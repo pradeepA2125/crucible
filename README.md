@@ -76,3 +76,4 @@ Key env vars:
 - [ ] Task timeline/execution trace APIs and UI surfaces
 - [ ] Loop analytics dashboards (token budgets, failure mode trends, latency metrics)
 - [ ] Step-scoped patch generation for reliability (replace full-plan single-shot patching with bounded patch size via per-step patch calls)
+- [ ] Deterministic patch preflight conflict detection for self-invalidating op order/anchors (e.g., removing `TaskStore` before `insert_after_symbol` on `TaskStore`)

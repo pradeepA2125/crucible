@@ -23,6 +23,7 @@
 - [x] diagnostics-aware repair loop
 - [ ] loop observability and budget analytics
 - [ ] Step-scoped patch generation planning/execution loop with bounded patch size (migrate away from full-plan single-shot patching)
+- [ ] Deterministic patch preflight conflict detector for self-invalidating patch op sequences (anchor/symbol dependency checks)
 
 ## Phase 5: Product Surface (pending)
 - [x] VS Code extension command surface and diff review UI (MVP)

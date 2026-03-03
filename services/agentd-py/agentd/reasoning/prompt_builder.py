@@ -40,6 +40,13 @@ PATCH_SYSTEM_INSTRUCTIONS = (
     "- create_file: use for new files only.\n"
     "- delete_file: use only when removal is explicitly required by the goal.\n"
     "\n"
+    "Operation ordering and anchor safety rules:\n"
+    "- Patch ops execute sequentially against the evolving file state.\n"
+    "- Never emit a later op that depends on an anchor/symbol removed or renamed by an earlier op.\n"
+    "- If you need to edit around a symbol and also insert near that symbol, keep the symbol stable until dependent insertions are done.\n"
+    "- Prefer one cohesive replace_range when mixed operations would invalidate later anchors.\n"
+    "- Failure example to avoid: replacing header lines in services/agentd-py/agentd/storage/base.py removed class TaskStore, then a later insert_after_symbol(anchor.symbol='TaskStore') failed because TaskStore no longer existed.\n"
+    "\n"
     "Behavior rules:\n"
     "- Respect the task plan and prioritize unresolved diagnostics when provided.\n"
     "- Keep changes cohesive and avoid speculative refactors.\n"
@@ -143,6 +150,14 @@ def build_patch_payload(
                 "file must be relative to workspace",
                 "no absolute paths",
                 "no path traversal",
+            ],
+            "execution_rules": [
+                "patch_ops run sequentially in listed order",
+                "do not invalidate symbols required by later anchor-based ops",
+                "if an op modifies/removes an anchor symbol, no later op may reference that anchor symbol",
+            ],
+            "known_failure_examples": [
+                "Do not remove TaskStore via replace_range and later use insert_after_symbol(anchor.symbol='TaskStore') in services/agentd-py/agentd/storage/base.py",
             ],
         },
         "retrieval_context": retrieval_context,

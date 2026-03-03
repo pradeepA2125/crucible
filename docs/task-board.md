@@ -40,3 +40,4 @@
 - [ ] Loop analytics and budget telemetry
 - [ ] Embeddings/hybrid semantic retrieval layer (deferred from current milestone)
 - [ ] Refactor create_patch flow from full-plan single-shot patching to step-scoped patch generation with bounded patch size responses (track progress with completed_step_ids)
+- [ ] Add deterministic preflight detection for self-invalidating patch op order/anchors before patch apply (e.g., remove symbol then anchor insert on same symbol)

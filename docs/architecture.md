@@ -48,3 +48,4 @@
 3. Loop analytics (iteration counts, token budget consumption, failure causes, latency histograms).
 4. Extension end-to-end smoke tests against a live scripted backend instance.
 5. Introduce step-scoped patch generation orchestration: replace full-plan single-shot patching with one focused patch call per plan step (or small step group), enforce bounded patch size caps on ops/files, and track step progress via `completed_step_ids`.
+6. Add deterministic patch preflight conflict detection for self-invalidating op sequences (symbol/anchor dependency analysis before patch apply).
