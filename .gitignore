@@ -15,3 +15,6 @@ workspaces/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
+apps/vscode-extension/tmp-review-files-*/
+generated.txt
