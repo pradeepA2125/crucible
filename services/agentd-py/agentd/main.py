@@ -11,6 +11,8 @@ from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.providers.anthropic_transport import AnthropicJsonTransport
 from agentd.providers.gemini_transport import GeminiJsonTransport
+from agentd.providers.groq_transport import GroqJsonTransport
+from agentd.providers.huggingface_transport import HuggingFaceJsonTransport
 from agentd.providers.openai_transport import OpenAIJsonTransport
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.engine import DefaultReasoningEngine
@@ -123,6 +125,31 @@ elif reasoning_backend == "gemini":
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv("AI_EDITOR_GEMINI_MODEL", "gemini-3-flash-preview"),
+        transport=transport,
+    )
+elif reasoning_backend == "huggingface":
+    transport = HuggingFaceJsonTransport(
+        api_key=os.getenv("HF_TOKEN"),
+        max_new_tokens=_int_env("AI_EDITOR_HUGGINGFACE_MAX_NEW_TOKENS", 4096),
+        seed=_optional_int_env("AI_EDITOR_HUGGINGFACE_SEED"),
+        timeout_sec=_float_env("AI_EDITOR_HUGGINGFACE_TIMEOUT_SEC", 60.0),
+    )
+    reasoning_engine = DefaultReasoningEngine(
+        model=os.getenv(
+            "AI_EDITOR_HUGGINGFACE_MODEL",
+            "deepseek-ai/DeepSeek-R1:fastest",
+        ),
+        transport=transport,
+    )
+elif reasoning_backend == "groq":
+    transport = GroqJsonTransport(
+        api_key=os.getenv("GROQ_API_KEY"),
+        endpoint=os.getenv("AI_EDITOR_GROQ_ENDPOINT"),
+        max_tokens=_int_env("AI_EDITOR_GROQ_MAX_TOKENS", 4096),
+        timeout_sec=_float_env("AI_EDITOR_GROQ_TIMEOUT_SEC", 60.0),
+    )
+    reasoning_engine = DefaultReasoningEngine(
+        model=os.getenv("AI_EDITOR_GROQ_MODEL", "openai/gpt-oss-120b"),
         transport=transport,
     )
 else:

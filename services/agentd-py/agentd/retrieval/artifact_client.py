@@ -56,6 +56,18 @@ class RetrievalContext:
 
 
 class RetrievalArtifactClient:
+    _IGNORED_CONTEXT_DIRS = {
+        ".git",
+        "node_modules",
+        ".venv",
+        "__pycache__",
+        ".pytest_cache",
+        "target",
+        "dist",
+        ".agentd",
+        ".ai-editor",
+    }
+
     def __init__(
         self,
         *,
@@ -130,7 +142,7 @@ class RetrievalArtifactClient:
                 )
             )
 
-        context = self._build_context(payload, goal, age_sec)
+        context = self._build_context(payload, goal, age_sec, workspace_path)
         return context, diagnostics
 
     def _resolve_snapshot_path(self, workspace_path: str) -> Path:
@@ -242,14 +254,34 @@ class RetrievalArtifactClient:
         payload: dict[str, object],
         goal: str,
         age_sec: float | None,
+        workspace_path: str,
     ) -> RetrievalContext:
+        workspace_root = Path(workspace_path).resolve()
+        snapshot_workspace_root = workspace_root
+        workspace_root_raw = payload.get("workspace_root")
+        if isinstance(workspace_root_raw, str) and workspace_root_raw.strip():
+            snapshot_workspace_root = Path(workspace_root_raw).expanduser().resolve()
+
         graph = payload.get("graph", {})
         nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
         edges = graph.get("edges", []) if isinstance(graph, dict) else []
         diagnostics = payload.get("diagnostics", [])
         stats = payload.get("stats", {})
 
-        node_items = [node for node in nodes if isinstance(node, dict)]
+        raw_node_items = [node for node in nodes if isinstance(node, dict)]
+        node_items: list[dict[str, object]] = []
+        for node in raw_node_items:
+            normalized_path = self._normalize_snapshot_path(
+                raw_path=node.get("path"),
+                workspace_root=workspace_root,
+                snapshot_workspace_root=snapshot_workspace_root,
+            )
+            if normalized_path is None:
+                continue
+            normalized_node = dict(node)
+            normalized_node["path"] = normalized_path
+            node_items.append(normalized_node)
+
         edge_items = [edge for edge in edges if isinstance(edge, dict)]
         diagnostic_items = [item for item in diagnostics if isinstance(item, dict)]
 
@@ -259,12 +291,19 @@ class RetrievalArtifactClient:
             if len(token) >= 3
         }
 
-        matched_nodes: list[dict[str, object]] = []
+        goal_lower = goal.lower()
+        scored_nodes: list[tuple[int, dict[str, object]]] = []
         for node in node_items:
             node_name = str(node.get("name", "")).lower()
             node_path = str(node.get("path", "")).lower()
-            if any(term in node_name or term in node_path for term in terms):
-                matched_nodes.append(node)
+            hit_count = sum(1 for term in terms if term in node_name or term in node_path)
+            if hit_count == 0:
+                continue
+            score = hit_count + self._path_bias_score(node_path, goal_lower)
+            scored_nodes.append((score, node))
+
+        scored_nodes.sort(key=lambda item: (-item[0], str(item[1].get("path", ""))))
+        matched_nodes = [node for _, node in scored_nodes[:500]]
 
         if not matched_nodes:
             matched_nodes = node_items[:8]
@@ -275,21 +314,33 @@ class RetrievalArtifactClient:
             if isinstance(node.get("id"), str)
         }
 
-        related_files = sorted(
-            {
-                str(node.get("path"))
-                for node in matched_nodes
-                if isinstance(node.get("path"), str)
-            }
-        )[:20]
+        related_files: list[str] = []
+        seen_files: set[str] = set()
+        for node in matched_nodes:
+            node_path = node.get("path")
+            if not isinstance(node_path, str):
+                continue
+            if node_path in seen_files:
+                continue
+            related_files.append(node_path)
+            seen_files.add(node_path)
+            if len(related_files) >= 20:
+                break
 
-        related_symbols = sorted(
-            {
-                str(node.get("name"))
-                for node in matched_nodes
-                if isinstance(node.get("name"), str) and str(node.get("kind")) != "File"
-            }
-        )[:40]
+        related_symbols: list[str] = []
+        seen_symbols: set[str] = set()
+        for node in matched_nodes:
+            node_name = node.get("name")
+            if not isinstance(node_name, str):
+                continue
+            if str(node.get("kind")) == "File":
+                continue
+            if node_name in seen_symbols:
+                continue
+            related_symbols.append(node_name)
+            seen_symbols.add(node_name)
+            if len(related_symbols) >= 40:
+                break
 
         graph_neighbors: set[str] = set()
         for edge in edge_items:
@@ -301,13 +352,17 @@ class RetrievalArtifactClient:
                 graph_neighbors.add(source)
         neighbors = sorted(graph_neighbors)[:50]
 
-        diagnostics_excerpt = [
-            (
-                f"{item.get('file', '<unknown>')}:{item.get('line', '?')}: "
-                f"{item.get('message', '')}"
+        diagnostics_excerpt: list[str] = []
+        for item in diagnostic_items:
+            excerpt = self._format_diagnostic_excerpt(
+                item,
+                workspace_root=workspace_root,
+                snapshot_workspace_root=snapshot_workspace_root,
             )
-            for item in diagnostic_items[:20]
-        ]
+            if excerpt is not None:
+                diagnostics_excerpt.append(excerpt)
+            if len(diagnostics_excerpt) >= 20:
+                break
 
         node_count = _coerce_int(
             stats.get("node_count") if isinstance(stats, dict) else None,
@@ -334,3 +389,81 @@ class RetrievalArtifactClient:
                 "diagnostic_count": diagnostic_count,
             },
         )
+
+    def _normalize_snapshot_path(
+        self,
+        *,
+        raw_path: object,
+        workspace_root: Path,
+        snapshot_workspace_root: Path,
+    ) -> str | None:
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return None
+
+        path_str = raw_path.strip()
+        candidate = Path(path_str).expanduser()
+        resolved = candidate.resolve() if candidate.is_absolute() else (snapshot_workspace_root / candidate).resolve()
+        if not self._is_within(resolved, workspace_root):
+            # Some snapshots store repo-relative paths while workspace_root changes across machines.
+            if not candidate.is_absolute():
+                fallback = (workspace_root / candidate).resolve()
+                if self._is_within(fallback, workspace_root):
+                    resolved = fallback
+                else:
+                    return None
+            else:
+                return None
+
+        relative = resolved.relative_to(workspace_root)
+        if self._is_ignored_relative_path(relative):
+            return None
+        return relative.as_posix()
+
+    def _is_within(self, path: Path, root: Path) -> bool:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            return False
+
+    def _is_ignored_relative_path(self, relative_path: Path) -> bool:
+        return any(part in self._IGNORED_CONTEXT_DIRS for part in relative_path.parts)
+
+    def _path_bias_score(self, normalized_path: str, goal_lower: str) -> int:
+        score = 0
+        if "agentd-py" in goal_lower and normalized_path.startswith("services/agentd-py/"):
+            score += 5
+        if "indexer" in goal_lower and normalized_path.startswith("services/indexer-rs/"):
+            score += 5
+        if ("vscode" in goal_lower or "extension" in goal_lower) and normalized_path.startswith(
+            "apps/vscode-extension/"
+        ):
+            score += 4
+        if (
+            "editor-client" in goal_lower
+            or "typescript client" in goal_lower
+            or "sdk" in goal_lower
+        ) and normalized_path.startswith("apps/editor-client/"):
+            score += 4
+        if "docs" in goal_lower and normalized_path.startswith("docs/"):
+            score += 2
+        return score
+
+    def _format_diagnostic_excerpt(
+        self,
+        item: dict[str, object],
+        *,
+        workspace_root: Path,
+        snapshot_workspace_root: Path,
+    ) -> str | None:
+        normalized_file = self._normalize_snapshot_path(
+            raw_path=item.get("file"),
+            workspace_root=workspace_root,
+            snapshot_workspace_root=snapshot_workspace_root,
+        )
+        if normalized_file is None:
+            return None
+
+        line = item.get("line", "?")
+        message = item.get("message", "")
+        return f"{normalized_file}:{line}: {message}"

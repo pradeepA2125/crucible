@@ -1,6 +1,8 @@
 from .anthropic_transport import AnthropicJsonTransport
 from .contracts import ModelJsonTransport
 from .gemini_transport import GeminiJsonTransport
+from .groq_transport import GroqJsonTransport
+from .huggingface_transport import HuggingFaceJsonTransport
 from .openai_transport import OpenAIJsonTransport
 
 __all__ = [
@@ -8,6 +10,8 @@ __all__ = [
     "OpenAIJsonTransport",
     "AnthropicJsonTransport",
     "GeminiJsonTransport",
+    "GroqJsonTransport",
+    "HuggingFaceJsonTransport",
     "OpenAIReasoningEngine",
 ]
 

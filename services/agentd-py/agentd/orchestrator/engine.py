@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Protocol
@@ -93,53 +95,61 @@ class AgentOrchestrator:
             task = transition(task, TaskStatus.PLANNED, "plan accepted")
             await self._store.save(task)
 
+            shadow_path = Path(shadow_workspace.shadow_path)
             while task.status in {TaskStatus.PLANNED, TaskStatus.REPAIRING}:
                 assert_budget(task, started_at_ms, int(time.time() * 1000))
                 task = bump_usage(task)
                 await self._store.save(task)
 
-                patch_raw = await self._reasoning_engine.create_patch(
-                    task,
-                    str(shadow_workspace.shadow_path),
-                    task.diagnostics,
-                    retrieval_context.as_prompt_payload(),
-                )
-                patch = PatchDocument.model_validate(patch_raw)
-                task.latest_patch = patch
-
-                patch_result = await self._patch_engine.apply_patch_document(
-                    Path(shadow_workspace.shadow_path),
-                    patch,
-                )
-                touched = patch_result.touched_files
-                task.modified_files = sorted({*task.modified_files, *touched})
-                task.diagnostics = [*persistent_diagnostics]
-
-                task = transition(task, TaskStatus.PATCHED, "patch applied in shadow workspace")
-                await self._store.save(task)
-
-                task = transition(task, TaskStatus.VALIDATING, "validation started")
-                await self._store.save(task)
-
-                validation = await self._validator.run(str(shadow_workspace.shadow_path))
-                if validation.success:
-                    task.diagnostics = [*persistent_diagnostics]
-                    task = transition(
+                checkpoint_root = self._create_shadow_checkpoint(shadow_path)
+                previous_modified_files = list(task.modified_files)
+                try:
+                    patch_raw = await self._reasoning_engine.create_patch(
                         task,
-                        TaskStatus.READY_FOR_REVIEW,
-                        "validation passed; ready for review",
+                        str(shadow_workspace.shadow_path),
+                        task.diagnostics,
+                        retrieval_context.as_prompt_payload(),
                     )
-                    await self._store.save(task)
-                    return task
+                    patch = PatchDocument.model_validate(patch_raw)
+                    task.latest_patch = patch
 
-                task.diagnostics = [*persistent_diagnostics, *validation.diagnostics]
-                if task.usage.iterations >= task.budget.max_iterations:
-                    task = transition(task, TaskStatus.FAILED, "repair budget exhausted")
-                    await self._store.save(task)
-                    return task
+                    patch_result = await self._patch_engine.apply_patch_document(
+                        shadow_path,
+                        patch,
+                    )
+                    touched = patch_result.touched_files
+                    task.modified_files = sorted({*task.modified_files, *touched})
+                    task.diagnostics = [*persistent_diagnostics]
 
-                task = transition(task, TaskStatus.REPAIRING, "validation failed")
-                await self._store.save(task)
+                    task = transition(task, TaskStatus.PATCHED, "patch applied in shadow workspace")
+                    await self._store.save(task)
+
+                    task = transition(task, TaskStatus.VALIDATING, "validation started")
+                    await self._store.save(task)
+
+                    validation = await self._validator.run(str(shadow_workspace.shadow_path))
+                    if validation.success:
+                        task.diagnostics = [*persistent_diagnostics]
+                        task = transition(
+                            task,
+                            TaskStatus.READY_FOR_REVIEW,
+                            "validation passed; ready for review",
+                        )
+                        await self._store.save(task)
+                        return task
+
+                    task.diagnostics = [*persistent_diagnostics, *validation.diagnostics]
+                    if task.usage.iterations >= task.budget.max_iterations:
+                        task = transition(task, TaskStatus.FAILED, "repair budget exhausted")
+                        await self._store.save(task)
+                        return task
+
+                    self._restore_shadow_checkpoint(shadow_path, checkpoint_root)
+                    task.modified_files = previous_modified_files
+                    task = transition(task, TaskStatus.REPAIRING, "validation failed")
+                    await self._store.save(task)
+                finally:
+                    self._cleanup_shadow_checkpoint(checkpoint_root)
 
             return task
         except Exception as exc:
@@ -153,3 +163,18 @@ class AgentOrchestrator:
                     pass
             await self._store.save(task)
             return task
+
+    def _create_shadow_checkpoint(self, shadow_path: Path) -> Path:
+        checkpoint_root = Path(tempfile.mkdtemp(prefix="ai-editor-repair-"))
+        shutil.copytree(shadow_path, checkpoint_root / "shadow")
+        return checkpoint_root
+
+    def _restore_shadow_checkpoint(self, shadow_path: Path, checkpoint_root: Path) -> None:
+        snapshot_path = checkpoint_root / "shadow"
+        if shadow_path.exists():
+            shutil.rmtree(shadow_path)
+        shutil.copytree(snapshot_path, shadow_path)
+
+    def _cleanup_shadow_checkpoint(self, checkpoint_root: Path) -> None:
+        if checkpoint_root.exists():
+            shutil.rmtree(checkpoint_root)

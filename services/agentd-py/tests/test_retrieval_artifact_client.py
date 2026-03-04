@@ -139,3 +139,106 @@ def test_corrupt_snapshot_warns_and_returns_empty_context(tmp_path: Path) -> Non
 
     assert context == RetrievalContext.empty()
     assert any("could not be parsed" in warning.message for warning in warnings)
+
+
+def test_context_filters_shadow_paths_and_normalizes_to_repo_relative(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    workspace.mkdir(parents=True)
+    snapshot_path = workspace / ".ai-editor/index-snapshot.json"
+    payload = _snapshot_payload(int(time.time() * 1000))
+    payload["workspace_root"] = str(workspace)
+    payload["graph"] = {
+        "nodes": [
+            {
+                "id": "file:shadow",
+                "path": str(
+                    workspace
+                    / ".agentd/shadows/task-1/services/agentd-py/agentd/api/tasks.py"
+                ),
+                "name": "tasks.py",
+                "kind": "File",
+            },
+            {
+                "id": "file:routes",
+                "path": str(workspace / "services/agentd-py/agentd/api/routes.py"),
+                "name": "routes.py",
+                "kind": "File",
+            },
+            {
+                "id": "function:file:routes:get_task_result",
+                "path": str(workspace / "services/agentd-py/agentd/api/routes.py"),
+                "name": "get_task_result",
+                "kind": "Function",
+            },
+        ],
+        "edges": [],
+    }
+    payload["diagnostics"] = [
+        {
+            "file": str(workspace / ".agentd/shadows/task-1/bad.py"),
+            "line": 1,
+            "column": 1,
+            "message": "bad shadow diagnostic",
+        },
+        {
+            "file": str(workspace / "services/agentd-py/agentd/api/routes.py"),
+            "line": 12,
+            "column": 1,
+            "message": "route warning",
+        },
+    ]
+
+    _write_snapshot(snapshot_path, payload)
+    client = RetrievalArtifactClient()
+    context, warnings = client.load_context(str(workspace), "task events route")
+
+    assert warnings == []
+    assert "services/agentd-py/agentd/api/routes.py" in context.related_files
+    assert all(not path.startswith("/") for path in context.related_files)
+    assert all(".agentd/shadows" not in path for path in context.related_files)
+    assert context.diagnostics_excerpt == [
+        "services/agentd-py/agentd/api/routes.py:12: route warning"
+    ]
+
+
+def test_goal_bias_prioritizes_agentd_paths_for_agentd_tasks(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    workspace.mkdir(parents=True)
+    snapshot_path = workspace / ".ai-editor/index-snapshot.json"
+    payload = _snapshot_payload(int(time.time() * 1000))
+    payload["workspace_root"] = str(workspace)
+    payload["graph"] = {
+        "nodes": [
+            {
+                "id": "file:ts",
+                "path": "apps/editor-client/src/domain/types.ts",
+                "name": "types.ts",
+                "kind": "File",
+            },
+            {
+                "id": "file:routes",
+                "path": "services/agentd-py/agentd/api/routes.py",
+                "name": "routes.py",
+                "kind": "File",
+            },
+            {
+                "id": "file:storage",
+                "path": "services/agentd-py/agentd/storage/base.py",
+                "name": "base.py",
+                "kind": "File",
+            },
+        ],
+        "edges": [],
+    }
+    payload["diagnostics"] = []
+    _write_snapshot(snapshot_path, payload)
+
+    client = RetrievalArtifactClient()
+    context, warnings = client.load_context(
+        str(workspace),
+        "Implement task events endpoint in agentd-py service",
+    )
+
+    assert warnings == []
+    assert context.related_files
+    assert context.related_files[0].startswith("services/agentd-py/")

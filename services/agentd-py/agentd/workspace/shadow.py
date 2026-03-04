@@ -11,6 +11,9 @@ from agentd.domain.models import TaskRecord
 
 DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
     ".git",
+    ".agentd",
+    ".ai-editor",
+    ".tmp",
     "node_modules",
     ".venv",
     "__pycache__",
