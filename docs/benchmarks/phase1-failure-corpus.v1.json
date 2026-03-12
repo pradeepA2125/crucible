@@ -1,0 +1,41 @@
+{
+  "schema_version": "phase1-failure-corpus.v1",
+  "generated_at": "2026-03-12T00:00:00Z",
+  "baseline_reference": "docs/benchmarks/benchmark-corpus.v1.json",
+  "clusters": [
+    "anchor_invalid_after_prior_mutation",
+    "invented_file_target",
+    "indentation_or_syntax_regression",
+    "duplicate_retry_insertion"
+  ],
+  "cases": [
+    {
+      "id": "p1-anchor-order-conflict",
+      "language": "python",
+      "cluster": "anchor_invalid_after_prior_mutation",
+      "goal": "Apply two operations where second selector depends on removed anchor.",
+      "expected_failure_code": "order_conflict"
+    },
+    {
+      "id": "p1-invented-target-path",
+      "language": "python",
+      "cluster": "invented_file_target",
+      "goal": "Plan references non-existent service path in repo.",
+      "expected_failure_code": "scope_violation"
+    },
+    {
+      "id": "p1-indent-syntax-regression",
+      "language": "python",
+      "cluster": "indentation_or_syntax_regression",
+      "goal": "Patch introduces invalid indentation in touched file.",
+      "expected_failure_code": "apply_error"
+    },
+    {
+      "id": "p1-duplicate-retry-insertion",
+      "language": "python",
+      "cluster": "duplicate_retry_insertion",
+      "goal": "Retry path should rollback and avoid duplicate inserted lines.",
+      "expected_failure_code": "apply_error"
+    }
+  ]
+}

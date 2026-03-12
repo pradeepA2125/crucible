@@ -1,0 +1,60 @@
+{
+  "schema_version": "benchmark-corpus.v1",
+  "generated_at": "2026-03-12T00:00:00+00:00",
+  "frozen": true,
+  "targets": {
+    "internal": 100,
+    "oss": 50
+  },
+  "tasks": [
+    {
+      "task_id": "oss-pydantic",
+      "goal": "Benchmark task placeholder for pydantic",
+      "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/pydantic",
+      "source": "oss",
+      "language": "python",
+      "tags": [
+        "phase0",
+        "seeded"
+      ]
+    },
+    {
+      "task_id": "oss-rustlings",
+      "goal": "Benchmark task placeholder for rustlings",
+      "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/rustlings",
+      "source": "oss",
+      "language": "rust",
+      "tags": [
+        "phase0",
+        "seeded"
+      ]
+    },
+    {
+      "task_id": "oss-typescript-language-server",
+      "goal": "Benchmark task placeholder for typescript-language-server",
+      "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/typescript-language-server",
+      "source": "oss",
+      "language": "typescript",
+      "tags": [
+        "phase0",
+        "seeded"
+      ]
+    },
+    {
+      "task_id": "oss-shadow-forge-stress",
+      "goal": "Benchmark task placeholder for shadow-forge-stress",
+      "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/shadow-forge-stress",
+      "source": "oss",
+      "language": "unknown",
+      "tags": [
+        "phase0",
+        "seeded"
+      ]
+    }
+  ],
+  "stats": {
+    "total_tasks": 4,
+    "internal_tasks": 0,
+    "oss_tasks": 4
+  }
+}
