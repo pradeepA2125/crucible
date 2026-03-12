@@ -21,6 +21,7 @@
 ## Deterministic boundaries
 - Model output is never executed directly.
 - `agentd-py` validates plan/patch payloads into typed models.
+- `agentd-py` validates plan step targets against the real workspace file index and performs one-shot replan on unresolved paths.
 - Patch application and validation gates remain deterministic.
 - Retrieval context is artifact-backed and loaded once per task (no per-loop command chatter).
 
@@ -28,6 +29,7 @@
 - `POST /v1/tasks`
 - `GET /v1/tasks/{task_id}`
 - `GET /v1/tasks/{task_id}/result`
+- `GET /v1/tasks/{task_id}/artifacts`
 - `POST /v1/tasks/{task_id}/cancel`
 - `POST /v1/tasks/{task_id}/accept`
 - `POST /v1/tasks/{task_id}/reject`
@@ -42,10 +44,68 @@
 4. Stale/corrupt/missing artifacts emit warning diagnostics; task execution continues with empty retrieval context when needed.
 5. Plan/patch prompts receive compact retrieval context (`related_files`, `related_symbols`, neighbors, diagnostics excerpt, snapshot age/stats).
 
-## Near-term implementation targets
-1. Rollback snapshots per repair iteration for deterministic recoverability.
-2. Task timeline/event query endpoints and richer timeline views.
-3. Loop analytics (iteration counts, token budget consumption, failure causes, latency histograms).
-4. Extension end-to-end smoke tests against a live scripted backend instance.
-5. Introduce step-scoped patch generation orchestration: replace full-plan single-shot patching with one focused patch call per plan step (or small step group), enforce bounded patch size caps on ops/files, and track step progress via `completed_step_ids`.
-6. Add deterministic patch preflight conflict detection for self-invalidating op sequences (symbol/anchor dependency analysis before patch apply).
+## Implementation Status
+
+### ✅ Phase 0: Evaluation Harness (Completed)
+- Unified evaluation/replay harness with benchmark scoring and failure clustering
+- Benchmark corpus freeze (100 internal + 50 OSS tasks)
+- Deterministic replay bundle and loader
+- Baseline metrics dashboard and weekly scorecard
+
+### ✅ Phase 1: Patch Engine v2 (Completed)
+**Hybrid CST/AST + Text-Based Patching:**
+- SearchReplaceOpV2 (Fast Apply): O(N) text search/replace for large files
+- ApplyDiffOpV2 (Unified Diff): Multi-hunk diff with context validation
+- Codex-style diff format support (`*** Begin/End Patch` markers)
+- Enhanced preflight validation for all operation types
+- Newline normalization for robust diff matching
+- Comprehensive test suite (12/12 tests passing)
+
+**Previously Completed:**
+- Simulated apply preflight (dependency, anchor stability, parse checks)
+- Plan-target grounding and one-shot replan feedback loop
+- Step-attempt checkpoint transactions with deterministic rollback
+- Candidate patch ranking and best-candidate selection
+- Artifacts API (`GET /v1/tasks/{task_id}/artifacts`)
+- Phase 1 failure corpus + gate report command
+
+**Pending:** Benchmark validation of 70% failure reduction target
+
+### 🔄 Phase 2: Planner/Executor/Critic v2 (Next)
+- Plan graph v2 with preconditions/postconditions/verification
+- Typed critic taxonomy and targeted repair prompts
+- Rules/memory precedence engine (global → workspace → repo → task)
+
+### 📋 Phase 3: Core Parity Surface (Planned)
+- Timeline/event UX in VS Code (attempt traces, preflight/validation deltas)
+- Background task mode with resume and checkpoint restore
+- Code review assistant mode (file/PR findings and suggestions)
+- MCP policy controls (allowlist, scope, audit)
+
+### 📋 Phase 4: Workflow Layer (Planned)
+- Issue-driven flow (issue → plan → patch → review artifacts)
+- Knowledge spaces and memory ingestion pipeline
+- Collaboration metadata (provenance, approvals, shareable run context)
+
+### 📋 Phase 5: Differentiation (Planned)
+- Multi-agent orchestrator (Planner/Retriever/Patcher/Verifier)
+- Retrieval v2 (symbolic + semantic + freshness-aware ranking)
+- Autonomous long-running refactor mode with staged promotion
+
+## Planned additive contracts (program-level)
+- Task APIs:
+  `GET /v1/tasks/{task_id}/events`,
+  `GET /v1/tasks/{task_id}/timeline`,
+  `GET /v1/tasks/{task_id}/artifacts`,
+  `POST /v1/tasks/{task_id}/resume`,
+  `POST /v1/tasks/{task_id}/rollback`,
+  optional SSE stream endpoint.
+- Planner/Patcher contracts:
+  `PlanStepV2`, `PatchDocumentV2`, `FailureTaxonomyV2`.
+- Policy contracts:
+  `RuleSet` scope precedence and `ToolPolicy` allowlist/scope/audit metadata.
+
+## Program references
+- `docs/program/parity-plus-6-month-plan.md`
+- `docs/program/linear-execution-model.md`
+- `docs/program/notion-structure.md`
