@@ -35,9 +35,11 @@ class ShadowWorkspaceManager:
         self,
         root_path: Path | None = None,
         ignore_patterns: Sequence[str] | None = None,
+        checkpoint_retention_tasks: int = 20,
     ) -> None:
         self._root_path = (root_path or Path(tempfile.gettempdir()) / "ai-editor-shadow").resolve()
         self._ignore_patterns = tuple(ignore_patterns or DEFAULT_IGNORE_PATTERNS)
+        self._checkpoint_retention_tasks = max(1, checkpoint_retention_tasks)
         self._root_path.mkdir(parents=True, exist_ok=True)
 
     async def prepare(self, task_id: str, workspace_path: str) -> ShadowWorkspace:
@@ -96,6 +98,17 @@ class ShadowWorkspaceManager:
         shadow_path = Path(task.shadow_workspace_path).resolve()
         if shadow_path.exists():
             shutil.rmtree(shadow_path)
+
+    async def prune_checkpoints(self) -> None:
+        checkpoints_root = self._root_path / "_checkpoints"
+        if not checkpoints_root.exists() or not checkpoints_root.is_dir():
+            return
+
+        task_dirs = [path for path in checkpoints_root.iterdir() if path.is_dir()]
+        task_dirs.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+
+        for stale_dir in task_dirs[self._checkpoint_retention_tasks :]:
+            shutil.rmtree(stale_dir, ignore_errors=True)
 
     def _resolve_shadow_path(self, task_id: str) -> Path:
         shadow_path = (self._root_path / task_id).resolve()

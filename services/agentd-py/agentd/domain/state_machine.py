@@ -8,9 +8,16 @@ from .models import TaskEvent, TaskRecord, TaskStatus
 _TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.QUEUED: {TaskStatus.CONTEXT_READY, TaskStatus.FAILED, TaskStatus.ABORTED},
     TaskStatus.CONTEXT_READY: {TaskStatus.PLANNED, TaskStatus.FAILED, TaskStatus.ABORTED},
-    TaskStatus.PLANNED: {TaskStatus.PATCHED, TaskStatus.FAILED, TaskStatus.ABORTED},
+    TaskStatus.PLANNED: {
+        TaskStatus.PATCHED,
+        TaskStatus.VALIDATING,
+        TaskStatus.REPAIRING,
+        TaskStatus.FAILED,
+        TaskStatus.ABORTED,
+    },
     TaskStatus.PATCHED: {TaskStatus.VALIDATING, TaskStatus.FAILED, TaskStatus.ABORTED},
     TaskStatus.VALIDATING: {
+        TaskStatus.PLANNED,
         TaskStatus.READY_FOR_REVIEW,
         TaskStatus.REPAIRING,
         TaskStatus.FAILED,

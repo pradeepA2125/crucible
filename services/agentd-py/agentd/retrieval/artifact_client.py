@@ -7,9 +7,8 @@ import shlex
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from agentd.domain.models import Diagnostic
 
@@ -26,19 +25,27 @@ def _coerce_int(value: object, default: int) -> int:
 
 @dataclass(frozen=True)
 class RetrievalContext:
-    related_files: list[str]
-    related_symbols: list[str]
-    graph_neighbors: list[str]
-    diagnostics_excerpt: list[str]
-    snapshot_age_sec: float | None
-    snapshot_stats: dict[str, int]
+    repository_structure: list[str] = field(default_factory=list)
+    related_files: list[str] = field(default_factory=list)
+    related_symbols: list[str] = field(default_factory=list)
+    graph_neighbors: list[str] = field(default_factory=list)
+    file_outlines: dict[str, list[str]] = field(default_factory=dict)
+    diagnostics_excerpt: list[str] = field(default_factory=list)
+    snapshot_age_sec: float | None = None
+    snapshot_stats: dict[str, int] = field(
+        default_factory=lambda: {"node_count": 0, "edge_count": 0, "diagnostic_count": 0}
+    )
+    file_contents: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def empty(cls) -> "RetrievalContext":
         return cls(
+            repository_structure=[],
             related_files=[],
             related_symbols=[],
             graph_neighbors=[],
+            file_outlines={},
+            file_contents={},
             diagnostics_excerpt=[],
             snapshot_age_sec=None,
             snapshot_stats={"node_count": 0, "edge_count": 0, "diagnostic_count": 0},
@@ -46,9 +53,12 @@ class RetrievalContext:
 
     def as_prompt_payload(self) -> dict[str, object]:
         return {
+            "repository_structure": self.repository_structure,
             "related_files": self.related_files,
             "related_symbols": self.related_symbols,
             "graph_neighbors": self.graph_neighbors,
+            "file_outlines": self.file_outlines,
+            "file_contents": self.file_contents,
             "diagnostics_excerpt": self.diagnostics_excerpt,
             "snapshot_age_sec": self.snapshot_age_sec,
             "snapshot_stats": self.snapshot_stats,
@@ -66,6 +76,7 @@ class RetrievalArtifactClient:
         "dist",
         ".agentd",
         ".ai-editor",
+        ".tmp",
     }
 
     def __init__(
@@ -143,6 +154,7 @@ class RetrievalArtifactClient:
             )
 
         context = self._build_context(payload, goal, age_sec, workspace_path)
+
         return context, diagnostics
 
     def _resolve_snapshot_path(self, workspace_path: str) -> Path:
@@ -300,6 +312,11 @@ class RetrievalArtifactClient:
             if hit_count == 0:
                 continue
             score = hit_count + self._path_bias_score(node_path, goal_lower)
+            
+            # Deprioritize test symbols unless goal mentions tests
+            if "test_" in node_name and "test" not in goal_lower:
+                score -= 10
+                
             scored_nodes.append((score, node))
 
         scored_nodes.sort(key=lambda item: (-item[0], str(item[1].get("path", ""))))
@@ -350,7 +367,34 @@ class RetrievalArtifactClient:
                 graph_neighbors.add(target)
             if isinstance(target, str) and target in matched_ids and isinstance(source, str):
                 graph_neighbors.add(source)
-        neighbors = sorted(graph_neighbors)[:50]
+
+        # Filter out neighbors whose IDs reference ignored directories
+        filtered_neighbors = [
+            n for n in sorted(graph_neighbors)
+            if not any(f"/{ignored}/" in n for ignored in self._IGNORED_CONTEXT_DIRS)
+        ]
+        neighbors = filtered_neighbors[:50]
+
+        # Extract structural outlines for top files
+        file_outlines: dict[str, list[str]] = {}
+        top_files = related_files[:8]  # Limit to top 8 most relevant files
+        for target_file in top_files:
+            outlines = []
+            # Find all nodes belonging to this file
+            file_nodes = [n for n in node_items if n.get("path") == target_file]
+            # Group by kind and sort by line if available
+            file_nodes.sort(key=lambda x: _coerce_int(x.get("line"), 0))
+            
+            for fnode in file_nodes:
+                kind = str(fnode.get("kind", ""))
+                name = str(fnode.get("name", ""))
+                if kind in {"Class", "Function", "Method", "Interface", "Protocol"}:
+                    line = fnode.get("line")
+                    suffix = f" (line {line})" if line else ""
+                    outlines.append(f"{kind}: {name}{suffix}")
+            
+            if outlines:
+                file_outlines[target_file] = outlines
 
         diagnostics_excerpt: list[str] = []
         for item in diagnostic_items:
@@ -377,10 +421,34 @@ class RetrievalArtifactClient:
             len(diagnostic_items),
         )
 
+        repository_structure: list[str] = []
+        # Optimization: keep structure walking shallow and fast
+        for root, dirs, files in os.walk(workspace_root):
+            rel_root = Path(root).relative_to(workspace_root)
+            if self._is_ignored_relative_path(rel_root):
+                dirs.clear()
+                continue
+            
+            level = len(rel_root.parts)
+            if level > 5: # Shallow walk for summary
+                dirs.clear()
+                continue
+            
+            indent = "  " * level
+            display_name = "." if str(rel_root) == "." else rel_root.name
+            
+            valid_dirs = [d for d in dirs if not self._is_ignored_relative_path(rel_root / d)]
+            valid_files = [f for f in files if self._is_supported_source_path(Path(f))]
+            if valid_dirs or valid_files:
+                summary = f"{indent}{display_name}/ ({len(valid_dirs)} dirs, {len(valid_files)} source files)"
+                repository_structure.append(summary)
+
         return RetrievalContext(
+            repository_structure=repository_structure,
             related_files=related_files,
             related_symbols=related_symbols,
             graph_neighbors=neighbors,
+            file_outlines=file_outlines,
             diagnostics_excerpt=diagnostics_excerpt,
             snapshot_age_sec=age_sec,
             snapshot_stats={
@@ -402,17 +470,31 @@ class RetrievalArtifactClient:
 
         path_str = raw_path.strip()
         candidate = Path(path_str).expanduser()
+        
+        # If the path is absolute and doesn't match workspace_root,
+        # it might be from a different workspace/shadow environment.
+        # We try to extract the project-relative part by finding the common suffix.
+        if candidate.is_absolute() and not self._is_within(candidate, workspace_root):
+            # STRATEGY: Find the project-relative path by looking for the last 
+            # occurrence of a project sub-directory that exists in the current workspace.
+            # This is more robust than hardcoding markers.
+            parts = candidate.parts
+            for i in range(len(parts)):
+                # Take the suffix from index i to end
+                suffix = Path(*parts[i:])
+                if (workspace_root / suffix).exists():
+                    return suffix.as_posix()
+
+        # Standard resolution for relative paths or paths already within workspace_root
         resolved = candidate.resolve() if candidate.is_absolute() else (snapshot_workspace_root / candidate).resolve()
         if not self._is_within(resolved, workspace_root):
-            # Some snapshots store repo-relative paths while workspace_root changes across machines.
+            # Final fallback: if it's a relative path that doesn't resolve within snapshot_workspace_root,
+            # try resolving it relative to the current workspace_root.
             if not candidate.is_absolute():
                 fallback = (workspace_root / candidate).resolve()
                 if self._is_within(fallback, workspace_root):
-                    resolved = fallback
-                else:
-                    return None
-            else:
-                return None
+                    return candidate.as_posix()
+            return None
 
         relative = resolved.relative_to(workspace_root)
         if self._is_ignored_relative_path(relative):
@@ -428,6 +510,11 @@ class RetrievalArtifactClient:
 
     def _is_ignored_relative_path(self, relative_path: Path) -> bool:
         return any(part in self._IGNORED_CONTEXT_DIRS for part in relative_path.parts)
+
+    def _is_supported_source_path(self, path: Path) -> bool:
+        # Same extensions as indexer-rs
+        ext = path.suffix.lower()
+        return ext in {".ts", ".tsx", ".py", ".rs"}
 
     def _path_bias_score(self, normalized_path: str, goal_lower: str) -> int:
         score = 0

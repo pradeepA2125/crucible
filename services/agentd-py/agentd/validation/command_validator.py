@@ -97,6 +97,217 @@ class CommandValidator:
         duration_ms = int((time.monotonic() - started_at) * 1000)
         return ValidationResult(success=not has_errors, diagnostics=diagnostics, duration_ms=duration_ms)
 
+    async def run_touched(self, workspace_path: str, touched_files: list[str]) -> ValidationResult:
+        started_at = time.monotonic()
+        diagnostics: list[Diagnostic] = []
+        root = Path(workspace_path)
+        ts_available: bool | None = None
+        ts_unavailable_reason: str | None = None
+        rustfmt_bin = shutil.which("rustfmt")
+        rustfmt_warned = False
+
+        for relative_path in touched_files:
+            path = (root / relative_path).resolve()
+            try:
+                path.relative_to(root.resolve())
+            except ValueError:
+                diagnostics.append(
+                    Diagnostic(
+                        source="validator:fast",
+                        message=f"Path escapes workspace: {relative_path}",
+                        level="error",
+                        file=relative_path,
+                    )
+                )
+                continue
+
+            if not path.exists() or not path.is_file():
+                continue
+
+            if path.suffix == ".py":
+                try:
+                    source = path.read_text(encoding="utf-8")
+                    compile(source, str(path), "exec")
+                except Exception as exc:
+                    diagnostics.append(
+                        Diagnostic(
+                            source="validator:fast-python-compile",
+                            message=f"{relative_path}: {exc}",
+                            level="error",
+                            file=relative_path,
+                        )
+                    )
+            elif path.suffix in {".ts", ".tsx", ".mts", ".cts"}:
+                if ts_available is None:
+                    ts_available, ts_unavailable_reason = await self._check_typescript_fast_support(root)
+                    if not ts_available:
+                        diagnostics.append(
+                            Diagnostic(
+                                source="validator:fast-typescript",
+                                message=ts_unavailable_reason
+                                or "TypeScript fast validation unavailable; skipping touched-file parse checks",
+                                level="warning",
+                            )
+                        )
+                if ts_available:
+                    diagnostics.extend(
+                        await self._run_typescript_fast_parse(root, path, relative_path)
+                    )
+            elif path.suffix == ".rs":
+                if not rustfmt_bin:
+                    if not rustfmt_warned:
+                        diagnostics.append(
+                            Diagnostic(
+                                source="validator:fast-rust",
+                                message="rustfmt is not available; skipping Rust touched-file parse checks",
+                                level="warning",
+                            )
+                        )
+                        rustfmt_warned = True
+                else:
+                    diagnostics.extend(
+                        await self._run_rust_fast_parse(root, path, relative_path, rustfmt_bin)
+                    )
+
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        return ValidationResult(
+            success=not any(item.level == "error" for item in diagnostics),
+            diagnostics=diagnostics,
+            duration_ms=duration_ms,
+        )
+
+    async def _check_typescript_fast_support(self, workspace_path: Path) -> tuple[bool, str | None]:
+        node_bin = shutil.which("node")
+        if not node_bin:
+            return False, "Node.js is not available; skipping TypeScript touched-file parse checks"
+
+        returncode, _stdout, stderr, timed_out = await self._run_process_exec(
+            [node_bin, "-e", "require.resolve('typescript')"],
+            cwd=workspace_path,
+            timeout_sec=10,
+        )
+        if timed_out:
+            return False, "Timed out while checking TypeScript parser availability"
+        if returncode != 0:
+            details = stderr.strip() or "typescript package is not resolvable from workspace"
+            return False, f"TypeScript fast validation unavailable: {details}"
+        return True, None
+
+    async def _run_typescript_fast_parse(
+        self,
+        workspace_path: Path,
+        file_path: Path,
+        relative_path: str,
+    ) -> list[Diagnostic]:
+        node_bin = shutil.which("node")
+        if not node_bin:
+            return []
+
+        script = (
+            "const fs=require('fs');"
+            "const ts=require('typescript');"
+            "const file=process.argv[1];"
+            "const src=fs.readFileSync(file,'utf8');"
+            "const out=ts.transpileModule(src,{fileName:file,reportDiagnostics:true,"
+            "compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.Preserve}});"
+            "const diags=(out.diagnostics||[]).filter(d=>d.category===ts.DiagnosticCategory.Error);"
+            "if(diags.length){"
+            "const host={getCurrentDirectory:()=>process.cwd(),getCanonicalFileName:f=>f,getNewLine:()=>\"\\n\"};"
+            "console.error(ts.formatDiagnosticsWithColorAndContext(diags,host));"
+            "process.exit(1);"
+            "}"
+        )
+        returncode, stdout, stderr, timed_out = await self._run_process_exec(
+            [node_bin, "-e", script, str(file_path)],
+            cwd=workspace_path,
+            timeout_sec=20,
+        )
+        if timed_out:
+            return [
+                Diagnostic(
+                    source="validator:fast-typescript-parse",
+                    message=f"{relative_path}: TypeScript parse check timed out",
+                    level="error",
+                    file=relative_path,
+                )
+            ]
+        if returncode == 0:
+            return []
+        output = "\n".join(part.strip() for part in [stdout, stderr] if part.strip())
+        message = output or f"{relative_path}: TypeScript parse check failed"
+        return [
+            Diagnostic(
+                source="validator:fast-typescript-parse",
+                message=message,
+                level="error",
+                file=relative_path,
+            )
+        ]
+
+    async def _run_rust_fast_parse(
+        self,
+        workspace_path: Path,
+        file_path: Path,
+        relative_path: str,
+        rustfmt_bin: str,
+    ) -> list[Diagnostic]:
+        returncode, stdout, stderr, timed_out = await self._run_process_exec(
+            [rustfmt_bin, "--emit", "stdout", "--edition", "2021", str(file_path)],
+            cwd=workspace_path,
+            timeout_sec=20,
+        )
+        if timed_out:
+            return [
+                Diagnostic(
+                    source="validator:fast-rust-parse",
+                    message=f"{relative_path}: Rust parse check timed out",
+                    level="error",
+                    file=relative_path,
+                )
+            ]
+        if returncode == 0:
+            return []
+        output = "\n".join(part.strip() for part in [stdout, stderr] if part.strip())
+        message = output or f"{relative_path}: Rust parse check failed"
+        return [
+            Diagnostic(
+                source="validator:fast-rust-parse",
+                message=message,
+                level="error",
+                file=relative_path,
+            )
+        ]
+
+    async def _run_process_exec(
+        self,
+        args: list[str],
+        *,
+        cwd: Path,
+        timeout_sec: int,
+    ) -> tuple[int, str, str, bool]:
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_raw, stderr_raw = await asyncio.wait_for(
+                process.communicate(),
+                timeout=timeout_sec,
+            )
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+            return -1, "", "", True
+
+        return (
+            process.returncode,
+            stdout_raw.decode("utf-8", errors="replace"),
+            stderr_raw.decode("utf-8", errors="replace"),
+            False,
+        )
+
     async def _run_command(self, command: ValidationCommand, workspace_path: Path) -> list[Diagnostic]:
         process = await asyncio.create_subprocess_shell(
             command.command,

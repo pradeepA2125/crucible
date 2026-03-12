@@ -7,7 +7,15 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from agentd.api.routes import build_router
-from agentd.domain.models import Diagnostic, PatchDocument, PlanDocument, TaskRecord, TaskStatus
+from agentd.domain.models import (
+    Diagnostic,
+    PatchDocument,
+    PatchDocumentV2,
+    PlanDocument,
+    StepExecutionTrace,
+    TaskRecord,
+    TaskStatus,
+)
 from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
@@ -70,7 +78,16 @@ async def test_get_task_result_returns_rich_task_payload(tmp_path: Path) -> None
         plan=_sample_plan(),
         latest_patch=_sample_patch(),
         modified_files=["src/main.py"],
+        completed_step_ids=["S1"],
         diagnostics=[Diagnostic(source="validator", message="warn", level="warning")],
+        execution_trace=[
+            StepExecutionTrace(
+                step_id="S1",
+                attempt=1,
+                status="step_completed",
+                message="ok",
+            )
+        ],
     )
     await store.create(task)
 
@@ -87,6 +104,9 @@ async def test_get_task_result_returns_rich_task_payload(tmp_path: Path) -> None
     assert payload["modified_files"] == ["src/main.py"]
     assert payload["diagnostics"][0]["source"] == "validator"
     assert payload["shadow_workspace_path"] is not None
+    assert payload["step_progress"]["total_steps"] == 1
+    assert payload["step_progress"]["completed_steps"] == 1
+    assert payload["execution_trace"][0]["step_id"] == "S1"
 
 
 @pytest.mark.asyncio
@@ -177,3 +197,100 @@ async def test_reject_returns_task_result_and_aborts(tmp_path: Path) -> None:
     assert payload["shadow_workspace_path"] is None
 
     assert not shadow.shadow_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_get_task_result_returns_selected_patch_candidate(tmp_path: Path) -> None:
+    store = InMemoryTaskStore()
+    manager = ShadowWorkspaceManager(root_path=tmp_path / "shadows")
+
+    real_workspace = tmp_path / "real"
+    real_workspace.mkdir(parents=True)
+
+    task = TaskRecord(
+        task_id="task-v2",
+        goal="goal",
+        workspace_path=str(real_workspace),
+        status=TaskStatus.READY_FOR_REVIEW,
+        plan=_sample_plan(),
+        latest_patch_v2=PatchDocumentV2.model_validate(
+            {
+                "candidates": [
+                    {
+                        "candidate_id": "c1",
+                        "patch_ops": [
+                            {
+                                "op": "create_file",
+                                "file": "src/a.py",
+                                "content": "print('a')\n",
+                                "reason": "create",
+                            }
+                        ],
+                    },
+                    {
+                        "candidate_id": "c2",
+                        "patch_ops": [
+                            {
+                                "op": "create_file",
+                                "file": "src/b.py",
+                                "content": "print('b')\n",
+                                "reason": "create",
+                            }
+                        ],
+                    },
+                ]
+            }
+        ),
+        selected_candidate_id="c2",
+        modified_files=["src/b.py"],
+    )
+    await store.create(task)
+
+    app = _build_app(store, manager)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/v1/tasks/task-v2/result")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_candidate_id"] == "c2"
+    assert payload["patch"]["candidate_id"] == "c2"
+    assert len(payload["patch_candidates"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_task_artifacts_lists_task_debug_files(tmp_path: Path) -> None:
+    store = InMemoryTaskStore()
+    manager = ShadowWorkspaceManager(root_path=tmp_path / "shadows")
+
+    real_workspace = tmp_path / "real"
+    real_workspace.mkdir(parents=True)
+
+    artifacts_root = tmp_path / "artifacts" / "task-artifacts"
+    (artifacts_root / "step-S1" / "attempt-1").mkdir(parents=True)
+    (artifacts_root / "step-S1" / "attempt-1" / "ranking.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    (artifacts_root / "step-S1" / "attempt-1" / "preflight-c1.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+
+    task = TaskRecord(
+        task_id="task-artifacts",
+        goal="goal",
+        workspace_path=str(real_workspace),
+        status=TaskStatus.READY_FOR_REVIEW,
+        artifacts_root_path=str(artifacts_root),
+    )
+    await store.create(task)
+
+    app = _build_app(store, manager)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/v1/tasks/task-artifacts/artifacts")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["task_id"] == "task-artifacts"
+    assert len(payload["entries"]) == 2
+    assert payload["entries"][0]["step_id"] == "S1"
