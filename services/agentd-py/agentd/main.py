@@ -20,14 +20,32 @@ from agentd.retrieval.artifact_client import RetrievalArtifactClient
 from agentd.storage.sqlite_store import SQLiteTaskStore
 from agentd.validation.command_validator import CommandValidator
 from agentd.workspace.shadow import ShadowWorkspaceManager
+from agentd.providers.openrouter_transport import OpenRouterJsonTransport
+from agentd.providers.watsonx_transport import WatsonxJsonTransport
+
 
 app = FastAPI(title="ai-editor agentd-py", version="0.1.0")
 
 database_path = Path(os.getenv("AI_EDITOR_DB_PATH", ".agentd/agentd.sqlite3")).resolve()
 shadow_root_path = Path(os.getenv("AI_EDITOR_SHADOW_ROOT", ".agentd/shadows")).resolve()
+ast_cutover_mode = os.getenv("AI_EDITOR_AST_CUTOVER_MODE", "hard").strip().lower()
+if ast_cutover_mode != "hard":
+    msg = (
+        "AI_EDITOR_AST_CUTOVER_MODE must be 'hard' for Phase 1 reliability "
+        f"(received: {ast_cutover_mode!r})"
+    )
+    raise RuntimeError(msg)
 
 store = SQLiteTaskStore(database_path=database_path)
-workspace_manager = ShadowWorkspaceManager(root_path=shadow_root_path)
+raw_checkpoint_retention = os.getenv("AI_EDITOR_CHECKPOINT_RETENTION_TASKS", "20")
+try:
+    checkpoint_retention_tasks = int(raw_checkpoint_retention)
+except ValueError:
+    checkpoint_retention_tasks = 20
+workspace_manager = ShadowWorkspaceManager(
+    root_path=shadow_root_path,
+    checkpoint_retention_tasks=checkpoint_retention_tasks,
+)
 patch_engine = PatchEngine()
 
 
@@ -79,18 +97,23 @@ if reasoning_backend == "scripted":
     reasoning_engine = ScriptedReasoningEngine(
         plan={
             "analysis": "Scaffold run",
-            "steps": [{"id": "S1", "goal": "No-op", "targets": ["README.md"], "risk": "low"}],
-            "expected_files": ["README.md"],
+            "steps": [{"id": "S1", "goal": "Create scaffold file", "targets": ["generated.txt"], "risk": "low"}],
+            "expected_files": ["generated.txt"],
             "stop_conditions": ["validation passes"],
         },
         patches=[
             {
-                "patch_ops": [
+                "candidates": [
                     {
-                        "op": "create_file",
-                        "file": "generated.txt",
-                        "content": "ok",
-                        "reason": "demo",
+                        "candidate_id": "c1",
+                        "patch_ops": [
+                            {
+                                "op": "create_file",
+                                "file": "generated.txt",
+                                "content": "ok",
+                                "reason": "demo",
+                            }
+                        ],
                     }
                 ]
             }
@@ -152,6 +175,29 @@ elif reasoning_backend == "groq":
         model=os.getenv("AI_EDITOR_GROQ_MODEL", "openai/gpt-oss-120b"),
         transport=transport,
     )
+elif reasoning_backend == "openrouter":
+
+    transport = OpenRouterJsonTransport(
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        timeout_sec=_float_env("AI_EDITOR_OPENROUTER_TIMEOUT_SEC", 120.0),
+    )
+    reasoning_engine = DefaultReasoningEngine(
+        model=os.getenv(
+            "AI_EDITOR_OPENROUTER_MODEL", "stepfun/step-3.5-flash:free"
+        ),
+        transport=transport,
+    )
+elif reasoning_backend == "watsonx":
+    transport = WatsonxJsonTransport(
+        api_key=os.getenv("WATSONX_API_KEY"),
+        project_id=os.getenv("WATSONX_PROJECT_ID"),
+        url=os.getenv("WATSONX_URL"),
+        space_id=os.getenv("WATSONX_SPACE_ID"),
+    )
+    reasoning_engine = DefaultReasoningEngine(
+        model=os.getenv("AI_EDITOR_WATSONX_MODEL", "ibm/granite-3-8b-instruct"),
+        transport=transport,
+    )
 else:
     transport = OpenAIJsonTransport()
     reasoning_engine = DefaultReasoningEngine(
@@ -168,6 +214,9 @@ orchestrator = AgentOrchestrator(
     patch_engine=patch_engine,
     workspace_manager=workspace_manager,
     retrieval_client=retrieval_client,
+    max_attempts_per_step=_int_env("AI_EDITOR_MAX_ATTEMPTS_PER_STEP", 3),
+    step_scoped_mode=_bool_env("AI_EDITOR_STEP_SCOPED_MODE", True),
+    patch_candidate_count=_int_env("AI_EDITOR_PATCH_CANDIDATE_COUNT", 3),
 )
 
 app.include_router(build_router(store, orchestrator, workspace_manager))

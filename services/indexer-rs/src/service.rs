@@ -328,7 +328,7 @@ fn is_supported_source_path(path: &Path) -> bool {
 }
 
 fn is_ignored_path(path: &Path) -> bool {
-    const IGNORED_DIRS: [&str; 7] = [
+    const IGNORED_DIRS: [&str; 10] = [
         ".git",
         "node_modules",
         ".venv",
@@ -336,6 +336,9 @@ fn is_ignored_path(path: &Path) -> bool {
         "dist",
         "__pycache__",
         ".pytest_cache",
+        ".agentd",
+        ".ai-editor",
+        ".tmp",
     ];
     path.components().any(|component| {
         let name = component.as_os_str().to_string_lossy();
