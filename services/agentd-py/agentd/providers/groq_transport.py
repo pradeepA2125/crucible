@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path as _Path
 from typing import Any
 
 try:
@@ -20,9 +21,13 @@ class GroqJsonTransport(ModelJsonTransport):
         endpoint: str | None = None,
         max_tokens: int = 4096,
         timeout_sec: float = 60.0,
+        reasoning_effort: str | None = None,
         completions_client: Any | None = None,
     ) -> None:
         self._max_tokens = max_tokens
+        self._reasoning_effort = reasoning_effort or os.getenv(
+            "AI_EDITOR_GROQ_REASONING_EFFORT", "high"
+        )
 
         if completions_client is not None:
             self._completions: Any = completions_client
@@ -55,25 +60,53 @@ class GroqJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
     ) -> dict[str, object]:
-        response = await self._completions.create(
-            model=model,
-            messages=[
+        # Normalize schema name to alphanumeric for Groq
+        safe_schema_name = "".join(c for c in schema_name if c.isalnum())
+
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": json.dumps(user_payload)},
             ],
-            response_format={
+            "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": schema_name,
+                    "name": safe_schema_name,
                     "schema": schema,
                 },
             },
-            max_tokens=self._max_tokens,
-            temperature=0,
-        )
+            "max_completion_tokens": self._max_tokens,
+            "temperature": 1,
+            "include_reasoning": False,
+        }
+        if self._reasoning_effort:
+            create_kwargs["reasoning_effort"] = self._reasoning_effort
 
-        output_text = self._extract_text(response)
-        return self._parse_output_object(output_text)
+        # Debug: dump request
+        try:
+            out_dir = _Path("/tmp/ai-editor-stress")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"debug-req-{safe_schema_name}.json").write_text(
+                json.dumps(create_kwargs, indent=2, default=str), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+        try:
+            response = await self._completions.create(**create_kwargs)
+            output_text = self._extract_text(response)
+            return self._parse_output_object(output_text)
+        except Exception as e:
+            # Capture and dump Groq body if available
+            if hasattr(e, "body"):
+                try:
+                    (out_dir / f"debug-err-{safe_schema_name}.json").write_text(
+                        json.dumps(e.body, indent=2), encoding="utf-8"
+                    )
+                except Exception:
+                    pass
+            raise
 
     def _extract_text(self, response: Any) -> str:
         choices = read_value(response, "choices")

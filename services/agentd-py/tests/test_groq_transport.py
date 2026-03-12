@@ -60,14 +60,15 @@ async def test_groq_transport_sends_expected_request_shape() -> None:
     assert len(client.calls) == 1
     call = client.calls[0]
     assert call["model"] == "llama-3.3-70b-versatile"
-    assert call["max_tokens"] == 111
-    assert call["temperature"] == 0
+    assert call["max_completion_tokens"] == 111
+    assert call["temperature"] == 1
+    assert call["include_reasoning"] is False
     assert call["messages"][0]["role"] == "system"
     assert call["messages"][0]["content"] == "plan"
     assert call["messages"][1]["role"] == "user"
     assert json.loads(call["messages"][1]["content"]) == {"task_id": "task-1"}
     assert call["response_format"]["type"] == "json_schema"
-    assert call["response_format"]["json_schema"]["name"] == "plan_document"
+    assert call["response_format"]["json_schema"]["name"] == "plandocument"
     assert call["response_format"]["json_schema"]["schema"] == {"type": "object"}
 
 
