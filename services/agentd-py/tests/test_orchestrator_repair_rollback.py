@@ -48,17 +48,24 @@ class RepairReasoningEngine:
         workspace_path: str,
         diagnostics: list[Diagnostic],
         retrieval_context: dict[str, object],
+        **kwargs: object,
     ) -> object:
-        _ = (task, workspace_path, diagnostics, retrieval_context)
+        _ = (task, workspace_path, diagnostics, retrieval_context, kwargs)
         self.patch_calls += 1
         return {
-            "patch_ops": [
+            "candidates": [
                 {
-                    "op": "insert_after_symbol",
-                    "file": "src/example.py",
-                    "anchor": {"symbol": "class X"},
-                    "content": "    injected = True",
-                    "reason": "repair rollback regression test",
+                    "candidate_id": "c1",
+                    "patch_ops": [
+                        {
+                            "op": "replace_node",
+                            "file": "src/example.py",
+                            "language": "python",
+                            "selector": {"kind": "symbol", "value": "X", "match": "exact"},
+                            "content": "class X:\n    pass\n    injected = True\n",
+                            "reason": "repair rollback regression test",
+                        }
+                    ],
                 }
             ]
         }
@@ -67,19 +74,24 @@ class RepairReasoningEngine:
 class FailOnceValidator:
     def __init__(self) -> None:
         self.calls = 0
+        self.fast_calls = 0
+
+    async def run_touched(self, workspace_path: str, touched_files: list[str]) -> ValidationResult:
+        _ = (workspace_path, touched_files)
+        self.fast_calls += 1
+        if self.fast_calls == 1:
+            return ValidationResult(
+                success=False,
+                diagnostics=[
+                    Diagnostic(source="validator", message="intentional first fast failure", level="error")
+                ],
+                duration_ms=1,
+            )
+        return ValidationResult(success=True, diagnostics=[], duration_ms=1)
 
     async def run(self, workspace_path: str) -> ValidationResult:
         _ = workspace_path
         self.calls += 1
-        if self.calls == 1:
-            return ValidationResult(
-                success=False,
-                diagnostics=[
-                    Diagnostic(source="validator", message="intentional first failure", level="error")
-                ],
-                duration_ms=1,
-            )
-
         return ValidationResult(success=True, diagnostics=[], duration_ms=1)
 
 
@@ -112,8 +124,9 @@ async def test_orchestrator_rolls_back_failed_repair_iteration(tmp_path: Path) -
     result = await orchestrator.run_task(task.task_id)
 
     assert result.status == TaskStatus.READY_FOR_REVIEW
-    assert reasoner.patch_calls == 2
-    assert validator.calls == 2
+    assert reasoner.patch_calls == 1
+    assert validator.fast_calls == 2
+    assert validator.calls == 1
     assert any(event.to_status == TaskStatus.REPAIRING for event in result.events)
     assert result.shadow_workspace_path is not None
 

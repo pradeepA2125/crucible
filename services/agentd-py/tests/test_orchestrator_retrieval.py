@@ -43,7 +43,9 @@ class RecordingReasoningEngine:
         workspace_path: str,
         diagnostics: list[Diagnostic],
         retrieval_context: dict[str, object],
+        **kwargs: object,
     ) -> object:
+        _ = kwargs
         self.patch_calls.append(
             {
                 "task_id": task.task_id,
@@ -53,12 +55,17 @@ class RecordingReasoningEngine:
             }
         )
         return {
-            "patch_ops": [
+            "candidates": [
                 {
-                    "op": "create_file",
-                    "file": "generated.txt",
-                    "content": "ok",
-                    "reason": "retrieval-driven edit",
+                    "candidate_id": "c1",
+                    "patch_ops": [
+                        {
+                            "op": "create_file",
+                            "file": "generated.txt",
+                            "content": "ok",
+                            "reason": "retrieval-driven edit",
+                        }
+                    ],
                 }
             ]
         }
