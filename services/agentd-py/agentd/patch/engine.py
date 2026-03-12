@@ -4,14 +4,18 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import TYPE_CHECKING, Iterable, Literal
 
 try:
     import libcst as cst
     from libcst.metadata import PositionProvider
 except Exception:  # pragma: no cover - optional dependency at import time
-    cst = None
+    cst = None  # type: ignore[assignment]
     PositionProvider = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    import libcst
+    from libcst.metadata import PositionProvider
 
 from agentd.domain.models import (
     ApplyDiffOpV2,
@@ -348,7 +352,7 @@ class PatchEngine:
         updated = [*lines[: index + 1], *insertion, *lines[index + 1 :]]
         target.write_text("\n".join(updated), encoding="utf-8")
 
-    def _apply_create_file(self, base_path: Path, operation: CreateFileOp) -> None:
+    def _apply_create_file(self, base_path: Path, operation: CreateFileOp | CreateFileOpV2) -> None:
         target = self._resolve_inside(base_path, operation.file)
         if target.exists():
             msg = f"File already exists: {operation.file}"
@@ -357,7 +361,7 @@ class PatchEngine:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(operation.content, encoding="utf-8")
 
-    def _apply_delete_file(self, base_path: Path, operation: DeleteFileOp) -> None:
+    def _apply_delete_file(self, base_path: Path, operation: DeleteFileOp | DeleteFileOpV2) -> None:
         target = self._resolve_inside(base_path, operation.file)
         if not target.exists():
             msg = f"Cannot delete missing path: {operation.file}"
@@ -988,11 +992,17 @@ class PatchEngine:
             msg = f"replace_node for Python requires class/def replacement in {file_path}"
             raise RuntimeError(msg)
 
-        class _ReplaceTransformer(cst.CSTTransformer):
-            METADATA_DEPENDENCIES = (PositionProvider,)
+        # At this point, PositionProvider is guaranteed to be non-None due to check at line 966
+        # Import the actual type for use in the transformer
+        from libcst.metadata import PositionProvider as _PositionProvider
+        import libcst as _cst
+        
+        class _ReplaceTransformer(_cst.CSTTransformer):
+            METADATA_DEPENDENCIES = (_PositionProvider,)
 
-            def _is_target(self, node: cst.CSTNode, kind: str) -> bool:
-                position = self.get_metadata(PositionProvider, node)
+            def _is_target(self, node: _cst.CSTNode, kind: str) -> bool:
+                from libcst.metadata import CodeRange
+                position: CodeRange = self.get_metadata(_PositionProvider, node)  # type: ignore[assignment]
                 return (
                     target.kind == kind
                     and target.start_line == position.start.line
@@ -1003,18 +1013,18 @@ class PatchEngine:
 
             def leave_ClassDef(
                 self,
-                original_node: cst.ClassDef,  # noqa: N803
-                updated_node: cst.ClassDef,  # noqa: N803
-            ) -> cst.BaseStatement:
+                original_node: _cst.ClassDef,  # noqa: N803
+                updated_node: _cst.ClassDef,  # noqa: N803
+            ) -> _cst.BaseStatement:
                 if self._is_target(original_node, "class"):
                     return replacement_stmt
                 return updated_node
 
             def leave_FunctionDef(
                 self,
-                original_node: cst.FunctionDef,  # noqa: N803
-                updated_node: cst.FunctionDef,  # noqa: N803
-            ) -> cst.BaseStatement:
+                original_node: _cst.FunctionDef,  # noqa: N803
+                updated_node: _cst.FunctionDef,  # noqa: N803
+            ) -> _cst.BaseStatement:
                 if self._is_target(original_node, "function"):
                     return replacement_stmt
                 return updated_node
@@ -1049,11 +1059,16 @@ class PatchEngine:
         target = matches[0]
         insertion_stmts = self._python_parse_statements(insertion_source, file_path=file_path)
 
-        class _InsertAfterTransformer(cst.CSTTransformer):
-            METADATA_DEPENDENCIES = (PositionProvider,)
+        # Import the actual type for use in the transformer
+        from libcst.metadata import PositionProvider as _PositionProvider
+        import libcst as _cst
 
-            def _is_target(self, node: cst.CSTNode, kind: str) -> bool:
-                position = self.get_metadata(PositionProvider, node)
+        class _InsertAfterTransformer(_cst.CSTTransformer):
+            METADATA_DEPENDENCIES = (_PositionProvider,)
+
+            def _is_target(self, node: _cst.CSTNode, kind: str) -> bool:
+                from libcst.metadata import CodeRange
+                position: CodeRange = self.get_metadata(_PositionProvider, node)  # type: ignore[assignment]
                 return (
                     target.kind == kind
                     and target.start_line == position.start.line
@@ -1064,20 +1079,20 @@ class PatchEngine:
 
             def leave_ClassDef(
                 self,
-                original_node: cst.ClassDef,  # noqa: N803
-                updated_node: cst.ClassDef,  # noqa: N803
-            ) -> cst.BaseStatement | cst.FlattenSentinel[cst.BaseStatement]:
+                original_node: _cst.ClassDef,  # noqa: N803
+                updated_node: _cst.ClassDef,  # noqa: N803
+            ) -> _cst.BaseStatement | _cst.FlattenSentinel[_cst.BaseStatement]:
                 if self._is_target(original_node, "class"):
-                    return cst.FlattenSentinel([updated_node, *insertion_stmts])
+                    return _cst.FlattenSentinel([updated_node, *insertion_stmts])
                 return updated_node
 
             def leave_FunctionDef(
                 self,
-                original_node: cst.FunctionDef,  # noqa: N803
-                updated_node: cst.FunctionDef,  # noqa: N803
-            ) -> cst.BaseStatement | cst.FlattenSentinel[cst.BaseStatement]:
+                original_node: _cst.FunctionDef,  # noqa: N803
+                updated_node: _cst.FunctionDef,  # noqa: N803
+            ) -> _cst.BaseStatement | _cst.FlattenSentinel[_cst.BaseStatement]:
                 if self._is_target(original_node, "function"):
-                    return cst.FlattenSentinel([updated_node, *insertion_stmts])
+                    return _cst.FlattenSentinel([updated_node, *insertion_stmts])
                 return updated_node
 
         wrapper = cst.MetadataWrapper(module)
@@ -1089,7 +1104,7 @@ class PatchEngine:
         content: str,
         *,
         file_path: str,
-    ) -> list["cst.BaseStatement"]:
+    ) -> list:  # type: ignore[type-arg]
         if cst is None:
             msg = "libcst is required for Python AST patching"
             raise ParserUnavailableError(msg)
@@ -1160,8 +1175,12 @@ class PatchEngine:
         except Exception as exc:  # pragma: no cover - parser errors vary
             raise RuntimeError(f"Python parse error: {exc}") from exc
 
-        class _DeclVisitor(cst.CSTVisitor):
-            METADATA_DEPENDENCIES = (PositionProvider,)
+        # Import the actual type for use in the visitor
+        from libcst.metadata import PositionProvider as _PositionProvider
+        import libcst as _cst
+
+        class _DeclVisitor(_cst.CSTVisitor):
+            METADATA_DEPENDENCIES = (_PositionProvider,)
 
             def __init__(self) -> None:
                 self.items: list[PythonDeclMatch] = []
@@ -1171,11 +1190,12 @@ class PatchEngine:
                     return name == symbol
                 return symbol in name
 
-            def visit_ClassDef(self, node: cst.ClassDef) -> None:  # noqa: N802
+            def visit_ClassDef(self, node: _cst.ClassDef) -> None:  # noqa: N802
+                from libcst.metadata import CodeRange
                 name = node.name.value
                 if not self._is_match(name):
                     return
-                position = self.get_metadata(PositionProvider, node)
+                position: CodeRange = self.get_metadata(_PositionProvider, node)  # type: ignore[assignment]
                 self.items.append(
                     PythonDeclMatch(
                         kind="class",
@@ -1187,11 +1207,12 @@ class PatchEngine:
                     )
                 )
 
-            def visit_FunctionDef(self, node: cst.FunctionDef) -> None:  # noqa: N802
+            def visit_FunctionDef(self, node: _cst.FunctionDef) -> None:  # noqa: N802
+                from libcst.metadata import CodeRange
                 name = node.name.value
                 if not self._is_match(name):
                     return
-                position = self.get_metadata(PositionProvider, node)
+                position: CodeRange = self.get_metadata(_PositionProvider, node)  # type: ignore[assignment]
                 self.items.append(
                     PythonDeclMatch(
                         kind="function",
@@ -1217,7 +1238,7 @@ class PatchEngine:
     ) -> list[tuple[int, int]]:
         parser = self._get_tree_sitter_parser(language)
         source_bytes = source.encode("utf-8")
-        tree = parser.parse(source_bytes)
+        tree = parser.parse(source_bytes)  # type: ignore[union-attr]
 
         spans: list[tuple[int, int]] = []
         stack = [tree.root_node]
@@ -1292,7 +1313,7 @@ class PatchEngine:
         pattern = re.compile(rf"\\b{re.escape(symbol)}\\b")
         return [(item.start(), item.end()) for item in pattern.finditer(source)]
 
-    def _get_tree_sitter_parser(self, language: Literal["typescript", "rust"]):
+    def _get_tree_sitter_parser(self, language: Literal["typescript", "rust"]):  # type: ignore[no-untyped-def]
         if not self._tree_sitter_ready:
             try:
                 from tree_sitter_languages import get_parser  # type: ignore
