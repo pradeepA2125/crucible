@@ -47,14 +47,19 @@ async def test_reasoning_engine_builds_plan_and_patch_with_transport(tmp_path: P
                 "stop_conditions": ["tests pass"],
             },
             {
-                "patch_ops": [
+                "candidates": [
                     {
-                        "op": "create_file",
-                        "file": "a.py",
-                        "content": "print('hi')",
-                        "reason": "add file",
+                        "candidate_id": "c1",
+                        "patch_ops": [
+                            {
+                                "op": "create_file",
+                                "file": "a.py",
+                                "content": "print('hi')",
+                                "reason": "add file",
+                            }
+                        ],
                     }
-                ]
+                ],
             },
         ]
     )
@@ -67,21 +72,21 @@ async def test_reasoning_engine_builds_plan_and_patch_with_transport(tmp_path: P
     patch = await engine.create_patch(task, str(tmp_path), diagnostics, retrieval_context)
 
     assert plan["steps"][0]["id"] == "S1"
-    assert patch["patch_ops"][0]["op"] == "create_file"
+    assert patch["candidates"][0]["patch_ops"][0]["op"] == "create_file"
     assert len(transport.calls) == 2
 
     plan_call = transport.calls[0]
     patch_call = transport.calls[1]
     assert plan_call["schema_name"] == "plan_document"
-    assert patch_call["schema_name"] == "patch_document"
+    assert patch_call["schema_name"] == "patch_document_v2"
     assert plan_call["user_payload"]["retrieval_context"] == retrieval_context
     assert patch_call["user_payload"]["retrieval_context"] == retrieval_context
     assert patch_call["user_payload"]["diagnostics"][0]["source"] == "validator"
     assert plan_call["user_payload"]["constraints"]["max_files_touched"] == 20
-    assert patch_call["user_payload"]["intent"]["mvp_execution_mode"] == "full-plan single-shot patching"
-    assert "replace_range" in patch_call["user_payload"]["patch_op_catalog"]
+    assert patch_call["user_payload"]["intent"]["execution_mode"] == "step_scoped_bounded_patching"
+    assert "replace_node" in patch_call["user_payload"]["patch_op_catalog"]
     assert "single JSON object" in plan_call["system_instructions"]
-    assert "Allowed ops are exactly" in patch_call["system_instructions"]
+    assert "precision code patching engine" in patch_call["system_instructions"]
 
 
 @pytest.mark.asyncio

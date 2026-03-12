@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from agentd.domain.models import Diagnostic, TaskRecord
+from agentd.domain.models import Diagnostic, PlanStep, TaskRecord
 
 
 class ReasoningEngine(Protocol):
@@ -19,4 +19,11 @@ class ReasoningEngine(Protocol):
         workspace_path: str,
         diagnostics: list[Diagnostic],
         retrieval_context: dict[str, object],
+        *,
+        current_step: PlanStep | None = None,
+        allowed_files: list[str] | None = None,
+        max_ops: int | None = None,
+        max_files: int | None = None,
+        candidate_count: int | None = None,
+        last_failure: dict[str, object] | None = None,
     ) -> object: ...

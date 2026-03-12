@@ -38,14 +38,19 @@ async def test_openai_reasoner_generates_schema_valid_plan_and_patch(tmp_path: P
                 "stop_conditions": ["tests pass"],
             },
             {
-                "patch_ops": [
+                "candidates": [
                     {
-                        "op": "create_file",
-                        "file": "a.py",
-                        "content": "print('hi')",
-                        "reason": "add file",
+                        "candidate_id": "c1",
+                        "patch_ops": [
+                            {
+                                "op": "create_file",
+                                "file": "a.py",
+                                "content": "print('hi')",
+                                "reason": "add file",
+                            }
+                        ],
                     }
-                ]
+                ],
             },
         ]
     )
@@ -63,7 +68,7 @@ async def test_openai_reasoner_generates_schema_valid_plan_and_patch(tmp_path: P
     )
 
     assert plan["steps"][0]["id"] == "S1"
-    assert patch["patch_ops"][0]["op"] == "create_file"
+    assert patch["candidates"][0]["patch_ops"][0]["op"] == "create_file"
     assert len(fake_client.calls) == 2
     first_payload = json.loads(str(fake_client.calls[0]["input"]))
     second_payload = json.loads(str(fake_client.calls[1]["input"]))
