@@ -7,11 +7,13 @@ export interface ReviewPanelHandlers {
   onRefresh: () => void;
   onAccept: () => void;
   onReject: () => void;
+  onProvidePlanFeedback: (feedback: string) => void;
 }
 
 interface PanelMessage {
   type?: string;
   relativePath?: string;
+  feedback?: string;
 }
 
 export class ReviewPanel {
@@ -21,6 +23,7 @@ export class ReviewPanel {
     task: null,
     result: null,
     reviewFiles: [],
+    patchEvents: [],
   };
 
   constructor(private readonly handlers: ReviewPanelHandlers) {}
@@ -31,9 +34,33 @@ export class ReviewPanel {
   }
 
   update(model: ReviewPanelViewModel): void {
-    this.lastModel = model;
     const panel = this.ensurePanel();
+
+    // If only new patch events were appended (nothing else changed), skip the
+    // full HTML replacement and push each new event via postMessage instead.
+    // This lets the WebView append <li> rows in place without a page reload.
+    if (this.isOnlyNewPatchEvents(model)) {
+      const newEvents = model.patchEvents.slice(this.lastModel.patchEvents.length);
+      for (const event of newEvents) {
+        void panel.webview.postMessage({ type: "appendPatchEvent", event });
+      }
+      this.lastModel = model;
+      return;
+    }
+
+    this.lastModel = model;
     panel.webview.html = renderPanelHtml(model);
+  }
+
+  private isOnlyNewPatchEvents(model: ReviewPanelViewModel): boolean {
+    return (
+      this.panel !== null &&
+      this.lastModel.session === model.session &&
+      this.lastModel.task === model.task &&
+      this.lastModel.result === model.result &&
+      this.lastModel.reviewFiles === model.reviewFiles &&
+      model.patchEvents.length > this.lastModel.patchEvents.length
+    );
   }
 
   dispose(): void {
@@ -76,6 +103,10 @@ export class ReviewPanel {
       }
       if (message.type === "reject") {
         this.handlers.onReject();
+        return;
+      }
+      if (message.type === "providePlanFeedback" && message.feedback !== undefined) {
+        this.handlers.onProvidePlanFeedback(message.feedback);
       }
     });
 
@@ -85,12 +116,29 @@ export class ReviewPanel {
   }
 }
 
-function renderPanelHtml(model: ReviewPanelViewModel): string {
+export function renderPanelHtml(model: ReviewPanelViewModel): string {
   const status = model.task?.status ?? model.session?.status ?? "No active task";
   const taskId = model.session?.taskId ?? "None";
   const workspacePath = model.session?.workspacePath ?? "N/A";
   const canReview = model.task?.status === "READY_FOR_REVIEW";
+  const isAwaitingPlan = model.task?.status === "AWAITING_PLAN_APPROVAL";
+  const isExecuting = model.task?.status === "EXECUTING" || model.task?.status === "VALIDATING" || model.task?.status === "REPAIRING";
   const diagnostics = model.task?.diagnostics ?? [];
+  const planMarkdown = model.task?.planMarkdown ?? "";
+  const patchEvents = model.patchEvents ?? [];
+
+  const opEvents = patchEvents.filter((e) => e.type !== "done");
+  const activityRows = opEvents
+    .map((ev) => {
+      if (ev.type === "operation_success") {
+        return `<li><span class="ev-ok">✓</span> ${escapeHtml(ev.op_type)} — <code>${escapeHtml(ev.path)}</code></li>`;
+      }
+      if (ev.type === "operation_error") {
+        return `<li><span class="ev-err">✗</span> ${escapeHtml(ev.op_type)} — <code>${escapeHtml(ev.path)}</code>: ${escapeHtml(ev.error)}</li>`;
+      }
+      return "";
+    })
+    .join("\n");
 
   const fileRows = model.reviewFiles
     .map((entry) => {
@@ -121,12 +169,22 @@ function renderPanelHtml(model: ReviewPanelViewModel): string {
 <head>
   <meta charset="utf-8" />
   <style>
-    body { font-family: sans-serif; padding: 16px; }
+    body { font-family: sans-serif; padding: 16px; line-height: 1.5; }
     .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
     .meta { margin: 8px 0; }
     ul { padding-left: 20px; }
     code { background: #f4f4f4; padding: 1px 4px; border-radius: 4px; }
-    pre { white-space: pre-wrap; word-break: break-word; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #f8f8f8; padding: 8px; border-radius: 4px; border: 1px solid #ddd; }
+    .plan-container { margin-top: 20px; padding: 15px; border: 1px solid #007acc; border-radius: 6px; background: #f0f7ff; }
+    .feedback-area { width: 100%; min-height: 80px; margin-top: 10px; font-family: inherit; padding: 8px; box-sizing: border-box; }
+    .activity-log { margin-top: 16px; padding: 12px; border: 1px solid #ccc; border-radius: 6px; background: #fafafa; }
+    .activity-log h3 { margin: 0 0 8px 0; font-size: 0.95em; color: #555; }
+    .activity-list { list-style: none; padding: 0; margin: 0; max-height: 240px; overflow-y: auto; font-family: monospace; font-size: 0.85em; }
+    .activity-list li { padding: 2px 0; border-bottom: 1px solid #eee; }
+    .activity-list li:last-child { border-bottom: none; }
+    .ev-ok { color: #2a7d2a; }
+    .ev-err { color: #c0392b; }
+    .ev-wait { color: #888; font-style: italic; }
   </style>
 </head>
 <body>
@@ -141,6 +199,30 @@ function renderPanelHtml(model: ReviewPanelViewModel): string {
   <div class="meta"><strong>Task:</strong> ${escapeHtml(taskId)}</div>
   <div class="meta"><strong>Workspace:</strong> ${escapeHtml(workspacePath)}</div>
 
+  ${isAwaitingPlan ? `
+  <div class="plan-container">
+    <h3>Engineering Plan (Proposed)</h3>
+    <pre>${escapeHtml(planMarkdown || "No markdown plan available.")}</pre>
+    
+    <div class="feedback-section">
+      <label for="feedback"><strong>Comments / Corrections:</strong></label>
+      <textarea id="feedback" class="feedback-area" placeholder="Enter feedback to regenerate plan, or leave empty to approve..."></textarea>
+      <div class="toolbar" style="margin-top: 10px;">
+        <button data-action="submit-plan">Approve / Regenerate Plan</button>
+      </div>
+    </div>
+  </div>
+  ` : ""}
+
+  ${isExecuting || opEvents.length > 0 ? `
+  <div class="activity-log">
+    <h3>Patch Operations ${isExecuting ? "⏳" : "✓"}</h3>
+    <ul id="activity-list" class="activity-list">
+      ${activityRows || '<li class="ev-wait">Waiting for patch operations…</li>'}
+    </ul>
+  </div>
+  ` : ""}
+
   <h3>Modified Files</h3>
   <ul>${fileRows || "<li>No modified files yet.</li>"}</ul>
 
@@ -148,7 +230,7 @@ function renderPanelHtml(model: ReviewPanelViewModel): string {
   <ul>${diagnosticRows || "<li>No diagnostics.</li>"}</ul>
 
   <details>
-    <summary>Plan JSON</summary>
+    <summary>Plan JSON (Execution blueprint)</summary>
     <pre>${escapeHtml(planJson)}</pre>
   </details>
 
@@ -168,11 +250,41 @@ function renderPanelHtml(model: ReviewPanelViewModel): string {
     document.querySelector('[data-action="reject"]').addEventListener('click', () => {
       vscode.postMessage({ type: 'reject' });
     });
+    
+    const submitBtn = document.querySelector('[data-action="submit-plan"]');
+    if (submitBtn) {
+      submitBtn.addEventListener('click', () => {
+        const feedback = document.getElementById('feedback').value;
+        vscode.postMessage({ type: 'providePlanFeedback', feedback });
+      });
+    }
+
     for (const button of document.querySelectorAll('[data-open-diff]')) {
       button.addEventListener('click', () => {
         vscode.postMessage({ type: 'openDiff', relativePath: button.dataset.openDiff });
       });
     }
+
+    window.addEventListener('message', (e) => {
+      const msg = e.data;
+      if (msg.type !== 'appendPatchEvent') return;
+      const ev = msg.event;
+      if (ev.type === 'done') return;
+      const list = document.getElementById('activity-list');
+      if (!list) return;
+      const waiting = list.querySelector('.ev-wait');
+      if (waiting) waiting.remove();
+      const li = document.createElement('li');
+      if (ev.type === 'operation_success') {
+        li.innerHTML = '<span class="ev-ok">&#x2713;</span> ' + ev.op_type + ' \u2014 <code>' + ev.path + '</code>';
+      } else if (ev.type === 'operation_error') {
+        li.innerHTML = '<span class="ev-err">&#x2717;</span> ' + ev.op_type + ' \u2014 <code>' + ev.path + '</code>: ' + ev.error;
+      } else {
+        return;
+      }
+      list.appendChild(li);
+      list.scrollTop = list.scrollHeight;
+    });
   </script>
 </body>
 </html>`;

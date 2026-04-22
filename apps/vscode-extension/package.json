@@ -12,7 +12,8 @@
     "onCommand:aiEditor.openReviewPanel",
     "onCommand:aiEditor.acceptPatch",
     "onCommand:aiEditor.rejectPatch",
-    "onCommand:aiEditor.refreshTask"
+    "onCommand:aiEditor.refreshTask",
+    "onCommand:aiEditor.attachToTask"
   ],
   "contributes": {
     "commands": [
@@ -35,6 +36,10 @@
       {
         "command": "aiEditor.refreshTask",
         "title": "AI Editor: Refresh Task"
+      },
+      {
+        "command": "aiEditor.attachToTask",
+        "title": "AI Editor: Attach to Task"
       }
     ],
     "configuration": {

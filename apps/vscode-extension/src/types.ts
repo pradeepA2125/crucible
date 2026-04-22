@@ -1,4 +1,4 @@
-import type { TaskResult, TaskStatus, TaskView } from "@ai-editor/editor-client";
+import type { PatchStreamEvent, TaskResult, TaskStatus, TaskView } from "@ai-editor/editor-client";
 
 export type TaskMode = "inline" | "file_edit" | "project_edit" | "autonomous";
 
@@ -23,4 +23,5 @@ export interface ReviewPanelViewModel {
   task: TaskView | null;
   result: TaskResult | null;
   reviewFiles: ReviewFileEntry[];
+  patchEvents: PatchStreamEvent[];
 }

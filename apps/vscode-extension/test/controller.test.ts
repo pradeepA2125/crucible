@@ -37,6 +37,7 @@ interface StubBackendState {
   acceptCalls: string[];
   rejectCalls: Array<{ taskId: string; reason: string }>;
   getResultCalls: string[];
+  planFeedbackCalls: Array<{ taskId: string; feedback: string | null }>;
 }
 
 function createStubBackend(state: StubBackendState): BackendTaskClient {
@@ -62,7 +63,14 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
         status: "READY_FOR_REVIEW",
         plan: {
           analysis: "a",
-          steps: [{ id: "1", goal: "g", targets: ["src/main.py"], risk: "low" }],
+          steps: [
+            {
+              id: "1",
+              goal: "g",
+              targets: [{ path: "src/main.py", intent: "existing" }],
+              risk: "low"
+            }
+          ],
           expected_files: ["src/main.py"],
           stop_conditions: ["done"],
         },
@@ -102,6 +110,19 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
         shadowWorkspacePath: null,
       } as TaskResult;
     },
+    providePlanFeedback: async (taskId, feedback) => {
+      state.planFeedbackCalls.push({ taskId, feedback });
+      return {
+        taskId,
+        goal: "goal",
+        status: "AWAITING_PLAN_APPROVAL",
+        modifiedFiles: [],
+        diagnostics: [] as Diagnostic[],
+        planMarkdown: feedback ? "# Revised Plan" : "# Approved Plan",
+      };
+    },
+    resumeTask: async (_taskId) => ({ taskId: "task-child", resumeOfTaskId: _taskId }),
+    streamPatch: async (_taskId, _onEvent, _signal) => {},
   };
 }
 
@@ -109,7 +130,10 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
   return {
     getWorkspacePath: () => "/tmp/workspace",
     promptForGoal: async () => "Ship the feature",
+    promptForTaskId: async () => undefined,
     promptForRejectReason: async () => "Needs changes",
+    promptForResumeStage: async () => undefined,
+    promptForMaxIterationsOverride: async () => undefined,
     showInfo: () => {},
     showWarning: () => {},
     showError: () => {},
@@ -134,6 +158,7 @@ describe("AiEditorController", () => {
       acceptCalls: [],
       rejectCalls: [],
       getResultCalls: [],
+      planFeedbackCalls: [],
     };
     const backend = createStubBackend(state);
     const store = new MemorySessionStore();
@@ -167,6 +192,7 @@ describe("AiEditorController", () => {
       acceptCalls: [],
       rejectCalls: [],
       getResultCalls: [],
+      planFeedbackCalls: [],
     };
     const backend = createStubBackend(state);
     const store = new MemorySessionStore();
@@ -204,6 +230,7 @@ describe("AiEditorController", () => {
       acceptCalls: [],
       rejectCalls: [],
       getResultCalls: [],
+      planFeedbackCalls: [],
     };
 
     const warnings: string[] = [];
@@ -240,5 +267,49 @@ describe("AiEditorController", () => {
 
     expect(warnings.some((message) => message.includes("Refreshing state"))).toBe(true);
     expect(state.getTaskCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("providePlanFeedback sends null on approval and text on regeneration", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [],
+      getTaskCalls: [],
+      acceptCalls: [],
+      rejectCalls: [],
+      getResultCalls: [],
+      planFeedbackCalls: [],
+    };
+    const infos: string[] = [];
+    const backend = createStubBackend(state);
+    const store = new MemorySessionStore();
+    store.value = {
+      taskId: "task-plan",
+      status: "AWAITING_PLAN_APPROVAL",
+      workspacePath: "/tmp/workspace",
+      backendBaseUrl: "http://127.0.0.1:8000",
+      updatedAt: "2026-03-03T00:00:00.000Z",
+    };
+
+    const controller = new AiEditorController(
+      () => backend,
+      store,
+      createSettings(),
+      createUi({
+        showInfo: (message) => infos.push(message),
+      }),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-03-03T00:00:00.000Z"
+    );
+
+    await controller.initialize();
+    await controller.providePlanFeedback("   ");
+    await controller.providePlanFeedback("Please scope this to the API layer");
+    controller.dispose();
+
+    expect(state.planFeedbackCalls).toEqual([
+      { taskId: "task-plan", feedback: null },
+      { taskId: "task-plan", feedback: "Please scope this to the API layer" },
+    ]);
+    expect(infos.some((message) => message.includes("Plan approved"))).toBe(true);
+    expect(infos.some((message) => message.includes("Submitted plan feedback"))).toBe(true);
   });
 });

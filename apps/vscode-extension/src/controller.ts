@@ -1,5 +1,7 @@
 import type {
   BackendTaskClient,
+  PatchStreamEvent,
+  ResumeTaskResponse,
   TaskResult,
   TaskStatus,
   TaskSubmission,
@@ -27,7 +29,10 @@ export interface SettingsProvider {
 export interface ControllerUI {
   getWorkspacePath(): string | null;
   promptForGoal(): Promise<string | undefined>;
+  promptForTaskId(): Promise<string | undefined>;
   promptForRejectReason(): Promise<string | undefined>;
+  promptForResumeStage(): Promise<"plan" | "feedback" | "execute" | undefined>;
+  promptForMaxIterationsOverride(): Promise<number | undefined>;
   showInfo(message: string): void;
   showWarning(message: string): void;
   showError(message: string): void;
@@ -45,6 +50,8 @@ export class AiEditorController {
   private latestTask: TaskView | null = null;
   private latestResult: TaskResult | null = null;
   private poller: TaskPoller | null = null;
+  private streamController: AbortController | null = null;
+  private patchEvents: PatchStreamEvent[] = [];
 
   constructor(
     private readonly createClient: BackendClientFactory,
@@ -113,15 +120,63 @@ export class AiEditorController {
       diagnostics: [],
     };
     this.latestResult = null;
+    this.stopStream();
+    this.patchEvents = [];
 
     await this.sessionStore.save(this.session);
     this.pushPanel();
     this.startPolling();
+    this.startStream(submission.taskId);
     this.ui.showInfo(`Started AI Editor task ${submission.taskId}`);
   }
 
   openReviewPanel(): void {
     this.pushPanel();
+  }
+
+  async attachToTask(): Promise<void> {
+    const taskId = (await this.ui.promptForTaskId())?.trim();
+    if (!taskId) {
+      return;
+    }
+
+    const backendBaseUrl = this.settings.getBackendBaseUrl();
+    const client = this.createClient(backendBaseUrl);
+
+    let task: TaskView;
+    try {
+      task = await client.getTask(taskId);
+    } catch (error) {
+      this.ui.showError(`Task not found: ${formatError(error)}`);
+      return;
+    }
+
+    const workspacePath = this.session?.workspacePath ?? this.ui.getWorkspacePath() ?? "";
+
+    this.stopPolling();
+    this.session = {
+      taskId: task.taskId,
+      status: task.status,
+      workspacePath,
+      backendBaseUrl,
+      updatedAt: this.now(),
+    };
+    this.latestTask = task;
+    this.latestResult = null;
+    this.stopStream();
+    this.patchEvents = [];
+
+    await this.sessionStore.save(this.session);
+    this.pushPanel();
+
+    if (!shouldStopPolling(task.status)) {
+      this.startPolling();
+      this.syncStream(task.status, task.taskId);
+    } else {
+      await this.refreshTask();
+    }
+
+    this.ui.showInfo(`Attached to task ${taskId} (${task.status})`);
   }
 
   async refreshTask(): Promise<void> {
@@ -179,6 +234,93 @@ export class AiEditorController {
     this.ui.showInfo("Patch rejected.");
   }
 
+  async providePlanFeedback(feedback: string | null): Promise<void> {
+    if (!this.session) {
+      this.ui.showWarning("No active task for plan feedback.");
+      return;
+    }
+
+    const client = this.clientForSession();
+    const trimmedFeedback = (feedback ?? "").trim();
+    const normalizedFeedback = trimmedFeedback.length > 0 ? trimmedFeedback : null;
+    try {
+      const task = await client.providePlanFeedback(this.session.taskId, normalizedFeedback);
+      this.latestTask = task;
+      this.session = {
+        ...this.session,
+        status: task.status,
+        updatedAt: this.now(),
+      };
+      await this.sessionStore.save(this.session);
+      
+      if (!shouldStopPolling(task.status)) {
+        this.startPolling();
+      }
+      // The route returns the pre-transition status (AWAITING_PLAN_APPROVAL) because
+      // continue_task runs in the background. Always start the stream here since
+      // execution begins immediately after approval regardless of the returned status.
+      this.stopStream();
+      this.patchEvents = [];
+      this.startStream(task.taskId);
+
+      this.pushPanel();
+      if (normalizedFeedback) {
+        this.ui.showInfo(`Submitted plan feedback. Regenerating...`);
+      } else {
+        this.ui.showInfo(`Plan approved. Proceeding to execution...`);
+      }
+    } catch (error) {
+      this.ui.showError(`Failed to provide plan feedback: ${formatError(error)}`);
+    }
+  }
+
+  async resumeTask(): Promise<void> {
+    if (!this.session) {
+      this.ui.showWarning("No active task to resume.");
+      return;
+    }
+    const status = this.latestTask?.status;
+    if (status !== "FAILED" && status !== "ABORTED") {
+      this.ui.showWarning("Resume is only available for failed or aborted tasks.");
+      return;
+    }
+
+    const stage = await this.ui.promptForResumeStage();
+    if (!stage) return;
+
+    let maxIterations: number | undefined;
+    if (stage === "execute") {
+      maxIterations = await this.ui.promptForMaxIterationsOverride();
+    }
+
+    const client = this.clientForSession();
+    let response: ResumeTaskResponse;
+    try {
+      response = await client.resumeTask(this.session.taskId, {
+        stage,
+        budgetOverride: maxIterations !== undefined ? { maxIterations } : undefined,
+      });
+    } catch (error) {
+      this.ui.showError(`Failed to resume task: ${formatError(error)}`);
+      return;
+    }
+
+    // Switch session to the new child task
+    const childInitialStatus: TaskStatus = stage === "feedback" ? "AWAITING_PLAN_APPROVAL" : "QUEUED";
+    this.session = {
+      ...this.session,
+      taskId: response.taskId,
+      status: childInitialStatus,
+      updatedAt: this.now(),
+    };
+    this.latestTask = null;
+    this.latestResult = null;
+    await this.sessionStore.save(this.session);
+    this.pushPanel();
+    this.startPolling();
+    this.ui.showInfo(`Resumed as new task ${response.taskId}`);
+  }
+
   async openDiffForFile(relativePath: string): Promise<void> {
     if (!this.session || !this.latestResult) {
       this.ui.showWarning("No review result is available for diff inspection.");
@@ -210,6 +352,45 @@ export class AiEditorController {
 
   dispose(): void {
     this.stopPolling();
+    this.stopStream();
+  }
+
+  private startStream(taskId: string): void {
+    if (this.streamController) return;
+    this.streamController = new AbortController();
+    const { signal } = this.streamController;
+    const client = this.clientForSession();
+    client
+      .streamPatch(taskId, (event) => {
+        this.patchEvents = [...this.patchEvents, event];
+        this.pushPanel();
+      }, signal)
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        this.ui.showWarning(`Patch stream error: ${err instanceof Error ? err.message : String(err)}`);
+      })
+      .finally(() => {
+        this.streamController = null;
+      });
+  }
+
+  private stopStream(): void {
+    this.streamController?.abort();
+    this.streamController = null;
+  }
+
+  private syncStream(status: TaskStatus, taskId: string): void {
+    if (
+      status === "QUEUED" ||
+      status === "CONTEXT_READY" ||
+      status === "PLANNED" ||
+      status === "EXECUTING" ||
+      status === "REPAIRING"
+    ) {
+      this.startStream(taskId);
+    } else {
+      this.stopStream();
+    }
   }
 
   private async pullLatestTask(): Promise<void> {
@@ -233,6 +414,8 @@ export class AiEditorController {
       updatedAt: this.now(),
     };
     await this.sessionStore.save(this.session);
+
+    this.syncStream(task.status, task.taskId);
 
     if (shouldStopPolling(task.status)) {
       this.stopPolling();
@@ -271,6 +454,8 @@ export class AiEditorController {
           updatedAt: this.now(),
         };
         await this.sessionStore.save(this.session);
+
+        this.syncStream(task.status, task.taskId);
 
         if (shouldLoadResult(task.status)) {
           try {
@@ -322,6 +507,7 @@ export class AiEditorController {
       task: this.latestTask,
       result: this.latestResult,
       reviewFiles,
+      patchEvents: this.patchEvents,
     };
   }
 }

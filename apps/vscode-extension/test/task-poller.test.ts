@@ -34,10 +34,12 @@ describe("TaskPoller", () => {
   });
 
   test("stop-status helper matches review and terminal states", () => {
+    expect(shouldStopPolling("AWAITING_PLAN_APPROVAL")).toBe(false);
     expect(shouldStopPolling("READY_FOR_REVIEW")).toBe(true);
     expect(shouldStopPolling("SUCCEEDED")).toBe(true);
     expect(shouldStopPolling("FAILED")).toBe(true);
     expect(shouldStopPolling("ABORTED")).toBe(true);
-    expect(shouldStopPolling("PATCHED")).toBe(false);
+    expect(shouldStopPolling("EXECUTING")).toBe(false);
+    expect(shouldStopPolling("VALIDATED")).toBe(false);
   });
 });

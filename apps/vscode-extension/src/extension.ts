@@ -30,6 +30,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     onReject: () => {
       void controller.rejectPatch();
     },
+    onProvidePlanFeedback: (feedback) => {
+      void controller.providePlanFeedback(feedback);
+    },
   });
 
   const ui: ControllerUI = {
@@ -58,6 +61,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     updatePanel: (model) => {
       panel.update(model);
     },
+    promptForResumeStage: () =>
+      vscode.window.showQuickPick(
+        ["plan", "feedback", "execute"] as const,
+        { placeHolder: "Select stage to resume from" },
+      ) as Promise<"plan" | "feedback" | "execute" | undefined>,
+    promptForMaxIterationsOverride: async () => {
+      const value = await vscode.window.showInputBox({
+        prompt: "Override max iterations? (leave blank to keep current)",
+        placeHolder: "e.g. 10",
+        validateInput: (v) =>
+          v === "" || /^\d+$/.test(v) ? null : "Enter a positive integer or leave blank",
+      });
+      return value === "" || value === undefined ? undefined : parseInt(value, 10);
+    },
+    promptForTaskId: () =>
+      vscode.window.showInputBox({
+        prompt: "Enter the task ID to attach to",
+        placeHolder: "task-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        ignoreFocusOut: true,
+      }),
   };
 
   const clientFactory: BackendClientFactory = (baseUrl) => new HttpBackendClient({ baseUrl });
@@ -86,6 +109,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.refreshTask", () => controller.refreshTask())
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiEditor.attachToTask", async () => {
+      await controller.attachToTask();
+      panel.show();
+    })
   );
   context.subscriptions.push({
     dispose: () => {

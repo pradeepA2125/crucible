@@ -78,6 +78,7 @@ declare module "vscode" {
       showOptions: ViewColumn,
       options: { enableScripts?: boolean; retainContextWhenHidden?: boolean }
     ): WebviewPanel;
+    function showQuickPick(items: readonly string[], options?: { placeHolder?: string }): Thenable<string | undefined>;
     function setStatusBarMessage(text: string, hideAfterTimeout?: number): Disposable;
   }
 
