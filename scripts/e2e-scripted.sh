@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/e2e-scripted.sh [--workspace PATH] [--port PORT] [--backend scripted|gemini] [--gemini-model MODEL] [--goal TEXT] [--open-vscode] [--skip-client-tests] [--skip-build]
+  scripts/e2e-scripted.sh [--workspace PATH] [--port PORT] [--backend scripted|gemini] [--gemini-model MODEL] [--goal TEXT] [--out-dir PATH] [--open-vscode] [--skip-client-tests] [--skip-build]
 
 What it does:
 1. Runs editor-client tests (includes polling null-diagnostic regression test).
@@ -16,19 +16,21 @@ What it does:
 7. Optionally opens VS Code Extension Development Host for manual UI check.
 
 Defaults:
-  --workspace   /Users/pradeepkumar/projects/AI editor/workspaces/typescript-language-server
+  --workspace   repository root
   --port        8000
   --backend     scripted
   --gemini-model gemini-3-flash-preview
+  --out-dir     <repo>/.tmp/e2e-runs
 EOF
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORKSPACE="${ROOT}/workspaces/typescript-language-server"
+WORKSPACE="${ROOT}"
 PORT="8000"
 BACKEND="scripted"
 GEMINI_MODEL="gemini-3-flash-preview"
 GOAL="scripted smoke task"
+OUT_DIR="${ROOT}/.tmp/e2e-runs"
 OPEN_VSCODE="0"
 SKIP_CLIENT_TESTS="0"
 SKIP_BUILD="0"
@@ -53,6 +55,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --goal)
       GOAL="${2:?missing value for --goal}"
+      shift 2
+      ;;
+    --out-dir)
+      OUT_DIR="${2:?missing value for --out-dir}"
       shift 2
       ;;
     --open-vscode)
@@ -111,7 +117,7 @@ if [[ ! -x "$AGENTD_PYTHON" ]]; then
   exit 1
 fi
 
-E2E_ROOT="${ROOT}/.tmp/e2e-scripted"
+E2E_ROOT="${OUT_DIR}"
 mkdir -p "$E2E_ROOT"
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="${E2E_ROOT}/${RUN_ID}"
@@ -123,6 +129,7 @@ SHADOW_ROOT="${RUN_DIR}/shadows"
 AGENTD_LOG="${RUN_DIR}/agentd.log"
 RESULT_JSON="${RUN_DIR}/result.json"
 FINAL_JSON="${RUN_DIR}/final.json"
+ARTIFACTS_ROOT="${RUN_DIR}/artifacts"
 
 echo "==> Run directory: $RUN_DIR"
 echo "==> Workspace: $WORKSPACE"
@@ -190,6 +197,7 @@ if [[ "$BACKEND" == "gemini" ]]; then
     AI_EDITOR_DB_PATH="$DB_PATH" \
     AI_EDITOR_SHADOW_ROOT="$SHADOW_ROOT" \
     AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH" \
+    AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT" \
     AI_EDITOR_VALIDATION_COMMANDS_JSON='[{"stage":"syntax","name":"smoke-pass","command":"true"}]' \
     "$AGENTD_PYTHON" -m uvicorn agentd.main:app --port "$PORT"
   ) >"$AGENTD_LOG" 2>&1 &
@@ -200,6 +208,7 @@ else
     AI_EDITOR_DB_PATH="$DB_PATH" \
     AI_EDITOR_SHADOW_ROOT="$SHADOW_ROOT" \
     AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH" \
+    AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT" \
     AI_EDITOR_VALIDATION_COMMANDS_JSON='[{"stage":"syntax","name":"smoke-pass","command":"true"}]' \
     "$AGENTD_PYTHON" -m uvicorn agentd.main:app --port "$PORT"
   ) >"$AGENTD_LOG" 2>&1 &

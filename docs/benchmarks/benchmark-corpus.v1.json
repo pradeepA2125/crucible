@@ -12,6 +12,7 @@
       "goal": "Benchmark task placeholder for pydantic",
       "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/pydantic",
       "source": "oss",
+      "dataset": "baseline",
       "language": "python",
       "tags": [
         "phase0",
@@ -23,6 +24,7 @@
       "goal": "Benchmark task placeholder for rustlings",
       "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/rustlings",
       "source": "oss",
+      "dataset": "baseline",
       "language": "rust",
       "tags": [
         "phase0",
@@ -34,6 +36,7 @@
       "goal": "Benchmark task placeholder for typescript-language-server",
       "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/typescript-language-server",
       "source": "oss",
+      "dataset": "baseline",
       "language": "typescript",
       "tags": [
         "phase0",
@@ -42,9 +45,10 @@
     },
     {
       "task_id": "oss-shadow-forge-stress",
-      "goal": "Benchmark task placeholder for shadow-forge-stress",
+      "goal": "Example corpus task for shadow-forge-stress",
       "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/shadow-forge-stress",
       "source": "oss",
+      "dataset": "example",
       "language": "unknown",
       "tags": [
         "phase0",
@@ -55,6 +59,8 @@
   "stats": {
     "total_tasks": 4,
     "internal_tasks": 0,
-    "oss_tasks": 4
+    "oss_tasks": 4,
+    "baseline_tasks": 3,
+    "example_tasks": 1
   }
 }

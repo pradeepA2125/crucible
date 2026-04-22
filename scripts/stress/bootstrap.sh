@@ -2,18 +2,18 @@
 set -euo pipefail
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage:
   scripts/stress/bootstrap.sh [--workspace PATH] [--snapshot-path PATH] [--skip-npm] [--skip-python] [--skip-index]
 
 Defaults:
   workspace: repository root
   snapshot:  <workspace>/.ai-editor/index-snapshot.json
-EOF
+USAGE
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WORKSPACE="$ROOT/workspaces/shadow-forge-stress"
+WORKSPACE="$ROOT"
 SNAPSHOT_PATH=""
 SKIP_NPM="0"
 SKIP_PYTHON="0"
@@ -94,7 +94,6 @@ if [[ "$SKIP_PYTHON" != "1" ]]; then
       python3 -m venv .venv
     fi
     .venv/bin/pip install -e '.[dev]'
-    .venv/bin/python -c "from google import genai; print('google_genai_ok')"
   )
   echo "==> python dependencies verified"
 fi

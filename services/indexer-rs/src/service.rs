@@ -328,7 +328,7 @@ fn is_supported_source_path(path: &Path) -> bool {
 }
 
 fn is_ignored_path(path: &Path) -> bool {
-    const IGNORED_DIRS: [&str; 10] = [
+    const IGNORED_DIRS: [&str; 11] = [
         ".git",
         "node_modules",
         ".venv",
@@ -336,6 +336,7 @@ fn is_ignored_path(path: &Path) -> bool {
         "dist",
         "__pycache__",
         ".pytest_cache",
+        ".mypy_cache",
         ".agentd",
         ".ai-editor",
         ".tmp",

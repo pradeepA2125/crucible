@@ -18,6 +18,11 @@ tree-sitter = "0.24"
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-typescript = "0.23"
+rust-bert = { version = "0.23", optional = true }
+
+[features]
+default = []
+embeddings = ["dep:rust-bert"]
 
 [dev-dependencies]
 pretty_assertions = "1.4"

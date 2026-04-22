@@ -1221,3 +1221,980 @@ This enhanced implementation plan maintains AI Editor's architectural advantages
 3. Set up benchmark suite for measuring improvements (precision@k, recall@k, apply success rate)
 4. Begin implementation with Fast Apply (highest ROI, lowest risk, proven by Void IDE)
 5. Follow with two-stage retrieval (addresses current retrieval limitations)
+
+## Stage 0.5 Stabilization Plan: Spec-First Baseline Reset
+
+### Summary
+Stage 0.5 is materially landed in the repo: the new `plan_markdown` field, `AWAITING_PLAN_APPROVAL` state, `create_markdown_plan` reasoning path, `continue_task` orchestration entrypoint, `POST /v1/tasks/{task_id}/plan/feedback`, VS Code feedback UI, and the 3 verification scripts are all present.
+
+What is not complete yet is the baseline around that flow. Current verification shows:
+- `apps/editor-client` tests pass.
+- `apps/vscode-extension` tests pass.
+- `services/agentd-py` has 5 failing tests, all caused by the new flow not being reflected in old backend tests and reasoning test assertions.
+- There are no automated tests yet for the new plan approval loop itself.
+
+The right next move is to treat Stage 0.5 as the canonical flow and stabilize the repo around it before resuming deeper Phase 1 reliability work.
+
+### Implementation Changes
+1. **Lock Spec-First as the canonical orchestration contract**
+- `run_task()` remains “initialize + retrieve + generate markdown plan + pause”.
+- `continue_task(task_id, feedback)` remains the only path that resumes execution.
+- `POST /v1/tasks/{task_id}/plan/feedback` remains the single approval/revision endpoint.
+- `feedback: null` means approve and continue; non-empty feedback means regenerate the markdown plan.
+
+2. **Update backend tests to the new lifecycle**
+- Fix all orchestrator test doubles in `services/agentd-py/tests` to implement `create_markdown_plan`.
+- Rewrite tests that currently expect `run_task()` to end at `READY_FOR_REVIEW`; they must now either:
+  - assert `AWAITING_PLAN_APPROVAL` after `run_task()`, or
+  - call `continue_task(..., feedback=None)` before asserting execution outcomes.
+- Update the reasoning engine test to cover both `generate_text()` and `generate_json()` paths instead of asserting legacy prompt phrasing.
+
+3. **Add missing Stage 0.5 automated coverage**
+- Backend:
+  - task creation reaches `AWAITING_PLAN_APPROVAL`
+  - `GET /v1/tasks/{task_id}` returns `plan_markdown`
+  - `POST /v1/tasks/{task_id}/plan/feedback` with text regenerates the markdown plan
+  - `POST /v1/tasks/{task_id}/plan/feedback` with `null` continues execution
+  - invalid-state feedback call returns `400`
+- Client:
+  - `HttpBackendClient` maps `plan_markdown`
+  - `providePlanFeedback()` posts correct payload
+- VS Code:
+  - controller handles approval and feedback paths distinctly
+  - poller treats `AWAITING_PLAN_APPROVAL` as a stable non-terminal state
+  - review panel renders markdown-plan review state and feedback controls correctly
+
+4. **Stabilize provider/transport coverage for markdown planning**
+- Add transport-level tests for `generate_text()` across every provider that now participates in planning.
+- Ensure `DefaultReasoningEngine.create_markdown_plan()` is covered independently from JSON planning and patch generation.
+- Keep markdown-plan prompt changes and feedback injection, but test the contract at the payload/response level rather than brittle string fragments.
+
+5. **Promote the verification scripts from ad hoc to acceptance harness**
+- Keep `scripts/verify/01_create_task.py`, `02_feedback.py`, and `03_finalize.py` as the manual operator flow.
+- Make their expected checkpoints explicit:
+  - Stage 1: `AWAITING_PLAN_APPROVAL` + non-empty `plan_markdown`
+  - Stage 2: revised `plan_markdown` returned after feedback
+  - Stage 3: `READY_FOR_REVIEW` then accept to `SUCCEEDED`
+- Use the exact `/v1/tasks/{task_id}/events` goal as the canonical Stage 0.5 smoke test.
+
+### Public APIs / Interfaces / Types
+- No route redesign is needed.
+- The canonical Stage 0.5 public contract is:
+  - `TaskView.plan_markdown`
+  - `TaskResult.plan_markdown`
+  - `POST /v1/tasks/{task_id}/plan/feedback`
+  - `TaskStatus.AWAITING_PLAN_APPROVAL`
+- `feedback: null` remains the approval signal; no separate `/plan/approve` endpoint is introduced in this pass.
+
+### Test Cases and Scenarios
+1. Create task -> reaches `AWAITING_PLAN_APPROVAL` with a markdown engineering plan.
+2. Submit feedback -> task re-enters planning and returns an updated markdown plan.
+3. Submit approval (`feedback: null`) -> task resumes and reaches `READY_FOR_REVIEW` or a diagnosable failure.
+4. Invalid feedback call while not awaiting approval -> `400`.
+5. Existing orchestrator regression tests still pass after being updated to the new two-step lifecycle.
+6. Manual 3-stage verification scripts succeed end-to-end on `workspaces/shadow-forge-stress`.
+
+### Assumptions and Defaults
+- Stage 0.5 is now the default flow for non-scripted task execution.
+- Human review of the markdown plan is mandatory before execution.
+- The current single feedback endpoint is acceptable and will not be split in this stabilization pass.
+- Phase 1 AST/transactional reliability work should resume only after this stabilization baseline is green.
+
+
+
+
+
+## Execution State Refactor: Canonical Workflow + Result-Driven Step Runner
+
+### Summary
+Refactor task execution so top-level task status reflects only coarse workflow phases, not per-step internals. Replace the overloaded `PLANNED/PATCHED/VALIDATING/REPAIRING` behavior with a canonical public lifecycle, and make `_execute_plan()` the only owner of workflow transitions. `_run_step_with_retries()` becomes a step executor that returns structured results and artifacts, but never calls `transition()` or decides the task’s final workflow state.
+
+### Implementation Changes
+1. **Canonical task lifecycle**
+- Replace `PATCHED` with `EXECUTING`, and add `VALIDATED`.
+- Keep public statuses as:
+  - `QUEUED`
+  - `CONTEXT_READY`
+  - `AWAITING_PLAN_APPROVAL`
+  - `PLANNED`
+  - `EXECUTING`
+  - `REPAIRING`
+  - `VALIDATING`
+  - `VALIDATED`
+  - `READY_FOR_REVIEW`
+  - `PROMOTING`
+  - `SUCCEEDED`
+  - `FAILED`
+  - `ABORTED`
+- New status semantics:
+  - `PLANNED`: markdown-approved JSON plan exists; no code execution has started.
+  - `EXECUTING`: normal step execution loop is active.
+  - `REPAIRING`: full-validation failure is being repaired.
+  - `VALIDATING`: full-workspace validation is running.
+  - `VALIDATED`: full validation passed and review bundle is being finalized.
+  - `READY_FOR_REVIEW`: stable human review gate.
+- New transition graph:
+  - `QUEUED -> CONTEXT_READY`
+  - `CONTEXT_READY -> AWAITING_PLAN_APPROVAL | FAILED | ABORTED`
+  - `AWAITING_PLAN_APPROVAL -> CONTEXT_READY | PLANNED | FAILED | ABORTED`
+  - `PLANNED -> EXECUTING | FAILED | ABORTED`
+  - `EXECUTING -> VALIDATING | FAILED | ABORTED`
+  - `VALIDATING -> VALIDATED | REPAIRING | FAILED | ABORTED`
+  - `REPAIRING -> EXECUTING | VALIDATING | FAILED | ABORTED`
+  - `VALIDATED -> READY_FOR_REVIEW | FAILED | ABORTED`
+  - `READY_FOR_REVIEW -> PROMOTING | FAILED | ABORTED`
+  - `PROMOTING -> SUCCEEDED | FAILED | ABORTED`
+- `REPAIRING` and `VALIDATING` are no longer used for ordinary per-step churn. They represent only workflow phases, not every attempt.
+
+2. **Result-driven step execution**
+- `_run_step_with_retries()` becomes lifecycle-neutral:
+  - no `transition()`
+  - no `self._store.save(task)`
+  - no direct ownership of `READY_FOR_REVIEW`, `PLANNED`, `VALIDATING`, or `REPAIRING`
+- Introduce a structured result type, for example `StepRunResult`, with:
+  - `step_id`
+  - `outcome: "step_completed" | "attempts_exhausted"`
+  - `validation_result: "validation_passed" | "validation_failed"`
+  - `attempts_used`
+  - `selected_candidate_id`
+  - `touched_files`
+  - `diagnostics`
+  - `trace_entries`
+  - `checkpoint_manifests`
+  - `last_failure`
+- `validation_result` here means step-local validation only. Full-workspace validation moves fully into `_execute_plan()`.
+- `_run_step_with_retries()` still performs:
+  - candidate generation
+  - ranking
+  - preflight
+  - apply
+  - step-local fast validation
+  - checkpoint/restore
+  - execution trace generation
+- `_execute_plan()` owns all workflow transitions:
+  - after JSON plan target validation: save `PLANNED`
+  - before first incomplete step: transition `PLANNED -> EXECUTING`
+  - keep `EXECUTING` across all normal step execution
+  - after all normal steps: `EXECUTING -> VALIDATING`
+  - on full validation success: `VALIDATING -> VALIDATED -> READY_FOR_REVIEW`
+  - on full validation failure: `VALIDATING -> REPAIRING`
+  - before repair step execution: `REPAIRING -> EXECUTING`
+  - after repair step success: `EXECUTING -> VALIDATING` and rerun full validation
+  - on step exhaustion or unrecoverable failure: transition to `FAILED`
+- Repair steps use the same step runner as normal steps, but top-level status remains controlled by `_execute_plan()`.
+
+3. **Validation and trace semantics**
+- Step-local validation stays inside `_run_step_with_retries()` and is always fast/touched-file scoped.
+- Full-workspace validation runs only in `_execute_plan()`. Remove the current `full_validation=True` state-coupled behavior from the step runner.
+- Persist `VALIDATED` as a real state event before `READY_FOR_REVIEW`; it may be brief, but it becomes part of task history and event debugging.
+- Keep attempt-level detail in `StepExecutionTrace`; do not expose every patch/apply/validate micro-step as a top-level task status.
+- Fix debug artifact shape so `patch-context.json` always includes:
+  - `current_step`
+  - `allowed_files`
+  - `max_ops`
+  - `max_files`
+  - `last_failure`
+  - nested retrieval context
+- Remove dead/unreachable orchestration code paths in `_execute_plan()` after the current early returns.
+
+4. **Compatibility and surface updates**
+- This is a deliberate public status cleanup:
+  - remove `PATCHED` from backend enum, editor-client schema, and VS Code UI logic
+  - add `EXECUTING` and `VALIDATED` everywhere status strings are defined or asserted
+- No route changes.
+- Add legacy read normalization so persisted older tasks/events still load:
+  - `PATCHED -> EXECUTING`
+  - normalize both `TaskRecord.status` and `TaskEvent.from_status/to_status`
+  - save back only canonical statuses on the next write
+- No SQLite schema migration is required because statuses are stored as strings.
+- Update frontend/task-state helpers to match the new graph and keep polling stop conditions unchanged:
+  - stop on `READY_FOR_REVIEW`, `SUCCEEDED`, `FAILED`, `ABORTED`
+  - do not stop on `EXECUTING`, `REPAIRING`, `VALIDATING`, or `VALIDATED`
+- Update docs to describe the new canonical lifecycle and the rule that top-level status is phase-level while attempt detail lives in trace/artifacts.
+
+### Public APIs / Interfaces / Types
+- **Breaking status enum update**
+  - remove `PATCHED`
+  - add `EXECUTING`
+  - add `VALIDATED`
+- **New internal result contract**
+  - `StepRunResult` (or equivalent) becomes the return type of `_run_step_with_retries()`
+- **No route changes**
+  - `TaskView`, `TaskResult`, `/v1/tasks/*`, `/v1/tasks/{task_id}/events`, and `/v1/tasks/{task_id}/artifacts` remain shape-compatible except for status string values
+
+### Test Plan
+1. **State machine**
+- valid transitions for the new graph
+- invalid transitions:
+  - `PLANNED -> READY_FOR_REVIEW`
+  - `EXECUTING -> READY_FOR_REVIEW`
+  - `REPAIRING -> READY_FOR_REVIEW`
+- legacy normalization:
+  - old task payload with `PATCHED` loads as `EXECUTING`
+  - old event rows with `PATCHED` normalize correctly
+
+2. **Orchestrator**
+- normal successful run:
+  - `AWAITING_PLAN_APPROVAL -> PLANNED -> EXECUTING -> VALIDATING -> VALIDATED -> READY_FOR_REVIEW`
+- repair run:
+  - `... -> EXECUTING -> VALIDATING -> REPAIRING -> EXECUTING -> VALIDATING -> VALIDATED -> READY_FOR_REVIEW`
+- exhausted step attempts:
+  - task ends in `FAILED`
+- `_run_step_with_retries()` does not call `transition()` or save task state directly
+- debug artifacts include non-null step-bounded fields
+
+3. **Client/UI**
+- editor-client status schema updated and task-state transition helper matches backend
+- VS Code poller continues through `EXECUTING`, `REPAIRING`, `VALIDATING`, `VALIDATED`
+- review panel still opens only on `READY_FOR_REVIEW`
+- status/event tests updated to assert the new canonical lifecycle
+
+4. **Regression and E2E**
+- rerun the exact `GET /v1/tasks/{task_id}/events` goal on the stress clone
+- required outcome:
+  - no `PLANNED -> READY_FOR_REVIEW` failure
+  - task reaches `READY_FOR_REVIEW`
+  - accept reaches `SUCCEEDED`
+  - artifacts show step attempts while top-level status remains phase-level
+
+### Assumptions and Defaults
+- Stage 0.5 spec-first flow remains unchanged: markdown plan approval is still mandatory before execution.
+- `PLANNED` is retained but only as “approved JSON plan exists, execution not started yet.”
+- `VALIDATED` is intentionally brief and exists mainly for lifecycle clarity and task events.
+- Attempt-level repair churn is intentionally moved out of top-level status and into execution trace/artifacts.
+- No compatibility layer is added to the public TypeScript schemas for old status strings; backend normalizes legacy persisted values before serving them.
+
+
+## Stage 0.6: Repo-Grounded Planning + Self-Critic Before Embeddings
+
+### Summary
+Make planning robust by strengthening **repo grounding** and adding a **bounded plan-critic loop** before human review and before execution. Do **not** make embeddings the next dependency for this problem.
+
+Why this is the right next step:
+- Current failures are mostly not “can’t find the repo”; they are “planner invented a wrapper model / field / column even though the repo already had the right shape.”
+- The current planner already gets useful structural context, but the prompts and validators do not force it to distinguish:
+  - existing repo facts
+  - proposed new additions
+  - unknowns that require caution
+- Embeddings should be Phase 2 support for recall, not the primary fix for schema/path hallucinations.
+
+### Key Changes
+
+#### 1. Add a dedicated planner evidence pack
+Implement a compact, deterministic `PlanEvidencePack` built from the existing artifact snapshot plus direct file reads of the top grounded files.
+
+Use it for both markdown planning and JSON planning.
+
+Contents:
+- `workspace_files_index`: existing source of truth for valid file paths
+- `evidence_files`: top 4-8 relevant files with short excerpts
+- `evidence_symbols`: matched symbols with file path, kind, and line/snippet
+- `evidence_routes_models_storage`: extracted repo facts for API/storage/model files when relevant
+- `diagnostics_excerpt`: existing retrieval/LSP excerpt, but filtered to goal-relevant files only
+- `confidence_notes`: explicit low-confidence flags when evidence is shallow or missing
+
+Extraction rules:
+- Prefer symbol-scoped snippets using snapshot line info.
+- Fallback to term-based excerpt windows from real file contents.
+- Cap each snippet to a small bounded window.
+- Never include ignored/generated dirs in evidence.
+- Always include exact excerpts for files that the current goal most likely touches.
+
+Implementation target:
+- Extend the retrieval layer in `services/agentd-py/agentd/retrieval/artifact_client.py`
+- Keep the existing `RetrievalContext`, but add a planner-focused sub-payload instead of dumping broad repo summaries only.
+
+#### 2. Tighten markdown plan prompting around evidence and novelty
+Revise `MARKDOWN_PLAN_SYSTEM_INSTRUCTIONS` so the model is forced to separate:
+- `EXISTING`: verified by evidence
+- `NEW`: proposed addition because no existing symbol/model/path satisfies the goal
+- `UNKNOWN`: insufficient evidence; do not assume
+
+Prompt rules to add:
+- Do not propose a new model/response wrapper/class/function unless the evidence pack shows no compatible existing one.
+- Do not mention fields/columns/routes/symbols unless they appear in evidence, or explicitly mark them as `NEW`.
+- If evidence is incomplete, say so in the markdown plan instead of inventing.
+- Prefer modifying existing symbols over creating wrappers.
+- For API tasks, do not assume new response models are needed; first inspect existing route/result patterns.
+- For storage/schema tasks, do not infer columns from goal text alone; only from evidence.
+- Verification must name tests/files already present when evidence shows them.
+
+Prompt rules to remove:
+- The current blanket guidance that says endpoint work should specify new Pydantic models. That instruction is causing the exact wrapper hallucinations we saw.
+
+Implementation target:
+- `services/agentd-py/agentd/reasoning/prompt_builder.py`
+
+#### 3. Add a structured markdown-plan critic loop before the human sees the plan
+After `create_markdown_plan`, run a second model pass that critiques the markdown plan against the evidence pack and returns structured issues.
+
+Add `PlanCritiqueIssue` and `PlanCritiqueResult` internal types.
+
+Issue taxonomy:
+- `invented_file`
+- `invented_symbol`
+- `schema_mismatch`
+- `redundant_change`
+- `existing_capability_ignored`
+- `verification_mismatch`
+- `path_prefix_mismatch`
+- `test_scope_mismatch`
+
+Loop behavior:
+- Generate markdown plan
+- Critique it against evidence
+- If issues exist, regenerate markdown plan with the critique injected
+- Repeat for max `2` auto-critique rounds
+- If still unresolved:
+  - keep the task in `AWAITING_PLAN_APPROVAL`
+  - surface critique issues through existing `diagnostics`
+  - write artifacts so the human can review the unresolved risks
+
+This preserves human review, but stops obviously bad drafts from being the first thing shown.
+
+Implementation targets:
+- new critic prompt builder + reasoning method in the reasoning layer
+- orchestration wiring in `services/agentd-py/agentd/orchestrator/engine.py`
+
+#### 4. Add a second critic/validation pass for JSON plan generation
+Keep the approved markdown plan as the blueprint, but do not trust the generated JSON plan blindly.
+
+After `create_plan`, run:
+- deterministic validators
+- optional model critic if deterministic checks are inconclusive
+
+Deterministic checks must include:
+- every `targets[]` path exists in `workspace_files_index`
+- every `expected_files[]` entry is either an existing file or explicitly marked `NEW`
+- no JSON step introduces files absent from the approved markdown plan unless marked as a repair to a critique issue
+- step ordering is dependency-safe
+- verification targets only real tests/files when claiming existing coverage
+
+Add a second validator layer for evidence mismatch:
+- if the markdown plan said “use existing TaskEvent fields `at/from_status/to_status/reason`”, the JSON plan must not reintroduce `event/payload_json`
+- if the markdown plan said “use existing routes file”, JSON plan must not drift to another file
+
+Loop behavior:
+- up to `2` JSON replan rounds with structured `plan_validation_feedback`
+- if still unresolved, fail before patch generation with plan diagnostics
+- do not enter execution with an ungrounded JSON plan
+
+Implementation targets:
+- extend current `_find_unresolved_plan_targets(...)` into a broader plan-grounding validator
+- keep using `plan_validation_feedback`, but make it schema/symbol-aware instead of path-only
+
+#### 5. Make repair/critic artifacts first-class for planning
+Write plan-stage artifacts so we can inspect why the planner drifted.
+
+Add artifacts:
+- `plan-evidence.json`
+- `markdown-plan-draft.json`
+- `markdown-plan-critique.json`
+- `markdown-plan-final.json`
+- `json-plan-draft.json`
+- `json-plan-critique.json`
+- `json-plan-final.json`
+
+These should appear under the existing task artifact root and use the same task-scoped lineage as execution artifacts.
+
+No new API route is required; existing artifacts listing is enough.
+
+#### 6. Keep embeddings explicitly deferred, but define where they plug in later
+Do not implement embeddings in this stage.
+
+Phase 2 embeddings should plug into the evidence pack as a **recall booster**, not as a replacement for critic logic:
+- use semantic retrieval only when lexical/symbolic grounding is weak
+- merge semantic chunks into the same `PlanEvidencePack`
+- keep the same critic loop and deterministic validators
+
+That way embeddings improve “find the right area,” while the critic still prevents “invent the wrong structure.”
+
+### Public APIs / Interfaces / Types
+Add internal types only:
+- `PlanEvidencePack`
+- `PlanCritiqueIssue`
+- `PlanCritiqueResult`
+
+No HTTP route changes required.
+Use existing `diagnostics` and artifact endpoints to surface critique outcomes during plan review.
+
+If needed, add only additive task payload fields later, but default this stage to:
+- critique surfaced in `diagnostics`
+- detailed evidence/critique in artifacts
+
+### Test Plan
+
+#### Unit
+- Evidence pack extraction includes real snippets for top goal-relevant files.
+- Critic flags:
+  - invented wrapper response model
+  - invented storage columns
+  - wrong route file/prefix
+  - redundant “add model” when existing model already satisfies the task
+- JSON plan validator rejects drift from approved markdown plan.
+
+#### Integration
+- Canonical `/tasks/{task_id}/events` planning task:
+  - markdown plan shown to user does not invent `TaskEventsResponse`
+  - markdown plan does not invent `event/payload_json`
+  - JSON plan targets only real repo files
+- If the first markdown plan is wrong, auto-critique revises it before `AWAITING_PLAN_APPROVAL`.
+
+#### E2E
+Use the stress clone and the current 3-stage verify flow.
+Acceptance criteria for the canonical task:
+- human sees a repo-faithful markdown plan with no schema hallucination
+- approval proceeds without needing manual correction for `TaskEvent` fields or SQLite columns
+- JSON plan does not drift from the approved markdown plan
+- execution can proceed with the same patching pipeline as today
+
+### Assumptions and Defaults
+- Stage 0.5 spec-first approval stays mandatory.
+- Auto-critique rounds:
+  - markdown plan: `2`
+  - JSON plan: `2`
+- Existing `diagnostics` and artifact listing are sufficient for surfacing plan-critic output in this stage.
+- Embeddings are not the next milestone for robustness; they remain a Phase 2 enhancement after repo-grounded planning is stable.
+
+
+## Stage 0.7: System-Wide De-Hardcoding (Runtime, Ops, Tests, Docs)
+
+### Summary
+Broaden the current de-hardcoding effort from planning-only to the whole system. The goal is to make the editor behave like a **generic multi-repo agent platform** with explicit adapters, instead of a system that happens to work well on this repo and this task family.
+
+The core rule is:
+
+- **Generic core by default**
+- **Optional repo/domain adapters**
+- **Language-specific logic only in explicit language adapters**
+- **Ops/tests/docs must not encode one canonical repo shape**
+
+This pass should cover **runtime core + ops tooling + tests + docs/benchmarks together**, because the current coupling exists across all of them.
+
+### Key Changes
+
+#### 1. Generic runtime core with explicit adapter boundaries
+- Introduce three explicit extension points:
+  - `PlanningAdapter`: repo/domain-specific planning and critique augmentation
+  - `EvidenceAdapter`: optional repo/domain labeling on top of raw evidence
+  - `LanguageAdapter`: language-specific parsing, patching, and validation behavior
+- Default runtime wiring:
+  - `GenericPlanningAdapter`
+  - `GenericEvidenceAdapter`
+  - language adapters only for Python / TypeScript / Rust execution concerns
+- Move all current repo-specific runtime logic behind adapters:
+  - retrieval path boosts for `agentd-py`, `indexer-rs`, `vscode-extension`, `editor-client`
+  - path/file heuristics like `routes.py`, `/storage/`, `/models`, `schemas.py`
+  - task-specific semantic bans like `TaskEvent`, `payload_json`, `TaskEventsResponse`
+- Generic core must operate only on:
+  - grounded files
+  - grounded symbols
+  - excerpts
+  - diagnostics
+  - plan/patch contracts
+  - adapter-supplied critique issues
+
+#### 2. De-hardcode retrieval, planning, and orchestration
+- Retrieval:
+  - remove repo-name/path-prefix boosts from core scoring
+  - keep lexical, symbol, graph, and diagnostics relevance only
+  - evidence pack stays neutral; category labels come from adapter if needed
+- Planning:
+  - markdown and JSON plan critics stay generic
+  - no core logic that knows about this repo’s route/store/model naming
+- Orchestration:
+  - remove task-specific grounding rules from `_validate_plan_grounding`
+  - keep only generic contradictions:
+    - invented files
+    - invented symbols
+    - markdown/JSON drift
+    - verification drift
+    - unsupported NEW claims without evidence or create intent
+- Artifacts:
+  - replace hardcoded `/tmp/ai-editor-stress` usage with configurable task-artifact root
+  - same artifact structure, but generic path policy
+
+#### 3. Keep language specificity, but only in language adapters
+- Preserve language-specific execution logic where it belongs:
+  - Python: `libcst`, syntax/indentation safety
+  - TypeScript/Rust: tree-sitter selectors and parser behavior
+- Formalize that these are adapter responsibilities, not planner-core responsibilities.
+- Move language-specific planning hints into `LanguageAdapter` metadata only if needed, and keep them generic by language:
+  - Python import/indentation sensitivity
+  - TypeScript export/import surface awareness
+  - Rust module/file layout awareness
+- No repo-specific file names or task-specific domain fields inside language adapters.
+
+#### 4. De-hardcode provider/runtime configuration and debug plumbing
+- Introduce a single generic artifact/debug root setting:
+  - `AI_EDITOR_ARTIFACTS_ROOT`
+  - default to `<workspace>/.agentd/artifacts` or a configurable app-local default, not `/tmp/ai-editor-stress`
+- Ensure all debug dumping uses the same artifact root contract:
+  - reasoning debug dumps
+  - orchestrator plan/patch artifacts
+  - provider transport request/response traces
+- Keep provider model defaults, but move any project- or test-oriented defaults out of core code and into:
+  - env
+  - scripts
+  - test fixtures
+- Remove any repo URL defaults or test-specific site metadata from provider core defaults unless they are truly provider-required.
+
+#### 5. De-hardcode ops scripts and verification harness
+- Generalize stress/e2e scripts so they do not assume:
+  - `shadow-forge-stress`
+  - one workspace path
+  - one repo layout
+  - one provider family
+  - one fixed temp directory
+- Scripts should take:
+  - `--workspace`
+  - `--out-dir`
+  - `--backend`
+  - `--model`
+  - optional `--validation-profile`
+- Keep convenience defaults, but defaults must be generic and overridable.
+- Verification scripts should be framed as:
+  - generic spec-first verify flow
+  - repo-specific examples stored separately as presets, not hardcoded into the script body
+
+#### 6. De-hardcode tests, fixtures, docs, and benchmarks
+- Tests:
+  - replace repo-specific paths in runtime tests with synthetic neutral fixtures unless the test is intentionally adapter-specific
+  - isolate any `agentd-py`-specific tests under adapter-specific or repo-specific test modules
+- Benchmarks:
+  - move `shadow-forge-stress` and similar entries into a labeled example corpus, not the default benchmark baseline
+  - define a generic benchmark schema where repo-specific corpora are one dataset, not the default worldview
+- Docs:
+  - update architecture docs to distinguish:
+    - generic runtime core
+    - optional repo/domain adapters
+    - language adapters
+    - example stress workspace
+  - remove wording that suggests the current repo structure is assumed by design
+
+### Public APIs / Interfaces / Types
+- No HTTP route changes required.
+- Additive internal/runtime configuration:
+  - `AI_EDITOR_PLANNING_ADAPTER=generic`
+  - `AI_EDITOR_EVIDENCE_ADAPTER=generic`
+  - `AI_EDITOR_ARTIFACTS_ROOT=<path>`
+- Add internal interfaces:
+  - `PlanningAdapter`
+  - `EvidenceAdapter`
+  - `LanguageAdapter`
+- Keep current task/result APIs stable.
+- Artifacts endpoint remains the same shape, but artifact paths come from the configured root instead of a hardcoded temp path.
+
+### Test Plan
+1. **Runtime core**
+- Retrieval no longer prefers this repo’s service paths by name alone.
+- Generic planning/critique works on:
+  - this repo
+  - a second repo with a different structure
+- Orchestrator grounding rejects drift generically without `TaskEvent`-style special cases.
+
+2. **Adapters**
+- Generic adapters produce neutral behavior.
+- Legacy repo adapter, if retained temporarily, reproduces current repo-specific safeguards only when explicitly enabled.
+- Language adapter tests confirm Python/TS/Rust behavior stays isolated to execution/parsing/validation.
+
+3. **Ops and tooling**
+- Stress and verify scripts run against two different workspaces without editing the script bodies.
+- Artifact/debug outputs land under configurable root paths, not fixed `/tmp/ai-editor-stress`.
+
+4. **Docs and benchmarks**
+- Benchmark corpus separates generic baselines from repo-specific examples.
+- Docs no longer imply `shadow-forge` is the canonical product shape.
+
+### Assumptions and Defaults
+- Default mode after this refactor is fully generic:
+  - generic planning adapter
+  - generic evidence adapter
+  - explicit language adapters
+- A temporary legacy repo adapter may be retained during migration, but it must be opt-in, not default.
+- Language-specific execution safety is not considered hardcoding debt as long as it stays inside explicit language adapters.
+- This pass is structural and reliability-oriented; it should not introduce new product-surface features.
+- Embeddings remain deferred; the de-hardcoding work should complete before semantic retrieval becomes part of the core path.
+
+Good catch — your instinct is right. The earlier version was too narrow. Let’s do this properly and turn the **entire session into a detailed, phase-wise implementation document** you can actually use for reviews or handoffs.
+
+---
+
+# 📘 Implementation Document
+
+## **Stage 0.7 – De-hardcoding, Context Optimization & Execution Flow Refinement**
+
+---
+
+# 🧭 Overview
+
+This phase focused on **stabilizing the system under long-context workloads**, **removing hardcoded assumptions**, and **improving execution reliability across planning → patching → validation**.
+
+What started as a *context overflow fix* evolved into a broader cleanup of:
+
+* Context handling strategy
+* Plan → execution contract
+* Patch quality and reliability
+* Type safety and schema alignment
+* Orchestration clarity
+
+---
+
+# ⚙️ windsurf coding Phase 1: Long Context Handling & Cache Indexing
+
+## 🎯 Problem
+
+* System was **passing entire context repeatedly**
+* Led to:
+
+  * Token bloat
+  * Model confusion
+  * Poor patch quality
+  * Slower execution
+
+## 🛠️ Solution
+
+### ✅ Introduced Indexed Context (Vectorless Approach)
+
+* Instead of raw context:
+
+  * Context is **chunked + indexed**
+  * Retrieved **selectively per step**
+
+### 🔑 Key Changes
+
+* Context is no longer:
+
+  ```
+  "dump everything into prompt"
+  ```
+* Instead:
+
+  ```
+  retrieve → relevant chunks → inject
+  ```
+
+### 💡 Impact
+
+* Reduced prompt size significantly
+* Improved reasoning clarity
+* Better patch precision
+
+---
+
+# ⚙️ windsurf coding Phase 2: De-hardcoding the System
+
+## 🎯 Problem
+
+* Multiple parts of system had:
+
+  * Hardcoded assumptions
+  * Static flows
+  * Tight coupling
+
+Examples:
+
+* Fixed prompt templates
+* Rigid plan execution assumptions
+* Static file handling logic
+
+## 🛠️ Solution
+
+### ✅ Dynamic Execution Model
+
+* Removed assumptions like:
+
+  * Fixed number of steps
+  * Fixed file paths
+  * Static prompt structures
+
+### ✅ Parameterization
+
+* Introduced:
+
+  * Config-driven behavior
+  * Flexible inputs to planners/executors
+
+### 💡 Impact
+
+* System became:
+
+  * Extensible
+  * Easier to adapt to new tasks
+  * Less brittle
+
+---
+
+# ⚙️ windsurf coding Phase 3: Plan → Execution Flow Refinement
+
+## 🎯 Problem
+
+* Plans generated were:
+
+  * High-level
+  * Ambiguous
+* Execution layer:
+
+  * Misinterpreted plans
+  * Produced inconsistent patches
+
+## 🛠️ Solution
+
+### ✅ Structured Plan Format
+
+Plans now include:
+
+* Explicit steps
+* File-level granularity
+* Clear intent per step
+
+### Example:
+
+```json
+{
+  "step": "Modify validation logic",
+  "files": ["validator.ts"],
+  "action": "update function X to include Y"
+}
+```
+
+### ✅ Stronger Plan-Execution Contract
+
+* Execution no longer "guesses"
+* It **follows structured intent**
+
+### 💡 Impact
+
+* Reduced hallucination in patching
+* More deterministic execution
+
+---
+
+# ⚙️ windsurf coding Phase 4: Patch Generation Improvements
+
+## 🎯 Problem
+
+* Patches had issues:
+
+  * Incorrect diffs
+  * Context mismatches
+  * Broken syntax
+  * Overwrites
+
+## 🛠️ Solution
+
+### ✅ Improved Diff Strategy
+
+* Moved toward:
+
+  * **Unified diff format**
+  * Minimal, targeted edits
+
+### ✅ Context Anchoring
+
+* Patches generated using:
+
+  * Surrounding code awareness
+  * Not blind replacement
+
+### ✅ Validation Awareness
+
+* Patch generation considers:
+
+  * Compilation correctness
+  * Logical consistency
+
+### 💡 Impact
+
+* Higher success rate in patch application
+* Fewer broken builds
+
+---
+
+# ⚙️ windsurf coding Phase 5: Plan Critique & Feedback Loop
+
+## 🎯 Problem
+
+* Plans were accepted as-is
+* No quality control before execution
+
+## 🛠️ Solution
+
+### ✅ Introduced Plan Critique Step
+
+* Plans are:
+
+  * Reviewed
+  * Refined before execution
+
+### Critique checks:
+
+* Missing steps
+* Ambiguity
+* Logical gaps
+
+### 💡 Impact
+
+* Better plans → better execution
+* Reduced downstream errors
+
+---
+
+# ⚙️ windsurf coding Phase 6: Orchestration Improvements
+
+## 🎯 Problem
+
+* Flow between components was:
+
+  * Loosely defined
+  * Hard to debug
+  * Inconsistent
+
+## 🛠️ Solution
+
+### ✅ Clear Stage Separation
+
+New pipeline:
+
+```
+User Input
+   ↓
+Planning
+   ↓
+Plan Critique
+   ↓
+Execution (Patch Generation)
+   ↓
+Validation
+```
+
+### ✅ Better State Handling
+
+* Task state includes:
+
+  * Status
+  * Modified files
+  * Execution trace
+
+### 💡 Impact
+
+* Easier debugging
+* Better observability
+* Cleaner flow
+
+---
+
+# ⚙️ windsurf coding Phase 7: Type Safety & Schema Alignment
+
+## 🎯 Problem
+
+* Type mismatches across:
+
+  * Planner
+  * Executor
+  * API layer
+
+## 🛠️ Solution
+
+### ✅ Unified Contracts
+
+* Standardized:
+
+  * Task schema
+  * Plan structure
+  * Patch format
+
+### ✅ Strong Typing
+
+* Reduced:
+
+  * Runtime errors
+  * Misinterpretation
+
+### 💡 Impact
+
+* Safer execution
+* Easier maintenance
+
+---
+
+# ⚙️ windsurf coding Phase 8: Bug Fixes
+
+## 🐞 Key Fixes
+
+### 1. Context Overflow Issues
+
+* Fixed via:
+
+  * Indexed retrieval
+  * Selective injection
+
+### 2. Broken Patch Application
+
+* Fixed:
+
+  * Diff formatting
+  * Context anchoring
+
+### 3. Execution Drift
+
+* Fixed:
+
+  * Structured plans
+  * Strong contract
+
+### 4. Inconsistent Outputs
+
+* Fixed:
+
+  * Schema alignment
+  * Type safety
+
+---
+
+# ⚡ Key Improvements Summary
+
+## 🚀 Performance
+
+* Reduced token usage
+* Faster execution
+
+## 🎯 Accuracy
+
+* Better patch precision
+* Reduced hallucinations
+
+## 🔧 Maintainability
+
+* De-hardcoded system
+* Modular design
+
+## 🔍 Observability
+
+* Clear execution stages
+* Better debugging
+
+---
+
+# ⚠️ Known Limitations / Pending Work
+
+Be honest here — this is what reviewers care about.
+
+* Patch quality still depends on:
+
+  * Model capability
+  * Context retrieval accuracy
+
+* Plan critique is:
+
+  * Helpful but not foolproof
+
+* No full semantic validation yet:
+
+  * Only structural correctness
+
+* diff engine failures
+
+  * Hunk length issues in header
+
+---

@@ -44,9 +44,9 @@ class RetrievalContext:
 
 **Retrieval Strategy** ([`artifact_client.py:300-323`](services/agentd-py/agentd/retrieval/artifact_client.py:300-323)):
 1. **Keyword matching**: Extract terms from goal, score nodes by term frequency
-2. **Path bias**: Boost scores for service-specific paths (agentd-py, indexer-rs, etc.)
-3. **Graph traversal**: Follow edges to find connected symbols
-4. **Ranking**: Top 500 nodes → Top 20 files + Top 40 symbols
+2. **Graph traversal**: Follow edges to find connected symbols
+3. **Ranking**: Top 500 nodes → Top 20 files + Top 40 symbols
+4. **Adapter boundary**: Repo/domain heuristics are opt-in adapters, not part of the default retrieval core
 
 ### Competitor Approaches
 
@@ -66,6 +66,7 @@ class RetrievalContext:
 - ✅ **LSP integration** provides real-time diagnostics
 - ✅ **Incremental indexing** with filesystem watching
 - ✅ **Privacy-preserving** (no external embedding API calls)
+- ✅ **Generic core by default** with optional repo/domain adapters
 
 **Missing Capabilities:**
 - ❌ **Semantic embeddings** for conceptual similarity (e.g., "authentication" → `verify_token()`)
@@ -148,7 +149,7 @@ Extend V2 with **hybrid operations**:
 ### Current AI Editor Implementation
 
 **Orchestration** ([`engine.py`](services/agentd-py/agentd/orchestrator/engine.py)):
-- **State machine**: `QUEUED → CONTEXT_READY → PLANNED → PATCHED → VALIDATING → REPAIRING → READY_FOR_REVIEW → SUCCEEDED`
+- **State machine**: `QUEUED → CONTEXT_READY → AWAITING_PLAN_APPROVAL → PLANNED → EXECUTING → VALIDATING → VALIDATED → READY_FOR_REVIEW → SUCCEEDED`
 - **Plan structure** ([`models.py:67-78`](services/agentd-py/agentd/domain/models.py:67-78)):
   ```python
   class PlanDocument:

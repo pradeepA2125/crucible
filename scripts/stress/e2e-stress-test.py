@@ -22,13 +22,17 @@ class E2EStressTest:
         print(f"Goal: {self.goal}")
         print(f"Target: {self.workspace_path}")
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             # 1. Submission with retry on 429
             print("\n[Submission] POST /v1/tasks")
             for attempt in range(max_retries):
                 resp = await client.post(
                     f"{BASE_URL}/v1/tasks",
-                    json={"goal": self.goal, "workspace_path": self.workspace_path}
+                    json={
+                        "goal": self.goal, 
+                        "workspace_path": self.workspace_path,
+                        "budget": {"max_iterations": 15}
+                    }
                 )
                 if resp.status_code == 200:
                     self.task_id = resp.json()["task_id"]
@@ -55,11 +59,10 @@ class E2EStressTest:
 
                 task = resp.json()
                 status = task["status"]
-                events = task.get("events", [])
-                usage = task.get("usage", {})
+                trace = task.get("execution_trace", [])
+                progress = task.get("step_progress", {})
 
-                # Check if the orchestrator itself is reporting a 429 failure in its events
-                # This happens if the submission succeeded but the LLM call within the engine failed
+                # Check if the orchestrator itself is reporting a 429 failure in its trace
                 is_failed = status == "FAILED"
                 is_429 = any("429" in str(d.get("message", "")) for d in task.get("diagnostics", []))
 
@@ -69,15 +72,22 @@ class E2EStressTest:
                     # We recursively call run to effectively "keep retrying" the whole flow
                     return await self.run(max_retries - 1)
 
-                # Print new events
-                if len(events) > self.last_event_count:
-                    for i in range(self.last_event_count, len(events)):
-                        ev = events[i]
-                        prefix = "🔹" if ev["to_status"] not in ["FAILED", "SUCCEEDED", "READY_FOR_REVIEW"] else "🏁"
-                        print(f" {prefix} {ev['from_status']} -> {ev['to_status']} | Reason: {ev['reason']}")
-                        if ev['to_status'] == "REPAIRING":
-                            print(f"    🔄 Iteration: {usage.get('iterations', 0)}")
-                    self.last_event_count = len(events)
+                # Print new trace events
+                if len(trace) > self.last_event_count:
+                    for i in range(self.last_event_count, len(trace)):
+                        ev = trace[i]
+                        step_id = ev.get("step_id", "?")
+                        ev_status = ev.get("status", "unknown")
+                        attempt = ev.get("attempt", 0)
+                        msg = ev.get("message", "")
+                        prefix = "🔹"
+                        if ev_status in ["validation_failed", "preflight_failed", "step_exhausted"]:
+                            prefix = "❌"
+                        elif ev_status == "step_completed":
+                            prefix = "✅"
+                        
+                        print(f" {prefix} Step {step_id} (Attempt {attempt}): {ev_status} | {msg}")
+                    self.last_event_count = len(trace)
 
                 # Check terminal states
                 if status == "READY_FOR_REVIEW":

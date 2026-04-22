@@ -2,21 +2,21 @@
 set -euo pipefail
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage:
   scripts/stress/run-constrained-task.sh --goal "text" [--workspace PATH] [--base-url URL] [--out-dir PATH] [--accept]
 
 Defaults:
   workspace: repository root
   base-url:  http://127.0.0.1:8000
-  out-dir:   /tmp/ai-editor-stress
-EOF
+  out-dir:   ${TMPDIR:-/tmp}/ai-editor-runs
+USAGE
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WORKSPACE="$ROOT/workspaces/shadow-forge-stress"
+WORKSPACE="$ROOT"
 BASE_URL="http://127.0.0.1:8000"
-OUT_DIR="/tmp/ai-editor-stress"
+OUT_DIR="${TMPDIR:-/tmp}/ai-editor-runs"
 GOAL=""
 AUTO_ACCEPT="0"
 

@@ -18,12 +18,27 @@
   - LSP diagnostics enrichment
   - Snapshot artifact + deterministic graph query CLI
 
+## Runtime layering
+- Generic runtime core is the default:
+  - retrieval scoring based on lexical, symbol, graph, and diagnostics relevance
+  - plan/patch contracts
+  - orchestrator grounding and deterministic validation
+- Optional repo/domain adapters may augment evidence labeling or critique rules:
+  - `AI_EDITOR_EVIDENCE_ADAPTER=generic|legacy_repo`
+  - `AI_EDITOR_PLANNING_ADAPTER=generic|legacy_repo`
+- Language-specific logic is isolated to explicit language adapters:
+  - Python execution/parsing via `libcst`
+  - TypeScript/Rust execution/parsing via tree-sitter
+- Artifact/debug output uses a configurable root:
+  - `AI_EDITOR_ARTIFACTS_ROOT`
+  - default `<workspace>/.agentd/artifacts`
+
 ## Deterministic boundaries
 - Model output is never executed directly.
 - `agentd-py` validates plan/patch payloads into typed models.
 - `agentd-py` validates plan step targets against the real workspace file index and performs one-shot replan on unresolved paths.
 - Patch application and validation gates remain deterministic.
-- Retrieval context is artifact-backed and loaded once per task (no per-loop command chatter).
+- Retrieval context is artifact-backed and adapter-neutral by default (no repo-shape assumptions in core scoring).
 
 ## API contracts
 - `POST /v1/tasks`
@@ -35,7 +50,7 @@
 - `POST /v1/tasks/{task_id}/reject`
 
 ## Orchestration lifecycle
-`QUEUED -> CONTEXT_READY -> PLANNED -> PATCHED -> VALIDATING -> REPAIRING -> READY_FOR_REVIEW -> PROMOTING -> SUCCEEDED|FAILED|ABORTED`
+`QUEUED -> CONTEXT_READY -> AWAITING_PLAN_APPROVAL -> PLANNED -> EXECUTING -> VALIDATING -> VALIDATED -> READY_FOR_REVIEW -> PROMOTING -> SUCCEEDED|FAILED|ABORTED`
 
 ## Retrieval artifact flow
 1. `indexer-rs index` writes `<workspace>/.ai-editor/index-snapshot.json` with schema/version metadata, full graph, diagnostics, and stats.
@@ -43,6 +58,7 @@
 3. If artifact is missing, `agentd-py` tries a single auto-index command and retries artifact load once.
 4. Stale/corrupt/missing artifacts emit warning diagnostics; task execution continues with empty retrieval context when needed.
 5. Plan/patch prompts receive compact retrieval context (`related_files`, `related_symbols`, neighbors, diagnostics excerpt, snapshot age/stats).
+6. Planner evidence packs remain generic by default; any repo-specific labeling comes from an explicit evidence adapter, not the retrieval core.
 
 ## Implementation Status
 
@@ -75,6 +91,7 @@
 - Plan graph v2 with preconditions/postconditions/verification
 - Typed critic taxonomy and targeted repair prompts
 - Rules/memory precedence engine (global → workspace → repo → task)
+- Add explicit `REGENERATING_PLAN` lifecycle state for feedback-driven plan regeneration windows.
 
 ### 📋 Phase 3: Core Parity Surface (Planned)
 - Timeline/event UX in VS Code (attempt traces, preflight/validation deltas)

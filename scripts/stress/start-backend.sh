@@ -2,37 +2,31 @@
 set -euo pipefail
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage:
-  scripts/stress/start-backend.sh [--workspace PATH] [--port N] [--log-dir PATH] [--model MODEL] [--max-tokens N]
+  scripts/stress/start-backend.sh [--workspace PATH] [--port N] [--out-dir PATH] [--log-dir PATH]
+                                  [--backend NAME] [--model MODEL] [--validation-profile smoke|full|strict|none]
+                                  [--artifacts-root PATH]
 
-Required env:
-  GROQ_API_KEY, OPENROUTER_API_KEY, or WATSONX_API_KEY
-EOF
+Defaults:
+  workspace: repository root
+  port:      8000
+  out-dir:   <repo>/.tmp/stress-<timestamp>
+  backend:   auto-detected from available provider keys
+  model:     provider-specific default
+  artifacts: <workspace>/.agentd/artifacts
+USAGE
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WORKSPACE="$ROOT/workspaces/shadow-forge-stress"
+WORKSPACE="$ROOT"
 PORT="8000"
-LOG_DIR="$ROOT/.tmp/stress-$(date +%Y%m%d-%H%M%S)"
-
-# Default values based on available keys
-if [[ -n "${WATSONX_API_KEY:-}" ]]; then
-  BACKEND="watsonx"
-  MODEL="${AI_EDITOR_WATSONX_MODEL:-deepseek-ai/deepseek-r1}"
-  MAX_TOKENS=""
-elif [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
-  BACKEND="openrouter"
-  MODEL="stepfun/step-3.5-flash:free"
-  MAX_TOKENS=""
-elif [[ -n "${GROQ_API_KEY:-}" ]]; then
-  BACKEND="groq"
-  MODEL="openai/gpt-oss-120b"
-  MAX_TOKENS="16384"
-else
-  echo "Error: Set GROQ_API_KEY, OPENROUTER_API_KEY, or WATSONX_API_KEY before starting backend." >&2
-  exit 1
-fi
+OUT_DIR="$ROOT/.tmp/stress-$(date +%Y%m%d-%H%M%S)"
+LOG_DIR=""
+BACKEND=""
+MODEL=""
+VALIDATION_PROFILE="full"
+ARTIFACTS_ROOT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,20 +38,28 @@ while [[ $# -gt 0 ]]; do
       PORT="${2:?missing value for --port}"
       shift 2
       ;;
+    --out-dir)
+      OUT_DIR="${2:?missing value for --out-dir}"
+      shift 2
+      ;;
     --log-dir)
       LOG_DIR="${2:?missing value for --log-dir}"
+      shift 2
+      ;;
+    --backend)
+      BACKEND="${2:?missing value for --backend}"
       shift 2
       ;;
     --model)
       MODEL="${2:?missing value for --model}"
       shift 2
       ;;
-    --max-tokens)
-      MAX_TOKENS="${2:?missing value for --max-tokens}"
+    --validation-profile)
+      VALIDATION_PROFILE="${2:?missing value for --validation-profile}"
       shift 2
       ;;
-    --backend)
-      BACKEND="${2:?missing value for --backend}"
+    --artifacts-root)
+      ARTIFACTS_ROOT="${2:?missing value for --artifacts-root}"
       shift 2
       ;;
     -h|--help)
@@ -72,6 +74,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ ! -d "$WORKSPACE" ]]; then
+  echo "Workspace directory does not exist: $WORKSPACE" >&2
+  exit 1
+fi
+
 AGENTD_DIR="$ROOT/services/agentd-py"
 if [[ ! -x "$AGENTD_DIR/.venv/bin/python" ]]; then
   echo "Missing virtualenv python: $AGENTD_DIR/.venv/bin/python" >&2
@@ -79,47 +86,207 @@ if [[ ! -x "$AGENTD_DIR/.venv/bin/python" ]]; then
   exit 1
 fi
 
-mkdir -p "$LOG_DIR" "$WORKSPACE/.agentd"
+resolve_backend() {
+  if [[ -n "$BACKEND" ]]; then
+    printf '%s' "$BACKEND"
+    return
+  fi
+  if [[ -n "${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}" ]]; then
+    printf 'gemini'
+  elif [[ -n "${GROQ_API_KEY:-}" ]]; then
+    printf 'groq'
+  elif [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+    printf 'openrouter'
+  elif [[ -n "${WATSONX_API_KEY:-}" ]]; then
+    printf 'watsonx'
+  elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+    printf 'openai'
+  elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    printf 'anthropic'
+  elif [[ -n "${HF_TOKEN:-}" ]]; then
+    printf 'huggingface'
+  else
+    printf 'scripted'
+  fi
+}
+
+resolve_default_model() {
+  case "$1" in
+    scripted) printf 'scripted' ;;
+    gemini) printf '%s' "${AI_EDITOR_GEMINI_MODEL:-gemini-3-flash-preview}" ;;
+    groq) printf '%s' "${AI_EDITOR_GROQ_MODEL:-openai/gpt-oss-120b}" ;;
+    openrouter) printf '%s' "${AI_EDITOR_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}" ;;
+    watsonx) printf '%s' "${AI_EDITOR_WATSONX_MODEL:-ibm/granite-3-8b-instruct}" ;;
+    openai) printf '%s' "${AI_EDITOR_OPENAI_MODEL:-gpt-5}" ;;
+    anthropic) printf '%s' "${AI_EDITOR_ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}" ;;
+    huggingface) printf '%s' "${AI_EDITOR_HUGGINGFACE_MODEL:-deepseek-ai/DeepSeek-R1:fastest}" ;;
+    *)
+      echo "Unsupported backend: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+resolve_validation_commands() {
+  case "$VALIDATION_PROFILE" in
+    none)
+      printf '[]'
+      ;;
+    smoke)
+      printf '[{"stage":"syntax","name":"smoke-pass","command":"true"}]'
+      ;;
+    full)
+      if [[ -n "${AI_EDITOR_VALIDATION_COMMANDS_JSON:-}" ]]; then
+        printf '%s' "$AI_EDITOR_VALIDATION_COMMANDS_JSON"
+      else
+        # Let CommandValidator auto-detect project commands instead of bypassing
+        # validation with a no-op command.
+        printf '__AUTO_DETECT__'
+      fi
+      ;;
+    strict)
+      if [[ -n "${AI_EDITOR_VALIDATION_COMMANDS_JSON:-}" ]]; then
+        printf '%s' "$AI_EDITOR_VALIDATION_COMMANDS_JSON"
+      else
+        printf '__STRICT_MISSING__'
+      fi
+      ;;
+    *)
+      echo "Unsupported validation profile: $VALIDATION_PROFILE" >&2
+      exit 1
+      ;;
+  esac
+}
+
+BACKEND="$(resolve_backend)"
+if [[ -z "$MODEL" ]]; then
+  MODEL="$(resolve_default_model "$BACKEND")"
+fi
+if [[ -z "$LOG_DIR" ]]; then
+  LOG_DIR="$OUT_DIR/logs"
+fi
+if [[ -z "$ARTIFACTS_ROOT" ]]; then
+  ARTIFACTS_ROOT="$WORKSPACE/.agentd/artifacts"
+fi
+
+mkdir -p "$OUT_DIR" "$LOG_DIR" "$WORKSPACE/.agentd" "$ARTIFACTS_ROOT"
 SNAPSHOT_PATH="$WORKSPACE/.ai-editor/index-snapshot.json"
 LOG_FILE="$LOG_DIR/agentd.log"
+VALIDATION_COMMANDS_JSON="$(resolve_validation_commands)"
+
+if [[ "$VALIDATION_COMMANDS_JSON" == "__STRICT_MISSING__" ]]; then
+  echo "strict validation profile requires AI_EDITOR_VALIDATION_COMMANDS_JSON to be set" >&2
+  exit 1
+fi
+
+case "$BACKEND" in
+  gemini)
+    if [[ -z "${GEMINI_API_KEY:-${GOOGLE_API_KEY:-}}" ]]; then
+      echo "GEMINI_API_KEY or GOOGLE_API_KEY is required for gemini backend" >&2
+      exit 1
+    fi
+    ;;
+  groq)
+    if [[ -z "${GROQ_API_KEY:-}" ]]; then
+      echo "GROQ_API_KEY is required for groq backend" >&2
+      exit 1
+    fi
+    ;;
+  openrouter)
+    if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
+      echo "OPENROUTER_API_KEY is required for openrouter backend" >&2
+      exit 1
+    fi
+    ;;
+  watsonx)
+    if [[ -z "${WATSONX_API_KEY:-}" ]]; then
+      echo "WATSONX_API_KEY is required for watsonx backend" >&2
+      exit 1
+    fi
+    ;;
+  openai)
+    if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+      echo "OPENAI_API_KEY is required for openai backend" >&2
+      exit 1
+    fi
+    ;;
+  anthropic)
+    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+      echo "ANTHROPIC_API_KEY is required for anthropic backend" >&2
+      exit 1
+    fi
+    ;;
+  huggingface)
+    if [[ -z "${HF_TOKEN:-}" ]]; then
+      echo "HF_TOKEN is required for huggingface backend" >&2
+      exit 1
+    fi
+    ;;
+  scripted)
+    ;;
+  *)
+    echo "Unsupported backend: $BACKEND" >&2
+    exit 1
+    ;;
+esac
 
 echo "==> starting backend"
 echo "workspace=$WORKSPACE"
 echo "port=$PORT"
 echo "backend=$BACKEND"
 echo "model=$MODEL"
-if [[ -n "$MAX_TOKENS" ]]; then
-  echo "max_tokens=$MAX_TOKENS"
-fi
 echo "snapshot=$SNAPSHOT_PATH"
 echo "db_path=$WORKSPACE/.agentd/agentd.sqlite3"
 echo "shadow_root=$WORKSPACE/.agentd/shadows"
+echo "artifacts_root=$ARTIFACTS_ROOT"
+echo "validation_profile=$VALIDATION_PROFILE"
+if [[ "$VALIDATION_COMMANDS_JSON" == "__AUTO_DETECT__" ]]; then
+  echo "validation_commands=auto-detect"
+else
+  echo "validation_commands=configured"
+fi
 echo "log_file=$LOG_FILE"
 
 (
   cd "$AGENTD_DIR"
   export AI_EDITOR_REASONING_BACKEND="$BACKEND"
-  if [[ "$BACKEND" == "groq" ]]; then
-    export AI_EDITOR_GROQ_MODEL="$MODEL"
-    export AI_EDITOR_GROQ_MAX_TOKENS="${MAX_TOKENS:-4096}"
-  elif [[ "$BACKEND" == "openrouter" ]]; then
-    export AI_EDITOR_OPENROUTER_MODEL="$MODEL"
-  elif [[ "$BACKEND" == "watsonx" ]]; then
-    export AI_EDITOR_WATSONX_MODEL="$MODEL"
-    # These are picked up by WatsonxJsonTransport directly from env if not passed to ctor
-    export WATSONX_API_KEY="${WATSONX_API_KEY}"
-    export WATSONX_PROJECT_ID="${WATSONX_PROJECT_ID}"
-    export WATSONX_URL="${WATSONX_URL:-https://us-south.ml.cloud.ibm.com}"
-  fi
-  export AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH"
   export AI_EDITOR_DB_PATH="$WORKSPACE/.agentd/agentd.sqlite3"
   export AI_EDITOR_SHADOW_ROOT="$WORKSPACE/.agentd/shadows"
-  export AI_EDITOR_VALIDATION_COMMANDS_JSON='[
-    {"stage":"syntax","name":"py-compile","command":"cd services/agentd-py && python -m compileall -q agentd tests","timeout_sec":120},
-    {"stage":"test","name":"py-tests","command":"cd services/agentd-py && python -m pytest -q","timeout_sec":300},
-    {"stage":"type","name":"ts-editor-client-typecheck","command":"npm run -w @ai-editor/editor-client typecheck","timeout_sec":240},
-    {"stage":"type","name":"ts-extension-typecheck","command":"npm run -w @ai-editor/vscode-extension typecheck","timeout_sec":240}
-  ]'
+  export AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH"
+  export AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT"
+  if [[ "$VALIDATION_COMMANDS_JSON" == "__AUTO_DETECT__" ]]; then
+    unset AI_EDITOR_VALIDATION_COMMANDS_JSON
+  else
+    export AI_EDITOR_VALIDATION_COMMANDS_JSON="$VALIDATION_COMMANDS_JSON"
+  fi
+
+  case "$BACKEND" in
+    gemini)
+      export AI_EDITOR_GEMINI_MODEL="$MODEL"
+      ;;
+    groq)
+      export AI_EDITOR_GROQ_MODEL="$MODEL"
+      ;;
+    openrouter)
+      export AI_EDITOR_OPENROUTER_MODEL="$MODEL"
+      ;;
+    watsonx)
+      export AI_EDITOR_WATSONX_MODEL="$MODEL"
+      export WATSONX_URL="${WATSONX_URL:-https://us-south.ml.cloud.ibm.com}"
+      ;;
+    openai)
+      export AI_EDITOR_OPENAI_MODEL="$MODEL"
+      ;;
+    anthropic)
+      export AI_EDITOR_ANTHROPIC_MODEL="$MODEL"
+      ;;
+    huggingface)
+      export AI_EDITOR_HUGGINGFACE_MODEL="$MODEL"
+      ;;
+    scripted)
+      ;;
+  esac
+
   source .venv/bin/activate
   uvicorn agentd.main:app --port "$PORT" 2>&1 | tee "$LOG_FILE"
 )

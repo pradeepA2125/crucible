@@ -107,6 +107,7 @@ Key env vars:
 ### Roadmap
 - [x] **Phase 0**: Eval harness and deterministic replay bundles
 - [x] **Phase 1**: Enhanced patch operations (SearchReplaceOpV2, ApplyDiffOpV2, Codex parser)
+- [ ] **Future reliability**: Add explicit `REGENERATING_PLAN` lifecycle state during feedback-driven plan regeneration (instead of overloading `CONTEXT_READY`)
 - [ ] **Phase 2**: Plan v2 with preconditions/postconditions/verification + two-stage retrieval
 - [ ] **Phase 3**: Parity surfaces (timeline/background/code review + MCP policy controls)
 - [ ] **Phase 4**: Workflow layer (issue-driven flows + knowledge spaces + collaboration metadata)

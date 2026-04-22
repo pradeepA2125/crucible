@@ -41,6 +41,7 @@
 ### Upcoming (Phases 2-3)
 - [ ] Plan graph v2 (`preconditions`, `postconditions`, `verification`) and critic taxonomy.
 - [ ] Rules/memory precedence engine and scoped policy evaluation.
+- [ ] Add explicit `REGENERATING_PLAN` lifecycle state for plan-feedback regeneration windows.
 - [ ] Task timeline and artifacts APIs (`/events`, `/timeline`, `/artifacts`).
 - [ ] VS Code timeline UI + background task resume/rollback controls.
 - [ ] Code review assistant mode and MCP policy audit controls.
