@@ -51,6 +51,28 @@ async def test_huggingface_transport_sends_expected_request_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_huggingface_transport_generate_text_returns_output() -> None:
+    fake_client = FakeInferenceClient(outputs=["# Plan\n\n- Add route"])
+    transport = HuggingFaceJsonTransport(
+        api_key="hf_test",
+        max_new_tokens=222,
+        seed=42,
+        inference_client=fake_client,
+    )
+
+    output = await transport.generate_text(
+        model="deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct:fastest",
+        system_instructions="plan instructions",
+        user_payload={"task_id": "task-1", "goal": "x"},
+    )
+
+    assert output == "# Plan\n\n- Add route"
+    call = fake_client.calls[0]
+    assert call["model"] == "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct:fastest"
+    assert "Response:" in call["prompt"]
+
+
+@pytest.mark.asyncio
 async def test_huggingface_transport_rejects_empty_text_output() -> None:
     fake_client = FakeInferenceClient(outputs=[""])
     transport = HuggingFaceJsonTransport(api_key="hf_test", inference_client=fake_client)

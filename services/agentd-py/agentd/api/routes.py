@@ -1,19 +1,26 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from agentd.domain.models import (
     Diagnostic,
+    PlanFeedbackRequest,
     RejectPatchRequest,
+    ResumeTaskRequest,
+    ResumeTaskResponse,
     StepProgress,
     TaskArtifactEntry,
     TaskArtifactsResponse,
+    TaskBudget,
     TaskCreateRequest,
     TaskCreateResponse,
+    TaskEvent,
     TaskRecord,
     TaskResult,
     TaskStatus,
@@ -44,12 +51,16 @@ def _to_task_result(task: TaskRecord) -> TaskResult:
     elif task.latest_patch:
         selected_patch = task.latest_patch
 
-    total_steps = len(task.plan.steps) if task.plan else 0
-    completed_steps = len(task.completed_step_ids)
+    plan_step_ids = [step.id for step in task.plan.steps] if task.plan else []
+    completed_plan_step_ids = [
+        step_id for step_id in task.completed_step_ids if step_id in plan_step_ids
+    ]
+    total_steps = len(plan_step_ids)
+    completed_steps = len(completed_plan_step_ids)
     current_step_id: str | None = None
     if task.plan:
         for step in task.plan.steps:
-            if step.id not in task.completed_step_ids:
+            if step.id not in completed_plan_step_ids:
                 current_step_id = step.id
                 break
 
@@ -79,6 +90,8 @@ def _to_task_result(task: TaskRecord) -> TaskResult:
         step_progress=step_progress,
         execution_trace=task.execution_trace[-50:],
         artifacts_root_path=task.artifacts_root_path,
+        plan_markdown=task.plan_markdown,
+        resume_of_task_id=task.resume_of_task_id,
     )
 
 
@@ -146,8 +159,17 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
+    # Guards against two concurrent plan-feedback calls for the same task.
+    # Safe without a lock: asyncio is single-threaded; the check+add happens
+    # with no await in between, so no other coroutine can interleave.
+    _in_flight_feedback: set[str] = set()
+
+    # Guards against concurrent resume calls for the same PARENT task_id.
+    _in_flight_resume: set[str] = set()
+
     @router.post("/tasks", response_model=TaskCreateResponse)
-    async def create_task(request: TaskCreateRequest, background_tasks: BackgroundTasks) -> TaskCreateResponse:
+    async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
+        import asyncio
         task_id = f"task-{uuid4()}"
         task = TaskRecord(
             task_id=task_id,
@@ -155,12 +177,63 @@ def build_router(
             workspace_path=request.workspace_path,
             mode=request.mode,
             budget=request.budget,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         await store.create(task)
-        background_tasks.add_task(orchestrator.run_task, task_id)
+        asyncio.create_task(orchestrator.run_task(task_id))
         return TaskCreateResponse(task_id=task_id)
+
+    @router.post("/tasks/{task_id}/plan/feedback", response_model=TaskView)
+    async def provide_plan_feedback(
+        task_id: str,
+        request: PlanFeedbackRequest,
+    ) -> TaskView:
+        import asyncio
+
+        # Reject duplicate concurrent calls before any await — safe because there
+        # is no await between the check and the add in asyncio's cooperative model.
+        if task_id in _in_flight_feedback:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Task {task_id} already has a plan-feedback call in progress",
+            )
+        _in_flight_feedback.add(task_id)
+
+        try:
+            task = await store.get(task_id)
+        except KeyError as exc:
+            _in_flight_feedback.discard(task_id)
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if task.status != TaskStatus.AWAITING_PLAN_APPROVAL:
+            _in_flight_feedback.discard(task_id)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Task {task_id} is not awaiting plan approval (status={task.status})",
+            )
+
+        # Mark running before create_task so SSE stream doesn't see the task as idle
+        # during the race window between this return and continue_task's own add().
+        orchestrator._running_tasks.add(task_id)
+
+        async def _run_and_release() -> None:
+            try:
+                await orchestrator.continue_task(task_id, feedback=request.feedback)
+            finally:
+                orchestrator._running_tasks.discard(task_id)
+                _in_flight_feedback.discard(task_id)
+
+        asyncio.create_task(_run_and_release())
+
+        return TaskView(
+            task_id=task.task_id,
+            goal=task.goal,
+            status=task.status,
+            modified_files=task.modified_files,
+            diagnostics=task.diagnostics,
+            plan_markdown=task.plan_markdown,
+        )
 
     @router.get("/tasks/{task_id}", response_model=TaskView)
     async def get_task(task_id: str) -> TaskView:
@@ -175,6 +248,8 @@ def build_router(
             status=task.status,
             modified_files=task.modified_files,
             diagnostics=task.diagnostics,
+            plan_markdown=task.plan_markdown,
+            resume_of_task_id=task.resume_of_task_id,
         )
 
     @router.get("/tasks/{task_id}/result", response_model=TaskResult)
@@ -185,6 +260,59 @@ def build_router(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         return _to_task_result(task)
+
+    @router.get("/tasks/{task_id}/events", response_model=list[TaskEvent])
+    async def get_task_events_route(task_id: str) -> list[TaskEvent]:
+        try:
+            return await store.get_task_events(task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/tasks/{task_id}/stream-patch")
+    async def stream_task_patches(task_id: str) -> StreamingResponse:
+        try:
+            await store.get(task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        # Statuses that will never produce more patch events — safe to close immediately.
+        # AWAITING_PLAN_APPROVAL is intentionally excluded: right after plan approval the
+        # task status is still AWAITING_PLAN_APPROVAL in the DB while continue_task is
+        # starting in the background. Closing early here would miss all patch events.
+        _DONE_STATUSES = {
+            TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED,
+            TaskStatus.READY_FOR_REVIEW,
+        }
+
+        async def event_generator():
+            queue = orchestrator.broadcaster.subscribe(task_id)
+            try:
+                # Drain replay buffer first so late-connecting clients get history
+                while not queue.empty():
+                    event = queue.get_nowait()
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("type") == "done":
+                        return
+
+                # Only close immediately if the task is definitively done or waiting for
+                # user input. Do NOT close just because _running_tasks is empty — there is
+                # a race window between the route returning and the background coroutine
+                # calling _running_tasks.add(), e.g. right after plan approval.
+                if task_id not in orchestrator._running_tasks:
+                    task = await store.get(task_id)
+                    if task.status in _DONE_STATUSES:
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        return
+
+                while True:
+                    event = await queue.get()
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("type") == "done":
+                        break
+            finally:
+                orchestrator.broadcaster.unsubscribe(task_id, queue)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     @router.get("/tasks/{task_id}/artifacts", response_model=TaskArtifactsResponse)
     async def get_task_artifacts(task_id: str) -> TaskArtifactsResponse:
@@ -246,7 +374,7 @@ def build_router(
             raise HTTPException(status_code=500, detail=f"Promotion failed: {exc}") from exc
 
         task.shadow_workspace_path = None
-        task.promoted_at = datetime.now(timezone.utc)
+        task.promoted_at = datetime.now(UTC)
         task = transition(task, TaskStatus.SUCCEEDED, "promotion completed")
         await store.save(task)
         await workspace_manager.prune_checkpoints()
@@ -271,5 +399,155 @@ def build_router(
         await workspace_manager.prune_checkpoints()
 
         return _to_task_result(task)
+
+    @router.post("/tasks/{task_id}/resume", response_model=ResumeTaskResponse)
+    async def resume_task_route(task_id: str, request: ResumeTaskRequest) -> ResumeTaskResponse:
+        import asyncio
+        from uuid import uuid4
+
+        # No-await check+add: safe in asyncio's cooperative concurrency model
+        if task_id in _in_flight_resume:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Resume already in progress for task {task_id}",
+            )
+        _in_flight_resume.add(task_id)
+
+        try:
+            parent = await store.get(task_id)
+        except KeyError as exc:
+            _in_flight_resume.discard(task_id)
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if parent.status not in {TaskStatus.FAILED, TaskStatus.ABORTED}:
+            _in_flight_resume.discard(task_id)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot resume task in {parent.status} state (must be FAILED or ABORTED)",
+            )
+
+        # Stage-specific eligibility — hard 409, no fallback reconstruction
+        if request.stage == "feedback":
+            if not parent.plan_approval_snapshot:
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "No plan approval snapshot available;"
+                        " cannot restore exact feedback state"
+                    ),
+                )
+        if request.stage == "execute":
+            if not parent.plan:
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(status_code=409, detail="No executable plan to resume from")
+            if not parent.shadow_workspace_path or not Path(parent.shadow_workspace_path).exists():
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail="Parent shadow workspace no longer exists; cannot resume execute stage",
+                )
+            # Allow resume even when all steps are done — re-runs full validation
+            # on the existing shadow, which is useful when validation previously
+            # failed for environmental reasons (quota, pre-existing test failures).
+
+        # Merge budget: parent values unless overridden
+        override = request.budget_override
+        merged_budget = TaskBudget(
+            max_iterations=(
+                override.max_iterations if override and override.max_iterations is not None
+                else parent.budget.max_iterations
+            ),
+            max_tokens=(
+                override.max_tokens if override and override.max_tokens is not None
+                else parent.budget.max_tokens
+            ),
+            max_files_touched=(
+                override.max_files_touched if override and override.max_files_touched is not None
+                else parent.budget.max_files_touched
+            ),
+            max_runtime_ms=(
+                override.max_runtime_ms if override and override.max_runtime_ms is not None
+                else parent.budget.max_runtime_ms
+            ),
+        )
+
+        child_id = f"task-{uuid4()}"
+        now = datetime.now(UTC)
+
+        if request.stage == "plan":
+            child = TaskRecord(
+                task_id=child_id,
+                goal=parent.goal,
+                workspace_path=parent.workspace_path,
+                mode=parent.mode,
+                budget=merged_budget,
+                status=TaskStatus.QUEUED,
+                resume_of_task_id=parent.task_id,
+                created_at=now,
+                updated_at=now,
+            )
+        elif request.stage == "feedback":
+            snapshot_state = parent.plan_approval_snapshot.task_state  # type: ignore[union-attr]
+            snapshot_task = TaskRecord.model_validate(snapshot_state)
+            child = TaskRecord(
+                task_id=child_id,
+                goal=snapshot_task.goal,
+                workspace_path=snapshot_task.workspace_path,
+                mode=snapshot_task.mode,
+                budget=merged_budget,
+                status=TaskStatus.AWAITING_PLAN_APPROVAL,
+                plan_markdown=snapshot_task.plan_markdown,
+                diagnostics=snapshot_task.diagnostics,
+                plan_approval_snapshot=snapshot_task.plan_approval_snapshot,
+                shadow_workspace_path=None,  # continue_task() calls prepare() fresh
+                resume_of_task_id=parent.task_id,
+                created_at=now,
+                updated_at=now,
+            )
+        else:  # "execute"
+            # Current task state IS the correct starting point:
+            #   plan/plan_markdown unchanged throughout lifecycle
+            #   completed_step_ids: exactly reflects what finished (failed step excluded)
+            #   modified_files: restored to pre-failed-step state by checkpoint logic
+            #   shadow: restored to pre-failed-step state by _run_step_with_retries
+            child = TaskRecord(
+                task_id=child_id,
+                goal=parent.goal,
+                workspace_path=parent.workspace_path,
+                mode=parent.mode,
+                budget=merged_budget,
+                status=TaskStatus.PLANNED,
+                plan=parent.plan,
+                plan_markdown=parent.plan_markdown,
+                completed_step_ids=list(parent.completed_step_ids),
+                modified_files=list(parent.modified_files),
+                plan_approval_snapshot=parent.plan_approval_snapshot,
+                resume_of_task_id=parent.task_id,
+                created_at=now,
+                updated_at=now,
+            )
+
+        await store.create(child)
+
+        async def _run_and_release() -> None:
+            try:
+                if request.stage == "plan":
+                    await orchestrator.run_task(child_id)
+                elif request.stage == "execute":
+                    shadow = await workspace_manager.clone(
+                        parent.task_id, child_id, parent.workspace_path
+                    )
+                    child_record = await store.get(child_id)
+                    child_record.shadow_workspace_path = str(shadow.shadow_path)
+                    await store.save(child_record)
+                    await orchestrator.resume_task(child_id)
+                # "feedback": no async work — user calls /plan/feedback on child_id
+            finally:
+                _in_flight_resume.discard(task_id)
+
+        asyncio.create_task(_run_and_release())
+
+        return ResumeTaskResponse(task_id=child_id, resume_of_task_id=parent.task_id)
 
     return router

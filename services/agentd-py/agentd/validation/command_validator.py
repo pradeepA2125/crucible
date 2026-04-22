@@ -22,6 +22,9 @@ class ValidationCommand:
     name: str
     command: str
     timeout_sec: int = 300
+    # When True, a non-zero exit emits a warning instead of an error.
+    # Use for linters/type-checkers that should inform but not block.
+    warning_only: bool = False
 
 
 class CommandValidator:
@@ -56,6 +59,7 @@ class CommandValidator:
             command = str(item.get("command", "")).strip()
             name = str(item.get("name", "")).strip() or f"{stage_raw}-check"
             timeout_sec = int(item.get("timeout_sec", 300))
+            warning_only = bool(item.get("warning_only", False))
 
             if not command:
                 msg = f"Validation command '{name}' is missing command text"
@@ -67,6 +71,7 @@ class CommandValidator:
                     name=name,
                     command=command,
                     timeout_sec=timeout_sec,
+                    warning_only=warning_only,
                 )
             )
 
@@ -321,11 +326,12 @@ class CommandValidator:
         except TimeoutError:
             process.kill()
             await process.wait()
+            level = "warning" if command.warning_only else "error"
             return [
                 Diagnostic(
                     source=f"validator:{command.name}",
                     message=f"Command timed out after {command.timeout_sec}s: {command.command}",
-                    level="error",
+                    level=level,
                 )
             ]
 
@@ -338,11 +344,12 @@ class CommandValidator:
             if part.strip()
         )
         message = output or f"Command failed with exit code {process.returncode}: {command.command}"
+        level = "warning" if command.warning_only else "error"
         return [
             Diagnostic(
                 source=f"validator:{command.name}",
                 message=message,
-                level="error",
+                level=level,
             )
         ]
 
@@ -364,15 +371,29 @@ class CommandValidator:
             )
             if shutil.which("mypy"):
                 commands.append(
-                    ValidationCommand(stage="type", name="mypy", command="mypy .")
+                    ValidationCommand(
+                        stage="type",
+                        name="mypy",
+                        command="mypy .",
+                        warning_only=True,
+                    )
                 )
             if shutil.which("ruff"):
                 commands.append(
-                    ValidationCommand(stage="lint", name="ruff", command="ruff check .")
+                    ValidationCommand(
+                        stage="lint",
+                        name="ruff",
+                        command="ruff check .",
+                        warning_only=True,
+                    )
                 )
             if shutil.which("pytest"):
                 commands.append(
-                    ValidationCommand(stage="test", name="pytest", command="pytest -q")
+                    ValidationCommand(
+                        stage="test",
+                        name="pytest",
+                        command="pytest",
+                    )
                 )
 
         package_json = workspace_path / "package.json"

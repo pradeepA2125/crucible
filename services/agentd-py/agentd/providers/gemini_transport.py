@@ -1,15 +1,38 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 from typing import Any
 
 try:
     from google import genai as google_genai
+    from google.genai import errors as google_genai_errors
 except ImportError:
     google_genai = None
+    google_genai_errors = None  # type: ignore[assignment]
 
 from agentd.providers.contracts import ModelJsonTransport
+
+logger = logging.getLogger(__name__)
+
+# Status codes that indicate transient server-side pressure — safe to retry.
+_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 503})
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Return True for transient Gemini errors (503 high demand, 429 rate limit)."""
+    if google_genai_errors is not None:
+        server_error = getattr(google_genai_errors, "ServerError", None)
+        client_error = getattr(google_genai_errors, "ClientError", None)
+        for cls in (server_error, client_error):
+            if cls is not None and isinstance(exc, cls):
+                # SDK stores HTTP status as .code (not .status_code)
+                status_code = getattr(exc, "code", None)
+                if isinstance(status_code, int) and status_code in _RETRYABLE_STATUS_CODES:
+                    return True
+    return False
 
 
 class GeminiJsonTransport(ModelJsonTransport):
@@ -21,6 +44,8 @@ class GeminiJsonTransport(ModelJsonTransport):
         thinking_budget: int | None = None,
         thinking_level: str | None = None,
         include_thoughts: bool = False,
+        timeout_sec: float = 120.0,
+        max_retries: int = 4,
         models_client: Any | None = None,
     ) -> None:
         self._client: Any | None = None
@@ -28,6 +53,8 @@ class GeminiJsonTransport(ModelJsonTransport):
         self._thinking_budget = thinking_budget
         self._thinking_level = normalize_thinking_level(thinking_level)
         self._include_thoughts = include_thoughts
+        self._timeout_sec = timeout_sec
+        self._max_retries = max(0, max_retries)
         if models_client is not None:
             self._models: Any = models_client
             return
@@ -65,14 +92,57 @@ class GeminiJsonTransport(ModelJsonTransport):
         if thinking_config is not None:
             config["thinking_config"] = thinking_config
 
-        response = await self._models.generate_content(
-            model=model,
-            contents=json.dumps(user_payload),
-            config=config,
-        )
-
+        response = await self._call_with_retry(model=model, contents=json.dumps(user_payload), config=config)
         output_text = self._extract_text(response)
         return self._parse_output_object(output_text, schema_name)
+
+    async def generate_text(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> str:
+        config: dict[str, object] = {
+            "temperature": 0,
+            "system_instruction": system_instructions,
+        }
+        thinking_config = self._build_thinking_config()
+        if thinking_config is not None:
+            config["thinking_config"] = thinking_config
+
+        response = await self._call_with_retry(model=model, contents=json.dumps(user_payload), config=config)
+        return self._extract_text(response)
+
+    async def _call_with_retry(self, *, model: str, contents: str, config: dict[str, object]) -> Any:
+        """Call generate_content with timeout and exponential backoff for transient errors."""
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            if attempt > 0:
+                # Exponential backoff: 5s, 10s, 20s, 40s … capped at 60s
+                delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                logger.warning(
+                    "Gemini transient error (attempt %d/%d), retrying in %.0fs",
+                    attempt, self._max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+
+            try:
+                return await asyncio.wait_for(
+                    self._models.generate_content(model=model, contents=contents, config=config),
+                    timeout=self._timeout_sec,
+                )
+            except TimeoutError as exc:
+                msg = f"Gemini generate_content timed out after {self._timeout_sec}s (model={model})"
+                raise RuntimeError(msg) from exc
+            except Exception as exc:
+                if _is_retryable(exc):
+                    last_exc = exc
+                    continue
+                raise
+
+        assert last_exc is not None
+        raise last_exc
 
     def _extract_text(self, response: Any) -> str:
         text = read_value(response, "text")

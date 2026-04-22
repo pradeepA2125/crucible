@@ -10,7 +10,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agentd.domain.models import Diagnostic
+from agentd.domain.models import (
+    Diagnostic,
+    PlanEvidenceFile,
+    PlanEvidencePack,
+    PlanEvidenceSymbol,
+)
+from agentd.runtime.adapters import EvidenceAdapter, GenericEvidenceAdapter
 
 
 def _coerce_int(value: object, default: int) -> int:
@@ -36,6 +42,7 @@ class RetrievalContext:
         default_factory=lambda: {"node_count": 0, "edge_count": 0, "diagnostic_count": 0}
     )
     file_contents: dict[str, str] = field(default_factory=dict)
+    planner_evidence: PlanEvidencePack = field(default_factory=PlanEvidencePack)
 
     @classmethod
     def empty(cls) -> "RetrievalContext":
@@ -46,12 +53,18 @@ class RetrievalContext:
             graph_neighbors=[],
             file_outlines={},
             file_contents={},
+            planner_evidence=PlanEvidencePack(),
             diagnostics_excerpt=[],
             snapshot_age_sec=None,
             snapshot_stats={"node_count": 0, "edge_count": 0, "diagnostic_count": 0},
         )
 
     def as_prompt_payload(self) -> dict[str, object]:
+        planner_evidence = (
+            self.planner_evidence.model_dump(mode="json")
+            if hasattr(self.planner_evidence, "model_dump")
+            else self.planner_evidence
+        )
         return {
             "repository_structure": self.repository_structure,
             "related_files": self.related_files,
@@ -59,6 +72,7 @@ class RetrievalContext:
             "graph_neighbors": self.graph_neighbors,
             "file_outlines": self.file_outlines,
             "file_contents": self.file_contents,
+            "planner_evidence": planner_evidence,
             "diagnostics_excerpt": self.diagnostics_excerpt,
             "snapshot_age_sec": self.snapshot_age_sec,
             "snapshot_stats": self.snapshot_stats,
@@ -72,6 +86,7 @@ class RetrievalArtifactClient:
         ".venv",
         "__pycache__",
         ".pytest_cache",
+        ".mypy_cache",
         "target",
         "dist",
         ".agentd",
@@ -86,19 +101,26 @@ class RetrievalArtifactClient:
         max_age_sec: int = 900,
         index_command_template: str | None = None,
         index_timeout_sec: int = 120,
+        evidence_adapter: EvidenceAdapter | None = None,
     ) -> None:
         self._snapshot_path_template = snapshot_path_template
         self._max_age_sec = max_age_sec
         self._index_command_template = index_command_template
         self._index_timeout_sec = index_timeout_sec
+        self._evidence_adapter = evidence_adapter or GenericEvidenceAdapter()
 
     @classmethod
-    def from_env(cls) -> "RetrievalArtifactClient":
+    def from_env(
+        cls,
+        *,
+        evidence_adapter: EvidenceAdapter | None = None,
+    ) -> "RetrievalArtifactClient":
         return cls(
             snapshot_path_template=os.getenv("AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH"),
             max_age_sec=int(os.getenv("AI_EDITOR_RETRIEVAL_MAX_AGE_SEC", "900")),
             index_command_template=os.getenv("AI_EDITOR_INDEXER_INDEX_CMD"),
             index_timeout_sec=int(os.getenv("AI_EDITOR_INDEXER_INDEX_TIMEOUT_SEC", "120")),
+            evidence_adapter=evidence_adapter,
         )
 
     def load_context(
@@ -311,7 +333,10 @@ class RetrievalArtifactClient:
             hit_count = sum(1 for term in terms if term in node_name or term in node_path)
             if hit_count == 0:
                 continue
-            score = hit_count + self._path_bias_score(node_path, goal_lower)
+            score = hit_count + self._evidence_adapter.path_relevance_score(
+                goal=goal,
+                normalized_path=node_path,
+            )
             
             # Deprioritize test symbols unless goal mentions tests
             if "test_" in node_name and "test" not in goal_lower:
@@ -396,6 +421,7 @@ class RetrievalArtifactClient:
             if outlines:
                 file_outlines[target_file] = outlines
 
+        relevant_files = set(top_files)
         diagnostics_excerpt: list[str] = []
         for item in diagnostic_items:
             excerpt = self._format_diagnostic_excerpt(
@@ -403,9 +429,13 @@ class RetrievalArtifactClient:
                 workspace_root=workspace_root,
                 snapshot_workspace_root=snapshot_workspace_root,
             )
-            if excerpt is not None:
-                diagnostics_excerpt.append(excerpt)
-            if len(diagnostics_excerpt) >= 20:
+            if excerpt is None:
+                continue
+            normalized_file = excerpt.split(":", 1)[0]
+            if relevant_files and normalized_file not in relevant_files:
+                continue
+            diagnostics_excerpt.append(excerpt)
+            if len(diagnostics_excerpt) >= 12:
                 break
 
         node_count = _coerce_int(
@@ -422,26 +452,37 @@ class RetrievalArtifactClient:
         )
 
         repository_structure: list[str] = []
-        # Optimization: keep structure walking shallow and fast
+        workspace_files_index = self._build_workspace_files_index(workspace_root)
         for root, dirs, files in os.walk(workspace_root):
             rel_root = Path(root).relative_to(workspace_root)
             if self._is_ignored_relative_path(rel_root):
                 dirs.clear()
                 continue
-            
+
             level = len(rel_root.parts)
-            if level > 5: # Shallow walk for summary
+            if level > 5:
                 dirs.clear()
                 continue
-            
+
             indent = "  " * level
             display_name = "." if str(rel_root) == "." else rel_root.name
-            
+
             valid_dirs = [d for d in dirs if not self._is_ignored_relative_path(rel_root / d)]
             valid_files = [f for f in files if self._is_supported_source_path(Path(f))]
             if valid_dirs or valid_files:
                 summary = f"{indent}{display_name}/ ({len(valid_dirs)} dirs, {len(valid_files)} source files)"
                 repository_structure.append(summary)
+
+        planner_evidence = self._build_planner_evidence(
+            workspace_root=workspace_root,
+            workspace_files_index=workspace_files_index,
+            goal_terms=terms,
+            matched_nodes=matched_nodes,
+            node_items=node_items,
+            top_files=top_files,
+            diagnostics_excerpt=diagnostics_excerpt,
+            snapshot_age_sec=age_sec,
+        )
 
         return RetrievalContext(
             repository_structure=repository_structure,
@@ -456,6 +497,7 @@ class RetrievalArtifactClient:
                 "edge_count": edge_count,
                 "diagnostic_count": diagnostic_count,
             },
+            planner_evidence=planner_evidence,
         )
 
     def _normalize_snapshot_path(
@@ -516,25 +558,188 @@ class RetrievalArtifactClient:
         ext = path.suffix.lower()
         return ext in {".ts", ".tsx", ".py", ".rs"}
 
-    def _path_bias_score(self, normalized_path: str, goal_lower: str) -> int:
-        score = 0
-        if "agentd-py" in goal_lower and normalized_path.startswith("services/agentd-py/"):
-            score += 5
-        if "indexer" in goal_lower and normalized_path.startswith("services/indexer-rs/"):
-            score += 5
-        if ("vscode" in goal_lower or "extension" in goal_lower) and normalized_path.startswith(
-            "apps/vscode-extension/"
-        ):
-            score += 4
-        if (
-            "editor-client" in goal_lower
-            or "typescript client" in goal_lower
-            or "sdk" in goal_lower
-        ) and normalized_path.startswith("apps/editor-client/"):
-            score += 4
-        if "docs" in goal_lower and normalized_path.startswith("docs/"):
-            score += 2
-        return score
+    def _build_workspace_files_index(self, workspace_root: Path) -> list[str]:
+        indexed: list[str] = []
+        for root, dirs, files in os.walk(workspace_root):
+            rel_root = Path(root).relative_to(workspace_root)
+            if self._is_ignored_relative_path(rel_root):
+                dirs.clear()
+                continue
+            dirs[:] = sorted(d for d in dirs if not self._is_ignored_relative_path(rel_root / d))
+            for file_name in sorted(files):
+                rel_path = (Path(root) / file_name).relative_to(workspace_root)
+                if self._is_ignored_relative_path(rel_path):
+                    continue
+                indexed.append(rel_path.as_posix())
+                if len(indexed) >= 15000:
+                    return indexed
+        return indexed
+
+    def _build_planner_evidence(
+        self,
+        *,
+        workspace_root: Path,
+        workspace_files_index: list[str],
+        goal_terms: set[str],
+        matched_nodes: list[dict[str, object]],
+        node_items: list[dict[str, object]],
+        top_files: list[str],
+        diagnostics_excerpt: list[str],
+        snapshot_age_sec: float | None,
+    ) -> PlanEvidencePack:
+        evidence_files: list[PlanEvidenceFile] = []
+        evidence_symbols: list[PlanEvidenceSymbol] = []
+        for target_file in top_files[:8]:
+            excerpt_info = self._extract_file_evidence(
+                workspace_root=workspace_root,
+                file_path=target_file,
+                matched_nodes=matched_nodes,
+                goal_terms=goal_terms,
+            )
+            if excerpt_info is None:
+                continue
+            evidence_files.append(
+                PlanEvidenceFile(
+                    path=target_file,
+                    excerpt=excerpt_info["excerpt"],
+                    rationale=excerpt_info["rationale"],
+                    line_start=excerpt_info["line_start"],
+                    line_end=excerpt_info["line_end"],
+                )
+            )
+
+        seen_symbol_keys: set[tuple[str, str]] = set()
+        for node in matched_nodes:
+            node_name = str(node.get("name", "")).strip()
+            node_kind = str(node.get("kind", "")).strip()
+            node_file = node.get("path")
+            if not node_name or not isinstance(node_file, str) or node_kind == "File":
+                continue
+            symbol_key = (node_file, node_name)
+            if symbol_key in seen_symbol_keys:
+                continue
+            seen_symbol_keys.add(symbol_key)
+            snippet = self._extract_symbol_snippet(
+                workspace_root=workspace_root,
+                file_path=node_file,
+                line=_coerce_int(node.get("line"), 0) or None,
+                symbol=node_name,
+            )
+            evidence_symbols.append(
+                PlanEvidenceSymbol(
+                    name=node_name,
+                    kind=node_kind,
+                    file=node_file,
+                    line=_coerce_int(node.get("line"), 0) or None,
+                    snippet=snippet,
+                )
+            )
+            if len(evidence_symbols) >= 16:
+                break
+
+        category_facts = self._evidence_adapter.build_category_facts(
+            evidence_files=evidence_files,
+        )
+
+        confidence_notes: list[str] = []
+        if snapshot_age_sec is not None and snapshot_age_sec > self._max_age_sec:
+            confidence_notes.append(
+                f"Snapshot is stale ({snapshot_age_sec:.1f}s old); prefer evidence excerpts over graph freshness."
+            )
+        if not evidence_files:
+            confidence_notes.append("No grounded file excerpts were extracted from the current workspace.")
+        if not evidence_symbols:
+            confidence_notes.append("No grounded symbol evidence was extracted for this goal.")
+        if not diagnostics_excerpt:
+            confidence_notes.append("No goal-relevant diagnostics were found in the retrieval snapshot.")
+        if len(workspace_files_index) == 0:
+            confidence_notes.append("Workspace file index is empty; file-path validation confidence is low.")
+
+        return PlanEvidencePack(
+            workspace_files_index=workspace_files_index,
+            evidence_files=evidence_files,
+            evidence_symbols=evidence_symbols,
+            evidence_routes_models_storage=category_facts,
+            diagnostics_excerpt=diagnostics_excerpt,
+            confidence_notes=confidence_notes,
+        )
+
+    def _extract_file_evidence(
+        self,
+        *,
+        workspace_root: Path,
+        file_path: str,
+        matched_nodes: list[dict[str, object]],
+        goal_terms: set[str],
+    ) -> dict[str, object] | None:
+        absolute_path = workspace_root / file_path
+        if not absolute_path.exists() or not absolute_path.is_file():
+            return None
+        try:
+            lines = absolute_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+
+        file_nodes = [node for node in matched_nodes if node.get("path") == file_path]
+        anchor_line: int | None = None
+        rationale = "keyword-grounded excerpt"
+        if file_nodes:
+            line_values = [
+                _coerce_int(node.get("line"), 0)
+                for node in file_nodes
+                if _coerce_int(node.get("line"), 0) > 0
+            ]
+            if line_values:
+                anchor_line = min(line_values)
+                rationale = "symbol-grounded excerpt"
+
+        if anchor_line is None and goal_terms:
+            for index, line in enumerate(lines, start=1):
+                lowered = line.lower()
+                if any(term in lowered for term in goal_terms):
+                    anchor_line = index
+                    break
+
+        if anchor_line is None:
+            anchor_line = 1
+
+        start = max(1, anchor_line - 3)
+        end = min(len(lines), start + 11)
+        excerpt = "\n".join(lines[start - 1 : end])
+        return {
+            "excerpt": excerpt,
+            "rationale": rationale,
+            "line_start": start,
+            "line_end": end,
+        }
+
+    def _extract_symbol_snippet(
+        self,
+        *,
+        workspace_root: Path,
+        file_path: str,
+        line: int | None,
+        symbol: str,
+    ) -> str | None:
+        absolute_path = workspace_root / file_path
+        if not absolute_path.exists() or not absolute_path.is_file():
+            return None
+        try:
+            lines = absolute_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return None
+
+        if line is None or line <= 0:
+            for index, content in enumerate(lines, start=1):
+                if symbol in content:
+                    line = index
+                    break
+        if line is None or line <= 0:
+            return None
+
+        start = max(1, line - 2)
+        end = min(len(lines), line + 3)
+        return "\n".join(lines[start - 1 : end])
 
     def _format_diagnostic_excerpt(
         self,

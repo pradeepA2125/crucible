@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 
@@ -67,6 +68,10 @@ class WatsonxJsonTransport(ModelJsonTransport):
             f"OUTPUT:"
         )
 
+        if GenParams is None:
+            msg = "ibm-watsonx-ai package is required for WatsonxJsonTransport"
+            raise RuntimeError(msg)
+
         params = {
             GenParams.DECODING_METHOD: "greedy",
             GenParams.MAX_NEW_TOKENS: 8192,  # Increased to allow for reasoning + large JSON
@@ -82,7 +87,7 @@ class WatsonxJsonTransport(ModelJsonTransport):
         )
 
         # Watsonx ModelInference is synchronous in the base SDK
-        response = model_inference.generate_text(prompt=prompt)
+        response = await asyncio.to_thread(model_inference.generate_text, prompt=prompt)
         
         # Extract thinking if present
         thinking = ""
@@ -106,6 +111,42 @@ class WatsonxJsonTransport(ModelJsonTransport):
                 f.write(f"--- MODEL: {model} ---\n{thinking}\n\n")
 
         return self._parse_output_object(response)
+
+    async def generate_text(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> str:
+        """Generates raw text using watsonx.ai ModelInference."""
+        prompt = (
+            f"{system_instructions}\n\n"
+            f"CONTEXT:\n{json.dumps(user_payload, indent=2)}\n\n"
+            f"OUTPUT:"
+        )
+
+        if GenParams is None:
+            msg = "ibm-watsonx-ai package is required for WatsonxJsonTransport"
+            raise RuntimeError(msg)
+
+        params = {
+            GenParams.DECODING_METHOD: "greedy",
+            GenParams.MAX_NEW_TOKENS: 4096,
+            GenParams.MIN_NEW_TOKENS: 1,
+        }
+
+        model_inference = ModelInference(
+            model_id=model,
+            params=params,
+            credentials=self.credentials,
+            project_id=self.project_id,
+            space_id=self.space_id,
+        )
+
+        # Watsonx ModelInference is synchronous in the base SDK
+        response = await asyncio.to_thread(model_inference.generate_text, prompt=prompt)
+        return response.strip()
 
     def _parse_output_object(self, output_text: str) -> dict[str, object]:
         # Strip potential markdown fences and other noise

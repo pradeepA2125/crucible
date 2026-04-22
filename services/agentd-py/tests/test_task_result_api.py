@@ -24,6 +24,9 @@ class DummyOrchestrator:
     async def run_task(self, task_id: str) -> None:
         _ = task_id
 
+    async def continue_task(self, task_id: str, feedback: str | None = None) -> None:
+        _ = (task_id, feedback)
+
 
 def _build_app(
     store: InMemoryTaskStore,
@@ -38,7 +41,14 @@ def _sample_plan() -> PlanDocument:
     return PlanDocument.model_validate(
         {
             "analysis": "Need review",
-            "steps": [{"id": "S1", "goal": "Update file", "targets": ["src/main.py"], "risk": "low"}],
+            "steps": [
+                {
+                    "id": "S1",
+                    "goal": "Update file",
+                    "targets": [{"path": "src/main.py", "intent": "existing"}],
+                    "risk": "low",
+                }
+            ],
             "expected_files": ["src/main.py"],
             "stop_conditions": ["validation passes"],
         }
@@ -107,6 +117,7 @@ async def test_get_task_result_returns_rich_task_payload(tmp_path: Path) -> None
     assert payload["step_progress"]["total_steps"] == 1
     assert payload["step_progress"]["completed_steps"] == 1
     assert payload["execution_trace"][0]["step_id"] == "S1"
+    assert payload["plan_markdown"] is None
 
 
 @pytest.mark.asyncio
@@ -254,7 +265,35 @@ async def test_get_task_result_returns_selected_patch_candidate(tmp_path: Path) 
     payload = response.json()
     assert payload["selected_candidate_id"] == "c2"
     assert payload["patch"]["candidate_id"] == "c2"
-    assert len(payload["patch_candidates"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_task_result_ignores_repair_steps_in_step_progress(tmp_path: Path) -> None:
+    store = InMemoryTaskStore()
+    manager = ShadowWorkspaceManager(root_path=tmp_path / "shadows")
+
+    real_workspace = tmp_path / "real"
+    real_workspace.mkdir(parents=True)
+
+    task = TaskRecord(
+        task_id="task-repair-progress",
+        goal="goal",
+        workspace_path=str(real_workspace),
+        status=TaskStatus.READY_FOR_REVIEW,
+        plan=_sample_plan(),
+        completed_step_ids=["S1", "repair-full-validation"],
+    )
+    await store.create(task)
+
+    app = _build_app(store, manager)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/v1/tasks/task-repair-progress/result")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["step_progress"]["total_steps"] == 1
+    assert payload["step_progress"]["completed_steps"] == 1
+    assert payload["step_progress"]["remaining_steps"] == 0
 
 
 @pytest.mark.asyncio

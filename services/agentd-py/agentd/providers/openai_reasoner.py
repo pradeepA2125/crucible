@@ -35,16 +35,58 @@ class OpenAIReasoningEngine:
             retrieval_context,
         )
 
+    async def create_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+    ) -> str:
+        return await self._engine.create_markdown_plan(
+            task,
+            workspace_path,
+            retrieval_context,
+        )
+
+    async def critique_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        plan_markdown: str,
+    ) -> object:
+        return await self._engine.critique_markdown_plan(
+            task,
+            workspace_path,
+            retrieval_context,
+            plan_markdown,
+        )
+
+    async def critique_json_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        candidate_plan: dict[str, object],
+    ) -> object:
+        return await self._engine.critique_json_plan(
+            task,
+            workspace_path,
+            retrieval_context,
+            candidate_plan,
+        )
+
     async def create_patch(
         self,
         task: TaskRecord,
         workspace_path: str,
         diagnostics: list[Diagnostic],
         retrieval_context: dict[str, object],
+        **kwargs: object,
     ) -> object:
         return await self._engine.create_patch(
             task,
             workspace_path,
             diagnostics,
             retrieval_context,
+            **kwargs,
         )

@@ -7,23 +7,35 @@ from .models import TaskEvent, TaskRecord, TaskStatus
 
 _TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.QUEUED: {TaskStatus.CONTEXT_READY, TaskStatus.FAILED, TaskStatus.ABORTED},
-    TaskStatus.CONTEXT_READY: {TaskStatus.PLANNED, TaskStatus.FAILED, TaskStatus.ABORTED},
+    TaskStatus.CONTEXT_READY: {
+        TaskStatus.AWAITING_PLAN_APPROVAL,
+        TaskStatus.FAILED,
+        TaskStatus.ABORTED,
+    },
+    TaskStatus.AWAITING_PLAN_APPROVAL: {TaskStatus.PLANNED, TaskStatus.CONTEXT_READY, TaskStatus.FAILED, TaskStatus.ABORTED},
     TaskStatus.PLANNED: {
-        TaskStatus.PATCHED,
+        TaskStatus.EXECUTING,
+        TaskStatus.FAILED,
+        TaskStatus.ABORTED,
+    },
+    TaskStatus.EXECUTING: {
         TaskStatus.VALIDATING,
-        TaskStatus.REPAIRING,
         TaskStatus.FAILED,
         TaskStatus.ABORTED,
     },
-    TaskStatus.PATCHED: {TaskStatus.VALIDATING, TaskStatus.FAILED, TaskStatus.ABORTED},
     TaskStatus.VALIDATING: {
-        TaskStatus.PLANNED,
-        TaskStatus.READY_FOR_REVIEW,
+        TaskStatus.VALIDATED,
         TaskStatus.REPAIRING,
         TaskStatus.FAILED,
         TaskStatus.ABORTED,
     },
-    TaskStatus.REPAIRING: {TaskStatus.PATCHED, TaskStatus.FAILED, TaskStatus.ABORTED},
+    TaskStatus.REPAIRING: {
+        TaskStatus.EXECUTING,
+        TaskStatus.VALIDATING,
+        TaskStatus.FAILED,
+        TaskStatus.ABORTED,
+    },
+    TaskStatus.VALIDATED: {TaskStatus.READY_FOR_REVIEW, TaskStatus.FAILED, TaskStatus.ABORTED},
     TaskStatus.READY_FOR_REVIEW: {TaskStatus.PROMOTING, TaskStatus.ABORTED, TaskStatus.FAILED},
     TaskStatus.PROMOTING: {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED},
     TaskStatus.SUCCEEDED: set(),

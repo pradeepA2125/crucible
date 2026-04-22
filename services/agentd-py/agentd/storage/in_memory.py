@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from agentd.domain.models import TaskRecord
+from agentd.domain.models import TaskEvent, TaskRecord
 from agentd.storage.base import TaskStore
 
 
@@ -34,3 +34,10 @@ class InMemoryTaskStore(TaskStore):
             except KeyError as exc:
                 msg = f"Task not found: {task_id}"
                 raise KeyError(msg) from exc
+
+    async def get_task_events(self, task_id: str) -> list[TaskEvent]:
+        async with self._lock:
+            if task_id not in self._tasks:
+                msg = f"Task not found: {task_id}"
+                raise KeyError(msg)
+            return list(self._tasks[task_id].events)

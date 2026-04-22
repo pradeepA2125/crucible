@@ -13,3 +13,11 @@ class ModelJsonTransport(Protocol):
         system_instructions: str,
         user_payload: dict[str, object],
     ) -> dict[str, object]: ...
+
+    async def generate_text(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> str: ...

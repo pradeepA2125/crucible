@@ -20,8 +20,8 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         *,
         api_key: str | None = None,
         base_url: str = "https://openrouter.ai/api/v1",
-        site_url: str = "https://github.com/pradeepA2125/shadow-forge",
-        site_name: str = "AI Editor",
+        site_url: str | None = None,
+        site_name: str | None = None,
         timeout_sec: float = 120.0,
         completions_client: Any | None = None,
     ) -> None:
@@ -34,17 +34,19 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             msg = "OPENROUTER_API_KEY is required for OpenRouterJsonTransport"
             raise RuntimeError(msg)
 
-        # OpenRouter-specific headers for rankings and credits
-        extra_headers = {
-            "HTTP-Referer": site_url,
-            "X-Title": site_name,
-        }
+        resolved_site_url = site_url or os.getenv("AI_EDITOR_OPENROUTER_SITE_URL")
+        resolved_site_name = site_name or os.getenv("AI_EDITOR_OPENROUTER_SITE_NAME")
+        extra_headers: dict[str, str] = {}
+        if resolved_site_url:
+            extra_headers["HTTP-Referer"] = resolved_site_url
+        if resolved_site_name:
+            extra_headers["X-Title"] = resolved_site_name
 
         client = AsyncOpenAI(
             api_key=resolved_api_key,
             base_url=base_url,
             timeout=timeout_sec,
-            default_headers=extra_headers,
+            default_headers=extra_headers or None,
         )
         self._completions = client.chat.completions
 
@@ -58,39 +60,92 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         user_payload: dict[str, object],
     ) -> dict[str, object]:
         """
-        Generates JSON using OpenRouter. We omit max_tokens to allow reasoning
-        models to use their full capacity.
+        Generates JSON using OpenRouter with robust schema enforcement.
+        We attempt 'json_schema' (Structured Outputs) first and fallback
+        to 'json_object' if the provider does not support it.
         """
-        # Some OpenRouter providers (like StepFun) do not support 'json_schema'
-        # and only support 'json_object'. We move the schema into the prompt
-        # and use 'json_object' mode for broader compatibility.
-        instructions_with_schema = (
-            f"{system_instructions}\n\n"
-            f"You MUST return a JSON object that strictly follows this schema:\n"
-            f"{json.dumps(schema, indent=2)}"
-        )
-        
-        create_kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": instructions_with_schema},
-                {"role": "user", "content": json.dumps(user_payload)},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 1.0,
-        }
-
         # Enable reasoning for openrouter/free or via environment variable
         reasoning_enabled = os.getenv("AI_EDITOR_OPENROUTER_REASONING_ENABLED", "true").lower() == "true"
-        if reasoning_enabled or model == "openrouter/free":
-            create_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
-
+        
+        # Strategy 1: Attempt Structured Outputs (json_schema)
         try:
+            create_kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_instructions},
+                    {"role": "user", "content": json.dumps(user_payload)},
+                ],
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "strict": True,
+                        "schema": schema,
+                    },
+                },
+                "temperature": 1.0,
+            }
+            
+            if reasoning_enabled or model == "openrouter/free":
+                create_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
+
             response = await self._completions.create(**create_kwargs)
             output_text = self._extract_text(response)
             return self._parse_output_object(output_text)
+            
         except Exception as e:
-            # For OpenRouter, we just re-raise but could add more logging here
+            # Strategy 2: Fallback to json_object with schema in prompt
+            # Some providers (like StepFun) do not support 'json_schema'
+            # or 'strict' mode.
+            print(f"[DEBUG] OpenRouter json_schema failed, falling back to json_object: {e}")
+            
+            instructions_with_schema = (
+                f"{system_instructions}\n\n"
+                f"You MUST return a JSON object that strictly follows this schema:\n"
+                f"{json.dumps(schema, indent=2)}"
+            )
+            
+            fallback_kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": instructions_with_schema},
+                    {"role": "user", "content": json.dumps(user_payload)},
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 1.0,
+            }
+            
+            if reasoning_enabled or model == "openrouter/free":
+                fallback_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
+
+            try:
+                response = await self._completions.create(**fallback_kwargs)
+                output_text = self._extract_text(response)
+                return self._parse_output_object(output_text)
+            except Exception as e2:
+                raise RuntimeError(f"OpenRouter API error (fallback also failed): {e2}") from e2
+
+    async def generate_text(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> str:
+        """Generates raw text using OpenRouter."""
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": json.dumps(user_payload)},
+            ],
+            "temperature": 1.0,
+        }
+
+        try:
+            response = await self._completions.create(**create_kwargs)
+            return self._extract_text(response)
+        except Exception as e:
             raise RuntimeError(f"OpenRouter API error: {e}") from e
 
     def _extract_text(self, response: Any) -> str:

@@ -68,3 +68,24 @@ class OpenAIJsonTransport(ModelJsonTransport):
             raise RuntimeError(msg)
 
         return payload
+
+    async def generate_text(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> str:
+        response = await self._responses.create(
+            model=model,
+            instructions=system_instructions,
+            input=json.dumps(user_payload),
+            temperature=0,
+        )
+
+        output_text = getattr(response, "output_text", "")
+        if not output_text:
+            msg = "OpenAI response contained no output_text"
+            raise RuntimeError(msg)
+
+        return output_text.strip()

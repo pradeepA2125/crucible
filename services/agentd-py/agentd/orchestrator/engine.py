@@ -8,9 +8,12 @@ import os
 import shutil
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
+
+from pydantic import ValidationError
 
 from agentd.domain.models import (
     CandidateScoreBreakdown,
@@ -20,19 +23,28 @@ from agentd.domain.models import (
     PatchDocumentV2,
     PatchFailureCode,
     PatchPreflightIssue,
+    PlanCritiqueIssue,
+    PlanCritiqueResult,
+    PlanEvidencePack,
     PlanStep,
+    PlanTargetIntent,
     PlanDocument,
     StepExecutionTrace,
+    StepRunResult,
+    TaskMilestoneSnapshot,
     TaskRecord,
     TaskStatus,
     ValidationResult,
 )
 from agentd.domain.state_machine import assert_budget, bump_usage, transition
+from agentd.orchestrator.broadcaster import PatchEventBroadcaster
 from agentd.patch.engine import PatchEngine
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.retrieval.artifact_client import RetrievalContext
+from agentd.runtime.adapters import GenericPlanningAdapter, PlanningAdapter
+from agentd.runtime.artifacts import task_artifacts_root
 from agentd.storage.base import TaskStore
-from agentd.workspace.shadow import ShadowWorkspaceManager
+from agentd.workspace.shadow import ShadowWorkspace, ShadowWorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +102,7 @@ class AgentOrchestrator:
         patch_engine: PatchEngine,
         workspace_manager: ShadowWorkspaceManager,
         retrieval_client: RetrievalClient | None = None,
+        planning_adapter: PlanningAdapter | None = None,
         max_attempts_per_step: int = 3,
         step_scoped_mode: bool = True,
         patch_candidate_count: int = 3,
@@ -100,16 +113,20 @@ class AgentOrchestrator:
         self._patch_engine = patch_engine
         self._workspace_manager = workspace_manager
         self._retrieval_client = retrieval_client or NullRetrievalClient()
+        self._planning_adapter = planning_adapter or GenericPlanningAdapter()
         self._max_attempts_per_step = max(1, max_attempts_per_step)
         self._step_scoped_mode = step_scoped_mode
         self._patch_candidate_count = max(1, patch_candidate_count)
+        self.broadcaster = PatchEventBroadcaster()
+        self._running_tasks: set[str] = set()
 
     async def run_task(self, task_id: str) -> TaskRecord:
         task = await self._store.get(task_id)
+        self._running_tasks.add(task_id)
         started_at_ms = int(time.time() * 1000)
         retrieval_context = RetrievalContext.empty()
         persistent_diagnostics: list[Diagnostic] = []
-        task.artifacts_root_path = str(self._artifacts_root(task.task_id))
+        task.artifacts_root_path = str(self._artifacts_root(task.task_id, task.workspace_path))
 
         try:
             task = transition(task, TaskStatus.CONTEXT_READY, "context assembled")
@@ -133,98 +150,331 @@ class AgentOrchestrator:
             task.diagnostics = [*persistent_diagnostics]
             await self._store.save(task)
 
-            plan_raw = await self._reasoning_engine.create_plan(
+            self._write_debug_artifact(
+                task.task_id,
+                "plan-evidence",
+                {
+                    "workspace_files_index": workspace_files_index,
+                    "planner_evidence": plan_context_payload.get("planner_evidence"),
+                    "related_files": plan_context_payload.get("related_files"),
+                    "related_symbols": plan_context_payload.get("related_symbols"),
+                    "diagnostics_excerpt": plan_context_payload.get("diagnostics_excerpt"),
+                },
+                artifacts_root_path=task.artifacts_root_path,
+            )
+            print("\n[PLAN] Entering Planning Node...")
+            plan_markdown, critique_diagnostics = await self._generate_repo_grounded_markdown_plan(
                 task,
                 str(shadow_workspace.shadow_path),
                 plan_context_payload,
             )
-            task.plan = PlanDocument.model_validate(plan_raw)
-            unresolved_targets = self._find_unresolved_plan_targets(
-                task.plan,
-                workspace_files_set,
-                workspace_files_index,
+            print("[PLAN] Plan Created.")
+            task.plan_markdown = plan_markdown
+            task.diagnostics = [*persistent_diagnostics, *critique_diagnostics]
+            task.plan_approval_snapshot = TaskMilestoneSnapshot(
+                captured_at=datetime.now(timezone.utc),
+                task_state=task.model_dump(mode="json"),
             )
-            if unresolved_targets:
-                plan_context_payload["plan_validation_feedback"] = {
-                    "missing_targets": [
-                        {
-                            "step_id": item["step_id"],
-                            "target": item["target"],
-                            "suggestion": item["suggestion"],
-                        }
-                        for item in unresolved_targets
-                    ],
-                    "rule": (
-                        "Use existing paths from workspace_files_index unless the step explicitly "
-                        "creates a new tests/docs file."
-                    ),
-                }
-                self._write_debug_artifact(
-                    task.task_id,
-                    "plan-feedback",
-                    plan_context_payload["plan_validation_feedback"],
-                )
-                replanned_raw = await self._reasoning_engine.create_plan(
+            task = transition(task, TaskStatus.AWAITING_PLAN_APPROVAL, "plan generated; awaiting approval")
+            await self._store.save(task)
+
+            # In Spec-First mode, we pause here and wait for the user to approve/revise.
+            # Do NOT broadcast "done" — the execution stream hasn't started yet.
+            # The replay buffer is cleared so that the post-approval stream starts fresh.
+            self._running_tasks.discard(task_id)
+            self.broadcaster.clear_replay(task_id)
+            return task
+
+        except Exception as exc:
+            logger.error(f"Task {task_id} failed during initialization", exc_info=True)
+            task.diagnostics.append(
+                Diagnostic(source="orchestrator", message=str(exc), level="error")
+            )
+            try:
+                task = transition(task, TaskStatus.FAILED, "initialization failed")
+            except ValueError:
+                pass
+            await self._store.save(task)
+            self._running_tasks.discard(task_id)
+            self.broadcaster.broadcast(task_id, {"type": "done"})
+            return task
+
+    async def continue_task(self, task_id: str, feedback: str | None = None) -> TaskRecord:
+        task = await self._store.get(task_id)
+        if task.status != TaskStatus.AWAITING_PLAN_APPROVAL:
+            raise ValueError(f"Task {task_id} is not awaiting plan approval")
+
+        self._running_tasks.add(task_id)
+        started_at_ms = int(time.time() * 1000)
+        task.artifacts_root_path = str(self._artifacts_root(task.task_id, task.workspace_path))
+
+        try:
+            shadow_workspace = await self._workspace_manager.prepare(task.task_id, task.workspace_path)
+            task.shadow_workspace_path = str(shadow_workspace.shadow_path)
+            
+            retrieval_context, retrieval_warnings = self._retrieval_client.load_context(
+                task.workspace_path,
+                task.goal,
+            )
+            workspace_files_index = self._collect_workspace_file_index(
+                Path(shadow_workspace.shadow_path)
+            )
+            workspace_files_set = set(workspace_files_index)
+            plan_context_payload = retrieval_context.as_prompt_payload()
+            plan_context_payload["workspace_files_index"] = workspace_files_index
+            self._write_debug_artifact(
+                task.task_id,
+                "plan-evidence",
+                {
+                    "workspace_files_index": workspace_files_index,
+                    "planner_evidence": plan_context_payload.get("planner_evidence"),
+                    "related_files": plan_context_payload.get("related_files"),
+                    "related_symbols": plan_context_payload.get("related_symbols"),
+                    "diagnostics_excerpt": plan_context_payload.get("diagnostics_excerpt"),
+                },
+                artifacts_root_path=task.artifacts_root_path,
+            )
+
+            if feedback:
+                # User provided feedback, regenerate markdown plan
+                task = transition(task, TaskStatus.CONTEXT_READY, "regenerating plan with feedback")
+                await self._store.save(task)
+                
+                plan_markdown, critique_diagnostics = await self._generate_repo_grounded_markdown_plan(
                     task,
                     str(shadow_workspace.shadow_path),
-                    plan_context_payload,
+                    {**plan_context_payload, "plan_feedback": feedback},
                 )
-                task.plan = PlanDocument.model_validate(replanned_raw)
-                unresolved_targets = self._find_unresolved_plan_targets(
-                    task.plan,
+                task.plan_markdown = plan_markdown
+                task.diagnostics = [*retrieval_warnings, *critique_diagnostics]
+                task.plan_approval_snapshot = TaskMilestoneSnapshot(
+                    captured_at=datetime.now(timezone.utc),
+                    task_state=task.model_dump(mode="json"),
+                )
+                task = transition(task, TaskStatus.AWAITING_PLAN_APPROVAL, "plan regenerated; awaiting approval")
+                await self._store.save(task)
+                self._running_tasks.discard(task_id)
+                self.broadcaster.clear_replay(task_id)
+                return task
+
+            # Approved! Generate JSON plan from Markdown
+            print("\n[PLAN] Plan Approved. Generating executable JSON plan...")
+            task = transition(task, TaskStatus.PLANNED, "plan approved; starting execution")
+            await self._store.save(task)
+
+            plan_validation_feedback: dict[str, object] | None = None
+            plan_draft_rounds: list[dict[str, object]] = []
+            plan_critique_rounds: list[dict[str, object]] = []
+            unresolved_targets: list[dict[str, str | None]] = []
+            grounding_issues: list[PlanCritiqueIssue] = []
+            schema_errors: list[dict[str, object]] = []
+            for attempt in range(3):
+                validation_context = dict(plan_context_payload)
+                if plan_validation_feedback is not None:
+                    validation_context["plan_validation_feedback"] = plan_validation_feedback
+
+                plan_raw = await self._reasoning_engine.create_plan(
+                    task,
+                    str(shadow_workspace.shadow_path),
+                    validation_context,
+                )
+                plan_draft_rounds.append(
+                    {
+                        "round": attempt + 1,
+                        "plan": plan_raw,
+                    }
+                )
+                try:
+                    candidate_plan = PlanDocument.model_validate(plan_raw)
+                except ValidationError as exc:
+                    schema_errors = list(exc.errors(include_url=False))
+                    plan_validation_feedback = {
+                        "previous_plan": plan_raw,
+                        "schema_errors": schema_errors,
+                    }
+                    continue
+
+                # Structural grounding check: verifies file paths, intents, expected_files
+                unresolved_targets, structural_issues = self._validate_plan_grounding(
+                    candidate_plan,
+                    task.plan_markdown or "",
                     workspace_files_set,
                     workspace_files_index,
+                    retrieval_context.planner_evidence,
                 )
-                plan_raw = replanned_raw
 
-            if unresolved_targets:
+                # Always run LLM semantic critique — not only as a repair mechanism
+                critique_result = await self._reasoning_engine.critique_json_plan(
+                    task,
+                    str(shadow_workspace.shadow_path),
+                    validation_context,
+                    candidate_plan.model_dump(mode="json"),
+                )
+                critique = PlanCritiqueResult.model_validate(critique_result)
+                plan_critique_rounds.append(
+                    {
+                        "round": attempt + 1,
+                        "critique": critique.model_dump(mode="json"),
+                    }
+                )
+                llm_issues = critique.issues if critique.verdict == "revise" else []
+
+                # Merge: structural issues take precedence; LLM issues are additive
+                grounding_issues = [*structural_issues, *llm_issues]
+
+                if not unresolved_targets and not grounding_issues:
+                    task.plan = candidate_plan
+                    break
+
+                plan_validation_feedback = {
+                    "previous_plan": plan_raw,
+                    "missing_targets": unresolved_targets,
+                    "grounding_issues": [issue.model_dump(mode="json") for issue in grounding_issues],
+                }
+
+            if task.plan is None:
+                schema_diagnostics: list[Diagnostic] = []
+                for item in schema_errors[:8]:
+                    loc = ".".join(str(part) for part in item.get("loc", ()))
+                    msg = str(item.get("msg", "invalid plan schema"))
+                    formatted = f"{loc}: {msg}" if loc else msg
+                    schema_diagnostics.append(
+                        Diagnostic(
+                            source="plan_schema_validation",
+                            message=formatted,
+                            level="error",
+                        )
+                    )
                 task.diagnostics = [
-                    *persistent_diagnostics,
+                    *retrieval_warnings,
+                    *schema_diagnostics,
                     *self._plan_target_diagnostics(unresolved_targets),
+                    *self._critique_diagnostics(grounding_issues, source="plan_grounding"),
                 ]
-                task = transition(task, TaskStatus.FAILED, "plan targets unresolved")
+                task = transition(task, TaskStatus.FAILED, "plan target validation failed")
                 await self._store.save(task)
-                self._write_debug_artifact(
-                    task.task_id,
-                    "plan-unresolved-targets",
-                    {"unresolved_targets": unresolved_targets},
-                )
                 return task
 
-            task = transition(task, TaskStatus.PLANNED, "plan accepted")
+            self._write_debug_artifact(
+                task.task_id,
+                "json-plan-draft",
+                {"rounds": plan_draft_rounds},
+                artifacts_root_path=task.artifacts_root_path,
+            )
+            self._write_debug_artifact(
+                task.task_id,
+                "json-plan-critique",
+                {"rounds": plan_critique_rounds},
+                artifacts_root_path=task.artifacts_root_path,
+            )
+            self._write_debug_artifact(
+                task.task_id,
+                "json-plan-final",
+                {"plan": plan_raw},
+                artifacts_root_path=task.artifacts_root_path,
+            )
+            self._write_debug_artifact(
+                task.task_id,
+                "plan",
+                {"plan": plan_raw},
+                artifacts_root_path=task.artifacts_root_path,
+            )
+
+            return await self._execute_plan(
+                task,
+                shadow_workspace,
+                retrieval_context,
+                retrieval_warnings,
+                started_at_ms,
+            )
+
+        except Exception as exc:
+            logger.error(f"Task {task_id} failed during continuation", exc_info=True)
+            task.diagnostics.append(
+                Diagnostic(source="orchestrator", message=str(exc), level="error")
+            )
+            task = transition(task, TaskStatus.FAILED, "continuation failed")
             await self._store.save(task)
-            self._write_debug_artifact(task.task_id, "plan", {"plan": plan_raw})
+            self._running_tasks.discard(task_id)
+            self.broadcaster.broadcast(task_id, {"type": "done"})
+            return task
 
-            if not self._step_scoped_mode:
-                msg = "single-shot mode is deprecated; set AI_EDITOR_STEP_SCOPED_MODE=1"
-                task.diagnostics = [
-                    *persistent_diagnostics,
-                    Diagnostic(source="orchestrator", message=msg, level="error"),
-                ]
-                task = transition(task, TaskStatus.FAILED, "step-scoped mode required")
-                await self._store.save(task)
-                return task
+    async def resume_task(self, task_id: str) -> TaskRecord:
+        """Resume execution of a child task that was created from a failed/aborted parent.
 
+        The child task must already be in PLANNED state with shadow_workspace_path set
+        (cloned from the parent by the route handler).  Skips plan generation entirely
+        and calls _execute_plan() directly, relying on the existing completed_step_ids
+        skip logic to continue from the first incomplete step.
+        """
+        task = await self._store.get(task_id)
+        self._running_tasks.add(task_id)
+        task.artifacts_root_path = str(self._artifacts_root(task.task_id, task.workspace_path))
+        started_at_ms = int(time.time() * 1000)
+        try:
+            retrieval_context, retrieval_warnings = self._retrieval_client.load_context(
+                task.workspace_path, task.goal
+            )
+            shadow_workspace = ShadowWorkspace(
+                task_id=task.task_id,
+                real_path=Path(task.workspace_path).resolve(),
+                shadow_path=Path(task.shadow_workspace_path),  # type: ignore[arg-type]
+            )
+            return await self._execute_plan(
+                task, shadow_workspace, retrieval_context, retrieval_warnings, started_at_ms
+            )
+        except Exception as exc:
+            logger.error(f"Task {task_id} failed during resume", exc_info=True)
+            task.diagnostics.append(Diagnostic(source="orchestrator", message=str(exc), level="error"))
+            task = transition(task, TaskStatus.FAILED, "resume failed")
+            await self._store.save(task)
+            self._running_tasks.discard(task_id)
+            self.broadcaster.broadcast(task_id, {"type": "done"})
+            return task
+
+    async def _execute_plan(
+        self,
+        task: TaskRecord,
+        shadow_workspace: ShadowWorkspace,
+        retrieval_context: RetrievalContext,
+        persistent_diagnostics: list[Diagnostic],
+        started_at_ms: int,
+    ) -> TaskRecord:
+        try:
             shadow_path = Path(shadow_workspace.shadow_path)
             if task.plan is None:
                 task = transition(task, TaskStatus.FAILED, "plan missing")
                 await self._store.save(task)
                 return task
 
+            task = transition(task, TaskStatus.EXECUTING, "execution started")
+            await self._store.save(task)
+
+            baseline_errors = await self._collect_baseline_errors(
+                shadow_path,
+                task_id=task.task_id,
+                artifacts_root_path=task.artifacts_root_path,
+            )
+            if baseline_errors:
+                logger.info(
+                    "Baseline validation captured pre-existing errors",
+                    extra={"task_id": task.task_id, "baseline_error_count": len(baseline_errors)},
+                )
+
             for step in task.plan.steps:
                 if step.id in task.completed_step_ids:
                     continue
-                succeeded = await self._run_step_with_retries(
+                step_result = await self._run_step_with_retries(
                     task,
                     step,
                     shadow_path,
                     retrieval_context,
                     persistent_diagnostics,
                     started_at_ms,
-                    full_validation=False,
                 )
+                self._merge_step_result(task, step_result, persistent_diagnostics)
                 await self._store.save(task)
-                if not succeeded:
+                if step_result.outcome != "step_completed":
                     task = transition(task, TaskStatus.FAILED, "step execution exhausted")
                     await self._store.save(task)
                     return task
@@ -232,33 +482,21 @@ class AgentOrchestrator:
             task = transition(task, TaskStatus.VALIDATING, "full validation started")
             await self._store.save(task)
             validation = await self._validator.run(str(shadow_workspace.shadow_path))
+            validation = self._filter_baseline_errors(validation, baseline_errors)
             self._write_debug_artifact(
                 task.task_id,
                 "full-validation",
                 validation.model_dump(mode="json"),
+                artifacts_root_path=task.artifacts_root_path,
             )
             if validation.success:
                 task.diagnostics = [*persistent_diagnostics]
+                task = transition(task, TaskStatus.VALIDATED, "full validation passed")
+                await self._store.save(task)
                 task = transition(
                     task,
                     TaskStatus.READY_FOR_REVIEW,
                     "validation passed; ready for review",
-                )
-                await self._store.save(task)
-                return task
-
-            retry_validation = await self._validator.run(str(shadow_workspace.shadow_path))
-            self._write_debug_artifact(
-                task.task_id,
-                "full-validation-retry",
-                retry_validation.model_dump(mode="json"),
-            )
-            if retry_validation.success:
-                task.diagnostics = [*persistent_diagnostics]
-                task = transition(
-                    task,
-                    TaskStatus.READY_FOR_REVIEW,
-                    "validation passed on retry; ready for review",
                 )
                 await self._store.save(task)
                 return task
@@ -271,56 +509,71 @@ class AgentOrchestrator:
             repair_step = PlanStep(
                 id="repair-full-validation",
                 goal="Repair files failing full validation",
-                targets=repair_targets,
+                targets=[
+                    {
+                        "path": path,
+                        "intent": PlanTargetIntent.EXISTING.value,
+                    }
+                    for path in repair_targets
+                ],
                 risk="med",
             )
-            repaired = await self._run_step_with_retries(
+            task = transition(task, TaskStatus.EXECUTING, "repair execution started")
+            await self._store.save(task)
+            repair_result = await self._run_step_with_retries(
                 task,
                 repair_step,
                 shadow_path,
                 retrieval_context,
                 persistent_diagnostics,
                 started_at_ms,
-                full_validation=True,
                 last_failure={
-                    "failure_code": PatchFailureCode.APPLY_ERROR,
+                    "failure_code": PatchFailureCode.APPLY_ERROR.value,
                     "file": None,
                     "op_id": None,
-                    "excerpt": "\n".join(d.message for d in validation.diagnostics[:2]),
+                    "excerpt": "\n".join(d.message for d in validation.diagnostics[:10]),
                 },
             )
+            self._merge_step_result(task, repair_result, persistent_diagnostics)
             await self._store.save(task)
-            if not repaired:
+            if repair_result.outcome != "step_completed":
                 task = transition(task, TaskStatus.FAILED, "repair budget exhausted")
                 await self._store.save(task)
                 return task
 
-            if task.status != TaskStatus.VALIDATING:
-                task = transition(task, TaskStatus.VALIDATING, "final validation after repair")
+            task = transition(task, TaskStatus.VALIDATING, "full validation started after repair")
+            await self._store.save(task)
+            repair_validation = await self._validator.run(str(shadow_workspace.shadow_path))
+            repair_validation = self._filter_baseline_errors(repair_validation, baseline_errors)
+            self._write_debug_artifact(
+                task.task_id,
+                "full-validation",
+                repair_validation.model_dump(mode="json"),
+                artifacts_root_path=task.artifacts_root_path,
+            )
+            if not repair_validation.success:
+                task.diagnostics = [*persistent_diagnostics, *repair_validation.diagnostics]
+                task = transition(task, TaskStatus.FAILED, "post-repair validation failed")
                 await self._store.save(task)
-            task = transition(task, TaskStatus.READY_FOR_REVIEW, "validation passed; ready for review")
+                return task
+
+            task.diagnostics = [*persistent_diagnostics]
+            task = transition(task, TaskStatus.VALIDATED, "full validation passed after repair")
+            await self._store.save(task)
+            task = transition(task, TaskStatus.READY_FOR_REVIEW, "repair successful; ready for review")
             await self._store.save(task)
             return task
         except Exception as exc:
-            logger.exception(
-                "Unhandled orchestrator failure",
-                extra={
-                    "task_id": task.task_id,
-                    "workspace_path": task.workspace_path,
-                    "status": task.status.value,
-                },
+            logger.error(f"Task {task.task_id} failed during execution", exc_info=True)
+            task.diagnostics.append(
+                Diagnostic(source="orchestrator", message=str(exc), level="error")
             )
-            if task.status not in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED}:
-                task.diagnostics.append(
-                    Diagnostic(source="orchestrator", message=str(exc), level="error")
-                )
-                try:
-                    task = transition(task, TaskStatus.FAILED, "unhandled orchestrator error")
-                except ValueError:
-                    pass
+            task = transition(task, TaskStatus.FAILED, "execution failed")
             await self._store.save(task)
             return task
         finally:
+            self._running_tasks.discard(task.task_id)
+            self.broadcaster.broadcast(task.task_id, {"type": "done"})
             if task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED}:
                 try:
                     await self._workspace_manager.prune_checkpoints()
@@ -329,6 +582,91 @@ class AgentOrchestrator:
                         "Checkpoint pruning failed",
                         extra={"task_id": task.task_id},
                     )
+
+    async def _generate_repo_grounded_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        plan_context_payload: dict[str, object],
+    ) -> tuple[str, list[Diagnostic]]:
+        draft_rounds: list[dict[str, object]] = []
+        critique_rounds: list[dict[str, object]] = []
+        working_context = dict(plan_context_payload)
+        final_markdown = task.plan_markdown or ""
+        unresolved_issues: list[PlanCritiqueIssue] = []
+
+        for attempt in range(3):
+            final_markdown = await self._reasoning_engine.create_markdown_plan(
+                task,
+                workspace_path,
+                working_context,
+            )
+            draft_rounds.append(
+                {
+                    "round": attempt + 1,
+                    "plan_markdown": final_markdown,
+                }
+            )
+            critique_raw = await self._reasoning_engine.critique_markdown_plan(
+                task,
+                workspace_path,
+                working_context,
+                final_markdown,
+            )
+            critique = PlanCritiqueResult.model_validate(critique_raw)
+            critique_rounds.append(
+                {
+                    "round": attempt + 1,
+                    "critique": critique.model_dump(mode="json"),
+                }
+            )
+            unresolved_issues = critique.issues if critique.verdict == "revise" else []
+            if not unresolved_issues:
+                break
+            working_context["plan_critique_feedback"] = critique.model_dump(mode="json")
+
+        self._write_debug_artifact(
+            task.task_id,
+            "markdown-plan-draft",
+            {"rounds": draft_rounds},
+            artifacts_root_path=task.artifacts_root_path,
+        )
+        self._write_debug_artifact(
+            task.task_id,
+            "markdown-plan-critique",
+            {"rounds": critique_rounds},
+            artifacts_root_path=task.artifacts_root_path,
+        )
+        self._write_debug_artifact(
+            task.task_id,
+            "markdown-plan-final",
+            {"plan_markdown": final_markdown},
+            artifacts_root_path=task.artifacts_root_path,
+        )
+        return final_markdown, self._critique_diagnostics(
+            unresolved_issues,
+            source="markdown_plan_critique",
+        )
+
+    def _merge_step_result(
+        self,
+        task: TaskRecord,
+        result: StepRunResult,
+        persistent_diagnostics: list[Diagnostic],
+    ) -> None:
+        if result.selected_candidate_id is not None:
+            task.selected_candidate_id = result.selected_candidate_id
+        task.modified_files = sorted({*task.modified_files, *result.touched_files})
+        task.execution_trace.extend(result.trace_entries)
+        task.checkpoints.extend(result.checkpoint_manifests)
+        task.diagnostics = [*result.diagnostics] if result.diagnostics else [*persistent_diagnostics]
+        plan_step_ids = {step.id for step in task.plan.steps} if task.plan else set()
+        if (
+            result.outcome == "step_completed"
+            and result.step_id in plan_step_ids
+            and result.step_id not in task.completed_step_ids
+        ):
+            task.completed_step_ids.append(result.step_id)
 
     async def _run_step_with_retries(
         self,
@@ -339,17 +677,24 @@ class AgentOrchestrator:
         persistent_diagnostics: list[Diagnostic],
         started_at_ms: int,
         *,
-        full_validation: bool,
         last_failure: dict[str, object] | None = None,
-    ) -> bool:
-        allowed_files = sorted(set(step.targets))
+    ) -> StepRunResult:
+        allowed_files = sorted(set(step.target_paths()))
         if not allowed_files:
             allowed_files = [*task.modified_files] or [*task.plan.expected_files]
         max_files = max(1, min(task.budget.max_files_touched, len(allowed_files)))
         max_ops = max(1, min(12, max_files * 3))
         allowed_files_set = set(allowed_files)
+        trace_entries: list[StepExecutionTrace] = []
+        checkpoints: list[CheckpointManifest] = []
+        last_result_diagnostics: list[Diagnostic] = [*persistent_diagnostics]
+        last_selected_candidate_id: str | None = None
+        touched_files_result: list[str] = []
 
         for attempt in range(1, self._max_attempts_per_step + 1):
+            print(f"\n[STEP] Running step {step.id} (Attempt {attempt}/{self._max_attempts_per_step})")
+            print(f"[GOAL] {step.goal}")
+            
             logger.info(
                 "Step attempt started",
                 extra={
@@ -361,11 +706,6 @@ class AgentOrchestrator:
             )
             assert_budget(task, started_at_ms, int(time.time() * 1000))
             task = bump_usage(task)
-            await self._store.save(task)
-
-            if task.status == TaskStatus.PLANNED:
-                task = transition(task, TaskStatus.REPAIRING, f"step {step.id} attempt {attempt} started")
-                await self._store.save(task)
 
             checkpoint = self._create_shadow_checkpoint(
                 task,
@@ -376,24 +716,49 @@ class AgentOrchestrator:
             )
             previous_modified_files = list(task.modified_files)
             try:
-                patching_context_payload = retrieval_context.as_prompt_payload()
-                patching_context_payload["file_contents"] = self._collect_file_contents(
-                    shadow_path,
-                    allowed_files,
+                # Combine step targets and expected files for patching context
+                context_files = sorted(set(allowed_files) | set(task.plan.expected_files if task.plan else []))
+                
+                # Create a specialized RetrievalContext for patching with full file contents
+                patch_retrieval_context = RetrievalContext(
+                    repository_structure=retrieval_context.repository_structure,
+                    related_files=retrieval_context.related_files,
+                    related_symbols=retrieval_context.related_symbols,
+                    graph_neighbors=retrieval_context.graph_neighbors,
+                    file_outlines=retrieval_context.file_outlines,
+                    diagnostics_excerpt=retrieval_context.diagnostics_excerpt,
+                    snapshot_age_sec=retrieval_context.snapshot_age_sec,
+                    snapshot_stats=retrieval_context.snapshot_stats,
+                    file_contents=self._collect_file_contents(shadow_path, context_files),
+                    planner_evidence=retrieval_context.planner_evidence,
                 )
+                retrieval_payload = patch_retrieval_context.as_prompt_payload()
+
+                patch_request_context = {
+                    "current_step": step.model_dump(mode="json"),
+                    "allowed_files": allowed_files,
+                    "max_ops": max_ops,
+                    "max_files": max_files,
+                    "last_failure": last_failure,
+                    "diagnostics": [item.model_dump(mode="json") for item in task.diagnostics],
+                    "retrieval_context": retrieval_payload,
+                }
                 self._write_debug_artifact(
                     task.task_id,
                     "patch-context",
-                    patching_context_payload,
+                    patch_request_context,
                     step_id=step.id,
                     attempt=attempt,
+                    artifacts_root_path=task.artifacts_root_path,
                 )
 
+                print("\n[PATCH] Entering Patching Node...")
+                print(f"[PATCH] Generating {self._patch_candidate_count} candidates for {len(allowed_files)} target files...")
                 patch_raw = await self._create_patch_document(
                     task,
                     str(shadow_path),
                     task.diagnostics,
-                    patching_context_payload,
+                    retrieval_payload,
                     current_step=step,
                     allowed_files=allowed_files,
                     max_ops=max_ops,
@@ -407,11 +772,13 @@ class AgentOrchestrator:
                     patch_raw,
                     step_id=step.id,
                     attempt=attempt,
+                    artifacts_root_path=task.artifacts_root_path,
                 )
                 patch_document = PatchDocumentV2.model_validate(patch_raw)
                 task.latest_patch_v2 = patch_document
                 task.latest_patch = None
 
+                print(f"[PATCH] Evaluating {len(patch_document.candidates)} candidates...")
                 evaluations, ranking_path = await self._evaluate_candidates(
                     task=task,
                     step=step,
@@ -422,18 +789,18 @@ class AgentOrchestrator:
                     allowed_files=allowed_files_set,
                     max_ops=max_ops,
                     max_files=max_files,
-                    full_validation=full_validation,
                 )
 
                 selected = self._select_best_candidate(evaluations)
                 if selected is None:
+                    print("[ERROR] No valid patch candidates were generated")
                     issue = PatchPreflightIssue(
                         code=PatchFailureCode.APPLY_ERROR,
                         file=None,
                         message="No patch candidates were generated",
                     )
                     last_failure = self._last_failure_from_issues([issue])
-                    task.execution_trace.append(
+                    trace_entries.append(
                         StepExecutionTrace(
                             step_id=step.id,
                             attempt=attempt,
@@ -443,20 +810,22 @@ class AgentOrchestrator:
                             checkpoint_id=checkpoint.checkpoint_id,
                         )
                     )
-                    task.diagnostics = [*persistent_diagnostics, *self._issues_to_diagnostics([issue])]
+                    last_result_diagnostics = [
+                        *persistent_diagnostics,
+                        *self._issues_to_diagnostics([issue]),
+                    ]
                     self._restore_shadow_checkpoint(shadow_path, checkpoint.checkpoint_path)
                     task.modified_files = previous_modified_files
-                    self._append_checkpoint(task, checkpoint)
-                    task = transition(task, TaskStatus.REPAIRING, f"step {step.id} no candidates")
-                    await self._store.save(task)
+                    checkpoints.append(checkpoint)
                     continue
 
                 checkpoint.ranking_report_path = ranking_path
                 checkpoint.candidate_id = selected.candidate.candidate_id
                 checkpoint.preflight_report_path = selected.preflight_report_path
                 checkpoint.validation_report_path = selected.validation_report_path
-                task.selected_candidate_id = selected.candidate.candidate_id
+                last_selected_candidate_id = selected.candidate.candidate_id
 
+                print(f"[PATCH] Selected candidate {selected.candidate.candidate_id} (Score: {selected.score:.2f})")
                 self._restore_shadow_checkpoint(shadow_path, checkpoint.checkpoint_path)
                 final_preflight = await self._patch_engine.preflight_patch_candidate(
                     shadow_path,
@@ -465,6 +834,7 @@ class AgentOrchestrator:
                 )
                 if not final_preflight.success:
                     failure_code = final_preflight.issues[0].code.value if final_preflight.issues else "unknown"
+                    print(f"[ERROR] Preflight rejected: {final_preflight.issues[0].message if final_preflight.issues else 'Unknown preflight error'}")
                     logger.warning(
                         "Step preflight rejected",
                         extra={
@@ -476,7 +846,7 @@ class AgentOrchestrator:
                         },
                     )
                     last_failure = self._last_failure_from_issues(final_preflight.issues)
-                    task.execution_trace.append(
+                    trace_entries.append(
                         StepExecutionTrace(
                             step_id=step.id,
                             attempt=attempt,
@@ -488,24 +858,29 @@ class AgentOrchestrator:
                             message="selected candidate preflight failed",
                         )
                     )
-                    task.diagnostics = [
+                    last_result_diagnostics = [
                         *persistent_diagnostics,
                         *self._issues_to_diagnostics(final_preflight.issues),
                     ]
                     task.modified_files = previous_modified_files
-                    self._append_checkpoint(task, checkpoint)
-                    task = transition(task, TaskStatus.REPAIRING, f"step {step.id} preflight failed")
-                    await self._store.save(task)
+                    checkpoints.append(checkpoint)
                     continue
+
+                print(f"[PATCH] Applying patch {selected.candidate.candidate_id}...")
+
+                async def _incremental_check(files: list[str]) -> ValidationResult:
+                    return await self._run_fast_validation(str(shadow_path), files)
 
                 patch_result = await self._patch_engine.apply_patch_candidate(
                     shadow_path,
                     selected.candidate,
                     allowed_files=allowed_files_set,
+                    on_patch_event=lambda ev: self.broadcaster.broadcast(task.task_id, ev),
+                    incremental_validator=_incremental_check,
                 )
                 touched = patch_result.touched_files
-                task.modified_files = sorted({*task.modified_files, *touched})
-                task.execution_trace.append(
+                touched_files_result = touched
+                trace_entries.append(
                     StepExecutionTrace(
                         step_id=step.id,
                         attempt=attempt,
@@ -517,30 +892,26 @@ class AgentOrchestrator:
                         message="selected candidate applied",
                     )
                 )
-                task = transition(task, TaskStatus.PATCHED, f"step {step.id} patch applied")
-                await self._store.save(task)
-
-                task = transition(task, TaskStatus.VALIDATING, f"step {step.id} validation started")
-                await self._store.save(task)
-                if full_validation:
-                    validation = await self._validator.run(str(shadow_path))
-                else:
-                    validation = await self._run_fast_validation(str(shadow_path), touched)
+                
+                print(f"[VALIDATE] Running fast validation on {len(touched)} files...")
+                validation = await self._run_fast_validation(str(shadow_path), touched)
                 validation_path = self._write_debug_artifact(
                     task.task_id,
                     "validation-selected",
                     validation.model_dump(mode="json"),
                     step_id=step.id,
                     attempt=attempt,
+                    artifacts_root_path=task.artifacts_root_path,
                 )
                 checkpoint.validation_report_path = validation_path or checkpoint.validation_report_path
                 checkpoint.file_hashes_after = self._hash_files(
                     shadow_path,
                     tracked_files=allowed_files,
                 )
-                self._append_checkpoint(task, checkpoint)
+                checkpoints.append(checkpoint)
 
                 if validation.success:
+                    print(f"[SUCCESS] Step {step.id} completed successfully")
                     logger.info(
                         "Step completed",
                         extra={
@@ -550,9 +921,7 @@ class AgentOrchestrator:
                             "result": "step_completed",
                         },
                     )
-                    if step.id not in task.completed_step_ids:
-                        task.completed_step_ids.append(step.id)
-                    task.execution_trace.append(
+                    trace_entries.append(
                         StepExecutionTrace(
                             step_id=step.id,
                             attempt=attempt,
@@ -570,16 +939,29 @@ class AgentOrchestrator:
                             },
                         )
                     )
-                    task.diagnostics = [*persistent_diagnostics]
-                    task = transition(task, TaskStatus.PLANNED, f"step {step.id} completed")
-                    await self._store.save(task)
-                    return True
+                    return StepRunResult(
+                        step_id=step.id,
+                        outcome="step_completed",
+                        validation_result="validation_passed",
+                        attempts_used=attempt,
+                        selected_candidate_id=selected.candidate.candidate_id,
+                        touched_files=touched,
+                        diagnostics=[*persistent_diagnostics],
+                        trace_entries=trace_entries,
+                        checkpoint_manifests=checkpoints,
+                        last_failure=last_failure,
+                    )
+
+                print(f"[ERROR] Validation failed for step {step.id}")
+                if validation.diagnostics:
+                    for diag in validation.diagnostics[:3]:
+                        print(f"  - {diag.message}")
 
                 last_failure = {
                     "failure_code": PatchFailureCode.APPLY_ERROR.value,
                     "file": None,
                     "op_id": None,
-                    "excerpt": "\n".join(d.message for d in validation.diagnostics[:2]),
+                    "excerpt": "\n".join(d.message for d in validation.diagnostics[:10]),
                 }
                 logger.warning(
                     "Step validation failed",
@@ -591,7 +973,7 @@ class AgentOrchestrator:
                         "failure_code": PatchFailureCode.APPLY_ERROR.value,
                     },
                 )
-                task.execution_trace.append(
+                trace_entries.append(
                     StepExecutionTrace(
                         step_id=step.id,
                         attempt=attempt,
@@ -603,12 +985,10 @@ class AgentOrchestrator:
                         message="selected candidate validation failed",
                     )
                 )
-                task.diagnostics = [*persistent_diagnostics, *validation.diagnostics]
+                last_result_diagnostics = [*persistent_diagnostics, *validation.diagnostics]
                 self._restore_shadow_checkpoint(shadow_path, checkpoint.checkpoint_path)
                 task.modified_files = previous_modified_files
-                self._append_checkpoint(task, checkpoint)
-                task = transition(task, TaskStatus.REPAIRING, f"step {step.id} validation failed")
-                await self._store.save(task)
+                checkpoints.append(checkpoint)
             except Exception as exc:
                 logger.exception(
                     "Iteration failed while applying/validating patch",
@@ -626,7 +1006,7 @@ class AgentOrchestrator:
                     message=str(exc),
                 )
                 last_failure = self._last_failure_from_issues([issue])
-                task.execution_trace.append(
+                trace_entries.append(
                     StepExecutionTrace(
                         step_id=step.id,
                         attempt=attempt,
@@ -636,13 +1016,15 @@ class AgentOrchestrator:
                         message="internal apply/validation error",
                     )
                 )
-                task.diagnostics = [*persistent_diagnostics, *self._issues_to_diagnostics([issue])]
+                last_result_diagnostics = [
+                    *persistent_diagnostics,
+                    *self._issues_to_diagnostics([issue]),
+                ]
                 self._restore_shadow_checkpoint(shadow_path, checkpoint.checkpoint_path)
                 task.modified_files = previous_modified_files
-                self._append_checkpoint(task, checkpoint)
-                await self._store.save(task)
+                checkpoints.append(checkpoint)
 
-        task.execution_trace.append(
+        trace_entries.append(
             StepExecutionTrace(
                 step_id=step.id,
                 attempt=self._max_attempts_per_step,
@@ -659,7 +1041,93 @@ class AgentOrchestrator:
                 "result": "step_exhausted",
             },
         )
-        return False
+        return StepRunResult(
+            step_id=step.id,
+            outcome="attempts_exhausted",
+            validation_result="validation_failed",
+            attempts_used=self._max_attempts_per_step,
+            selected_candidate_id=last_selected_candidate_id,
+            touched_files=touched_files_result,
+            diagnostics=last_result_diagnostics,
+            trace_entries=trace_entries,
+            checkpoint_manifests=checkpoints,
+            last_failure=last_failure,
+        )
+
+    async def _collect_baseline_errors(
+        self,
+        shadow_path: Path,
+        task_id: str | None = None,
+        artifacts_root_path: str | None = None,
+    ) -> frozenset[str]:
+        """Run the full validator before any patches to record pre-existing errors.
+
+        Returns the set of error messages already present so they can be filtered
+        from post-patch validation results.  Failures here are non-fatal — if the
+        baseline run itself errors we just return an empty set and proceed normally.
+        """
+        try:
+            result = await self._validator.run(str(shadow_path))
+            errors = frozenset(
+                self._normalize_error_message(d.message)
+                for d in result.diagnostics
+                if d.level == "error"
+            )
+            if task_id:
+                self._write_debug_artifact(
+                    task_id,
+                    "baseline-validation",
+                    {
+                        "success": result.success,
+                        "baseline_error_count": len(errors),
+                        "diagnostics": result.model_dump(mode="json")["diagnostics"],
+                    },
+                    artifacts_root_path=artifacts_root_path,
+                )
+            return errors
+        except Exception:
+            logger.warning("Baseline validation run failed; proceeding without baseline filtering")
+            return frozenset()
+
+    @staticmethod
+    def _normalize_error_message(msg: str) -> str:
+        """Produce a stable fingerprint for an error message across repeated runs.
+
+        pytest embeds volatile data throughout its output (tmp dir run numbers,
+        inner task UUIDs, elapsed times) making the full string comparison fail
+        even when the same tests fail. For pytest output we extract only the
+        FAILED test IDs from the short summary section — these are deterministic.
+        For other validators (mypy, ruff) we apply light normalization.
+        """
+        import re
+        # Detect pytest output by its short summary sentinel
+        if "short test summary info" in msg:
+            failed_lines = re.findall(r"^FAILED\s+(\S+)", msg, re.MULTILINE)
+            if failed_lines:
+                return "pytest:FAILED:" + ",".join(sorted(failed_lines))
+            # No FAILED lines means zero failures; treat as empty (shouldn't reach here)
+            return "pytest:FAILED:"
+        # Strip pytest/cargo timing: "N error(s) in X.XXs" at end of output
+        msg = re.sub(r"\d+ errors? in \d+\.\d+s\s*$", "", msg, flags=re.MULTILINE).rstrip()
+        # Strip compiler/linter line:col numbers so shifted lines still match
+        msg = re.sub(r"(?m)(:\d+){1,2}(?=:|\s|$)", "", msg)
+        return msg
+
+    def _filter_baseline_errors(
+        self, result: ValidationResult, baseline: frozenset[str]
+    ) -> ValidationResult:
+        """Remove errors that were already present before patching started."""
+        if not baseline:
+            return result
+        filtered = [
+            d for d in result.diagnostics
+            if not (d.level == "error" and self._normalize_error_message(d.message) in baseline)
+        ]
+        return ValidationResult(
+            success=not any(d.level == "error" for d in filtered),
+            diagnostics=filtered,
+            duration_ms=result.duration_ms,
+        )
 
     async def _run_fast_validation(
         self,
@@ -700,7 +1168,8 @@ class AgentOrchestrator:
             if not abs_path.exists() or not abs_path.is_file():
                 continue
             try:
-                contents[rel_path] = abs_path.read_text(encoding="utf-8")
+                lines = abs_path.read_text(encoding="utf-8").splitlines()
+                contents[rel_path] = "\n".join(f"{i+1:4d}: {line}" for i, line in enumerate(lines))
             except OSError:
                 continue
         return contents
@@ -744,7 +1213,6 @@ class AgentOrchestrator:
         allowed_files: set[str],
         max_ops: int,
         max_files: int,
-        full_validation: bool,
     ) -> tuple[list[_CandidateEvaluation], str | None]:
         evaluations: list[_CandidateEvaluation] = []
         for candidate in patch_document.candidates:
@@ -759,7 +1227,6 @@ class AgentOrchestrator:
                 allowed_files=allowed_files,
                 max_ops=max_ops,
                 max_files=max_files,
-                full_validation=full_validation,
             )
             evaluations.append(evaluation)
 
@@ -790,6 +1257,7 @@ class AgentOrchestrator:
             ranking_payload,
             step_id=step.id,
             attempt=attempt,
+            artifacts_root_path=task.artifacts_root_path,
         )
         return evaluations, ranking_path
 
@@ -805,7 +1273,6 @@ class AgentOrchestrator:
         allowed_files: set[str],
         max_ops: int,
         max_files: int,
-        full_validation: bool,
     ) -> _CandidateEvaluation:
         op_count = len(candidate.patch_ops)
         candidate_files = sorted({op.file for op in candidate.patch_ops})
@@ -849,6 +1316,7 @@ class AgentOrchestrator:
             preflight.model_dump(mode="json"),
             step_id=step.id,
             attempt=attempt,
+            artifacts_root_path=task.artifacts_root_path,
         )
         if not preflight.success:
             breakdown = self._score_candidate(
@@ -895,6 +1363,7 @@ class AgentOrchestrator:
                 validation.model_dump(mode="json"),
                 step_id=step.id,
                 attempt=attempt,
+                artifacts_root_path=task.artifacts_root_path,
             )
             breakdown = self._score_candidate(
                 preflight_pass=True,
@@ -917,16 +1386,14 @@ class AgentOrchestrator:
             )
 
         touched_files = patch_result.touched_files
-        if full_validation:
-            validation = await self._validator.run(str(shadow_path))
-        else:
-            validation = await self._run_fast_validation(str(shadow_path), touched_files)
+        validation = await self._run_fast_validation(str(shadow_path), touched_files)
         validation_path = self._write_debug_artifact(
             task.task_id,
             f"validation-{candidate.candidate_id}",
             validation.model_dump(mode="json"),
             step_id=step.id,
             attempt=attempt,
+            artifacts_root_path=task.artifacts_root_path,
         )
 
         checkpoint_snapshot = Path(checkpoint.checkpoint_path)
@@ -967,13 +1434,20 @@ class AgentOrchestrator:
         if not evaluations:
             return None
 
+        # Filter candidates that pass preflight
+        passing_candidates = [e for e in evaluations if e.preflight_pass]
+        
+        if not passing_candidates:
+            # If none pass preflight, select the one with highest score (fallback)
+            passing_candidates = evaluations
+        
         def sort_key(item: _CandidateEvaluation) -> tuple[float, int, int, str]:
             touched_files_count = len(item.touched_files) if item.touched_files else len(
                 {op.file for op in item.candidate.patch_ops}
             )
             return (-item.score, touched_files_count, item.changed_lines, item.candidate.candidate_id)
 
-        return sorted(evaluations, key=sort_key)[0]
+        return sorted(passing_candidates, key=sort_key)[0]
 
     def _score_candidate(
         self,
@@ -1047,15 +1521,74 @@ class AgentOrchestrator:
         if not issues:
             return None
         issue = issues[0]
+        
+        # Add specific guidance based on error type
+        guidance = self._get_error_guidance(issue.code, issue.message, issue.file)
+        
         return {
             "failure_code": issue.code.value,
             "file": issue.file,
             "op_id": issue.op_index,
             "excerpt": issue.message,
+            "guidance": guidance,
+            "suggested_fix": self._get_suggested_fix(issue.code, issue.message, issue.file),
         }
+    
+    def _get_error_guidance(self, failure_code: PatchFailureCode, message: str, file: str | None) -> str:
+        """Provide specific guidance for different error types."""
+        if failure_code == PatchFailureCode.ANCHOR_MISSING:
+            return "The search text or symbol selector was not found. Check if the file content has changed since patch generation."
+        
+        elif failure_code == PatchFailureCode.ANCHOR_AMBIGUOUS:
+            return "The search text appears multiple times. Use more specific context or a symbol selector for unique matching."
+        
+        elif failure_code == PatchFailureCode.PARSER_UNAVAILABLE:
+            return "Tree-sitter parser not installed. AST operations require language-specific parsers. Consider using search_replace instead."
+        
+        elif failure_code == PatchFailureCode.APPLY_ERROR and "Hunk context mismatch" in message:
+            return "Diff header line count doesn't match actual context. This is a model generation error - try search_replace instead."
+        
+        elif failure_code == PatchFailureCode.RANGE_INVALID:
+            return "Line numbers in patch are out of range. The file may be shorter than expected."
+        
+        elif failure_code == PatchFailureCode.SCOPE_VIOLATION:
+            return "Patch operation targets file outside current step scope. Check allowed_files constraint."
+        
+        else:
+            return "Patch validation failed. Review the specific error message for details."
+    
+    def _get_suggested_fix(self, failure_code: PatchFailureCode, message: str, file: str | None) -> str:
+        """Suggest specific fixes for different error types."""
+        if failure_code == PatchFailureCode.ANCHOR_MISSING:
+            return "Use search_replace with more context or verify the exact text exists in the file."
+        
+        elif failure_code == PatchFailureCode.ANCHOR_AMBIGUOUS:
+            return "Include more surrounding context in search text to make it unique."
+        
+        elif failure_code == PatchFailureCode.PARSER_UNAVAILABLE:
+            return "Switch to search_replace operation for text-based replacement."
+        
+        elif failure_code == PatchFailureCode.APPLY_ERROR and "Hunk context mismatch" in message:
+            return "Prefer search_replace over apply_diff for this type of change."
+        
+        elif failure_code == PatchFailureCode.RANGE_INVALID:
+            return "Check the actual file line count and adjust patch accordingly."
+        
+        elif failure_code == PatchFailureCode.SCOPE_VIOLATION:
+            return "Ensure all modified files are in the allowed_files list."
+        
+        else:
+            return "Review patch operation and try a different approach or operation type."
 
-    def _artifacts_root(self, task_id: str) -> Path:
-        return Path("/tmp/ai-editor-stress") / task_id
+    def _artifacts_root(
+        self,
+        task_id: str,
+        workspace_path: str | None = None,
+        artifacts_root_path: str | None = None,
+    ) -> Path:
+        if artifacts_root_path:
+            return Path(artifacts_root_path)
+        return task_artifacts_root(task_id, workspace_path)
 
     def _write_debug_artifact(
         self,
@@ -1065,9 +1598,15 @@ class AgentOrchestrator:
         *,
         step_id: str | None = None,
         attempt: int | None = None,
+        workspace_path: str | None = None,
+        artifacts_root_path: str | None = None,
     ) -> str | None:
         try:
-            root = self._artifacts_root(task_id)
+            root = self._artifacts_root(
+                task_id,
+                workspace_path=workspace_path,
+                artifacts_root_path=artifacts_root_path,
+            )
             if step_id:
                 root = root / f"step-{step_id}"
             if attempt is not None:
@@ -1147,6 +1686,15 @@ class AgentOrchestrator:
             "target",
             "dist",
             "__pycache__",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".tox",
+            ".idea",
+            ".vscode",
+            "build",
+            "tmp",
+            "out",
+            "coverage",
             ".agentd",
             ".ai-editor",
         }
@@ -1156,7 +1704,7 @@ class AgentOrchestrator:
             for file_name in sorted(files):
                 relative = str((Path(root) / file_name).relative_to(workspace_path))
                 indexed.append(relative)
-                if len(indexed) >= 2000:
+                if len(indexed) >= 15000:
                     return indexed
         return indexed
 
@@ -1168,9 +1716,10 @@ class AgentOrchestrator:
     ) -> list[dict[str, str | None]]:
         unresolved: list[dict[str, str | None]] = []
         for step in plan.steps:
-            for target in step.targets:
+            for target in step.target_paths():
                 if target in workspace_files_set:
                     continue
+                target_intent = step.target_intent_for(target)
                 if self._allow_missing_plan_target(step, target):
                     continue
                 unresolved.append(
@@ -1178,32 +1727,17 @@ class AgentOrchestrator:
                         "step_id": step.id,
                         "target": target,
                         "suggestion": self._suggest_workspace_path(target, workspace_files_index),
+                        "reason": (
+                            "missing_target_intent"
+                            if target_intent is None
+                            else "missing_existing_target"
+                        ),
                     }
                 )
         return unresolved
 
     def _allow_missing_plan_target(self, step: PlanStep, target: str) -> bool:
-        target_lower = target.lower()
-        goal_lower = step.goal.lower()
-        create_intent = any(
-            marker in goal_lower
-            for marker in (
-                "create",
-                "new file",
-                "add test",
-                "write test",
-                "generate",
-            )
-        )
-        if create_intent:
-            return True
-        if target_lower.endswith(".md") and (
-            target_lower.startswith("docs/")
-            or target_lower.endswith("/readme.md")
-            or target_lower == "readme.md"
-        ):
-            return True
-        return False
+        return step.target_intent_for(target) == PlanTargetIntent.NEW
 
     def _suggest_workspace_path(
         self,
@@ -1226,7 +1760,16 @@ class AgentOrchestrator:
             target = item["target"] or "<unknown>"
             step_id = item["step_id"] or "<unknown>"
             suggestion = item["suggestion"]
-            message = f"Plan step {step_id} references missing target: {target}"
+            reason = item.get("reason")
+            if reason == "missing_target_intent":
+                message = (
+                    f"Plan step {step_id} references missing target without explicit intent: {target}. "
+                    "Add target intent in step.targets as {'path': ..., 'intent': 'existing'|'new'}."
+                )
+            elif reason == "missing_existing_target":
+                message = f"Plan step {step_id} references missing target marked existing: {target}"
+            else:
+                message = f"Plan step {step_id} references missing target: {target}"
             if suggestion:
                 message += f" (did you mean: {suggestion})"
             diagnostics.append(
@@ -1238,3 +1781,164 @@ class AgentOrchestrator:
                 )
             )
         return diagnostics
+
+    def _critique_diagnostics(
+        self,
+        issues: list[PlanCritiqueIssue],
+        *,
+        source: str,
+    ) -> list[Diagnostic]:
+        diagnostics: list[Diagnostic] = []
+        for issue in issues[:10]:
+            diagnostics.append(
+                Diagnostic(
+                    source=f"{source}:{issue.code.value}",
+                    message=issue.message,
+                    level="warning",
+                    file=issue.file,
+                )
+            )
+        return diagnostics
+
+    def _validate_plan_grounding(
+        self,
+        plan: PlanDocument,
+        approved_markdown: str,
+        workspace_files_set: set[str],
+        workspace_files_index: list[str],
+        planner_evidence: PlanEvidencePack,
+    ) -> tuple[list[dict[str, str | None]], list[PlanCritiqueIssue]]:
+        unresolved_targets: list[dict[str, str | None]] = []
+        issues: list[PlanCritiqueIssue] = []
+        approved_existing_files = set(
+            self._extract_markdown_file_mentions(approved_markdown, workspace_files_index)
+        )
+        step_target_files = {target for step in plan.steps for target in step.target_paths()}
+        created_files: set[str] = set()
+
+        for step in plan.steps:
+            for target in step.target_paths():
+                target_intent = step.target_intent_for(target)
+                if target in workspace_files_set or target in created_files:
+                    if target_intent == PlanTargetIntent.NEW and target in workspace_files_set:
+                        issues.append(
+                            PlanCritiqueIssue(
+                                code="schema_mismatch",
+                                message=(
+                                    f"Target '{target}' is marked as new, but it already exists in the workspace."
+                                ),
+                                file=target,
+                            )
+                        )
+                elif self._allow_missing_plan_target(step, target):
+                    created_files.add(target)
+                else:
+                    unresolved_targets.append(
+                        {
+                            "step_id": step.id,
+                            "target": target,
+                            "suggestion": self._suggest_workspace_path(target, workspace_files_index),
+                            "reason": (
+                                "missing_target_intent"
+                                if target_intent is None
+                                else "missing_existing_target"
+                            ),
+                        }
+                    )
+
+                if (
+                    approved_existing_files
+                    and target in workspace_files_set
+                    and target not in approved_existing_files
+                ):
+                    issues.append(
+                        PlanCritiqueIssue(
+                            code="path_prefix_mismatch",
+                            message=(
+                                f"JSON plan target '{target}' is not part of the approved markdown blueprint."
+                            ),
+                            file=target,
+                            evidence=", ".join(sorted(approved_existing_files)[:6]) or None,
+                        )
+                    )
+
+        allowed_expected_missing = {
+            target
+            for step in plan.steps
+            for target in step.target_paths()
+            if step.target_intent_for(target) == PlanTargetIntent.NEW
+        }
+        for expected_file in plan.expected_files:
+            if expected_file in workspace_files_set or expected_file in allowed_expected_missing:
+                continue
+            if expected_file in step_target_files:
+                continue
+            issues.append(
+                PlanCritiqueIssue(
+                    code="invented_file",
+                    message=(
+                        f"expected_files includes '{expected_file}' without evidence that it exists or will be created."
+                    ),
+                    file=expected_file,
+                    evidence=self._suggest_workspace_path(expected_file, workspace_files_index),
+                )
+            )
+
+        mentioned_verification_files = self._extract_markdown_file_mentions(
+            "\n".join(plan.stop_conditions),
+            workspace_files_index,
+        )
+        for verification_file in mentioned_verification_files:
+            if verification_file not in workspace_files_set:
+                issues.append(
+                    PlanCritiqueIssue(
+                        code="verification_mismatch",
+                        message=f"Stop condition references missing verification file '{verification_file}'.",
+                        file=verification_file,
+                    )
+                )
+
+        issues.extend(
+            self._planning_adapter.additional_grounding_issues(
+                plan=plan,
+                approved_markdown=approved_markdown,
+                workspace_files_index=workspace_files_index,
+                planner_evidence=planner_evidence,
+            )
+        )
+
+        return unresolved_targets, self._dedupe_critique_issues(issues)
+
+    def _extract_markdown_file_mentions(
+        self,
+        text: str,
+        workspace_files_index: list[str],
+    ) -> list[str]:
+        if not text:
+            return []
+        mentions: list[str] = []
+        seen: set[str] = set()
+        for candidate in workspace_files_index:
+            if candidate in text and candidate not in seen:
+                seen.add(candidate)
+                mentions.append(candidate)
+        return mentions
+
+    def _dedupe_critique_issues(
+        self,
+        issues: list[PlanCritiqueIssue],
+    ) -> list[PlanCritiqueIssue]:
+        deduped: list[PlanCritiqueIssue] = []
+        seen: set[tuple[str, str | None, str]] = set()
+        for issue in issues:
+            key = (issue.code.value, issue.file, issue.message)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(issue)
+        return deduped
+
+    def _truncate_text(self, text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        return text[:limit] + "\n...[truncated]"

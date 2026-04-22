@@ -50,6 +50,24 @@ async def test_openai_transport_sends_expected_request_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_transport_generate_text_returns_output_text() -> None:
+    fake_client = FakeResponsesClient(outputs=["# Plan\n\n- Add route"])
+    transport = OpenAIJsonTransport(responses_client=fake_client)
+
+    output = await transport.generate_text(
+        model="gpt-5",
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    assert output == "# Plan\n\n- Add route"
+    assert len(fake_client.calls) == 1
+    call = fake_client.calls[0]
+    assert call["instructions"] == "plan"
+    assert "text" not in call
+
+
+@pytest.mark.asyncio
 async def test_openai_transport_rejects_empty_output_text() -> None:
     fake_client = FakeResponsesClient(outputs=[""])
     transport = OpenAIJsonTransport(responses_client=fake_client)

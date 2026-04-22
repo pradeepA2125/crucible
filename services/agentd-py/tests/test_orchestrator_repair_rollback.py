@@ -21,6 +21,25 @@ class RepairReasoningEngine:
     def __init__(self) -> None:
         self.patch_calls = 0
 
+    async def create_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+    ) -> str:
+        _ = (task, workspace_path, retrieval_context)
+        return "# Plan\n\n- Insert marker"
+
+    async def critique_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        plan_markdown: str,
+    ) -> object:
+        _ = (task, workspace_path, retrieval_context, plan_markdown)
+        return {"verdict": "pass", "issues": []}
+
     async def create_plan(
         self,
         task: TaskRecord,
@@ -34,7 +53,7 @@ class RepairReasoningEngine:
                 {
                     "id": "S1",
                     "goal": "Insert marker",
-                    "targets": ["src/example.py"],
+                    "targets": [{"path": "src/example.py", "intent": "existing"}],
                     "risk": "low",
                 }
             ],
@@ -69,6 +88,16 @@ class RepairReasoningEngine:
                 }
             ]
         }
+
+    async def critique_json_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        candidate_plan: dict[str, object],
+    ) -> object:
+        _ = (task, workspace_path, retrieval_context, candidate_plan)
+        return {"verdict": "pass", "issues": []}
 
 
 class FailOnceValidator:
@@ -121,14 +150,17 @@ async def test_orchestrator_rolls_back_failed_repair_iteration(tmp_path: Path) -
         workspace_manager=ShadowWorkspaceManager(root_path=tmp_path / "shadows"),
     )
 
-    result = await orchestrator.run_task(task.task_id)
+    initialized = await orchestrator.run_task(task.task_id)
+    assert initialized.status == TaskStatus.AWAITING_PLAN_APPROVAL
+
+    result = await orchestrator.continue_task(task.task_id, feedback=None)
 
     assert result.status == TaskStatus.READY_FOR_REVIEW
     assert reasoner.patch_calls == 1
-    assert validator.fast_calls == 2
-    assert validator.calls == 1
-    assert any(event.to_status == TaskStatus.REPAIRING for event in result.events)
+    assert validator.fast_calls == 3  # 1 candidate eval + 1 incremental per-op + 1 post-apply
+    assert validator.calls == 2  # 1 baseline capture + 1 post-execution full validation
     assert result.shadow_workspace_path is not None
+    assert result.completed_step_ids == ["S1"]
 
     shadow_target = Path(result.shadow_workspace_path) / "src/example.py"
     content = shadow_target.read_text(encoding="utf-8")

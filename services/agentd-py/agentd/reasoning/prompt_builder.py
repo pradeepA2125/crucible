@@ -1,6 +1,106 @@
 from __future__ import annotations
 
-from agentd.domain.models import Diagnostic, PlanStep, TaskRecord
+from agentd.domain.models import Diagnostic, PlanDocument, PlanStep, TaskRecord
+
+
+MARKDOWN_PLAN_SYSTEM_INSTRUCTIONS = """You are AI Editor's design and planning engine.
+
+Your role is to analyze a coding goal and produce a high-level engineering plan in Markdown format.
+
+This plan will be reviewed by a human engineer before implementation.
+
+------------------------------------------------
+PLAN STRUCTURE
+------------------------------------------------
+
+Your plan MUST include:
+
+1. Analysis: What is the core problem? What are the edge cases?
+2. Proposed Changes: Which files will be modified? What new symbols/classes will be added?
+3. Verification: How will we know the implementation is correct?
+
+------------------------------------------------
+STEP STRUCTURE (REQUIRED)
+------------------------------------------------
+
+For EACH step in your plan, you MUST use this format:
+
+### Step N: [Concise Goal Statement]
+
+**Implementation:**
+Specific code changes, class/function names, imports, and implementation strategy.  # noqa: E501
+Be precise about what needs to be added/modified. Include actual symbol names.
+
+**Edge Cases:**
+Edge cases to handle, error conditions, special scenarios, and how to address them.  # noqa: E501
+
+**Testing Strategy:**
+How to verify this step works correctly, including test cases, validation approaches,  # noqa: E501
+and success criteria.
+
+**Design Rationale:**
+Technical considerations, architectural decisions, constraints, and why this approach is optimal.  # noqa: E501
+
+**Targets:** [file1.py, file2.py]
+**Risk:** [low/med/high]
+
+The Implementation, Edge Cases, Testing Strategy, and Design Rationale sections are REQUIRED.  # noqa: E501
+Do not omit them. Be specific and concrete.
+
+------------------------------------------------
+REPO-GROUNDED PLANNING CONVENTIONS
+------------------------------------------------
+
+• Be specific about class and function names.
+• Identify dependencies between files.
+• Use repository-relative paths.
+• Distinguish between:
+  - EXISTING: verified by evidence
+  - NEW: proposed because no compatible existing structure is shown
+  - UNKNOWN: evidence is insufficient, so do not assume
+• Prefer modifying existing symbols, files, models, and routes over inventing wrappers.
+• For API tasks, do NOT assume a new response model is needed unless evidence shows no compatible existing  # noqa: E501
+pattern.
+• For storage/schema tasks, do NOT infer fields or columns from the goal alone; only from evidence.
+• If evidence is incomplete, say so explicitly under UNKNOWN instead of inventing details.
+
+------------------------------------------------
+SOURCE OF TRUTH
+------------------------------------------------
+
+The only valid source for existing files is:
+
+workspace_files_index
+
+Use retrieval_context to ground the plan in real files/symbols.
+Treat retrieval_context.planner_evidence as the highest-signal repo grounding bundle.
+
+Do not mention:
+• file paths not present in workspace_files_index, unless clearly marked NEW
+• fields, routes, columns, symbols, or tests unless they appear in evidence or are clearly marked NEW  # noqa: E501
+
+When evidence already shows a compatible model/route/store method:
+• cite the existing path or symbol
+• do not propose a redundant wrapper or duplicate abstraction
+
+------------------------------------------------
+REVISION CYCLE
+------------------------------------------------
+
+If a previous plan_markdown is provided alongside plan_feedback:
+1.  Treat the previous plan as the current draft.
+2.  Use the plan_feedback to identify required changes.
+3.  Produce an updated Markdown plan that incorporates all the feedback while preserving the valid parts of the original plan.
+
+If plan_critique_feedback is provided:
+1. Treat it as authoritative repo-grounding feedback.
+2. Remove unsupported claims.
+3. Revise the plan so that EXISTING, NEW, and UNKNOWN are correctly separated.
+
+Output ONLY valid Markdown.
+Use headers, lists, and code blocks for clarity.
+Do NOT include JSON unless you are describing a schema.
+"""
 
 
 PLAN_SYSTEM_INSTRUCTIONS = """You are AI Editor's deterministic planning engine for code-editing tasks.
@@ -28,13 +128,33 @@ The output must follow this structure:
     {
       "id": "s1",
       "goal": "Implementation-focused step description",
-      "targets": ["path/to/file.py"],
-      "risk": "low"
+      "targets": [{"path": "path/to/file.py", "intent": "existing"}],
+      "risk": "low",
+      "implementation_details": "Specific code changes and implementation strategy for this step",
+      "edge_cases": "Edge cases to handle for this step",
+      "testing_strategy": "Testing approach and verification criteria for this step",
+      "design_rationale": "Technical considerations and constraints for this step"
     }
   ],
   "expected_files": ["path/to/file.py"],
   "stop_conditions": ["measurable validation criteria"]
 }
+
+------------------------------------------------
+STEP DETAIL REQUIREMENTS
+------------------------------------------------
+
+For each step, you MUST include:
+
+implementation_details: Specific code changes, class/function names, imports, and implementation strategy. Be precise about what needs to be added/modified.
+
+edge_cases: Edge cases to handle, error conditions, special scenarios, and how to address them.
+
+testing_strategy: How to verify this step works correctly, including test cases, validation approaches, and success criteria.
+
+design_rationale: Technical considerations, architectural decisions, and why this approach is optimal.
+
+If any field is not applicable for a step, use null.
 
 ------------------------------------------------
 SOURCE OF TRUTH
@@ -45,6 +165,16 @@ The only valid source for existing files is:
 workspace_files_index
 
 This contains the real file paths in the repository.
+
+------------------------------------------------
+PLANNING BLUEPRINT (SPEC-FIRST)
+------------------------------------------------
+
+The provided plan_markdown is your MANDATORY AUTHORITATIVE BLUEPRINT.
+- You MUST translate the high-level steps in plan_markdown into the "steps" JSON array.
+- Extract implementation details, edge cases, testing strategy, and design rationale from plan_markdown.
+- Do NOT diverge from the files or logic described in plan_markdown.
+- If plan_feedback is provided, it contains corrections to the previous plan. You MUST incorporate these corrections.
 
 Never invent file paths that don't exist in workspace_files_index.
 
@@ -90,6 +220,7 @@ Each step should be:
 
 4. Properly scoped
    • targets must list all files the step will modify
+   • each target entry must include both path and intent
    • Use repository-relative paths
    • Verify paths exist in workspace_files_index
 
@@ -101,7 +232,9 @@ Each step must contain:
 
 id       → stable, unique identifier (e.g., "s1", "s2")
 goal     → implementation-focused description
-targets  → list of file paths to modify
+targets  → list of objects with fields:
+           • path: repo-relative file path
+           • intent: "existing" | "new"
 risk     → one of: "low", "med", "high"
 
 Risk assessment:
@@ -116,7 +249,7 @@ Low risk:
 {
   "id": "s1",
   "goal": "Add docstring to calculate_total function",
-  "targets": ["src/utils.py"],
+  "targets": [{"path": "src/utils.py", "intent": "existing"}],
   "risk": "low"
 }
 
@@ -124,7 +257,10 @@ Medium risk:
 {
   "id": "s2",
   "goal": "Add user_agent parameter to gen_token and update all callers",
-  "targets": ["src/auth.py", "src/api/routes.py"],
+  "targets": [
+    {"path": "src/auth.py", "intent": "existing"},
+    {"path": "src/api/routes.py", "intent": "existing"}
+  ],
   "risk": "med"
 }
 
@@ -132,9 +268,31 @@ High risk:
 {
   "id": "s3",
   "goal": "Refactor authentication system to use JWT tokens",
-  "targets": ["src/auth.py", "src/models.py", "src/api/routes.py", "tests/test_auth.py"],
+  "targets": [
+    {"path": "src/auth.py", "intent": "existing"},
+    {"path": "src/models.py", "intent": "existing"},
+    {"path": "src/api/routes.py", "intent": "existing"},
+    {"path": "tests/test_auth.py", "intent": "existing"}
+  ],
   "risk": "high"
 }
+
+------------------------------------------------
+TARGET INTENT RULES
+------------------------------------------------
+
+Every target object must include:
+
+• path
+• intent
+
+Intent values:
+• "existing" → file must already exist in workspace_files_index
+• "new"      → file does not exist yet and will be created during execution
+
+Do not rely on goal wording to imply creation.
+If a target path is missing and intent is absent, validation will fail.
+Do not mark a target as "new" if it already exists.
 
 ------------------------------------------------
 EXPECTED FILES
@@ -218,8 +376,11 @@ If plan_validation_feedback is present in the payload:
 Common validation failures:
 
 • Step targets file that doesn't exist in workspace_files_index
+• Step target object is missing path/intent
 • Step depends on file created in later step
 • expected_files missing files from step targets
+• Step drifts away from files or symbols already approved in plan_markdown
+• Step reintroduces fields or structures contradicted by the approved markdown blueprint
 
 ------------------------------------------------
 PLANNING QUALITY RULES
@@ -285,6 +446,94 @@ Return ONLY the JSON plan with analysis, steps, expected_files, and stop_conditi
 No markdown fences. No explanations. No commentary.
 """
 
+MARKDOWN_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS = """You are AI Editor's repo-grounding critic for markdown engineering plans.
+
+Return ONLY a single valid JSON object matching the provided schema.
+
+Your job is to compare:
+• the proposed markdown plan
+• workspace_files_index
+• retrieval_context.planner_evidence
+• any plan_feedback
+
+and determine whether the markdown plan is safely grounded in the repository.
+
+Flag issues when the plan:
+• invents files, paths, symbols, routes, models, fields, or columns not supported by evidence
+• ignores an existing capability that evidence already shows
+• proposes a redundant wrapper or duplicate model/class/function
+• names tests or verification steps that do not match repo evidence
+• drifts to the wrong path prefix (for example wrong package or route file)
+
+Issue taxonomy must use ONLY:
+• invented_file
+• invented_symbol
+• schema_mismatch
+• redundant_change
+• existing_capability_ignored
+• verification_mismatch
+• path_prefix_mismatch
+• test_scope_mismatch
+• insufficient_implementation_details
+• incomplete_edge_cases
+• vague_testing_strategy
+• missing_design_rationale
+
+------------------------------------------------
+STEP DETAIL QUALITY REVIEW
+------------------------------------------------
+
+For each step, verify the required sections are present and high-quality:
+
+• Implementation: Are specific classes/functions named? Is the strategy concrete?
+• Edge Cases: Are failure modes covered? Are error conditions addressed?
+• Testing Strategy: Can success be verified? Are test approaches actionable?
+• Design Rationale: Is technical reasoning sound? Are trade-offs explained?
+
+Flag insufficient_detail when sections are missing, vague, or lack concrete specifics.
+
+If the plan is acceptable, return verdict=\"pass\" and issues=[].
+If the plan should be revised, return verdict=\"revise\" with specific issues.
+Prefer concrete, evidence-backed issues over generic criticism.
+"""
+
+JSON_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS = """You are AI Editor's repo-grounding critic for executable JSON plans.
+
+Return ONLY a single valid JSON object matching the provided schema.
+
+Your job is to compare:
+• the approved markdown blueprint
+• the proposed JSON plan
+• workspace_files_index
+• retrieval_context.planner_evidence
+• plan_validation_feedback if present
+
+Flag issues when the JSON plan:
+• introduces files absent from the approved markdown blueprint without clear NEW intent
+• targets files not present in workspace_files_index when they are not creation targets
+• drifts away from evidence-backed route/model/storage files from the approved markdown plan
+• reintroduces fields, columns, or symbols contradicted by approved markdown and evidence
+• claims verification against tests/files that do not exist
+
+Use the same issue taxonomy as the markdown critic.
+
+------------------------------------------------
+STEP DETAIL FIELD VALIDATION
+------------------------------------------------
+
+Verify that JSON plan steps contain the rich detail fields extracted from markdown:
+
+• implementation_details: Should be present and match Implementation section from markdown
+• edge_cases: Should be present and match Edge Cases section from markdown
+• testing_strategy: Should be present and match Testing Strategy section from markdown
+• design_rationale: Should be present and match Design Rationale section from markdown
+
+Flag schema_mismatch if these fields are missing or significantly different from the approved markdown blueprint.
+
+If the JSON plan is acceptable, return verdict=\"pass\" and issues=[].
+If revision is needed, return verdict=\"revise\" with specific issues.
+"""
+
 PATCH_SYSTEM_INSTRUCTIONS = """You are a deterministic code patch generation engine.
 
 Your role is to generate precise, minimal patch instructions that modify the codebase to satisfy the current step goal.
@@ -321,6 +570,25 @@ Each candidate represents an alternative approach to accomplish the goal.
 Generate exactly candidate_count candidates unless step scope cannot support it.
 
 ------------------------------------------------
+STEP-SPECIFIC GUIDANCE
+------------------------------------------------
+
+Use these step-specific details for precise implementation:
+
+step_implementation_details → Specific code changes and implementation strategy required
+step_edge_cases → Edge cases to handle in implementation  
+step_testing_strategy → Verification criteria and testing approach to satisfy
+step_design_rationale → Technical considerations and constraints
+
+Priority:
+1. Use step_implementation_details for specific code changes
+2. Use step_edge_cases to handle edge cases in your implementation
+3. Use step_testing_strategy to ensure verification criteria are met
+4. Use step_design_rationale for technical constraints and considerations
+
+If step details are insufficient, look in the plan.steps array for the current_step.id and extract additional context from any markdown-style content within that step's fields. The plan field may contain richer details that weren't extracted into the structured fields.
+
+------------------------------------------------
 SOURCE OF TRUTH
 ------------------------------------------------
 
@@ -329,6 +597,19 @@ The only valid source of code is:
 retrieval_context.file_contents
 
 This dictionary contains the real and current file contents.
+
+------------------------------------------------
+LINE NUMBER FORMAT
+------------------------------------------------
+
+File contents in retrieval_context.file_contents are prefixed with line numbers:
+  "  35: def apply_patch_document(\n  36:     self,\n  37:     base_dir: str | Path,"
+
+Use these line numbers to:
+- Calculate precise start_line and end_line for replace_range operations
+- Calculate accurate hunk headers for apply_diff operations (@@ -start,count +start,count @@)
+- Determine exact insertion points for insert_after_node operations
+- Verify context line counts match the hunk header
 
 Never assume code that does not appear in this context.
 
@@ -424,10 +705,12 @@ Choose strategies using this order:
 
 1. If modifying functions/classes → ast_patch
 2. If exact text replacement is possible → fast_apply
-3. If multiple nearby edits exist → diff_patch
-4. If creating/removing files → file_ops
+3. If line numbers are known precisely → replace_range
+4. If multiple nearby edits exist → diff_patch
+5. If creating/removing files → file_ops
 
 Prefer fast_apply for large files (>500 lines) when you have exact text to match.
+Prefer replace_range when you can pinpoint the exact lines to replace from file_contents.
 
 ------------------------------------------------
 CANDIDATE GENERATION RULES
@@ -443,11 +726,48 @@ Generate multiple candidates to explore different approaches:
 Example candidate diversity:
 
 Candidate 1: ast_patch approach (structural change)
-Candidate 2: fast_apply approach (text replacement)
+Candidate 2: fast_apply or replace_range approach (text/line replacement)
 Candidate 3: diff_patch approach (multi-section edit)
 
 ------------------------------------------------
-OPERATION RULES
+REPLACE RANGE RULES
+------------------------------------------------
+
+replace_range operation:
+
+Required fields:
+
+op: "replace_range"
+file
+anchor: { start_line, end_line }
+content
+reason
+
+Rules:
+
+• Use EXACT line numbers from retrieval_context.file_contents.
+• start_line is the first line to replace (1-indexed).
+• end_line is the last line to replace (inclusive, 1-indexed).
+• content must be syntactically valid and match the surrounding indentation.
+• If replacing multiple blocks, ensure line numbers are adjusted if previous ops in the same candidate modified the file length (or use separate candidates).
+
+Example:
+
+{
+  "op": "replace_range",
+  "file": "services/auth.py",
+  "anchor": {
+    "start_line": 42,
+    "end_line": 45
+  },
+  "content": "    def get_token(self, user_id):\\n        return self.store.find_token(user_id)",
+  "reason": "replace old token lookup with new store method"
+}
+
+Performance note: O(1) - most precise for large files when line numbers are known.
+
+------------------------------------------------
+FAST APPLY RULES
 ------------------------------------------------
 
 Each operation must contain:
@@ -561,7 +881,7 @@ Example:
 Performance note: O(N) - fastest for large files, requires unique search text
 
 ------------------------------------------------
-DIFF PATCH RULES
+DIFF PATCH RULES (Aider Style)
 ------------------------------------------------
 
 apply_diff operation:
@@ -573,24 +893,24 @@ file
 diff
 reason
 
-The diff must follow unified diff format with proper @@ hunk headers.
-
 Rules:
 
-• include @@ context markers with line numbers: @@ -start,count +start,count @@
-• removed lines start with "-"
-• added lines start with "+"
-• context lines have no prefix (or single space)
-• include enough surrounding context for stability (3-5 lines recommended)
-• multiple hunks are allowed in a single diff
+• Start each hunk of changes with a `@@ ... @@` line.
+• CRITICAL: Don't include line numbers in hunk headers. The patch tool doesn't need them.
+• Use ` ` for context lines, `-` for removed lines, and `+` for added lines.
+• Indentation matters exactly!
+• When editing a function, method, loop, etc., replace the *entire* code block.
+• Delete the entire existing version with `-` lines and add the new version with `+` lines.
+• This ensures the patch applies cleanly and provides enough context for unique matching.
+• Include at least 3 lines of surrounding context if not replacing an entire block.
 
-Example:
+Example (CORRECT - Entire block replacement):
 
 {
   "op": "apply_diff",
   "file": "services/auth.py",
-  "diff": "@@ -15,3 +15,4 @@\\n def login(user):\\n     token = gen_token(user.id)\\n+    logger.info(f'User {user.id} logged in')\\n     return token",
-  "reason": "add login event logging"
+  "diff": "@@ ... @@\\n-def login(user):\\n-    token = gen_token(user.id)\\n-    return token\\n+def login(user):\\n+    token = gen_token(user.id)\\n+    logger.info(f'User {user.id} logged in')\\n+    return token",
+  "reason": "add login event logging by replacing the login function block"
 }
 
 Multi-hunk example:
@@ -598,11 +918,11 @@ Multi-hunk example:
 {
   "op": "apply_diff",
   "file": "services/auth.py",
-  "diff": "@@ -10,2 +10,3 @@\\n import hashlib\\n+import logging\\n from datetime import datetime\\n@@ -15,3 +16,4 @@\\n def login(user):\\n     token = gen_token(user.id)\\n+    logging.info(f'User {user.id} logged in')\\n     return token",
+  "diff": "@@ ... @@\\n import hashlib\\n+import logging\\n from datetime import datetime\\n@@ ... @@\\n-def login(user):\\n-    token = gen_token(user.id)\\n-    return token\\n+def login(user):\\n+    token = gen_token(user.id)\\n+    logging.info(f'User {user.id} logged in')\\n+    return token",
   "reason": "add logging import and login event"
 }
 
-Performance note: Tolerates minor code shifts via context matching
+Performance note: Most robust for multi-section edits and LLM-generated patches.
 
 ------------------------------------------------
 AST PATCH RULES
@@ -714,6 +1034,7 @@ Preflight validation checks:
 
 • Selectors must match exactly one node in the target file
 • Search text must exist exactly once in the target file
+• Range line numbers must be valid and within file bounds
 • Diff hunks must have valid @@ headers with line numbers
 • Operations must target files in allowed_files
 • File paths must be relative to workspace (no absolute paths, no path traversal)
@@ -739,6 +1060,32 @@ Avoid:
 • rewriting entire files when targeted edits suffice
 • touching unrelated code
 • speculative improvements not required by the goal
+
+------------------------------------------------
+COMMON FAILURES & REPAIR GUIDANCE
+------------------------------------------------
+
+If you are in a REPAIR cycle (last_failure is present), use these strategies:
+
+1. NameError / ImportError
+   • High probability of missing import or typo in symbol name.
+   • Verify all new symbols added in previous steps are correctly imported in the current file.
+   • Use search_replace or apply_diff to add missing imports at the top of the file.
+
+2. anchor_missing (Selector/Range Failure)
+   • Occurs when a symbol selector (exact match) fails to find the node, or line numbers are out of bounds.
+   • Check if the symbol is a class/function or just an import.
+   • For replace_range, carefully examine the `last_failure` output to identify the reported file length and the problematic `start_line`/`end_line` values. Adjust these line numbers to be within the valid bounds of the current file. Remember that `replace_range` operations are 1-based.
+   • If the selector fails, try a different anchor or switch to diff_patch / search_replace.
+   • Ensure you aren't trying to use a symbol that you deleted or renamed in an earlier op of the same candidate.
+3. SyntaxError
+   • Ensure all braces, parentheses, and indentation are correct in your content.
+   • In Python, preserve existing indentation levels exactly.
+
+4. Validation Failure (Test failure)
+   • Read the excerpt in last_failure carefully. It contains the first few lines of the error/traceback.
+   • Look for "Error:" or "Fail:" lines to identify the root cause.
+
 • stylistic refactors not required by the goal
 • removing code that later operations depend on
 
@@ -814,8 +1161,12 @@ def build_plan_payload(
     *,
     workspace_path: str,
     retrieval_context: dict[str, object],
+    plan_markdown: str | None = None,
+    plan_feedback: str | None = None,
+    plan_validation_feedback: dict[str, object] | None = None,
+    plan_critique_feedback: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    payload = {
         "intent": {
             "task_type": "plan_generation",
             "goal": "Produce an ordered, executable plan for later patch generation.",
@@ -823,9 +1174,19 @@ def build_plan_payload(
         "task_id": task.task_id,
         "goal": task.goal,
         "workspace_path": workspace_path,
-        "mode": task.mode,
-        "budget": task.budget.model_dump(mode="json"),
         "modified_files": task.modified_files,
+        "plan_markdown": plan_markdown or task.plan_markdown,
+        "plan_feedback": plan_feedback,
+        "plan_validation_feedback": (
+            plan_validation_feedback
+            if plan_validation_feedback is not None
+            else retrieval_context.get("plan_validation_feedback")
+        ),
+        "plan_critique_feedback": (
+            plan_critique_feedback
+            if plan_critique_feedback is not None
+            else retrieval_context.get("plan_critique_feedback")
+        ),
         "constraints": {
             "max_files_touched": task.budget.max_files_touched,
             "max_iterations": task.budget.max_iterations,
@@ -841,7 +1202,9 @@ def build_plan_payload(
             "step_requirements": [
                 "id must be stable and unique within plan",
                 "goal must be implementation-focused",
-                "targets must be repo-relative paths",
+                "targets must be objects containing path and intent",
+                "target path must be repo-relative",
+                "target intent must be existing|new",
                 "risk must be one of low|med|high",
             ],
             "example_output": {
@@ -850,7 +1213,12 @@ def build_plan_payload(
                     {
                         "id": "s1",
                         "goal": "Create the new route handler",
-                        "targets": ["services/agentd-py/agentd/api/routes.py"],
+                        "targets": [
+                            {
+                                "path": "services/agentd-py/agentd/api/routes.py",
+                                "intent": "existing",
+                            }
+                        ],
                         "risk": "low",
                     }
                 ],
@@ -863,6 +1231,45 @@ def build_plan_payload(
                 ],
             },
         },
+        "retrieval_context": retrieval_context,
+    }
+    return payload
+
+
+def build_markdown_plan_critique_payload(
+    task: TaskRecord,
+    *,
+    workspace_path: str,
+    retrieval_context: dict[str, object],
+    plan_markdown: str,
+    plan_feedback: str | None = None,
+) -> dict[str, object]:
+    return {
+        "task_id": task.task_id,
+        "goal": task.goal,
+        "workspace_path": workspace_path,
+        "plan_markdown": plan_markdown,
+        "plan_feedback": plan_feedback,
+        "retrieval_context": retrieval_context,
+    }
+
+
+def build_json_plan_critique_payload(
+    task: TaskRecord,
+    *,
+    workspace_path: str,
+    retrieval_context: dict[str, object],
+    plan_markdown: str,
+    candidate_plan: dict[str, object],
+    plan_validation_feedback: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "task_id": task.task_id,
+        "goal": task.goal,
+        "workspace_path": workspace_path,
+        "plan_markdown": plan_markdown,
+        "candidate_plan": candidate_plan,
+        "plan_validation_feedback": plan_validation_feedback,
         "retrieval_context": retrieval_context,
     }
 
@@ -880,6 +1287,28 @@ def build_patch_payload(
     candidate_count: int | None = None,
     last_failure: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    # Extract step-specific details from the enriched JSON plan
+    step_details = {}
+    if current_step and task.plan:
+        # Convert PlanDocument to dict if needed for type safety
+        if isinstance(task.plan, PlanDocument):
+            plan_data = task.plan.model_dump(mode="json")
+        else:
+            plan_data = task.plan
+        
+        # Now plan_data is guaranteed to be a dict
+        if plan_data and plan_data.get("steps"):
+            # Find the matching step in the plan
+            for step in plan_data["steps"]:
+                if step.get("id") == current_step.id:
+                    step_details = {
+                        "implementation_details": step.get("implementation_details"),
+                        "edge_cases": step.get("edge_cases"),
+                        "testing_strategy": step.get("testing_strategy"),
+                        "design_rationale": step.get("design_rationale"),
+                    }
+                    break
+    
     return {
         "intent": {
             "task_type": "patch_generation",
@@ -897,6 +1326,12 @@ def build_patch_payload(
         "modified_files": task.modified_files,
         "diagnostics": [item.model_dump(mode="json") for item in diagnostics],
         "last_failure": last_failure,
+        
+        # Step-specific details from enriched JSON plan
+        "step_implementation_details": step_details.get("implementation_details"),
+        "step_edge_cases": step_details.get("edge_cases"),
+        "step_testing_strategy": step_details.get("testing_strategy"),
+        "step_design_rationale": step_details.get("design_rationale"),
         "constraints": {
             "max_files_touched": task.budget.max_files_touched,
             "max_iterations": task.budget.max_iterations,
@@ -953,6 +1388,21 @@ def build_patch_payload(
                     "reason": "Add TODO comment",
                 },
             },
+            "replace_range": {
+                "requires": ["file", "anchor.start_line", "anchor.end_line", "content", "reason"],
+                "use_when": "precise line-range replacement using current file line numbers",
+                "performance": "O(1) - most precise for large files when line numbers are known",
+                "example": {
+                    "op": "replace_range",
+                    "file": "src/utils.py",
+                    "anchor": {
+                        "start_line": 10,
+                        "end_line": 12
+                    },
+                    "content": "def helper():\\n    # Updated implementation\\n    return True",
+                    "reason": "Update helper implementation using line numbers",
+                },
+            },
             "create_file": {
                 "requires": ["file", "content", "reason"],
                 "use_when": "creating a new file",
@@ -971,6 +1421,7 @@ def build_patch_payload(
                 "insert_after_node",
                 "search_replace",
                 "apply_diff",
+                "replace_range",
                 "create_file",
                 "delete_file",
             ],

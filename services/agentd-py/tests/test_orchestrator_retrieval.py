@@ -14,8 +14,34 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 class RecordingReasoningEngine:
     def __init__(self) -> None:
+        self.markdown_plan_calls: list[dict[str, object]] = []
         self.plan_calls: list[dict[str, object]] = []
         self.patch_calls: list[dict[str, object]] = []
+
+    async def create_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+    ) -> str:
+        self.markdown_plan_calls.append(
+            {
+                "task_id": task.task_id,
+                "workspace_path": workspace_path,
+                "retrieval_context": retrieval_context,
+            }
+        )
+        return "# Plan\n\n- Create helper"
+
+    async def critique_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        plan_markdown: str,
+    ) -> object:
+        _ = (task, workspace_path, retrieval_context, plan_markdown)
+        return {"verdict": "pass", "issues": []}
 
     async def create_plan(
         self,
@@ -32,7 +58,14 @@ class RecordingReasoningEngine:
         )
         return {
             "analysis": "Plan with retrieval",
-            "steps": [{"id": "S1", "goal": "Create file", "targets": ["generated.txt"], "risk": "low"}],
+            "steps": [
+                {
+                    "id": "S1",
+                    "goal": "Create file",
+                    "targets": [{"path": "generated.txt", "intent": "new"}],
+                    "risk": "low",
+                }
+            ],
             "expected_files": ["generated.txt"],
             "stop_conditions": ["validation passes"],
         }
@@ -70,6 +103,16 @@ class RecordingReasoningEngine:
             ]
         }
 
+    async def critique_json_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        candidate_plan: dict[str, object],
+    ) -> object:
+        _ = (task, workspace_path, retrieval_context, candidate_plan)
+        return {"verdict": "pass", "issues": []}
+
 
 class AlwaysPassValidator:
     async def run(self, workspace_path: str) -> ValidationResult:
@@ -95,6 +138,19 @@ class StubRetrievalClient:
                 diagnostics_excerpt=["src/auth.py:12: unresolved name"],
                 snapshot_age_sec=12.0,
                 snapshot_stats={"node_count": 3, "edge_count": 2, "diagnostic_count": 1},
+                planner_evidence={
+                    "workspace_files_index": ["src/auth.py"],
+                    "evidence_files": [
+                        {
+                            "path": "src/auth.py",
+                            "excerpt": "def build_auth(token):\n    return validate(token)",
+                        }
+                    ],
+                    "evidence_symbols": [],
+                    "evidence_routes_models_storage": {"routes": [], "models": [], "storage": []},
+                    "diagnostics_excerpt": ["src/auth.py:12: unresolved name"],
+                    "confidence_notes": [],
+                },
             ),
             [Diagnostic(source="retrieval", message="Snapshot is stale", level="warning")],
         )
@@ -121,19 +177,30 @@ async def test_orchestrator_passes_retrieval_context_to_plan_and_patch(tmp_path:
         retrieval_client=retrieval_client,
     )
 
-    result = await orchestrator.run_task(task.task_id)
+    initialized = await orchestrator.run_task(task.task_id)
+    assert initialized.status == TaskStatus.AWAITING_PLAN_APPROVAL
+
+    result = await orchestrator.continue_task(task.task_id, feedback=None)
 
     assert result.status == TaskStatus.READY_FOR_REVIEW
-    assert retrieval_client.calls == [(str(real_workspace), "Generate helper")]
+    assert retrieval_client.calls == [
+        (str(real_workspace), "Generate helper"),
+        (str(real_workspace), "Generate helper"),
+    ]
+    assert len(reasoner.markdown_plan_calls) == 1
     assert len(reasoner.plan_calls) == 1
     assert len(reasoner.patch_calls) == 1
 
+    markdown_context = reasoner.markdown_plan_calls[0]["retrieval_context"]
     plan_context = reasoner.plan_calls[0]["retrieval_context"]
     patch_context = reasoner.patch_calls[0]["retrieval_context"]
+    assert isinstance(markdown_context, dict)
     assert isinstance(plan_context, dict)
     assert isinstance(patch_context, dict)
+    assert markdown_context["related_files"] == ["src/auth.py"]
     assert plan_context["related_files"] == ["src/auth.py"]
     assert patch_context["related_symbols"] == ["build_auth"]
+    assert markdown_context["planner_evidence"]["workspace_files_index"] == ["src/auth.py"]
 
     assert result.diagnostics
     assert result.diagnostics[0].source == "retrieval"

@@ -64,6 +64,21 @@ class ShadowWorkspaceManager:
             shadow_path=shadow_path,
         )
 
+    async def clone(self, parent_task_id: str, child_task_id: str, workspace_path: str) -> ShadowWorkspace:
+        """Copy the parent's shadow workspace into a new path for a child task."""
+        src = self._resolve_shadow_path(parent_task_id)
+        if not src.exists():
+            raise RuntimeError(f"Parent shadow workspace does not exist: {src}")
+        dst = self._resolve_shadow_path(child_task_id)
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+        return ShadowWorkspace(
+            task_id=child_task_id,
+            real_path=Path(workspace_path).resolve(),
+            shadow_path=dst,
+        )
+
     async def promote(self, task: TaskRecord) -> None:
         if task.shadow_workspace_path is None:
             msg = f"Task {task.task_id} has no shadow workspace"

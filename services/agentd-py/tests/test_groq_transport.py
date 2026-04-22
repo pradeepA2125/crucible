@@ -73,6 +73,25 @@ async def test_groq_transport_sends_expected_request_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_groq_transport_generate_text_returns_content() -> None:
+    client = FakeCompletionsClient(
+        responses=[FakeResponse(choices=[FakeChoice(message=FakeMessage(content="# Plan"))])]
+    )
+    transport = GroqJsonTransport(api_key="test-key", completions_client=client, max_tokens=111)
+
+    output = await transport.generate_text(
+        model="llama-3.3-70b-versatile",
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    assert output == "# Plan"
+    call = client.calls[0]
+    assert call["messages"][0]["content"] == "plan"
+    assert "response_format" not in call
+
+
+@pytest.mark.asyncio
 async def test_groq_transport_rejects_missing_choices() -> None:
     client = FakeCompletionsClient(responses=[FakeResponse(choices=[])])
     transport = GroqJsonTransport(api_key="test-key", completions_client=client)

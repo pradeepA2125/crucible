@@ -65,6 +65,11 @@ def _snapshot_payload(generated_at_ms: int) -> dict[str, object]:
 def test_load_context_from_valid_snapshot(tmp_path: Path) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir(parents=True)
+    (workspace / "src").mkdir(parents=True)
+    (workspace / "src/auth.py").write_text(
+        "def build_auth(token: str) -> str:\n    return validate_token(token)\n\n\ndef validate_token(token: str) -> str:\n    return token.strip()\n",
+        encoding="utf-8",
+    )
     snapshot_path = workspace / ".ai-editor/index-snapshot.json"
     _write_snapshot(snapshot_path, _snapshot_payload(int(time.time() * 1000)))
 
@@ -78,6 +83,12 @@ def test_load_context_from_valid_snapshot(tmp_path: Path) -> None:
     assert context.diagnostics_excerpt
     assert context.snapshot_stats["node_count"] == 3
     assert context.snapshot_age_sec is not None
+    assert context.planner_evidence.workspace_files_index == ["src/auth.py"]
+    assert context.planner_evidence.evidence_files
+    assert context.planner_evidence.evidence_files[0].path == "src/auth.py"
+    assert "build_auth" in context.planner_evidence.evidence_files[0].excerpt
+    assert context.planner_evidence.evidence_symbols
+    assert context.planner_evidence.evidence_symbols[0].file == "src/auth.py"
 
 
 def test_stale_snapshot_warns_but_returns_context(tmp_path: Path) -> None:
@@ -201,7 +212,7 @@ def test_context_filters_shadow_paths_and_normalizes_to_repo_relative(tmp_path: 
     ]
 
 
-def test_goal_bias_prioritizes_agentd_paths_for_agentd_tasks(tmp_path: Path) -> None:
+def test_load_context_ranks_by_goal_terms_without_repo_specific_bias(tmp_path: Path) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir(parents=True)
     snapshot_path = workspace / ".ai-editor/index-snapshot.json"
@@ -210,21 +221,21 @@ def test_goal_bias_prioritizes_agentd_paths_for_agentd_tasks(tmp_path: Path) -> 
     payload["graph"] = {
         "nodes": [
             {
-                "id": "file:ts",
-                "path": "apps/editor-client/src/domain/types.ts",
-                "name": "types.ts",
+                "id": "file:ui",
+                "path": "ui/button.tsx",
+                "name": "button.tsx",
                 "kind": "File",
             },
             {
-                "id": "file:routes",
-                "path": "services/agentd-py/agentd/api/routes.py",
-                "name": "routes.py",
+                "id": "file:auth",
+                "path": "src/auth/session_auth.py",
+                "name": "session_auth.py",
                 "kind": "File",
             },
             {
-                "id": "file:storage",
-                "path": "services/agentd-py/agentd/storage/base.py",
-                "name": "base.py",
+                "id": "file:payments",
+                "path": "src/payments/processor.py",
+                "name": "processor.py",
                 "kind": "File",
             },
         ],
@@ -236,9 +247,9 @@ def test_goal_bias_prioritizes_agentd_paths_for_agentd_tasks(tmp_path: Path) -> 
     client = RetrievalArtifactClient()
     context, warnings = client.load_context(
         str(workspace),
-        "Implement task events endpoint in agentd-py service",
+        "Improve session auth flow",
     )
 
     assert warnings == []
     assert context.related_files
-    assert context.related_files[0].startswith("services/agentd-py/")
+    assert context.related_files[0] == "src/auth/session_auth.py"

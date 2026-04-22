@@ -13,6 +13,29 @@ class ReasoningEngine(Protocol):
         retrieval_context: dict[str, object],
     ) -> object: ...
 
+    async def create_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+    ) -> str: ...
+
+    async def critique_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        plan_markdown: str,
+    ) -> object: ...
+
+    async def critique_json_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        candidate_plan: dict[str, object],
+    ) -> object: ...
+
     async def create_patch(
         self,
         task: TaskRecord,

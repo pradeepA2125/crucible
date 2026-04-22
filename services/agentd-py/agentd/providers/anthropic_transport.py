@@ -81,6 +81,28 @@ class AnthropicJsonTransport(ModelJsonTransport):
         output_text = self._extract_text(response)
         return self._parse_output_object(output_text)
 
+    async def generate_text(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> str:
+        """Generates raw text using Anthropic."""
+        response = await self._messages.create(
+            model=model,
+            max_tokens=self._max_tokens,
+            temperature=0,
+            system=system_instructions,
+            messages=[
+                {
+                    "role": "user",
+                    "content": json.dumps(user_payload),
+                }
+            ],
+        )
+        return self._extract_text(response)
+
     def _build_system_prompt(
         self,
         *,

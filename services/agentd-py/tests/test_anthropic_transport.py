@@ -68,6 +68,24 @@ async def test_anthropic_transport_sends_expected_request_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_anthropic_transport_generate_text_returns_text_blocks() -> None:
+    client = FakeMessagesClient(
+        responses=[FakeResponse(content=[FakeTextBlock(type="text", text="# Plan\n\n- Add route")])]
+    )
+    transport = AnthropicJsonTransport(api_key="test-key", messages_client=client)
+
+    output = await transport.generate_text(
+        model="claude-3-5-sonnet-latest",
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    assert output == "# Plan\n\n- Add route"
+    call = client.calls[0]
+    assert call["system"] == "plan"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_transport_rejects_empty_text_output() -> None:
     client = FakeMessagesClient(responses=[FakeResponse(content=[])])
     transport = AnthropicJsonTransport(api_key="test-key", messages_client=client)

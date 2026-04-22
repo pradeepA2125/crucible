@@ -51,6 +51,24 @@ async def test_gemini_transport_sends_expected_request_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_transport_generate_text_returns_text() -> None:
+    fake_client = FakeModelsClient(outputs=["# Plan\n\n- Add route"])
+    transport = GeminiJsonTransport(models_client=fake_client)
+
+    output = await transport.generate_text(
+        model="gemini-3-flash-preview",
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    assert output == "# Plan\n\n- Add route"
+    call = fake_client.calls[0]
+    assert call["config"]["system_instruction"] == "plan"
+    assert call["config"]["temperature"] == 0
+    assert "response_json_schema" not in call["config"]
+
+
+@pytest.mark.asyncio
 async def test_gemini_transport_includes_thinking_budget_when_enabled() -> None:
     fake_client = FakeModelsClient(outputs=[json.dumps({"ok": True})])
     transport = GeminiJsonTransport(

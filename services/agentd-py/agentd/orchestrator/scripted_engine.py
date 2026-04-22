@@ -18,6 +18,35 @@ class ScriptedReasoningEngine:
         _ = (task, workspace_path, retrieval_context)
         return self._plan
 
+    async def create_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+    ) -> str:
+        _ = (task, workspace_path, retrieval_context)
+        return "# Scripted Plan\n\n- Review generated changes"
+
+    async def critique_markdown_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        plan_markdown: str,
+    ) -> object:
+        _ = (task, workspace_path, retrieval_context, plan_markdown)
+        return {"verdict": "pass", "issues": []}
+
+    async def critique_json_plan(
+        self,
+        task: TaskRecord,
+        workspace_path: str,
+        retrieval_context: dict[str, object],
+        candidate_plan: dict[str, object],
+    ) -> object:
+        _ = (task, workspace_path, retrieval_context, candidate_plan)
+        return {"verdict": "pass", "issues": []}
+
     async def create_patch(
         self,
         task: TaskRecord,

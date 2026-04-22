@@ -87,6 +87,34 @@ class HuggingFaceJsonTransport(ModelJsonTransport):
         output_text = self._extract_text(response)
         return self._parse_output_object(output_text, schema_name)
 
+    async def generate_text(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> str:
+        prompt = (
+            f"{system_instructions}\n\n"
+            f"Input payload: {json.dumps(user_payload, separators=(',', ':'))}\n\n"
+            "Response:"
+        )
+        generation_kwargs: dict[str, object] = {
+            "prompt": prompt,
+            "model": model,
+            "max_new_tokens": self._max_new_tokens,
+        }
+        if self._seed is not None:
+            generation_kwargs["seed"] = self._seed
+
+        try:
+            response = await asyncio.to_thread(self._client.text_generation, **generation_kwargs)
+        except Exception as exc:
+            msg = f"Hugging Face request failed: {exc}"
+            raise RuntimeError(msg) from exc
+
+        return self._extract_text(response)
+
     def _build_prompt(
         self,
         *,

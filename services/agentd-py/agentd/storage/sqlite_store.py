@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
-from agentd.domain.models import TaskRecord
+from agentd.domain.models import TaskEvent, TaskRecord
 
 
 class SQLiteTaskStore:
@@ -130,6 +131,35 @@ class SQLiteTaskStore:
 
             payload_json = str(row[0])
             return TaskRecord.model_validate_json(payload_json)
+
+    async def get_task_events(self, task_id: str) -> list[TaskEvent]:
+        async with self._lock:
+            cursor = self._conn.execute(
+                "SELECT 1 FROM tasks WHERE task_id = ?",
+                (task_id,),
+            )
+            if cursor.fetchone() is None:
+                msg = f"Task not found: {task_id}"
+                raise KeyError(msg)
+
+            cursor = self._conn.execute(
+                """
+                SELECT at, from_status, to_status, reason
+                FROM task_events
+                WHERE task_id = ?
+                ORDER BY event_index ASC
+                """,
+                (task_id,),
+            )
+            return [
+                TaskEvent(
+                    at=datetime.fromisoformat(row[0]),
+                    from_status=row[1],  # type: ignore[arg-type]
+                    to_status=row[2],    # type: ignore[arg-type]
+                    reason=row[3],
+                )
+                for row in cursor.fetchall()
+            ]
 
     def _replace_task_events(self, task: TaskRecord) -> None:
         self._conn.execute("DELETE FROM task_events WHERE task_id = ?", (task.task_id,))

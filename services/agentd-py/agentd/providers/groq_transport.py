@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path as _Path
 from typing import Any
 
 try:
@@ -11,6 +10,7 @@ except ImportError:
     AsyncGroqClient = None
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.runtime.artifacts import provider_debug_root
 
 
 class GroqJsonTransport(ModelJsonTransport):
@@ -80,12 +80,12 @@ class GroqJsonTransport(ModelJsonTransport):
             "temperature": 1,
             "include_reasoning": False,
         }
-        if self._reasoning_effort:
+        if self._reasoning_effort and "deepseek" in model.lower():
             create_kwargs["reasoning_effort"] = self._reasoning_effort
 
         # Debug: dump request
+        out_dir = provider_debug_root("groq")
         try:
-            out_dir = _Path("/tmp/ai-editor-stress")
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / f"debug-req-{safe_schema_name}.json").write_text(
                 json.dumps(create_kwargs, indent=2, default=str), encoding="utf-8"
@@ -107,6 +107,32 @@ class GroqJsonTransport(ModelJsonTransport):
                 except Exception:
                     pass
             raise
+
+    async def generate_text(
+        self,
+        *,
+        model: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> str:
+        """Generates raw text using Groq."""
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": json.dumps(user_payload)},
+            ],
+            "max_completion_tokens": self._max_tokens,
+            "temperature": 1,
+        }
+        if self._reasoning_effort and "deepseek" in model.lower():
+            create_kwargs["reasoning_effort"] = self._reasoning_effort
+
+        try:
+            response = await self._completions.create(**create_kwargs)
+            return self._extract_text(response)
+        except Exception as e:
+            raise RuntimeError(f"Groq API error: {e}") from e
 
     def _extract_text(self, response: Any) -> str:
         choices = read_value(response, "choices")

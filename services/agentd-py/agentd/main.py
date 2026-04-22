@@ -17,6 +17,7 @@ from agentd.providers.openai_transport import OpenAIJsonTransport
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.engine import DefaultReasoningEngine
 from agentd.retrieval.artifact_client import RetrievalArtifactClient
+from agentd.runtime.adapters import build_evidence_adapter, build_planning_adapter
 from agentd.storage.sqlite_store import SQLiteTaskStore
 from agentd.validation.command_validator import CommandValidator
 from agentd.workspace.shadow import ShadowWorkspaceManager
@@ -97,7 +98,14 @@ if reasoning_backend == "scripted":
     reasoning_engine = ScriptedReasoningEngine(
         plan={
             "analysis": "Scaffold run",
-            "steps": [{"id": "S1", "goal": "Create scaffold file", "targets": ["generated.txt"], "risk": "low"}],
+            "steps": [
+                {
+                    "id": "S1",
+                    "goal": "Create scaffold file",
+                    "targets": [{"path": "generated.txt", "intent": "new"}],
+                    "risk": "low",
+                }
+            ],
             "expected_files": ["generated.txt"],
             "stop_conditions": ["validation passes"],
         },
@@ -145,6 +153,8 @@ elif reasoning_backend == "gemini":
         thinking_budget=thinking_budget,
         thinking_level=thinking_level,
         include_thoughts=_bool_env("AI_EDITOR_GEMINI_INCLUDE_THOUGHTS", False),
+        timeout_sec=_float_env("AI_EDITOR_GEMINI_TIMEOUT_SEC", 120.0),
+        max_retries=_int_env("AI_EDITOR_GEMINI_MAX_RETRIES", 4),
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv("AI_EDITOR_GEMINI_MODEL", "gemini-3-flash-preview"),
@@ -206,7 +216,9 @@ else:
     )
 
 validator = CommandValidator.from_env()
-retrieval_client = RetrievalArtifactClient.from_env()
+evidence_adapter = build_evidence_adapter(os.getenv("AI_EDITOR_EVIDENCE_ADAPTER", "generic"))
+planning_adapter = build_planning_adapter(os.getenv("AI_EDITOR_PLANNING_ADAPTER", "generic"))
+retrieval_client = RetrievalArtifactClient.from_env(evidence_adapter=evidence_adapter)
 orchestrator = AgentOrchestrator(
     store=store,
     reasoning_engine=reasoning_engine,
@@ -214,6 +226,7 @@ orchestrator = AgentOrchestrator(
     patch_engine=patch_engine,
     workspace_manager=workspace_manager,
     retrieval_client=retrieval_client,
+    planning_adapter=planning_adapter,
     max_attempts_per_step=_int_env("AI_EDITOR_MAX_ATTEMPTS_PER_STEP", 3),
     step_scoped_mode=_bool_env("AI_EDITOR_STEP_SCOPED_MODE", True),
     patch_candidate_count=_int_env("AI_EDITOR_PATCH_CANDIDATE_COUNT", 3),
