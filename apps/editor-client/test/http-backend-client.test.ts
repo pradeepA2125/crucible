@@ -10,9 +10,10 @@ describe("HttpBackendClient", () => {
           JSON.stringify({
             task_id: "task-123",
             goal: "goal",
-            status: "QUEUED",
+            status: "AWAITING_PLAN_APPROVAL",
             modified_files: ["a.ts"],
-            diagnostics: []
+            diagnostics: [],
+            plan_markdown: "# Plan\n\n- Add route"
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         )
@@ -21,6 +22,7 @@ describe("HttpBackendClient", () => {
     const result = await client.getTask("task-123");
     expect(result.taskId).toBe("task-123");
     expect(result.modifiedFiles).toEqual(["a.ts"]);
+    expect(result.planMarkdown).toBe("# Plan\n\n- Add route");
   });
 
   test("accepts diagnostics with null file/line/column fields from backend", async () => {
@@ -69,7 +71,14 @@ describe("HttpBackendClient", () => {
             status: "READY_FOR_REVIEW",
             plan: {
               analysis: "a",
-              steps: [{ id: "S1", goal: "g", targets: ["a.ts"], risk: "low" }],
+              steps: [
+                {
+                  id: "S1",
+                  goal: "g",
+                  targets: [{ path: "a.ts", intent: "existing" }],
+                  risk: "low"
+                }
+              ],
               expected_files: ["a.ts"],
               stop_conditions: ["done"]
             },
@@ -123,5 +132,32 @@ describe("HttpBackendClient", () => {
       workspace_path: "/tmp/repo",
       mode: "project_edit"
     });
+  });
+
+  test("posts explicit null when approving a plan without feedback", async () => {
+    let body = "";
+
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (_url, init) => {
+        body = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({
+            task_id: "task-123",
+            goal: "goal",
+            status: "AWAITING_PLAN_APPROVAL",
+            modified_files: [],
+            diagnostics: [],
+            plan_markdown: "# Plan"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+    });
+
+    const result = await client.providePlanFeedback("task-123", null);
+
+    expect(JSON.parse(body)).toEqual({ feedback: null });
+    expect(result.planMarkdown).toBe("# Plan");
   });
 });

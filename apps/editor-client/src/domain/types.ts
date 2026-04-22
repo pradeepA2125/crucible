@@ -1,10 +1,12 @@
 export type TaskStatus =
   | "QUEUED"
   | "CONTEXT_READY"
+  | "AWAITING_PLAN_APPROVAL"
   | "PLANNED"
-  | "PATCHED"
+  | "EXECUTING"
   | "VALIDATING"
   | "REPAIRING"
+  | "VALIDATED"
   | "READY_FOR_REVIEW"
   | "PROMOTING"
   | "SUCCEEDED"
@@ -42,8 +44,13 @@ export interface Diagnostic {
 export interface PlanStep {
   id: string;
   goal: string;
-  targets: string[];
+  targets: PlanTarget[];
   risk: "low" | "med" | "high";
+}
+
+export interface PlanTarget {
+  path: string;
+  intent: "existing" | "new";
 }
 
 export interface PlanDocument {
@@ -90,6 +97,7 @@ export interface TaskRecord {
   goal: string;
   status: TaskStatus;
   plan?: PlanDocument;
+  planMarkdown?: string;
   completedStepIds: string[];
   modifiedFiles: string[];
   diagnostics: Diagnostic[];

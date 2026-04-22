@@ -2,11 +2,13 @@ import type { TaskBudget, TaskRecord, TaskStatus } from "./types.js";
 
 const transitions: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   QUEUED: new Set(["CONTEXT_READY", "FAILED", "ABORTED"]),
-  CONTEXT_READY: new Set(["PLANNED", "FAILED", "ABORTED"]),
-  PLANNED: new Set(["PATCHED", "FAILED", "ABORTED"]),
-  PATCHED: new Set(["VALIDATING", "FAILED", "ABORTED"]),
-  VALIDATING: new Set(["READY_FOR_REVIEW", "REPAIRING", "FAILED", "ABORTED"]),
-  REPAIRING: new Set(["PATCHED", "FAILED", "ABORTED"]),
+  CONTEXT_READY: new Set(["AWAITING_PLAN_APPROVAL", "FAILED", "ABORTED"]),
+  AWAITING_PLAN_APPROVAL: new Set(["PLANNED", "CONTEXT_READY", "FAILED", "ABORTED"]),
+  PLANNED: new Set(["EXECUTING", "FAILED", "ABORTED"]),
+  EXECUTING: new Set(["VALIDATING", "FAILED", "ABORTED"]),
+  VALIDATING: new Set(["VALIDATED", "REPAIRING", "FAILED", "ABORTED"]),
+  REPAIRING: new Set(["EXECUTING", "VALIDATING", "FAILED", "ABORTED"]),
+  VALIDATED: new Set(["READY_FOR_REVIEW", "FAILED", "ABORTED"]),
   READY_FOR_REVIEW: new Set(["PROMOTING", "FAILED", "ABORTED"]),
   PROMOTING: new Set(["SUCCEEDED", "FAILED", "ABORTED"]),
   SUCCEEDED: new Set(),

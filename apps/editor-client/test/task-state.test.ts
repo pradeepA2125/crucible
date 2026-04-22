@@ -15,10 +15,10 @@ describe("task state machine", () => {
     });
 
     const t1 = transitionTask(task, "CONTEXT_READY", "context ready");
-    const t2 = transitionTask(t1, "PLANNED", "planned");
+    const t2 = transitionTask(transitionTask(t1, "AWAITING_PLAN_APPROVAL", "plan"), "PLANNED", "planned");
     expect(t2.status).toBe("PLANNED");
-    expect(t2.events).toHaveLength(2);
-    expect(canTransition("PLANNED", "PATCHED")).toBe(true);
+    expect(t2.events).toHaveLength(3);
+    expect(canTransition("PLANNED", "EXECUTING")).toBe(true);
   });
 
   test("supports review and promotion transitions", () => {
@@ -34,10 +34,12 @@ describe("task state machine", () => {
     });
 
     const contextReady = transitionTask(task, "CONTEXT_READY", "context");
-    const planned = transitionTask(contextReady, "PLANNED", "planned");
-    const patched = transitionTask(planned, "PATCHED", "patched");
-    const validating = transitionTask(patched, "VALIDATING", "validating");
-    const review = transitionTask(validating, "READY_FOR_REVIEW", "ready");
+    const awaitingApproval = transitionTask(contextReady, "AWAITING_PLAN_APPROVAL", "awaiting");
+    const planned = transitionTask(awaitingApproval, "PLANNED", "planned");
+    const executing = transitionTask(planned, "EXECUTING", "executing");
+    const validating = transitionTask(executing, "VALIDATING", "validating");
+    const validated = transitionTask(validating, "VALIDATED", "validated");
+    const review = transitionTask(validated, "READY_FOR_REVIEW", "ready");
     const promoting = transitionTask(review, "PROMOTING", "promoting");
     const succeeded = transitionTask(promoting, "SUCCEEDED", "done");
 

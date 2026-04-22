@@ -5,7 +5,14 @@ describe("schema validation", () => {
   test("accepts valid plan schema", () => {
     const value = PlanSchema.parse({
       analysis: "do things",
-      steps: [{ id: "S1", goal: "edit", targets: ["a.ts"], risk: "low" }],
+      steps: [
+        {
+          id: "S1",
+          goal: "edit",
+          targets: [{ path: "a.ts", intent: "existing" }],
+          risk: "low"
+        }
+      ],
       expected_files: ["a.ts"],
       stop_conditions: ["tests pass"]
     });

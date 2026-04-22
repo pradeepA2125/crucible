@@ -3,10 +3,14 @@ import {
   TaskResultSchema,
   TaskSubmissionSchema,
   TaskViewSchema,
+  ResumeTaskResponseSchema,
   type BackendTaskClient,
+  type PatchStreamEvent,
   type TaskResult,
   type TaskSubmission,
-  type TaskView
+  type TaskView,
+  type ResumeTaskRequest,
+  type ResumeTaskResponse
 } from "../contracts/task-contracts.js";
 import type { TaskStatus } from "../domain/types.js";
 
@@ -76,6 +80,74 @@ export class HttpBackendClient implements BackendTaskClient {
     return this.toTaskResult(response);
   }
 
+  async providePlanFeedback(taskId: string, feedback: string | null): Promise<TaskView> {
+    const response = await this.fetchJson(`/v1/tasks/${encodeURIComponent(taskId)}/plan/feedback`, {
+      method: "POST",
+      body: JSON.stringify({ feedback })
+    });
+    return this.toTaskView(response);
+  }
+
+  async resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse> {
+    const body: Record<string, unknown> = { stage: options?.stage ?? "execute" };
+    if (options?.budgetOverride) {
+      body["budget_override"] = {
+        max_iterations: options.budgetOverride.maxIterations,
+        max_tokens: options.budgetOverride.maxTokens,
+        max_files_touched: options.budgetOverride.maxFilesTouched,
+        max_runtime_ms: options.budgetOverride.maxRuntimeMs
+      };
+    }
+    const response = await this.fetchJson(
+      `/v1/tasks/${encodeURIComponent(taskId)}/resume`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+    return ResumeTaskResponseSchema.parse({
+      taskId: this.readString(response, "taskId", "task_id"),
+      resumeOfTaskId: this.readString(response, "resumeOfTaskId", "resume_of_task_id")
+    });
+  }
+
+  async streamPatch(
+    taskId: string,
+    onEvent: (event: PatchStreamEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const response = await this.fetchFn(
+      `${this.options.baseUrl}/v1/tasks/${encodeURIComponent(taskId)}/stream-patch`,
+      { signal: signal ?? null, headers: { accept: "text/event-stream" } }
+    );
+    if (!response.ok) {
+      throw new Error(`Stream failed (${response.status}) for task ${taskId}`);
+    }
+    if (!response.body) return;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6)) as PatchStreamEvent;
+            onEvent(event);
+            if (event.type === "done") return;
+          } catch {
+            // skip malformed SSE line
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  }
+
   private async fetchJson(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await this.fetchFn(`${this.options.baseUrl}${path}`, {
       ...init,
@@ -98,7 +170,9 @@ export class HttpBackendClient implements BackendTaskClient {
       status: this.readUnknown(raw, "status"),
       goal: this.readString(raw, "goal"),
       modifiedFiles: this.readArray(raw, "modifiedFiles", "modified_files"),
-      diagnostics: this.normalizeDiagnostics(raw)
+      diagnostics: this.normalizeDiagnostics(raw),
+      planMarkdown: this.readOptionalString(raw, "planMarkdown", "plan_markdown"),
+      resumeOfTaskId: this.readOptionalString(raw, "resumeOfTaskId", "resume_of_task_id")
     });
   }
 
@@ -107,6 +181,7 @@ export class HttpBackendClient implements BackendTaskClient {
       taskId: this.readString(raw, "taskId", "task_id"),
       status: this.readUnknown(raw, "status"),
       plan: this.readOptionalUnknown(raw, "plan"),
+      planMarkdown: this.readOptionalString(raw, "planMarkdown", "plan_markdown"),
       patch: this.readOptionalUnknown(raw, "patch"),
       modifiedFiles: this.readArray(raw, "modifiedFiles", "modified_files"),
       diagnostics: this.normalizeDiagnostics(raw),
@@ -115,7 +190,8 @@ export class HttpBackendClient implements BackendTaskClient {
         raw,
         "shadowWorkspacePath",
         "shadow_workspace_path"
-      )
+      ),
+      resumeOfTaskId: this.readOptionalString(raw, "resumeOfTaskId", "resume_of_task_id")
     });
   }
 
@@ -193,6 +269,14 @@ export class HttpBackendClient implements BackendTaskClient {
 
   private readString(raw: unknown, key: string, fallbackKey?: string): string {
     const value = this.readUnknown(raw, key, fallbackKey);
+    return String(value);
+  }
+
+  private readOptionalString(raw: unknown, key: string, fallbackKey?: string): string | undefined {
+    const value = this.readOptionalUnknown(raw, key, fallbackKey);
+    if (value === undefined || value === null) {
+      return undefined;
+    }
     return String(value);
   }
 

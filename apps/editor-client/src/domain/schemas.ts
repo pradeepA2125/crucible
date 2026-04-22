@@ -1,11 +1,33 @@
 import { z } from "zod";
 
 const RiskSchema = z.enum(["low", "med", "high"]);
+const PlanTargetIntentSchema = z.enum(["existing", "new"]);
+
+export const PlanTargetSchema = z.preprocess(
+  (input) => {
+    if (typeof input === "string") {
+      return { path: input, intent: "existing" };
+    }
+
+    if (Array.isArray(input) && input.length >= 1 && typeof input[0] === "string") {
+      return {
+        path: input[0],
+        intent: typeof input[1] === "string" ? input[1] : "existing"
+      };
+    }
+
+    return input;
+  },
+  z.object({
+    path: z.string().min(1),
+    intent: PlanTargetIntentSchema
+  })
+);
 
 export const PlanStepSchema = z.object({
   id: z.string().min(1),
   goal: z.string().min(1),
-  targets: z.array(z.string().min(1)).min(1),
+  targets: z.array(PlanTargetSchema).min(1),
   risk: RiskSchema
 });
 
