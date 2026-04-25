@@ -13,6 +13,8 @@ pub struct IndexerConfig {
     pub lsp_startup_timeout_ms: u64,
     pub lsp_request_timeout_ms: u64,
     pub snapshot_output_path: PathBuf,
+    /// If set, the indexer calls POST <backend_url>/v1/index/build after each snapshot write.
+    pub backend_url: Option<String>,
 }
 
 impl IndexerConfig {
@@ -58,6 +60,10 @@ impl IndexerConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| workspace_root.join(".ai-editor/index-snapshot.json"));
 
+        // When set, the indexer POSTs to POST /v1/index/build after every snapshot write
+        // so the Python-side semantic index stays warm without any task-time cold start.
+        let backend_url = env::var("AI_EDITOR_BACKEND_URL").ok();
+
         Self {
             workspace_root,
             max_parse_workers,
@@ -69,6 +75,7 @@ impl IndexerConfig {
             lsp_startup_timeout_ms,
             lsp_request_timeout_ms,
             snapshot_output_path,
+            backend_url,
         }
     }
 }

@@ -50,10 +50,11 @@ pub struct IndexerService {
 impl IndexerService {
     pub fn new(config: IndexerConfig) -> Result<Self> {
         let lsp = LspAdapter::new(&config);
+        let workspace_root = config.workspace_root.clone();
         Ok(Self {
             config,
             graph: SymbolGraph::default(),
-            parser: Box::new(TreeSitterParser),
+            parser: Box::new(TreeSitterParser::new(workspace_root)),
             lsp,
             tracked_files: HashSet::new(),
             diagnostics_snapshot: Vec::new(),
@@ -240,6 +241,30 @@ impl IndexerService {
         }
         let payload = serde_json::to_vec_pretty(&snapshot)?;
         tokio::fs::write(&self.config.snapshot_output_path, payload).await?;
+
+        if let Some(backend_url) = &self.config.backend_url {
+            let url = format!("{}/v1/index/build", backend_url.trim_end_matches('/'));
+            let workspace = self.config.workspace_root.display().to_string();
+            tokio::spawn(async move {
+                match reqwest::Client::new()
+                    .post(&url)
+                    .json(&serde_json::json!({ "workspace_path": workspace }))
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => {
+                        tracing::debug!(url = %url, "notified backend: index build accepted");
+                    }
+                    Ok(resp) => {
+                        tracing::warn!(url = %url, status = %resp.status(), "backend index-build notification returned non-2xx");
+                    }
+                    Err(err) => {
+                        tracing::warn!(url = %url, error = %err, "backend index-build notification failed (backend may not be running)");
+                    }
+                }
+            });
+        }
+
         Ok(())
     }
 

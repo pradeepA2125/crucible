@@ -218,7 +218,24 @@ else:
 validator = CommandValidator.from_env()
 evidence_adapter = build_evidence_adapter(os.getenv("AI_EDITOR_EVIDENCE_ADAPTER", "generic"))
 planning_adapter = build_planning_adapter(os.getenv("AI_EDITOR_PLANNING_ADAPTER", "generic"))
-retrieval_client = RetrievalArtifactClient.from_env(evidence_adapter=evidence_adapter)
+
+_semantic_index: object = None
+if _bool_env("AI_EDITOR_SEMANTIC_RETRIEVAL", False):
+    try:
+        from agentd.retrieval.semantic_index import SemanticIndex
+        _semantic_index = SemanticIndex.from_env()
+    except ImportError:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "AI_EDITOR_SEMANTIC_RETRIEVAL=true but lancedb/sentence-transformers not installed; "
+            "falling back to graph-only retrieval. "
+            "Install with: pip install 'ai-editor-agentd[semantic]'"
+        )
+
+retrieval_client = RetrievalArtifactClient.from_env(
+    evidence_adapter=evidence_adapter,
+    semantic_index=_semantic_index,
+)
 orchestrator = AgentOrchestrator(
     store=store,
     reasoning_engine=reasoning_engine,
@@ -232,7 +249,7 @@ orchestrator = AgentOrchestrator(
     patch_candidate_count=_int_env("AI_EDITOR_PATCH_CANDIDATE_COUNT", 3),
 )
 
-app.include_router(build_router(store, orchestrator, workspace_manager))
+app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client))
 
 
 @app.get("/health")

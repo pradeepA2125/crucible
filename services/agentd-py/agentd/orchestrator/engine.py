@@ -41,6 +41,7 @@ from agentd.orchestrator.broadcaster import PatchEventBroadcaster
 from agentd.patch.engine import PatchEngine
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.retrieval.artifact_client import RetrievalContext
+from agentd.retrieval.chunker import ScoredChunk
 from agentd.runtime.adapters import GenericPlanningAdapter, PlanningAdapter
 from agentd.runtime.artifacts import task_artifacts_root
 from agentd.storage.base import TaskStore
@@ -145,7 +146,6 @@ class AgentOrchestrator:
             )
             workspace_files_set = set(workspace_files_index)
             plan_context_payload = retrieval_context.as_prompt_payload()
-            plan_context_payload["workspace_files_index"] = workspace_files_index
             persistent_diagnostics = retrieval_warnings
             task.diagnostics = [*persistent_diagnostics]
             await self._store.save(task)
@@ -154,10 +154,7 @@ class AgentOrchestrator:
                 task.task_id,
                 "plan-evidence",
                 {
-                    "workspace_files_index": workspace_files_index,
                     "planner_evidence": plan_context_payload.get("planner_evidence"),
-                    "related_files": plan_context_payload.get("related_files"),
-                    "related_symbols": plan_context_payload.get("related_symbols"),
                     "diagnostics_excerpt": plan_context_payload.get("diagnostics_excerpt"),
                 },
                 artifacts_root_path=task.artifacts_root_path,
@@ -221,15 +218,11 @@ class AgentOrchestrator:
             )
             workspace_files_set = set(workspace_files_index)
             plan_context_payload = retrieval_context.as_prompt_payload()
-            plan_context_payload["workspace_files_index"] = workspace_files_index
             self._write_debug_artifact(
                 task.task_id,
                 "plan-evidence",
                 {
-                    "workspace_files_index": workspace_files_index,
                     "planner_evidence": plan_context_payload.get("planner_evidence"),
-                    "related_files": plan_context_payload.get("related_files"),
-                    "related_symbols": plan_context_payload.get("related_symbols"),
                     "diagnostics_excerpt": plan_context_payload.get("diagnostics_excerpt"),
                 },
                 artifacts_root_path=task.artifacts_root_path,
@@ -719,7 +712,9 @@ class AgentOrchestrator:
                 # Combine step targets and expected files for patching context
                 context_files = sorted(set(allowed_files) | set(task.plan.expected_files if task.plan else []))
                 
-                # Create a specialized RetrievalContext for patching with full file contents
+                # Build patch context using semantic chunk-scoped contents when available,
+                # falling back to full file content. Either way original line numbers are
+                # preserved so replace_range/apply_diff ops remain precise.
                 patch_retrieval_context = RetrievalContext(
                     repository_structure=retrieval_context.repository_structure,
                     related_files=retrieval_context.related_files,
@@ -729,7 +724,9 @@ class AgentOrchestrator:
                     diagnostics_excerpt=retrieval_context.diagnostics_excerpt,
                     snapshot_age_sec=retrieval_context.snapshot_age_sec,
                     snapshot_stats=retrieval_context.snapshot_stats,
-                    file_contents=self._collect_file_contents(shadow_path, context_files),
+                    file_contents=self._collect_chunk_scoped_contents(
+                        shadow_path, context_files, step.goal, retrieval_context
+                    ),
                     planner_evidence=retrieval_context.planner_evidence,
                 )
                 retrieval_payload = patch_retrieval_context.as_prompt_payload()
@@ -1172,6 +1169,83 @@ class AgentOrchestrator:
                 contents[rel_path] = "\n".join(f"{i+1:4d}: {line}" for i, line in enumerate(lines))
             except OSError:
                 continue
+        return contents
+
+    def _collect_chunk_scoped_contents(
+        self,
+        shadow_path: Path,
+        allowed_files: list[str],
+        step_goal: str,
+        retrieval_context: RetrievalContext,
+    ) -> dict[str, str]:
+        """Return line-numbered file contents scoped to semantically relevant chunks.
+
+        For each allowed file:
+        - If semantic chunks exist for that file: include only the chunk line ranges
+          (+ 4 context lines each side) with omission markers between gaps.
+        - If no chunks: fall back to full file content.
+
+        Original line numbers are preserved so replace_range/apply_diff patch ops remain precise.
+        """
+        if not retrieval_context.semantic_chunks:
+            return self._collect_file_contents(shadow_path, allowed_files)
+
+        allowed_set = set(allowed_files)
+        chunks_by_path: dict[str, list[ScoredChunk]] = {}
+        for sc in retrieval_context.semantic_chunks:
+            if sc.chunk.path in allowed_set:
+                chunks_by_path.setdefault(sc.chunk.path, []).append(sc)
+
+        contents: dict[str, str] = {}
+        _CONTEXT = 4
+
+        for rel_path in allowed_files:
+            abs_path = shadow_path / rel_path
+            if not abs_path.exists() or not abs_path.is_file():
+                continue
+            try:
+                lines = abs_path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+
+            file_chunks = chunks_by_path.get(rel_path)
+            if not file_chunks:
+                contents[rel_path] = "\n".join(
+                    f"{i+1:4d}: {line}" for i, line in enumerate(lines)
+                )
+                continue
+
+            ranges: list[tuple[int, int]] = []
+            for sc in file_chunks:
+                start0 = max(0, sc.chunk.line_start - 1 - _CONTEXT)
+                end0 = min(len(lines), sc.chunk.line_end + _CONTEXT)
+                ranges.append((start0, end0))
+
+            ranges.sort()
+            merged: list[tuple[int, int]] = []
+            for s, e in ranges:
+                if merged and s <= merged[-1][1]:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+                else:
+                    merged.append((s, e))
+
+            parts: list[str] = []
+            prev_end = 0
+            for start0, end0 in merged:
+                if start0 > prev_end:
+                    parts.append(f"... (lines {prev_end + 1}–{start0} omitted) ...")
+                numbered = "\n".join(
+                    f"{start0 + j + 1:4d}: {line}"
+                    for j, line in enumerate(lines[start0:end0])
+                )
+                parts.append(numbered)
+                prev_end = end0
+
+            if prev_end < len(lines):
+                parts.append(f"... (lines {prev_end + 1}–{len(lines)} omitted) ...")
+
+            contents[rel_path] = "\n".join(parts)
+
         return contents
 
     async def _create_patch_document(

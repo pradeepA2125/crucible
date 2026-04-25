@@ -28,6 +28,7 @@ from agentd.domain.models import (
 )
 from agentd.domain.state_machine import transition
 from agentd.orchestrator.engine import AgentOrchestrator
+from agentd.retrieval.artifact_client import RetrievalArtifactClient
 from agentd.storage.base import TaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
@@ -156,6 +157,7 @@ def build_router(
     store: TaskStore,
     orchestrator: AgentOrchestrator,
     workspace_manager: ShadowWorkspaceManager,
+    retrieval_client: RetrievalArtifactClient | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
@@ -549,5 +551,48 @@ def build_router(
         asyncio.create_task(_run_and_release())
 
         return ResumeTaskResponse(task_id=child_id, resume_of_task_id=parent.task_id)
+
+    # ── Index routes ───────────────────────────────────────────────────────────
+    # Allows callers (CI, indexer scripts, start-backend.sh) to pre-warm the
+    # semantic index immediately after the Rust indexer writes a new snapshot,
+    # eliminating the cold-start penalty on the first task.
+
+    @router.get("/index/status")
+    async def get_index_status() -> dict:  # type: ignore[type-arg]
+        """Return the current state of the semantic index.
+
+        GET /v1/index/status
+        Response: { "semantic_enabled": bool, "building": bool, "last_indexed_snapshot_ms": int }
+        Poll until building=false to know the pre-warm triggered by POST /v1/index/build is done.
+        """
+        if retrieval_client is None:
+            return {"semantic_enabled": False, "building": False, "last_indexed_snapshot_ms": 0}
+        return retrieval_client.index_status()
+
+    @router.post("/index/build", status_code=202)
+    async def build_index(request: dict) -> dict:  # type: ignore[type-arg]
+        """Trigger an async semantic index build for a workspace.
+
+        POST /v1/index/build
+        Body: { "workspace_path": "/abs/path/to/workspace" }
+
+        Returns 202 immediately; building runs in the background.
+        Returns 503 if semantic retrieval is not enabled.
+        Returns 400 if workspace_path is missing.
+        """
+        import asyncio as _asyncio
+
+        workspace_path = request.get("workspace_path", "").strip() if isinstance(request, dict) else ""
+        if not workspace_path:
+            raise HTTPException(400, "workspace_path is required")
+        if retrieval_client is None or not retrieval_client.semantic_enabled():
+            raise HTTPException(503, "Semantic retrieval is not enabled (set AI_EDITOR_SEMANTIC_RETRIEVAL=true)")
+
+        async def _build() -> None:
+            loop = _asyncio.get_event_loop()
+            await loop.run_in_executor(None, retrieval_client.trigger_index_build, workspace_path)
+
+        _asyncio.create_task(_build())
+        return {"status": "building", "workspace_path": workspace_path}
 
     return router

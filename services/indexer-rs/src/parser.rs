@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
-use std::path::Path;
+use rustpython_parser::{ast, Parse};
+use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser};
 
 use crate::graph::{EdgeKind, SymbolEdge, SymbolGraph, SymbolKind, SymbolNode};
@@ -9,14 +10,20 @@ pub trait LanguageParser: Send + Sync {
     fn parse_file(&self, file_path: &Path, source: &str, graph: &mut SymbolGraph) -> Result<()>;
 }
 
-#[derive(Default)]
-pub struct TreeSitterParser;
+pub struct TreeSitterParser {
+    pub workspace_root: PathBuf,
+}
+
+impl TreeSitterParser {
+    pub fn new(workspace_root: PathBuf) -> Self {
+        Self { workspace_root }
+    }
+}
 
 #[derive(Clone, Copy)]
 enum ParserLanguage {
     TypeScript,
     Tsx,
-    Python,
     Rust,
 }
 
@@ -36,7 +43,6 @@ impl ParserLanguage {
         {
             "ts" => Some(Self::TypeScript),
             "tsx" => Some(Self::Tsx),
-            "py" => Some(Self::Python),
             "rs" => Some(Self::Rust),
             _ => None,
         }
@@ -50,9 +56,6 @@ impl ParserLanguage {
             Self::Tsx => parser
                 .set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
                 .context("failed to set TSX grammar"),
-            Self::Python => parser
-                .set_language(&tree_sitter_python::LANGUAGE.into())
-                .context("failed to set Python grammar"),
             Self::Rust => parser
                 .set_language(&tree_sitter_rust::LANGUAGE.into())
                 .context("failed to set Rust grammar"),
@@ -63,7 +66,6 @@ impl ParserLanguage {
         match self {
             Self::TypeScript => "typescript",
             Self::Tsx => "tsx",
-            Self::Python => "python",
             Self::Rust => "rust",
         }
     }
@@ -76,6 +78,11 @@ impl LanguageParser for TreeSitterParser {
 
     fn parse_file(&self, file_path: &Path, source: &str, graph: &mut SymbolGraph) -> Result<()> {
         let file_id = upsert_file_node(graph, file_path);
+
+        if file_path.extension().and_then(|e| e.to_str()) == Some("py") {
+            return extract_python_ruff(file_path, source, graph, &file_id, &self.workspace_root);
+        }
+
         let Some(language) = ParserLanguage::from_path(file_path) else {
             return Ok(());
         };
@@ -95,7 +102,6 @@ impl LanguageParser for TreeSitterParser {
             ParserLanguage::TypeScript | ParserLanguage::Tsx => {
                 extract_typescript(file_path, source, graph, &file_id, root, None)
             }
-            ParserLanguage::Python => extract_python(file_path, source, graph, &file_id, root, None),
             ParserLanguage::Rust => extract_rust(file_path, source, graph, &file_id, root, None),
         }
 
@@ -309,178 +315,204 @@ fn recurse_typescript(
     }
 }
 
-fn extract_python(
+fn extract_python_ruff(
     file_path: &Path,
     source: &str,
     graph: &mut SymbolGraph,
     file_id: &str,
-    node: Node<'_>,
-    current_class: Option<String>,
+    workspace_root: &Path,
+) -> Result<()> {
+    let stmts = ast::Suite::parse(source, file_path.to_str().unwrap_or("<file>"))
+        .map_err(|e| anyhow!("Python parse error in {}: {e}", file_path.display()))?;
+    walk_python_body(file_path, source, graph, file_id, workspace_root, &stmts, None);
+    Ok(())
+}
+
+fn walk_python_body(
+    file_path: &Path,
+    source: &str,
+    graph: &mut SymbolGraph,
+    file_id: &str,
+    workspace_root: &Path,
+    stmts: &[ast::Stmt],
+    current_class: Option<&str>,
 ) {
-    match node.kind() {
-        "import_statement" => {
-            for module_name in extract_python_import_modules(&node_text(node, source).unwrap_or_default()) {
-                let module_id = upsert_external_symbol(
-                    graph,
-                    file_path,
-                    "module",
-                    &module_name,
-                    SymbolKind::Module,
-                    node_line(node),
-                );
-                graph.add_edge(SymbolEdge {
-                    from: file_id.to_string(),
-                    to: module_id,
-                    kind: EdgeKind::Imports,
-                });
+    for stmt in stmts {
+        match stmt {
+            ast::Stmt::FunctionDef(f) => {
+                let name = f.name.as_str();
+                let line = py_offset_to_line(source, usize::from(f.range.start()));
+                emit_python_fn(file_path, graph, file_id, name, line, current_class);
             }
-        }
-        "import_from_statement" => {
-            if let Some(module_name) = extract_python_from_module(&node_text(node, source).unwrap_or_default()) {
-                let module_id = upsert_external_symbol(
-                    graph,
-                    file_path,
-                    "module",
-                    &module_name,
-                    SymbolKind::Module,
-                    node_line(node),
-                );
-                graph.add_edge(SymbolEdge {
-                    from: file_id.to_string(),
-                    to: module_id,
-                    kind: EdgeKind::Imports,
-                });
+            ast::Stmt::AsyncFunctionDef(f) => {
+                let name = f.name.as_str();
+                let line = py_offset_to_line(source, usize::from(f.range.start()));
+                emit_python_fn(file_path, graph, file_id, name, line, current_class);
             }
-        }
-        "class_definition" => {
-            if let Some(name) = field_identifier(node, "name", source) {
+            ast::Stmt::ClassDef(c) => {
+                let name = c.name.as_str();
+                let line = py_offset_to_line(source, usize::from(c.range.start()));
                 let class_id = upsert_named_symbol(
-                    graph,
-                    file_path,
-                    file_id,
-                    "class",
-                    &name,
-                    SymbolKind::Class,
-                    node_line(node),
+                    graph, file_path, file_id, "class", name, SymbolKind::Class, line,
                 );
                 graph.add_edge(SymbolEdge {
                     from: file_id.to_string(),
                     to: class_id.clone(),
                     kind: EdgeKind::References,
                 });
-
-                for parent_name in extract_python_base_classes(&node_text(node, source).unwrap_or_default()) {
-                    let parent_id = upsert_external_symbol(
-                        graph,
-                        file_path,
-                        "class",
-                        &parent_name,
-                        SymbolKind::Class,
-                        node_line(node),
-                    );
-                    graph.add_edge(SymbolEdge {
-                        from: class_id.clone(),
-                        to: parent_id,
-                        kind: EdgeKind::Inherits,
-                    });
+                for base in &c.bases {
+                    if let Some(base_name) = py_expr_base_name(base) {
+                        let parent_id = upsert_external_symbol(
+                            graph, file_path, "class", &base_name, SymbolKind::Class, line,
+                        );
+                        graph.add_edge(SymbolEdge {
+                            from: class_id.clone(),
+                            to: parent_id,
+                            kind: EdgeKind::Inherits,
+                        });
+                    }
                 }
-
-                recurse_python(file_path, source, graph, file_id, node, Some(class_id));
-                return;
-            }
-        }
-        "function_definition" => {
-            if let Some(name) = field_identifier(node, "name", source) {
-                if let Some(class_id) = current_class.as_ref() {
-                    let method_id = upsert_member_symbol(
-                        graph,
-                        file_path,
-                        file_id,
-                        "method",
-                        class_id,
-                        &name,
-                        SymbolKind::Method,
-                        node_line(node),
-                    );
-                    graph.add_edge(SymbolEdge {
-                        from: class_id.clone(),
-                        to: method_id,
-                        kind: EdgeKind::References,
-                    });
-                } else {
-                    let function_id = upsert_scoped_symbol(
-                        graph,
-                        file_path,
-                        file_id,
-                        "function",
-                        &name,
-                        SymbolKind::Function,
-                        node_line(node),
-                    );
-                    graph.add_edge(SymbolEdge {
-                        from: file_id.to_string(),
-                        to: function_id,
-                        kind: EdgeKind::References,
-                    });
-                }
-            }
-        }
-        "assignment" => {
-            if let Some(left) = node.child_by_field_name("left") {
-                for name in extract_identifiers(&node_text(left, source).unwrap_or_default()) {
-                    let variable_id = upsert_scoped_symbol(
-                        graph,
-                        file_path,
-                        file_id,
-                        "variable",
-                        &name,
-                        SymbolKind::Variable,
-                        node_line(node),
-                    );
-                    graph.add_edge(SymbolEdge {
-                        from: file_id.to_string(),
-                        to: variable_id,
-                        kind: EdgeKind::References,
-                    });
-                }
-            }
-        }
-        "call" => {
-            if let Some(target_name) = extract_call_target(node, source) {
-                let target_id = upsert_external_symbol(
-                    graph,
-                    file_path,
-                    "call",
-                    &target_name,
-                    SymbolKind::Function,
-                    node_line(node),
+                walk_python_body(
+                    file_path, source, graph, file_id, workspace_root,
+                    &c.body, Some(class_id.as_str()),
                 );
-                let from = current_class.clone().unwrap_or_else(|| file_id.to_string());
-                graph.add_edge(SymbolEdge {
-                    from,
-                    to: target_id,
-                    kind: EdgeKind::Calls,
-                });
             }
+            ast::Stmt::Import(i) => {
+                for alias in &i.names {
+                    let module_name = alias.name.as_str();
+                    if let Some(target) = resolve_python_module_to_file(module_name, 0, file_path, workspace_root) {
+                        let target_id = format!("file:{}", target.display());
+                        graph.upsert_node(SymbolNode {
+                            id: target_id.clone(),
+                            path: target.display().to_string(),
+                            name: target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                            kind: SymbolKind::File,
+                            line: 1,
+                        });
+                        graph.add_edge(SymbolEdge {
+                            from: file_id.to_string(),
+                            to: target_id,
+                            kind: EdgeKind::Imports,
+                        });
+                    } else {
+                        let module_id = upsert_external_symbol(
+                            graph, file_path, "module", module_name, SymbolKind::Module, 0,
+                        );
+                        graph.add_edge(SymbolEdge {
+                            from: file_id.to_string(),
+                            to: module_id,
+                            kind: EdgeKind::Imports,
+                        });
+                    }
+                }
+            }
+            ast::Stmt::ImportFrom(i) => {
+                // ast::Int wraps u32 and exposes .to_u32()
+                let level: u32 = i.level.as_ref().map(|n| n.to_u32()).unwrap_or(0);
+                if let Some(module_id_val) = &i.module {
+                    let module_name = module_id_val.as_str();
+                    if let Some(target) = resolve_python_module_to_file(module_name, level, file_path, workspace_root) {
+                        let target_id = format!("file:{}", target.display());
+                        graph.upsert_node(SymbolNode {
+                            id: target_id.clone(),
+                            path: target.display().to_string(),
+                            name: target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                            kind: SymbolKind::File,
+                            line: 1,
+                        });
+                        graph.add_edge(SymbolEdge {
+                            from: file_id.to_string(),
+                            to: target_id,
+                            kind: EdgeKind::Imports,
+                        });
+                    } else {
+                        let module_id = upsert_external_symbol(
+                            graph, file_path, "module", module_name, SymbolKind::Module, 0,
+                        );
+                        graph.add_edge(SymbolEdge {
+                            from: file_id.to_string(),
+                            to: module_id,
+                            kind: EdgeKind::Imports,
+                        });
+                    }
+                }
+            }
+            _ => {}
         }
-        _ => {}
     }
-
-    recurse_python(file_path, source, graph, file_id, node, current_class);
 }
 
-fn recurse_python(
+fn emit_python_fn(
     file_path: &Path,
-    source: &str,
     graph: &mut SymbolGraph,
     file_id: &str,
-    node: Node<'_>,
-    current_class: Option<String>,
+    name: &str,
+    line: u32,
+    current_class: Option<&str>,
 ) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        extract_python(file_path, source, graph, file_id, child, current_class.clone());
+    if let Some(class_id) = current_class {
+        let method_id = upsert_member_symbol(
+            graph, file_path, file_id, "method", class_id, name, SymbolKind::Method, line,
+        );
+        graph.add_edge(SymbolEdge {
+            from: class_id.to_string(),
+            to: method_id,
+            kind: EdgeKind::References,
+        });
+    } else {
+        let function_id = upsert_scoped_symbol(
+            graph, file_path, file_id, "function", name, SymbolKind::Function, line,
+        );
+        graph.add_edge(SymbolEdge {
+            from: file_id.to_string(),
+            to: function_id,
+            kind: EdgeKind::References,
+        });
     }
+}
+
+fn py_expr_base_name(expr: &ast::Expr) -> Option<String> {
+    match expr {
+        ast::Expr::Name(n) => Some(n.id.as_str().to_string()),
+        ast::Expr::Attribute(a) => Some(a.attr.as_str().to_string()),
+        _ => None,
+    }
+}
+
+fn resolve_python_module_to_file(
+    module: &str,
+    level: u32,
+    file_path: &Path,
+    workspace_root: &Path,
+) -> Option<PathBuf> {
+    let rel_path = module.replace('.', "/");
+
+    let base = if level > 0 {
+        // Relative import: ascend `level` package directories from the file's directory.
+        // level=1 means current package (parent dir of file), level=2 means grandparent, etc.
+        let mut dir = file_path.parent().unwrap_or(workspace_root);
+        for _ in 1..level {
+            dir = dir.parent().unwrap_or(workspace_root);
+        }
+        dir.to_path_buf()
+    } else {
+        workspace_root.to_path_buf()
+    };
+
+    let module_file = base.join(format!("{rel_path}.py"));
+    if module_file.exists() {
+        return Some(module_file);
+    }
+    let pkg_init = base.join(&rel_path).join("__init__.py");
+    if pkg_init.exists() {
+        return Some(pkg_init);
+    }
+    None
+}
+
+fn py_offset_to_line(source: &str, offset: usize) -> u32 {
+    let safe = offset.min(source.len());
+    1 + source[..safe].bytes().filter(|&b| b == b'\n').count() as u32
 }
 
 fn extract_rust(
@@ -895,56 +927,6 @@ fn extract_extends_targets(text: &str) -> Vec<String> {
     targets
 }
 
-fn extract_python_import_modules(text: &str) -> Vec<String> {
-    let Some(rest) = text.trim().strip_prefix("import ") else {
-        return Vec::new();
-    };
-
-    let mut modules: Vec<String> = Vec::new();
-    for part in rest.split(',') {
-        let token = part
-            .split_whitespace()
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .trim_end_matches(';');
-        if !token.is_empty() {
-            modules.push(token.to_string());
-        }
-    }
-    modules.sort();
-    modules.dedup();
-    modules
-}
-
-fn extract_python_from_module(text: &str) -> Option<String> {
-    let compact = text.replace('\n', " ");
-    let rest = compact.trim().strip_prefix("from ")?;
-    let module = rest.split(" import ").next()?.trim();
-    (!module.is_empty()).then_some(module.to_string())
-}
-
-fn extract_python_base_classes(text: &str) -> Vec<String> {
-    let compact = text.replace('\n', " ");
-    let start = compact.find('(');
-    let end = compact.rfind(')');
-    let (Some(start), Some(end)) = (start, end) else {
-        return Vec::new();
-    };
-    if end <= start + 1 {
-        return Vec::new();
-    }
-
-    let mut classes = Vec::new();
-    for value in compact[start + 1..end].split(',') {
-        if let Some(name) = first_identifier(value.trim()) {
-            classes.push(name);
-        }
-    }
-    classes.sort();
-    classes.dedup();
-    classes
-}
 
 fn extract_rust_use_module(text: &str) -> Option<String> {
     let compact = text.replace('\n', " ");

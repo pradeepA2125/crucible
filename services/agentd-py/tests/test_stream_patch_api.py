@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from agentd.api.routes import build_router
-from agentd.domain.models import TaskRecord
+from agentd.domain.models import TaskRecord, TaskStatus
 from agentd.orchestrator.broadcaster import PatchEventBroadcaster
 from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.storage.in_memory import InMemoryTaskStore
@@ -52,6 +52,7 @@ async def test_stream_patch_idle_task(app: FastAPI, store: InMemoryTaskStore):
             task_id=task_id,
             goal="goal",
             workspace_path=".",
+            status=TaskStatus.FAILED,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )

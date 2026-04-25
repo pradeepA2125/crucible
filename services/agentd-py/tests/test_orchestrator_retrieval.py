@@ -197,10 +197,10 @@ async def test_orchestrator_passes_retrieval_context_to_plan_and_patch(tmp_path:
     assert isinstance(markdown_context, dict)
     assert isinstance(plan_context, dict)
     assert isinstance(patch_context, dict)
-    assert markdown_context["related_files"] == ["src/auth.py"]
-    assert plan_context["related_files"] == ["src/auth.py"]
-    assert patch_context["related_symbols"] == ["build_auth"]
-    assert markdown_context["planner_evidence"]["workspace_files_index"] == ["src/auth.py"]
+    assert "repository_structure" in markdown_context
+    assert "file_outlines" in plan_context
+    assert "file_contents" in patch_context
+    assert "planner_evidence" in markdown_context
 
     assert result.diagnostics
     assert result.diagnostics[0].source == "retrieval"

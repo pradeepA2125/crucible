@@ -32,25 +32,20 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 ---
 
 ## Phase 2 (Weeks 7-10): Advanced Retrieval Enhancement
-**Status**: Not started.
+**Status**: ✅ Substantially complete.
 
 ### Two-Stage Retrieval Architecture
-- [ ] **ANN Search**: Semantic search with local embeddings
-  - Integrate embedding model in indexer-rs (CodeBERT/StarCoder)
-  - Update snapshot schema with embeddings
-  - Top 100 candidates via approximate nearest neighbor
-- [ ] **Exact Match**: Ripgrep integration + graph-based symbol lookup
-- [ ] **Hybrid scoring**: 0.6 × graph + 0.4 × semantic
-- [ ] **Cross-Encoder Reranker**: `cross-encoder/ms-marco-MiniLM-L-6-v2`, rerank top 100 → top 20
-- [ ] **LLM Reranker** (optional fallback for ambiguous queries)
+- [x] **Semantic search**: LanceDB + `BAAI/bge-small-en-v1.5`, delta indexing (mtime-based, only re-embeds changed files)
+- [x] **Hybrid scoring**: 0.35 × graph + 0.65 × semantic with segment-aware path matching (fixes cross-repo file bias, e.g. `pydantic-core/` vs `pydantic/`)
+- [x] **Cold-start elimination**: `POST /v1/index/build` + `GET /v1/index/status` pre-warm API; `start-backend.sh` waits for index ready before printing "backend ready"; Rust indexer notifies backend after every snapshot write via `AI_EDITOR_BACKEND_URL`
+- [ ] ~~**Cross-Encoder Reranker**~~: Skipped — MS MARCO models don't understand code syntax; graph signals already capture structural relevance; ripgrep + LLM reranker deferred as low ROI
+- [ ] ~~**Ripgrep exact-match layer**~~: Deferred — low incremental impact given hybrid scoring quality
+- [ ] ~~**`REGENERATING_PLAN` status**~~: Deferred — low user-facing impact
 
-### Lifecycle Cleanup
-- [ ] Add explicit `REGENERATING_PLAN` status for plan-feedback regeneration windows (currently reuses `CONTEXT_READY` temporarily, which is misleading)
-
-### Success Metrics
-- 40%+ improvement in retrieval relevance (precision@20)
-- Stage 1 recall: 90%+ relevant code in top 100
-- Query latency: <500ms for two-stage retrieval
+### What shipped vs. original plan
+- Embeddings run Python-side (not in indexer-rs) — simpler, works well, Rust notifies Python after each snapshot
+- Segment-aware graph scoring replaced naive substring matching — fixed real retrieval bias observed in pydantic workspace
+- Pre-warm pipeline fully automated: Rust indexer → backend API → `_last_indexed_snapshot_ms` skip guard in `load_context()`
 
 ---
 
@@ -82,6 +77,14 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 
 ## Phase 4 (Weeks 15-19): Agentic Tools & Shell Integration
 **Status**: Planned. Reframed from "API Integration" to close the gap with Claude Code and Cursor agent modes.
+
+### Code Search Tools
+Two complementary tools the agent can call mid-task — replaces the need for exhaustive pre-task retrieval:
+
+- [ ] **`search_code`** (ripgrep): exact/regex pattern search across the shadow workspace; file-type filters, context lines, structured output (file, line, match). Use when the agent knows exactly what to look for (callers of a function, usages of a class, occurrences of a pattern).
+- [ ] **`search_semantic`**: vector similarity search against the live semantic index; returns ranked chunks. Use when the agent needs to discover related code it doesn't know the name of ("find code similar to phone number validation").
+- [ ] Both tools produce structured results injected into the agent's step context
+- [ ] Tool calls recorded in step artifacts alongside patch ops
 
 ### Shell / Terminal Tool
 - [ ] Agent can run shell commands inside a sandboxed environment (workspace-scoped, no network by default)
@@ -183,7 +186,7 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 |-------|-------|-------|--------|
 | Phase 0 | 1-2 | Eval harness + baseline | ✅ Complete |
 | Phase 1 | 3-6 | Enhanced patch operations | ✅ Complete (benchmarks pending) |
-| Phase 2 | 7-10 | Two-stage retrieval | 🔲 Not started |
+| Phase 2 | 7-10 | Two-stage retrieval | ✅ Substantially complete |
 | Phase 3 | 11-14 | Streaming, resume/rollback | ✅ Substantially complete |
 | Phase 4 | 15-19 | Agentic tools, shell, MCP | 🔲 Not started |
 | Phase 5 | 20-22 | Chat, inline editing, GitHub | 🔲 Not started |

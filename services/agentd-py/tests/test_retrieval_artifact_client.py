@@ -83,7 +83,6 @@ def test_load_context_from_valid_snapshot(tmp_path: Path) -> None:
     assert context.diagnostics_excerpt
     assert context.snapshot_stats["node_count"] == 3
     assert context.snapshot_age_sec is not None
-    assert context.planner_evidence.workspace_files_index == ["src/auth.py"]
     assert context.planner_evidence.evidence_files
     assert context.planner_evidence.evidence_files[0].path == "src/auth.py"
     assert "build_auth" in context.planner_evidence.evidence_files[0].excerpt

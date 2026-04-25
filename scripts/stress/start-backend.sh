@@ -247,6 +247,8 @@ else
 fi
 echo "log_file=$LOG_FILE"
 
+# Start uvicorn in the background so we can wait for it to be ready before
+# pre-warming the semantic index (guaranteeing no cold-start on the first task).
 (
   cd "$AGENTD_DIR"
   export AI_EDITOR_REASONING_BACKEND="$BACKEND"
@@ -289,4 +291,49 @@ echo "log_file=$LOG_FILE"
 
   source .venv/bin/activate
   uvicorn agentd.main:app --port "$PORT" 2>&1 | tee "$LOG_FILE"
-)
+) &
+_SERVER_PID=$!
+
+# Wait for backend to become healthy.
+_health_url="http://localhost:${PORT}/health"
+echo "==> waiting for backend on port $PORT ..."
+for _i in $(seq 1 60); do
+  if curl -sf "$_health_url" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+if ! curl -sf "$_health_url" >/dev/null 2>&1; then
+  echo "Backend did not become healthy within 60 s" >&2
+  kill "$_SERVER_PID" 2>/dev/null || true
+  exit 1
+fi
+echo "==> backend healthy"
+
+# Pre-warm the semantic index synchronously — no task can be submitted until
+# this completes, so the first task is guaranteed to have a warm index.
+if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
+  _build_url="http://localhost:${PORT}/v1/index/build"
+  _status_url="http://localhost:${PORT}/v1/index/status"
+  echo "==> semantic index pre-warm: triggering build for $WORKSPACE ..."
+  if ! curl -sf -X POST "$_build_url" \
+      -H "Content-Type: application/json" \
+      -d "{\"workspace_path\": \"$WORKSPACE\"}" >/dev/null; then
+    echo "==> semantic index pre-warm: trigger failed (non-fatal, check backend log)" >&2
+  else
+    echo "==> semantic index pre-warm: waiting for completion ..."
+    for _j in $(seq 1 120); do
+      _building=$(curl -sf "$_status_url" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('building', True))" 2>/dev/null \
+        || echo "True")
+      if [[ "$_building" == "False" ]]; then
+        echo "==> semantic index pre-warm: ready"
+        break
+      fi
+      sleep 1
+    done
+  fi
+fi
+
+echo "==> backend ready — submitting tasks is now safe"
+wait "$_SERVER_PID"

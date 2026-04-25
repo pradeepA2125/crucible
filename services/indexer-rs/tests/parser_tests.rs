@@ -4,7 +4,7 @@ use std::path::Path;
 
 #[test]
 fn typescript_parser_emits_symbols_and_edges() {
-    let parser = TreeSitterParser;
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
     let mut graph = SymbolGraph::default();
     let source = r#"
 import { fetchUser } from "./api";
@@ -36,7 +36,16 @@ export function buildService() {
 
 #[test]
 fn python_parser_emits_symbols_and_edges() {
-    let parser = TreeSitterParser;
+    use std::io::Write;
+    // Create a real workspace so cross-file import resolution can be tested.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let ws = tmp.path();
+    // Write the module that will be imported so resolve_python_module_to_file can find it.
+    std::fs::create_dir_all(ws.join("app")).unwrap();
+    let mut f = std::fs::File::create(ws.join("app/db.py")).unwrap();
+    writeln!(f, "class Repo: pass").unwrap();
+
+    let parser = TreeSitterParser::new(ws.to_path_buf());
     let mut graph = SymbolGraph::default();
     let source = r#"
 from app.db import Repo
@@ -47,27 +56,43 @@ class AccountService:
 
 def run():
     return AccountService()
+
+async def async_run():
+    pass
 "#;
 
     parser
-        .parse_file(Path::new("app/service.py"), source, &mut graph)
+        .parse_file(&ws.join("app/service.py"), source, &mut graph)
         .expect("parse");
 
     let nodes = graph.all_nodes();
     let edges = graph.all_edges();
-    assert!(nodes
-        .iter()
-        .any(|node| node.kind == SymbolKind::Class && node.name == "AccountService"));
-    assert!(nodes
-        .iter()
-        .any(|node| node.kind == SymbolKind::Method && node.name == "get_user"));
-    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Imports));
-    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Calls));
+
+    // Class and methods must be extracted accurately (no docstring/assignment noise)
+    assert!(nodes.iter().any(|n| n.kind == SymbolKind::Class && n.name == "AccountService"),
+        "missing class AccountService");
+    assert!(nodes.iter().any(|n| n.kind == SymbolKind::Method && n.name == "get_user"),
+        "missing method get_user");
+    assert!(nodes.iter().any(|n| n.kind == SymbolKind::Function && n.name == "run"),
+        "missing function run");
+    assert!(nodes.iter().any(|n| n.kind == SymbolKind::Function && n.name == "async_run"),
+        "missing async function async_run");
+
+    // File-to-file import edge: app/service.py → app/db.py (the key new capability)
+    let target_id = format!("file:{}", ws.join("app/db.py").display());
+    assert!(edges.iter().any(|e| e.kind == EdgeKind::Imports && e.to == target_id),
+        "missing file-to-file import edge to app/db.py; edges: {edges:?}");
+
+    // No garbage variable nodes from __slots__ or assignment tokenization
+    assert!(!nodes.iter().any(|n| n.kind == SymbolKind::Variable && n.name == "self"),
+        "spurious 'self' variable node");
+    assert!(!nodes.iter().any(|n| n.kind == SymbolKind::Variable && n.name == "return"),
+        "spurious 'return' variable node");
 }
 
 #[test]
 fn rust_parser_emits_symbols_and_edges() {
-    let parser = TreeSitterParser;
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
     let mut graph = SymbolGraph::default();
     let source = r#"
 use crate::storage::Store;
