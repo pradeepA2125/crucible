@@ -18,3 +18,4 @@ workspaces/
 *.egg-info/
 apps/vscode-extension/tmp-review-files-*/
 generated.txt
+.worktrees/
