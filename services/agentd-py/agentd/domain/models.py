@@ -58,6 +58,9 @@ class TaskBudget(BaseModel):
     max_tokens: int = 120_000
     max_runtime_ms: int = 20 * 60 * 1000
     max_tool_calls_per_step: int = 8
+    max_planning_tool_calls: int = 20
+    max_revision_tool_calls: int = 10
+    max_delta_replans: int = 3
 
 
 class TaskUsage(BaseModel):
@@ -83,6 +86,45 @@ class AgentToolTrace(BaseModel):
     step_id: str
     calls: list[ToolCall] = Field(default_factory=list)
     results: list[ToolResult] = Field(default_factory=list)
+
+
+class DeltaReplanRequest(BaseModel):
+    requested_by_step_id: str
+    reason: str
+    evidence: str
+    hinted_affected_steps: list[str]
+    requested_at: datetime
+
+
+class TaskExecutionState(BaseModel):
+    current_step_id: str | None = None
+    step_checkpoints: dict[str, str] = Field(default_factory=dict)
+    delta_replan_requests: list[DeltaReplanRequest] = Field(default_factory=list)
+    delta_replans_used: int = 0
+
+
+class RevisedStep(BaseModel):
+    step_id: str
+    goal: str
+    targets: list[dict[str, str]]
+    implementation_details: str
+    edge_cases: str = ""
+    testing_strategy: str = ""
+    risk: str = "low"
+
+
+class PlanRevisionResult(BaseModel):
+    revised_steps: list[RevisedStep]
+    reverted_step_ids: list[str]
+    revision_summary: str
+    tool_trace: AgentToolTrace
+
+
+class PlanningResult(BaseModel):
+    plan_markdown: str
+    files_examined: list[str]
+    confidence: Literal["high", "medium", "low"]
+    tool_trace: AgentToolTrace
 
 
 class TaskEvent(BaseModel):
@@ -532,6 +574,7 @@ class TaskRecord(BaseModel):
     events: list[TaskEvent] = Field(default_factory=list)
     execution_trace: list[StepExecutionTrace] = Field(default_factory=list)
     checkpoints: list[CheckpointManifest] = Field(default_factory=list)
+    execution_state: TaskExecutionState = Field(default_factory=TaskExecutionState)
     artifacts_root_path: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
