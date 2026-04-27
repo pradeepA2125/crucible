@@ -16,6 +16,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from agentd.domain.models import (
+    AgentToolTrace,
     CandidateScoreBreakdown,
     CheckpointManifest,
     Diagnostic,
@@ -120,6 +121,8 @@ class AgentOrchestrator:
         self._patch_candidate_count = max(1, patch_candidate_count)
         self.broadcaster = PatchEventBroadcaster()
         self._running_tasks: set[str] = set()
+        import os
+        self._tool_loop_enabled: bool = os.environ.get("AI_EDITOR_TOOL_LOOP_ENABLED", "true") not in ("0", "false", "False")
 
     async def run_task(self, task_id: str) -> TaskRecord:
         task = await self._store.get(task_id)
@@ -749,20 +752,46 @@ class AgentOrchestrator:
                     artifacts_root_path=task.artifacts_root_path,
                 )
 
-                print("\n[PATCH] Entering Patching Node...")
-                print(f"[PATCH] Generating {self._patch_candidate_count} candidates for {len(allowed_files)} target files...")
-                patch_raw = await self._create_patch_document(
-                    task,
-                    str(shadow_path),
-                    task.diagnostics,
-                    retrieval_payload,
-                    current_step=step,
-                    allowed_files=allowed_files,
-                    max_ops=max_ops,
-                    max_files=max_files,
-                    candidate_count=self._patch_candidate_count,
-                    last_failure=last_failure,
-                )
+                if self._tool_loop_enabled:
+                    print("\n[PATCH] Entering Tool-Use Loop (ReAct)...")
+                    from agentd.tools.loop import ToolLoop, build_tool_registry
+                    registry = build_tool_registry(shadow_path, self._retrieval_client)
+                    tool_loop = ToolLoop(
+                        self._reasoning_engine,
+                        registry,
+                        self.broadcaster,
+                        task.task_id,
+                    )
+                    patch_raw, tool_trace = await tool_loop.run(
+                        step,
+                        {**patch_request_context, "plan_markdown": task.plan_markdown},
+                        task.budget,
+                        task.usage,
+                    )
+                    self._write_debug_artifact(
+                        task.task_id,
+                        "tool-trace",
+                        tool_trace.model_dump(mode="json"),
+                        step_id=step.id,
+                        attempt=attempt,
+                        artifacts_root_path=task.artifacts_root_path,
+                    )
+                    print(f"[PATCH] Tool loop complete ({len(tool_trace.calls)} tool calls)")
+                else:
+                    print("\n[PATCH] Entering Patching Node...")
+                    print(f"[PATCH] Generating {self._patch_candidate_count} candidates for {len(allowed_files)} target files...")
+                    patch_raw = await self._create_patch_document(
+                        task,
+                        str(shadow_path),
+                        task.diagnostics,
+                        retrieval_payload,
+                        current_step=step,
+                        allowed_files=allowed_files,
+                        max_ops=max_ops,
+                        max_files=max_files,
+                        candidate_count=self._patch_candidate_count,
+                        last_failure=last_failure,
+                    )
                 self._write_debug_artifact(
                     task.task_id,
                     "patch",

@@ -241,3 +241,25 @@ class DefaultReasoningEngine(ReasoningEngine):
             step_id=current_step.id if current_step else None,
         )
         return PatchDocumentV2.model_validate(patch_payload).model_dump(mode="json")
+
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        from agentd.reasoning.tool_prompts import (
+            AGENT_STEP_RESPONSE_SCHEMA,
+            build_tool_step_payload,
+            format_tool_system_prompt,
+        )
+        user_payload = build_tool_step_payload(step_context, history, tool_definitions)
+        system_instructions = format_tool_system_prompt(tool_definitions)
+        result = await self._transport.generate_json(
+            model=self._model,
+            schema_name="agent_step_response",
+            schema=AGENT_STEP_RESPONSE_SCHEMA,
+            system_instructions=system_instructions,
+            user_payload=user_payload,
+        )
+        return result

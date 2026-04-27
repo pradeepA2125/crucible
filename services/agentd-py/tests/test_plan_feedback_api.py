@@ -99,6 +99,26 @@ class SpecFirstReasoner:
         _ = (task, workspace_path, retrieval_context, candidate_plan)
         return {"verdict": "pass", "issues": []}
 
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        _ = (step_context, history, tool_definitions)
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "create_file",
+                    "file": "generated.txt",
+                    "content": "ok\n",
+                    "reason": "create generated file",
+                }
+            ],
+        }
+
 
 class AutoCritiqueReasoner(SpecFirstReasoner):
     def __init__(self) -> None:

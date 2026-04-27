@@ -79,3 +79,28 @@ class ScriptedReasoningEngine:
         index = min(self._patch_index, len(self._patches) - 1)
         self._patch_index += 1
         return self._patches[index]
+
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        _ = (step_context, history, tool_definitions)
+        if not self._patches:
+            raise RuntimeError("ScriptedReasoningEngine has no patch payloads configured")
+
+        index = min(self._patch_index, len(self._patches) - 1)
+        self._patch_index += 1
+        patch_doc = self._patches[index]
+
+        patch_ops: list[object] = []
+        if isinstance(patch_doc, dict):
+            raw_candidates = patch_doc.get("candidates")
+            if isinstance(raw_candidates, list) and raw_candidates:
+                first = raw_candidates[0]
+                if isinstance(first, dict):
+                    ops = first.get("patch_ops")
+                    if isinstance(ops, list):
+                        patch_ops = ops
+        return {"type": "emit_patch", "thought": "scripted engine bypasses tool loop", "patch_ops": patch_ops}

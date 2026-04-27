@@ -22,6 +22,9 @@ class _DummyReasoningEngine:
         _ = (task, workspace_path, diagnostics, retrieval_context, kwargs)
         raise RuntimeError("not used in scoring tests")
 
+    async def create_tool_step(self, step_context, history, tool_definitions):  # type: ignore[no-untyped-def]
+        raise RuntimeError("not used in scoring tests")
+
 
 class _DummyValidator:
     async def run(self, workspace_path: str) -> ValidationResult:

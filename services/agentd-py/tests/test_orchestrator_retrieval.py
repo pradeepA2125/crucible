@@ -113,6 +113,33 @@ class RecordingReasoningEngine:
         _ = (task, workspace_path, retrieval_context, candidate_plan)
         return {"verdict": "pass", "issues": []}
 
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        self.patch_calls.append(
+            {
+                "task_id": None,
+                "workspace_path": None,
+                "diagnostics": [],
+                "retrieval_context": step_context,
+            }
+        )
+        return {
+            "type": "emit_patch",
+            "thought": "stub",
+            "patch_ops": [
+                {
+                    "op": "create_file",
+                    "file": "generated.txt",
+                    "content": "ok",
+                    "reason": "retrieval-driven edit",
+                }
+            ],
+        }
+
 
 class AlwaysPassValidator:
     async def run(self, workspace_path: str) -> ValidationResult:

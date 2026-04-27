@@ -57,11 +57,32 @@ class TaskBudget(BaseModel):
     max_files_touched: int = 20
     max_tokens: int = 120_000
     max_runtime_ms: int = 20 * 60 * 1000
+    max_tool_calls_per_step: int = 8
 
 
 class TaskUsage(BaseModel):
     iterations: int = 0
     tokens_used: int = 0
+    tool_calls_used: int = 0
+
+
+class ToolCall(BaseModel):
+    call_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+
+
+class ToolResult(BaseModel):
+    call_id: str
+    tool_name: str
+    output: str
+    is_error: bool = False
+
+
+class AgentToolTrace(BaseModel):
+    step_id: str
+    calls: list[ToolCall] = Field(default_factory=list)
+    results: list[ToolResult] = Field(default_factory=list)
 
 
 class TaskEvent(BaseModel):

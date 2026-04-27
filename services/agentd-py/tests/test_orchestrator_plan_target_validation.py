@@ -121,6 +121,28 @@ class ReplanningReasoner:
         _ = (task, workspace_path, retrieval_context, candidate_plan)
         return {"verdict": "pass", "issues": []}
 
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        _ = (step_context, history, tool_definitions)
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "replace_node",
+                    "file": "src/example.py",
+                    "language": "python",
+                    "selector": {"kind": "symbol", "value": "X", "match": "exact"},
+                    "content": "class X:\n    pass\n    updated = True\n",
+                    "reason": "apply update",
+                }
+            ],
+        }
+
 
 class AlwaysBadReasoner(ReplanningReasoner):
     async def create_plan(
@@ -257,6 +279,27 @@ class MarkdownBlueprintReasoner(ReplanningReasoner):
             ]
         }
 
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        _ = (step_context, history, tool_definitions)
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "search_replace",
+                    "file": "services/agentd-py/agentd/api/routes.py",
+                    "search": "router = object()",
+                    "replace": "router = object()\nTASK_EVENTS_ROUTE = True",
+                    "reason": "apply minimal endpoint marker for validation",
+                }
+            ],
+        }
+
 
 class NewFileIntentReasoner(ReplanningReasoner):
     async def create_plan(
@@ -305,6 +348,26 @@ class NewFileIntentReasoner(ReplanningReasoner):
                     ],
                 }
             ]
+        }
+
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        _ = (step_context, history, tool_definitions)
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "create_file",
+                    "file": "tests/test_task_events_api.py",
+                    "content": "def test_placeholder():\n    assert True\n",
+                    "reason": "add placeholder regression test",
+                }
+            ],
         }
 
 

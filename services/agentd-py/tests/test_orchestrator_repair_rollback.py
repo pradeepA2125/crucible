@@ -99,6 +99,29 @@ class RepairReasoningEngine:
         _ = (task, workspace_path, retrieval_context, candidate_plan)
         return {"verdict": "pass", "issues": []}
 
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        _ = (step_context, history, tool_definitions)
+        self.patch_calls += 1
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "replace_node",
+                    "file": "src/example.py",
+                    "language": "python",
+                    "selector": {"kind": "symbol", "value": "X", "match": "exact"},
+                    "content": "class X:\n    pass\n    injected = True\n",
+                    "reason": "repair rollback regression test",
+                }
+            ],
+        }
+
 
 class FailOnceValidator:
     def __init__(self) -> None:

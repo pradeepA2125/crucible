@@ -50,3 +50,17 @@ class ReasoningEngine(Protocol):
         candidate_count: int | None = None,
         last_failure: dict[str, object] | None = None,
     ) -> object: ...
+
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+    ) -> dict[str, object]:
+        """Run one turn of the ReAct loop: given history + tools, return the next action.
+
+        Returns a dict with at minimum {"type": "tool_call"|"emit_patch", "thought": str}.
+        For tool_call: also "tool" (name) and "args" (dict).
+        For emit_patch: also "patch_ops" (list of patch op dicts).
+        """
+        ...
