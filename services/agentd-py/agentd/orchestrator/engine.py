@@ -19,6 +19,7 @@ from agentd.domain.models import (
     AgentToolTrace,
     CandidateScoreBreakdown,
     CheckpointManifest,
+    DeltaReplanRequest,
     Diagnostic,
     PatchCandidateV2,
     PatchDocumentV2,
@@ -26,10 +27,11 @@ from agentd.domain.models import (
     PatchPreflightIssue,
     PlanCritiqueIssue,
     PlanCritiqueResult,
+    PlanDocument,
     PlanEvidencePack,
+    PlanRevisionResult,
     PlanStep,
     PlanTargetIntent,
-    PlanDocument,
     StepExecutionTrace,
     StepRunResult,
     TaskMilestoneSnapshot,
@@ -386,6 +388,7 @@ class AgentOrchestrator:
     ) -> TaskRecord:
         try:
             shadow_path = Path(shadow_workspace.shadow_path)
+            real_path = shadow_workspace.real_path
             if task.plan is None:
                 task = transition(task, TaskStatus.FAILED, "plan missing")
                 await self._store.save(task)
@@ -416,16 +419,56 @@ class AgentOrchestrator:
                 )
 
                 if isinstance(step_result, PlanHandoff):
-                    # Delta replan: planning agent dispatch added in Task 12.
-                    # For now, fail cleanly so existing tests see a predictable error.
-                    task.diagnostics.append(Diagnostic(
-                        source="orchestrator",
-                        message=f"Delta replan requested by step {step_result.step_id}: {step_result.reason}",
-                        level="error",
-                    ))
-                    task = transition(task, TaskStatus.FAILED, "delta replan not yet wired")
+                    request = DeltaReplanRequest(
+                        requested_by_step_id=step_result.step_id,
+                        reason=step_result.reason,
+                        evidence=step_result.evidence,
+                        hinted_affected_steps=step_result.hinted_affected_steps,
+                        requested_at=datetime.now(timezone.utc),
+                    )
+                    task.execution_state.delta_replan_requests.append(request)
+
+                    if task.execution_state.delta_replans_used >= task.budget.max_delta_replans:
+                        task.diagnostics.append(Diagnostic(
+                            source="orchestrator",
+                            message=(
+                                f"Delta replan budget exhausted "
+                                f"({task.budget.max_delta_replans} max). "
+                                f"Last request from step {step_result.step_id}: {step_result.reason}"
+                            ),
+                            level="error",
+                        ))
+                        task = transition(task, TaskStatus.FAILED, "delta replan budget exhausted")
+                        await self._store.save(task)
+                        return task
+
+                    task.execution_state.delta_replans_used += 1
+                    logger.info(
+                        "Delta replan triggered",
+                        extra={
+                            "task_id": task.task_id,
+                            "step_id": step_result.step_id,
+                            "reason": step_result.reason,
+                            "replans_used": task.execution_state.delta_replans_used,
+                        },
+                    )
+
+                    planning_agent = self._build_planning_agent(task.task_id, task.workspace_path)
+                    revision = await planning_agent.revise(task, real_path)
+                    self._write_debug_artifact(
+                        task.task_id,
+                        "delta-replan-revision",
+                        {
+                            "revision_summary": revision.revision_summary,
+                            "revised_steps": [r.model_dump(mode="json") for r in revision.revised_steps],
+                            "reverted_step_ids": revision.reverted_step_ids,
+                            "tool_trace": revision.tool_trace.model_dump(mode="json"),
+                        },
+                        artifacts_root_path=task.artifacts_root_path,
+                    )
+                    self._apply_revision(task, shadow_path, revision)
                     await self._store.save(task)
-                    return task
+                    continue
 
                 self._merge_step_result(task, step_result, persistent_diagnostics)
                 await self._store.save(task)
@@ -643,6 +686,82 @@ class AgentOrchestrator:
         completed = set(task.completed_step_ids)
         return next((s for s in task.plan.steps if s.id not in completed), None)
 
+    def _apply_revision(
+        self,
+        task: TaskRecord,
+        shadow_path: Path,
+        revision: PlanRevisionResult,
+    ) -> None:
+        """Apply a PlanRevisionResult to task state and the shadow workspace.
+
+        Steps:
+        1. Restore shadow to the pre-earliest-reverted-step checkpoint.
+        2. Remove reverted step IDs from completed_step_ids.
+        3. Update task.plan.steps with revised/new step definitions.
+        """
+        revert_ids = set(revision.reverted_step_ids)
+
+        if revert_ids and task.plan is not None:
+            # Find the earliest reverted step in plan order and restore its checkpoint
+            for step in task.plan.steps:
+                if step.id in revert_ids:
+                    checkpoint_path = task.execution_state.step_checkpoints.get(step.id)
+                    if checkpoint_path:
+                        self._restore_shadow_checkpoint(shadow_path, checkpoint_path)
+                        logger.info(
+                            "Delta replan: shadow restored to pre-step checkpoint",
+                            extra={"task_id": task.task_id, "reverted_to_step": step.id},
+                        )
+                    break
+
+            # Remove reverted IDs from completed steps and their checkpoints
+            task.completed_step_ids = [s for s in task.completed_step_ids if s not in revert_ids]
+            for step_id in revert_ids:
+                task.execution_state.step_checkpoints.pop(step_id, None)
+
+        if task.plan is None:
+            return
+
+        # Apply revised step definitions
+        revised_by_id = {r.step_id: r for r in revision.revised_steps}
+        existing_ids = {s.id for s in task.plan.steps}
+        new_steps: list[PlanStep] = []
+
+        for step in task.plan.steps:
+            revised = revised_by_id.get(step.id)
+            if revised is not None:
+                new_steps.append(PlanStep.model_validate({
+                    "id": step.id,
+                    "goal": revised.goal,
+                    "targets": revised.targets,
+                    "risk": revised.risk,
+                    "implementation_details": revised.implementation_details,
+                    "edge_cases": revised.edge_cases or None,
+                    "testing_strategy": revised.testing_strategy or None,
+                }))
+            else:
+                new_steps.append(step)
+
+        # Append entirely new steps (not present in the original plan)
+        for revised in revision.revised_steps:
+            if revised.step_id not in existing_ids:
+                new_steps.append(PlanStep.model_validate({
+                    "id": revised.step_id,
+                    "goal": revised.goal,
+                    "targets": revised.targets,
+                    "risk": revised.risk,
+                    "implementation_details": revised.implementation_details,
+                    "edge_cases": revised.edge_cases or None,
+                    "testing_strategy": revised.testing_strategy or None,
+                }))
+
+        task.plan = PlanDocument(
+            analysis=task.plan.analysis,
+            steps=new_steps,
+            expected_files=task.plan.expected_files,
+            stop_conditions=task.plan.stop_conditions,
+        )
+
     async def _run_step_with_retries(
         self,
         task: TaskRecord,
@@ -689,6 +808,9 @@ class AgentOrchestrator:
                 shadow_path,
                 tracked_files=allowed_files,
             )
+            if attempt == 1:
+                # Record pre-step shadow state for potential delta replan revert
+                task.execution_state.step_checkpoints[step.id] = checkpoint.checkpoint_path
             previous_modified_files = list(task.modified_files)
             try:
                 # Combine step targets and expected files for patching context
