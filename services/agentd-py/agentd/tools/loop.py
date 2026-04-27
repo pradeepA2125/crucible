@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,6 +27,24 @@ from agentd.tools.registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 _MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "4000"))
+
+
+@dataclass
+class PatchResult:
+    patch_document: dict[str, object]
+    tool_trace: AgentToolTrace
+
+
+@dataclass
+class PlanHandoff:
+    step_id: str
+    reason: str
+    evidence: str
+    hinted_affected_steps: list[str]
+    tool_trace: AgentToolTrace
+
+
+StepOutcome = PatchResult | PlanHandoff
 
 
 class ToolBudgetExceededError(Exception):
@@ -60,12 +79,10 @@ class ToolLoop:
         patch_request_context: dict[str, object],
         budget: TaskBudget,
         usage: TaskUsage,
-    ) -> tuple[dict[str, object], AgentToolTrace]:
+    ) -> StepOutcome:
         """Run the ReAct loop for one plan step.
 
-        Returns:
-            (raw_patch_document_dict, tool_trace)
-            raw_patch_document_dict is compatible with PatchDocumentV2.model_validate().
+        Returns PatchResult on success or PlanHandoff when the agent signals revision_needed.
         """
         trace = AgentToolTrace(step_id=step.id)
         history: list[dict[str, object]] = []
@@ -115,7 +132,34 @@ class ToolLoop:
                         "op_count": len(patch_ops),
                     },
                 )
-                return self._wrap_as_patch_document(patch_ops), trace
+                return PatchResult(
+                    patch_document=self._wrap_as_patch_document(patch_ops),
+                    tool_trace=trace,
+                )
+
+            if action_type == "revision_needed":
+                reason = str(response.get("reason", ""))
+                evidence = str(response.get("evidence", ""))
+                raw_affected = response.get("affected_steps", [])
+                affected = [str(s) for s in raw_affected] if isinstance(raw_affected, list) else []
+                logger.info(
+                    "Tool loop revision_needed: %s",
+                    reason[:200],
+                    extra={"task_id": self._task_id, "step_id": step.id},
+                )
+                self._broadcaster.broadcast(self._task_id, {
+                    "type": "revision_needed",
+                    "step_id": step.id,
+                    "reason": reason,
+                    "evidence": evidence[:300],
+                })
+                return PlanHandoff(
+                    step_id=step.id,
+                    reason=reason,
+                    evidence=evidence,
+                    hinted_affected_steps=affected,
+                    tool_trace=trace,
+                )
 
             if action_type != "tool_call":
                 # Unexpected response — treat as empty patch to trigger a retry attempt
@@ -124,7 +168,10 @@ class ToolLoop:
                     action_type,
                     extra={"task_id": self._task_id, "step_id": step.id},
                 )
-                return self._wrap_as_patch_document([]), trace
+                return PatchResult(
+                    patch_document=self._wrap_as_patch_document([]),
+                    tool_trace=trace,
+                )
 
             if iteration >= max_calls:
                 raise ToolBudgetExceededError(

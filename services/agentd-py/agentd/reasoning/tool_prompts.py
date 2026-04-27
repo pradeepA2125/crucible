@@ -8,8 +8,8 @@ AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
     "properties": {
         "type": {
             "type": "string",
-            "enum": ["tool_call", "emit_patch"],
-            "description": "Action type: 'tool_call' to invoke a tool, 'emit_patch' when ready to write code",
+            "enum": ["tool_call", "emit_patch", "revision_needed"],
+            "description": "Action type: 'tool_call' to invoke a tool, 'emit_patch' when ready to write code, 'revision_needed' when the step's planned approach is fundamentally wrong",
         },
         "thought": {
             "type": "string",
@@ -27,6 +27,19 @@ AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
             "type": "array",
             "items": {"type": "object"},
             "description": "List of patch operations to apply (required when type='emit_patch')",
+        },
+        "reason": {
+            "type": "string",
+            "description": "Why the step cannot be completed as planned (required when type='revision_needed')",
+        },
+        "evidence": {
+            "type": "string",
+            "description": "Specific evidence from tool calls justifying the revision request",
+        },
+        "affected_steps": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Step IDs that are likely also affected (hint for planning agent)",
         },
     },
     "required": ["type", "thought"],
@@ -59,6 +72,9 @@ RULES:
 2. When you have enough information, emit a patch. Do not over-search.
 3. The search field in search_replace must be an EXACT substring of the current file content.
 4. Output exactly one JSON object per turn matching the schema.
+5. To signal a plan error: {{"type": "revision_needed", "thought": "...", "reason": "...", "evidence": "...", "affected_steps": [...]}}
+   Use ONLY when the target files/symbols in the plan are fundamentally wrong and cannot be fixed with a patch.
+   Provide specific evidence from your tool calls.
 """
 
 
