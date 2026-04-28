@@ -243,3 +243,25 @@ async def test_planning_agent_revise(tmp_path: Path):
     assert isinstance(result, PlanRevisionResult)
     assert result.revised_steps[0].step_id == "s2"
     assert result.revised_steps[0].goal == "Retargeted"
+
+
+# --- _validate_no_duplicate_file_targets: multi-file scenarios ---
+
+def test_duplicate_targets_across_steps_multi_file():
+    steps = [
+        {"id": "s1", "targets": [{"path": "src/auth.py"}, {"path": "src/models.py"}]},
+        {"id": "s2", "targets": [{"path": "src/auth.py"}]},
+    ]
+    errors = _validate_no_duplicate_file_targets(steps)
+    assert len(errors) == 1
+    assert "src/auth.py" in errors[0]
+    assert "s1" in errors[0]
+    assert "s2" in errors[0]
+
+
+def test_no_cross_step_duplicates_with_different_files():
+    steps = [
+        {"id": "s1", "targets": [{"path": "a.py"}, {"path": "b.py"}]},
+        {"id": "s2", "targets": [{"path": "c.py"}, {"path": "d.py"}]},
+    ]
+    assert _validate_no_duplicate_file_targets(steps) == []

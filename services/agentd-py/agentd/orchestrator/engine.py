@@ -52,6 +52,21 @@ from agentd.workspace.shadow import ShadowWorkspace, ShadowWorkspaceManager
 logger = logging.getLogger(__name__)
 
 
+def _validate_no_duplicate_file_targets_engine(steps: list[dict]) -> list[str]:
+    """Returns error strings for any file path appearing in more than one step's targets."""
+    seen: dict[str, str] = {}
+    errors: list[str] = []
+    for step in steps:
+        step_id = str(step.get("id", "?"))
+        for target in step.get("targets", []):
+            path = str(target.get("path", "")) if isinstance(target, dict) else str(target)
+            if path in seen:
+                errors.append(f"'{path}' in step '{seen[path]}' and '{step_id}'")
+            else:
+                seen[path] = step_id
+    return errors
+
+
 @dataclass(frozen=True)
 class _CandidateEvaluation:
     candidate: PatchCandidateV2
@@ -311,6 +326,21 @@ class AgentOrchestrator:
                     level="error",
                 ))
                 task = transition(task, TaskStatus.FAILED, "JSON plan schema invalid")
+                await self._store.save(task)
+                return task
+
+            steps_as_dicts = [
+                {"id": s.id, "targets": [{"path": t.path} for t in s.targets]}
+                for s in candidate_plan.steps
+            ]
+            duplicate_errors = _validate_no_duplicate_file_targets_engine(steps_as_dicts)
+            if duplicate_errors:
+                task.diagnostics.append(Diagnostic(
+                    source="orchestrator",
+                    message="JSON plan violates one-step-per-file constraint: " + "; ".join(duplicate_errors),
+                    level="error",
+                ))
+                task = transition(task, TaskStatus.FAILED, "plan has duplicate file targets across steps")
                 await self._store.save(task)
                 return task
 
@@ -692,6 +722,19 @@ class AgentOrchestrator:
             expected_files=task.plan.expected_files,
             stop_conditions=task.plan.stop_conditions,
         )
+
+        steps_as_dicts = [
+            {"id": s.id, "targets": [{"path": t.path} for t in s.targets]}
+            for s in task.plan.steps
+        ]
+        collision_errors = _validate_no_duplicate_file_targets_engine(steps_as_dicts)
+        if collision_errors:
+            task.diagnostics.append(Diagnostic(
+                source="orchestrator",
+                message="Revision introduced duplicate file targets: " + "; ".join(collision_errors),
+                level="error",
+            ))
+            raise ValueError("Revision created duplicate file targets across steps")
 
     async def _run_step_with_retries(
         self,
