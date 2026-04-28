@@ -3,46 +3,61 @@ from __future__ import annotations
 
 import json
 
+# Discriminated union: each variant enforces its own required fields.
+# Constrained-decoding providers (Gemini, OpenAI) enforce this at the token level.
+# Anthropic (prompt-only) gets explicit per-variant required lists as guidance.
 AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "object",
-    "properties": {
-        "type": {
-            "type": "string",
-            "enum": ["tool_call", "emit_patch", "revision_needed"],
-            "description": "Action type: 'tool_call' to invoke a tool, 'emit_patch' when ready to write code, 'revision_needed' when the step's planned approach is fundamentally wrong",
+    "oneOf": [
+        {
+            "title": "ToolCallAction",
+            "description": "Call a tool to gather context before writing code.",
+            "properties": {
+                "type": {"type": "string", "enum": ["tool_call"]},
+                "thought": {"type": "string", "description": "Reasoning before this action (1-3 sentences)"},
+                "tool": {"type": "string", "minLength": 1, "description": "Tool name"},
+                "args": {"type": "object", "description": "Tool arguments"},
+            },
+            "required": ["type", "thought", "tool", "args"],
         },
-        "thought": {
-            "type": "string",
-            "description": "Your reasoning before taking this action (1–3 sentences)",
+        {
+            "title": "EmitPatchAction",
+            "description": "Emit patch operations when ready to write code.",
+            "properties": {
+                "type": {"type": "string", "enum": ["emit_patch"]},
+                "thought": {"type": "string", "description": "Final reasoning"},
+                "patch_ops": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Patch operations to apply (search_replace, create_file, apply_diff, delete_file)",
+                },
+            },
+            "required": ["type", "thought", "patch_ops"],
         },
-        "tool": {
-            "type": "string",
-            "description": "Name of the tool to call (required when type='tool_call')",
+        {
+            "title": "RevisionNeededAction",
+            "description": "Signal that the step's planned approach is fundamentally wrong.",
+            "properties": {
+                "type": {"type": "string", "enum": ["revision_needed"]},
+                "thought": {"type": "string", "description": "Reasoning"},
+                "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Why the step cannot be completed as planned",
+                },
+                "evidence": {
+                    "type": "string",
+                    "description": "Specific evidence from tool calls justifying the revision",
+                },
+                "affected_steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Step IDs likely also affected (hint for planning agent)",
+                },
+            },
+            "required": ["type", "thought", "reason", "evidence", "affected_steps"],
         },
-        "args": {
-            "type": "object",
-            "description": "Tool arguments as a JSON object (required when type='tool_call')",
-        },
-        "patch_ops": {
-            "type": "array",
-            "items": {"type": "object"},
-            "description": "List of patch operations to apply (required when type='emit_patch')",
-        },
-        "reason": {
-            "type": "string",
-            "description": "Why the step cannot be completed as planned (required when type='revision_needed')",
-        },
-        "evidence": {
-            "type": "string",
-            "description": "Specific evidence from tool calls justifying the revision request",
-        },
-        "affected_steps": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Step IDs that are likely also affected (hint for planning agent)",
-        },
-    },
-    "required": ["type", "thought"],
+    ],
 }
 
 TOOL_LOOP_SYSTEM_PROMPT = """\

@@ -120,9 +120,11 @@ class ToolLoop:
             thought = str(response.get("thought", ""))
 
             if action_type == "emit_patch":
-                patch_ops = response.get("patch_ops", [])
+                patch_ops = response.get("patch_ops")
                 if not isinstance(patch_ops, list):
-                    patch_ops = []
+                    raise ToolBudgetExceededError(
+                        f"Step {step.id!r}: emit_patch response has non-list 'patch_ops' at iteration {iteration}"
+                    )
                 logger.debug(
                     "Tool loop emitting patch",
                     extra={
@@ -162,15 +164,9 @@ class ToolLoop:
                 )
 
             if action_type != "tool_call":
-                # Unexpected response — treat as empty patch to trigger a retry attempt
-                logger.warning(
-                    "Unexpected tool loop response type '%s'; treating as empty patch",
-                    action_type,
-                    extra={"task_id": self._task_id, "step_id": step.id},
-                )
-                return PatchResult(
-                    patch_document=self._wrap_as_patch_document([]),
-                    tool_trace=trace,
+                raise ToolBudgetExceededError(
+                    f"Step {step.id!r}: unexpected response type '{action_type}' at iteration {iteration}; "
+                    "expected tool_call, emit_patch, or revision_needed"
                 )
 
             if iteration >= max_calls:

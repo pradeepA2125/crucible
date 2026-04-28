@@ -3,56 +3,69 @@ from __future__ import annotations
 
 import json
 
+# Discriminated union: each variant enforces its own required fields.
+# Constrained-decoding providers (Gemini, OpenAI) enforce this at the token level.
+# Anthropic (prompt-only) gets explicit per-variant required lists as guidance.
 PLANNING_STEP_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "object",
-    "properties": {
-        "type": {
-            "type": "string",
-            "enum": ["tool_call", "emit_plan", "emit_revision"],
-            "description": "Action type for this turn",
+    "oneOf": [
+        {
+            "title": "ToolCallAction",
+            "description": "Call one of the available tools to gather information.",
+            "properties": {
+                "type": {"type": "string", "enum": ["tool_call"]},
+                "thought": {"type": "string", "description": "Reasoning before this action (1-3 sentences)"},
+                "tool": {"type": "string", "minLength": 1, "description": "Tool name"},
+                "args": {"type": "object", "description": "Tool arguments"},
+            },
+            "required": ["type", "thought", "tool", "args"],
         },
-        "thought": {
-            "type": "string",
-            "description": "Reasoning before taking this action (1-3 sentences)",
+        {
+            "title": "EmitPlanAction",
+            "description": "Emit the final markdown plan when confident about all target files.",
+            "properties": {
+                "type": {"type": "string", "enum": ["emit_plan"]},
+                "thought": {"type": "string", "description": "Final reasoning"},
+                "plan_markdown": {"type": "string", "minLength": 1, "description": "Full markdown plan"},
+                "files_examined": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Relative paths of all files read during exploration",
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["high", "medium", "low"],
+                    "description": "Confidence in plan correctness",
+                },
+            },
+            "required": ["type", "thought", "plan_markdown", "files_examined", "confidence"],
         },
-        "tool": {
-            "type": "string",
-            "description": "Tool name (required when type='tool_call')",
+        {
+            "title": "EmitRevisionAction",
+            "description": "Emit targeted step revisions when correcting a failed step.",
+            "properties": {
+                "type": {"type": "string", "enum": ["emit_revision"]},
+                "thought": {"type": "string", "description": "Reasoning behind the revision"},
+                "revised_steps": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "minItems": 1,
+                    "description": "Complete replacement definitions for affected steps",
+                },
+                "reverted_step_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Step IDs to roll back to pre-step shadow state",
+                },
+                "revision_summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Human-readable summary of what changed and why",
+                },
+            },
+            "required": ["type", "thought", "revised_steps", "reverted_step_ids", "revision_summary"],
         },
-        "args": {
-            "type": "object",
-            "description": "Tool arguments (required when type='tool_call')",
-        },
-        "plan_markdown": {
-            "type": "string",
-            "description": "Full markdown plan (required when type='emit_plan')",
-        },
-        "files_examined": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Relative paths of all files read during exploration",
-        },
-        "confidence": {
-            "type": "string",
-            "enum": ["high", "medium", "low"],
-            "description": "Confidence in plan correctness (required when type='emit_plan')",
-        },
-        "revised_steps": {
-            "type": "array",
-            "items": {"type": "object"},
-            "description": "Complete step replacements (required when type='emit_revision')",
-        },
-        "reverted_step_ids": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Step IDs to roll back (must have checkpoints)",
-        },
-        "revision_summary": {
-            "type": "string",
-            "description": "Human-readable summary of what changed and why",
-        },
-    },
-    "required": ["type", "thought"],
+    ],
 }
 
 PLANNING_SYSTEM_PROMPT = """\

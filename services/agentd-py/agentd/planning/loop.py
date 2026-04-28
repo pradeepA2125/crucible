@@ -110,7 +110,11 @@ class PlanningLoop:
             thought = str(response.get("thought", ""))
 
             if action_type == "emit_plan":
-                plan_markdown = str(response.get("plan_markdown", ""))
+                plan_markdown = response.get("plan_markdown")
+                if not plan_markdown or not str(plan_markdown).strip():
+                    raise PlanningBudgetExceededError(
+                        f"emit_plan response missing or empty 'plan_markdown' at iteration {iteration}"
+                    )
                 files_examined = list(response.get("files_examined", []))
                 confidence = str(response.get("confidence", "medium"))
                 if confidence not in ("high", "medium", "low"):
@@ -121,16 +125,18 @@ class PlanningLoop:
                     "confidence": confidence,
                 })
                 return PlanningResult(
-                    plan_markdown=plan_markdown,
+                    plan_markdown=str(plan_markdown),
                     files_examined=files_examined,
                     confidence=confidence,  # type: ignore[arg-type]
                     tool_trace=trace,
                 )
 
             if action_type == "emit_revision":
-                raw_steps = response.get("revised_steps", [])
-                if not isinstance(raw_steps, list):
-                    raw_steps = []
+                raw_steps = response.get("revised_steps")
+                if not isinstance(raw_steps, list) or len(raw_steps) == 0:
+                    raise PlanningBudgetExceededError(
+                        f"emit_revision response missing or empty 'revised_steps' at iteration {iteration}"
+                    )
                 revised_steps = [
                     RevisedStep(
                         step_id=str(s.get("step_id", "")),
@@ -154,16 +160,9 @@ class PlanningLoop:
                 )
 
             if action_type != "tool_call":
-                logger.warning(
-                    "Unexpected planning loop response type '%s'; treating as empty plan",
-                    action_type,
-                    extra={"task_id": self._task_id},
-                )
-                return PlanningResult(
-                    plan_markdown="",
-                    files_examined=[],
-                    confidence="low",
-                    tool_trace=trace,
+                raise PlanningBudgetExceededError(
+                    f"Unexpected planning response type '{action_type}' at iteration {iteration}; "
+                    "expected tool_call, emit_plan, or emit_revision"
                 )
 
             if iteration >= max_calls:
