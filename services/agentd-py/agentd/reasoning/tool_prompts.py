@@ -3,61 +3,53 @@ from __future__ import annotations
 
 import json
 
-# Discriminated union: each variant enforces its own required fields.
-# Constrained-decoding providers (Gemini, OpenAI) enforce this at the token level.
-# Anthropic (prompt-only) gets explicit per-variant required lists as guidance.
+# Flat schema compatible with Gemini's constrained JSON decoding.
+# Gemini does not support oneOf/anyOf discriminated unions — it deadlocks on them.
+# All fields are optional except "type" and "thought"; the system prompt instructs
+# the model which fields to populate based on the chosen type.
 AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "object",
-    "oneOf": [
-        {
-            "title": "ToolCallAction",
-            "description": "Call a tool to gather context before writing code.",
-            "properties": {
-                "type": {"type": "string", "enum": ["tool_call"]},
-                "thought": {"type": "string", "description": "Reasoning before this action (1-3 sentences)"},
-                "tool": {"type": "string", "minLength": 1, "description": "Tool name"},
-                "args": {"type": "object", "description": "Tool arguments"},
-            },
-            "required": ["type", "thought", "tool", "args"],
+    "properties": {
+        "type": {
+            "type": "string",
+            "enum": ["tool_call", "emit_patch", "verify_done", "revision_needed"],
+            "description": "Action type: tool_call to gather context, emit_patch to write code, verify_done when checks pass, revision_needed if plan is wrong",
         },
-        {
-            "title": "EmitPatchAction",
-            "description": "Emit patch operations when ready to write code.",
-            "properties": {
-                "type": {"type": "string", "enum": ["emit_patch"]},
-                "thought": {"type": "string", "description": "Final reasoning"},
-                "patch_ops": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "description": "Patch operations to apply (search_replace, create_file, apply_diff, delete_file)",
-                },
-            },
-            "required": ["type", "thought", "patch_ops"],
+        "thought": {"type": "string", "description": "Reasoning before this action (1-3 sentences)"},
+        # tool_call fields
+        "tool": {"type": "string", "description": "Tool name (required for tool_call)"},
+        "args": {"type": "object", "additionalProperties": True, "description": "Tool arguments (required for tool_call)"},
+        # emit_patch fields
+        "patch_ops": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+            "description": "Patch operations to apply (required for emit_patch): search_replace, create_file, apply_diff, delete_file",
         },
-        {
-            "title": "RevisionNeededAction",
-            "description": "Signal that the step's planned approach is fundamentally wrong.",
-            "properties": {
-                "type": {"type": "string", "enum": ["revision_needed"]},
-                "thought": {"type": "string", "description": "Reasoning"},
-                "reason": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Why the step cannot be completed as planned",
-                },
-                "evidence": {
-                    "type": "string",
-                    "description": "Specific evidence from tool calls justifying the revision",
-                },
-                "affected_steps": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Step IDs likely also affected (hint for planning agent)",
-                },
-            },
-            "required": ["type", "thought", "reason", "evidence", "affected_steps"],
+        # verify_done fields
+        "verified": {
+            "type": "boolean",
+            "description": "True when all linters and tests passed (required for verify_done)",
         },
-    ],
+        "test_output": {
+            "type": "string",
+            "description": "Full output from the last test/lint run (required for verify_done)",
+        },
+        # revision_needed fields
+        "reason": {
+            "type": "string",
+            "description": "Why the step cannot be completed as planned (required for revision_needed)",
+        },
+        "evidence": {
+            "type": "string",
+            "description": "Specific evidence from tool calls justifying the revision (required for revision_needed)",
+        },
+        "affected_steps": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Step IDs likely also affected (required for revision_needed)",
+        },
+    },
+    "required": ["type", "thought"],
 }
 
 TOOL_LOOP_SYSTEM_PROMPT = """\
@@ -71,32 +63,104 @@ PATCH OPERATION FORMATS (for emit_patch):
 Each element of patch_ops must be one of these objects:
 
 search_replace — find and replace text in a file (most reliable):
-  {{"op": "search_replace", "file": "path/to/file.py", "search": "exact text to find", "replace": "new text", "reason": "why"}}
+  {{"op": "search_replace", "file": "path/to/file.rs", "search": "exact text to find", "replace": "new text", "reason": "why"}}
 
 create_file — create a new file:
-  {{"op": "create_file", "file": "path/to/new_file.py", "content": "full file content", "reason": "why"}}
+  {{"op": "create_file", "file": "path/to/new_file.ext", "content": "full file content", "reason": "why"}}
 
 apply_diff — apply a unified diff (for multi-section edits):
-  {{"op": "apply_diff", "file": "path/to/file.py", "diff": "@@ -1,3 +1,4 @@\\n context\\n+added line\\n context", "reason": "why"}}
+  {{"op": "apply_diff", "file": "path/to/file.ext", "diff": "@@ -1,3 +1,4 @@\\n context\\n+added line\\n context", "reason": "why"}}
 
 delete_file — delete a file:
-  {{"op": "delete_file", "file": "path/to/file.py", "reason": "why"}}
+  {{"op": "delete_file", "file": "path/to/file.ext", "reason": "why"}}
 
 RULES:
 1. Use tools to gather context before writing code. Read files you haven't seen.
 2. When you have enough information, emit a patch. Do not over-search.
 3. The search field in search_replace must be an EXACT substring of the current file content.
-4. Output exactly one JSON object per turn matching the schema.
-5. To signal a plan error: {{"type": "revision_needed", "thought": "...", "reason": "...", "evidence": "...", "affected_steps": [...]}}
-   Use ONLY when the target files/symbols in the plan are fundamentally wrong and cannot be fixed with a patch.
-   Provide specific evidence from your tool calls.
+4. Output exactly one JSON object per turn. The "type" field selects the variant; all fields
+   listed for that variant are REQUIRED.
+
+EXECUTION PHASES:
+
+Phase 1 — EXPLORE & PATCH
+  Gather context with tools, emit_patch when confident.
+  After your patch is applied you will automatically enter Phase 2.
+
+Phase 2 — VERIFY
+  You will be notified in the conversation when Phase 2 begins.
+  Required sequence:
+    1. Run static analysis first (fast): ruff check, mypy, tsc --noEmit, cargo check
+    2. Run tests: pytest, cargo test, vitest, npm test
+    3. If any check fails: emit another emit_patch to correct, then re-run checks
+    4. When all pass: emit verify_done with verified=true and full test_output
+
+  Rules:
+    - You MUST run at least one linter AND one test command before verify_done(verified=true)
+    - If this step has no test_command hint, emit verify_done(verified=true) immediately
+    - Never claim verified=true without actually running the checks
+
+BINARY DISCOVERY (verify phase only):
+
+When run_command fails with "not found":
+  1. find_binary <name>               — returns full paths in real workspace
+  2. If found: run_command <full-path> <args>  (full paths to allowed binaries accepted)
+  3. If not found: detect package manager, call setup_env, then retry
+
+Package manager detection — list_directory(".") first:
+  uv.lock              -> setup_env: "uv sync"
+  poetry.lock          -> setup_env: "poetry install"
+  requirements*.txt    -> setup_env: "pip install -r requirements.txt"
+  pyproject.toml only  -> setup_env: "uv sync"
+  package-lock.json    -> setup_env: "npm ci"
+  yarn.lock            -> setup_env: "yarn install --frozen-lockfile"
+  pnpm-lock.yaml       -> setup_env: "pnpm install --frozen-lockfile"
+  Cargo.toml           -> cargo is always available, no setup needed
+  go.mod               -> setup_env: "go mod download"
+
+IMPORTANT: setup_env reads YOUR patched files (shadow workspace), not the original.
+If you added a dependency via emit_patch, call setup_env immediately after —
+it reads your patched pyproject.toml/package.json.
+
+When a dependency is missing from the project file:
+  1. emit_patch  — add the dep to pyproject.toml / package.json
+  2. setup_env   — reads your patched file, installs to real env
+  3. find_binary — confirm the binary is now present
+  4. run_command — run the test
+
+Concrete example (Python/uv, pytest missing):
+  list_directory(".")         -> pyproject.toml, uv.lock, src/, tests/
+  run_command pytest tests/   -> Error: pytest not found on PATH
+  find_binary pytest          -> not found in real workspace
+  emit_patch                  -> add "pytest>=8" to pyproject.toml dev-dependencies
+  setup_env "uv sync"         -> cwd=shadow, UV_PROJECT_ENVIRONMENT=/real/.venv
+  find_binary pytest          -> found: /real/.venv/bin/pytest
+  run_command /real/.venv/bin/pytest tests/test_foo.py  -> 1 passed
+  verify_done verified=true test_output="1 passed"
+
+OUTPUT — choose exactly one variant per turn:
+
+Variant 1 — call a tool (required fields: type, thought, tool, args):
+  {{"type": "tool_call", "thought": "<1-3 sentence reasoning>", "tool": "<tool_name>", "args": {{<tool args>}}}}
+
+Variant 2 — emit patch ops (required fields: type, thought, patch_ops):
+  {{"type": "emit_patch", "thought": "<final reasoning>", "patch_ops": [{{<patch op>}}, ...]}}
+
+Variant 3 — signal plan error (required fields: type, thought, reason, evidence, affected_steps):
+  {{"type": "revision_needed", "thought": "...", "reason": "...", "evidence": "...", "affected_steps": [...]}}
+  Use ONLY when the target files/symbols in the plan are fundamentally wrong.
+
+Variant 4 — signal verify complete (required fields: type, thought, verified, test_output):
+  {{"type": "verify_done", "thought": "...", "verified": true, "test_output": "full pytest or linter output"}}
+  Use after ALL linters and tests pass. Or immediately if no test_command is set.
 """
 
 
 def build_tool_step_payload(
     step_context: dict[str, object],
     history: list[dict[str, object]],
-    tool_definitions: list[dict[str, object]],
+    *,
+    phase: str = "explore",
 ) -> dict[str, object]:
     """Build the user_payload dict for a single ReAct loop turn."""
     payload: dict[str, object] = {
@@ -106,7 +170,6 @@ def build_tool_step_payload(
         "last_failure": step_context.get("last_failure"),
     }
 
-    # Rich planner context — include only when present (LLM generated these during planning)
     for field in ("implementation_details", "edge_cases", "design_rationale", "testing_strategy"):
         value = step_context.get(field)
         if value:
@@ -116,7 +179,6 @@ def build_tool_step_payload(
     if risk and risk != "low":
         payload["risk"] = risk
 
-    # File contents and diagnostics from retrieval context
     file_contents = step_context.get("file_contents")
     if file_contents:
         payload["file_contents"] = file_contents
@@ -129,13 +191,18 @@ def build_tool_step_payload(
     if plan_markdown:
         payload["plan_markdown"] = plan_markdown
 
-    # Embed conversation history so this remains a single-turn call (no transport changes)
     if history:
         payload["conversation_history"] = history
-        payload["instruction"] = (
-            "Continue the conversation above. Output your NEXT action as a JSON object. "
-            "If you have gathered enough context, emit_patch. Otherwise call another tool."
-        )
+        if phase == "verify":
+            payload["instruction"] = (
+                "You are in VERIFY phase. Run linters and tests. "
+                "Emit verify_done when all checks pass, or emit_patch to correct failures."
+            )
+        else:
+            payload["instruction"] = (
+                "Continue the conversation above. Output your NEXT action as a JSON object. "
+                "If you have gathered enough context, emit_patch. Otherwise call another tool."
+            )
     else:
         payload["instruction"] = (
             "Start gathering context for this step. "
@@ -145,6 +212,10 @@ def build_tool_step_payload(
     return payload
 
 
-def format_tool_system_prompt(tool_definitions: list[dict[str, object]]) -> str:
+def format_tool_system_prompt(
+    tool_definitions: list[dict[str, object]],
+    *,
+    phase: str = "explore",
+) -> str:
     tools_json = json.dumps(tool_definitions, indent=2)
     return TOOL_LOOP_SYSTEM_PROMPT.format(tools_json=tools_json)
