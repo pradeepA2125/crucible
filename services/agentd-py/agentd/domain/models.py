@@ -61,6 +61,7 @@ class TaskBudget(BaseModel):
     max_planning_tool_calls: int = 20
     max_revision_tool_calls: int = 10
     max_delta_replans: int = 3
+    max_verify_calls_per_step: int = 4
 
 
 class TaskUsage(BaseModel):
@@ -169,6 +170,7 @@ class PlanStep(BaseModel):
     edge_cases: str | None = None                  # Edge cases to handle in implementation
     testing_strategy: str | None = None           # Verification approach and testing criteria
     design_rationale: str | None = None            # Technical considerations and constraints
+    test_command: str | None = None               # Runnable test command (e.g. "pytest tests/test_auth.py::test_login"); only set when test file is verified or is a NEW target in this step
 
     @model_validator(mode="before")
     @classmethod
