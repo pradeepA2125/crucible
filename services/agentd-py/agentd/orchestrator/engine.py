@@ -865,6 +865,8 @@ class AgentOrchestrator:
                         registry,
                         self.broadcaster,
                         task.task_id,
+                        self._patch_engine,
+                        shadow_path,
                     )
                     step_outcome = await tool_loop.run(
                         step,
@@ -878,17 +880,68 @@ class AgentOrchestrator:
                         task.modified_files = previous_modified_files
                         return step_outcome
 
-                    patch_raw = step_outcome.patch_document
+                    assert isinstance(step_outcome, VerifyResult)
+
+                    if not step_outcome.verified:
+                        # Verify phase failed — restore shadow and retry with test output as context
+                        self._restore_shadow_checkpoint(shadow_path, checkpoint.checkpoint_path)
+                        task.modified_files = previous_modified_files
+                        last_failure = {
+                            "failure_code": "verify_failed",
+                            "excerpt": step_outcome.test_output[:2000] if step_outcome.test_output else "Verify phase failed",
+                        }
+                        self._write_debug_artifact(
+                            task.task_id, "tool-trace",
+                            step_outcome.tool_trace.model_dump(mode="json"),
+                            step_id=step.id, attempt=attempt,
+                            artifacts_root_path=task.artifacts_root_path,
+                        )
+                        trace_entries.append(StepExecutionTrace(
+                            step_id=step.id, attempt=attempt, status="validation_failed",
+                            checkpoint_id=checkpoint.checkpoint_id,
+                            message=f"verify phase failed: {step_outcome.test_output[:200]}",
+                        ))
+                        last_result_diagnostics = [
+                            *persistent_diagnostics,
+                            Diagnostic(source="verify_phase", message=step_outcome.test_output[:500], level="error"),
+                        ]
+                        checkpoints.append(checkpoint)
+                        continue
+
+                    # VerifyResult(verified=True) — patch already applied inline, proceed directly
+                    touched = step_outcome.touched_files
                     tool_trace = step_outcome.tool_trace
                     self._write_debug_artifact(
-                        task.task_id,
-                        "tool-trace",
+                        task.task_id, "tool-trace",
                         tool_trace.model_dump(mode="json"),
-                        step_id=step.id,
-                        attempt=attempt,
+                        step_id=step.id, attempt=attempt,
                         artifacts_root_path=task.artifacts_root_path,
                     )
-                    print(f"[PATCH] Tool loop complete ({len(tool_trace.calls)} tool calls)")
+                    self._write_debug_artifact(
+                        task.task_id, "patch",
+                        step_outcome.patch_document,
+                        step_id=step.id, attempt=attempt,
+                        artifacts_root_path=task.artifacts_root_path,
+                    )
+                    print(f"[PATCH] Tool loop complete ({len(tool_trace.calls)} tool calls, verified=True)")
+                    task.modified_files = sorted(set(task.modified_files) | set(touched))
+                    trace_entries.append(StepExecutionTrace(
+                        step_id=step.id, attempt=attempt, status="step_completed",
+                        checkpoint_id=checkpoint.checkpoint_id,
+                        message=f"verify passed: {step_outcome.test_output[:200] if step_outcome.test_output else 'no test output'}",
+                    ))
+                    return StepRunResult(
+                        step_id=step.id,
+                        outcome="step_completed",
+                        validation_result="validation_passed",
+                        attempts_used=attempt,
+                        selected_candidate_id=None,
+                        touched_files=touched,
+                        diagnostics=[*persistent_diagnostics],
+                        trace_entries=trace_entries,
+                        checkpoint_manifests=checkpoints,
+                        last_failure=None,
+                    )
                 else:
                     print("\n[PATCH] Entering Patching Node...")
                     print(f"[PATCH] Generating {self._patch_candidate_count} candidates for {len(allowed_files)} target files...")

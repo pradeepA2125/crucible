@@ -311,15 +311,7 @@ class ToolLoop:
         except Exception as exc:
             return {"is_error": True, "error": str(exc), "touched_files": []}
 
-        if not result.success:
-            issues = "; ".join(i.message for i in result.issues[:3])
-            return {"is_error": True, "error": issues, "touched_files": []}
-
-        touched = [
-            op.get("file", "") for op in (candidate.patch_ops or [])
-            if isinstance(op, dict)
-        ]
-        return {"is_error": False, "touched_files": [f for f in touched if f]}
+        return {"is_error": False, "touched_files": result.touched_files}
 
     @staticmethod
     def _wrap_as_patch_document(patch_ops: list[object]) -> dict[str, object]:

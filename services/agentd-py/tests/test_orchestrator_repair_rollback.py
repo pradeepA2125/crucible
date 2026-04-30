@@ -21,25 +21,6 @@ class RepairReasoningEngine:
     def __init__(self) -> None:
         self.patch_calls = 0
 
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path, retrieval_context)
-        return "# Plan\n\n- Insert marker"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, plan_markdown)
-        return {"verdict": "pass", "issues": []}
-
     async def create_plan(
         self,
         task: TaskRecord,
@@ -88,16 +69,6 @@ class RepairReasoningEngine:
                 }
             ]
         }
-
-    async def critique_json_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, candidate_plan)
-        return {"verdict": "pass", "issues": []}
 
     async def create_tool_step(
         self,
@@ -195,7 +166,9 @@ async def test_orchestrator_rolls_back_failed_repair_iteration(tmp_path: Path) -
 
     assert result.status == TaskStatus.READY_FOR_REVIEW
     assert reasoner.patch_calls == 1
-    assert validator.fast_calls == 3  # 1 candidate eval + 1 incremental per-op + 1 post-apply
+    # Tool-loop inline apply bypasses _evaluate_candidates — run_touched is no longer called
+    # per step; verify phase owns validation now.
+    assert validator.fast_calls == 0
     assert validator.calls == 2  # 1 baseline capture + 1 post-execution full validation
     assert result.shadow_workspace_path is not None
     assert result.completed_step_ids == ["S1"]
