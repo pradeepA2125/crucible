@@ -89,6 +89,7 @@ class ToolLoop:
         last_patch_document: dict[str, object] = {}
         all_touched_files: list[str] = []
         last_verify_run_errored: bool = False  # True if last verify-phase run_command failed
+        had_scope_violation: bool = False     # True if any patch was rejected for out-of-scope file
 
         retrieval_ctx = patch_request_context.get("retrieval_context") or {}
         if not isinstance(retrieval_ctx, dict):
@@ -217,6 +218,7 @@ class ToolLoop:
                                        extra={"task_id": self._task_id, "step_id": step.id})
                         is_scope_error = "outside current step scope" in error_msg
                         if is_scope_error:
+                            had_scope_violation = True
                             feedback = (
                                 f"Patch FAILED: {error_msg}\n"
                                 "This file is not in your allowed targets for this step. "
@@ -303,6 +305,31 @@ class ToolLoop:
             # Budget enforcement per phase
             if phase == "explore":
                 if explore_calls >= max_explore:
+                    if had_scope_violation:
+                        # Agent kept burning budget after a scope rejection without emitting
+                        # revision_needed. Convert to PlanHandoff so the outer retry doesn't
+                        # fire — we already know the plan needs a target added.
+                        logger.warning(
+                            "Explore budget exhausted after scope violation (step %s) — "
+                            "converting to PlanHandoff to skip outer retry",
+                            step.id, extra={"task_id": self._task_id},
+                        )
+                        self._broadcaster.broadcast(self._task_id, {
+                            "type": "revision_needed", "step_id": step.id,
+                            "reason": "Scope violation: required file not in step targets",
+                            "evidence": "Patch rejected for out-of-scope file; agent exhausted budget without emitting revision_needed",  # noqa: E501
+                        })
+                        return PlanHandoff(
+                            step_id=step.id,
+                            reason="Scope violation: required file not in step targets",
+                            evidence=(
+                                "Patch rejected for out-of-scope file. "
+                                "Agent exhausted explore budget without emitting revision_needed. "
+                                "The plan should add the required file as a target."
+                            ),
+                            hinted_affected_steps=[],
+                            tool_trace=trace,
+                        )
                     raise ToolBudgetExceededError(
                         f"Step {step.id!r}: explore budget ({max_explore})"
                         " exhausted without emitting a patch"
@@ -359,6 +386,22 @@ class ToolLoop:
                 "content": tool_output.output[:_MAX_OUTPUT_INJECT_CHARS],
             })
 
+        if had_scope_violation:
+            logger.warning(
+                "Total budget exceeded after scope violation (step %s) — converting to PlanHandoff",
+                step.id, extra={"task_id": self._task_id},
+            )
+            return PlanHandoff(
+                step_id=step.id,
+                reason="Scope violation: required file not in step targets",
+                evidence=(
+                    "Patch rejected for out-of-scope file. "
+                    "Agent exhausted total budget without emitting revision_needed. "
+                    "The plan should add the required file as a target."
+                ),
+                hinted_affected_steps=[],
+                tool_trace=trace,
+            )
         raise ToolBudgetExceededError(f"Step {step.id!r}: total budget exceeded")
 
     async def _apply_patch_inline(
