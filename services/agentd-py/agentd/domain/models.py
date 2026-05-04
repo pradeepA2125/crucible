@@ -290,7 +290,7 @@ class PlanCritiqueCode(StrEnum):
     VERIFICATION_MISMATCH = "verification_mismatch"
     PATH_PREFIX_MISMATCH = "path_prefix_mismatch"
     TEST_SCOPE_MISMATCH = "test_scope_mismatch"
-    # Step-detail quality codes — must match MARKDOWN_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS
+    # Step-detail quality codes
     INSUFFICIENT_IMPLEMENTATION_DETAILS = "insufficient_implementation_details"
     INCOMPLETE_EDGE_CASES = "incomplete_edge_cases"
     VAGUE_TESTING_STRATEGY = "vague_testing_strategy"

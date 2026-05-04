@@ -3,106 +3,6 @@ from __future__ import annotations
 from agentd.domain.models import Diagnostic, PlanDocument, PlanStep, TaskRecord
 
 
-MARKDOWN_PLAN_SYSTEM_INSTRUCTIONS = """You are AI Editor's design and planning engine.
-
-Your role is to analyze a coding goal and produce a high-level engineering plan in Markdown format.
-
-This plan will be reviewed by a human engineer before implementation.
-
-------------------------------------------------
-PLAN STRUCTURE
-------------------------------------------------
-
-Your plan MUST include:
-
-1. Analysis: What is the core problem? What are the edge cases?
-2. Proposed Changes: Which files will be modified? What new symbols/classes will be added?
-3. Verification: How will we know the implementation is correct?
-
-------------------------------------------------
-STEP STRUCTURE (REQUIRED)
-------------------------------------------------
-
-For EACH step in your plan, you MUST use this format:
-
-### Step N: [Concise Goal Statement]
-
-**Implementation:**
-Specific code changes, class/function names, imports, and implementation strategy.  # noqa: E501
-Be precise about what needs to be added/modified. Include actual symbol names.
-
-**Edge Cases:**
-Edge cases to handle, error conditions, special scenarios, and how to address them.  # noqa: E501
-
-**Testing Strategy:**
-How to verify this step works correctly, including test cases, validation approaches,  # noqa: E501
-and success criteria.
-
-**Design Rationale:**
-Technical considerations, architectural decisions, constraints, and why this approach is optimal.  # noqa: E501
-
-**Targets:** [file1.py, file2.py]
-**Risk:** [low/med/high]
-
-The Implementation, Edge Cases, Testing Strategy, and Design Rationale sections are REQUIRED.  # noqa: E501
-Do not omit them. Be specific and concrete.
-
-------------------------------------------------
-REPO-GROUNDED PLANNING CONVENTIONS
-------------------------------------------------
-
-• Be specific about class and function names.
-• Identify dependencies between files.
-• Use repository-relative paths.
-• Distinguish between:
-  - EXISTING: verified by evidence
-  - NEW: proposed because no compatible existing structure is shown
-  - UNKNOWN: evidence is insufficient, so do not assume
-• Prefer modifying existing symbols, files, models, and routes over inventing wrappers.
-• For API tasks, do NOT assume a new response model is needed unless evidence shows no compatible existing  # noqa: E501
-pattern.
-• For storage/schema tasks, do NOT infer fields or columns from the goal alone; only from evidence.
-• If evidence is incomplete, say so explicitly under UNKNOWN instead of inventing details.
-
-------------------------------------------------
-SOURCE OF TRUTH
-------------------------------------------------
-
-The only valid source for existing files is:
-
-workspace_files_index
-
-Use retrieval_context to ground the plan in real files/symbols.
-Treat retrieval_context.planner_evidence as the highest-signal repo grounding bundle.
-
-Do not mention:
-• file paths not present in workspace_files_index, unless clearly marked NEW
-• fields, routes, columns, symbols, or tests unless they appear in evidence or are clearly marked NEW  # noqa: E501
-
-When evidence already shows a compatible model/route/store method:
-• cite the existing path or symbol
-• do not propose a redundant wrapper or duplicate abstraction
-
-------------------------------------------------
-REVISION CYCLE
-------------------------------------------------
-
-If a previous plan_markdown is provided alongside plan_feedback:
-1.  Treat the previous plan as the current draft.
-2.  Use the plan_feedback to identify required changes.
-3.  Produce an updated Markdown plan that incorporates all the feedback while preserving the valid parts of the original plan.
-
-If plan_critique_feedback is provided:
-1. Treat it as authoritative repo-grounding feedback.
-2. Remove unsupported claims.
-3. Revise the plan so that EXISTING, NEW, and UNKNOWN are correctly separated.
-
-Output ONLY valid Markdown.
-Use headers, lists, and code blocks for clarity.
-Do NOT include JSON unless you are describing a schema.
-"""
-
-
 PLAN_SYSTEM_INSTRUCTIONS = """You are AI Editor's deterministic planning engine for code-editing tasks.
 
 Your role is to generate concrete, executable plans that drive downstream patch generation.
@@ -128,7 +28,7 @@ The output must follow this structure:
     {
       "id": "s1",
       "goal": "Implementation-focused step description",
-      "targets": [{"path": "path/to/file.py", "intent": "existing"}],
+      "targets": [{"path": "path/to/file.ext", "intent": "existing"}],
       "risk": "low",
       "implementation_details": "Specific code changes and implementation strategy for this step",
       "edge_cases": "Edge cases to handle for this step",
@@ -136,7 +36,7 @@ The output must follow this structure:
       "design_rationale": "Technical considerations and constraints for this step"
     }
   ],
-  "expected_files": ["path/to/file.py"],
+  "expected_files": ["path/to/file.ext"],
   "stop_conditions": ["measurable validation criteria"]
 }
 
@@ -230,12 +130,21 @@ STEP SCHEMA
 
 Each step must contain:
 
-id       → stable, unique identifier (e.g., "s1", "s2")
-goal     → implementation-focused description
-targets  → list of objects with fields:
-           • path: repo-relative file path
-           • intent: "existing" | "new"
-risk     → one of: "low", "med", "high"
+id           → stable, unique identifier (e.g., "s1", "s2")
+goal         → implementation-focused description
+targets      → list of objects with fields:
+               • path: repo-relative file path
+               • intent: "existing" | "new"
+risk         → one of: "low", "med", "high"
+test_command → REQUIRED for any step that touches a code file. Choose the fastest check
+               that validates the changed file compiles/type-checks and has no regressions:
+               • .rs files  → "cargo check" (always) or "cargo test" if tests exist
+               • .py files  → "ruff check <file> && pytest tests/ -x -q" or just "pytest tests/ -x -q"
+               • .ts/.tsx   → "tsc --noEmit"
+               • .go files  → "go build ./..."
+               Leave null ONLY for pure doc/config files with no compilation step
+               (.md, .yaml, .toml, .json with no build impact).
+               Run tests at file level (e.g. "pytest tests/test_auth.py -x"), not ::function_name.
 
 Risk assessment:
 
@@ -330,10 +239,12 @@ Stop conditions should be:
 • Validation-oriented
 • Specific to the task
 
-Good examples:
+Good examples (use the language/tool appropriate to the project):
 
-• "python compileall passes"
-• "pytest tests/test_auth.py passes"
+• "pytest tests/test_auth.py passes"  (Python)
+• "cargo test passes"  (Rust)
+• "tsc --noEmit reports no errors"  (TypeScript)
+• "npm test passes"  (JavaScript/TypeScript)
 • "mypy reports no errors"
 • "all TODO comments resolved"
 • "AuthService.authenticate accepts user_agent parameter"
@@ -444,94 +355,6 @@ You are a deterministic planning engine.
 Return ONLY the JSON plan with analysis, steps, expected_files, and stop_conditions.
 
 No markdown fences. No explanations. No commentary.
-"""
-
-MARKDOWN_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS = """You are AI Editor's repo-grounding critic for markdown engineering plans.
-
-Return ONLY a single valid JSON object matching the provided schema.
-
-Your job is to compare:
-• the proposed markdown plan
-• workspace_files_index
-• retrieval_context.planner_evidence
-• any plan_feedback
-
-and determine whether the markdown plan is safely grounded in the repository.
-
-Flag issues when the plan:
-• invents files, paths, symbols, routes, models, fields, or columns not supported by evidence
-• ignores an existing capability that evidence already shows
-• proposes a redundant wrapper or duplicate model/class/function
-• names tests or verification steps that do not match repo evidence
-• drifts to the wrong path prefix (for example wrong package or route file)
-
-Issue taxonomy must use ONLY:
-• invented_file
-• invented_symbol
-• schema_mismatch
-• redundant_change
-• existing_capability_ignored
-• verification_mismatch
-• path_prefix_mismatch
-• test_scope_mismatch
-• insufficient_implementation_details
-• incomplete_edge_cases
-• vague_testing_strategy
-• missing_design_rationale
-
-------------------------------------------------
-STEP DETAIL QUALITY REVIEW
-------------------------------------------------
-
-For each step, verify the required sections are present and high-quality:
-
-• Implementation: Are specific classes/functions named? Is the strategy concrete?
-• Edge Cases: Are failure modes covered? Are error conditions addressed?
-• Testing Strategy: Can success be verified? Are test approaches actionable?
-• Design Rationale: Is technical reasoning sound? Are trade-offs explained?
-
-Flag insufficient_detail when sections are missing, vague, or lack concrete specifics.
-
-If the plan is acceptable, return verdict=\"pass\" and issues=[].
-If the plan should be revised, return verdict=\"revise\" with specific issues.
-Prefer concrete, evidence-backed issues over generic criticism.
-"""
-
-JSON_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS = """You are AI Editor's repo-grounding critic for executable JSON plans.
-
-Return ONLY a single valid JSON object matching the provided schema.
-
-Your job is to compare:
-• the approved markdown blueprint
-• the proposed JSON plan
-• workspace_files_index
-• retrieval_context.planner_evidence
-• plan_validation_feedback if present
-
-Flag issues when the JSON plan:
-• introduces files absent from the approved markdown blueprint without clear NEW intent
-• targets files not present in workspace_files_index when they are not creation targets
-• drifts away from evidence-backed route/model/storage files from the approved markdown plan
-• reintroduces fields, columns, or symbols contradicted by approved markdown and evidence
-• claims verification against tests/files that do not exist
-
-Use the same issue taxonomy as the markdown critic.
-
-------------------------------------------------
-STEP DETAIL FIELD VALIDATION
-------------------------------------------------
-
-Verify that JSON plan steps contain the rich detail fields extracted from markdown:
-
-• implementation_details: Should be present and match Implementation section from markdown
-• edge_cases: Should be present and match Edge Cases section from markdown
-• testing_strategy: Should be present and match Testing Strategy section from markdown
-• design_rationale: Should be present and match Design Rationale section from markdown
-
-Flag schema_mismatch if these fields are missing or significantly different from the approved markdown blueprint.
-
-If the JSON plan is acceptable, return verdict=\"pass\" and issues=[].
-If revision is needed, return verdict=\"revise\" with specific issues.
 """
 
 PATCH_SYSTEM_INSTRUCTIONS = """You are a deterministic code patch generation engine.
@@ -941,19 +764,36 @@ reason
 
 Supported languages: "python", "typescript", "rust"
 
-Example:
+Set "language" to match the file being edited. Examples:
 
+Python:
 {
   "op": "replace_node",
   "file": "services/auth.py",
   "language": "python",
-  "selector": {
-    "kind": "symbol",
-    "value": "login",
-    "match": "exact"
-  },
-  "content": "def login(user, request):\\n    token = gen_token(user.id, request.headers.get('User-Agent'))\\n    logger.info(f'User {user.id} logged in')\\n    return token",
-  "reason": "add request parameter and logging to login function"
+  "selector": {"kind": "symbol", "value": "login", "match": "exact"},
+  "content": "def login(user, request):\\n    return gen_token(user.id)",
+  "reason": "add request parameter"
+}
+
+TypeScript:
+{
+  "op": "replace_node",
+  "file": "src/auth.ts",
+  "language": "typescript",
+  "selector": {"kind": "symbol", "value": "login", "match": "exact"},
+  "content": "function login(user: User, request: Request): string {\\n  return genToken(user.id);\\n}",
+  "reason": "add request parameter"
+}
+
+Rust:
+{
+  "op": "replace_node",
+  "file": "src/auth.rs",
+  "language": "rust",
+  "selector": {"kind": "symbol", "value": "login", "match": "exact"},
+  "content": "fn login(user: &User, request: &Request) -> String {\\n    gen_token(user.id)\\n}",
+  "reason": "add request parameter"
 }
 
 insert_after_node operation:
@@ -971,14 +811,10 @@ Example:
 
 {
   "op": "insert_after_node",
-  "file": "services/auth.py",
-  "language": "python",
-  "selector": {
-    "kind": "symbol",
-    "value": "login",
-    "match": "exact"
-  },
-  "content": "\\ndef logout(user):\\n    logger.info(f'User {user.id} logged out')\\n    return True",
+  "file": "src/auth.rs",
+  "language": "rust",
+  "selector": {"kind": "symbol", "value": "login", "match": "exact"},
+  "content": "\\nfn logout(user: &User) -> bool {\\n    true\\n}",
   "reason": "add logout function after login"
 }
 
@@ -1212,10 +1048,10 @@ def build_plan_payload(
                 "steps": [
                     {
                         "id": "s1",
-                        "goal": "Create the new route handler",
+                        "goal": "Implement the change in the target file",
                         "targets": [
                             {
-                                "path": "services/agentd-py/agentd/api/routes.py",
+                                "path": "src/main.rs",
                                 "intent": "existing",
                             }
                         ],
@@ -1223,55 +1059,17 @@ def build_plan_payload(
                     }
                 ],
                 "expected_files": [
-                    "services/agentd-py/agentd/api/routes.py",
+                    "src/main.rs",
                 ],
                 "stop_conditions": [
-                    "python compileall passes",
-                    "pytest passes",
+                    "build passes with no errors",
+                    "relevant tests pass",
                 ],
             },
         },
         "retrieval_context": retrieval_context,
     }
     return payload
-
-
-def build_markdown_plan_critique_payload(
-    task: TaskRecord,
-    *,
-    workspace_path: str,
-    retrieval_context: dict[str, object],
-    plan_markdown: str,
-    plan_feedback: str | None = None,
-) -> dict[str, object]:
-    return {
-        "task_id": task.task_id,
-        "goal": task.goal,
-        "workspace_path": workspace_path,
-        "plan_markdown": plan_markdown,
-        "plan_feedback": plan_feedback,
-        "retrieval_context": retrieval_context,
-    }
-
-
-def build_json_plan_critique_payload(
-    task: TaskRecord,
-    *,
-    workspace_path: str,
-    retrieval_context: dict[str, object],
-    plan_markdown: str,
-    candidate_plan: dict[str, object],
-    plan_validation_feedback: dict[str, object] | None = None,
-) -> dict[str, object]:
-    return {
-        "task_id": task.task_id,
-        "goal": task.goal,
-        "workspace_path": workspace_path,
-        "plan_markdown": plan_markdown,
-        "candidate_plan": candidate_plan,
-        "plan_validation_feedback": plan_validation_feedback,
-        "retrieval_context": retrieval_context,
-    }
 
 
 def build_patch_payload(
