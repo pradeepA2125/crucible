@@ -38,16 +38,16 @@ from agentd.domain.models import (
 )
 from agentd.domain.state_machine import assert_budget, bump_usage, transition
 from agentd.orchestrator.broadcaster import PatchEventBroadcaster
+from agentd.patch.engine import PatchEngine
 from agentd.planning.agent import PlanningAgent
 from agentd.planning.registry import PlanningToolRegistry
-from agentd.tools.loop import PlanHandoff
-from agentd.patch.engine import PatchEngine
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.retrieval.artifact_client import RetrievalContext
 from agentd.retrieval.chunker import ScoredChunk
 from agentd.runtime.adapters import GenericPlanningAdapter, PlanningAdapter
 from agentd.runtime.artifacts import task_artifacts_root
 from agentd.storage.base import TaskStore
+from agentd.tools.loop import PlanHandoff
 from agentd.workspace.shadow import ShadowWorkspace, ShadowWorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -854,7 +854,7 @@ class AgentOrchestrator:
 
                 if self._tool_loop_enabled:
                     print("\n[PATCH] Entering Tool-Use Loop (ReAct)...")
-                    from agentd.tools.loop import VerifyResult, PlanHandoff, ToolLoop, build_tool_registry
+                    from agentd.tools.loop import ToolLoop, VerifyResult, build_tool_registry
                     registry = build_tool_registry(
                         shadow_path,
                         self._retrieval_client,

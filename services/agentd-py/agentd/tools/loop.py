@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -54,7 +54,8 @@ class ToolLoop:
     """Two-phase ReAct loop for a single plan step.
 
     Phase 1 (explore): agent calls tools and emits a patch. Patch is applied inline.
-    Phase 2 (verify): agent runs linters/tests and emits verify_done, or corrects with another patch.
+    Phase 2 (verify): agent runs linters/tests and emits verify_done, or corrects with
+    another patch.
     """
 
     def __init__(
@@ -155,7 +156,8 @@ class ToolLoop:
                 patch_ops = response.get("patch_ops")
                 if not isinstance(patch_ops, list):
                     raise ToolBudgetExceededError(
-                        f"Step {step.id!r}: emit_patch has non-list 'patch_ops' at iteration {iteration}"
+                        f"Step {step.id!r}: emit_patch has non-list 'patch_ops'"
+                        f" at iteration {iteration}"
                     )
 
                 patch_document = self._wrap_as_patch_document(patch_ops)
@@ -171,7 +173,10 @@ class ToolLoop:
                                        extra={"task_id": self._task_id, "step_id": step.id})
                         history.append({
                             "role": "tool_result", "tool": "_patch_apply",
-                            "content": f"Patch FAILED: {error_msg}\nFix your search strings and re-emit.",
+                            "content": (
+                                f"Patch FAILED: {error_msg}\n"
+                                "Fix your search strings and re-emit."
+                            ),
                         })
                         self._broadcaster.broadcast(self._task_id, {
                             "type": "patch_failed", "step_id": step.id, "error": error_msg,
@@ -224,14 +229,16 @@ class ToolLoop:
             # ── tool_call ────────────────────────────────────────────────
             if action_type != "tool_call":
                 raise ToolBudgetExceededError(
-                    f"Step {step.id!r}: unexpected response type '{action_type}' at iteration {iteration}"
+                    f"Step {step.id!r}: unexpected response type '{action_type}'"
+                    f" at iteration {iteration}"
                 )
 
             # Budget enforcement per phase
             if phase == "explore":
                 if explore_calls >= max_explore:
                     raise ToolBudgetExceededError(
-                        f"Step {step.id!r}: explore budget ({max_explore}) exhausted without emitting a patch"
+                        f"Step {step.id!r}: explore budget ({max_explore})"
+                        " exhausted without emitting a patch"
                     )
                 explore_calls += 1
             else:
@@ -240,7 +247,10 @@ class ToolLoop:
                         patch_document=last_patch_document,
                         touched_files=all_touched_files,
                         verified=False,
-                        test_output=f"Verify budget exhausted after {verify_calls} calls without passing checks",
+                        test_output=(
+                            f"Verify budget exhausted after {verify_calls} calls"
+                            " without passing checks"
+                        ),
                         tool_trace=trace,
                     )
                 verify_calls += 1
@@ -285,8 +295,9 @@ class ToolLoop:
         step: PlanStep,
     ) -> dict[str, object]:
         """Apply patch_document to shadow_path. Returns {touched_files, is_error, error}."""
-        from agentd.domain.models import PatchDocumentV2
         from pydantic import ValidationError
+
+        from agentd.domain.models import PatchDocumentV2
 
         assert self._patch_engine is not None
         assert self._shadow_path is not None
@@ -294,16 +305,16 @@ class ToolLoop:
         try:
             doc = PatchDocumentV2.model_validate(patch_document)
         except (ValidationError, Exception) as exc:
-            return {"is_error": True, "error": f"Invalid patch document: {exc}", "touched_files": []}
+            return {"is_error": True, "error": f"Invalid patch document: {exc}", "touched_files": []}  # noqa: E501
 
         if not doc.candidates:
-            return {"is_error": True, "error": "No candidates in patch document", "touched_files": []}
+            return {"is_error": True, "error": "No candidates in patch document", "touched_files": []}  # noqa: E501
 
         candidate = doc.candidates[0]
         allowed_files = {t.path for t in step.targets}
 
         try:
-            result = await self._patch_engine.apply_patch_candidate(  # type: ignore[union-attr]
+            result = await self._patch_engine.apply_patch_candidate(  # type: ignore[attr-defined]
                 self._shadow_path,
                 candidate,
                 allowed_files=allowed_files,

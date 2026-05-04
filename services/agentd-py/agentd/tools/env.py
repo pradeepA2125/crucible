@@ -19,7 +19,9 @@ async def find_binary(*, name: str, real_workspace: Path) -> ToolOutput:
     Not sandboxed to shadow — intentionally searches real filesystem.
     """
     if not name or "/" in name:
-        return ToolOutput(output="Error: binary name must not contain path separators", is_error=True)
+        return ToolOutput(
+            output="Error: binary name must not contain path separators", is_error=True
+        )
 
     found: list[str] = []
 
@@ -43,11 +45,14 @@ async def find_binary(*, name: str, real_workspace: Path) -> ToolOutput:
             line = line.strip()
             if line and line not in found:
                 found.append(line)
-    except (asyncio.TimeoutError, FileNotFoundError):
+    except (TimeoutError, FileNotFoundError):
         pass
 
     if not found:
-        return ToolOutput(output=f"not found: no '{name}' binary on PATH or in {real_workspace}", is_error=False)
+        return ToolOutput(
+            output=f"not found: no '{name}' binary on PATH or in {real_workspace}",
+            is_error=False,
+        )
 
     # Sort by path depth (shallowest = most local first)
     found.sort(key=lambda p: p.count(os.sep))
@@ -66,7 +71,7 @@ async def _run_silent(command: str, *args: str) -> str | None:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
         if proc.returncode == 0:
             return stdout.decode("utf-8", errors="replace").strip()
-    except (asyncio.TimeoutError, FileNotFoundError):
+    except (TimeoutError, FileNotFoundError):
         pass
     return None
 
@@ -136,7 +141,7 @@ async def setup_env(
             env=env,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return ToolOutput(
             output=f"Error: setup_env '{command}' timed out after {timeout_sec}s",
             is_error=True,

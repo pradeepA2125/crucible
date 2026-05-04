@@ -48,6 +48,13 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# Prompt templates and JSON schema dicts contain long description strings by necessity
+"agentd/reasoning/tool_prompts.py" = ["E501"]
+"agentd/reasoning/prompt_builder.py" = ["E501"]
+"agentd/tools/registry.py" = ["E501"]
+"agentd/planning/prompts.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

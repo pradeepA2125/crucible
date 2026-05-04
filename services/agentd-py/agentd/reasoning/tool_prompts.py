@@ -13,17 +13,30 @@ AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
         "type": {
             "type": "string",
             "enum": ["tool_call", "emit_patch", "verify_done", "revision_needed"],
-            "description": "Action type: tool_call to gather context, emit_patch to write code, verify_done when checks pass, revision_needed if plan is wrong",
+            "description": (
+                "Action type: tool_call to gather context, emit_patch to write code,"
+                " verify_done when checks pass, revision_needed if plan is wrong"
+            ),
         },
-        "thought": {"type": "string", "description": "Reasoning before this action (1-3 sentences)"},
+        "thought": {
+            "type": "string",
+            "description": "Reasoning before this action (1-3 sentences)",
+        },
         # tool_call fields
         "tool": {"type": "string", "description": "Tool name (required for tool_call)"},
-        "args": {"type": "object", "additionalProperties": True, "description": "Tool arguments (required for tool_call)"},
+        "args": {
+            "type": "object",
+            "additionalProperties": True,
+            "description": "Tool arguments (required for tool_call)",
+        },
         # emit_patch fields
         "patch_ops": {
             "type": "array",
             "items": {"type": "object", "additionalProperties": True},
-            "description": "Patch operations to apply (required for emit_patch): search_replace, create_file, apply_diff, delete_file",
+            "description": (
+                "Patch operations to apply (required for emit_patch):"
+                " search_replace, create_file, apply_diff, delete_file"
+            ),
         },
         # verify_done fields
         "verified": {
@@ -37,11 +50,14 @@ AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
         # revision_needed fields
         "reason": {
             "type": "string",
-            "description": "Why the step cannot be completed as planned (required for revision_needed)",
+            "description": "Why the step cannot be completed as planned (required for revision_needed)",  # noqa: E501
         },
         "evidence": {
             "type": "string",
-            "description": "Specific evidence from tool calls justifying the revision (required for revision_needed)",
+            "description": (
+                "Specific evidence from tool calls justifying the revision"
+                " (required for revision_needed)"
+            ),
         },
         "affected_steps": {
             "type": "array",
