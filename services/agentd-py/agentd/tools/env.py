@@ -76,7 +76,7 @@ async def _run_silent(command: str, *args: str) -> str | None:
     return None
 
 
-_SETUP_ENV_BINARIES = {"uv", "pip3", "pip", "npm", "yarn", "pnpm", "cargo", "go", "poetry"}
+_SETUP_ENV_BINARIES = {"uv", "pip3", "pip", "npm", "yarn", "pnpm", "cargo", "go", "poetry", "rustup"}
 _SETUP_ENV_TIMEOUT_SEC = 300
 
 
@@ -130,7 +130,7 @@ async def setup_env(
         if "--modules-dir" not in command:
             cmd_parts += ["--modules-dir", str(real_workspace / "node_modules")]
 
-    # cargo/go/poetry: cwd=shadow_root is sufficient; they use global caches
+    # cargo/go/poetry/rustup: cwd=shadow_root is sufficient; they use global caches/toolchains
 
     try:
         proc = await asyncio.create_subprocess_exec(

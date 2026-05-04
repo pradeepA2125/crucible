@@ -131,8 +131,19 @@ Package manager detection — list_directory(".") first:
   package-lock.json    -> setup_env: "npm ci"
   yarn.lock            -> setup_env: "yarn install --frozen-lockfile"
   pnpm-lock.yaml       -> setup_env: "pnpm install --frozen-lockfile"
-  Cargo.toml           -> cargo is always available, no setup needed
+  Cargo.toml           -> cargo is available; if a component is missing, see below
   go.mod               -> setup_env: "go mod download"
+
+When run_command exits non-zero with a MISSING COMPONENT error (command ran but a tool it needs is absent):
+  Rust toolchain components (error contains "is not installed for the toolchain"):
+    setup_env: "rustup component add <component>"   e.g. "rustup component add clippy"
+    then retry the original command
+  Python package missing at import time:
+    setup_env: "uv sync" or "pip install <pkg>"
+    then retry
+  Node module missing (MODULE_NOT_FOUND):
+    setup_env: "npm ci"
+    then retry
 
 IMPORTANT: setup_env reads YOUR patched files (shadow workspace), not the original.
 If you added a dependency via emit_patch, call setup_env immediately after —
