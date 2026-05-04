@@ -698,6 +698,8 @@ class AgentOrchestrator:
         new_steps: list[PlanStep] = []
 
         for step in task.plan.steps:
+            if step.id in revert_ids and step.id not in revised_by_id:
+                continue  # reverted without replacement — drop it
             revised = revised_by_id.get(step.id)
             if revised is not None:
                 new_steps.append(PlanStep.model_validate({
