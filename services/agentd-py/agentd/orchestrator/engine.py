@@ -443,7 +443,12 @@ class AgentOrchestrator:
                     extra={"task_id": task.task_id, "baseline_error_count": len(baseline_errors)},
                 )
 
+            # Per-step run counter: incremented each time a step is (re)attempted after a delta
+            # replan, so artifact attempt numbers don't collide across runs of the same step.
+            step_attempt_offsets: dict[str, int] = {}
+
             while (step := self._next_incomplete_step(task)) is not None:
+                attempt_offset = step_attempt_offsets.get(step.id, 0)
                 step_result = await self._run_step_with_retries(
                     task,
                     step,
@@ -451,6 +456,7 @@ class AgentOrchestrator:
                     retrieval_context,
                     persistent_diagnostics,
                     started_at_ms,
+                    attempt_offset=attempt_offset,
                 )
 
                 if isinstance(step_result, PlanHandoff):
@@ -478,6 +484,11 @@ class AgentOrchestrator:
                         return task
 
                     task.execution_state.delta_replans_used += 1
+                    print(
+                        f"\n[DELTA-REPLAN] Step {step_result.step_id} requested revision "
+                        f"({task.execution_state.delta_replans_used}/{task.budget.max_delta_replans})"
+                        f"\n[DELTA-REPLAN] Reason: {step_result.reason[:200]}"
+                    )
                     logger.info(
                         "Delta replan triggered",
                         extra={
@@ -490,9 +501,11 @@ class AgentOrchestrator:
 
                     planning_agent = self._build_planning_agent(task.task_id, task.workspace_path)
                     revision = await planning_agent.revise(task, real_path)
+
+                    rev_n = task.execution_state.delta_replans_used
                     self._write_debug_artifact(
                         task.task_id,
-                        "delta-replan-revision",
+                        f"delta-replan-{rev_n}-revision",
                         {
                             "revision_summary": revision.revision_summary,
                             "revised_steps": [r.model_dump(mode="json") for r in revision.revised_steps],
@@ -501,7 +514,35 @@ class AgentOrchestrator:
                         },
                         artifacts_root_path=task.artifacts_root_path,
                     )
+
                     self._apply_revision(task, shadow_path, revision)
+
+                    reverted = revision.reverted_step_ids
+                    revised_ids = [r.step_id for r in revision.revised_steps]
+                    new_plan_summary = ", ".join(
+                        f"{s.id}:[{','.join(t.path for t in s.targets)}]"
+                        for s in task.plan.steps
+                    )
+                    print(
+                        f"[DELTA-REPLAN] Reverted: {reverted}  |  Revised: {revised_ids}"
+                        f"\n[DELTA-REPLAN] New plan: {new_plan_summary}"
+                    )
+                    logger.info(
+                        "Delta replan applied",
+                        extra={
+                            "task_id": task.task_id,
+                            "reverted": reverted,
+                            "revised": revised_ids,
+                            "new_plan_steps": [s.id for s in task.plan.steps],
+                        },
+                    )
+
+                    # Bump offsets for every reverted step so re-runs write to new attempt dirs
+                    for sid in reverted:
+                        step_attempt_offsets[sid] = (
+                            step_attempt_offsets.get(sid, 0) + self._max_attempts_per_step
+                        )
+
                     await self._store.save(task)
                     continue
 
@@ -757,6 +798,7 @@ class AgentOrchestrator:
         started_at_ms: int,
         *,
         last_failure: dict[str, object] | None = None,
+        attempt_offset: int = 0,
     ) -> "StepRunResult | PlanHandoff":
         allowed_files = sorted(set(step.target_paths()))
         if not allowed_files:
@@ -787,15 +829,19 @@ class AgentOrchestrator:
         touched_files_result: list[str] = []
 
         for attempt in range(1, self._max_attempts_per_step + 1):
-            print(f"\n[STEP] Running step {step.id} (Attempt {attempt}/{self._max_attempts_per_step})")
+            effective_attempt = attempt_offset + attempt
+            print(
+                f"\n[STEP] Running step {step.id} "
+                f"(Attempt {effective_attempt}, local {attempt}/{self._max_attempts_per_step})"
+            )
             print(f"[GOAL] {step.goal}")
-            
+
             logger.info(
                 "Step attempt started",
                 extra={
                     "task_id": task.task_id,
                     "step_id": step.id,
-                    "attempt": attempt,
+                    "attempt": effective_attempt,
                     "max_attempts_per_step": self._max_attempts_per_step,
                 },
             )
@@ -805,7 +851,7 @@ class AgentOrchestrator:
             checkpoint = self._create_shadow_checkpoint(
                 task,
                 step,
-                attempt,
+                effective_attempt,
                 shadow_path,
                 tracked_files=allowed_files,
             )
@@ -816,7 +862,7 @@ class AgentOrchestrator:
             try:
                 # Combine step targets and expected files for patching context
                 context_files = sorted(set(allowed_files) | set(task.plan.expected_files if task.plan else []))
-                
+
                 # Build patch context using semantic chunk-scoped contents when available,
                 # falling back to full file content. Either way original line numbers are
                 # preserved so replace_range/apply_diff ops remain precise.
@@ -850,7 +896,7 @@ class AgentOrchestrator:
                     "patch-context",
                     patch_request_context,
                     step_id=step.id,
-                    attempt=attempt,
+                    attempt=effective_attempt,
                     artifacts_root_path=task.artifacts_root_path,
                 )
 
@@ -895,11 +941,11 @@ class AgentOrchestrator:
                         self._write_debug_artifact(
                             task.task_id, "tool-trace",
                             step_outcome.tool_trace.model_dump(mode="json"),
-                            step_id=step.id, attempt=attempt,
+                            step_id=step.id, attempt=effective_attempt,
                             artifacts_root_path=task.artifacts_root_path,
                         )
                         trace_entries.append(StepExecutionTrace(
-                            step_id=step.id, attempt=attempt, status="validation_failed",
+                            step_id=step.id, attempt=effective_attempt, status="validation_failed",
                             checkpoint_id=checkpoint.checkpoint_id,
                             message=f"verify phase failed: {step_outcome.test_output[:200]}",
                         ))
@@ -916,19 +962,23 @@ class AgentOrchestrator:
                     self._write_debug_artifact(
                         task.task_id, "tool-trace",
                         tool_trace.model_dump(mode="json"),
-                        step_id=step.id, attempt=attempt,
+                        step_id=step.id, attempt=effective_attempt,
                         artifacts_root_path=task.artifacts_root_path,
                     )
                     self._write_debug_artifact(
                         task.task_id, "patch",
                         step_outcome.patch_document,
-                        step_id=step.id, attempt=attempt,
+                        step_id=step.id, attempt=effective_attempt,
                         artifacts_root_path=task.artifacts_root_path,
                     )
-                    print(f"[PATCH] Tool loop complete ({len(tool_trace.calls)} tool calls, verified=True)")
+                    print(
+                        f"[PATCH] Tool loop complete"
+                        f" ({len(tool_trace.calls)} tool calls, verified=True,"
+                        f" touched={touched})"
+                    )
                     task.modified_files = sorted(set(task.modified_files) | set(touched))
                     trace_entries.append(StepExecutionTrace(
-                        step_id=step.id, attempt=attempt, status="step_completed",
+                        step_id=step.id, attempt=effective_attempt, status="step_completed",
                         checkpoint_id=checkpoint.checkpoint_id,
                         message=f"verify passed: {step_outcome.test_output[:200] if step_outcome.test_output else 'no test output'}",
                     ))
@@ -964,7 +1014,7 @@ class AgentOrchestrator:
                     "patch",
                     patch_raw,
                     step_id=step.id,
-                    attempt=attempt,
+                    attempt=effective_attempt,
                     artifacts_root_path=task.artifacts_root_path,
                 )
                 patch_document = PatchDocumentV2.model_validate(patch_raw)
@@ -975,7 +1025,7 @@ class AgentOrchestrator:
                 evaluations, ranking_path = await self._evaluate_candidates(
                     task=task,
                     step=step,
-                    attempt=attempt,
+                    attempt=effective_attempt,
                     patch_document=patch_document,
                     shadow_path=shadow_path,
                     checkpoint=checkpoint,
@@ -996,7 +1046,7 @@ class AgentOrchestrator:
                     trace_entries.append(
                         StepExecutionTrace(
                             step_id=step.id,
-                            attempt=attempt,
+                            attempt=effective_attempt,
                             status="preflight_failed",
                             issues=[issue],
                             message="no patch candidates",
@@ -1042,7 +1092,7 @@ class AgentOrchestrator:
                     trace_entries.append(
                         StepExecutionTrace(
                             step_id=step.id,
-                            attempt=attempt,
+                            attempt=effective_attempt,
                             status="preflight_failed",
                             candidate_id=selected.candidate.candidate_id,
                             checkpoint_id=checkpoint.checkpoint_id,
@@ -1076,7 +1126,7 @@ class AgentOrchestrator:
                 trace_entries.append(
                     StepExecutionTrace(
                         step_id=step.id,
-                        attempt=attempt,
+                        attempt=effective_attempt,
                         status="patch_applied",
                         candidate_id=selected.candidate.candidate_id,
                         checkpoint_id=checkpoint.checkpoint_id,
@@ -1101,7 +1151,7 @@ class AgentOrchestrator:
                     "validation-selected",
                     validation.model_dump(mode="json"),
                     step_id=step.id,
-                    attempt=attempt,
+                    attempt=effective_attempt,
                     artifacts_root_path=task.artifacts_root_path,
                 )
                 checkpoint.validation_report_path = validation_path or checkpoint.validation_report_path
@@ -1125,7 +1175,7 @@ class AgentOrchestrator:
                     trace_entries.append(
                         StepExecutionTrace(
                             step_id=step.id,
-                            attempt=attempt,
+                            attempt=effective_attempt,
                             status="step_completed",
                             candidate_id=selected.candidate.candidate_id,
                             checkpoint_id=checkpoint.checkpoint_id,
@@ -1177,7 +1227,7 @@ class AgentOrchestrator:
                 trace_entries.append(
                     StepExecutionTrace(
                         step_id=step.id,
-                        attempt=attempt,
+                        attempt=effective_attempt,
                         status="validation_failed",
                         candidate_id=selected.candidate.candidate_id,
                         checkpoint_id=checkpoint.checkpoint_id,
@@ -1210,7 +1260,7 @@ class AgentOrchestrator:
                 trace_entries.append(
                     StepExecutionTrace(
                         step_id=step.id,
-                        attempt=attempt,
+                        attempt=effective_attempt,
                         status="validation_failed",
                         issues=[issue],
                         checkpoint_id=checkpoint.checkpoint_id,

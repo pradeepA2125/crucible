@@ -253,9 +253,20 @@ class ToolLoop:
                                 all_touched_files.append(f)
 
                 last_patch_document = patch_document
+                logger.info(
+                    "Inline patch applied successfully",
+                    extra={
+                        "task_id": self._task_id, "step_id": step.id,
+                        "touched_files": all_touched_files,
+                    },
+                )
 
                 # Short-circuit if no verify needed
                 if not step.test_command:
+                    logger.info(
+                        "No test_command — short-circuit verify, marking verified=True",
+                        extra={"task_id": self._task_id, "step_id": step.id},
+                    )
                     return VerifyResult(
                         patch_document=last_patch_document,
                         touched_files=all_touched_files,
