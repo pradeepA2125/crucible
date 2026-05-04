@@ -430,6 +430,25 @@ class CommandValidator:
                         )
                     )
 
+        cargo_toml = workspace_path / "Cargo.toml"
+        if cargo_toml.exists() and shutil.which("cargo"):
+            commands.append(
+                ValidationCommand(
+                    stage="syntax",
+                    name="cargo-check",
+                    command="cargo check --all-targets 2>&1",
+                    timeout_sec=120,
+                )
+            )
+            commands.append(
+                ValidationCommand(
+                    stage="test",
+                    name="cargo-test",
+                    command="cargo test 2>&1",
+                    timeout_sec=300,
+                )
+            )
+
         return commands
 
     def _has_files(self, workspace_path: Path, suffixes: set[str]) -> bool:
