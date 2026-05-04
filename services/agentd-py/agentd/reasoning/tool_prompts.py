@@ -165,6 +165,13 @@ Concrete example (Python/uv, pytest missing):
   run_command /real/.venv/bin/pytest tests/test_foo.py  -> 1 passed
   verify_done verified=true test_output="1 passed"
 
+SCOPE VIOLATIONS — when a patch is rejected for targeting a file outside your step scope:
+Do NOT retry the same patch or loop on cargo check. Instead:
+  - If you can implement the goal entirely within the allowed files: do so.
+  - If the goal genuinely requires a file not listed in your targets: emit revision_needed
+    with evidence explaining which file is missing and why it is required.
+    The plan will be revised to include it.
+
 OUTPUT — choose exactly one variant per turn:
 
 Variant 1 — call a tool (required fields: type, thought, tool, args):

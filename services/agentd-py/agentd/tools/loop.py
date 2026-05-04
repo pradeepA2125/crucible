@@ -215,12 +215,23 @@ class ToolLoop:
                         error_msg = str(apply_result.get("error", "patch application failed"))
                         logger.warning("Inline patch failed: %s", error_msg,
                                        extra={"task_id": self._task_id, "step_id": step.id})
-                        history.append({
-                            "role": "tool_result", "tool": "_patch_apply",
-                            "content": (
+                        is_scope_error = "outside current step scope" in error_msg
+                        if is_scope_error:
+                            feedback = (
+                                f"Patch FAILED: {error_msg}\n"
+                                "This file is not in your allowed targets for this step. "
+                                "Options: (1) implement the change using only your allowed files, "
+                                "or (2) emit revision_needed explaining which file must be added "
+                                "to the plan and why."
+                            )
+                        else:
+                            feedback = (
                                 f"Patch FAILED: {error_msg}\n"
                                 "Fix your search strings and re-emit."
-                            ),
+                            )
+                        history.append({
+                            "role": "tool_result", "tool": "_patch_apply",
+                            "content": feedback,
                         })
                         self._broadcaster.broadcast(self._task_id, {
                             "type": "patch_failed", "step_id": step.id, "error": error_msg,
