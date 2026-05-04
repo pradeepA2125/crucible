@@ -1,0 +1,170 @@
+"""Integration tests for the two-phase ToolLoop verify flow."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from agentd.domain.models import TaskRecord, TaskStatus, ValidationResult
+from agentd.orchestrator.engine import AgentOrchestrator
+from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from agentd.patch.engine import PatchEngine
+from agentd.storage.in_memory import InMemoryTaskStore
+from agentd.workspace.shadow import ShadowWorkspaceManager
+
+
+def _make_plan_raw(test_command: str | None = None) -> dict:
+    step: dict = {
+        "id": "s1",
+        "goal": "Create hello.py",
+        "targets": [{"path": "hello.py", "intent": "new"}],
+        "risk": "low",
+    }
+    if test_command:
+        step["test_command"] = test_command
+    return {
+        "analysis": "test",
+        "steps": [step],
+        "expected_files": ["hello.py"],
+        "stop_conditions": ["done"],
+    }
+
+
+def _make_patch_raw(content: str = 'print("hello")') -> dict:
+    return {
+        "candidates": [{
+            "candidate_id": "c1",
+            "patch_ops": [{"op": "create_file", "file": "hello.py", "content": content, "reason": "create"}],
+        }]
+    }
+
+
+class _NullValidator:
+    async def run(self, workspace_path: str) -> ValidationResult:
+        return ValidationResult(success=True, diagnostics=[], duration_ms=0)
+
+
+def _make_orchestrator(
+    reasoning: ScriptedReasoningEngine,
+    tmp_path: Path,
+) -> tuple[AgentOrchestrator, InMemoryTaskStore]:
+    store = InMemoryTaskStore()
+    orchestrator = AgentOrchestrator(
+        store=store,
+        reasoning_engine=reasoning,
+        validator=_NullValidator(),
+        patch_engine=PatchEngine(),
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "shadows"),
+        max_attempts_per_step=2,
+    )
+    return orchestrator, store
+
+
+@pytest.mark.asyncio
+async def test_no_test_command_returns_verified_immediately(tmp_path: Path) -> None:
+    """Steps without test_command skip verify phase — VerifyResult(verified=True) immediately."""
+    patch = _make_patch_raw()
+    reasoning = ScriptedReasoningEngine(
+        plan=_make_plan_raw(test_command=None),
+        patches=[patch],
+        tool_step_responses=[
+            {"type": "emit_patch", "thought": "create file", "patch_ops": patch["candidates"][0]["patch_ops"]},
+        ],
+    )
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    orchestrator, store = _make_orchestrator(reasoning, tmp_path)
+    task = TaskRecord(task_id="task-1", goal="create hello.py", workspace_path=str(ws))
+    await store.create(task)
+
+    initialized = await orchestrator.run_task("task-1")
+    assert initialized.status == TaskStatus.AWAITING_PLAN_APPROVAL
+    result = await orchestrator.continue_task("task-1", feedback=None)
+    assert result.status == TaskStatus.READY_FOR_REVIEW
+    assert "hello.py" in result.modified_files
+
+
+@pytest.mark.asyncio
+async def test_verify_done_true_completes_step(tmp_path: Path) -> None:
+    """emit_patch + verify_done(verified=True) in tool_step_responses completes the step."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    patch = _make_patch_raw()
+    reasoning = ScriptedReasoningEngine(
+        plan=_make_plan_raw(test_command="pytest tests/test_hello.py"),
+        patches=[patch],
+        tool_step_responses=[
+            {"type": "emit_patch", "thought": "create file", "patch_ops": patch["candidates"][0]["patch_ops"]},
+            {"type": "verify_done", "thought": "tests pass", "verified": True, "test_output": "1 passed"},
+        ],
+    )
+    orchestrator, store = _make_orchestrator(reasoning, tmp_path)
+    task = TaskRecord(task_id="task-2", goal="create", workspace_path=str(ws))
+    await store.create(task)
+
+    initialized = await orchestrator.run_task("task-2")
+    assert initialized.status == TaskStatus.AWAITING_PLAN_APPROVAL
+    result = await orchestrator.continue_task("task-2", feedback=None)
+    assert result.status == TaskStatus.READY_FOR_REVIEW
+    assert "hello.py" in result.modified_files
+
+
+@pytest.mark.asyncio
+async def test_verify_done_false_triggers_retry(tmp_path: Path) -> None:
+    """verify_done(verified=False) causes engine to restore checkpoint and retry the step."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    patch_ops = [{"op": "create_file", "file": "hello.py", "content": "x=1", "reason": "r"}]
+    reasoning = ScriptedReasoningEngine(
+        plan=_make_plan_raw(test_command="pytest tests/"),
+        patches=[],
+        tool_step_responses=[
+            # Attempt 1: patch then verify fails
+            {"type": "emit_patch", "thought": "attempt 1", "patch_ops": patch_ops},
+            {"type": "verify_done", "thought": "failed", "verified": False, "test_output": "1 failed"},
+            # Attempt 2: patch then verify passes
+            {"type": "emit_patch", "thought": "attempt 2", "patch_ops": patch_ops},
+            {"type": "verify_done", "thought": "ok", "verified": True, "test_output": "1 passed"},
+        ],
+    )
+    orchestrator, store = _make_orchestrator(reasoning, tmp_path)
+    task = TaskRecord(task_id="task-3", goal="create", workspace_path=str(ws))
+    await store.create(task)
+
+    initialized = await orchestrator.run_task("task-3")
+    assert initialized.status == TaskStatus.AWAITING_PLAN_APPROVAL
+    result = await orchestrator.continue_task("task-3", feedback=None)
+    assert result.status == TaskStatus.READY_FOR_REVIEW
+    assert "hello.py" in result.modified_files
+
+
+@pytest.mark.asyncio
+async def test_patch_apply_failure_stays_in_explore(tmp_path: Path) -> None:
+    """When emit_patch ops fail to apply, agent stays in explore phase and corrects."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    # search_replace on nonexistent file will raise from PatchEngine
+    bad_ops = [{"op": "search_replace", "file": "nonexistent.py", "search": "x", "replace": "y", "reason": "bad"}]
+    good_ops = [{"op": "create_file", "file": "hello.py", "content": "x=1", "reason": "correct"}]
+
+    reasoning = ScriptedReasoningEngine(
+        plan=_make_plan_raw(test_command=None),
+        patches=[],
+        tool_step_responses=[
+            {"type": "emit_patch", "thought": "bad patch", "patch_ops": bad_ops},
+            # Agent sees failure in history, corrects:
+            {"type": "emit_patch", "thought": "corrected", "patch_ops": good_ops},
+        ],
+    )
+    orchestrator, store = _make_orchestrator(reasoning, tmp_path)
+    task = TaskRecord(task_id="task-4", goal="create", workspace_path=str(ws))
+    await store.create(task)
+
+    initialized = await orchestrator.run_task("task-4")
+    assert initialized.status == TaskStatus.AWAITING_PLAN_APPROVAL
+    result = await orchestrator.continue_task("task-4", feedback=None)
+    assert result.status == TaskStatus.READY_FOR_REVIEW
+    assert "hello.py" in result.modified_files
