@@ -156,10 +156,17 @@ class DeltaReplanReasoner:
         history: list,
         tool_definitions: list,
     ) -> dict:
-        _ = (history, tool_definitions)
+        _ = tool_definitions
         self.tool_step_calls += 1
         allowed_files = step_context.get("allowed_files", [])
         if "correct_file.py" in allowed_files:
+            # In verify phase (patch already applied) — signal completion
+            in_verify = any(
+                isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+                for msg in history
+            )
+            if in_verify:
+                return {"type": "verify_done", "thought": "patch applied", "verified": True, "test_output": ""}
             return {
                 "type": "emit_patch",
                 "thought": "patching correct file",
@@ -217,8 +224,8 @@ async def test_orchestrator_delta_replan_corrects_step_target(tmp_path: Path) ->
     assert result.status == TaskStatus.READY_FOR_REVIEW
     # generate_plan() + revise() = 2 planning_step calls
     assert reasoner.planning_step_calls == 2
-    # revision_needed on wrong_file + emit_patch on correct_file = 2 tool_step calls
-    assert reasoner.tool_step_calls == 2
+    # revision_needed on wrong_file + emit_patch on correct_file + verify_done = 3 tool_step calls
+    assert reasoner.tool_step_calls == 3
     # The revised step patched correct_file.py
     assert "correct_file.py" in result.modified_files
     # Execution state reflects exactly one delta replan

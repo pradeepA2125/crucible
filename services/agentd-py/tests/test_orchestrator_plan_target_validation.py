@@ -27,26 +27,6 @@ class ReplanningReasoner:
         self.plan_calls = 0
         self.plan_contexts: list[dict[str, object]] = []
 
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path, retrieval_context)
-        self.markdown_plan_calls += 1
-        return "# Plan\n\n- Update endpoint"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, plan_markdown)
-        return {"verdict": "pass", "issues": []}
-
     async def create_plan(
         self,
         task: TaskRecord,
@@ -111,23 +91,19 @@ class ReplanningReasoner:
             ]
         }
 
-    async def critique_json_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, candidate_plan)
-        return {"verdict": "pass", "issues": []}
-
     async def create_tool_step(
         self,
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
     ) -> dict[str, object]:
-        _ = (step_context, history, tool_definitions)
+        _ = (step_context, tool_definitions)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
         return {
             "type": "emit_patch",
             "thought": "scripted",
@@ -186,16 +162,6 @@ class AlwaysBadReasoner(ReplanningReasoner):
 
 
 class MarkdownBlueprintReasoner(ReplanningReasoner):
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path, retrieval_context)
-        self.markdown_plan_calls += 1
-        return "# Plan\n\n- Update `services/agentd-py/agentd/api/routes.py`"
-
     async def create_plan(
         self,
         task: TaskRecord,
@@ -243,31 +209,6 @@ class MarkdownBlueprintReasoner(ReplanningReasoner):
             "stop_conditions": ["tests pass"],
         }
 
-    async def critique_json_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context)
-        # Check if plan targets drift from markdown blueprint
-        if self.plan_calls == 1:
-            # First call has drift - return issues
-            return {
-                "verdict": "revise",
-                "issues": [
-                    {
-                        "code": "path_prefix_mismatch",
-                        "message": "JSON plan target 'services/agentd-py/agentd/storage/base.py' is not part of the approved markdown blueprint.",
-                        "file": "services/agentd-py/agentd/storage/base.py",
-                        "evidence": "services/agentd-py/agentd/api/routes.py",
-                    }
-                ]
-            }
-        # Second call should pass
-        return {"verdict": "pass", "issues": []}
-
     async def create_patch(
         self,
         task: TaskRecord,
@@ -300,7 +241,13 @@ class MarkdownBlueprintReasoner(ReplanningReasoner):
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
     ) -> dict[str, object]:
-        _ = (step_context, history, tool_definitions)
+        _ = (step_context, tool_definitions)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
         return {
             "type": "emit_patch",
             "thought": "scripted",
@@ -371,7 +318,13 @@ class NewFileIntentReasoner(ReplanningReasoner):
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
     ) -> dict[str, object]:
-        _ = (step_context, history, tool_definitions)
+        _ = (step_context, tool_definitions)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
         return {
             "type": "emit_patch",
             "thought": "scripted",

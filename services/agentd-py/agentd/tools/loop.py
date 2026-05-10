@@ -4,13 +4,17 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Awaitable, Callable
 from uuid import uuid4
 
 from agentd.domain.models import (
     AgentToolTrace,
     PlanStep,
+    PlanTarget,
+    PlanTargetIntent,
     TaskBudget,
     TaskUsage,
     ToolCall,
@@ -46,6 +50,35 @@ class PlanHandoff:
 StepOutcome = VerifyResult | PlanHandoff
 
 
+@dataclass
+class ScopeDecision:
+    """Result of asking whether to extend a step's scope to cover an out-of-scope file."""
+    approve: bool
+    extended_files: list[str] = field(default_factory=list)
+    reason: str = ""
+    remember: bool = False
+
+
+# Callback signature: receives the out-of-scope files + the agent's thought, returns a decision.
+ScopeExtensionCallback = Callable[[list[str], str], Awaitable[ScopeDecision]]
+
+
+async def _default_reject_callback(
+    files: list[str], reason: str,
+) -> ScopeDecision:
+    """Default behavior when no callback is supplied — preserves the pre-feature reject path."""
+    _ = files, reason  # acknowledge unused
+    return ScopeDecision(approve=False, extended_files=[], reason="default policy")
+
+
+_SCOPE_FILE_PATTERN = re.compile(r"outside current step scope:\s*([^\s,;]+)")
+
+
+def _extract_out_of_scope_files(error_msg: str) -> list[str]:
+    """Parse 'Patch op targets file outside current step scope: <path>' into a list."""
+    return _SCOPE_FILE_PATTERN.findall(error_msg)
+
+
 class ToolBudgetExceededError(Exception):
     """Raised when the explore budget exhausts before emitting a patch."""
 
@@ -66,6 +99,7 @@ class ToolLoop:
         task_id: str,
         patch_engine: object | None = None,   # PatchEngine — optional for backward compat in tests
         shadow_path: Path | None = None,
+        scope_extension_callback: ScopeExtensionCallback | None = None,
     ) -> None:
         self._reasoning = reasoning_engine
         self._registry = registry
@@ -73,6 +107,9 @@ class ToolLoop:
         self._task_id = task_id
         self._patch_engine = patch_engine
         self._shadow_path = shadow_path
+        self._scope_cb: ScopeExtensionCallback = (
+            scope_extension_callback or _default_reject_callback
+        )
 
     async def run(
         self,
@@ -108,6 +145,7 @@ class ToolLoop:
             "diagnostics": patch_request_context.get("diagnostics"),
             "last_failure": patch_request_context.get("last_failure"),
             "plan_markdown": patch_request_context.get("plan_markdown"),
+            "prior_step_files": patch_request_context.get("prior_step_files") or [],
         }
 
         max_explore = budget.max_tool_calls_per_step
@@ -217,28 +255,71 @@ class ToolLoop:
                         logger.warning("Inline patch failed: %s", error_msg,
                                        extra={"task_id": self._task_id, "step_id": step.id})
                         is_scope_error = "outside current step scope" in error_msg
+
                         if is_scope_error:
-                            had_scope_violation = True
-                            feedback = (
-                                f"Patch FAILED: {error_msg}\n"
-                                "This file is not in your allowed targets for this step. "
-                                "Options: (1) implement the change using only your allowed files, "
-                                "or (2) emit revision_needed explaining which file must be added "
-                                "to the plan and why."
-                            )
+                            out_of_scope = _extract_out_of_scope_files(error_msg)
+                            decision = await self._scope_cb(out_of_scope, thought)
+
+                            if decision.approve:
+                                # Extend step.targets in place; new files default to "new".
+                                existing = {t.path for t in step.targets}
+                                for path in decision.extended_files:
+                                    if path not in existing:
+                                        step.targets.append(
+                                            PlanTarget(path=path, intent=PlanTargetIntent.NEW)
+                                        )
+                                        existing.add(path)
+                                # Retry preflight with extended scope.
+                                apply_result = await self._apply_patch_inline(
+                                    patch_document, step,
+                                )
+                                if apply_result.get("is_error"):
+                                    # Different error after scope extension — feed it back.
+                                    new_err = str(apply_result.get("error", "patch failed"))
+                                    history.append({
+                                        "role": "tool_result", "tool": "_patch_apply",
+                                        "content": (
+                                            f"Patch FAILED after scope extension: {new_err}\n"
+                                            "Fix your patch ops and re-emit."
+                                        ),
+                                    })
+                                    self._broadcaster.broadcast(self._task_id, {
+                                        "type": "patch_failed", "step_id": step.id,
+                                        "error": new_err,
+                                    })
+                                    continue
+                                # Patch succeeded after extension — fall through to success path.
+                            else:
+                                had_scope_violation = True
+                                feedback = (
+                                    f"Patch FAILED: {error_msg}\n"
+                                    f"Scope extension was not granted ({decision.reason}). "
+                                    "Options: (1) implement the change using only your allowed "
+                                    "files, or (2) emit revision_needed explaining which file "
+                                    "must be added to the plan and why."
+                                )
+                                history.append({
+                                    "role": "tool_result", "tool": "_patch_apply",
+                                    "content": feedback,
+                                })
+                                self._broadcaster.broadcast(self._task_id, {
+                                    "type": "patch_failed", "step_id": step.id,
+                                    "error": error_msg,
+                                })
+                                continue  # stay in explore, agent corrects/revises
                         else:
                             feedback = (
                                 f"Patch FAILED: {error_msg}\n"
                                 "Fix your search strings and re-emit."
                             )
-                        history.append({
-                            "role": "tool_result", "tool": "_patch_apply",
-                            "content": feedback,
-                        })
-                        self._broadcaster.broadcast(self._task_id, {
-                            "type": "patch_failed", "step_id": step.id, "error": error_msg,
-                        })
-                        continue  # stay in explore, agent corrects and re-emits
+                            history.append({
+                                "role": "tool_result", "tool": "_patch_apply",
+                                "content": feedback,
+                            })
+                            self._broadcaster.broadcast(self._task_id, {
+                                "type": "patch_failed", "step_id": step.id, "error": error_msg,
+                            })
+                            continue  # stay in explore, agent corrects and re-emits
 
                     # Patch succeeded
                     touched = apply_result.get("touched_files", [])
@@ -263,30 +344,21 @@ class ToolLoop:
                     },
                 )
 
-                # Short-circuit if no verify needed
-                if not step.test_command:
-                    logger.info(
-                        "No test_command — short-circuit verify, marking verified=True",
-                        extra={"task_id": self._task_id, "step_id": step.id},
-                    )
-                    return VerifyResult(
-                        patch_document=last_patch_document,
-                        touched_files=all_touched_files,
-                        verified=True,
-                        test_output="",
-                        tool_trace=trace,
-                    )
-
-                # Transition to verify phase
+                # Always enter verify phase — execution agent decides what to run
                 phase = "verify"
                 last_verify_run_errored = False
+                touched_files_str = ", ".join(all_touched_files) or "none"
+                testing_strategy = step.testing_strategy or "not specified"
+                test_cmd_hint = step.test_command or "none — discover from testing_strategy and touched files"
                 history.append({
                     "role": "tool_result", "tool": "_patch_apply",
                     "content": (
-                        "Patch applied successfully.\n"
-                        "VERIFY PHASE: run linters then tests.\n"
-                        f"test_command hint: {step.test_command}\n"
-                        "Emit verify_done when all checks pass, or emit_patch again to correct."
+                        "Patch applied successfully. Entering VERIFY PHASE.\n"
+                        f"Touched files: {touched_files_str}\n"
+                        f"testing_strategy: {testing_strategy}\n"
+                        f"test_command hint: {test_cmd_hint}\n"
+                        "Run linters then tests. Emit verify_done when all pass, "
+                        "or emit_patch again to correct failures."
                     ),
                 })
                 self._broadcaster.broadcast(self._task_id, {
@@ -365,6 +437,14 @@ class ToolLoop:
             # rejected if the agent claims pass despite a failing check.
             if phase == "verify" and tool_name == "run_command":
                 last_verify_run_errored = tool_output.is_error
+
+            # A successful setup_env or init_workspace clears the previous
+            # "binary not found" failure — the binary is now expected to exist.
+            if (
+                tool_name in ("setup_env", "init_workspace")
+                and not tool_output.is_error
+            ):
+                last_verify_run_errored = False
 
             self._broadcaster.broadcast(self._task_id, {
                 "type": "tool_result", "tool": tool_name,

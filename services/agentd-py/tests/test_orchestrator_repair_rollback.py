@@ -76,7 +76,13 @@ class RepairReasoningEngine:
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
     ) -> dict[str, object]:
-        _ = (step_context, history, tool_definitions)
+        _ = (step_context, tool_definitions)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
         self.patch_calls += 1
         return {
             "type": "emit_patch",

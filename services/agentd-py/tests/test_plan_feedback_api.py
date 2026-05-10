@@ -19,30 +19,6 @@ class SpecFirstReasoner:
     def __init__(self) -> None:
         self.markdown_feedbacks: list[str | None] = []
 
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path)
-        feedback = retrieval_context.get("plan_feedback")
-        if isinstance(feedback, str) and feedback.strip():
-            self.markdown_feedbacks.append(feedback)
-            return f"# Revised Plan\n\n- {feedback}"
-        self.markdown_feedbacks.append(None)
-        return "# Initial Plan\n\n- Create generated file"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, plan_markdown)
-        return {"verdict": "pass", "issues": []}
-
     async def create_plan(
         self,
         task: TaskRecord,
@@ -89,23 +65,19 @@ class SpecFirstReasoner:
             ]
         }
 
-    async def critique_json_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, candidate_plan)
-        return {"verdict": "pass", "issues": []}
-
     async def create_tool_step(
         self,
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
     ) -> dict[str, object]:
-        _ = (step_context, history, tool_definitions)
+        _ = (step_context, tool_definitions)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
         return {
             "type": "emit_patch",
             "thought": "scripted",

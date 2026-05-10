@@ -18,25 +18,6 @@ class RecordingReasoningEngine:
         self.plan_calls: list[dict[str, object]] = []
         self.patch_calls: list[dict[str, object]] = []
 
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path, retrieval_context)
-        return "# Plan\n\n- Create helper"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, plan_markdown)
-        return {"verdict": "pass", "issues": []}
-
     async def create_planning_step(
         self,
         plan_context: dict[str, object],
@@ -113,22 +94,19 @@ class RecordingReasoningEngine:
             ]
         }
 
-    async def critique_json_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, candidate_plan)
-        return {"verdict": "pass", "issues": []}
-
     async def create_tool_step(
         self,
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
     ) -> dict[str, object]:
+        _ = tool_definitions
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
         self.patch_calls.append(
             {
                 "task_id": None,
