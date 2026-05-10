@@ -113,64 +113,94 @@ Phase 2 — VERIFY
 
   Rules:
     - You MUST run at least one linter AND one test command before verify_done(verified=true)
-    - If this step has no test_command hint, emit verify_done(verified=true) immediately
     - Never claim verified=true without actually running the checks
+    - Use the "testing_strategy" and "test_command hint" from the patch-apply message to
+      discover what to run. If both are absent and the step only touches non-executable
+      files (docs, config, assets), you may emit verify_done(verified=true) with an
+      explanation in test_output instead of running checks.
 
 BINARY DISCOVERY (verify phase only):
 
+run_command auto-resolves naked binary names against the real workspace's
+.venv/bin and node_modules/.bin (where setup_env installs them) — try the
+direct command first. CWD is the shadow so your patched files are tested.
+
 When run_command fails with "not found":
-  1. find_binary <name>               — returns full paths in real workspace
-  2. If found: run_command <full-path> <args>  (full paths to allowed binaries accepted)
-  3. If not found: detect package manager, call setup_env, then retry
+  1. find_binary <name>      — probes workspace bins, then PATH; on miss it appends
+                                an "AGENT SHOULD: setup_env <cmd>" hint — follow it.
+  2. If found:  run_command <name> ...   (or use the full path returned)
+  3. If not found and you have an existing manifest: setup_env "<pm sync command>"
+  4. If not found and the workspace is bare:  init_workspace + setup_env
 
-Package manager detection — list_directory(".") first:
-  uv.lock              -> setup_env: "uv sync"
-  poetry.lock          -> setup_env: "poetry install"
-  requirements*.txt    -> setup_env: "pip install -r requirements.txt"
-  pyproject.toml only  -> setup_env: "uv sync"
-  package-lock.json    -> setup_env: "npm ci"
-  yarn.lock            -> setup_env: "yarn install --frozen-lockfile"
-  pnpm-lock.yaml       -> setup_env: "pnpm install --frozen-lockfile"
-  Cargo.toml           -> cargo is available; if a component is missing, see below
-  go.mod               -> setup_env: "go mod download"
+WORKSPACE BOOTSTRAPPING:
 
-When run_command exits non-zero with a MISSING COMPONENT error (command ran but a tool it needs is absent):
-  Rust toolchain components (error contains "is not installed for the toolchain"):
-    setup_env: "rustup component add <component>"   e.g. "rustup component add clippy"
-    then retry the original command
-  Python package missing at import time:
-    setup_env: "uv sync" or "pip install <pkg>"
-    then retry
-  Node module missing (MODULE_NOT_FOUND):
-    setup_env: "npm ci"
-    then retry
+Bare workspace (no manifest files) — use init_workspace, NOT hand-written manifests:
+  init_workspace ecosystem=python dev_deps=["pytest"]
+  init_workspace ecosystem=node   dev_deps=["vitest"]
+  init_workspace ecosystem=rust   dev_deps=[]
+  init_workspace ecosystem=go     dev_deps=[]
+init_workspace emits the smallest valid manifest with EXACTLY the deps you list —
+no extras. Then call setup_env to install. Refuses to overwrite existing manifests.
 
-IMPORTANT: setup_env reads YOUR patched files (shadow workspace), not the original.
-If you added a dependency via emit_patch, call setup_env immediately after —
-it reads your patched pyproject.toml/package.json.
+Existing workspace — list_directory(".") to detect, then setup_env directly:
+  uv.lock / pyproject.toml only / requirements*.txt -> setup_env "uv sync"
+                                                       (uv missing -> auto-fallback to
+                                                        python3 -m venv + pip; transparent)
+  poetry.lock           -> setup_env "poetry install"  (no fallback — needs poetry)
+  package-lock.json     -> setup_env "npm ci"
+  yarn.lock             -> setup_env "yarn install --frozen-lockfile"
+  pnpm-lock.yaml        -> setup_env "pnpm install --frozen-lockfile"
+  Cargo.toml            -> cargo must be on PATH (no auto-install); if a component
+                           is missing, setup_env "rustup component add <name>"
+  go.mod                -> setup_env "go mod download"  (go must be on PATH)
 
-When a dependency is missing from the project file:
-  1. emit_patch  — add the dep to pyproject.toml / package.json
-  2. setup_env   — reads your patched file, installs to real env
-  3. find_binary — confirm the binary is now present
-  4. run_command — run the test
+If setup_env returns "AGENT SHOULD: setup_env \"<alt-pm>\"" — follow it (alternate PM).
+If setup_env returns "AGENT SHOULD: emit revision_needed" — emit revision_needed,
+do NOT retry; the toolchain is genuinely missing and only the user can install it.
 
-Concrete example (Python/uv, pytest missing):
-  list_directory(".")         -> pyproject.toml, uv.lock, src/, tests/
-  run_command pytest tests/   -> Error: pytest not found on PATH
-  find_binary pytest          -> not found in real workspace
-  emit_patch                  -> add "pytest>=8" to pyproject.toml dev-dependencies
-  setup_env "uv sync"         -> cwd=shadow, UV_PROJECT_ENVIRONMENT=/real/.venv
-  find_binary pytest          -> found: /real/.venv/bin/pytest
-  run_command /real/.venv/bin/pytest tests/test_foo.py  -> 1 passed
-  verify_done verified=true test_output="1 passed"
+setup_env reads YOUR patched files in the shadow workspace. If you added a dep via
+emit_patch (or init_workspace), the very next setup_env call sees it.
 
-SCOPE VIOLATIONS — when a patch is rejected for targeting a file outside your step scope:
-Do NOT retry the same patch or loop on cargo check. Instead:
-  - If you can implement the goal entirely within the allowed files: do so.
-  - If the goal genuinely requires a file not listed in your targets: emit revision_needed
-    with evidence explaining which file is missing and why it is required.
-    The plan will be revised to include it.
+Concrete example (bare Python workspace):
+  list_directory(".")           -> src/  (no manifest, no .venv)
+  init_workspace ecosystem=python dev_deps=["pytest"]
+                                -> Created pyproject.toml with 1 dep
+  setup_env "uv sync"           -> if uv on PATH: uv installs into /real/.venv
+                                   if uv missing: note: bootstrapped via python3 + pip
+  run_command pytest tests/     -> auto-resolves /real/.venv/bin/pytest -> 1 passed
+  verify_done verified=true
+
+Concrete example (cargo missing — non-recoverable):
+  list_directory(".")           -> Cargo.toml, src/main.rs
+  run_command cargo test        -> Error: 'cargo' not found on PATH
+  setup_env "cargo build"       -> Error: 'cargo' not found on PATH. Cannot bootstrap automatically.
+                                   Install: https://rustup.rs
+                                   AGENT SHOULD: emit revision_needed citing missing toolchain 'cargo'.
+  revision_needed               -> reason="missing rust toolchain", evidence="cargo not on PATH"
+
+PRIOR STEP FILES:
+
+The "prior_step_files" field in your request context lists paths already created or
+modified by earlier steps in this task. These files exist in your working copy but NOT
+in the original workspace — so read_file and list_directory will not show them.
+
+Rules:
+- NEVER emit create_file for a path in prior_step_files — it already exists.
+- To modify one: use search_replace or apply_diff.
+- To read one: use run_command with "cat <path>".
+- run_command and pytest already see these files when they execute.
+
+SCOPE VIOLATIONS:
+ALWAYS emit_patch first — even when you need files outside your targets.
+The system automatically approves small conventional files (__init__.py,
+conftest.py) and will extend your scope without interrupting execution.
+Never skip the patch attempt because you anticipate a scope issue.
+
+If your patch is rejected and the system explicitly denies scope extension:
+  - Implement within your allowed files if possible.
+  - Otherwise emit revision_needed with the missing file and why it is required.
+
+revision_needed is a LAST RESORT — only after an explicit denial, never preemptive.
 
 OUTPUT — choose exactly one variant per turn:
 
@@ -182,11 +212,12 @@ Variant 2 — emit patch ops (required fields: type, thought, patch_ops):
 
 Variant 3 — signal plan error (required fields: type, thought, reason, evidence, affected_steps):
   {{"type": "revision_needed", "thought": "...", "reason": "...", "evidence": "...", "affected_steps": [...]}}
-  Use ONLY when the target files/symbols in the plan are fundamentally wrong.
+  Use ONLY after scope extension was explicitly denied or the plan targets are fundamentally wrong.
 
 Variant 4 — signal verify complete (required fields: type, thought, verified, test_output):
   {{"type": "verify_done", "thought": "...", "verified": true, "test_output": "full pytest or linter output"}}
-  Use after ALL linters and tests pass. Or immediately if no test_command is set.
+  Use after ALL linters and tests pass. For non-executable files (docs/config/assets) with no
+  testing_strategy, you may emit this immediately with test_output explaining why no checks ran.
 """
 
 
@@ -216,6 +247,10 @@ def build_tool_step_payload(
     file_contents = step_context.get("file_contents")
     if file_contents:
         payload["file_contents"] = file_contents
+
+    prior_step_files = step_context.get("prior_step_files")
+    if prior_step_files:
+        payload["prior_step_files"] = prior_step_files
 
     diagnostics = step_context.get("diagnostics")
     if diagnostics:
