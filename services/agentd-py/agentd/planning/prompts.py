@@ -3,69 +3,51 @@ from __future__ import annotations
 
 import json
 
-# Discriminated union: each variant enforces its own required fields.
-# Constrained-decoding providers (Gemini, OpenAI) enforce this at the token level.
-# Anthropic (prompt-only) gets explicit per-variant required lists as guidance.
+# Flat schema compatible with Gemini's constrained JSON decoding.
+# Gemini does not support oneOf/anyOf discriminated unions — it deadlocks on them.
+# All fields are optional except "type" and "thought"; the system prompt instructs
+# the model which fields to populate based on the chosen type.
 PLANNING_STEP_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "object",
-    "oneOf": [
-        {
-            "title": "ToolCallAction",
-            "description": "Call one of the available tools to gather information.",
-            "properties": {
-                "type": {"type": "string", "enum": ["tool_call"]},
-                "thought": {"type": "string", "description": "Reasoning before this action (1-3 sentences)"},
-                "tool": {"type": "string", "minLength": 1, "description": "Tool name"},
-                "args": {"type": "object", "description": "Tool arguments"},
-            },
-            "required": ["type", "thought", "tool", "args"],
+    "properties": {
+        "type": {
+            "type": "string",
+            "enum": ["tool_call", "emit_plan", "emit_revision"],
+            "description": "Action type: tool_call to explore, emit_plan when ready, emit_revision to fix a step",
         },
-        {
-            "title": "EmitPlanAction",
-            "description": "Emit the final markdown plan when confident about all target files.",
-            "properties": {
-                "type": {"type": "string", "enum": ["emit_plan"]},
-                "thought": {"type": "string", "description": "Final reasoning"},
-                "plan_markdown": {"type": "string", "minLength": 1, "description": "Full markdown plan"},
-                "files_examined": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Relative paths of all files read during exploration",
-                },
-                "confidence": {
-                    "type": "string",
-                    "enum": ["high", "medium", "low"],
-                    "description": "Confidence in plan correctness",
-                },
-            },
-            "required": ["type", "thought", "plan_markdown", "files_examined", "confidence"],
+        "thought": {"type": "string", "description": "Reasoning before this action (1-3 sentences)"},
+        # tool_call fields
+        "tool": {"type": "string", "description": "Tool name (required for tool_call)"},
+        "args": {"type": "object", "additionalProperties": True, "description": "Tool arguments (required for tool_call)"},
+        # emit_plan fields
+        "plan_markdown": {"type": "string", "description": "Full markdown plan (required for emit_plan)"},
+        "files_examined": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Relative paths of files read (required for emit_plan)",
         },
-        {
-            "title": "EmitRevisionAction",
-            "description": "Emit targeted step revisions when correcting a failed step.",
-            "properties": {
-                "type": {"type": "string", "enum": ["emit_revision"]},
-                "thought": {"type": "string", "description": "Reasoning behind the revision"},
-                "revised_steps": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "minItems": 1,
-                    "description": "Complete replacement definitions for affected steps",
-                },
-                "reverted_step_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Step IDs to roll back to pre-step shadow state",
-                },
-                "revision_summary": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Human-readable summary of what changed and why",
-                },
-            },
-            "required": ["type", "thought", "revised_steps", "reverted_step_ids", "revision_summary"],
+        "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+            "description": "Confidence in plan correctness (required for emit_plan)",
         },
-    ],
+        # emit_revision fields
+        "revised_steps": {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+            "description": "Complete replacement step definitions (required for emit_revision)",
+        },
+        "reverted_step_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Step IDs to roll back (required for emit_revision)",
+        },
+        "revision_summary": {
+            "type": "string",
+            "description": "Human-readable summary of what changed and why (required for emit_revision)",
+        },
+    },
+    "required": ["type", "thought"],
 }
 
 PLANNING_SYSTEM_PROMPT = """\
@@ -81,12 +63,59 @@ PLANNING RULES:
 3. All changes to a given file must be consolidated into a single step. Never list the same
    file path in more than one step's targets.
 4. When you have high confidence in the target files, emit the plan.
-5. Output exactly one JSON object per turn matching the schema.
+5. Output exactly one JSON object per turn. The "type" field selects the variant; all fields
+   listed for that variant are REQUIRED.
 
-OUTPUT:
-- To call a tool: {{"type": "tool_call", "thought": "...", "tool": "<name>", "args": {{...}}}}
-- To emit the final plan: {{"type": "emit_plan", "thought": "...", "plan_markdown": "# Plan\\n...",
-    "files_examined": ["path/to/file.py"], "confidence": "high"}}
+REPO-GROUNDED CONVENTIONS:
+• Label each file and symbol you intend to change:
+  - EXISTING — verified by a tool call in this session (appeared in a search result or was read)
+  - NEW      — no compatible structure was found; creating from scratch
+  - UNKNOWN  — evidence is insufficient; name it UNKNOWN, do not invent details
+• Prefer modifying existing symbols, files, models, and routes over inventing wrappers.
+• For API tasks, do NOT propose a new response model unless your tool calls show no compatible
+  existing pattern.
+• For schema or storage tasks, infer fields only from files you have actually read — not from
+  the goal description alone.
+• When a tool result already shows a compatible capability, cite the existing path or symbol;
+  do not propose a redundant duplicate.
+
+TEST COVERAGE HINTS (testing_strategy and test_command fields):
+• For each source file you intend to modify, search for its companion test file using these
+  naming conventions before emitting a plan:
+  - Python:     tests/test_<stem>.py  or  tests/<stem>_test.py
+  - Rust:       <module>/<stem>_tests.rs  (inline #[cfg(test)] blocks) or tests/<stem>.rs
+  - TypeScript: <stem>.test.ts  or  <stem>.spec.ts (same directory or __tests__/)
+• Set testing_strategy on every step to a brief description of what should be verified, e.g.
+  "run vitest on task-state.test.ts" or "pytest tests/test_auth.py". The execution agent uses
+  this to discover the command even when test_command is not set.
+• Set test_command ONLY when the test file is itself a target of this step (intent "new" or
+  "existing"). A focused file-level command is best, e.g. "pytest tests/test_auth.py -x" or
+  "npx vitest run src/domain/task-state.test.ts". Do NOT use ::function_name qualifiers.
+• If you are creating a new test file as part of the task, that test file MUST be listed as a
+  target (with intent "new") in the SAME step as the source change. Set test_command to run
+  those tests.
+• Rationale: if the step only targets source files (not the test file), setting test_command
+  would run stale tests before the import is updated — the execution agent handles this via
+  testing_strategy instead.
+• Never invent a test path you have not seen or aren't creating. Leave test_command null and
+  use testing_strategy for the hint when the test file is not a step target.
+
+BEFORE EMITTING THE PLAN, VERIFY:
+□ Every file targeted in the plan was seen in a read_file or search_code result this session.
+□ No symbol is named that did not appear in a tool result.
+□ No redundant wrapper is proposed when evidence shows an existing capability.
+□ The same file path does not appear in more than one step's targets.
+□ test_command (if set) — the test file is a TARGET in this step (EXISTING or NEW intent), not just mentioned somewhere.
+□ testing_strategy is set on every step that touches code (not just steps with test_command).
+
+OUTPUT — choose exactly one variant per turn:
+
+Variant 1 — call a tool (required fields: type, thought, tool, args):
+  {{"type": "tool_call", "thought": "<1-3 sentence reasoning>", "tool": "<tool_name>", "args": {{<tool args>}}}}
+
+Variant 2 — emit the final plan (required fields: type, thought, plan_markdown, files_examined, confidence):
+  {{"type": "emit_plan", "thought": "<final reasoning>", "plan_markdown": "# Plan\\n...",
+    "files_examined": ["path/to/file.rs"], "confidence": "high"}}
 """
 
 REVISION_SYSTEM_PROMPT_SUFFIX = """\
@@ -107,9 +136,22 @@ Read files from the actual workspace (original, unmodified).
 Verify the evidence in revision_request before deciding what to change.
 Only revise what the evidence justifies — do not restructure unaffected steps.
 
-OUTPUT:
-- To call a tool: {{"type": "tool_call", "thought": "...", "tool": "<name>", "args": {{...}}}}
-- To emit revision: {{"type": "emit_revision", "thought": "...",
+TEST COVERAGE IN REVISIONS:
+Apply the same rules as initial planning for testing_strategy and test_command:
+- Set testing_strategy on every revised_step that touches code.
+- Set test_command ONLY when a test file is a target (intent "new" or "existing") of the
+  revised step. If the original step had test_command and the revised step still targets that
+  test file, preserve test_command unchanged.
+- If the revised step drops the test file from its targets, clear test_command (null) and
+  describe the intended check in testing_strategy instead.
+
+OUTPUT — choose exactly one variant per turn:
+
+Variant 1 — call a tool (required fields: type, thought, tool, args):
+  {{"type": "tool_call", "thought": "<reasoning>", "tool": "<name>", "args": {{...}}}}
+
+Variant 3 — emit revision (required fields: type, thought, revised_steps, reverted_step_ids, revision_summary):
+  {{"type": "emit_revision", "thought": "...",
     "revised_steps": [{{full step dict}}], "reverted_step_ids": [], "revision_summary": "..."}}
 """
 
