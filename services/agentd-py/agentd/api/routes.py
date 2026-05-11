@@ -14,6 +14,8 @@ from agentd.domain.models import (
     RejectPatchRequest,
     ResumeTaskRequest,
     ResumeTaskResponse,
+    ScopeDecisionRequest,
+    ScopeDecisionResponse,
     StepProgress,
     TaskArtifactEntry,
     TaskArtifactsResponse,
@@ -158,6 +160,7 @@ def build_router(
     orchestrator: AgentOrchestrator,
     workspace_manager: ShadowWorkspaceManager,
     retrieval_client: RetrievalArtifactClient | None = None,
+    chat_agent: object | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
@@ -168,6 +171,9 @@ def build_router(
 
     # Guards against concurrent resume calls for the same PARENT task_id.
     _in_flight_resume: set[str] = set()
+
+    # Guards against concurrent scope-decision posts for the same task_id.
+    _in_flight_scope: set[str] = set()
 
     @router.post("/tasks", response_model=TaskCreateResponse)
     async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
@@ -402,6 +408,73 @@ def build_router(
 
         return _to_task_result(task)
 
+    @router.post("/tasks/{task_id}/scope-decision", response_model=ScopeDecisionResponse)
+    async def post_scope_decision(
+        task_id: str, request: ScopeDecisionRequest,
+    ) -> ScopeDecisionResponse:
+        from agentd.tools.loop import ScopeDecision
+
+        if task_id in _in_flight_scope:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Scope decision already in progress for task {task_id}",
+            )
+        _in_flight_scope.add(task_id)
+
+        try:
+            try:
+                task = await store.get(task_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            if task.status != TaskStatus.AWAITING_SCOPE_DECISION:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} is not awaiting scope decision "
+                        f"(status={task.status})"
+                    ),
+                )
+
+            future = orchestrator._pending_scope_decisions.get(task_id)
+            if future is None or future.done():
+                raise HTTPException(
+                    status_code=409, detail="No pending scope decision for this task",
+                )
+
+            pending = task.execution_state.pending_scope_request
+            if pending is None:
+                raise HTTPException(
+                    status_code=409, detail="Task has no pending scope request payload",
+                )
+
+            if request.decision == "approve":
+                approved_files = request.files or list(pending.files)
+                extra = set(approved_files) - set(pending.files)
+                if extra:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Cannot approve files that were not in the original request: "
+                            f"{sorted(extra)}"
+                        ),
+                    )
+                decision = ScopeDecision(
+                    approve=True,
+                    extended_files=approved_files,
+                    reason="user approved",
+                    remember=request.remember,
+                )
+            else:
+                decision = ScopeDecision(
+                    approve=False, extended_files=[], reason="user rejected",
+                )
+            future.set_result(decision)
+
+            return ScopeDecisionResponse(task_id=task_id, status=TaskStatus.EXECUTING)
+        finally:
+            _in_flight_scope.discard(task_id)
+
     @router.post("/tasks/{task_id}/resume", response_model=ResumeTaskResponse)
     async def resume_task_route(task_id: str, request: ResumeTaskRequest) -> ResumeTaskResponse:
         import asyncio
@@ -594,5 +667,40 @@ def build_router(
 
         _asyncio.create_task(_build())
         return {"status": "building", "workspace_path": workspace_path}
+
+    # --- Chat routes ---
+
+    if chat_agent is not None:
+        from agentd.chat.agent import ChatAgent as _ChatAgent
+        _chat_agent: _ChatAgent = chat_agent  # type: ignore[assignment]
+
+        @router.get("/chat/threads")
+        async def list_chat_threads(workspace: str) -> dict:
+            threads = _chat_agent._store.list_threads(workspace)
+            return {"threads": [t.model_dump(exclude={"messages"}) for t in threads]}
+
+        @router.post("/chat/threads")
+        async def create_chat_thread(request: dict) -> dict:
+            workspace = request.get("workspace", "")
+            title = request.get("title", "New Chat")
+            thread = _chat_agent._store.create_thread(workspace, title=title)
+            return thread.model_dump(exclude={"messages"})
+
+        @router.get("/chat/threads/{thread_id}")
+        async def get_chat_thread(thread_id: str) -> dict:
+            thread = _chat_agent._store.get_thread(thread_id)
+            if thread is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            return thread.model_dump()
+
+        @router.post("/chat/threads/{thread_id}/message")
+        async def post_chat_message(thread_id: str, request: dict) -> StreamingResponse:
+            message = request.get("message", "")
+
+            async def event_stream():
+                async for event in _chat_agent.handle_message(thread_id, message):
+                    yield f"data: {event.model_dump_json()}\n\n"
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return router

@@ -7,12 +7,14 @@ from fastapi import FastAPI
 
 from agentd.api.routes import build_router
 from agentd.patch.engine import PatchEngine
+from agentd.domain.models import ScopePolicy, ScopeRemember, ScopeTrigger
 from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.providers.anthropic_transport import AnthropicJsonTransport
 from agentd.providers.gemini_transport import GeminiJsonTransport
 from agentd.providers.groq_transport import GroqJsonTransport
 from agentd.providers.huggingface_transport import HuggingFaceJsonTransport
+from agentd.providers.ollama_transport import OllamaJsonTransport
 from agentd.providers.openai_transport import OpenAIJsonTransport
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.engine import DefaultReasoningEngine
@@ -180,6 +182,7 @@ elif reasoning_backend == "groq":
         endpoint=os.getenv("AI_EDITOR_GROQ_ENDPOINT"),
         max_tokens=_int_env("AI_EDITOR_GROQ_MAX_TOKENS", 4096),
         timeout_sec=_float_env("AI_EDITOR_GROQ_TIMEOUT_SEC", 60.0),
+        max_retries=_int_env("AI_EDITOR_GROQ_MAX_RETRIES", 4),
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv("AI_EDITOR_GROQ_MODEL", "openai/gpt-oss-120b"),
@@ -206,6 +209,18 @@ elif reasoning_backend == "watsonx":
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv("AI_EDITOR_WATSONX_MODEL", "ibm/granite-3-8b-instruct"),
+        transport=transport,
+    )
+elif reasoning_backend == "ollama":
+    transport = OllamaJsonTransport(
+        host=os.getenv("OLLAMA_HOST"),
+        thinking_enabled=_bool_env("AI_EDITOR_OLLAMA_THINKING_ENABLED", False),
+        keep_alive=os.getenv("AI_EDITOR_OLLAMA_KEEP_ALIVE"),
+        timeout_sec=_float_env("AI_EDITOR_OLLAMA_TIMEOUT_SEC", 600.0),
+        max_retries=_int_env("AI_EDITOR_OLLAMA_MAX_RETRIES", 4),
+    )
+    reasoning_engine = DefaultReasoningEngine(
+        model=os.getenv("AI_EDITOR_OLLAMA_MODEL", "glm-4.7-flash:latest"),
         transport=transport,
     )
 else:
@@ -236,6 +251,30 @@ retrieval_client = RetrievalArtifactClient.from_env(
     evidence_adapter=evidence_adapter,
     semantic_index=_semantic_index,
 )
+def _scope_policy_env() -> ScopePolicy:
+    raw = os.getenv("AI_EDITOR_SCOPE_POLICY", "strict").strip().lower()
+    try:
+        return ScopePolicy(raw)
+    except ValueError:
+        return ScopePolicy.STRICT
+
+
+def _scope_trigger_env() -> ScopeTrigger:
+    raw = os.getenv("AI_EDITOR_SCOPE_TRIGGER", "nearby").strip().lower()
+    try:
+        return ScopeTrigger(raw)
+    except ValueError:
+        return ScopeTrigger.NEARBY
+
+
+def _scope_remember_env() -> ScopeRemember:
+    raw = os.getenv("AI_EDITOR_SCOPE_REMEMBER", "task").strip().lower()
+    try:
+        return ScopeRemember(raw)
+    except ValueError:
+        return ScopeRemember.TASK
+
+
 orchestrator = AgentOrchestrator(
     store=store,
     reasoning_engine=reasoning_engine,
@@ -247,9 +286,33 @@ orchestrator = AgentOrchestrator(
     max_attempts_per_step=_int_env("AI_EDITOR_MAX_ATTEMPTS_PER_STEP", 3),
     step_scoped_mode=_bool_env("AI_EDITOR_STEP_SCOPED_MODE", True),
     patch_candidate_count=_int_env("AI_EDITOR_PATCH_CANDIDATE_COUNT", 3),
+    scope_policy=_scope_policy_env(),
+    scope_trigger=_scope_trigger_env(),
+    scope_remember=_scope_remember_env(),
+    scope_timeout_sec=_float_env("AI_EDITOR_SCOPE_TIMEOUT_SEC", 600.0),
 )
 
-app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client))
+from agentd.chat.agent import ChatAgent
+from agentd.chat.storage import ChatThreadStore
+
+_chat_db_path = Path(os.getenv("AI_EDITOR_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
+_chat_db_path.parent.mkdir(parents=True, exist_ok=True)
+_chat_thread_store = ChatThreadStore(_chat_db_path)
+
+# workspace_path for ChatAgent — the real repo being edited; defaults to cwd if not set
+_chat_workspace_path = os.getenv("AI_EDITOR_WORKSPACE_PATH", str(Path.cwd()))
+# In the scripted backend, no provider transport exists — skip chat agent wiring.
+_chat_transport = locals().get("transport")
+_chat_agent = ChatAgent(
+    workspace_path=_chat_workspace_path,
+    transport=_chat_transport or reasoning_engine,
+    model=os.getenv("AI_EDITOR_GEMINI_MODEL", os.getenv("AI_EDITOR_OPENAI_MODEL", "gpt-4o")),
+    thread_store=_chat_thread_store,
+    orchestrator=orchestrator,
+) if _chat_transport is not None else None
+
+app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client, _chat_agent))
+
 
 
 @app.get("/health")
