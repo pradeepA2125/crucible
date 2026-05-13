@@ -27,6 +27,10 @@ BACKEND=""
 MODEL=""
 VALIDATION_PROFILE="full"
 ARTIFACTS_ROOT=""
+SCOPE_POLICY=""
+SCOPE_TRIGGER=""
+SCOPE_REMEMBER=""
+SCOPE_TIMEOUT_SEC=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,6 +64,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --artifacts-root)
       ARTIFACTS_ROOT="${2:?missing value for --artifacts-root}"
+      shift 2
+      ;;
+    --scope-policy)
+      SCOPE_POLICY="${2:?missing value for --scope-policy}"
+      shift 2
+      ;;
+    --scope-trigger)
+      SCOPE_TRIGGER="${2:?missing value for --scope-trigger}"
+      shift 2
+      ;;
+    --scope-remember)
+      SCOPE_REMEMBER="${2:?missing value for --scope-remember}"
+      shift 2
+      ;;
+    --scope-timeout-sec)
+      SCOPE_TIMEOUT_SEC="${2:?missing value for --scope-timeout-sec}"
       shift 2
       ;;
     -h|--help)
@@ -120,6 +140,8 @@ resolve_default_model() {
     openai) printf '%s' "${AI_EDITOR_OPENAI_MODEL:-gpt-5}" ;;
     anthropic) printf '%s' "${AI_EDITOR_ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}" ;;
     huggingface) printf '%s' "${AI_EDITOR_HUGGINGFACE_MODEL:-deepseek-ai/DeepSeek-R1:fastest}" ;;
+    ollama) printf '%s' "${AI_EDITOR_OLLAMA_MODEL:-glm-4.7-flash:latest}" ;;
+    turboquant) printf '%s' "${AI_EDITOR_TURBOQUANT_MODEL:-qwen3.6:35b-a3b-q4_K_M}" ;;
     *)
       echo "Unsupported backend: $1" >&2
       exit 1
@@ -222,6 +244,22 @@ case "$BACKEND" in
       exit 1
     fi
     ;;
+  ollama)
+    # Local — no API key. Verify the daemon is reachable so we fail fast.
+    OLLAMA_URL="${OLLAMA_HOST:-http://localhost:11434}"
+    if ! curl -sf "${OLLAMA_URL%/}/api/tags" >/dev/null 2>&1; then
+      echo "Ollama daemon not reachable at $OLLAMA_URL — start it with 'ollama serve'." >&2
+      exit 1
+    fi
+    ;;
+  turboquant)
+    # Local llama-server with TurboQuant KV-cache compression. Verify it's reachable.
+    TQ_URL="${TURBOQUANT_HOST:-http://localhost:11435}"
+    if ! curl -sf "${TQ_URL%/}/health" >/dev/null 2>&1; then
+      echo "TurboQuant server not reachable at $TQ_URL — start it with start-tqp.sh first." >&2
+      exit 1
+    fi
+    ;;
   scripted)
     ;;
   *)
@@ -252,6 +290,7 @@ echo "log_file=$LOG_FILE"
 (
   cd "$AGENTD_DIR"
   export AI_EDITOR_REASONING_BACKEND="$BACKEND"
+  export AI_EDITOR_WORKSPACE_PATH="$WORKSPACE"
   export AI_EDITOR_DB_PATH="$WORKSPACE/.agentd/agentd.sqlite3"
   export AI_EDITOR_SHADOW_ROOT="$WORKSPACE/.agentd/shadows"
   export AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH"
@@ -261,6 +300,11 @@ echo "log_file=$LOG_FILE"
   else
     export AI_EDITOR_VALIDATION_COMMANDS_JSON="$VALIDATION_COMMANDS_JSON"
   fi
+
+  [[ -n "$SCOPE_POLICY" ]]      && export AI_EDITOR_SCOPE_POLICY="$SCOPE_POLICY"
+  [[ -n "$SCOPE_TRIGGER" ]]     && export AI_EDITOR_SCOPE_TRIGGER="$SCOPE_TRIGGER"
+  [[ -n "$SCOPE_REMEMBER" ]]    && export AI_EDITOR_SCOPE_REMEMBER="$SCOPE_REMEMBER"
+  [[ -n "$SCOPE_TIMEOUT_SEC" ]] && export AI_EDITOR_SCOPE_TIMEOUT_SEC="$SCOPE_TIMEOUT_SEC"
 
   case "$BACKEND" in
     gemini)
@@ -285,12 +329,23 @@ echo "log_file=$LOG_FILE"
     huggingface)
       export AI_EDITOR_HUGGINGFACE_MODEL="$MODEL"
       ;;
+    ollama)
+      export AI_EDITOR_OLLAMA_MODEL="$MODEL"
+      [[ -n "${OLLAMA_HOST:-}" ]] && export OLLAMA_HOST="$OLLAMA_HOST"
+      ;;
+    turboquant)
+      export AI_EDITOR_TURBOQUANT_MODEL="$MODEL"
+      export TURBOQUANT_HOST="${TURBOQUANT_HOST:-http://localhost:11435}"
+      ;;
     scripted)
       ;;
   esac
 
-  source .venv/bin/activate
-  uvicorn agentd.main:app --port "$PORT" 2>&1 | tee "$LOG_FILE"
+  # Run uvicorn directly from the venv WITHOUT activating it. Activation
+  # prepends .venv/bin to PATH and that PATH is inherited by every child
+  # subprocess (incl. agent's run_command), causing the agent to silently use
+  # the backend's pytest/ruff/mypy instead of the workspace's. Bypass that.
+  ./.venv/bin/uvicorn agentd.main:app --port "$PORT" 2>&1 | tee "$LOG_FILE"
 ) &
 _SERVER_PID=$!
 

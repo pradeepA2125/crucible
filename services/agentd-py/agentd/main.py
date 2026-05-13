@@ -15,6 +15,7 @@ from agentd.providers.gemini_transport import GeminiJsonTransport
 from agentd.providers.groq_transport import GroqJsonTransport
 from agentd.providers.huggingface_transport import HuggingFaceJsonTransport
 from agentd.providers.ollama_transport import OllamaJsonTransport
+from agentd.providers.turboquant_transport import TurboQuantTransport
 from agentd.providers.openai_transport import OpenAIJsonTransport
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.engine import DefaultReasoningEngine
@@ -214,13 +215,22 @@ elif reasoning_backend == "watsonx":
 elif reasoning_backend == "ollama":
     transport = OllamaJsonTransport(
         host=os.getenv("OLLAMA_HOST"),
-        thinking_enabled=_bool_env("AI_EDITOR_OLLAMA_THINKING_ENABLED", False),
         keep_alive=os.getenv("AI_EDITOR_OLLAMA_KEEP_ALIVE"),
         timeout_sec=_float_env("AI_EDITOR_OLLAMA_TIMEOUT_SEC", 600.0),
         max_retries=_int_env("AI_EDITOR_OLLAMA_MAX_RETRIES", 4),
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv("AI_EDITOR_OLLAMA_MODEL", "glm-4.7-flash:latest"),
+        transport=transport,
+    )
+elif reasoning_backend == "turboquant":
+    transport = TurboQuantTransport(
+        host=os.getenv("TURBOQUANT_HOST", "http://localhost:11435"),
+        timeout_sec=_float_env("AI_EDITOR_TURBOQUANT_TIMEOUT_SEC", 600.0),
+        max_retries=_int_env("AI_EDITOR_TURBOQUANT_MAX_RETRIES", 4),
+    )
+    reasoning_engine = DefaultReasoningEngine(
+        model=os.getenv("AI_EDITOR_TURBOQUANT_MODEL", "qwen3.6:35b-a3b-q4_K_M"),
         transport=transport,
     )
 else:
@@ -309,6 +319,7 @@ _BACKEND_MODEL_ENVVAR: dict[str, str] = {
     "openrouter":  "AI_EDITOR_OPENROUTER_MODEL",
     "watsonx":     "AI_EDITOR_WATSONX_MODEL",
     "ollama":      "AI_EDITOR_OLLAMA_MODEL",
+    "turboquant":  "AI_EDITOR_TURBOQUANT_MODEL",
     "openai":      "AI_EDITOR_OPENAI_MODEL",
 }
 _chat_model = os.getenv(

@@ -695,7 +695,7 @@ def build_router(
 
         @router.post("/chat/threads/{thread_id}/message")
         async def post_chat_message(thread_id: str, request: dict) -> StreamingResponse:
-            message = request.get("message", "")
+            message = request.get("content") or request.get("message", "")
 
             async def event_stream():
                 async for event in _chat_agent.handle_message(thread_id, message):
