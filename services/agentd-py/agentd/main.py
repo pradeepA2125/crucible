@@ -22,6 +22,7 @@ from agentd.storage.sqlite_store import SQLiteTaskStore
 from agentd.validation.command_validator import CommandValidator
 from agentd.workspace.shadow import ShadowWorkspaceManager
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
+from agentd.providers.turboquant_transport import TurboQuantJsonTransport
 from agentd.providers.watsonx_transport import WatsonxJsonTransport
 
 
@@ -206,6 +207,16 @@ elif reasoning_backend == "watsonx":
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv("AI_EDITOR_WATSONX_MODEL", "ibm/granite-3-8b-instruct"),
+        transport=transport,
+    )
+elif reasoning_backend == "turboquant":
+    transport = TurboQuantJsonTransport(
+        host=os.getenv("TURBOQUANT_HOST", "http://localhost:11435"),
+        timeout_sec=_float_env("AI_EDITOR_TURBOQUANT_TIMEOUT_SEC", 600.0),
+        max_retries=_int_env("AI_EDITOR_TURBOQUANT_MAX_RETRIES", 4),
+    )
+    reasoning_engine = DefaultReasoningEngine(
+        model=os.getenv("AI_EDITOR_TURBOQUANT_MODEL", "qwen3.6:35b-a3b-q4_K_M"),
         transport=transport,
     )
 else:
