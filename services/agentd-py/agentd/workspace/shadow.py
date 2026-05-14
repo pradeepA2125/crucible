@@ -64,6 +64,42 @@ class ShadowWorkspaceManager:
             shadow_path=shadow_path,
         )
 
+    async def prepare_lightweight(
+        self,
+        task_id: str,
+        workspace_path: str,
+        target_files: list[str],
+    ) -> ShadowWorkspace:
+        """Create a shadow that contains only the listed target files.
+
+        Copies each file in target_files (relative paths) from workspace_path
+        into the shadow, preserving directory structure.  Any parent directories
+        are created as needed.  Only the files required for the inline change are
+        present — no full workspace copy.
+        """
+        real_path = Path(workspace_path).resolve()
+        if not real_path.exists() or not real_path.is_dir():
+            msg = f"Workspace path is not a directory: {workspace_path}"
+            raise RuntimeError(msg)
+
+        shadow_path = self._resolve_shadow_path(task_id)
+        if shadow_path.exists():
+            shutil.rmtree(shadow_path)
+        shadow_path.mkdir(parents=True, exist_ok=True)
+
+        for rel in target_files:
+            src = self._resolve_inside(real_path, rel)
+            dst = self._resolve_inside(shadow_path, rel)
+            if src.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+
+        return ShadowWorkspace(
+            task_id=task_id,
+            real_path=real_path,
+            shadow_path=shadow_path,
+        )
+
     async def clone(self, parent_task_id: str, child_task_id: str, workspace_path: str) -> ShadowWorkspace:
         """Copy the parent's shadow workspace into a new path for a child task."""
         src = self._resolve_shadow_path(parent_task_id)
