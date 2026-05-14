@@ -100,6 +100,11 @@ TEST COVERAGE HINTS (testing_strategy and test_command fields):
 • Never invent a test path you have not seen or aren't creating. Leave test_command null and
   use testing_strategy for the hint when the test file is not a step target.
 
+PRE-EXPLORED CONTEXT (when present in the payload):
+If the payload contains "pre_explored_context", treat those as tool results you have already
+gathered. You may cite files and symbols from that context as EXISTING without re-reading them.
+You may still call tools to explore further, but you do not need to re-read the same files.
+
 BEFORE EMITTING THE PLAN, VERIFY:
 □ Every file targeted in the plan was seen in a read_file or search_code result this session.
 □ No symbol is named that did not appear in a tool result.
@@ -182,6 +187,10 @@ def build_planning_step_payload(
     initial_context = plan_context.get("initial_context")
     if initial_context:
         payload["initial_context"] = initial_context
+
+    pre_explored_context = plan_context.get("pre_explored_context")
+    if pre_explored_context:
+        payload["pre_explored_context"] = pre_explored_context
 
     revision_request = plan_context.get("revision_request")
     if revision_request:

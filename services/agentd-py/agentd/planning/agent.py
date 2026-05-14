@@ -39,6 +39,7 @@ class PlanningAgent:
         task: TaskRecord,
         initial_context: dict[str, object],
         budget: TaskBudget,
+        pre_explored_context: list[dict[str, object]] | None = None,
     ) -> PlanningResult:
         """Explore the workspace and produce a markdown plan.
 
@@ -46,12 +47,16 @@ class PlanningAgent:
             task: Current task (reads goal and workspace_path).
             initial_context: Output of load_context() — seed, not a constraint.
             budget: Controls max_planning_tool_calls.
+            pre_explored_context: Tool results from a prior explore phase (e.g. chat agent).
+                The planner can cite these as EXISTING evidence without re-reading.
         """
         plan_context: dict[str, object] = {
             "goal": task.goal,
             "workspace_path": task.workspace_path,
             "initial_context": initial_context,
         }
+        if pre_explored_context:
+            plan_context["pre_explored_context"] = pre_explored_context
         loop = PlanningLoop(
             reasoning_engine=self._reasoning,
             registry=self._registry,

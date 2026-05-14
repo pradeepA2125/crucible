@@ -257,6 +257,7 @@ class AgentOrchestrator:
                 task=task,
                 initial_context=plan_context_payload,
                 budget=task.budget,
+                pre_explored_context=task.initial_explore_context or None,
             )
             self._write_debug_artifact(
                 task.task_id,
