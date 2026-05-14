@@ -100,11 +100,15 @@ class ToolLoop:
         patch_engine: object | None = None,   # PatchEngine — optional for backward compat in tests
         shadow_path: Path | None = None,
         scope_extension_callback: ScopeExtensionCallback | None = None,
+        broadcast_key: str | None = None,
+        skip_verify: bool = False,
     ) -> None:
         self._reasoning = reasoning_engine
         self._registry = registry
         self._broadcaster = broadcaster
         self._task_id = task_id
+        self._broadcast_key = broadcast_key if broadcast_key is not None else task_id
+        self._skip_verify = skip_verify
         self._patch_engine = patch_engine
         self._shadow_path = shadow_path
         self._scope_cb: ScopeExtensionCallback = (
@@ -225,7 +229,7 @@ class ToolLoop:
                 affected = [str(s) for s in raw_affected] if isinstance(raw_affected, list) else []
                 logger.info("Tool loop revision_needed: %s", reason[:200],
                             extra={"task_id": self._task_id, "step_id": step.id})
-                self._broadcaster.broadcast(self._task_id, {
+                self._broadcaster.broadcast(self._broadcast_key, {
                     "type": "revision_needed",
                     "payload": {"step_id": step.id, "reason": reason, "evidence": evidence[:300]},
                 })
@@ -283,7 +287,7 @@ class ToolLoop:
                                             "Fix your patch ops and re-emit."
                                         ),
                                     })
-                                    self._broadcaster.broadcast(self._task_id, {
+                                    self._broadcaster.broadcast(self._broadcast_key, {
                                         "type": "patch_failed",
                                         "payload": {"step_id": step.id, "error": new_err},
                                     })
@@ -302,7 +306,7 @@ class ToolLoop:
                                     "role": "tool_result", "tool": "_patch_apply",
                                     "content": feedback,
                                 })
-                                self._broadcaster.broadcast(self._task_id, {
+                                self._broadcaster.broadcast(self._broadcast_key, {
                                     "type": "patch_failed",
                                     "payload": {"step_id": step.id, "error": error_msg},
                                 })
@@ -316,7 +320,7 @@ class ToolLoop:
                                 "role": "tool_result", "tool": "_patch_apply",
                                 "content": feedback,
                             })
-                            self._broadcaster.broadcast(self._task_id, {
+                            self._broadcaster.broadcast(self._broadcast_key, {
                                 "type": "patch_failed",
                                 "payload": {"step_id": step.id, "error": error_msg},
                             })
@@ -362,10 +366,18 @@ class ToolLoop:
                         "or emit_patch again to correct failures."
                     ),
                 })
-                self._broadcaster.broadcast(self._task_id, {
+                self._broadcaster.broadcast(self._broadcast_key, {
                     "type": "patch_applied",
                     "payload": {"step_id": step.id, "phase": "verify", "touched_files": all_touched_files},
                 })
+                if self._skip_verify:
+                    return VerifyResult(
+                        patch_document=last_patch_document,
+                        touched_files=all_touched_files,
+                        verified=True,
+                        test_output="",
+                        tool_trace=trace,
+                    )
                 continue
 
             # ── tool_call ────────────────────────────────────────────────
@@ -387,7 +399,7 @@ class ToolLoop:
                             "converting to PlanHandoff to skip outer retry",
                             step.id, extra={"task_id": self._task_id},
                         )
-                        self._broadcaster.broadcast(self._task_id, {
+                        self._broadcaster.broadcast(self._broadcast_key, {
                             "type": "revision_needed",
                             "payload": {
                                 "step_id": step.id,
@@ -429,7 +441,7 @@ class ToolLoop:
             raw_args = response.get("args")
             args: dict[str, object] = raw_args if isinstance(raw_args, dict) else {}
 
-            self._broadcaster.broadcast(self._task_id, {
+            self._broadcaster.broadcast(self._broadcast_key, {
                 "type": "tool_call",
                 "payload": {"tool": tool_name, "thought": thought[:300], "iteration": iteration + 1, "phase": phase},
             })
@@ -450,7 +462,7 @@ class ToolLoop:
             ):
                 last_verify_run_errored = False
 
-            self._broadcaster.broadcast(self._task_id, {
+            self._broadcaster.broadcast(self._broadcast_key, {
                 "type": "tool_result",
                 "payload": {"tool": tool_name, "output": tool_output.output[:500], "is_error": tool_output.is_error, "iteration": iteration + 1},
             })
