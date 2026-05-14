@@ -19,7 +19,7 @@ import {
   type ScopeDecisionResponse,
   type ChatThreadSummary,
   type ChatThread,
-  type ChatEvent,
+  type StreamEvent,
 } from "../contracts/task-contracts.js";
 import type { TaskStatus } from "../domain/types.js";
 
@@ -264,7 +264,7 @@ export class HttpBackendClient implements BackendTaskClient {
     });
   }
 
-  async *sendChatMessage(threadId: string, message: string): AsyncIterable<ChatEvent> {
+  async *sendChatMessage(threadId: string, message: string): AsyncIterable<StreamEvent> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
       {
@@ -290,7 +290,7 @@ export class HttpBackendClient implements BackendTaskClient {
         for (const line of lines) {
           if (!line.startsWith("data:")) continue;
           try {
-            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim()));
+            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
           } catch {
             // skip malformed SSE line
           }

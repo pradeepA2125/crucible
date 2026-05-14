@@ -127,7 +127,7 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
     sendScopeDecision: async (taskId, _decision) => ({ taskId, status: "EXECUTING" }),
     streamPatch: async (_taskId, _onEvent, _signal) => {},
     streamPatchEvents: async function* (_taskId: string) {
-      yield { type: "done" as const };
+      yield { type: "done" as const, payload: {} as Record<string, never> };
     },
     listChatThreads: async () => [],
     createChatThread: async (workspacePath: string, title?: string) => ({
@@ -144,7 +144,7 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
       touchedFiles: [],
     }),
     sendChatMessage: async function* (_threadId: string, _message: string) {
-      yield { type: "chat_done", payload: {} };
+      yield { type: "chat_done" as const, payload: {} as Record<string, never> };
     },
   };
 }
@@ -372,11 +372,11 @@ describe("AiEditorController — chat", () => {
         messages: [],
         touchedFiles: [],
       }),
-      sendChatMessage: async function* () {
-        yield { type: "chat_agent_thinking", payload: { message: "Exploring…" } };
-        yield { type: "intent_classified", payload: { intent: "qa" } };
-        yield { type: "chat_response", payload: { chunk: "The answer is 42." } };
-        yield { type: "chat_done", payload: {} };
+      sendChatMessage: async function* (_threadId: string, _message: string) {
+        yield { type: "chat_agent_thinking" as const, payload: { message: "Exploring…" } };
+        yield { type: "intent_classified" as const, payload: { intent: "qa", rationale: "", likely_targets: [] } };
+        yield { type: "chat_response" as const, payload: { chunk: "The answer is 42." } };
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
       },
     };
 
@@ -420,12 +420,12 @@ describe("AiEditorController — chat", () => {
         threadId, workspacePath: "/tmp/workspace",
         title: "New Chat", messages: [], touchedFiles: [],
       }),
-      sendChatMessage: async function* () {
-        yield { type: "chat_agent_thinking", payload: { message: "Exploring workspace…" } };
-        yield { type: "explore_tool_call", payload: { tool: "search_code", args: { pattern: "auth" } } };
-        yield { type: "intent_classified", payload: { intent: "qa" } };
-        yield { type: "chat_response", payload: { chunk: "It handles auth." } };
-        yield { type: "chat_done", payload: {} };
+      sendChatMessage: async function* (_threadId: string, _message: string) {
+        yield { type: "chat_agent_thinking" as const, payload: { message: "Exploring workspace…" } };
+        yield { type: "explore_tool_call" as const, payload: { tool: "search_code", args: { pattern: "auth" } } };
+        yield { type: "intent_classified" as const, payload: { intent: "qa", rationale: "", likely_targets: [] } };
+        yield { type: "chat_response" as const, payload: { chunk: "It handles auth." } };
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
       },
     };
 

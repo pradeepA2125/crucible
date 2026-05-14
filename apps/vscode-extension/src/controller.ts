@@ -2,7 +2,7 @@ import type {
   BackendTaskClient,
   ChatMessage,
   ChatThreadSummary,
-  PatchStreamEvent,
+  StreamEvent,
   ResumeTaskResponse,
   TaskResult,
   TaskStatus,
@@ -74,7 +74,7 @@ export class AiEditorController {
   private latestResult: TaskResult | null = null;
   private poller: TaskPoller | null = null;
   private streamController: AbortController | null = null;
-  private patchEvents: PatchStreamEvent[] = [];
+  private patchEvents: StreamEvent[] = [];
   private activeThreadId: string | null = null;
 
   constructor(
@@ -510,7 +510,7 @@ export class AiEditorController {
         if (event.type === "operation_success") {
           this.ui.appendChatMessage({
             role: "agent",
-            content: `✓ ${event.op_type}: ${event.path}`,
+            content: `✓ ${event.payload.op_type}: ${event.payload.path}`,
             type: "text",
             timestamp: this.now(),
             metadata: {},
@@ -518,7 +518,7 @@ export class AiEditorController {
         } else if (event.type === "operation_error") {
           this.ui.appendChatMessage({
             role: "agent",
-            content: `✗ ${event.op_type}: ${event.path} — ${event.error}`,
+            content: `✗ ${event.payload.op_type}: ${event.payload.path} — ${event.payload.error}`,
             type: "text",
             timestamp: this.now(),
             metadata: {},
@@ -564,12 +564,12 @@ export class AiEditorController {
 
   private async handleScopeExtensionRequest(
     taskId: string,
-    event: Extract<PatchStreamEvent, { type: "scope_extension_requested" }>
+    event: Extract<StreamEvent, { type: "scope_extension_requested" }>
   ): Promise<void> {
     const result = await this.ui.promptForScopeDecision({
-      files: event.files,
-      reason: event.reason,
-      stepId: event.step_id
+      files: event.payload.files,
+      reason: event.payload.reason,
+      stepId: event.payload.step_id
     });
     if (!result) return; // user dismissed — task stays paused until timeout
 
@@ -577,7 +577,7 @@ export class AiEditorController {
     try {
       await client.sendScopeDecision(taskId, {
         decision: result.decision,
-        files: result.decision === "approve" ? event.files : [],
+        files: result.decision === "approve" ? event.payload.files : [],
         remember: result.remember
       });
     } catch (err) {

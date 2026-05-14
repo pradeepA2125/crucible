@@ -131,10 +131,10 @@ export function renderPanelHtml(model: ReviewPanelViewModel): string {
   const activityRows = opEvents
     .map((ev) => {
       if (ev.type === "operation_success") {
-        return `<li><span class="ev-ok">✓</span> ${escapeHtml(ev.op_type)} — <code>${escapeHtml(ev.path)}</code></li>`;
+        return `<li><span class="ev-ok">✓</span> ${escapeHtml(ev.payload.op_type)} — <code>${escapeHtml(ev.payload.path)}</code></li>`;
       }
       if (ev.type === "operation_error") {
-        return `<li><span class="ev-err">✗</span> ${escapeHtml(ev.op_type)} — <code>${escapeHtml(ev.path)}</code>: ${escapeHtml(ev.error)}</li>`;
+        return `<li><span class="ev-err">✗</span> ${escapeHtml(ev.payload.op_type)} — <code>${escapeHtml(ev.payload.path)}</code>: ${escapeHtml(ev.payload.error)}</li>`;
       }
       return "";
     })
