@@ -18,6 +18,7 @@ class IntentClassification(BaseModel):
     rationale: str
     files_examined: list[str] = Field(default_factory=list)
     likely_targets: list[str] = Field(default_factory=list)
+    answer: str | None = None
 
 
 class ChatMessage(BaseModel):
@@ -33,6 +34,7 @@ class ChatThread(BaseModel):
     thread_id: str
     workspace_path: str
     title: str = "New Chat"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     messages: list[ChatMessage] = Field(default_factory=list)
     touched_files: list[str] = Field(default_factory=list)
 

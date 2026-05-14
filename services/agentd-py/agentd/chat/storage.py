@@ -31,13 +31,18 @@ class ChatThreadStore:
 
     def create_thread(self, workspace_path: str, title: str = "New Chat") -> ChatThread:
         thread_id = f"chat-{uuid.uuid4().hex[:12]}"
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(timezone.utc)
         self._conn.execute(
             "INSERT INTO chat_threads (thread_id, workspace_path, title, created_at) VALUES (?, ?, ?, ?)",
-            (thread_id, workspace_path, title, created_at),
+            (thread_id, workspace_path, title, created_at.isoformat()),
         )
         self._conn.commit()
-        return ChatThread(thread_id=thread_id, workspace_path=workspace_path, title=title)
+        return ChatThread(
+            thread_id=thread_id,
+            workspace_path=workspace_path,
+            title=title,
+            created_at=created_at,
+        )
 
     def list_threads(self, workspace_path: str) -> list[ChatThread]:
         rows = self._conn.execute(
@@ -49,6 +54,7 @@ class ChatThreadStore:
                 thread_id=row["thread_id"],
                 workspace_path=row["workspace_path"],
                 title=row["title"],
+                created_at=datetime.fromisoformat(row["created_at"]),
                 messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
                 touched_files=json.loads(row["touched_files_json"]),
             )
@@ -65,6 +71,7 @@ class ChatThreadStore:
             thread_id=row["thread_id"],
             workspace_path=row["workspace_path"],
             title=row["title"],
+            created_at=datetime.fromisoformat(row["created_at"]),
             messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
             touched_files=json.loads(row["touched_files_json"]),
         )
