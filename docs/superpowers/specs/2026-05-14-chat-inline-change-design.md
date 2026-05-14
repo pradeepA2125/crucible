@@ -227,6 +227,185 @@ New `"task_card"` value in `ChatMessage.type` enum. Carries `taskId` in metadata
 
 ---
 
+## Streaming Architecture
+
+### One Mechanism Everywhere: `EventBroadcaster`
+
+The existing `PatchEventBroadcaster` is the foundation. It is **generalized and renamed** to `EventBroadcaster`, and its scope is extended beyond task-execution phases to cover every event source in the framework: chat agent explore phase, intent classification, QA responses, inline change execution, and large-change task status transitions.
+
+**Current limitation:** `PatchEventBroadcaster` is keyed by `task_id` and only receives events from phases that have an active task record (`EXECUTING`, `VALIDATING`, etc.). The chat agent and the explore phase have no task_id and therefore no broadcaster channel. This gap is what produces the generator/yield anti-pattern in `handle_message()`.
+
+**Fix:** Rename `PatchEventBroadcaster` to `EventBroadcaster`. Change the key parameter from `task_id: str` to `channel_id: str` everywhere. The broadcaster logic is unchanged — replay buffer, subscribe/unsubscribe, broadcast are identical. Any string can now be a channel: a task UUID, a chat message UUID, or any other identifier.
+
+```python
+# agentd/orchestrator/broadcaster.py — rename only
+class EventBroadcaster:  # was PatchEventBroadcaster
+    def subscribe(self, channel_id: str) -> asyncio.Queue[dict[str, Any]]: ...
+    def unsubscribe(self, channel_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None: ...
+    def broadcast(self, channel_id: str, event: dict[str, Any]) -> None: ...
+    def clear_replay(self, channel_id: str) -> None: ...
+```
+
+`PatchEventBroadcaster` is kept as a backward-compatible alias (`PatchEventBroadcaster = EventBroadcaster`) so existing call sites in `engine.py`, `tools/loop.py`, and `planning/loop.py` compile without change.
+
+### Unified event envelope
+
+All events in the system use the same JSON shape:
+
+```json
+{"type": "<event_type>", "payload": {<event_data>}}
+```
+
+**Current ToolLoop events are flat** (`{"type": "operation_success", "op_type": "search_replace", "path": "foo.py"}`). These must migrate to nested payload so the frontend can parse all events with a single type union. The migration is one pass through `tools/loop.py` and the corresponding TypeScript `PatchStreamEvent` type.
+
+Event catalogue (after migration):
+
+| Source | `type` | `payload` fields |
+|---|---|---|
+| ChatAgent | `chat_agent_thinking` | `message: str` |
+| ChatAgent | `explore_tool_call` | `tool: str, args: dict` |
+| ChatAgent | `intent_classified` | `intent: str, rationale: str, likely_targets: list[str]` |
+| ChatAgent | `chat_response` | `chunk: str` |
+| ChatAgent | `chat_done` | `{}` |
+| ChatAgent | `task_card` | `task_id: str` |
+| ToolLoop | `tool_call` | `tool: str, args: dict` |
+| ToolLoop | `tool_result` | `tool: str, output: str, is_error: bool` |
+| ToolLoop | `operation_success` | `op_type: str, path: str` |
+| ToolLoop | `operation_error` | `op_type: str, path: str, error: str` |
+| ToolLoop | `diff_ready` | `task_id: str, diff_entries: list[DiffEntry]` |
+| ToolLoop/Orchestrator | `done` | `{}` |
+| Orchestrator | `task_status_changed` | `task_id: str, status: str` |
+
+### `ChatAgent.handle_message()` — regular async coroutine, not a generator
+
+`handle_message()` is no longer an async generator. It accepts a `channel_id` (generated per message by the route), uses the shared `EventBroadcaster`, and calls `broadcast(channel_id, event)` directly.
+
+```python
+# agentd/chat/agent.py — new signature
+async def handle_message(self, thread_id: str, message: str, channel_id: str) -> None:
+    self._broadcaster.broadcast(channel_id, {"type": "chat_agent_thinking", "payload": {"message": "Exploring workspace…"}})
+
+    for _ in range(self._max_explore_calls):
+        step = await self._transport.generate_json(...)
+        if step.get("action") == "done":
+            break
+        tool_name = step.get("tool", "")
+        args = step.get("args") or {}
+        self._broadcaster.broadcast(channel_id, {"type": "explore_tool_call", "payload": {"tool": tool_name, "args": args}})
+        tool_output = await self._registry.execute(tool_name, args)
+        context.append(...)
+
+    classification = await self._classifier.classify(message, context=context, history=history)
+    self._broadcaster.broadcast(channel_id, {"type": "intent_classified", "payload": {...}})
+
+    if classification.intent == IntentType.QA:
+        response_text = await self._transport.generate_text(...)
+        self._broadcaster.broadcast(channel_id, {"type": "chat_response", "payload": {"chunk": response_text}})
+
+    elif classification.intent == IntentType.SMALL_CHANGE:
+        plan_md = await self._draft_plan_markdown(message, context, classification.likely_targets)
+        # run_inline_change is awaited directly — handle_message is already a background task
+        await self._orchestrator.run_inline_change(
+            goal=message,
+            workspace_path=self._workspace_path,
+            explore_context=context,
+            likely_targets=classification.likely_targets,
+            plan_markdown=plan_md,
+            channel_id=channel_id,
+        )
+
+    elif classification.intent == IntentType.LARGE_CHANGE:
+        task_id = await self._submit_large_change(message, context, thread_id=thread_id, channel_id=channel_id)
+        self._broadcaster.broadcast(channel_id, {"type": "task_card", "payload": {"task_id": task_id}})
+
+    self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+```
+
+`EventBroadcaster` is injected into `ChatAgent.__init__()` as `broadcaster: EventBroadcaster`. The same instance is shared with `AgentOrchestrator` so inline change ToolLoop events and chat events all go through one broadcaster on their respective channel IDs.
+
+### Chat message route — same pattern as `/stream-patch`
+
+```python
+# agentd/api/routes.py
+@router.post("/v1/chat/threads/{thread_id}/message")
+async def send_message(thread_id: str, body: SendMessageRequest) -> StreamingResponse:
+    channel_id = f"chat:{uuid4().hex}"
+    queue = broadcaster.subscribe(channel_id)
+    asyncio.create_task(chat_agent.handle_message(thread_id, body.message, channel_id))
+
+    async def event_generator():
+        try:
+            while True:
+                event = await queue.get()
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") == "chat_done":
+                    break
+        finally:
+            broadcaster.unsubscribe(channel_id, queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+```
+
+Identical pattern to `/stream-patch`. No special-casing.
+
+### ToolLoop — `broadcast_key` for inline changes
+
+`ToolLoop.__init__()` gains an optional `broadcast_key: str | None = None`. When set, all `self._broadcaster.broadcast(self._task_id, ...)` calls use `broadcast_key` instead. When `None` (default), `task_id` is used — existing call sites are unaffected.
+
+For inline changes: `run_inline_change()` creates a ToolLoop with `broadcast_key=channel_id`. ToolLoop events (tool calls, patch operations, `diff_ready`) flow to the chat channel, not the task channel. The task still has its own `task_id` used for the promote/discard API.
+
+### Event flow — small_change (end to end)
+
+```
+POST /v1/chat/threads/{id}/message
+    │
+    channel_id = "chat:abc123"
+    broadcaster.subscribe(channel_id) → queue
+    asyncio.create_task(handle_message(..., channel_id))
+    return StreamingResponse(queue)
+    │
+    ├── broadcast("chat_agent_thinking")
+    ├── broadcast("explore_tool_call") × N           ← real-time as each tool fires
+    ├── broadcast("intent_classified")
+    ├── broadcast("chat_agent_thinking", "Drafting plan…")
+    │
+    └── run_inline_change(..., channel_id="chat:abc123")
+            │
+            ├── ToolLoop step 1 [broadcast_key="chat:abc123"]
+            │     ├── broadcast("tool_call")          ← real-time
+            │     ├── broadcast("tool_result")
+            │     └── broadcast("operation_success")
+            ├── ToolLoop step 2 ...
+            └── broadcast("diff_ready", {task_id, diff_entries})
+                    │
+    broadcast("chat_done")
+                    │
+                    ▼
+    Frontend: diff card shown in chat thread
+```
+
+### Event flow — large_change
+
+The task's own broadcaster channel (`task_id`) remains the primary stream for the ReviewPanel (`/stream-patch`). When the task originates from chat, the orchestrator forwards these status transitions to the `channel_id` stored on the task record:
+
+| Status reached | Event broadcast to `channel_id` |
+|---|---|
+| `AWAITING_PLAN_APPROVAL` | `{"type": "task_status_changed", "payload": {"task_id": ..., "status": "AWAITING_PLAN_APPROVAL", "plan_markdown": ...}}` |
+| `EXECUTING` | `{"type": "task_status_changed", "payload": {"task_id": ..., "status": "EXECUTING"}}` |
+| `READY_FOR_REVIEW` | `{"type": "task_status_changed", "payload": {"task_id": ..., "status": "READY_FOR_REVIEW"}}` |
+| `SUCCEEDED` / `FAILED` | `{"type": "task_status_changed", "payload": {"task_id": ..., "status": ...}}` |
+
+The `channel_id` is stored as `TaskRecord.chat_channel_id: str | None = None`. The orchestrator checks this field at each status transition and broadcasts to it if set.
+
+### `TaskRecord` additions
+
+```python
+is_inline_change: bool = False       # True for run_inline_change() tasks
+chat_channel_id: str | None = None   # broadcaster channel for chat-originated tasks
+```
+
+---
+
 ## Context Plumbing — Small Change
 
 ```
