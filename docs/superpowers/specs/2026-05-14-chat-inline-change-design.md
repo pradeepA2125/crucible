@@ -22,7 +22,7 @@ The chat agent currently stubs `small_change` and `large_change` intent branches
 
 ## Non-Goals
 
-- Replacing the review panel (it remains available as "Maximize" from the diff card)
+- Replacing the ReviewPanel WebView — it remains the primary UI for full tasks (large_change and tasks submitted outside chat). For small changes, "Maximize" on the diff card opens VS Code's native `vscode.diff()` editor, not the ReviewPanel.
 - Changing the full task lifecycle for tasks submitted outside the chat agent
 - Auto-applying changes without user confirmation
 
@@ -198,7 +198,9 @@ metadata: { taskId: string }
 - File list with `+N / -N` per file
 - **Apply** button → `controller.applyInlineChange(taskId)`
 - **Discard** button → `controller.discardInlineChange(taskId)`
-- **Maximize** (per file) → `vscode.diff(tempFile, realFile)` via `DiffService`
+- **Maximize** (per file) → `vscode.diff(tempFile, realFile)` via `DiffService` — opens VS Code's native diff editor for detailed inspection; does NOT open the ReviewPanel WebView
+
+`taskId` on the diff card refers to the inline `TaskRecord` created by `run_inline_change()` in `PLANNED` state. This ID is used exclusively to locate temp files for promote/discard — it does not represent a reviewable task in the ReviewPanel.
 
 ---
 
