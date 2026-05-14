@@ -203,6 +203,32 @@ describe("HttpBackendClient", () => {
 
   // ── Chat API ──────────────────────────────────────────────────────────────
 
+  test("createChatThread sends correct body and maps response", async () => {
+    let capturedUrl = "";
+    let capturedBody = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (url, init) => {
+        capturedUrl = String(url);
+        capturedBody = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({
+            thread_id: "chat-xyz",
+            workspace_path: "/ws",
+            title: "My thread",
+            created_at: "2026-05-11T00:00:00Z",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+    });
+    const result = await client.createChatThread("/ws", "My thread");
+    expect(capturedUrl).toContain("/v1/chat/threads");
+    expect(JSON.parse(capturedBody)).toEqual({ workspace: "/ws", title: "My thread" });
+    expect(result.threadId).toBe("chat-xyz");
+    expect(result.createdAt).toBe("2026-05-11T00:00:00Z");
+  });
+
   test("listChatThreads maps snake_case to camelCase", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",

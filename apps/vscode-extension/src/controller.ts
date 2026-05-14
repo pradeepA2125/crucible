@@ -387,9 +387,14 @@ export class AiEditorController {
     if (first && !this.activeThreadId) {
       this.activeThreadId = first.threadId;
     } else if (!this.activeThreadId) {
-      const thread = await client.createChatThread(workspacePath);
-      this.activeThreadId = thread.threadId;
-      threads = [thread];
+      try {
+        const thread = await client.createChatThread(workspacePath);
+        this.activeThreadId = thread.threadId;
+        threads = [thread];
+      } catch (error) {
+        this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
+        return;
+      }
     }
     this.ui.openChatPanel();
     this.ui.renderChatThreadList(threads, this.activeThreadId ?? "");
@@ -398,8 +403,15 @@ export class AiEditorController {
   async newChatThread(): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
-    const thread = await client.createChatThread(workspacePath);
+    let thread;
+    try {
+      thread = await client.createChatThread(workspacePath);
+    } catch (error) {
+      this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
+      return;
+    }
     this.activeThreadId = thread.threadId;
+    this.ui.openChatPanel();
     this.ui.clearChatThread();
     let threads: ChatThreadSummary[];
     try {
@@ -425,9 +437,14 @@ export class AiEditorController {
     const client = this.createClient(this.settings.getBackendBaseUrl());
 
     if (!this.activeThreadId) {
-      const thread = await client.createChatThread(workspacePath);
-      this.activeThreadId = thread.threadId;
-      this.ui.openChatPanel();
+      try {
+        const thread = await client.createChatThread(workspacePath);
+        this.activeThreadId = thread.threadId;
+        this.ui.openChatPanel();
+      } catch (error) {
+        this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
+        return;
+      }
     }
 
     const threadId = this.activeThreadId;
@@ -451,6 +468,8 @@ export class AiEditorController {
           const args = event.payload["args"] as Record<string, unknown> | undefined;
           const argValues = args ? Object.values(args).map(String).join(", ") : "";
           this.ui.updateChatThinking(`${tool}: ${argValues}`);
+        } else if (event.type === "intent_classified") {
+          this.ui.hideChatThinking();
         } else if (event.type === "chat_response") {
           const chunk = (event.payload["chunk"] as string) ?? "";
           this.ui.appendChatChunk(chunk);
