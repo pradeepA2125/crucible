@@ -85,16 +85,12 @@ export type ScopeDecisionRequest = z.infer<typeof ScopeDecisionRequestSchema>;
 export type ScopeDecisionResponse = z.infer<typeof ScopeDecisionResponseSchema>;
 
 export type PatchStreamEvent =
-  | { type: "planning_tool_call"; tool: string; args: Record<string, unknown> }
-  | { type: "planning_tool_result"; tool: string; output: string; is_error: boolean }
-  | { type: "planning_complete"; files_examined: string[]; confidence: number }
-  | { type: "tool_call"; tool: string; args: Record<string, unknown> }
-  | { type: "tool_result"; tool: string; output: string; is_error: boolean }
-  | { type: "revision_needed"; reason: string }
   | { type: "operation_success"; op_type: string; path: string }
   | { type: "operation_error"; op_type: string; path: string; error: string }
   | { type: "scope_extension_requested"; decision_id: string; files: string[]; reason: string; step_id: string }
   | { type: "done" };
+
+// ── Chat types ────────────────────────────────────────────────────────────
 
 export const ChatMessageSchema = z.object({
   role: z.enum(["user", "agent"]),
@@ -110,7 +106,7 @@ export const ChatThreadSummarySchema = z.object({
   threadId: z.string(),
   workspacePath: z.string(),
   title: z.string(),
-  createdAt: z.string().optional(),
+  createdAt: z.string(),
 });
 export type ChatThreadSummary = z.infer<typeof ChatThreadSummarySchema>;
 
@@ -140,9 +136,9 @@ export interface BackendTaskClient {
   resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse>;
   sendScopeDecision(taskId: string, decision: ScopeDecisionRequest): Promise<ScopeDecisionResponse>;
   streamPatch(taskId: string, onEvent: (event: PatchStreamEvent) => void, signal?: AbortSignal): Promise<void>;
+  streamPatchEvents(taskId: string): AsyncIterable<PatchStreamEvent>;
   listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]>;
   createChatThread(workspacePath: string, title?: string): Promise<ChatThreadSummary>;
   getChatThread(threadId: string): Promise<ChatThread>;
   sendChatMessage(threadId: string, message: string): AsyncIterable<ChatEvent>;
-  streamPatchEvents(taskId: string): AsyncIterable<PatchStreamEvent>;
 }

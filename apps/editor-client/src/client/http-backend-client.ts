@@ -178,16 +178,50 @@ export class HttpBackendClient implements BackendTaskClient {
     }
   }
 
+  async *streamPatchEvents(taskId: string): AsyncIterable<PatchStreamEvent> {
+    // Wraps the callback-based streamPatch as an async iterable so callers
+    // can use for-await without holding an AbortController.
+    const events: PatchStreamEvent[] = [];
+    let notify: (() => void) | null = null;
+    let streamDone = false;
+
+    const push = (event: PatchStreamEvent) => {
+      events.push(event);
+      notify?.();
+      notify = null;
+    };
+
+    const streamPromise = this.streamPatch(taskId, push);
+    streamPromise.finally(() => {
+      streamDone = true;
+      notify?.();
+      notify = null;
+    });
+
+    while (true) {
+      if (events.length === 0 && !streamDone) {
+        await new Promise<void>((resolve) => { notify = resolve; });
+      }
+      while (events.length > 0) {
+        const event = events.shift()!;
+        yield event;
+        if (event.type === "done") return;
+      }
+      if (streamDone) return;
+    }
+  }
+
   async listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]> {
     const raw = await this.fetchJson(
       `/v1/chat/threads?workspace=${encodeURIComponent(workspacePath)}`
     ) as Record<string, unknown>;
-    return ((raw["threads"] ?? []) as Record<string, unknown>[]).map((t) =>
+    const threads = Array.isArray(raw["threads"]) ? raw["threads"] : [];
+    return (threads as Record<string, unknown>[]).map((t) =>
       ChatThreadSummarySchema.parse({
         threadId: t["thread_id"],
         workspacePath: t["workspace_path"],
         title: t["title"],
-        createdAt: t["created_at"] ?? undefined,
+        createdAt: t["created_at"],
       })
     );
   }
@@ -201,7 +235,7 @@ export class HttpBackendClient implements BackendTaskClient {
       threadId: raw["thread_id"],
       workspacePath: raw["workspace_path"],
       title: raw["title"],
-      createdAt: raw["created_at"] ?? undefined,
+      createdAt: raw["created_at"],
     });
   }
 
@@ -209,19 +243,24 @@ export class HttpBackendClient implements BackendTaskClient {
     const raw = await this.fetchJson(
       `/v1/chat/threads/${encodeURIComponent(threadId)}`
     ) as Record<string, unknown>;
+    const messages = Array.isArray(raw["messages"]) ? raw["messages"] : [];
     return ChatThreadSchema.parse({
       threadId: raw["thread_id"],
       workspacePath: raw["workspace_path"],
       title: raw["title"],
-      messages: ((raw["messages"] ?? []) as Record<string, unknown>[]).map((m) => ({
+      messages: (messages as Record<string, unknown>[]).map((m) => ({
         role: m["role"],
         content: m["content"],
         type: m["type"] ?? "text",
         taskId: m["task_id"] ?? null,
-        timestamp: String(m["timestamp"]),
-        metadata: (m["metadata"] as Record<string, unknown>) ?? {},
+        timestamp: typeof m["timestamp"] === "string"
+          ? m["timestamp"]
+          : new Date(m["timestamp"] as string).toISOString(),
+        metadata: (typeof m["metadata"] === "object" && m["metadata"] !== null)
+          ? m["metadata"]
+          : {},
       })),
-      touchedFiles: (raw["touched_files"] ?? []) as string[],
+      touchedFiles: Array.isArray(raw["touched_files"]) ? raw["touched_files"] : [],
     });
   }
 
@@ -237,27 +276,6 @@ export class HttpBackendClient implements BackendTaskClient {
     if (!response.ok) {
       throw new Error(`Chat message failed (${response.status}) for thread ${threadId}`);
     }
-    yield* this.readSseStream(response, (line) => ChatEventSchema.parse(JSON.parse(line)));
-  }
-
-  async *streamPatchEvents(taskId: string): AsyncIterable<PatchStreamEvent> {
-    const response = await this.fetchFn(
-      `${this.options.baseUrl}/v1/tasks/${encodeURIComponent(taskId)}/stream-patch`,
-      { headers: { accept: "text/event-stream" } }
-    );
-    if (!response.ok) {
-      throw new Error(`Stream failed (${response.status}) for task ${taskId}`);
-    }
-    for await (const event of this.readSseStream(response, (line) => JSON.parse(line) as PatchStreamEvent)) {
-      yield event;
-      if (event.type === "done") return;
-    }
-  }
-
-  private async *readSseStream<T>(
-    response: Response,
-    parse: (dataLine: string) => T
-  ): AsyncIterable<T> {
     if (!response.body) return;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -272,8 +290,10 @@ export class HttpBackendClient implements BackendTaskClient {
         for (const line of lines) {
           if (!line.startsWith("data:")) continue;
           try {
-            yield parse(line.slice(5).trim());
-          } catch { /* skip malformed SSE lines */ }
+            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim()));
+          } catch {
+            // skip malformed SSE line
+          }
         }
       }
     } finally {

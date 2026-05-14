@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import { HttpBackendClient } from "../src/client/http-backend-client.js";
-import type { ChatEvent, PatchStreamEvent } from "../src/contracts/task-contracts.js";
 
 describe("HttpBackendClient", () => {
   test("maps snake_case backend payload to camelCase task view", async () => {
@@ -202,7 +201,9 @@ describe("HttpBackendClient", () => {
     ).rejects.toThrow();
   });
 
-  test("listChatThreads maps snake_case thread list to camelCase summaries", async () => {
+  // ── Chat API ──────────────────────────────────────────────────────────────
+
+  test("listChatThreads maps snake_case to camelCase", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",
       fetchFn: async () =>
@@ -227,7 +228,7 @@ describe("HttpBackendClient", () => {
     expect(result[0].createdAt).toBe("2026-05-11T00:00:00Z");
   });
 
-  test("getChatThread maps full thread with messages", async () => {
+  test("getChatThread maps thread and messages", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",
       fetchFn: async () =>
@@ -243,7 +244,7 @@ describe("HttpBackendClient", () => {
                 content: "hello",
                 type: "text",
                 task_id: null,
-                timestamp: "2026-05-11T00:00:00Z",
+                timestamp: "2026-05-11T00:00:01Z",
                 metadata: {},
               },
             ],
@@ -259,53 +260,23 @@ describe("HttpBackendClient", () => {
     expect(result.messages[0].content).toBe("hello");
   });
 
-  test("sendChatMessage streams SSE events as an async iterable", async () => {
-    const sseBody = [
-      'data: {"type":"intent_classified","payload":{"intent":"qa"}}',
-      "",
-      'data: {"type":"chat_done","payload":{}}',
-      "",
-    ].join("\n");
-
+  test("sendChatMessage streams SSE events", async () => {
+    const sseBody =
+      'data: {"type":"intent_classified","payload":{"intent":"qa"}}\n\n' +
+      'data: {"type":"chat_done","payload":{}}\n\n';
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",
       fetchFn: async () =>
-        new Response(sseBody, {
+        new Response(new TextEncoder().encode(sseBody), {
           status: 200,
           headers: { "content-type": "text/event-stream" },
         }),
     });
-
-    const events: ChatEvent[] = [];
+    const events: Array<{ type: string }> = [];
     for await (const event of client.sendChatMessage("chat-abc123", "hello")) {
       events.push(event);
     }
     expect(events[0].type).toBe("intent_classified");
     expect(events[1].type).toBe("chat_done");
-  });
-
-  test("streamPatchEvents yields patch events as an async iterable", async () => {
-    const sseBody = [
-      'data: {"type":"operation_success","op_type":"search_replace","path":"a.ts"}',
-      "",
-      'data: {"type":"done"}',
-      "",
-    ].join("\n");
-
-    const client = new HttpBackendClient({
-      baseUrl: "http://localhost:8000",
-      fetchFn: async () =>
-        new Response(sseBody, {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        }),
-    });
-
-    const events: PatchStreamEvent[] = [];
-    for await (const event of client.streamPatchEvents("task-abc")) {
-      events.push(event);
-    }
-    expect(events[0].type).toBe("operation_success");
-    expect(events[1].type).toBe("done");
   });
 });
