@@ -10,6 +10,7 @@ export const TaskStatusSchema = z.enum([
   "AWAITING_PLAN_APPROVAL",
   "PLANNED",
   "EXECUTING",
+  "AWAITING_SCOPE_DECISION",
   "VALIDATING",
   "REPAIRING",
   "VALIDATED",
@@ -64,16 +65,69 @@ export const ResumeTaskResponseSchema = z.object({
   resumeOfTaskId: z.string().min(1)
 });
 
+export const ScopeDecisionRequestSchema = z.object({
+  decision: z.enum(["approve", "reject"]),
+  files: z.array(z.string()).default([]),
+  remember: z.boolean().default(false)
+});
+
+export const ScopeDecisionResponseSchema = z.object({
+  taskId: z.string().min(1),
+  status: TaskStatusSchema
+});
+
 export type TaskSubmission = z.infer<typeof TaskSubmissionSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
 export type TaskResult = z.infer<typeof TaskResultSchema>;
 export type ResumeTaskRequest = z.infer<typeof ResumeTaskRequestSchema>;
 export type ResumeTaskResponse = z.infer<typeof ResumeTaskResponseSchema>;
+export type ScopeDecisionRequest = z.infer<typeof ScopeDecisionRequestSchema>;
+export type ScopeDecisionResponse = z.infer<typeof ScopeDecisionResponseSchema>;
 
 export type PatchStreamEvent =
+  | { type: "planning_tool_call"; tool: string; args: Record<string, unknown> }
+  | { type: "planning_tool_result"; tool: string; output: string; is_error: boolean }
+  | { type: "planning_complete"; files_examined: string[]; confidence: number }
+  | { type: "tool_call"; tool: string; args: Record<string, unknown> }
+  | { type: "tool_result"; tool: string; output: string; is_error: boolean }
+  | { type: "revision_needed"; reason: string }
   | { type: "operation_success"; op_type: string; path: string }
   | { type: "operation_error"; op_type: string; path: string; error: string }
+  | { type: "scope_extension_requested"; decision_id: string; files: string[]; reason: string; step_id: string }
   | { type: "done" };
+
+export const ChatMessageSchema = z.object({
+  role: z.enum(["user", "agent"]),
+  content: z.string(),
+  type: z.enum(["text", "plan_card", "diff_card", "diff_summary"]).default("text"),
+  taskId: z.string().nullable().optional(),
+  timestamp: z.string(),
+  metadata: z.record(z.unknown()).default({}),
+});
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+
+export const ChatThreadSummarySchema = z.object({
+  threadId: z.string(),
+  workspacePath: z.string(),
+  title: z.string(),
+  createdAt: z.string().optional(),
+});
+export type ChatThreadSummary = z.infer<typeof ChatThreadSummarySchema>;
+
+export const ChatThreadSchema = z.object({
+  threadId: z.string(),
+  workspacePath: z.string(),
+  title: z.string(),
+  messages: z.array(ChatMessageSchema),
+  touchedFiles: z.array(z.string()),
+});
+export type ChatThread = z.infer<typeof ChatThreadSchema>;
+
+export const ChatEventSchema = z.object({
+  type: z.string(),
+  payload: z.record(z.unknown()).default({}),
+});
+export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
 export interface BackendTaskClient {
   submitTask(input: TaskSubmission): Promise<{ taskId: string }>;
@@ -84,5 +138,11 @@ export interface BackendTaskClient {
   rejectPatch(taskId: string, reason: string): Promise<TaskResult>;
   providePlanFeedback(taskId: string, feedback: string | null): Promise<TaskView>;
   resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse>;
+  sendScopeDecision(taskId: string, decision: ScopeDecisionRequest): Promise<ScopeDecisionResponse>;
   streamPatch(taskId: string, onEvent: (event: PatchStreamEvent) => void, signal?: AbortSignal): Promise<void>;
+  listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]>;
+  createChatThread(workspacePath: string, title?: string): Promise<ChatThreadSummary>;
+  getChatThread(threadId: string): Promise<ChatThread>;
+  sendChatMessage(threadId: string, message: string): AsyncIterable<ChatEvent>;
+  streamPatchEvents(taskId: string): AsyncIterable<PatchStreamEvent>;
 }
