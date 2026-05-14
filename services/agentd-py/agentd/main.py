@@ -333,6 +333,7 @@ _chat_agent = ChatAgent(
     model=_chat_model,
     thread_store=_chat_thread_store,
     orchestrator=orchestrator,
+    broadcaster=orchestrator.broadcaster,
 ) if reasoning_backend != "scripted" else None
 
 app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client, _chat_agent))

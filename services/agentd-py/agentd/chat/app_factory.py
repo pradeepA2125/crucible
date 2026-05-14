@@ -55,6 +55,7 @@ def build_app(workspace_path: str) -> FastAPI:
         model="test-model",
         thread_store=chat_store,
         orchestrator=None,
+        broadcaster=orchestrator.broadcaster,
     )
     router = build_router(store, orchestrator, ws_manager, None, agent)
     app = FastAPI()

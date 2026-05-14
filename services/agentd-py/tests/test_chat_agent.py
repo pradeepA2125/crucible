@@ -2,6 +2,7 @@ import pytest
 from pathlib import Path
 from agentd.chat.agent import ChatAgent
 from agentd.chat.storage import ChatThreadStore
+from agentd.orchestrator.broadcaster import EventBroadcaster
 
 
 class ScriptedTransport:
@@ -27,31 +28,51 @@ def store(tmp_path: Path) -> ChatThreadStore:
     return ChatThreadStore(tmp_path / "chat.db")
 
 
+def _make_agent(tmp_path, transport, broadcaster, orchestrator=None):
+    return ChatAgent(
+        workspace_path=str(tmp_path),
+        transport=transport,
+        model="test-model",
+        thread_store=ChatThreadStore(tmp_path / "chat.db"),
+        orchestrator=orchestrator,
+        broadcaster=broadcaster,
+    )
+
+
+def _drain(queue) -> list[dict]:
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    return events
+
+
 @pytest.mark.asyncio
-async def test_qa_streams_response(tmp_path: Path, store: ChatThreadStore) -> None:
+async def test_qa_broadcasts_response(tmp_path: Path, store: ChatThreadStore) -> None:
+    broadcaster = EventBroadcaster()
+    queue = broadcaster.subscribe("ch-1")
     agent = ChatAgent(
         workspace_path=str(tmp_path),
         transport=ScriptedTransport("It handles login."),
         model="test-model",
         thread_store=store,
         orchestrator=None,
+        broadcaster=broadcaster,
     )
     thread = store.create_thread(str(tmp_path))
-    events = []
-    async for event in agent.handle_message(thread.thread_id, "What does auth do?"):
-        events.append(event)
+    await agent.handle_message(thread.thread_id, "What does auth do?", channel_id="ch-1")
 
-    types = [e.type for e in events]
-    assert "chat_agent_thinking" in types   # user sees activity immediately
+    events = _drain(queue)
+    types = [e["type"] for e in events]
+    assert "chat_agent_thinking" in types
     assert "intent_classified" in types
     assert "chat_response" in types
     assert "chat_done" in types
-    assert any("login" in e.payload.get("chunk", "")
-               for e in events if e.type == "chat_response")
+    assert any("login" in e["payload"].get("chunk", "")
+               for e in events if e["type"] == "chat_response")
 
 
 @pytest.mark.asyncio
-async def test_explore_tool_calls_yield_events(tmp_path: Path, store: ChatThreadStore) -> None:
+async def test_explore_tool_calls_broadcast_events(tmp_path: Path, store: ChatThreadStore) -> None:
     """Each tool call during explore must emit an explore_tool_call event."""
     class OneToolTransport:
         async def generate_text(self, **_) -> str:
@@ -66,21 +87,23 @@ async def test_explore_tool_calls_yield_events(tmp_path: Path, store: ChatThread
                 return {"action": "done"}
             return {"intent": "qa", "rationale": "ok", "likely_targets": []}
 
+    broadcaster = EventBroadcaster()
+    queue = broadcaster.subscribe("ch-2")
     agent = ChatAgent(
         workspace_path=str(tmp_path),
         transport=OneToolTransport(),
         model="test-model",
         thread_store=store,
         orchestrator=None,
+        broadcaster=broadcaster,
     )
     thread = store.create_thread(str(tmp_path))
-    events = []
-    async for event in agent.handle_message(thread.thread_id, "What does auth do?"):
-        events.append(event)
+    await agent.handle_message(thread.thread_id, "What does auth do?", channel_id="ch-2")
 
-    tool_events = [e for e in events if e.type == "explore_tool_call"]
+    events = _drain(queue)
+    tool_events = [e for e in events if e["type"] == "explore_tool_call"]
     assert len(tool_events) == 1
-    assert tool_events[0].payload["tool"] == "search_code"
+    assert tool_events[0]["payload"]["tool"] == "search_code"
 
 
 @pytest.mark.asyncio
@@ -101,16 +124,18 @@ async def test_explore_context_passed_to_classifier(tmp_path: Path, store: ChatT
             classifier_payloads.append(user_payload)
             return {"intent": "qa", "rationale": "ok", "likely_targets": []}
 
+    broadcaster = EventBroadcaster()
+    broadcaster.subscribe("ch-3")
     agent = ChatAgent(
         workspace_path=str(tmp_path),
         transport=CapturingTransport(),
         model="test-model",
         thread_store=store,
         orchestrator=None,
+        broadcaster=broadcaster,
     )
     thread = store.create_thread(str(tmp_path))
-    async for _ in agent.handle_message(thread.thread_id, "What does auth do?"):
-        pass
+    await agent.handle_message(thread.thread_id, "What does auth do?", channel_id="ch-3")
 
     assert len(classifier_payloads) == 1
     assert classifier_payloads[0]["explore_context"]  # search result injected
@@ -118,16 +143,18 @@ async def test_explore_context_passed_to_classifier(tmp_path: Path, store: ChatT
 
 @pytest.mark.asyncio
 async def test_qa_persists_both_messages(tmp_path: Path, store: ChatThreadStore) -> None:
+    broadcaster = EventBroadcaster()
+    broadcaster.subscribe("ch-4")
     agent = ChatAgent(
         workspace_path=str(tmp_path),
         transport=ScriptedTransport("Answer."),
         model="test-model",
         thread_store=store,
         orchestrator=None,
+        broadcaster=broadcaster,
     )
     thread = store.create_thread(str(tmp_path))
-    async for _ in agent.handle_message(thread.thread_id, "Explain this"):
-        pass
+    await agent.handle_message(thread.thread_id, "Explain this", channel_id="ch-4")
 
     reloaded = store.get_thread(thread.thread_id)
     assert len(reloaded.messages) == 2

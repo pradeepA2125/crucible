@@ -695,11 +695,31 @@ def build_router(
 
         @router.post("/chat/threads/{thread_id}/message")
         async def post_chat_message(thread_id: str, request: dict) -> StreamingResponse:
+            import asyncio as _asyncio_chat
+            import json as _json
             message = request.get("content") or request.get("message", "")
+            channel_id = f"chat:{thread_id}"
+            queue = _chat_agent._broadcaster.subscribe(channel_id)
+
+            async def _run_agent() -> None:
+                try:
+                    await _chat_agent.handle_message(thread_id, message, channel_id=channel_id)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).exception("ChatAgent.handle_message failed")
+                    _chat_agent._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+            _asyncio_chat.create_task(_run_agent())
 
             async def event_stream():
-                async for event in _chat_agent.handle_message(thread_id, message):
-                    yield f"data: {event.model_dump_json()}\n\n"
+                try:
+                    while True:
+                        event = await queue.get()
+                        yield f"data: {_json.dumps(event)}\n\n"
+                        if event.get("type") in ("chat_done", "done"):
+                            break
+                finally:
+                    _chat_agent._broadcaster.unsubscribe(channel_id, queue)
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 

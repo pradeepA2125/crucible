@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from agentd.chat.classifier import IntentClassifier
-from agentd.chat.models import ChatEvent, ChatMessage, IntentType
+from agentd.chat.models import ChatMessage, IntentType
 from agentd.chat.storage import ChatThreadStore
+from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.planning.registry import PlanningToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,8 @@ _EXPLORE_SCHEMA: dict[str, object] = {
 
 _EXPLORE_PROMPT = """\
 You are exploring a codebase to gather context before classifying a user request.
-Use tools to find relevant files, symbols, and usages mentioned in the message and history.
+conversation_history contains recent turns — if the answer is already in history, emit action=done immediately without calling any tools.
+Only use tools to find information that is not already covered by history or prior tool_results.
 When you have enough evidence to judge scope, emit action=done.
 
 Tools: search_code (ripgrep), list_directory, read_file, search_semantic.
@@ -38,6 +40,14 @@ Use the workspace context below — files and search results already gathered.
 Be concise and specific. Name files and functions explicitly.
 """
 
+_DRAFT_PLAN_PROMPT = """\
+You are drafting a brief implementation plan for a small code change.
+Based on the explored context and the user's request, write 2-4 bullet points
+describing exactly what files will be changed and what each change will do.
+Be concrete — name specific files, functions, or lines. No fluff.
+Output plain markdown (bullet list). Maximum 150 words.
+"""
+
 
 class ChatAgent:
     def __init__(
@@ -48,6 +58,7 @@ class ChatAgent:
         model: str,
         thread_store: ChatThreadStore,
         orchestrator: Any | None,
+        broadcaster: EventBroadcaster,
         max_explore_calls: int = 5,
     ) -> None:
         self._workspace_path = workspace_path
@@ -55,11 +66,17 @@ class ChatAgent:
         self._model = model
         self._store = thread_store
         self._orchestrator = orchestrator
+        self._broadcaster = broadcaster
         self._max_explore_calls = max_explore_calls
         self._registry = PlanningToolRegistry(real_path=Path(workspace_path))
         self._classifier = IntentClassifier(transport=transport, model=model)
 
-    async def handle_message(self, thread_id: str, message: str) -> AsyncIterator[ChatEvent]:
+    async def handle_message(self, thread_id: str, message: str, channel_id: str) -> None:
+        """Process a chat message and broadcast all events to channel_id.
+
+        Replaces the old async-generator form. The route background-tasks this
+        coroutine and streams events from the broadcaster to the SSE client.
+        """
         thread = self._store.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"Thread {thread_id!r} not found")
@@ -69,12 +86,14 @@ class ChatAgent:
 
         history = [{"role": m.role, "content": m.content} for m in thread.messages]
 
-        # Explore phase — inlined so we can yield progress events at each step.
-        # Without these the user sees nothing for several seconds and thinks the UI is frozen.
+        # Explore phase
         context: list[dict[str, Any]] = []
         files_examined: list[str] = []
 
-        yield ChatEvent(type="chat_agent_thinking", payload={"message": "Exploring workspace…"})
+        self._broadcaster.broadcast(channel_id, {
+            "type": "chat_agent_thinking",
+            "payload": {"message": "Exploring workspace…"},
+        })
 
         for _ in range(self._max_explore_calls):
             try:
@@ -85,8 +104,8 @@ class ChatAgent:
                     system_instructions=_EXPLORE_PROMPT,
                     user_payload={
                         "message": message,
-                        "conversation_history": history[-10:],
                         "workspace_path": self._workspace_path,
+                        "conversation_history": history[-6:],
                         "tool_results": context,
                     },
                 )
@@ -100,8 +119,10 @@ class ChatAgent:
             tool_name = step.get("tool", "")
             args = step.get("args") or {}
 
-            yield ChatEvent(type="explore_tool_call",
-                            payload={"tool": tool_name, "args": args})
+            self._broadcaster.broadcast(channel_id, {
+                "type": "explore_tool_call",
+                "payload": {"tool": tool_name, "args": args},
+            })
 
             try:
                 tool_output = await self._registry.execute(tool_name, args)
@@ -117,51 +138,99 @@ class ChatAgent:
         classification = await self._classifier.classify(
             message, context=context, history=history
         )
-        yield ChatEvent(
-            type="intent_classified",
-            payload={
+        self._broadcaster.broadcast(channel_id, {
+            "type": "intent_classified",
+            "payload": {
                 "intent": classification.intent,
                 "rationale": classification.rationale,
                 "likely_targets": classification.likely_targets,
                 "files_examined": files_examined,
             },
-        )
+        })
 
         if classification.intent == IntentType.QA:
-            async for event in self._handle_qa(thread_id, message, context, history):
-                yield event
-        else:
-            # small_change and large_change wired in Plan 2
-            yield ChatEvent(
-                type="chat_response",
-                payload={"chunk": f"[{classification.intent} routing — not yet wired]"},
-            )
-            yield ChatEvent(type="chat_done", payload={})
+            if classification.answer:
+                response_text = classification.answer
+            else:
+                try:
+                    response_text = await self._transport.generate_text(
+                        model=self._model,
+                        system_instructions=_QA_PROMPT,
+                        user_payload={
+                            "workspace_path": self._workspace_path,
+                            "conversation_history": history[-10:],
+                            "workspace_context": context,
+                            "question": message,
+                        },
+                    )
+                except Exception:
+                    logger.exception("Q&A LLM call failed")
+                    response_text = "Sorry, I couldn't answer that. Please try again."
 
-    async def _handle_qa(
+            self._store.append_message(
+                thread_id, ChatMessage(role="agent", content=response_text)
+            )
+            self._broadcaster.broadcast(channel_id, {
+                "type": "chat_response",
+                "payload": {"chunk": response_text},
+            })
+            self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+        elif classification.intent == IntentType.SMALL_CHANGE:
+            if self._orchestrator is not None:
+                plan_md = await self._draft_plan_markdown(message, context)
+                await self._orchestrator.run_inline_change(
+                    thread_id=thread_id,
+                    goal=message,
+                    workspace_path=self._workspace_path,
+                    plan_markdown=plan_md,
+                    explore_context=context,
+                    channel_id=channel_id,
+                    store=self._store,
+                )
+            else:
+                self._broadcaster.broadcast(channel_id, {
+                    "type": "chat_response",
+                    "payload": {"chunk": "[small_change: no orchestrator configured]"},
+                })
+                self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+        else:  # large_change
+            if self._orchestrator is not None:
+                task_id = await self._orchestrator.create_task_from_chat(
+                    thread_id=thread_id,
+                    goal=message,
+                    workspace_path=self._workspace_path,
+                    explore_context=context,
+                    store=self._store,
+                )
+                self._broadcaster.broadcast(channel_id, {
+                    "type": "task_card",
+                    "payload": {"task_id": task_id},
+                })
+            else:
+                self._broadcaster.broadcast(channel_id, {
+                    "type": "chat_response",
+                    "payload": {"chunk": "[large_change: no orchestrator configured]"},
+                })
+            self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+    async def _draft_plan_markdown(
         self,
-        thread_id: str,
-        message: str,
-        context: list[dict[str, Any]],
-        history: list[dict[str, str]],
-    ) -> AsyncIterator[ChatEvent]:
+        goal: str,
+        explore_context: list[dict[str, Any]],
+    ) -> str:
+        """Generate a short bullet-list plan for display before inline change runs."""
         try:
-            response_text = await self._transport.generate_text(
+            return await self._transport.generate_text(
                 model=self._model,
-                system_instructions=_QA_PROMPT,
+                system_instructions=_DRAFT_PLAN_PROMPT,
                 user_payload={
+                    "goal": goal,
                     "workspace_path": self._workspace_path,
-                    "conversation_history": history[-10:],
-                    "workspace_context": context,  # already gathered — no re-read
-                    "question": message,
+                    "explore_context": explore_context,
                 },
             )
         except Exception:
-            logger.exception("Q&A LLM call failed")
-            response_text = "Sorry, I couldn't answer that. Please try again."
-
-        self._store.append_message(
-            thread_id, ChatMessage(role="agent", content=response_text)
-        )
-        yield ChatEvent(type="chat_response", payload={"chunk": response_text})
-        yield ChatEvent(type="chat_done", payload={})
+            logger.exception("_draft_plan_markdown failed — using goal as fallback")
+            return f"- {goal}"
