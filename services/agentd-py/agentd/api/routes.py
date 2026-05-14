@@ -668,6 +668,21 @@ def build_router(
         _asyncio.create_task(_build())
         return {"status": "building", "workspace_path": workspace_path}
 
+    # --- Inline change routes ---
+
+    @router.post("/chat/inline-changes/{inline_task_id}/promote")
+    async def promote_inline_change(inline_task_id: str) -> dict:
+        try:
+            await orchestrator.promote_inline_change(inline_task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"status": "promoted", "inline_task_id": inline_task_id}
+
+    @router.delete("/chat/inline-changes/{inline_task_id}")
+    async def discard_inline_change(inline_task_id: str) -> dict:
+        await orchestrator.discard_inline_change(inline_task_id)
+        return {"status": "discarded", "inline_task_id": inline_task_id}
+
     # --- Chat routes ---
 
     if chat_agent is not None:
