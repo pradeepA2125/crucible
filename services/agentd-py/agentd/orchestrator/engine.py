@@ -299,6 +299,15 @@ class AgentOrchestrator:
             # The replay buffer is cleared so that the post-approval stream starts fresh.
             self._running_tasks.discard(task_id)
             self.broadcaster.clear_replay(task_id)
+            if task.chat_channel_id:
+                self.broadcaster.broadcast(task.chat_channel_id, {
+                    "type": "task_status_changed",
+                    "payload": {
+                        "task_id": task_id,
+                        "status": task.status.value,
+                        "plan_markdown": task.plan_markdown,
+                    },
+                })
             return task
 
         except Exception as exc:
@@ -379,6 +388,15 @@ class AgentOrchestrator:
                 await self._store.save(task)
                 self._running_tasks.discard(task_id)
                 self.broadcaster.clear_replay(task_id)
+                if task.chat_channel_id:
+                    self.broadcaster.broadcast(task.chat_channel_id, {
+                        "type": "task_status_changed",
+                        "payload": {
+                            "task_id": task_id,
+                            "status": task.status.value,
+                            "plan_markdown": task.plan_markdown,
+                        },
+                    })
                 return task
 
             # Approved! Generate JSON plan from Markdown
@@ -687,6 +705,7 @@ class AgentOrchestrator:
             mode=request.mode,
             status=TaskStatus.QUEUED,
             initial_explore_context=explore_context,
+            chat_channel_id=f"chat:{thread_id}",
         )
         await self._store.create(task)
         asyncio.create_task(self.run_task(task.task_id))

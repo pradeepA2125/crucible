@@ -521,6 +521,13 @@ export class AiEditorController {
     feedback?: string
   ): Promise<void> {
     if (action === "implement") {
+      const client = this.createClient(this.settings.getBackendBaseUrl());
+      try {
+        await client.providePlanFeedback(taskId, null);
+      } catch (error) {
+        this.ui.showError(`Failed to approve plan: ${formatError(error)}`);
+        return;
+      }
       await this.streamTaskIntoChatThread(taskId);
     } else {
       if (!feedback?.trim()) return;
@@ -551,6 +558,30 @@ export class AiEditorController {
           this.ui.appendChatMessage({
             role: "agent",
             content: `✗ ${event.payload.op_type}: ${event.payload.path} — ${event.payload.error}`,
+            type: "text",
+            timestamp: this.now(),
+            metadata: {},
+          });
+        } else if (event.type === "tool_call") {
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: `[${event.payload.phase}] ${event.payload.tool}: ${event.payload.thought}`,
+            type: "text",
+            timestamp: this.now(),
+            metadata: {},
+          });
+        } else if (event.type === "patch_applied") {
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: `Patch applied for step ${event.payload.step_id} (${event.payload.touched_files.join(", ")})`,
+            type: "text",
+            timestamp: this.now(),
+            metadata: {},
+          });
+        } else if (event.type === "planning_complete") {
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: `Planning complete (confidence: ${event.payload.confidence}, examined ${event.payload.files_examined.length} files)`,
             type: "text",
             timestamp: this.now(),
             metadata: {},
