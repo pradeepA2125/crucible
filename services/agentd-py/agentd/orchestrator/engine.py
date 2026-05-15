@@ -61,6 +61,10 @@ from agentd.workspace.shadow import ShadowWorkspace, ShadowWorkspaceManager
 
 logger = logging.getLogger(__name__)
 
+# Max chars of each explore-phase tool result injected into the ToolLoop's
+# initial history. Mirrors AI_EDITOR_TOOL_RESULT_MAX_CHARS used by the loop.
+_MAX_EXPLORE_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "4000"))
+
 
 _NEARBY_PATTERN_NAMES: frozenset[str] = frozenset({"__init__.py", "conftest.py"})
 
@@ -577,16 +581,36 @@ class AgentOrchestrator:
             testing_strategy="none — inline change, no verify",
         )
 
-        # Read target files from disk (not from explore_context) so the ToolLoop
-        # model always gets the full, untruncated content. The explore phase
-        # tool caps output at 500 lines, which causes the model to still make
-        # extra read_file calls for any file longer than that limit.
-        file_contents: dict[str, str] = {}
-        for rel in target_files:
-            try:
-                file_contents[rel] = (real_path / rel).read_text(errors="replace")
-            except OSError:
-                pass
+        # Convert the chat explore phase results into pre-seeded ToolLoop history.
+        # This mirrors how the PlanningAgent's retrieval works: the model starts
+        # already knowing what search_code and read_file found, so it only fetches
+        # what it genuinely still needs (e.g. an offset range it hasn't seen yet).
+        # This avoids dumping whole files and lets the model discover exactly the
+        # lines it needs via targeted additional reads.
+        initial_history: list[dict[str, object]] = []
+        for entry in explore_context:
+            tool_name = entry.get("tool", "")
+            args_val = entry.get("args") or {}
+            result_text = str(entry.get("result", ""))
+            is_error = bool(entry.get("is_error", False))
+            if not tool_name or not result_text:
+                continue
+            # Reconstruct as assistant tool_call + tool_result pair
+            initial_history.append({
+                "role": "assistant",
+                "content": json.dumps({
+                    "type": "tool_call",
+                    "thought": "Exploring workspace before making changes.",
+                    "tool": tool_name,
+                    "args": args_val,
+                }),
+            })
+            initial_history.append({
+                "role": "tool_result",
+                "tool": tool_name,
+                "content": result_text[:_MAX_EXPLORE_INJECT_CHARS],
+                "is_error": is_error,
+            })
 
         registry = build_tool_registry(
             shadow_path,
@@ -604,15 +628,12 @@ class AgentOrchestrator:
             skip_verify=True,
         )
 
-        # Use a higher per-step budget for inline changes (no verify phase needed)
-        inline_budget = TaskBudget(max_tool_calls_per_step=16)
+        inline_budget = TaskBudget(max_tool_calls_per_step=8)
         patch_context: dict[str, object] = {
             "goal": goal,
             "workspace_path": workspace_path,
             "plan_markdown": plan_markdown,
         }
-        if file_contents:
-            patch_context["retrieval_context"] = {"file_contents": file_contents}
 
         try:
             outcome = await tool_loop.run(
@@ -620,6 +641,7 @@ class AgentOrchestrator:
                 patch_context,
                 inline_budget,
                 TaskUsage(),
+                initial_history=initial_history or None,
             )
         except Exception as exc:
             logger.exception("run_inline_change tool loop failed", extra={"inline_task_id": inline_task_id})

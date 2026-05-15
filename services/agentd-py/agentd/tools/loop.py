@@ -121,9 +121,10 @@ class ToolLoop:
         patch_request_context: dict[str, object],
         budget: TaskBudget,
         usage: TaskUsage,
+        initial_history: list[dict[str, object]] | None = None,
     ) -> StepOutcome:
         trace = AgentToolTrace(step_id=step.id)
-        history: list[dict[str, object]] = []
+        history: list[dict[str, object]] = list(initial_history) if initial_history else []
         phase = "explore"
         explore_calls = 0
         verify_calls = 0
