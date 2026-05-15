@@ -26,7 +26,7 @@ from agentd.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-_MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "4000"))
+_MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "100000"))
 
 
 @dataclass

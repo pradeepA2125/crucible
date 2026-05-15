@@ -621,7 +621,7 @@ class AgentOrchestrator:
             skip_verify=True,
         )
 
-        inline_budget = TaskBudget(max_tool_calls_per_step=8)
+        inline_budget = TaskBudget(max_tool_calls_per_step=32)
         patch_context: dict[str, object] = {
             "goal": goal,
             "workspace_path": workspace_path,
