@@ -61,9 +61,6 @@ from agentd.workspace.shadow import ShadowWorkspace, ShadowWorkspaceManager
 
 logger = logging.getLogger(__name__)
 
-# Max chars of each explore-phase tool result injected into the ToolLoop's
-# initial history. Mirrors AI_EDITOR_TOOL_RESULT_MAX_CHARS used by the loop.
-_MAX_EXPLORE_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "4000"))
 
 
 _NEARBY_PATTERN_NAMES: frozenset[str] = frozenset({"__init__.py", "conftest.py"})
@@ -604,7 +601,7 @@ class AgentOrchestrator:
             initial_history.append({
                 "role": "tool_result",
                 "tool": tool_name,
-                "content": result_text[:_MAX_EXPLORE_INJECT_CHARS],
+                "content": result_text,
                 "is_error": is_error,
             })
 
