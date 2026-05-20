@@ -152,8 +152,16 @@ stateDiagram-v2
 | `TEST_FAILED` | `test_passed` | `TEST_PASSED` |
 | `TEST_PASSED` | `verify_done` | terminal |
 
-Any `(state, event)` pair not in this table is a protocol error — `transition()` raises
-`InvalidVerifyPhaseTransition` with the current state and event in the message.
+Any `(state, event)` pair dispatched to `transition()` but absent from this table is a
+protocol error — `transition()` raises `InvalidVerifyPhaseTransition` with the current state
+and event in the message.
+
+**Dispatch rule:** the loop controls which events reach the state machine. `READ_CALLED` is
+only dispatched when `sm.state == PATCH_FAILED_MUST_READ` — reads in all other states execute
+and return without calling `transition()` at all. Self-loops (`POSTPATCH_BLOCKING +
+postpatch_blocking`, `TEST_FAILED + test_failed`) are explicitly listed because those events
+are dispatched from those states and need a defined outcome. Implicit "no-op stays in state"
+rows are not listed and not needed.
 
 ---
 
