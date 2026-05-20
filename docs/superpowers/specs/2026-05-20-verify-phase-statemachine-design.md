@@ -73,7 +73,6 @@ in the prompt as informational context.
 
 ```python
 class VerifyPhaseEvent(str, Enum):
-    PATCH_SUCCESS      = "patch_success"      # shadow write succeeded
     PATCH_FAILED       = "patch_failed"       # search text not found / apply error
     READ_CALLED        = "read_called"        # read_file or search_code dispatched
     POSTPATCH_BLOCKING = "postpatch_blocking" # py_compile/mypy errors after patch
@@ -82,10 +81,9 @@ class VerifyPhaseEvent(str, Enum):
     TEST_FAILED        = "test_failed"        # run_command non-zero
 ```
 
-`PATCH_SUCCESS` fires immediately after the shadow write. The loop then runs `PostPatchAnalyzer`
-synchronously and fires `POSTPATCH_BLOCKING` or `POSTPATCH_CLEAN` as a second event before
-returning control to the model. The model never sees these as separate turns — both transitions
-happen atomically from the loop's perspective.
+`PATCH_SUCCESS` is **not** a state machine event. When a patch applies cleanly, the loop runs
+`PostPatchAnalyzer` synchronously and fires `POSTPATCH_BLOCKING` or `POSTPATCH_CLEAN` directly.
+There is no intermediate state between "patch applied" and the postpatch result.
 
 ---
 
@@ -98,27 +96,27 @@ stateDiagram-v2
     [*] --> EXPLORE
 
     EXPLORE --> PATCH_FAILED_MUST_READ : patch_failed
-    EXPLORE --> POSTPATCH_BLOCKING     : patch_success → blocking errors
-    EXPLORE --> POSTPATCH_CLEAN        : patch_success → clean
+    EXPLORE --> POSTPATCH_BLOCKING     : postpatch_blocking
+    EXPLORE --> POSTPATCH_CLEAN        : postpatch_clean
 
     PATCH_FAILED_MUST_READ --> PATCH_FAILED_CAN_RETRY : read_called
 
     PATCH_FAILED_CAN_RETRY --> PATCH_FAILED_MUST_READ : patch_failed (count < MAX)
-    PATCH_FAILED_CAN_RETRY --> POSTPATCH_BLOCKING     : patch_success → blocking errors
-    PATCH_FAILED_CAN_RETRY --> POSTPATCH_CLEAN        : patch_success → clean
+    PATCH_FAILED_CAN_RETRY --> POSTPATCH_BLOCKING     : postpatch_blocking
+    PATCH_FAILED_CAN_RETRY --> POSTPATCH_CLEAN        : postpatch_clean
     PATCH_FAILED_CAN_RETRY --> [*]                    : patch_failed (count = MAX)\n⚡ VerifyPhaseExhausted
 
     POSTPATCH_BLOCKING --> PATCH_FAILED_MUST_READ : patch_failed
-    POSTPATCH_BLOCKING --> POSTPATCH_BLOCKING     : patch_success → still blocking
-    POSTPATCH_BLOCKING --> POSTPATCH_CLEAN        : patch_success → clean
+    POSTPATCH_BLOCKING --> POSTPATCH_BLOCKING     : postpatch_blocking (self)
+    POSTPATCH_BLOCKING --> POSTPATCH_CLEAN        : postpatch_clean
 
     POSTPATCH_CLEAN --> TEST_FAILED : test_failed
     POSTPATCH_CLEAN --> TEST_PASSED : test_passed
     POSTPATCH_CLEAN --> [*]         : verify_done (no tests required) ✓
 
     TEST_FAILED --> PATCH_FAILED_MUST_READ : patch_failed
-    TEST_FAILED --> POSTPATCH_BLOCKING     : patch_success → blocking errors
-    TEST_FAILED --> POSTPATCH_CLEAN        : patch_success → clean
+    TEST_FAILED --> POSTPATCH_BLOCKING     : postpatch_blocking
+    TEST_FAILED --> POSTPATCH_CLEAN        : postpatch_clean
     TEST_FAILED --> TEST_FAILED            : test_failed (re-run)
     TEST_FAILED --> TEST_PASSED            : test_passed
 
@@ -208,8 +206,8 @@ entering the new state. This covers:
 
 - After `patch_failed` → `PATCH_FAILED_MUST_READ`: cache clears. After reading, the same patch
   body can be submitted again (with corrected search text).
-- After `patch_success` → `POSTPATCH_*`: cache clears. Model can patch a different location in
-  the same file without the prior patch key blocking it.
+- After `postpatch_blocking` / `postpatch_clean` (patch applied + analyzer ran): cache clears.
+  Model can patch a different location in the same file without the prior patch key blocking it.
 - After `test_failed` → `TEST_FAILED`: cache clears. Model can re-apply a fix to the same
   location after reading test output.
 
@@ -312,8 +310,8 @@ class VerifyPhaseStateMachine:
    - Build `patch_key = (op_type, file_path, search_text, replace_text)` tuple.
    - `sm.check_patch_dedup(patch_key)` → if True, return dedup response to model; do not call engine.
    - Else: dispatch to patch engine, `sm.record_patch_attempt(patch_key)`.
-   - On engine success: `sm.transition(PATCH_SUCCESS)`, run `PostPatchAnalyzer`,
-     fire `sm.transition(POSTPATCH_BLOCKING or POSTPATCH_CLEAN)`.
+   - On engine success: run `PostPatchAnalyzer`, fire `sm.transition(POSTPATCH_BLOCKING)`
+     or `sm.transition(POSTPATCH_CLEAN)` based on `blocking_clean` result.
    - On engine failure: `sm.transition(PATCH_FAILED)` (may raise `VerifyPhaseExhausted`).
 5. On `read_file` / `search_code` dispatch:
    - Fire `sm.transition(READ_CALLED)` only when `sm.state == PATCH_FAILED_MUST_READ`.
