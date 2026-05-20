@@ -150,7 +150,42 @@ The model's only path forward is `emit_patch` (e.g., remove the import, add a st
 
 **Recommended fix:** Add `find_binary` to `POSTPATCH_BLOCKING`'s allowed tools (it's diagnostic-only — no state event fires). Optionally add `setup_env` and `init_workspace` for the missing-dep case. Spec text would need a corresponding update.
 
-### 🟡 Risk 5.3 — `type` enum is not dynamically filtered
+### ✅ Risk 5.3 — CLOSED (commit 42a81ca)
+
+`VerifyPhaseStateMachine.allowed_action_types()` is now derived from the
+allowed-tools table and threaded into `DefaultReasoningEngine.create_tool_step`,
+which deep-copies the schema and replaces the outer `type` enum per turn.
+Constrained-decoding providers physically cannot sample a disallowed type.
+
+### ✅ Loop-level fallback gates — added in follow-up
+
+For providers that ignore the JSON schema (Anthropic, OpenRouter without schema
+support, some Ollama configurations), the schema filter is text-only. Two
+belt-and-suspenders gates in `loop.py` now catch any bypass:
+
+1. **Action-type gate** (`loop.py:247-268`): runs immediately after parsing
+   `action_type`. If `action_type not in sm.allowed_action_types()`, the loop
+   appends a `_action_gate` pushback message and continues to the next iteration.
+   verify_done from EXPLORE, emit_patch from MUST_READ / POSTPATCH_CLEAN /
+   TEST_PASSED — all routed through the gate before reaching their handlers.
+
+2. **Tool gate** (`loop.py:586-606`): runs inside the `tool_call` branch after
+   parsing `tool_name`, BEFORE budget enforcement and BEFORE
+   `registry.execute()`. If `tool_name not in sm.allowed_tools()`, the loop
+   pushes back with a `_tool_gate` message and continues. The actual subprocess
+   (or `setup_env` install, or `init_workspace` manifest write) does not run.
+
+Both gates produce the same `state_description` text in their pushback so the
+model gets uniform recovery context. The original `verify_done` handler-level
+state check is retained as defense-in-depth but is now redundant for the
+schema-bypass scenario.
+
+Coverage: `tests/test_tool_loop_state_gates.py` (4 tests) pins each gate's
+behaviour using scripted engines that deliberately bypass the schema.
+
+### ~~🟡 Risk 5.3 — `type` enum is not dynamically filtered~~ (superseded above)
+
+(Original description retained for history.)
 
 The spec promises "hard schema enforcement — the model cannot call a tool that is absent from the schema." This holds for tools inside `tool_call` (`AGENT_STEP_RESPONSE_SCHEMA.properties.tool` — well, today the `tool` field is `{"type": "string"}` with no enum at all, but `tool_definitions` is the contract the model sees). But the **outer `type` enum** (`tool_call | emit_patch | verify_done | revision_needed`) at `tool_prompts.py:13` is **static**.
 

@@ -245,6 +245,30 @@ class ToolLoop:
                 thought[:300] if thought else "",
             )
 
+            # Action-type gate — belt-and-suspenders backup for the schema filter.
+            # Constrained-decoding providers can't emit a disallowed type because the
+            # `type` enum is filtered per turn (see engine.py). Text-prompt providers
+            # (Anthropic, Ollama w/o constrained JSON, etc.) can still craft an
+            # off-state type. Catch it here so the SM never sees an event it cannot
+            # legally dispatch from the current state.
+            _allowed_action_types = sm.allowed_action_types()
+            if action_type not in _allowed_action_types:
+                logger.warning(
+                    "[loop] action_type %r not allowed in state %s (step %s)",
+                    action_type, sm.state.value, step.id,
+                    extra={"task_id": self._task_id},
+                )
+                history.append({"role": "assistant", "content": json.dumps(response, default=str)})
+                history.append({
+                    "role": "tool_result", "tool": "_action_gate",
+                    "content": (
+                        f"Action type {action_type!r} is not valid in the current state. "
+                        f"Allowed: {sorted(_allowed_action_types)}.\n"
+                        f"{sm.state_description()}"
+                    ),
+                })
+                continue
+
             # ── verify_done ──────────────────────────────────────────────
             if action_type == "verify_done":
                 verified_flag = bool(response.get("verified", False))
@@ -560,6 +584,34 @@ class ToolLoop:
                     f" at iteration {iteration}"
                 )
 
+            # Parse tool name and args early so we can gate before consuming budget.
+            tool_name = str(response.get("tool", ""))
+            raw_args = response.get("args")
+            args: dict[str, object] = raw_args if isinstance(raw_args, dict) else {}
+
+            # Tool gate — same belt-and-suspenders as the action-type gate.
+            # The schema filter at engine.py removes off-state tools from the
+            # tool_definitions list per turn. For providers that ignore the
+            # schema, this catches the off-state tool BEFORE budget is consumed
+            # and BEFORE the side-effectful registry.execute() runs (which would
+            # otherwise actually invoke setup_env / run_command / etc.).
+            _allowed_tools = sm.allowed_tools()
+            if tool_name not in _allowed_tools:
+                logger.warning(
+                    "[loop] tool %r not allowed in state %s (step %s)",
+                    tool_name, sm.state.value, step.id,
+                    extra={"task_id": self._task_id},
+                )
+                history.append({"role": "assistant", "content": json.dumps(response, default=str)})
+                history.append({
+                    "role": "tool_result", "tool": "_tool_gate",
+                    "content": (
+                        f"Tool {tool_name!r} is not available in the current state.\n"
+                        f"{sm.state_description()}"
+                    ),
+                })
+                continue
+
             # Budget enforcement per phase
             if phase == "explore":
                 if explore_calls >= max_explore:
@@ -609,10 +661,6 @@ class ToolLoop:
                         tool_trace=trace,
                     )
                 verify_calls += 1
-
-            tool_name = str(response.get("tool", ""))
-            raw_args = response.get("args")
-            args: dict[str, object] = raw_args if isinstance(raw_args, dict) else {}
 
             args_repr = json.dumps(args, default=str)[:300]
             logger.info(
