@@ -292,12 +292,14 @@ class VerifyPhaseStateMachine:
     def state_description(
         self,
         *,
+        iteration: int = 0,
         error_summary: str = "",
         failure_summary: str = "",
     ) -> str:
         """Human-readable description of the current state for injection into the system prompt.
 
         Called once per loop turn. Tells the model exactly where it is and what it should do next.
+        iteration: current loop iteration count — shown in header as "[iteration N]", informational only.
         error_summary: first ~300 chars of postpatch analyzer output (used in POSTPATCH_BLOCKING).
         failure_summary: first ~300 chars of test command output (used in TEST_FAILED).
         """
@@ -311,9 +313,8 @@ class VerifyPhaseStateMachine:
 **`agentd/tools/loop.py`** — the only file that changes behavior:
 
 1. Instantiate `sm = VerifyPhaseStateMachine()` at the top of each step loop.
-2. Before each model call: `sm.allowed_tools()` → filter tool schema.
-3. Before each model call: prepend `sm.state_description()` to the system prompt.
-4. On `emit_patch` dispatch:
+2. Before each model call: `sm.allowed_tools()` → filter tool schema; `sm.state_description(iteration=i)` → prepend to system prompt.
+3. On `emit_patch` dispatch:
    - Build `patch_key = (op_type, file_path, search_text, replace_text)` tuple.
    - `sm.check_patch_dedup(patch_key)` → if True, return dedup response to model; do not call engine.
    - Else: dispatch to patch engine, `sm.record_patch_attempt(patch_key)`.
