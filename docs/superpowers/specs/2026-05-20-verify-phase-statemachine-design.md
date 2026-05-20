@@ -318,13 +318,148 @@ class VerifyPhaseStateMachine:
 
 ---
 
+## Tool prompt reform
+
+`tool_prompts.py` currently contains static verify-phase guidance that does not change between
+turns. This section replaces all of it with a dynamic, per-turn injection driven by
+`sm.state_description()`. The goal is not enforcement (the tool schema handles that) — it is
+giving the model honest, contextual reasoning about why it is in this state and what it should
+do next.
+
+### Injection mechanism
+
+Each loop turn, `sm.state_description()` is prepended to the tool system prompt before the
+model call. It is a short paragraph, not a bullet list. It always covers:
+
+1. **What just happened** — the event that caused the current state (or initial context for EXPLORE).
+2. **Why** — the reasoning behind the transition, so the model understands the constraint rather than fighting it.
+3. **Available tools** — what can be called right now.
+4. **Path forward** — what action unlocks the next state.
+
+Dynamic values are interpolated where useful (retry count, error summary).
+
+### Per-state messages
+
+---
+
+**`EXPLORE`**
+
+```
+You are in the explore phase. No patch has been applied yet for this step.
+Read the relevant files, search for symbols, and understand the code structure before making
+changes. When you have enough context, emit your patch.
+
+Available tools: read_file, search_code, list_directory, emit_patch
+```
+
+---
+
+**`PATCH_FAILED_MUST_READ`**
+
+```
+Your last patch failed — the search text was not found in the file. This usually means the
+file content differs from what you expected, either because a prior patch changed it or the
+search string doesn't match exactly (whitespace, indentation, nearby lines).
+
+To help you correct the patch, emit_patch is unavailable right now. Read the actual file
+content first so you have the exact text to search for. Once you call read_file or
+search_code, emit_patch becomes available again.
+
+Available tools: read_file, search_code, list_directory
+Next: read the file → emit_patch unlocks
+```
+
+---
+
+**`PATCH_FAILED_CAN_RETRY`** — `retry_count` and `MAX_PATCH_RETRIES` are interpolated
+
+```
+You've read the file. emit_patch is available again (retry {retry_count} of {MAX_PATCH_RETRIES}).
+Use the exact text from your last read as the search string — copy it verbatim, including
+indentation and surrounding lines. If the same search string keeps failing, try a smaller,
+more distinctive excerpt, or switch to a different operation type.
+
+Available tools: read_file, search_code, list_directory, emit_patch
+```
+
+---
+
+**`POSTPATCH_BLOCKING`** — `error_summary` (first 300 chars of postpatch output) is interpolated
+
+```
+Your patch applied, but static analysis found blocking errors that must be fixed before
+running tests:
+
+{error_summary}
+
+Read the affected lines, then emit a corrective patch. Tests are unavailable until these
+errors are resolved.
+
+Available tools: read_file, search_code, list_directory, emit_patch
+```
+
+---
+
+**`POSTPATCH_CLEAN`**
+
+```
+Static checks passed — no compile or type errors.
+Run the relevant tests with run_command to confirm correctness. If this step has no automated
+tests (documentation, config, or comment-only changes), call verify_done(True) directly.
+
+Available tools: read_file, search_code, list_directory, run_command, verify_done
+```
+
+---
+
+**`TEST_FAILED`** — `failure_summary` (first 300 chars of test output) is interpolated
+
+```
+Tests ran but failed:
+
+{failure_summary}
+
+Read the failure output, locate the issue, and emit a corrective patch. You can re-run a
+narrower test command after patching — no need to run the full suite again.
+
+Available tools: read_file, search_code, list_directory, emit_patch, run_command
+```
+
+---
+
+**`TEST_PASSED`**
+
+```
+Tests passed. Call verify_done(True) to complete this step.
+
+Available tools: read_file, verify_done
+```
+
+---
+
+### What gets removed from `tool_prompts.py`
+
+All static verify-phase guidance in the current `TOOL_LOOP_SYSTEM_PROMPT` is removed:
+
+- The "after applying a patch, verify it works" block
+- The "do not call read_file / search_code in verify phase" prohibition (was already wrong;
+  the shadow-reads design removed it, but this replaces it with correct phased guidance)
+- Any static text about available tools in the verify phase
+
+These are fully superseded by the per-turn `state_description()` injection.
+
+The explore-phase static guidance (how to use read_file, search_code, what op types exist)
+remains — it lives above the dynamic injection and does not change per turn.
+
+---
+
 ## Files to create / modify
 
 | File | Change |
 |---|---|
 | `agentd/tools/verify_phase_sm.py` | New — `VerifyPhaseState`, `VerifyPhaseEvent`, `VerifyPhaseStateMachine`, exception classes |
 | `agentd/tools/loop.py` | Replace 5 flags with `VerifyPhaseStateMachine`; wire all event dispatch points |
-| `agentd/reasoning/tool_prompts.py` | Add `state_description()` output to per-turn system prompt |
+| `agentd/reasoning/tool_prompts.py` | Remove static verify-phase text; add per-turn `state_description()` injection point |
 
 ---
 
