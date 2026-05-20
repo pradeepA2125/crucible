@@ -4,7 +4,7 @@
 
 **Goal:** Replace five scattered boolean flags in `tools/loop.py` with an explicit `VerifyPhaseStateMachine` that hard-enforces tool availability per state, clears emit_patch dedup on every transition, and injects a per-turn contextual prompt telling the model what state it is in and what to do next.
 
-**Architecture:** Three-file change. A new `agentd/tools/verify_phase_sm.py` owns all state machine logic. `loop.py` imports it, removes the five flags, and wires event dispatch at the three key points (patch success/failure, read-in-must-read, run_command result). `tool_prompts.py` removes all static verify-phase guidance and injects `sm.state_description()` into the per-turn `instruction` field of the user payload.
+**Architecture:** Three-file change. A new `agentd/tools/verify_phase_sm.py` owns all state machine logic. `loop.py` imports it, removes the five flags, and wires event dispatch at four points: (1) patch failure → `PATCH_FAILED`; (2) read called while in `PATCH_FAILED_MUST_READ` → `READ_CALLED`; (3) PostPatchAnalyzer result after a successful patch → `POSTPATCH_BLOCKING` or `POSTPATCH_CLEAN`; (4) run_command result → `TEST_PASSED` or `TEST_FAILED`. Note: patch success is not itself a state machine event — the loop runs PostPatchAnalyzer immediately and fires the postpatch event directly. `tool_prompts.py` removes all static verify-phase guidance and injects `sm.state_description()` into the per-turn `instruction` field of the user payload.
 
 **Tech Stack:** Python 3.11+, pytest-asyncio, existing `agentd` conventions (no new dependencies).
 
