@@ -289,10 +289,17 @@ class VerifyPhaseStateMachine:
     def is_terminal(self) -> bool:
         return self.state == VerifyPhaseState.TEST_PASSED
 
-    def state_description(self) -> str:
+    def state_description(
+        self,
+        *,
+        error_summary: str = "",
+        failure_summary: str = "",
+    ) -> str:
         """Human-readable description of the current state for injection into the system prompt.
 
         Called once per loop turn. Tells the model exactly where it is and what it should do next.
+        error_summary: first ~300 chars of postpatch analyzer output (used in POSTPATCH_BLOCKING).
+        failure_summary: first ~300 chars of test command output (used in TEST_FAILED).
         """
         ...
 ```
