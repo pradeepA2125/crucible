@@ -388,7 +388,8 @@ Next: read the file → emit_patch unlocks
 ```
 You've read the file. emit_patch is available again (retry {retry_count} of {MAX_PATCH_RETRIES}).
 Use what you just read to construct a correct patch. If the same op type keeps failing, switch
-to a different one that better fits what you observed in the file.
+to a different one that better fits what you observed in the file. The retry counter only
+increments on actual patch failures that reach the engine — duplicate call blocks are free.
 
 Available tools: read_file, search_code, list_directory, emit_patch
 ```

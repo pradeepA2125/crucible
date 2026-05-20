@@ -212,7 +212,9 @@ class VerifyPhaseStateMachine:
                 "You've read the file. emit_patch is available again. "
                 "Use what you just read to construct a correct patch. "
                 "If the same op type keeps failing, switch to a different one that "
-                "better fits what you observed in the file.\n"
+                "better fits what you observed in the file. "
+                f"The retry counter ({rc}/{mx}) only increments on actual patch failures "
+                "that reach the engine — duplicate call blocks are free.\n"
                 "Available tools: read_file, search_code, list_directory, emit_patch"
             )
 
