@@ -370,15 +370,11 @@ Available tools: read_file, search_code, list_directory, emit_patch
 **`PATCH_FAILED_MUST_READ`**
 
 ```
-Your last patch failed — the file content doesn't match what your patch expected. The file may
-have changed since you last read it, or your assumed structure (text, diff context, AST node,
-line range) was off.
-
-To help you correct the patch, emit_patch is unavailable right now. Read the actual current
-file content first. Once you call read_file or search_code, emit_patch becomes available again.
+Last patch failed — the file may not match what the patch expected. Reading the file gives
+you ground truth before deciding what to do next. emit_patch is locked until you read;
+it unlocks automatically after.
 
 Available tools: read_file, search_code, list_directory
-Next: read the file → emit_patch unlocks
 ```
 
 ---
@@ -386,10 +382,10 @@ Next: read the file → emit_patch unlocks
 **`PATCH_FAILED_CAN_RETRY`** — `retry_count` and `MAX_PATCH_RETRIES` are interpolated
 
 ```
-You've read the file. emit_patch is available again (retry {retry_count} of {MAX_PATCH_RETRIES}).
-Use what you just read to construct a correct patch. If the same op type keeps failing, switch
-to a different one that better fits what you observed in the file. The retry counter only
-increments on actual patch failures that reach the engine — duplicate call blocks are free.
+You've read the file. emit_patch is available (retry {retry_count} of {MAX_PATCH_RETRIES}).
+Use what you observed to decide your next move — patch if needed, read more if unsure, or
+switch op type if the current one keeps failing. Retry counter only increments on actual
+engine failures.
 
 Available tools: read_file, search_code, list_directory, emit_patch
 ```
@@ -399,13 +395,11 @@ Available tools: read_file, search_code, list_directory, emit_patch
 **`POSTPATCH_BLOCKING`** — `error_summary` (first 300 chars of postpatch output) is interpolated
 
 ```
-Your patch applied, but static analysis found blocking errors that must be fixed before
-running tests:
+Patch applied, but static analysis found errors that need resolving before tests can run:
 
 {error_summary}
 
-Read the affected lines, then emit a corrective patch. Tests are unavailable until these
-errors are resolved.
+run_command is locked for now.
 
 Available tools: read_file, search_code, list_directory, emit_patch
 ```
@@ -415,9 +409,8 @@ Available tools: read_file, search_code, list_directory, emit_patch
 **`POSTPATCH_CLEAN`**
 
 ```
-Static checks passed — no compile or type errors.
-Run the relevant tests with run_command to confirm correctness. If this step has no automated
-tests (documentation, config, or comment-only changes), call verify_done(True) directly.
+Static checks passed. You can run tests, read more, or call verify_done if the step is
+complete.
 
 Available tools: read_file, search_code, list_directory, run_command, verify_done
 ```
@@ -427,12 +420,11 @@ Available tools: read_file, search_code, list_directory, run_command, verify_don
 **`TEST_FAILED`** — `failure_summary` (first 300 chars of test output) is interpolated
 
 ```
-Tests ran but failed:
+Tests failed:
 
 {failure_summary}
 
-Read the failure output, locate the issue, and emit a corrective patch. You can re-run a
-narrower test command after patching — no need to run the full suite again.
+Read the output, patch if needed, or re-run a narrower command to narrow down the issue.
 
 Available tools: read_file, search_code, list_directory, emit_patch, run_command
 ```
@@ -442,7 +434,7 @@ Available tools: read_file, search_code, list_directory, emit_patch, run_command
 **`TEST_PASSED`**
 
 ```
-Tests passed. Call verify_done(True) to complete this step.
+Tests passed. Call verify_done when ready.
 
 Available tools: read_file, verify_done
 ```

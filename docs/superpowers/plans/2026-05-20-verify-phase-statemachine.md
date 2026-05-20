@@ -196,46 +196,37 @@ class VerifyPhaseStateMachine:
 
         if s == _S.PATCH_FAILED_MUST_READ:
             return (
-                "CURRENT STATE: PATCH_FAILED — MUST READ BEFORE RETRYING\n"
-                "Your last patch failed — the file content doesn't match what your patch "
-                "expected. The file may have changed since you last read it, or your "
-                "assumed structure (text, diff context, AST node, line range) was off.\n\n"
-                "emit_patch is unavailable right now. Read the actual current file content "
-                "first. Once you call read_file or search_code, emit_patch becomes available again.\n"
-                "Available tools: read_file, search_code, list_directory\n"
-                "Next: read the file → emit_patch unlocks"
+                "CURRENT STATE: PATCH_FAILED\n"
+                "Last patch failed — the file may not match what the patch expected. "
+                "Reading the file gives you ground truth before deciding what to do next. "
+                "emit_patch is locked until you read; it unlocks automatically after.\n"
+                "Available tools: read_file, search_code, list_directory"
             )
 
         if s == _S.PATCH_FAILED_CAN_RETRY:
             return (
                 f"CURRENT STATE: PATCH_FAILED — RETRY {rc} of {mx}\n"
-                "You've read the file. emit_patch is available again. "
-                "Use what you just read to construct a correct patch. "
-                "If the same op type keeps failing, switch to a different one that "
-                "better fits what you observed in the file. "
-                f"The retry counter ({rc}/{mx}) only increments on actual patch failures "
-                "that reach the engine — duplicate call blocks are free.\n"
+                "You've read the file. emit_patch is available. "
+                "Use what you observed to decide your next move — patch if needed, "
+                "read more if unsure, or switch op type if the current one keeps failing. "
+                f"Retry counter ({rc}/{mx}) only increments on actual engine failures.\n"
                 "Available tools: read_file, search_code, list_directory, emit_patch"
             )
 
         if s == _S.POSTPATCH_BLOCKING:
             summary = f"\n{error_summary}\n" if error_summary else ""
             return (
-                "CURRENT STATE: POSTPATCH — BLOCKING ERRORS\n"
-                "Your patch applied but static analysis (py_compile / mypy) found blocking "
-                f"errors that must be fixed before running tests:{summary}\n"
-                "Read the affected lines, then emit a corrective patch. "
-                "run_command is unavailable until these errors are resolved.\n"
+                f"CURRENT STATE: POSTPATCH — BLOCKING ERRORS{summary}\n"
+                "Patch applied, but static analysis found errors that need resolving "
+                "before tests can run. run_command is locked for now.\n"
                 "Available tools: read_file, search_code, list_directory, emit_patch"
             )
 
         if s == _S.POSTPATCH_CLEAN:
             return (
                 "CURRENT STATE: POSTPATCH — CLEAN\n"
-                "Static checks passed — no compile or type errors.\n"
-                "Run the relevant tests with run_command to confirm correctness. "
-                "If this step has no automated tests (docs, config, comment-only changes), "
-                "call verify_done(True) directly.\n"
+                "Static checks passed. You can run tests, read more, "
+                "or call verify_done if the step is complete.\n"
                 "Available tools: read_file, search_code, list_directory, run_command, verify_done"
             )
 
@@ -243,16 +234,15 @@ class VerifyPhaseStateMachine:
             summary = f"\n{failure_summary}\n" if failure_summary else ""
             return (
                 f"CURRENT STATE: TEST_FAILED{summary}\n"
-                "Tests ran but failed. Read the failure output, locate the issue, "
-                "and emit a corrective patch. You can re-run a narrower test command "
-                "after patching — no need to run the full suite again.\n"
+                "Tests failed. Read the output, patch if needed, "
+                "or re-run a narrower command to narrow down the issue.\n"
                 "Available tools: read_file, search_code, list_directory, emit_patch, run_command"
             )
 
         if s == _S.TEST_PASSED:
             return (
                 "CURRENT STATE: TEST_PASSED\n"
-                "Tests passed. Call verify_done(True) to complete this step.\n"
+                "Tests passed. Call verify_done when ready.\n"
                 "Available tools: read_file, verify_done"
             )
 
