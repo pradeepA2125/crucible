@@ -27,7 +27,7 @@ class _ScriptedReasoning:
         self._responses = list(responses)
         self.received: list[tuple[dict, list, list]] = []
 
-    async def create_tool_step(self, *, step_context, history, tool_definitions):
+    async def create_tool_step(self, *, step_context, history, tool_definitions, on_thinking=None, state_description=""):
         self.received.append((dict(step_context), list(history), list(tool_definitions)))
         return self._responses.pop(0)
 
@@ -44,6 +44,9 @@ class _NoopRegistry:
 
     async def execute(self, name: str, args: dict):
         return ToolOutput(output="(stub)", is_error=False)
+
+    def use_shadow_for_reads(self) -> None:
+        pass
 
 
 def _make_step(targets: list[str]) -> PlanStep:

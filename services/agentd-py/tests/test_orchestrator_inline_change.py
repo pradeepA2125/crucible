@@ -16,15 +16,19 @@ class _EmitPatchEngine:
         self._search = search
         self._replace = replace
 
-    async def create_tool_step(self, step_context, history, tool_definitions):
-        if not history:
-            return {
-                "type": "emit_patch",
-                "thought": "patching",
-                "patch_ops": [{"op": "search_replace", "file": self._file,
-                               "search": self._search, "replace": self._replace, "reason": "r"}],
-            }
-        return {"type": "verify_done", "thought": "done", "verified": True, "test_output": ""}
+    async def create_tool_step(self, step_context, history, tool_definitions, on_thinking=None, state_description=""):
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "done", "verified": True, "test_output": ""}
+        return {
+            "type": "emit_patch",
+            "thought": "patching",
+            "patch_ops": [{"op": "search_replace", "file": self._file,
+                           "search": self._search, "replace": self._replace, "reason": "r"}],
+        }
 
     async def create_patch(self, *a, **kw):
         return {}
@@ -39,6 +43,12 @@ class _EmitPatchEngine:
 class _AlwaysPassValidator:
     async def run(self, workspace_path): ...
     async def run_touched(self, workspace_path, touched_files): ...
+
+
+class _NullStore:
+    """Minimal store stub that silently absorbs append_message calls."""
+    def append_message(self, thread_id: str, message: object) -> None:
+        pass
 
 
 def _make_orchestrator(tmp_path: Path, reasoning_engine) -> AgentOrchestrator:
@@ -69,7 +79,7 @@ async def test_run_inline_change_broadcasts_diff_ready(tmp_path: Path) -> None:
         plan_markdown="- change x to 2",
         explore_context=explore_context,
         channel_id="chat:t1",
-        store=None,
+        store=_NullStore(),
     )
 
     events = []
@@ -107,7 +117,7 @@ async def test_promote_inline_change_writes_to_real_workspace(tmp_path: Path) ->
         plan_markdown="",
         explore_context=explore_context,
         channel_id="chat:t2",
-        store=None,
+        store=_NullStore(),
     )
 
     # Find the inline_task_id
@@ -138,7 +148,7 @@ async def test_discard_inline_change_removes_shadow(tmp_path: Path) -> None:
         plan_markdown="",
         explore_context=explore_context,
         channel_id="chat:t3",
-        store=None,
+        store=_NullStore(),
     )
 
     inline_task_id = next(iter(orch._inline_shadows))

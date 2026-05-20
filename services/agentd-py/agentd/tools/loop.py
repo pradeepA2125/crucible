@@ -526,7 +526,7 @@ class ToolLoop:
                 history.append({
                     "role": "tool_result", "tool": "_patch_apply",
                     "content": (
-                        f"Patch applied.\n"
+                        f"Patch applied successfully.\n"
                         f"Touched files: {touched_files_str}\n"
                         f"testing_strategy: {testing_strategy}\n"
                         f"test_command hint: {test_cmd_hint}\n"

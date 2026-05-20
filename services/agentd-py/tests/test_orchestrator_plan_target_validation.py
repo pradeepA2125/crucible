@@ -32,8 +32,9 @@ class ReplanningReasoner:
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path)
+        _ = (task, workspace_path, on_thinking)
         self.plan_calls += 1
         self.plan_contexts.append(dict(retrieval_context))
         if self.plan_calls == 1:
@@ -96,8 +97,10 @@ class ReplanningReasoner:
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict[str, object]:
-        _ = (step_context, tool_definitions)
+        _ = (step_context, tool_definitions, on_thinking)
         in_verify = any(
             isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
             for msg in history
@@ -124,6 +127,8 @@ class ReplanningReasoner:
         plan_context: dict,
         history: list,
         tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict:
         _ = (plan_context, history, tool_definitions)
         return {
@@ -141,8 +146,9 @@ class AlwaysBadReasoner(ReplanningReasoner):
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path)
+        _ = (task, workspace_path, on_thinking)
         self.plan_calls += 1
         self.plan_contexts.append(dict(retrieval_context))
         return {
@@ -167,8 +173,9 @@ class MarkdownBlueprintReasoner(ReplanningReasoner):
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path)
+        _ = (task, workspace_path, on_thinking)
         self.plan_calls += 1
         self.plan_contexts.append(dict(retrieval_context))
         if self.plan_calls == 1:
@@ -240,8 +247,10 @@ class MarkdownBlueprintReasoner(ReplanningReasoner):
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict[str, object]:
-        _ = (step_context, tool_definitions)
+        _ = (step_context, tool_definitions, on_thinking)
         in_verify = any(
             isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
             for msg in history
@@ -269,8 +278,9 @@ class NewFileIntentReasoner(ReplanningReasoner):
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path, retrieval_context)
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         self.plan_calls += 1
         self.plan_contexts.append(dict(retrieval_context))
         return {
@@ -317,8 +327,10 @@ class NewFileIntentReasoner(ReplanningReasoner):
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict[str, object]:
-        _ = (step_context, tool_definitions)
+        _ = (step_context, tool_definitions, on_thinking)
         in_verify = any(
             isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
             for msg in history

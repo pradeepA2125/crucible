@@ -23,6 +23,8 @@ class RecordingReasoningEngine:
         plan_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict[str, object]:
         _ = (history, tool_definitions)
         self.planning_step_calls.append({"plan_context": plan_context})
@@ -39,7 +41,9 @@ class RecordingReasoningEngine:
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
+        _ = on_thinking
         self.plan_calls.append(
             {
                 "task_id": task.task_id,
@@ -99,8 +103,10 @@ class RecordingReasoningEngine:
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict[str, object]:
-        _ = tool_definitions
+        _ = (tool_definitions, on_thinking)
         in_verify = any(
             isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
             for msg in history

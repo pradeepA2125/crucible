@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
 
 from agentd.domain.models import Diagnostic, PlanStep, TaskRecord
@@ -11,29 +12,7 @@ class ReasoningEngine(Protocol):
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
-    ) -> object: ...
-
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str: ...
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object: ...
-
-    async def critique_json_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
+        on_thinking: Callable[[str], None] | None = None,
     ) -> object: ...
 
     async def create_patch(
@@ -56,8 +35,14 @@ class ReasoningEngine(Protocol):
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: Callable[[str], None] | None = None,
+        state_description: str = "",
     ) -> dict[str, object]:
         """Run one turn of the ReAct loop: given history + tools, return the next action.
+
+        state_description is the per-turn output of
+        VerifyPhaseStateMachine.state_description() — injected into the user
+        payload so the model knows which state it is in and what is available.
 
         Returns a dict with at minimum {"type": "tool_call"|"emit_patch", "thought": str}.
         For tool_call: also "tool" (name) and "args" (dict).
@@ -70,6 +55,7 @@ class ReasoningEngine(Protocol):
         plan_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         """One turn of the planning ReAct loop.
 

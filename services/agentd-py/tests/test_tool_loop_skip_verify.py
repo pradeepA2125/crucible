@@ -7,7 +7,7 @@ from agentd.tools.loop import VerifyResult
 
 class _EmitPatchEngine:
     """Scripted engine: emits patch immediately, then verify_done if asked."""
-    async def create_tool_step(self, step_context, history, tool_definitions):
+    async def create_tool_step(self, step_context, history, tool_definitions, on_thinking=None, state_description=""):
         if not history:
             return {
                 "type": "emit_patch",

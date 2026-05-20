@@ -127,6 +127,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
         on_thinking: Callable[[str], None] | None = None,
+        state_description: str = "",
     ) -> dict[str, object]:
         from agentd.reasoning.tool_prompts import (
             AGENT_STEP_RESPONSE_SCHEMA,
@@ -134,7 +135,9 @@ class DefaultReasoningEngine(ReasoningEngine):
             format_tool_system_prompt,
             inject_tools_into_payload,
         )
-        user_payload = build_tool_step_payload(step_context, history)
+        user_payload = build_tool_step_payload(
+            step_context, history, state_description=state_description,
+        )
         inject_tools_into_payload(user_payload, tool_definitions)
         system_instructions = format_tool_system_prompt()
         result = await self._transport.generate_json(

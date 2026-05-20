@@ -45,7 +45,7 @@ class AlwaysPassValidator:
 class RevisionNeededEngine:
     """Engine that immediately emits revision_needed."""
 
-    async def create_tool_step(self, step_context, history, tool_definitions):
+    async def create_tool_step(self, step_context, history, tool_definitions, on_thinking=None, state_description=""):
         return {
             "type": "revision_needed",
             "thought": "Target file is wrong",
@@ -98,6 +98,8 @@ class DeltaReplanReasoner:
         plan_context: dict,
         history: list,
         tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict:
         _ = (history, tool_definitions)
         self.planning_step_calls += 1
@@ -134,8 +136,9 @@ class DeltaReplanReasoner:
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict,
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path, retrieval_context)
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         return {
             "analysis": "initial plan — targets wrong file",
             "steps": [
@@ -155,8 +158,10 @@ class DeltaReplanReasoner:
         step_context: dict,
         history: list,
         tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict:
-        _ = tool_definitions
+        _ = (tool_definitions, on_thinking)
         self.tool_step_calls += 1
         allowed_files = step_context.get("allowed_files", [])
         if "correct_file.py" in allowed_files:
@@ -256,6 +261,8 @@ class AlwaysRevisionNeededReasoner:
         plan_context: dict,
         history: list,
         tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict:
         _ = (history, tool_definitions)
         self.planning_step_calls += 1
@@ -290,8 +297,9 @@ class AlwaysRevisionNeededReasoner:
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict,
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path, retrieval_context)
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         return {
             "analysis": "always-bad plan",
             "steps": [
@@ -311,8 +319,10 @@ class AlwaysRevisionNeededReasoner:
         step_context: dict,
         history: list,
         tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict:
-        _ = (step_context, history, tool_definitions)
+        _ = (step_context, history, tool_definitions, on_thinking)
         self.tool_step_calls += 1
         return {
             "type": "revision_needed",

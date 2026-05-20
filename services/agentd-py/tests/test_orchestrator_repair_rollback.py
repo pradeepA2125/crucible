@@ -26,8 +26,9 @@ class RepairReasoningEngine:
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path, retrieval_context)
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         return {
             "analysis": "Insert a marker line after class declaration.",
             "steps": [
@@ -75,8 +76,10 @@ class RepairReasoningEngine:
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict[str, object]:
-        _ = (step_context, tool_definitions)
+        _ = (step_context, tool_definitions, on_thinking)
         in_verify = any(
             isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
             for msg in history
@@ -104,6 +107,8 @@ class RepairReasoningEngine:
         plan_context: dict,
         history: list,
         tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict:
         _ = (plan_context, history, tool_definitions)
         return {

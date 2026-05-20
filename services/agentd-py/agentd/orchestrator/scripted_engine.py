@@ -31,8 +31,9 @@ class ScriptedReasoningEngine:
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path, retrieval_context)
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         return self._plan
 
     async def create_patch(
@@ -73,8 +74,10 @@ class ScriptedReasoningEngine:
         step_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
     ) -> dict[str, object]:
-        _ = (step_context, history, tool_definitions)
+        _ = (step_context, history, tool_definitions, on_thinking, state_description)
 
         # Prefer explicit tool_step_responses when configured
         if self._tool_step_responses:
@@ -106,6 +109,7 @@ class ScriptedReasoningEngine:
         plan_context: dict[str, object],
         history: list[dict[str, object]],
         tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
     ) -> dict[str, object]:
         _ = (plan_context, history, tool_definitions)
         return {

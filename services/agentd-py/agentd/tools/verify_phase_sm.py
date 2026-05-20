@@ -45,6 +45,10 @@ _TRANSITIONS: dict[tuple[_S, _E], _S] = {
     (_S.EXPLORE,                _E.POSTPATCH_CLEAN):    _S.POSTPATCH_CLEAN,
 
     (_S.PATCH_FAILED_MUST_READ, _E.READ_CALLED):        _S.PATCH_FAILED_CAN_RETRY,
+    # Defensive: emit_patch is not in the MUST_READ schema, but a model bypassing
+    # the schema can still emit one. If it fails, stay in MUST_READ (no retry
+    # counter increment — the read precondition isn't satisfied yet).
+    (_S.PATCH_FAILED_MUST_READ, _E.PATCH_FAILED):       _S.PATCH_FAILED_MUST_READ,
 
     # PATCH_FAILED from CAN_RETRY handled inline below (counter check).
     (_S.PATCH_FAILED_CAN_RETRY, _E.POSTPATCH_BLOCKING): _S.POSTPATCH_BLOCKING,
@@ -56,12 +60,19 @@ _TRANSITIONS: dict[tuple[_S, _E], _S] = {
 
     (_S.POSTPATCH_CLEAN,        _E.TEST_FAILED):        _S.TEST_FAILED,
     (_S.POSTPATCH_CLEAN,        _E.TEST_PASSED):        _S.TEST_PASSED,
+    # Defensive: emit_patch is not in the POSTPATCH_CLEAN schema, but a model bypassing
+    # the schema (or a scripted test) may still emit one. If it fails, recover into
+    # MUST_READ rather than blowing up the loop.
+    (_S.POSTPATCH_CLEAN,        _E.PATCH_FAILED):       _S.PATCH_FAILED_MUST_READ,
 
     (_S.TEST_FAILED,            _E.PATCH_FAILED):       _S.PATCH_FAILED_MUST_READ,
     (_S.TEST_FAILED,            _E.POSTPATCH_BLOCKING): _S.POSTPATCH_BLOCKING,
     (_S.TEST_FAILED,            _E.POSTPATCH_CLEAN):    _S.POSTPATCH_CLEAN,
     (_S.TEST_FAILED,            _E.TEST_FAILED):        _S.TEST_FAILED,
     (_S.TEST_FAILED,            _E.TEST_PASSED):        _S.TEST_PASSED,
+
+    # Defensive (same rationale as POSTPATCH_CLEAN + PATCH_FAILED above).
+    (_S.TEST_PASSED,            _E.PATCH_FAILED):       _S.PATCH_FAILED_MUST_READ,
 }
 
 _ALLOWED_TOOLS: dict[_S, frozenset[str]] = {

@@ -189,7 +189,10 @@ async def test_verify_context_message_contains_touched_files_and_strategy(tmp_pa
             step_context: dict,
             history: list[dict],
             tool_definitions: list[dict],
+            on_thinking: object = None,
+            state_description: str = "",
         ) -> dict:
+            _ = state_description
             captured_histories.append(list(history))
             return await super().create_tool_step(step_context, history, tool_definitions)
 

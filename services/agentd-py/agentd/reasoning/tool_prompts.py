@@ -131,9 +131,15 @@ def build_tool_step_payload(
     step_context: dict[str, object],
     history: list[dict[str, object]],
     *,
-    phase: str = "explore",
+    state_description: str = "",
 ) -> dict[str, object]:
-    """Build the user_payload dict for a single ReAct loop turn."""
+    """Build the user_payload dict for a single ReAct loop turn.
+
+    When state_description is provided (verify-phase state machine context),
+    it becomes the primary instruction. Explore-phase budget hints kick in
+    only when no state description is supplied (back-compat for callers that
+    haven't been migrated to the SM-driven path).
+    """
     payload: dict[str, object] = {
         "step_goal": step_context.get("goal", ""),
         "targets": step_context.get("targets", []),
@@ -168,42 +174,12 @@ def build_tool_step_payload(
 
     if history:
         payload["conversation_history"] = history
-        if phase == "verify":
-            verify_iter = len(history) // 2
-            if verify_iter >= 3:
-                read_rule = (
-                    "⚠ MANDATORY — YOU MUST DO THIS BEFORE EVERY emit_patch:\n"
-                    "   call read_file on EVERY file you are about to patch.\n"
-                    "   Do NOT use memory. Do NOT use text from earlier turns.\n"
-                    "   The shadow file has changed since you last read it.\n"
-                    "   Only text returned by read_file THIS turn is safe to use as a search string.\n"
-                )
-            else:
-                read_rule = (
-                    "RULE: Before every emit_patch, call read_file on the file you will patch "
-                    "to get its current shadow content. Never patch from memory.\n"
-                )
-            payload["instruction"] = (
-                f"{read_rule}"
-                "\nVERIFY phase sequence:\n"
-                "1. AUTO-CHECKS already ran (py_compile, ruff, mypy). Fix any failures\n"
-                "   shown in the patch-applied message before proceeding.\n"
-                "   Do NOT call run_command for ruff/mypy — they ran automatically.\n"
-                "2. TESTS (scoped — NEVER run the full suite):\n"
-                "   Derive test file from touched source file using search_code if needed.\n"
-                "   Python → pytest tests/test_<module>.py -x -q\n"
-                "   TypeScript → vitest run <spec_file>\n"
-                "   Rust → cargo test <module_path>\n"
-                "3. If a check FAILS:\n"
-                "   a. read_file the failing file (shadow content) — get exact current text.\n"
-                "   b. For undefined names: search_code to find where the definition lives.\n"
-                "   c. emit_patch using only text from step (a). Re-run the same check.\n"
-                "4. verify_done(verified=true) only when AUTO-CHECKS and tests both passed.\n"
-                "   TIMEOUTS and 'not found on PATH' are failures — fix them, do not skip.\n"
-                "   find_binary/list_directory/read_file do NOT count as verification.\n"
-                "Reads in verify phase return the SHADOW workspace (your patched files)."
-            )
+        if state_description:
+            # SM-driven path: the state description IS the instruction. It tells the
+            # model which state it's in, what's available, and what to do next.
+            payload["instruction"] = state_description
         else:
+            # Back-compat path: explore-phase budget hints when no SM context is wired.
             iteration = len(history) // 2
             recent = [str(m.get("content", "")) for m in history[-6:]]
             patch_fail_count = sum(1 for m in recent if "patch failed" in m.lower() or "not found in" in m)
