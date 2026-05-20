@@ -198,9 +198,8 @@ class VerifyPhaseStateMachine:
             return (
                 "CURRENT STATE: PATCH_FAILED — MUST READ BEFORE RETRYING\n"
                 "Your last patch failed — the file content doesn't match what your patch "
-                "expected. This applies to any op type: search text not found, diff doesn't "
-                "apply, AST node missing, byte range wrong. The file may have changed since "
-                "you last read it, or your assumptions were off.\n\n"
+                "expected. The file may have changed since you last read it, or your "
+                "assumed structure (text, diff context, AST node, line range) was off.\n\n"
                 "emit_patch is unavailable right now. Read the actual current file content "
                 "first. Once you call read_file or search_code, emit_patch becomes available again.\n"
                 "Available tools: read_file, search_code, list_directory\n"
@@ -211,10 +210,9 @@ class VerifyPhaseStateMachine:
             return (
                 f"CURRENT STATE: PATCH_FAILED — RETRY {rc} of {mx}\n"
                 "You've read the file. emit_patch is available again. "
-                "Use what you just read to construct a correct patch — exact text, correct "
-                "line range, or the right AST node, depending on your op type. "
-                "If the same approach keeps failing, try a different operation type "
-                "(e.g. apply_diff instead of search_replace).\n"
+                "Use what you just read to construct a correct patch. "
+                "If the same op type keeps failing, switch to a different one that "
+                "better fits what you observed in the file.\n"
                 "Available tools: read_file, search_code, list_directory, emit_patch"
             )
 
