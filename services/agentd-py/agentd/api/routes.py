@@ -16,6 +16,8 @@ from agentd.domain.models import (
     ResumeTaskResponse,
     ScopeDecisionRequest,
     ScopeDecisionResponse,
+    ValidationDecisionRequest,
+    ValidationDecisionResponse,
     StepDecisionRequest,
     StepProgress,
     TaskArtifactEntry,
@@ -175,6 +177,7 @@ def build_router(
 
     # Guards against concurrent scope-decision posts for the same task_id.
     _in_flight_scope: set[str] = set()
+    _in_flight_validation: set[str] = set()
 
     @router.post("/tasks", response_model=TaskCreateResponse)
     async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
@@ -476,6 +479,46 @@ def build_router(
             return ScopeDecisionResponse(task_id=task_id, status=TaskStatus.EXECUTING)
         finally:
             _in_flight_scope.discard(task_id)
+
+    @router.post("/tasks/{task_id}/validation-decision", response_model=ValidationDecisionResponse)
+    async def post_validation_decision(
+        task_id: str, request: ValidationDecisionRequest,
+    ) -> ValidationDecisionResponse:
+        if task_id in _in_flight_validation:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Validation decision already in progress for task {task_id}",
+            )
+        _in_flight_validation.add(task_id)
+        try:
+            try:
+                task = await store.get(task_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            if task.status != TaskStatus.AWAITING_VALIDATION_DECISION:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} is not awaiting a validation decision "
+                        f"(status={task.status})"
+                    ),
+                )
+
+            future = orchestrator._pending_validation_decisions.get(task_id)
+            if future is None or future.done():
+                raise HTTPException(
+                    status_code=409, detail="No pending validation decision for this task",
+                )
+
+            future.set_result(request.decision == "accept")
+            # The orchestrator coroutine drives the resulting transition (VALIDATED→
+            # READY_FOR_REVIEW on accept, FAILED on reject); report the gate status here.
+            return ValidationDecisionResponse(
+                task_id=task_id, status=TaskStatus.AWAITING_VALIDATION_DECISION,
+            )
+        finally:
+            _in_flight_validation.discard(task_id)
 
     _in_flight_step_decision: set[str] = set()
 

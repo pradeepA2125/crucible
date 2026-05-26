@@ -201,6 +201,36 @@ describe("HttpBackendClient", () => {
     ).rejects.toThrow();
   });
 
+  test("sendValidationDecision posts decision and parses response", async () => {
+    let url = "";
+    let body = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (input, init) => {
+        url = String(input);
+        body = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({ task_id: "task-1", status: "AWAITING_VALIDATION_DECISION" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+    });
+    const result = await client.sendValidationDecision("task-1", "accept");
+    expect(url).toContain("/v1/tasks/task-1/validation-decision");
+    expect(JSON.parse(body)).toEqual({ decision: "accept" });
+    expect(result.taskId).toBe("task-1");
+    expect(result.status).toBe("AWAITING_VALIDATION_DECISION");
+  });
+
+  test("sendValidationDecision throws on 409", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(JSON.stringify({ detail: "not awaiting" }), { status: 409 })
+    });
+    await expect(client.sendValidationDecision("task-x", "accept")).rejects.toThrow();
+  });
+
   // ── Chat API ──────────────────────────────────────────────────────────────
 
   test("createChatThread sends correct body and maps response", async () => {

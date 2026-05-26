@@ -20,18 +20,36 @@ _TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     },
     TaskStatus.EXECUTING: {
         TaskStatus.VALIDATING,
+        TaskStatus.AWAITING_SCOPE_DECISION,
+        TaskStatus.AWAITING_STEP_REVIEW,
+        TaskStatus.FAILED,
+        TaskStatus.ABORTED,
+    },
+    TaskStatus.AWAITING_SCOPE_DECISION: {
+        TaskStatus.EXECUTING,
+        TaskStatus.FAILED,
+        TaskStatus.ABORTED,
+    },
+    TaskStatus.AWAITING_STEP_REVIEW: {
+        TaskStatus.EXECUTING,
         TaskStatus.FAILED,
         TaskStatus.ABORTED,
     },
     TaskStatus.VALIDATING: {
         TaskStatus.VALIDATED,
         TaskStatus.REPAIRING,
+        TaskStatus.AWAITING_VALIDATION_DECISION,
         TaskStatus.FAILED,
         TaskStatus.ABORTED,
     },
     TaskStatus.REPAIRING: {
         TaskStatus.EXECUTING,
         TaskStatus.VALIDATING,
+        TaskStatus.FAILED,
+        TaskStatus.ABORTED,
+    },
+    TaskStatus.AWAITING_VALIDATION_DECISION: {
+        TaskStatus.VALIDATED,
         TaskStatus.FAILED,
         TaskStatus.ABORTED,
     },

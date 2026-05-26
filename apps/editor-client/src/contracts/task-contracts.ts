@@ -11,8 +11,10 @@ export const TaskStatusSchema = z.enum([
   "PLANNED",
   "EXECUTING",
   "AWAITING_SCOPE_DECISION",
+  "AWAITING_STEP_REVIEW",
   "VALIDATING",
   "REPAIRING",
+  "AWAITING_VALIDATION_DECISION",
   "VALIDATED",
   "READY_FOR_REVIEW",
   "PROMOTING",
@@ -51,7 +53,7 @@ export const TaskResultSchema = z.object({
 });
 
 export const ResumeTaskRequestSchema = z.object({
-  stage: z.enum(["plan", "feedback", "execute"]),
+  stage: z.enum(["plan", "feedback", "execute", "validate"]),
   budgetOverride: z.object({
     maxIterations: z.number().int().optional(),
     maxTokens: z.number().int().optional(),
@@ -71,7 +73,20 @@ export const ScopeDecisionRequestSchema = z.object({
   remember: z.boolean().default(false)
 });
 
+export const StepDecisionRequestSchema = z.object({
+  decision: z.enum(["accept", "discard"])
+});
+
 export const ScopeDecisionResponseSchema = z.object({
+  taskId: z.string().min(1),
+  status: TaskStatusSchema
+});
+
+export const ValidationDecisionRequestSchema = z.object({
+  decision: z.enum(["accept", "reject"])
+});
+
+export const ValidationDecisionResponseSchema = z.object({
   taskId: z.string().min(1),
   status: TaskStatusSchema
 });
@@ -83,6 +98,9 @@ export type ResumeTaskRequest = z.infer<typeof ResumeTaskRequestSchema>;
 export type ResumeTaskResponse = z.infer<typeof ResumeTaskResponseSchema>;
 export type ScopeDecisionRequest = z.infer<typeof ScopeDecisionRequestSchema>;
 export type ScopeDecisionResponse = z.infer<typeof ScopeDecisionResponseSchema>;
+export type StepDecisionRequest = z.infer<typeof StepDecisionRequestSchema>;
+export type ValidationDecisionRequest = z.infer<typeof ValidationDecisionRequestSchema>;
+export type ValidationDecisionResponse = z.infer<typeof ValidationDecisionResponseSchema>;
 
 export interface DiffEntry {
   path: string;
@@ -95,23 +113,28 @@ export type StreamEvent =
   | { type: "operation_success"; payload: { op_type: string; path: string } }
   | { type: "operation_error"; payload: { op_type: string; path: string; error: string } }
   | { type: "done"; payload: Record<string, never> }
-  | { type: "tool_call"; payload: { tool: string; thought: string; iteration: number; phase: string } }
+  | { type: "tool_call"; payload: { tool: string; thought: string; iteration: number; phase: string; args?: Record<string, unknown> } }
   | { type: "tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
   | { type: "planning_tool_call"; payload: { tool: string; thought: string; iteration: number } }
   | { type: "planning_tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
+  | { type: "planning_thinking_chunk"; payload: { chunk: string; iteration: number } }
   | { type: "planning_complete"; payload: { files_examined: string[]; confidence: string } }
   | { type: "revision_needed"; payload: { step_id: string; reason: string; evidence: string } }
   | { type: "patch_applied"; payload: { step_id: string; phase: string; touched_files: string[] } }
   | { type: "patch_failed"; payload: { step_id: string; error: string } }
   | { type: "scope_extension_requested"; payload: { decision_id: string; files: string[]; reason: string; step_id: string } }
+  | { type: "tool_thinking_chunk"; payload: { chunk: string } }
   | { type: "chat_agent_thinking"; payload: { message: string } }
-  | { type: "explore_tool_call"; payload: { tool: string; args: Record<string, unknown> } }
+  | { type: "chat_agent_thinking_chunk"; payload: { chunk: string } }
+  | { type: "explore_tool_call"; payload: { tool: string; args: Record<string, unknown>; thought?: string } }
   | { type: "intent_classified"; payload: { intent: string; rationale: string; likely_targets: string[] } }
   | { type: "chat_response"; payload: { chunk: string } }
   | { type: "chat_done"; payload: Record<string, never> }
   | { type: "task_card"; payload: { task_id: string } }
-  | { type: "task_status_changed"; payload: { task_id: string; status: string; plan_markdown?: string } }
-  | { type: "diff_ready"; payload: { task_id: string; diff_entries: DiffEntry[]; completed_steps: number; total_steps: number } };
+  | { type: "task_status_changed"; payload: { task_id: string; status: string; plan_markdown?: string; message?: string } }
+  | { type: "diff_ready"; payload: { task_id: string; diff_entries: DiffEntry[]; thinking_log: string[]; completed_steps: number; total_steps: number } }
+  | { type: "thread_title_updated"; payload: { thread_id: string; title: string } }
+  | { type: "step_review_requested"; payload: { step_id: string; step_title: string; diff_entries: DiffEntry[] } };
 
 // Backward-compat alias
 export type PatchStreamEvent = StreamEvent;
@@ -121,7 +144,7 @@ export type PatchStreamEvent = StreamEvent;
 export const ChatMessageSchema = z.object({
   role: z.enum(["user", "agent"]),
   content: z.string(),
-  type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card"]).default("text"),
+  type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card"]).default("text"),
   taskId: z.string().nullable().optional(),
   timestamp: z.string(),
   metadata: z.record(z.unknown()).default({}),
@@ -161,6 +184,8 @@ export interface BackendTaskClient {
   providePlanFeedback(taskId: string, feedback: string | null): Promise<TaskView>;
   resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse>;
   sendScopeDecision(taskId: string, decision: ScopeDecisionRequest): Promise<ScopeDecisionResponse>;
+  sendValidationDecision(taskId: string, decision: "accept" | "reject"): Promise<ValidationDecisionResponse>;
+  sendStepDecision(taskId: string, decision: "accept" | "discard"): Promise<void>;
   streamPatch(taskId: string, onEvent: (event: StreamEvent) => void, signal?: AbortSignal): Promise<void>;
   streamPatchEvents(taskId: string): AsyncIterable<StreamEvent>;
   listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]>;

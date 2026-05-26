@@ -5,6 +5,7 @@ import {
   TaskViewSchema,
   ResumeTaskResponseSchema,
   ScopeDecisionResponseSchema,
+  ValidationDecisionResponseSchema,
   ChatThreadSummarySchema,
   ChatThreadSchema,
   ChatEventSchema,
@@ -17,6 +18,7 @@ import {
   type ResumeTaskResponse,
   type ScopeDecisionRequest,
   type ScopeDecisionResponse,
+  type ValidationDecisionResponse,
   type ChatThreadSummary,
   type ChatThread,
   type StreamEvent,
@@ -116,6 +118,33 @@ export class HttpBackendClient implements BackendTaskClient {
       taskId: this.readString(response, "taskId", "task_id"),
       status: this.readString(response, "status")
     });
+  }
+
+  async sendValidationDecision(
+    taskId: string,
+    decision: "accept" | "reject"
+  ): Promise<ValidationDecisionResponse> {
+    const response = await this.fetchJson(
+      `/v1/tasks/${encodeURIComponent(taskId)}/validation-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision })
+      }
+    );
+    return ValidationDecisionResponseSchema.parse({
+      taskId: this.readString(response, "taskId", "task_id"),
+      status: this.readString(response, "status")
+    });
+  }
+
+  async sendStepDecision(taskId: string, decision: "accept" | "discard"): Promise<void> {
+    await this.fetchJson(
+      `/v1/tasks/${encodeURIComponent(taskId)}/step-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision })
+      }
+    );
   }
 
   async resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse> {

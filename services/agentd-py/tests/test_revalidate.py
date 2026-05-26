@@ -92,24 +92,6 @@ async def test_revalidate_passes_to_ready_for_review(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_revalidate_fails_on_new_error(tmp_path: Path) -> None:
-    store = InMemoryTaskStore()
-    validator = _StubValidator(
-        ValidationResult(
-            success=False,
-            diagnostics=[Diagnostic(source="v", message="brand new failure", level="error")],
-            duration_ms=1,
-        )
-    )
-    orch = _orchestrator(store, validator, tmp_path)
-    await _make_completed_task(store, tmp_path)
-
-    result = await orch.revalidate_task("t-reval")
-    assert result.status == TaskStatus.FAILED
-    assert any("brand new failure" in d.message for d in result.diagnostics)
-
-
-@pytest.mark.asyncio
 async def test_revalidate_filters_baselined_error(tmp_path: Path) -> None:
     store = InMemoryTaskStore()
     fingerprint = AgentOrchestrator._normalize_error_message("preexisting failure")
@@ -211,3 +193,81 @@ async def test_resume_validate_happy_path_reaches_ready_for_review(tmp_path: Pat
         assert child_id != "p-complete"
         payload = await _wait_for_status(client, child_id, "READY_FOR_REVIEW")
     assert payload["resume_of_task_id"] == "p-complete"
+
+
+async def _wait_for_gate(store: InMemoryTaskStore, task_id: str, timeout: float = 2.0) -> None:
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if (await store.get(task_id)).status == TaskStatus.AWAITING_VALIDATION_DECISION:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("validation-decision gate not reached")
+
+
+def _failing_validator() -> _StubValidator:
+    return _StubValidator(
+        ValidationResult(
+            success=False,
+            diagnostics=[Diagnostic(source="v", message="boom", level="error")],
+            duration_ms=1,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_revalidate_failure_opens_gate_then_accept(tmp_path: Path) -> None:
+    store = InMemoryTaskStore()
+    orch = _orchestrator(store, _failing_validator(), tmp_path)
+    await _make_completed_task(store, tmp_path)
+
+    run = asyncio.create_task(orch.revalidate_task("t-reval"))
+    await _wait_for_gate(store, "t-reval")
+    orch._pending_validation_decisions["t-reval"].set_result(True)  # accept
+    result = await run
+    assert result.status == TaskStatus.READY_FOR_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_revalidate_failure_gate_reject_fails(tmp_path: Path) -> None:
+    store = InMemoryTaskStore()
+    orch = _orchestrator(store, _failing_validator(), tmp_path)
+    await _make_completed_task(store, tmp_path)
+
+    run = asyncio.create_task(orch.revalidate_task("t-reval"))
+    await _wait_for_gate(store, "t-reval")
+    orch._pending_validation_decisions["t-reval"].set_result(False)  # reject
+    result = await run
+    assert result.status == TaskStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_validation_decision_endpoint_accept_reaches_ready(tmp_path: Path) -> None:
+    store = InMemoryTaskStore()
+    workspace_manager = ShadowWorkspaceManager(root_path=tmp_path / "shadows")
+    orch = _orchestrator(store, _failing_validator(), tmp_path)
+    await _make_completed_task(store, tmp_path)
+    app = _build_app(store, orch, workspace_manager)
+
+    run = asyncio.create_task(orch.revalidate_task("t-reval"))
+    await _wait_for_gate(store, "t-reval")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/tasks/t-reval/validation-decision", json={"decision": "accept"})
+        assert resp.status_code == 200
+    result = await run
+    assert result.status == TaskStatus.READY_FOR_REVIEW
+
+
+@pytest.mark.asyncio
+async def test_validation_decision_endpoint_409_when_not_awaiting(tmp_path: Path) -> None:
+    store = InMemoryTaskStore()
+    workspace_manager = ShadowWorkspaceManager(root_path=tmp_path / "shadows")
+    orch = _orchestrator(store, _failing_validator(), tmp_path)
+    (tmp_path / "ws").mkdir(parents=True, exist_ok=True)
+    await store.create(
+        TaskRecord(task_id="t-x", goal="g", workspace_path=str(tmp_path / "ws"), status=TaskStatus.FAILED)
+    )
+    app = _build_app(store, orch, workspace_manager)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/tasks/t-x/validation-decision", json={"decision": "accept"})
+    assert resp.status_code == 409

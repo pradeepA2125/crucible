@@ -18,6 +18,7 @@ class TaskStatus(StrEnum):
     AWAITING_STEP_REVIEW = "AWAITING_STEP_REVIEW"
     VALIDATING = "VALIDATING"
     REPAIRING = "REPAIRING"
+    AWAITING_VALIDATION_DECISION = "AWAITING_VALIDATION_DECISION"
     VALIDATED = "VALIDATED"
     READY_FOR_REVIEW = "READY_FOR_REVIEW"
     PROMOTING = "PROMOTING"
@@ -134,6 +135,15 @@ class ScopeDecisionRequest(BaseModel):
 
 
 class ScopeDecisionResponse(BaseModel):
+    task_id: str
+    status: "TaskStatus"
+
+
+class ValidationDecisionRequest(BaseModel):
+    decision: Literal["accept", "reject"]
+
+
+class ValidationDecisionResponse(BaseModel):
     task_id: str
     status: "TaskStatus"
 

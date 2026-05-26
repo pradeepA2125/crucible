@@ -206,10 +206,16 @@ class AgentOrchestrator:
         self._scope_timeout_sec = max(0.0, scope_timeout_sec)
         self._pending_scope_decisions: dict[str, asyncio.Future[ScopeDecision]] = {}
         self._pending_step_decisions: dict[str, asyncio.Future[str]] = {}
+        # task_id → future resolved by POST /tasks/{id}/validation-decision (True=accept)
+        self._pending_validation_decisions: dict[str, asyncio.Future[bool]] = {}
         self._inline_shadows: dict[str, dict[str, object]] = {}  # inline_task_id → meta
         self._chat_store = chat_store
         import os
         self._tool_loop_enabled: bool = os.environ.get("AI_EDITOR_TOOL_LOOP_ENABLED", "true") not in ("0", "false", "False")
+        # 0 = wait indefinitely for the user's accept/reject (a deliberate human gate).
+        self._validation_decision_timeout_sec = float(
+            os.environ.get("AI_EDITOR_VALIDATION_DECISION_TIMEOUT_SEC", "0") or 0
+        )
 
     async def run_task(self, task_id: str) -> TaskRecord:
         task = await self._store.get(task_id)
@@ -575,9 +581,7 @@ class AgentOrchestrator:
                 )
                 await self._store.save(task)
             else:
-                task.diagnostics = [*validation.diagnostics]
-                task = transition(task, TaskStatus.FAILED, "revalidation failed")
-                await self._store.save(task)
+                task = await self._pause_for_validation_decision(task, validation)
             return task
         except Exception as exc:
             logger.error(f"Task {task_id} failed during revalidate", exc_info=True)
@@ -588,6 +592,56 @@ class AgentOrchestrator:
         finally:
             self._running_tasks.discard(task_id)
             self.broadcaster.broadcast(task_id, {"type": "done", "payload": {}})
+
+    async def _pause_for_validation_decision(
+        self,
+        task: TaskRecord,
+        validation: ValidationResult,
+        persistent_diagnostics: list[Diagnostic] | None = None,
+    ) -> TaskRecord:
+        """Gate on a terminal validation failure: surface the surviving diagnostics and let
+        the user accept (treat as pre-existing/acceptable → VALIDATED → READY_FOR_REVIEW) or
+        reject (→ FAILED). Mirrors the scope-decision gate; no repair is attempted here.
+
+        Entered from VALIDATING. Resolved by POST /tasks/{id}/validation-decision.
+        """
+        persistent = list(persistent_diagnostics or [])
+        task.diagnostics = [*persistent, *validation.diagnostics]
+        future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
+        self._pending_validation_decisions[task.task_id] = future
+        task = transition(task, TaskStatus.AWAITING_VALIDATION_DECISION, "validation decision gate")
+        await self._store.save(task)
+        self.broadcaster.broadcast(task.task_id, {
+            "type": "validation_decision_requested",
+            "payload": {
+                "task_id": task.task_id,
+                "diagnostics": [
+                    {**d.model_dump(mode="json"), "message": self._cap_diagnostic_message(d.message)}
+                    for d in validation.diagnostics
+                ],
+            },
+        })
+        accept = False
+        try:
+            if self._validation_decision_timeout_sec > 0:
+                accept = await asyncio.wait_for(future, timeout=self._validation_decision_timeout_sec)
+            else:
+                accept = await future
+        except asyncio.TimeoutError:
+            accept = False
+        finally:
+            self._pending_validation_decisions.pop(task.task_id, None)
+        task = await self._store.get(task.task_id)
+        if accept:
+            task.diagnostics = [*persistent]
+            task = transition(task, TaskStatus.VALIDATED, "validation errors accepted")
+            await self._store.save(task)
+            task = transition(task, TaskStatus.READY_FOR_REVIEW, "validation accepted; ready for review")
+            await self._store.save(task)
+        else:
+            task = transition(task, TaskStatus.FAILED, "validation errors rejected")
+            await self._store.save(task)
+        return task
 
     async def get_task(self, task_id: str) -> TaskRecord:
         return await self._store.get(task_id)
@@ -1311,10 +1365,11 @@ class AgentOrchestrator:
                 artifacts_root_path=task.artifacts_root_path,
             )
             if not repair_validation.success:
-                task.diagnostics = [*persistent_diagnostics, *repair_validation.diagnostics]
-                task = transition(task, TaskStatus.FAILED, "post-repair validation failed")
-                await self._store.save(task)
-                return task
+                # Auto-repair couldn't clear it — ask the user (errors may be pre-existing/flaky)
+                # instead of failing outright.
+                return await self._pause_for_validation_decision(
+                    task, repair_validation, persistent_diagnostics
+                )
 
             task.diagnostics = [*persistent_diagnostics]
             task = transition(task, TaskStatus.VALIDATED, "full validation passed after repair")
