@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Union
@@ -13,6 +14,8 @@ class TaskStatus(StrEnum):
     AWAITING_PLAN_APPROVAL = "AWAITING_PLAN_APPROVAL"
     PLANNED = "PLANNED"
     EXECUTING = "EXECUTING"
+    AWAITING_SCOPE_DECISION = "AWAITING_SCOPE_DECISION"
+    AWAITING_STEP_REVIEW = "AWAITING_STEP_REVIEW"
     VALIDATING = "VALIDATING"
     REPAIRING = "REPAIRING"
     VALIDATED = "VALIDATED"
@@ -56,12 +59,12 @@ class TaskBudget(BaseModel):
     max_iterations: int = 6
     max_files_touched: int = 20
     max_tokens: int = 120_000
-    max_runtime_ms: int = 20 * 60 * 1000
-    max_tool_calls_per_step: int = 8
-    max_planning_tool_calls: int = 20
-    max_revision_tool_calls: int = 10
+    max_runtime_ms: int = 90 * 60 * 1000
+    max_tool_calls_per_step: int = 50
+    max_planning_tool_calls: int = 50
+    max_revision_tool_calls: int = 50
     max_delta_replans: int = 3
-    max_verify_calls_per_step: int = 4
+    max_verify_calls_per_step: int = 8
 
 
 class TaskUsage(BaseModel):
@@ -97,11 +100,63 @@ class DeltaReplanRequest(BaseModel):
     requested_at: datetime
 
 
+class ScopePolicy(StrEnum):
+    """How the engine handles patches that target files outside the step's scope."""
+    STRICT = "strict"   # auto-reject (default — current behavior)
+    ASK = "ask"         # pause + user gate via POST /scope-decision
+    AUTO = "auto"       # auto-approve + audit log
+
+
+class ScopeTrigger(StrEnum):
+    """Which out-of-scope files trip the gate."""
+    NEARBY = "nearby"   # same dir as a target OR conventional pattern (__init__.py, conftest.py)
+    ANY = "any"         # every out-of-scope file
+
+
+class ScopeRemember(StrEnum):
+    """How long an approval persists."""
+    TASK = "task"       # remember within current task
+    NONE = "none"       # ask every time
+
+
+class ScopeExtensionRequest(BaseModel):
+    """Persisted on the task while the engine waits for a scope decision."""
+    decision_id: str
+    files: list[str]
+    reason: str
+    step_id: str
+
+
+class ScopeDecisionRequest(BaseModel):
+    decision: Literal["approve", "reject"]
+    files: list[str] = Field(default_factory=list)
+    remember: bool = False
+
+
+class ScopeDecisionResponse(BaseModel):
+    task_id: str
+    status: "TaskStatus"
+
+
+class StepReviewPayload(BaseModel):
+    """Persisted on the task while the engine waits for a per-step accept/discard decision."""
+    step_id: str
+    step_title: str
+    diff_entries: list[dict[str, Any]]  # serialized DiffEntry objects
+
+
+class StepDecisionRequest(BaseModel):
+    decision: Literal["accept", "discard"]
+
+
 class TaskExecutionState(BaseModel):
     current_step_id: str | None = None
     step_checkpoints: dict[str, str] = Field(default_factory=dict)
     delta_replan_requests: list[DeltaReplanRequest] = Field(default_factory=list)
     delta_replans_used: int = 0
+    auto_approved_scope_files: list[str] = Field(default_factory=list)
+    pending_scope_request: ScopeExtensionRequest | None = None
+    pending_step_review: StepReviewPayload | None = None
 
 
 class RevisedStep(BaseModel):
@@ -112,6 +167,7 @@ class RevisedStep(BaseModel):
     edge_cases: str = ""
     testing_strategy: str = ""
     risk: str = "low"
+    test_command: str | None = None
 
 
 class PlanRevisionResult(BaseModel):
@@ -534,6 +590,7 @@ class StepRunResult(BaseModel):
     attempts_used: int
     selected_candidate_id: str | None = None
     touched_files: list[str] = Field(default_factory=list)
+    patch_ops_by_file: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
     trace_entries: list[StepExecutionTrace] = Field(default_factory=list)
     checkpoint_manifests: list[CheckpointManifest] = Field(default_factory=list)
@@ -570,6 +627,10 @@ class TaskRecord(BaseModel):
     plan_approval_snapshot: TaskMilestoneSnapshot | None = None
     completed_step_ids: list[str] = Field(default_factory=list)
     modified_files: list[str] = Field(default_factory=list)
+    # Normalized fingerprints of diagnostics present BEFORE this task's work began,
+    # captured at the start of _execute_plan. Persisted so a `validate`-stage resume can
+    # reuse the ORIGINAL baseline instead of re-collecting it on the already-mutated shadow.
+    baseline_error_fingerprints: list[str] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
     budget: TaskBudget = Field(default_factory=TaskBudget)
     usage: TaskUsage = Field(default_factory=TaskUsage)
@@ -578,6 +639,11 @@ class TaskRecord(BaseModel):
     checkpoints: list[CheckpointManifest] = Field(default_factory=list)
     execution_state: TaskExecutionState = Field(default_factory=TaskExecutionState)
     artifacts_root_path: str | None = None
+    is_inline_change: bool = False
+    step_review_auto_accept: bool = True
+    chat_channel_id: str | None = None
+    initial_explore_context: list[dict[str, object]] | None = None
+    planning_explore_context: list[dict[str, object]] | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -592,6 +658,8 @@ class TaskCreateRequest(BaseModel):
     workspace_path: str
     mode: Literal["inline", "file_edit", "project_edit", "autonomous"] = "project_edit"
     budget: TaskBudget = Field(default_factory=TaskBudget)
+    initial_explore_context: list[dict[str, object]] | None = None
+    step_review_auto_accept: bool = True
 
 
 class TaskCreateResponse(BaseModel):
@@ -649,7 +717,7 @@ class BudgetOverride(BaseModel):
 
 
 class ResumeTaskRequest(BaseModel):
-    stage: Literal["plan", "feedback", "execute"]
+    stage: Literal["plan", "feedback", "execute", "validate"]
     budget_override: BudgetOverride | None = None
 
 
@@ -670,3 +738,18 @@ class TaskArtifactsResponse(BaseModel):
     task_id: str
     artifacts_root_path: str | None = None
     entries: list[TaskArtifactEntry] = Field(default_factory=list)
+
+
+@dataclass
+class DiffEntry:
+    path: str
+    additions: int
+    deletions: int
+    temp_path: str
+
+
+@dataclass
+class InlineChangeResult:
+    task_id: str
+    diff_entries: list[DiffEntry]
+    plan_document: dict[str, Any]

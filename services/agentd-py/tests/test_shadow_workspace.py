@@ -41,6 +41,33 @@ async def test_shadow_workspace_prepare_promote_and_cleanup(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_clone_strips_generated_cache_dirs(tmp_path: Path) -> None:
+    # A parent shadow accumulates tooling caches during validation runs. clone() must
+    # strip them (like prepare does) so resume children don't inherit stale ancestor
+    # bytecode/cache or balloon in size down the resume chain.
+    real = tmp_path / "real"
+    real.mkdir(parents=True)
+    (real / "src").mkdir()
+    (real / "src/main.py").write_text("x = 1\n", encoding="utf-8")
+
+    manager = ShadowWorkspaceManager(root_path=tmp_path / "shadows")
+    parent = await manager.prepare("parent", str(real))
+
+    cache_dirs = [".mypy_cache", ".pytest_cache", ".ruff_cache", "src/__pycache__"]
+    for d in cache_dirs:
+        (parent.shadow_path / d).mkdir(parents=True)
+        (parent.shadow_path / d / "junk").write_text("stale", encoding="utf-8")
+    (parent.shadow_path / "src/new.py").write_text("y = 2\n", encoding="utf-8")  # real edit
+
+    child = await manager.clone("parent", "child", str(real), src_override=parent.shadow_path)
+
+    assert (child.shadow_path / "src/main.py").exists()
+    assert (child.shadow_path / "src/new.py").exists()  # real content survives clone
+    for d in cache_dirs:
+        assert not (child.shadow_path / d).exists(), f"{d} should be stripped on clone"
+
+
+@pytest.mark.asyncio
 async def test_shadow_workspace_prunes_old_checkpoint_tasks(tmp_path: Path) -> None:
     manager = ShadowWorkspaceManager(
         root_path=tmp_path / "shadows",

@@ -16,6 +16,7 @@ from agentd.domain.models import (
     ResumeTaskResponse,
     ScopeDecisionRequest,
     ScopeDecisionResponse,
+    StepDecisionRequest,
     StepProgress,
     TaskArtifactEntry,
     TaskArtifactsResponse,
@@ -185,6 +186,7 @@ def build_router(
             workspace_path=request.workspace_path,
             mode=request.mode,
             budget=request.budget,
+            step_review_auto_accept=request.step_review_auto_accept,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
@@ -475,6 +477,42 @@ def build_router(
         finally:
             _in_flight_scope.discard(task_id)
 
+    _in_flight_step_decision: set[str] = set()
+
+    @router.post("/tasks/{task_id}/step-decision")
+    async def post_step_decision(task_id: str, request: StepDecisionRequest) -> dict:
+        if task_id in _in_flight_step_decision:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Step decision already in progress for task {task_id}",
+            )
+        _in_flight_step_decision.add(task_id)
+        try:
+            try:
+                task = await store.get(task_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            if task.status != TaskStatus.AWAITING_STEP_REVIEW:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} is not awaiting step review "
+                        f"(status={task.status})"
+                    ),
+                )
+
+            future = orchestrator._pending_step_decisions.get(task_id)
+            if future is None or future.done():
+                raise HTTPException(
+                    status_code=409, detail="No pending step review for this task",
+                )
+
+            future.set_result(request.decision)
+            return {"ok": True}
+        finally:
+            _in_flight_step_decision.discard(task_id)
+
     @router.post("/tasks/{task_id}/resume", response_model=ResumeTaskResponse)
     async def resume_task_route(task_id: str, request: ResumeTaskRequest) -> ResumeTaskResponse:
         import asyncio
@@ -525,6 +563,27 @@ def build_router(
             # Allow resume even when all steps are done — re-runs full validation
             # on the existing shadow, which is useful when validation previously
             # failed for environmental reasons (quota, pre-existing test failures).
+
+        if request.stage == "validate":
+            if not parent.plan:
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(status_code=409, detail="No plan to revalidate")
+            if not parent.shadow_workspace_path or not Path(parent.shadow_workspace_path).exists():
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail="Parent shadow workspace no longer exists; cannot revalidate",
+                )
+            plan_step_ids = {step.id for step in parent.plan.steps}
+            if not plan_step_ids <= set(parent.completed_step_ids):
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Not all plan steps are complete;"
+                        " use stage=execute to finish them before revalidating"
+                    ),
+                )
 
         # Merge budget: parent values unless overridden
         override = request.budget_override
@@ -580,12 +639,13 @@ def build_router(
                 created_at=now,
                 updated_at=now,
             )
-        else:  # "execute"
+        else:  # "execute" / "validate"
             # Current task state IS the correct starting point:
             #   plan/plan_markdown unchanged throughout lifecycle
             #   completed_step_ids: exactly reflects what finished (failed step excluded)
             #   modified_files: restored to pre-failed-step state by checkpoint logic
             #   shadow: restored to pre-failed-step state by _run_step_with_retries
+            #   baseline_error_fingerprints: original pre-execution baseline, reused by validate
             child = TaskRecord(
                 task_id=child_id,
                 goal=parent.goal,
@@ -597,6 +657,7 @@ def build_router(
                 plan_markdown=parent.plan_markdown,
                 completed_step_ids=list(parent.completed_step_ids),
                 modified_files=list(parent.modified_files),
+                baseline_error_fingerprints=list(parent.baseline_error_fingerprints),
                 plan_approval_snapshot=parent.plan_approval_snapshot,
                 resume_of_task_id=parent.task_id,
                 created_at=now,
@@ -609,14 +670,20 @@ def build_router(
             try:
                 if request.stage == "plan":
                     await orchestrator.run_task(child_id)
-                elif request.stage == "execute":
+                elif request.stage in ("execute", "validate"):
                     shadow = await workspace_manager.clone(
-                        parent.task_id, child_id, parent.workspace_path
+                        parent.task_id,
+                        child_id,
+                        parent.workspace_path,
+                        src_override=Path(parent.shadow_workspace_path) if parent.shadow_workspace_path else None,
                     )
                     child_record = await store.get(child_id)
                     child_record.shadow_workspace_path = str(shadow.shadow_path)
                     await store.save(child_record)
-                    await orchestrator.resume_task(child_id)
+                    if request.stage == "execute":
+                        await orchestrator.resume_task(child_id)
+                    else:
+                        await orchestrator.revalidate_task(child_id)
                 # "feedback": no async work — user calls /plan/feedback on child_id
             finally:
                 _in_flight_resume.discard(task_id)
@@ -676,11 +743,15 @@ def build_router(
             await orchestrator.promote_inline_change(inline_task_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if chat_agent is not None:
+            chat_agent._store.resolve_diff_card(inline_task_id, "applied")  # type: ignore[union-attr]
         return {"status": "promoted", "inline_task_id": inline_task_id}
 
     @router.delete("/chat/inline-changes/{inline_task_id}")
     async def discard_inline_change(inline_task_id: str) -> dict:
         await orchestrator.discard_inline_change(inline_task_id)
+        if chat_agent is not None:
+            chat_agent._store.resolve_diff_card(inline_task_id, "discarded")  # type: ignore[union-attr]
         return {"status": "discarded", "inline_task_id": inline_task_id}
 
     # --- Chat routes ---
@@ -736,7 +807,15 @@ def build_router(
                 agent_task = _asyncio_chat.create_task(_run_agent())
                 try:
                     while True:
-                        event = await queue.get()
+                        try:
+                            event = await _asyncio_chat.wait_for(
+                                queue.get(), timeout=15.0
+                            )
+                        except _asyncio_chat.TimeoutError:
+                            # Keep-alive ping — prevents Node.js fetch from
+                            # dropping the connection during slow LLM inference.
+                            yield ": ping\n\n"
+                            continue
                         yield f"data: {_json.dumps(event)}\n\n"
                         if event.get("type") in ("chat_done", "done"):
                             break

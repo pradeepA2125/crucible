@@ -16,6 +16,8 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+import dataclasses
+
 from agentd.domain.models import (
     CandidateScoreBreakdown,
     CheckpointManifest,
@@ -37,6 +39,7 @@ from agentd.domain.models import (
     ScopeRemember,
     ScopeTrigger,
     StepExecutionTrace,
+    StepReviewPayload,
     StepRunResult,
     TaskBudget,
     TaskMilestoneSnapshot,
@@ -114,21 +117,6 @@ def _is_nearby_file(out_of_scope: str, allowed: list[str]) -> bool:
     return False
 
 
-def _validate_no_duplicate_file_targets_engine(steps: list[dict]) -> list[str]:
-    """Returns error strings for any file path appearing in more than one step's targets."""
-    seen: dict[str, str] = {}
-    errors: list[str] = []
-    for step in steps:
-        step_id = str(step.get("id", "?"))
-        for target in step.get("targets", []):
-            path = str(target.get("path", "")) if isinstance(target, dict) else str(target)
-            if path in seen:
-                errors.append(f"'{path}' in step '{seen[path]}' and '{step_id}'")
-            else:
-                seen[path] = step_id
-    return errors
-
-
 def _merge_validation_results(a: "ValidationResult", b: "ValidationResult") -> "ValidationResult":
     return ValidationResult(
         success=a.success and b.success,
@@ -198,6 +186,7 @@ class AgentOrchestrator:
         scope_trigger: ScopeTrigger = ScopeTrigger.NEARBY,
         scope_remember: ScopeRemember = ScopeRemember.TASK,
         scope_timeout_sec: float = 600.0,
+        chat_store: object | None = None,
     ) -> None:
         self._store = store
         self._reasoning_engine = reasoning_engine
@@ -216,7 +205,9 @@ class AgentOrchestrator:
         self._scope_remember = scope_remember
         self._scope_timeout_sec = max(0.0, scope_timeout_sec)
         self._pending_scope_decisions: dict[str, asyncio.Future[ScopeDecision]] = {}
+        self._pending_step_decisions: dict[str, asyncio.Future[str]] = {}
         self._inline_shadows: dict[str, dict[str, object]] = {}  # inline_task_id → meta
+        self._chat_store = chat_store
         import os
         self._tool_loop_enabled: bool = os.environ.get("AI_EDITOR_TOOL_LOOP_ENABLED", "true") not in ("0", "false", "False")
 
@@ -265,6 +256,7 @@ class AgentOrchestrator:
                 initial_context=plan_context_payload,
                 budget=task.budget,
                 pre_explored_context=task.initial_explore_context or None,
+                chat_channel_id=task.chat_channel_id,
             )
             self._write_debug_artifact(
                 task.task_id,
@@ -277,6 +269,14 @@ class AgentOrchestrator:
                 f"Confidence: {planning_result.confidence}"
             )
             task.plan_markdown = planning_result.plan_markdown
+            # Persist planning tool results so feedback re-planning can skip re-reading.
+            task.planning_explore_context = [
+                {"tool": c.tool_name, "args": c.arguments, "result": r.output, "is_error": r.is_error}
+                for c, r in zip(
+                    planning_result.tool_trace.calls,
+                    planning_result.tool_trace.results,
+                )
+            ]
             confidence_diagnostics: list[Diagnostic] = []
             if planning_result.confidence == "low":
                 confidence_diagnostics = [Diagnostic(
@@ -309,10 +309,19 @@ class AgentOrchestrator:
                         "plan_markdown": task.plan_markdown,
                     },
                 })
+            self._write_chat_plan_card(task)
             return task
 
         except Exception as exc:
             logger.error(f"Task {task_id} failed during initialization", exc_info=True)
+            from agentd.planning.loop import PlanningBudgetExceededError
+            if isinstance(exc, PlanningBudgetExceededError) and exc.partial_trace is not None:
+                self._write_debug_artifact(
+                    task_id,
+                    "planning-trace-partial",
+                    exc.partial_trace.model_dump(mode="json"),
+                    artifacts_root_path=task.artifacts_root_path,
+                )
             task.diagnostics.append(
                 Diagnostic(source="orchestrator", message=str(exc), level="error")
             )
@@ -347,6 +356,7 @@ class AgentOrchestrator:
             )
             workspace_files_set = set(workspace_files_index)
             plan_context_payload = retrieval_context.as_prompt_payload()
+            plan_context_payload["workspace_files_index"] = workspace_files_index
             self._write_debug_artifact(
                 task.task_id,
                 "plan-evidence",
@@ -363,10 +373,16 @@ class AgentOrchestrator:
                 await self._store.save(task)
 
                 planning_agent = self._build_planning_agent(task.task_id, task.workspace_path)
+                _feedback_pre_explored = [
+                    *(task.initial_explore_context or []),
+                    *(task.planning_explore_context or []),
+                ]
                 planning_result = await planning_agent.generate_plan(
                     task=task,
                     initial_context={**plan_context_payload, "plan_feedback": feedback},
                     budget=task.budget,
+                    pre_explored_context=_feedback_pre_explored or None,
+                    chat_channel_id=task.chat_channel_id,
                 )
                 self._write_debug_artifact(
                     task.task_id,
@@ -374,6 +390,16 @@ class AgentOrchestrator:
                     planning_result.tool_trace.model_dump(mode="json"),
                     artifacts_root_path=task.artifacts_root_path,
                 )
+                # Accumulate feedback pass tool results so subsequent feedback rounds
+                # also skip re-reading files explored in this pass.
+                new_entries = [
+                    {"tool": c.tool_name, "args": c.arguments, "result": r.output, "is_error": r.is_error}
+                    for c, r in zip(
+                        planning_result.tool_trace.calls,
+                        planning_result.tool_trace.results,
+                    )
+                ]
+                task.planning_explore_context = [*(task.planning_explore_context or []), *new_entries]
                 task.plan_markdown = planning_result.plan_markdown
                 confidence_diagnostics_fb: list[Diagnostic] = [Diagnostic(
                     source="planning_agent",
@@ -398,17 +424,32 @@ class AgentOrchestrator:
                             "plan_markdown": task.plan_markdown,
                         },
                     })
+                self._write_chat_plan_card(task)
                 return task
 
             # Approved! Generate JSON plan from Markdown
             print("\n[PLAN] Plan Approved. Generating executable JSON plan...")
             task = transition(task, TaskStatus.PLANNED, "plan approved; starting execution")
             await self._store.save(task)
+            self.broadcaster.broadcast(task_id, {
+                "type": "task_status_changed",
+                "payload": {"task_id": task_id, "status": "PLANNED", "message": "Generating execution plan…"},
+            })
+
+            _plan_channel = task.chat_channel_id or task_id
+
+            def _on_plan_thinking(chunk: str) -> None:
+                for ch in (task_id, _plan_channel):
+                    self.broadcaster.broadcast(ch, {
+                        "type": "planning_thinking_chunk",
+                        "payload": {"chunk": chunk, "iteration": 0},
+                    })
 
             plan_raw = await self._reasoning_engine.create_plan(
                 task,
                 str(shadow_workspace.shadow_path),
                 plan_context_payload,
+                on_thinking=_on_plan_thinking,
             )
             self._write_debug_artifact(
                 task.task_id,
@@ -425,21 +466,6 @@ class AgentOrchestrator:
                     level="error",
                 ))
                 task = transition(task, TaskStatus.FAILED, "JSON plan schema invalid")
-                await self._store.save(task)
-                return task
-
-            steps_as_dicts = [
-                {"id": s.id, "targets": [{"path": t.path} for t in s.targets]}
-                for s in candidate_plan.steps
-            ]
-            duplicate_errors = _validate_no_duplicate_file_targets_engine(steps_as_dicts)
-            if duplicate_errors:
-                task.diagnostics.append(Diagnostic(
-                    source="orchestrator",
-                    message="JSON plan violates one-step-per-file constraint: " + "; ".join(duplicate_errors),
-                    level="error",
-                ))
-                task = transition(task, TaskStatus.FAILED, "plan has duplicate file targets across steps")
                 await self._store.save(task)
                 return task
 
@@ -470,13 +496,16 @@ class AgentOrchestrator:
             self.broadcaster.broadcast(task_id, {"type": "done", "payload": {}})
             return task
 
-    async def resume_task(self, task_id: str) -> TaskRecord:
+    async def resume_task(self, task_id: str, *, broadcast_key: str | None = None) -> TaskRecord:
         """Resume execution of a child task that was created from a failed/aborted parent.
 
         The child task must already be in PLANNED state with shadow_workspace_path set
         (cloned from the parent by the route handler).  Skips plan generation entirely
         and calls _execute_plan() directly, relying on the existing completed_step_ids
         skip logic to continue from the first incomplete step.
+
+        broadcast_key: if set, ToolLoop events are routed to this channel instead of
+        the task channel (used by the chat resume path to stream events to the chat SSE).
         """
         task = await self._store.get(task_id)
         self._running_tasks.add(task_id)
@@ -492,7 +521,8 @@ class AgentOrchestrator:
                 shadow_path=Path(task.shadow_workspace_path),  # type: ignore[arg-type]
             )
             return await self._execute_plan(
-                task, shadow_workspace, retrieval_context, retrieval_warnings, started_at_ms
+                task, shadow_workspace, retrieval_context, retrieval_warnings, started_at_ms,
+                broadcast_key=broadcast_key,
             )
         except Exception as exc:
             logger.error(f"Task {task_id} failed during resume", exc_info=True)
@@ -502,6 +532,128 @@ class AgentOrchestrator:
             self._running_tasks.discard(task_id)
             self.broadcaster.broadcast(task_id, {"type": "done", "payload": {}})
             return task
+
+    async def revalidate_task(self, task_id: str) -> TaskRecord:
+        """Re-run full validation on a completed task's existing shadow — no step execution.
+
+        For a child whose plan steps are all done, runs the command validator on the
+        existing shadow and reports the true result, reusing the task's ORIGINAL baseline
+        (baseline_error_fingerprints) so only errors introduced by the task's work fail.
+        Does NOT run the repair loop — on failure the task goes FAILED with the diagnostics;
+        the user can resume execute to fix.
+        """
+        task = await self._store.get(task_id)
+        self._running_tasks.add(task_id)
+        task.artifacts_root_path = str(self._artifacts_root(task.task_id, task.workspace_path))
+        try:
+            if not task.shadow_workspace_path or not Path(task.shadow_workspace_path).exists():
+                task = transition(task, TaskStatus.FAILED, "revalidate: shadow workspace missing")
+                await self._store.save(task)
+                return task
+            shadow_path = Path(task.shadow_workspace_path)
+            baseline = frozenset(task.baseline_error_fingerprints)
+
+            task = transition(task, TaskStatus.EXECUTING, "revalidation started")
+            await self._store.save(task)
+            task = transition(task, TaskStatus.VALIDATING, "full validation (revalidate)")
+            await self._store.save(task)
+
+            validation = await self._validator.run(str(shadow_path))
+            validation = self._filter_baseline_errors(validation, baseline)
+            self._write_debug_artifact(
+                task.task_id,
+                "full-validation",
+                validation.model_dump(mode="json"),
+                artifacts_root_path=task.artifacts_root_path,
+            )
+            if validation.success:
+                task.diagnostics = []
+                task = transition(task, TaskStatus.VALIDATED, "revalidation passed")
+                await self._store.save(task)
+                task = transition(
+                    task, TaskStatus.READY_FOR_REVIEW, "revalidation passed; ready for review"
+                )
+                await self._store.save(task)
+            else:
+                task.diagnostics = [*validation.diagnostics]
+                task = transition(task, TaskStatus.FAILED, "revalidation failed")
+                await self._store.save(task)
+            return task
+        except Exception as exc:
+            logger.error(f"Task {task_id} failed during revalidate", exc_info=True)
+            task.diagnostics.append(Diagnostic(source="orchestrator", message=str(exc), level="error"))
+            task = transition(task, TaskStatus.FAILED, "revalidate failed")
+            await self._store.save(task)
+            return task
+        finally:
+            self._running_tasks.discard(task_id)
+            self.broadcaster.broadcast(task_id, {"type": "done", "payload": {}})
+
+    async def get_task(self, task_id: str) -> TaskRecord:
+        return await self._store.get(task_id)
+
+    async def resume_from_execute(self, parent_task_id: str, *, chat_channel_id: str | None = None) -> str:
+        """Create a child task resuming from execute stage and launch it. Returns child task_id.
+
+        Equivalent to POST /tasks/{id}/resume with stage=execute, but callable directly
+        from the chat agent without going through the HTTP layer.
+
+        chat_channel_id: if set, ToolLoop events are streamed to this channel and
+        chat_done is broadcast when execution completes.  The caller must NOT broadcast
+        chat_done itself in this case — this method's background task owns that.
+        """
+        parent = await self._store.get(parent_task_id)
+        if parent.status not in {TaskStatus.FAILED, TaskStatus.ABORTED}:
+            raise ValueError(f"Cannot resume task in {parent.status} state (must be FAILED or ABORTED)")
+        if not parent.plan:
+            raise ValueError("No executable plan to resume from")
+        if not parent.shadow_workspace_path or not Path(parent.shadow_workspace_path).exists():
+            raise ValueError("Parent shadow workspace no longer exists; cannot resume execute stage")
+
+        child_id = f"task-{uuid4()}"
+        now = datetime.now(timezone.utc)
+        child = TaskRecord(
+            task_id=child_id,
+            goal=parent.goal,
+            workspace_path=parent.workspace_path,
+            mode=parent.mode,
+            budget=TaskBudget(),  # fresh budget with current defaults
+            status=TaskStatus.PLANNED,
+            plan=parent.plan,
+            plan_markdown=parent.plan_markdown,
+            completed_step_ids=list(parent.completed_step_ids),
+            modified_files=list(parent.modified_files),
+            plan_approval_snapshot=parent.plan_approval_snapshot,
+            resume_of_task_id=parent.task_id,
+            created_at=now,
+            updated_at=now,
+        )
+        await self._store.create(child)
+
+        async def _run() -> None:
+            shadow = await self._workspace_manager.clone(
+                parent.task_id,
+                child_id,
+                parent.workspace_path,
+                src_override=Path(parent.shadow_workspace_path) if parent.shadow_workspace_path else None,
+            )
+            child_record = await self._store.get(child_id)
+            child_record.shadow_workspace_path = str(shadow.shadow_path)
+            await self._store.save(child_record)
+            if chat_channel_id:
+                await self._resume_with_channel(child_id, chat_channel_id)
+            else:
+                await self.resume_task(child_id)
+
+        asyncio.create_task(_run())
+        return child_id
+
+    async def _resume_with_channel(self, child_id: str, chat_channel_id: str) -> None:
+        """Run resume_task streaming events to chat_channel_id, then close the chat SSE."""
+        try:
+            await self.resume_task(child_id, broadcast_key=chat_channel_id)
+        finally:
+            self.broadcaster.broadcast(chat_channel_id, {"type": "chat_done", "payload": {}})
 
     async def run_inline_change(
         self,
@@ -514,6 +666,7 @@ class AgentOrchestrator:
         likely_targets: list[str] | None = None,
         channel_id: str,
         store: object,
+        thinking_log: list[str] | None = None,
     ) -> None:
         """Run a small inline change within a chat thread.
 
@@ -526,6 +679,10 @@ class AgentOrchestrator:
 
         inline_task_id = f"inline-{uuid4().hex[:12]}"
         real_path = Path(workspace_path)
+        logger.info(
+            "[inline] run_inline_change start: id=%s goal=%.80s workspace=%s explore_entries=%d",
+            inline_task_id, goal, workspace_path, len(explore_context),
+        )
 
         # Collect target files from the explore phase.
         # Priority: (1) read_file entries from explore, (2) likely_targets from
@@ -554,16 +711,32 @@ class AgentOrchestrator:
                 if candidate_path.is_file() and rel not in target_files:
                     target_files.append(rel)
 
+        logger.info("[inline] target_files resolved: %s", target_files)
+        _making_msg = "Making changes…"
+        self.broadcaster.broadcast(channel_id, {
+            "type": "chat_agent_thinking",
+            "payload": {"message": _making_msg},
+        })
+        if thinking_log is not None:
+            thinking_log.append(_making_msg)
         shadow = await self._workspace_manager.prepare_lightweight(
             inline_task_id, workspace_path, target_files
         )
         shadow_path = Path(shadow.shadow_path)
+        logger.info("[inline] shadow prepared: %s", shadow_path)
 
         self._inline_shadows[inline_task_id] = {
             "shadow_path": str(shadow_path),
             "workspace_path": workspace_path,
             "touched_files": [],
         }
+        # Persist to disk so promote/discard survive a reload.
+        _manifest = shadow_path / ".inline-manifest.json"
+        _manifest.write_text(json.dumps({
+            "inline_task_id": inline_task_id,
+            "workspace_path": workspace_path,
+            "touched_files": [],
+        }))
 
         # Build a single-step plan targeting all collected files
         plan_targets = [
@@ -619,6 +792,7 @@ class AgentOrchestrator:
             shadow_path,
             broadcast_key=channel_id,
             skip_verify=True,
+            thinking_log=thinking_log,
         )
 
         inline_budget = TaskBudget(max_tool_calls_per_step=32)
@@ -628,6 +802,10 @@ class AgentOrchestrator:
             "plan_markdown": plan_markdown,
         }
 
+        logger.info(
+            "[inline] starting ToolLoop: id=%s initial_history_entries=%d",
+            inline_task_id, len(initial_history),
+        )
         try:
             outcome = await tool_loop.run(
                 step,
@@ -648,12 +826,52 @@ class AgentOrchestrator:
         touched_files: list[str] = []
         if isinstance(outcome, VerifyResult):
             touched_files = outcome.touched_files
+            logger.info(
+                "[inline] ToolLoop complete: id=%s verified=%s touched=%s",
+                inline_task_id, outcome.verified, touched_files,
+            )
+        else:
+            logger.warning(
+                "[inline] ToolLoop returned PlanHandoff (unexpected for inline): id=%s reason=%.100s",
+                inline_task_id, getattr(outcome, "reason", ""),
+            )
 
         self._inline_shadows[inline_task_id]["touched_files"] = touched_files
+        _manifest = shadow_path / ".inline-manifest.json"
+        _manifest.write_text(json.dumps({
+            "inline_task_id": inline_task_id,
+            "workspace_path": workspace_path,
+            "touched_files": touched_files,
+        }))
 
         # Compute diff entries
         diff_entries = self._compute_diff_entries(
             real_path, shadow_path, touched_files, inline_task_id
+        )
+
+        logger.info(
+            "[inline] diff computed: id=%s entries=%d",
+            inline_task_id, len(diff_entries),
+        )
+
+        # Persist the diff card to the thread so it survives panel reloads.
+        from agentd.chat.models import ChatMessage as _ChatMsg
+        diff_entries_payload = [
+            {"path": e.path, "additions": e.additions, "deletions": e.deletions, "temp_path": e.temp_path}
+            for e in diff_entries
+        ]
+        store.append_message(  # type: ignore[union-attr]
+            thread_id,
+            _ChatMsg(
+                role="agent",
+                content=inline_task_id,
+                type="diff_card",
+                task_id=inline_task_id,
+                metadata={
+                    "diff_entries": diff_entries_payload,
+                    "thinking_log": thinking_log or [],
+                },
+            ),
         )
 
         self.broadcaster.broadcast(channel_id, {
@@ -669,6 +887,7 @@ class AgentOrchestrator:
                     }
                     for e in diff_entries
                 ],
+                "thinking_log": thinking_log or [],
                 "completed_steps": 1,
                 "total_steps": 1,
             },
@@ -701,9 +920,27 @@ class AgentOrchestrator:
             ))
         return entries
 
+    def _load_inline_meta_from_disk(self, inline_task_id: str) -> dict | None:
+        """Reconstruct inline shadow metadata from the on-disk manifest (survives reload)."""
+        shadow_path = self._workspace_manager._resolve_shadow_path(inline_task_id)
+        manifest = shadow_path / ".inline-manifest.json"
+        if not manifest.exists():
+            return None
+        try:
+            data = json.loads(manifest.read_text())
+            return {
+                "shadow_path": str(shadow_path),
+                "workspace_path": data["workspace_path"],
+                "touched_files": data.get("touched_files", []),
+            }
+        except Exception:
+            return None
+
     async def promote_inline_change(self, inline_task_id: str) -> None:
         """Copy shadow files into the real workspace."""
         meta = self._inline_shadows.get(inline_task_id)
+        if meta is None:
+            meta = self._load_inline_meta_from_disk(inline_task_id)
         if meta is None:
             raise KeyError(f"Unknown inline change: {inline_task_id!r}")
         shadow_path = Path(str(meta["shadow_path"]))
@@ -720,6 +957,8 @@ class AgentOrchestrator:
     async def discard_inline_change(self, inline_task_id: str) -> None:
         """Remove the inline change shadow without touching the real workspace."""
         meta = self._inline_shadows.pop(inline_task_id, None)
+        if meta is None:
+            meta = self._load_inline_meta_from_disk(inline_task_id)
         if meta:
             shadow_path = Path(str(meta["shadow_path"]))
             if shadow_path.exists():
@@ -736,6 +975,10 @@ class AgentOrchestrator:
     ) -> str:
         """Create a full planning task pre-seeded with chat explore context."""
         from agentd.domain.models import TaskCreateRequest
+        logger.info(
+            "[chat→task] create_task_from_chat: thread=%s goal=%.80s explore_entries=%d",
+            thread_id, goal, len(explore_context),
+        )
         request = TaskCreateRequest(
             goal=goal,
             workspace_path=workspace_path,
@@ -753,7 +996,52 @@ class AgentOrchestrator:
         )
         await self._store.create(task)
         asyncio.create_task(self.run_task(task.task_id))
+        logger.info("[chat→task] task created and queued: task_id=%s", task.task_id)
         return task.task_id
+
+    def _write_chat_plan_card(self, task: "TaskRecord") -> None:
+        """Persist a revised plan card to the chat DB so it survives a reload."""
+        if not task.chat_channel_id or self._chat_store is None or not task.plan_markdown:
+            return
+        from agentd.chat.models import ChatMessage
+        thread_id = task.chat_channel_id[len("chat:"):]
+        msg = ChatMessage(
+            role="agent",
+            content=task.plan_markdown,
+            type="plan_card",
+            task_id=task.task_id,
+            metadata={"taskId": task.task_id, "plan_markdown": task.plan_markdown},
+        )
+        self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+
+    def _write_chat_completion(self, task: "TaskRecord") -> None:
+        """Write a completion card to the chat DB for tasks originating from chat."""
+        if not task.chat_channel_id or self._chat_store is None:
+            return
+        from agentd.chat.models import ChatMessage
+        thread_id = task.chat_channel_id[len("chat:"):]
+        if task.status == TaskStatus.READY_FOR_REVIEW:
+            content = "Execution complete — review the diff in the Tasks panel."
+        elif task.status == TaskStatus.SUCCEEDED:
+            content = "Task completed successfully."
+        else:
+            diag = task.diagnostics[-1].message if task.diagnostics else "Unknown error"
+            content = f"Execution failed: {diag}"
+        msg = ChatMessage(role="agent", content=content, type="text",
+                          task_id=task.task_id, metadata={"task_id": task.task_id})
+        self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+
+    async def await_plan_ready(self, task_id: str, timeout_sec: float = 3600.0) -> "TaskRecord | None":
+        """Poll until task reaches AWAITING_PLAN_APPROVAL or a terminal state."""
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            task = await self._store.get(task_id)
+            if task.status == TaskStatus.AWAITING_PLAN_APPROVAL:
+                return task
+            if task.status in (TaskStatus.FAILED, TaskStatus.ABORTED, TaskStatus.SUCCEEDED):
+                return task
+            await asyncio.sleep(2.0)
+        return None
 
     async def _execute_plan(
         self,
@@ -762,6 +1050,8 @@ class AgentOrchestrator:
         retrieval_context: RetrievalContext,
         persistent_diagnostics: list[Diagnostic],
         started_at_ms: int,
+        *,
+        broadcast_key: str | None = None,
     ) -> TaskRecord:
         try:
             shadow_path = Path(shadow_workspace.shadow_path)
@@ -773,12 +1063,20 @@ class AgentOrchestrator:
 
             task = transition(task, TaskStatus.EXECUTING, "execution started")
             await self._store.save(task)
+            self.broadcaster.broadcast(task.task_id, {
+                "type": "task_status_changed",
+                "payload": {"task_id": task.task_id, "status": "EXECUTING", "message": "Executing plan…"},
+            })
 
             baseline_errors = await self._collect_baseline_errors(
                 shadow_path,
                 task_id=task.task_id,
                 artifacts_root_path=task.artifacts_root_path,
             )
+            # Persist the ORIGINAL baseline so a later `validate`-stage resume can reuse it
+            # rather than re-collecting on the already-mutated shadow (which would mask
+            # every error by capturing it as baseline).
+            task.baseline_error_fingerprints = sorted(baseline_errors)
             if baseline_errors:
                 logger.info(
                     "Baseline validation captured pre-existing errors",
@@ -788,6 +1086,9 @@ class AgentOrchestrator:
             # Per-step run counter: incremented each time a step is (re)attempted after a delta
             # replan, so artifact attempt numbers don't collide across runs of the same step.
             step_attempt_offsets: dict[str, int] = {}
+            # Accumulates applied patch ops per file across completed steps so that later
+            # steps can see what was changed in prior-step files without needing cat.
+            completed_ops_by_file: dict[str, list[dict[str, object]]] = {}
 
             while (step := self._next_incomplete_step(task)) is not None:
                 attempt_offset = step_attempt_offsets.get(step.id, 0)
@@ -799,6 +1100,9 @@ class AgentOrchestrator:
                     persistent_diagnostics,
                     started_at_ms,
                     attempt_offset=attempt_offset,
+                    broadcast_key=broadcast_key,
+                    prior_step_patches=completed_ops_by_file,
+                    static_baseline=baseline_errors,
                 )
 
                 if isinstance(step_result, PlanHandoff):
@@ -889,11 +1193,29 @@ class AgentOrchestrator:
                     continue
 
                 self._merge_step_result(task, step_result, persistent_diagnostics)
+                for _fpath, _ops in step_result.patch_ops_by_file.items():
+                    completed_ops_by_file.setdefault(_fpath, []).extend(_ops)
                 await self._store.save(task)
                 if step_result.outcome != "step_completed":
                     task = transition(task, TaskStatus.FAILED, "step execution exhausted")
                     await self._store.save(task)
                     return task
+
+                # Per-step review gate: pause and show diff to user before continuing.
+                if not task.step_review_auto_accept:
+                    decision = await self._pause_for_step_review(
+                        task, step, step_result, shadow_path, real_path,
+                    )
+                    if decision == "discard":
+                        await self._unmerge_step_result(
+                            task, step, step_result, shadow_path, real_path,
+                            completed_ops_by_file,
+                        )
+                        continue
+                # Always partial-promote so subsequent steps' EXPLORE reads see prior
+                # accepted changes. Review (if enabled above) runs BEFORE; promote is
+                # required regardless of whether review was shown.
+                await self._partial_promote(shadow_path, real_path, step_result.touched_files)
 
             task = transition(task, TaskStatus.VALIDATING, "full validation started")
             await self._store.save(task)
@@ -947,8 +1269,14 @@ class AgentOrchestrator:
                     "failure_code": PatchFailureCode.APPLY_ERROR.value,
                     "file": None,
                     "op_id": None,
-                    "excerpt": "\n".join(d.message for d in validation.diagnostics[:10]),
+                    "excerpt": "\n".join(
+                        self._cap_diagnostic_message(d.message)
+                        for d in validation.diagnostics[:10]
+                    ),
                 },
+                broadcast_key=broadcast_key,
+                prior_step_patches=completed_ops_by_file,
+                static_baseline=baseline_errors,
             )
             # Repair cannot delta-replan (the plan is already done by this point);
             # if the agent kept hitting scope violations, fail out cleanly with the
@@ -1004,7 +1332,9 @@ class AgentOrchestrator:
             return task
         finally:
             self._running_tasks.discard(task.task_id)
-            self.broadcaster.broadcast(task.task_id, {"type": "done", "payload": {}})
+            self.broadcaster.broadcast(task.task_id, {"type": "done", "payload": {"status": task.status.value}})
+            if task.chat_channel_id and self._chat_store is not None:
+                self._write_chat_completion(task)
             if task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED}:
                 try:
                     await self._workspace_manager.prune_checkpoints()
@@ -1102,6 +1432,98 @@ class AgentOrchestrator:
             return decision
 
         return _cb
+
+    async def _pause_for_step_review(
+        self,
+        task: TaskRecord,
+        step: PlanStep,
+        step_result: StepRunResult,
+        shadow_path: Path,
+        real_path: Path,
+    ) -> str:
+        """Pause after a step completes, broadcast a diff, and wait for accept/discard."""
+        diff_entries = self._compute_diff_entries(
+            real_path, shadow_path, step_result.touched_files, task.task_id,
+        )
+        serialized = [dataclasses.asdict(e) for e in diff_entries]
+        payload = StepReviewPayload(
+            step_id=step.id,
+            step_title=step.goal[:120],
+            diff_entries=serialized,
+        )
+        task.execution_state.pending_step_review = payload
+        task = transition(task, TaskStatus.AWAITING_STEP_REVIEW, "step review gate")
+        await self._store.save(task)
+        self.broadcaster.broadcast(task.task_id, {
+            "type": "step_review_requested",
+            "payload": {
+                "step_id": step.id,
+                "step_title": payload.step_title,
+                "diff_entries": serialized,
+            },
+        })
+
+        future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
+        self._pending_step_decisions[task.task_id] = future
+        decision = "discard"
+        try:
+            decision = await future
+        finally:
+            self._pending_step_decisions.pop(task.task_id, None)
+            task = await self._store.get(task.task_id)
+            task.execution_state.pending_step_review = None
+            if task.status == TaskStatus.AWAITING_STEP_REVIEW:
+                task = transition(task, TaskStatus.EXECUTING, "step decision received")
+            await self._store.save(task)
+
+        return decision
+
+    async def _partial_promote(
+        self,
+        shadow_path: Path,
+        real_path: Path,
+        touched_files: list[str],
+    ) -> None:
+        """Copy accepted step's files from shadow → real workspace so subsequent steps read them."""
+        for rel in touched_files:
+            src = shadow_path / rel
+            dst = real_path / rel
+            if src.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+
+    async def _unmerge_step_result(
+        self,
+        task: TaskRecord,
+        step: PlanStep,
+        step_result: StepRunResult,
+        shadow_path: Path,
+        real_path: Path,
+        completed_ops_by_file: dict[str, list[dict[str, object]]],
+    ) -> None:
+        """Revert a discarded step: restore shadow files and unset completed state."""
+        # Revert shadow files back to real workspace state
+        for rel in step_result.touched_files:
+            real_file = real_path / rel
+            shadow_file = shadow_path / rel
+            if real_file.exists():
+                shutil.copy2(real_file, shadow_file)
+            elif shadow_file.exists():
+                shadow_file.unlink()
+
+        # Remove step from completed list
+        if step.id in task.completed_step_ids:
+            task.completed_step_ids.remove(step.id)
+
+        # Remove step's file ops from the accumulator
+        for fpath in step_result.touched_files:
+            completed_ops_by_file.pop(fpath, None)
+
+        # Remove step's touched files from task.modified_files (only if no earlier step touched them)
+        remaining = set(completed_ops_by_file.keys())
+        task.modified_files = sorted(f for f in task.modified_files if f in remaining)
+
+        await self._store.save(task)
 
     def _merge_step_result(
         self,
@@ -1226,19 +1648,6 @@ class AgentOrchestrator:
             stop_conditions=task.plan.stop_conditions,
         )
 
-        steps_as_dicts = [
-            {"id": s.id, "targets": [{"path": t.path} for t in s.targets]}
-            for s in task.plan.steps
-        ]
-        collision_errors = _validate_no_duplicate_file_targets_engine(steps_as_dicts)
-        if collision_errors:
-            task.diagnostics.append(Diagnostic(
-                source="orchestrator",
-                message="Revision introduced duplicate file targets: " + "; ".join(collision_errors),
-                level="error",
-            ))
-            raise ValueError("Revision created duplicate file targets across steps")
-
     async def _run_step_with_retries(
         self,
         task: TaskRecord,
@@ -1250,6 +1659,9 @@ class AgentOrchestrator:
         *,
         last_failure: dict[str, object] | None = None,
         attempt_offset: int = 0,
+        broadcast_key: str | None = None,
+        prior_step_patches: dict[str, list[dict[str, object]]] | None = None,
+        static_baseline: frozenset[str] | None = None,
     ) -> "StepRunResult | PlanHandoff":
         allowed_files = sorted(set(step.target_paths()))
         if not allowed_files:
@@ -1333,15 +1745,37 @@ class AgentOrchestrator:
                 )
                 retrieval_payload = patch_retrieval_context.as_prompt_payload()
 
+                _completed_ids = set(task.completed_step_ids)
+                _step_progress = [
+                    {
+                        "id": s.id,
+                        "goal": s.goal,
+                        "status": (
+                            "completed" if s.id in _completed_ids
+                            else "current" if s.id == step.id
+                            else "pending"
+                        ),
+                    }
+                    for s in (task.plan.steps if task.plan else [])
+                ]
                 patch_request_context = {
                     "current_step": step.model_dump(mode="json"),
+                    "overall_goal": task.goal,
+                    "step_progress": _step_progress,
                     "allowed_files": allowed_files,
                     "max_ops": max_ops,
                     "max_files": max_files,
                     "last_failure": last_failure,
-                    "diagnostics": [item.model_dump(mode="json") for item in task.diagnostics],
+                    "diagnostics": [
+                        {
+                            **item.model_dump(mode="json"),
+                            "message": self._cap_diagnostic_message(item.message),
+                        }
+                        for item in task.diagnostics
+                    ],
                     "retrieval_context": retrieval_payload,
                     "prior_step_files": list(task.modified_files),
+                    "prior_step_patches": prior_step_patches or {},
                 }
                 self._write_debug_artifact(
                     task.task_id,
@@ -1364,12 +1798,13 @@ class AgentOrchestrator:
                         self._reasoning_engine,
                         registry,
                         self.broadcaster,
-                        task.task_id,
+                        broadcast_key or task.task_id,
                         self._patch_engine,
                         shadow_path,
                         scope_extension_callback=self._build_scope_callback(
                             task.task_id, step.id, step,
                         ),
+                        static_baseline=static_baseline,
                     )
                     step_outcome = await tool_loop.run(
                         step,
@@ -1437,6 +1872,14 @@ class AgentOrchestrator:
                         checkpoint_id=checkpoint.checkpoint_id,
                         message=f"verify passed: {step_outcome.test_output[:200] if step_outcome.test_output else 'no test output'}",
                     ))
+                    # Extract ops by file so callers can pass them as prior_step_patches
+                    _ops_by_file: dict[str, list[dict[str, object]]] = {}
+                    _candidates = step_outcome.patch_document.get("candidates") or []
+                    if isinstance(_candidates, list) and _candidates:
+                        for _op in (_candidates[0].get("patch_ops") or []):
+                            if isinstance(_op, dict) and "file" in _op:
+                                _f = str(_op["file"])
+                                _ops_by_file.setdefault(_f, []).append(_op)
                     return StepRunResult(
                         step_id=step.id,
                         outcome="step_completed",
@@ -1444,6 +1887,7 @@ class AgentOrchestrator:
                         attempts_used=attempt,
                         selected_candidate_id=None,
                         touched_files=touched,
+                        patch_ops_by_file=_ops_by_file,
                         diagnostics=[*persistent_diagnostics],
                         trace_entries=trace_entries,
                         checkpoint_manifests=checkpoints,
@@ -1667,7 +2111,10 @@ class AgentOrchestrator:
                     "failure_code": PatchFailureCode.APPLY_ERROR.value,
                     "file": None,
                     "op_id": None,
-                    "excerpt": "\n".join(d.message for d in validation.diagnostics[:10]),
+                    "excerpt": "\n".join(
+                        self._cap_diagnostic_message(d.message)
+                        for d in validation.diagnostics[:10]
+                    ),
                 }
                 logger.warning(
                     "Step validation failed",
@@ -1768,16 +2215,18 @@ class AgentOrchestrator:
     ) -> frozenset[str]:
         """Run the full validator before any patches to record pre-existing errors.
 
-        Returns the set of error messages already present so they can be filtered
-        from post-patch validation results.  Failures here are non-fatal — if the
-        baseline run itself errors we just return an empty set and proceed normally.
+        Returns the set of pre-existing diagnostic fingerprints (errors AND
+        warnings) so they can be filtered from post-patch validation results. A
+        pre-existing warning bloats the repair context as badly as an error — a
+        single ruff/mypy blob can be tens of thousands of tokens — so both levels
+        must be captured here. Failures here are non-fatal — if the baseline run
+        itself errors we just return an empty set and proceed normally.
         """
         try:
             result = await self._validator.run(str(shadow_path))
             errors = frozenset(
                 self._normalize_error_message(d.message)
                 for d in result.diagnostics
-                if d.level == "error"
             )
             if task_id:
                 self._write_debug_artifact(
@@ -1828,12 +2277,19 @@ class AgentOrchestrator:
     def _filter_baseline_errors(
         self, result: ValidationResult, baseline: frozenset[str]
     ) -> ValidationResult:
-        """Remove errors that were already present before patching started."""
+        """Remove diagnostics (errors or warnings) already present before patching.
+
+        Filtering is level-agnostic: any pre-existing diagnostic is noise once we
+        only care about what the patch changed. success still keys on error-level
+        diagnostics only, so removing pre-existing warnings never flips a passing
+        run to failing — it just keeps stale noise out of task.diagnostics and the
+        repair context.
+        """
         if not baseline:
             return result
         filtered = [
             d for d in result.diagnostics
-            if not (d.level == "error" and self._normalize_error_message(d.message) in baseline)
+            if self._normalize_error_message(d.message) not in baseline
         ]
         return ValidationResult(
             success=not any(d.level == "error" for d in filtered),
@@ -2643,3 +3099,19 @@ class AgentOrchestrator:
         if len(text) <= limit:
             return text
         return text[:limit] + "\n...[truncated]"
+
+    def _cap_diagnostic_message(self, text: str, limit: int = 5000) -> str:
+        """Bound a diagnostic message before it enters an LLM context window.
+
+        A single validator diagnostic can carry the tool's entire stdout blob
+        (a ruff/mypy run over a large file is tens of thousands of tokens), which
+        overflows the repair loop's context. Keep the head (error type/location)
+        and the tail (pytest/cargo failure summaries live at the end) so the
+        error stays debuggable; drop the bulk in between.
+        """
+        if len(text) <= limit:
+            return text
+        head = (limit * 3) // 4
+        tail = limit - head
+        dropped = len(text) - head - tail
+        return f"{text[:head]}\n...[truncated {dropped:,} chars]...\n{text[-tail:]}"
