@@ -240,7 +240,11 @@ impl IndexerService {
             tokio::fs::create_dir_all(parent).await?;
         }
         let payload = serde_json::to_vec_pretty(&snapshot)?;
-        tokio::fs::write(&self.config.snapshot_output_path, payload).await?;
+        // Atomic write: serialize to a temp sibling then rename, so a reader (the backend's
+        // trigger_index_build) never observes a half-written snapshot (torn read).
+        let tmp_path = self.config.snapshot_output_path.with_extension("json.tmp");
+        tokio::fs::write(&tmp_path, payload).await?;
+        tokio::fs::rename(&tmp_path, &self.config.snapshot_output_path).await?;
 
         if let Some(backend_url) = &self.config.backend_url {
             let url = format!("{}/v1/index/build", backend_url.trim_end_matches('/'));

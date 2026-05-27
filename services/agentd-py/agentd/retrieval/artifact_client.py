@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -131,6 +132,10 @@ class RetrievalArtifactClient:
         self._semantic_index = semantic_index  # None when semantic retrieval is disabled
         self._last_indexed_snapshot_ms: int = 0  # snapshot generation ms at last index build
         self._building: bool = False
+        # Serializes re-embeds: the watch loop can fire several /v1/index/build calls in quick
+        # succession (multiple FS events per edit). Coalesce them — skip if a build is already
+        # running; the in-flight build reads the snapshot fresh, and any newer change re-triggers.
+        self._build_lock = threading.Lock()
 
     @classmethod
     def from_env(
@@ -163,6 +168,10 @@ class RetrievalArtifactClient:
         snapshot_path = self._resolve_snapshot_path(workspace_path)
         if not snapshot_path.exists():
             return None
+        if not self._build_lock.acquire(blocking=False):
+            # A build is already running — coalesce. Skipping is safe: the in-flight build
+            # reads the snapshot fresh, and any change after it re-triggers a build.
+            return None
         try:
             self._building = True
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -177,6 +186,7 @@ class RetrievalArtifactClient:
             return None
         finally:
             self._building = False
+            self._build_lock.release()
 
     def index_status(self) -> dict[str, object]:
         return {
