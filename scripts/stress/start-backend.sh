@@ -9,16 +9,49 @@ Usage:
                                   [--artifacts-root PATH]
 
 Defaults:
-  workspace: repository root
-  port:      8000
-  out-dir:   <repo>/.tmp/stress-<timestamp>
-  backend:   auto-detected from available provider keys
-  model:     provider-specific default
-  artifacts: <workspace>/.agentd/artifacts
+  workspace:    repository root
+  port:         8000
+  out-dir:      <repo>/.tmp/stress-<timestamp>  (uvicorn stdout log only)
+  backend:      auto-detected from available provider keys
+  model:        provider-specific default
+  artifacts:    <workspace>/.agentd/artifacts
+  db:           <workspace>/.agentd/agentd.sqlite3
+  chat_db:      <workspace>/.agentd/chat.sqlite3
+  log_file:     <workspace>/.agentd/agentd.log
+  shadow_root:  <workspace>/.agentd/shadows
 USAGE
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Auto-source .env — check this dir first, then the main worktree root (git common dir).
+if [[ -z "${_AI_EDITOR_ENV_LOADED:-}" ]]; then
+  _env_file=""
+  if [[ -f "$ROOT/.env" ]]; then
+    _env_file="$ROOT/.env"
+  else
+    # In a git worktree the common git dir lives in the main repo; go up from there.
+    _git_common="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+    if [[ -n "$_git_common" ]]; then
+      # --git-common-dir may be absolute or relative; resolve to main repo root.
+      if [[ "$_git_common" = /* ]]; then
+        _main_root="$(dirname "$_git_common")"
+      else
+        _main_root="$(cd "$ROOT/$_git_common/.." 2>/dev/null && pwd || true)"
+      fi
+      [[ -f "$_main_root/.env" ]] && _env_file="$_main_root/.env"
+    fi
+  fi
+  if [[ -n "$_env_file" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$_env_file"
+    set +a
+    export _AI_EDITOR_ENV_LOADED=1
+    echo "==> sourced env from $_env_file"
+  fi
+fi
+
 WORKSPACE="$ROOT"
 PORT="8000"
 OUT_DIR="$ROOT/.tmp/stress-$(date +%Y%m%d-%H%M%S)"
@@ -27,10 +60,11 @@ BACKEND=""
 MODEL=""
 VALIDATION_PROFILE="full"
 ARTIFACTS_ROOT=""
-SCOPE_POLICY=""
-SCOPE_TRIGGER=""
-SCOPE_REMEMBER=""
+SCOPE_POLICY="ask"
+SCOPE_TRIGGER="any"
+SCOPE_REMEMBER="task"
 SCOPE_TIMEOUT_SEC=""
+TURBOQUANT_TIMEOUT_SEC="1200"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -80,6 +114,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --scope-timeout-sec)
       SCOPE_TIMEOUT_SEC="${2:?missing value for --scope-timeout-sec}"
+      shift 2
+      ;;
+    --turboquant-timeout-sec)
+      TURBOQUANT_TIMEOUT_SEC="${2:?missing value for --turboquant-timeout-sec}"
       shift 2
       ;;
     -h|--help)
@@ -193,7 +231,11 @@ fi
 
 mkdir -p "$OUT_DIR" "$LOG_DIR" "$WORKSPACE/.agentd" "$ARTIFACTS_ROOT"
 SNAPSHOT_PATH="$WORKSPACE/.ai-editor/index-snapshot.json"
-LOG_FILE="$LOG_DIR/agentd.log"
+LOG_FILE="$LOG_DIR/agentd.log"             # uvicorn stdout (tee'd)
+BACKEND_LOG_FILE="$WORKSPACE/.agentd/agentd.log"   # structured backend log
+CHAT_DB_PATH="$WORKSPACE/.agentd/chat.sqlite3"
+DB_PATH="$WORKSPACE/.agentd/agentd.sqlite3"
+SHADOW_ROOT="$WORKSPACE/.agentd/shadows"
 VALIDATION_COMMANDS_JSON="$(resolve_validation_commands)"
 
 if [[ "$VALIDATION_COMMANDS_JSON" == "__STRICT_MISSING__" ]]; then
@@ -274,8 +316,9 @@ echo "port=$PORT"
 echo "backend=$BACKEND"
 echo "model=$MODEL"
 echo "snapshot=$SNAPSHOT_PATH"
-echo "db_path=$WORKSPACE/.agentd/agentd.sqlite3"
-echo "shadow_root=$WORKSPACE/.agentd/shadows"
+echo "db_path=$DB_PATH"
+echo "chat_db_path=$CHAT_DB_PATH"
+echo "shadow_root=$SHADOW_ROOT"
 echo "artifacts_root=$ARTIFACTS_ROOT"
 echo "validation_profile=$VALIDATION_PROFILE"
 if [[ "$VALIDATION_COMMANDS_JSON" == "__AUTO_DETECT__" ]]; then
@@ -283,7 +326,8 @@ if [[ "$VALIDATION_COMMANDS_JSON" == "__AUTO_DETECT__" ]]; then
 else
   echo "validation_commands=configured"
 fi
-echo "log_file=$LOG_FILE"
+echo "backend_log=$BACKEND_LOG_FILE"
+echo "uvicorn_log=$LOG_FILE"
 
 # Start uvicorn in the background so we can wait for it to be ready before
 # pre-warming the semantic index (guaranteeing no cold-start on the first task).
@@ -291,8 +335,10 @@ echo "log_file=$LOG_FILE"
   cd "$AGENTD_DIR"
   export AI_EDITOR_REASONING_BACKEND="$BACKEND"
   export AI_EDITOR_WORKSPACE_PATH="$WORKSPACE"
-  export AI_EDITOR_DB_PATH="$WORKSPACE/.agentd/agentd.sqlite3"
-  export AI_EDITOR_SHADOW_ROOT="$WORKSPACE/.agentd/shadows"
+  export AI_EDITOR_DB_PATH="$DB_PATH"
+  export AI_EDITOR_CHAT_DB_PATH="$CHAT_DB_PATH"
+  export AI_EDITOR_SHADOW_ROOT="$SHADOW_ROOT"
+  export AI_EDITOR_LOG_FILE="$BACKEND_LOG_FILE"
   export AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH"
   export AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT"
   if [[ "$VALIDATION_COMMANDS_JSON" == "__AUTO_DETECT__" ]]; then
@@ -336,6 +382,7 @@ echo "log_file=$LOG_FILE"
     turboquant)
       export AI_EDITOR_TURBOQUANT_MODEL="$MODEL"
       export TURBOQUANT_HOST="${TURBOQUANT_HOST:-http://localhost:11435}"
+      export AI_EDITOR_TURBOQUANT_TIMEOUT_SEC="$TURBOQUANT_TIMEOUT_SEC"
       ;;
     scripted)
       ;;
@@ -345,7 +392,7 @@ echo "log_file=$LOG_FILE"
   # prepends .venv/bin to PATH and that PATH is inherited by every child
   # subprocess (incl. agent's run_command), causing the agent to silently use
   # the backend's pytest/ruff/mypy instead of the workspace's. Bypass that.
-  ./.venv/bin/uvicorn agentd.main:app --port "$PORT" 2>&1 | tee "$LOG_FILE"
+  ./.venv/bin/uvicorn agentd.main:app --port "$PORT" --reload 2>&1 | tee "$LOG_FILE"
 ) &
 _SERVER_PID=$!
 
@@ -389,6 +436,25 @@ if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
     done
   fi
 fi
+
+# Self-updating index: launch the incremental indexer watcher. It re-indexes changed source
+# files → rewrites the snapshot (atomic) → notifies the backend via AI_EDITOR_BACKEND_URL, which
+# delta-re-embeds. LSP off here — embedding only needs the tree-sitter symbol graph, and a full
+# LSP (rust-analyzer/pyright) is memory-heavy.
+_INDEXER_BIN="$AGENTD_DIR/../indexer-rs/target/release/ai-editor-indexer"
+_WATCHER_PID=""
+if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_BIN" ]]; then
+  AI_EDITOR_BACKEND_URL="http://localhost:${PORT}" AI_EDITOR_LSP_ENABLED=false \
+    "$_INDEXER_BIN" index --workspace "$WORKSPACE" --snapshot-path "$SNAPSHOT_PATH" --watch true \
+    >> "$LOG_DIR/indexer-watch.log" 2>&1 &
+  _WATCHER_PID=$!
+  echo "==> indexer watch started (self-updating index): pid=$_WATCHER_PID log=$LOG_DIR/indexer-watch.log"
+elif [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
+  echo "==> indexer watch NOT started — binary missing: $_INDEXER_BIN (build: cargo build --release in services/indexer-rs)" >&2
+fi
+
+# Don't orphan child processes (backend + watcher) on exit/interrupt.
+trap '[[ -n "$_WATCHER_PID" ]] && kill "$_WATCHER_PID" 2>/dev/null; kill "$_SERVER_PID" 2>/dev/null' EXIT INT TERM
 
 echo "==> backend ready — submitting tasks is now safe"
 wait "$_SERVER_PID"
