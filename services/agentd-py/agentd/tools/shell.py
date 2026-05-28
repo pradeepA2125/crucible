@@ -35,23 +35,16 @@ async def run_command(
     args: list[str],
     shadow_root: Path,
     real_workspace_path: Path,
-    allowlist: set[str],
     timeout_sec: int = _DEFAULT_TIMEOUT_SEC,
     binary_name_override: str | None = None,
 ) -> ToolOutput:
     if not command:
         return ToolOutput(output="Error: command is required", is_error=True)
 
-    check_name = binary_name_override or command
-    if check_name not in allowlist:
-        return ToolOutput(
-            output=(
-                f"Error: '{check_name}' is not in the shell allowlist. "
-                f"Allowed: {', '.join(sorted(allowlist))}"
-            ),
-            is_error=True,
-        )
-
+    # Gating happens upstream in ToolRegistry via the command_approval_callback
+    # (or is bypassed in allow_all/test paths). shell.run_command no longer
+    # enforces a static allowlist — that mechanism was replaced by the approval gate.
+    check_name = binary_name_override or command  # noqa: F841 — kept for log clarity
     # Binary resolution — always against real_workspace_path, never shadow.
     # setup_env installs binaries into the real workspace; the shadow has no .venv.
     # CWD stays shadow_root so patched files (pyproject.toml, pytest.ini, tests)

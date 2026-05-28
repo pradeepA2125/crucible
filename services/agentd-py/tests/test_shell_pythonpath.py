@@ -73,7 +73,6 @@ async def test_run_command_prepends_shadow_import_root_for_pytest(tmp_path: Path
         args=[],
         shadow_root=shadow,
         real_workspace_path=real,
-        allowlist={"pytest"},
         binary_name_override="pytest",
     )
     assert str(shadow / "pkgs") in out.output
@@ -94,7 +93,6 @@ async def test_run_command_skips_shadow_import_root_for_non_python_tool(tmp_path
         args=[],
         shadow_root=shadow,
         real_workspace_path=real,
-        allowlist={"eslint"},
         binary_name_override="eslint",
     )
     assert str(shadow / "pkgs") not in out.output

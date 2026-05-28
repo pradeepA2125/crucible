@@ -1966,6 +1966,7 @@ class AgentOrchestrator:
                         shadow_path,
                         self._retrieval_client,
                         real_workspace_path=Path(task.workspace_path),
+                        command_approval_callback=self._build_command_approval_callback(task.task_id),
                     )
                     tool_loop = ToolLoop(
                         self._reasoning_engine,

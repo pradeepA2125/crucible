@@ -23,9 +23,10 @@ class ToolOutput:
 class ToolRegistry:
     """Dispatches tool calls to the appropriate implementation.
 
-    read_file and list_directory operate on real_workspace_path (stable, immutable
-    throughout the task). search_code and run_command operate on shadow_root (patched
-    code). setup_env and find_binary operate on real_workspace_path.
+    read_file, list_directory, search_code: real_workspace_path (stable source of truth).
+    run_command: CWD=shadow_root (patched files), binary resolution=real_workspace_path
+                 (binaries installed by setup_env live in real .venv/node_modules).
+    setup_env, find_binary: real_workspace_path.
     """
 
     def __init__(
@@ -33,16 +34,21 @@ class ToolRegistry:
         shadow_root: Path,
         real_workspace_path: Path,
         semantic_index: object | None = None,
+        command_approval_callback: object | None = None,
     ) -> None:
         self._shadow_root = shadow_root
         self._real_workspace_path = real_workspace_path
         self._semantic_index = semantic_index
+        self._read_from_shadow: bool = False
         self._ripgrep_cmd = os.environ.get("AI_EDITOR_RIPGREP_CMD", "rg")
-        allowlist_raw = os.environ.get(
-            "AI_EDITOR_SHELL_ALLOWLIST",
-            "pytest,npm,cargo,ruff,mypy,tsc,eslint,jest,vitest",
-        )
-        self._shell_allowlist = {c.strip() for c in allowlist_raw.split(",") if c.strip()}
+        # async (command, args, cwd) -> CommandDecision. When set, run_command
+        # consults it before executing. When None, run_command runs unguarded
+        # (legacy/test path) — production wires this via the engine.
+        self._command_approval_callback = command_approval_callback
+
+    def use_shadow_for_reads(self) -> None:
+        """Switch read_file, search_code, list_directory to read from the shadow workspace."""
+        self._read_from_shadow = True
 
     def definitions(self, phase: str = "explore") -> list[ToolDefinition]:
         tools = [
@@ -66,8 +72,10 @@ class ToolRegistry:
             ToolDefinition(
                 name="read_file",
                 description=(
-                    "Read a file from the workspace. Optionally specify a line range. "
-                    "Use when you need to see file content not in the initial context."
+                    "Read up to 500 lines of a file. Use start_line+end_line to target "
+                    "the section you need. When you know a line number from search_code, "
+                    "read a precise range around it. When uncertain of a section's length, "
+                    "read a wider block (e.g. 200–300 lines) rather than guessing a tight range."
                 ),
                 parameters={
                     "type": "object",
@@ -97,15 +105,17 @@ class ToolRegistry:
             ToolDefinition(
                 name="run_command",
                 description=(
-                    "Run an allow-listed shell command inside the shadow workspace. "
-                    f"Allowed commands: {', '.join(sorted(self._shell_allowlist))}. "
-                    "Full paths to allowed binaries are also accepted (e.g. /home/user/.venv/bin/pytest). "
-                    "Use to run tests, linters, or type checkers."
+                    "Run a shell command inside the shadow workspace. Each command "
+                    "is surfaced to the user for approval (Accept / Accept & remember / "
+                    "Reject) unless the session was started in allow_all mode. If the "
+                    "user rejects, you will receive a tool-result error and should try "
+                    "a different approach (e.g. a static check). Use to run tests, "
+                    "linters, or type checkers."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "command": {"type": "string", "description": "Command name or full path (basename must be in the allowlist)"},
+                        "command": {"type": "string", "description": "Command name or full path"},
                         "args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments"},
                     },
                     "required": ["command"],
@@ -140,7 +150,11 @@ class ToolRegistry:
                         "Call ONLY when find_binary confirms binary is absent. "
                         "Allowed: 'uv sync', 'pip install -r requirements.txt', "
                         "'npm ci', 'yarn install --frozen-lockfile', 'pnpm install --frozen-lockfile', "
-                        "'cargo build', 'go mod download', 'poetry install'"
+                        "'cargo build', 'go mod download', 'poetry install'. "
+                        "Python ecosystem: if 'uv' is missing, transparently falls back to "
+                        "system python3 + pip; you don't need a separate code path. "
+                        "Node/Rust/Go: returns 'AGENT SHOULD: revision_needed' when the "
+                        "toolchain is genuinely missing — emit revision_needed in that case."
                     ),
                     parameters={
                         "type": "object",
@@ -148,6 +162,32 @@ class ToolRegistry:
                             "command": {"type": "string", "description": "Full command string, e.g. 'uv sync' or 'npm ci'"},
                         },
                         "required": ["command"],
+                    },
+                ),
+                ToolDefinition(
+                    name="init_workspace",
+                    description=(
+                        "Bootstrap a bare workspace by emitting a minimal manifest "
+                        "(pyproject.toml / package.json / Cargo.toml / go.mod) into shadow. "
+                        "Use this INSTEAD of hand-writing manifests via emit_patch — "
+                        "it guarantees the smallest valid manifest with only the dev_deps "
+                        "you declare; no extra packages. Refuses if the manifest already exists."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "ecosystem": {
+                                "type": "string",
+                                "enum": ["python", "node", "rust", "go"],
+                                "description": "Target ecosystem",
+                            },
+                            "dev_deps": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Exact dev dependencies to declare (e.g. ['pytest'] or ['vitest']). No defaults beyond pytest for python.",
+                            },
+                        },
+                        "required": ["ecosystem", "dev_deps"],
                     },
                 ),
             ]
@@ -181,26 +221,52 @@ class ToolRegistry:
                 path_filter=str(args["path_filter"]) if "path_filter" in args else None,
                 context_lines=int(args.get("context_lines", 3)),  # type: ignore[call-overload]
                 fixed_strings=bool(args.get("fixed_strings", False)),
-                shadow_root=self._shadow_root,
+                shadow_root=(
+                    self._shadow_root if self._read_from_shadow
+                    else self._real_workspace_path
+                ),
                 ripgrep_cmd=self._ripgrep_cmd,
             )
 
         if name == "read_file":
             from agentd.tools.files import read_file
+            _MAX_READ_LINES = 500
             start = args.get("start_line")
             end = args.get("end_line")
-            return await read_file(
+            result = await read_file(
                 path=str(args.get("path", "")),
                 start_line=int(start) if start is not None else None,  # type: ignore[call-overload]
                 end_line=int(end) if end is not None else None,  # type: ignore[call-overload]
-                shadow_root=self._real_workspace_path,
+                shadow_root=(
+                    self._shadow_root if self._read_from_shadow
+                    else self._real_workspace_path
+                ),
             )
+            if result.is_error:
+                return result
+            lines = result.output.splitlines()
+            if len(lines) > _MAX_READ_LINES:
+                truncated = "\n".join(lines[:_MAX_READ_LINES])
+                total = len(lines)
+                return ToolOutput(
+                    output=(
+                        truncated
+                        + f"\n\n[TRUNCATED: showing {_MAX_READ_LINES} of {total} lines. "
+                        "Use search_code to locate the symbol (line number shown as '123: def foo'), "
+                        "then call read_file with start_line/end_line around that line.]"
+                    ),
+                    is_error=False,
+                )
+            return result
 
         if name == "list_directory":
             from agentd.tools.files import list_directory
             return await list_directory(
                 path=str(args.get("path", ".")),
-                root=self._real_workspace_path,
+                root=(
+                    self._shadow_root if self._read_from_shadow
+                    else self._real_workspace_path
+                ),
             )
 
         if name == "run_command":
@@ -208,12 +274,24 @@ class ToolRegistry:
             raw_args = args.get("args", [])
             cmd_args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
             command = str(args.get("command", ""))
-            binary_name = Path(command).name  # basename check allows full paths
+            cwd = str(args.get("cwd", "")) or ""
+            binary_name = Path(command).name  # basename used by binary-rule matching
+            if self._command_approval_callback is not None:
+                decision = await self._command_approval_callback(command, cmd_args, cwd)
+                if not decision.approve:
+                    return ToolOutput(
+                        output=(
+                            f"Command rejected by user: {command} "
+                            f"{' '.join(cmd_args)}".strip()
+                            + ". Try a different approach (e.g. a static check)."
+                        ),
+                        is_error=True,
+                    )
             return await run_command(
                 command=command,
                 args=cmd_args,
                 shadow_root=self._shadow_root,
-                allowlist=self._shell_allowlist,
+                real_workspace_path=self._real_workspace_path,
                 binary_name_override=binary_name,
             )
 
@@ -230,6 +308,16 @@ class ToolRegistry:
                 command=str(args.get("command", "")),
                 shadow_root=self._shadow_root,
                 real_workspace=self._real_workspace_path,
+            )
+
+        if name == "init_workspace":
+            from agentd.tools.env import init_workspace
+            raw_deps = args.get("dev_deps", [])
+            dev_deps = [str(d) for d in raw_deps] if isinstance(raw_deps, list) else []
+            return await init_workspace(
+                ecosystem=str(args.get("ecosystem", "")),
+                dev_deps=dev_deps,
+                shadow_root=self._shadow_root,
             )
 
         if name == "search_semantic":

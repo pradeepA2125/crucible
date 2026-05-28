@@ -39,6 +39,65 @@ _POST_PATCH_ANALYZER = AnalyzerBuilder.default()
 _MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "100000"))
 
 
+def _extract_line_hint(error_msg: str, last_compiler_error: str) -> str:
+    """Extract a line number reference from the compiler error or patch failure message,
+    and construct a guided line-reading hint for the model.
+    """
+    if last_compiler_error:
+        m = re.search(r":(\d+):", last_compiler_error)
+        if m:
+            ln = int(m.group(1))
+            return (
+                f"\nThe active compiler error is near line {ln}.\n"
+                f"Use search_code to locate the error symbols or call read_file with start_line={max(1, ln - 30)} "
+                f"and end_line={ln + 50} to read around that area. Keep reading recursively until you have enough context.\n"
+            )
+
+    if error_msg:
+        m = re.search(r":(\d+):", error_msg)
+        if m:
+            ln = int(m.group(1))
+            return (
+                f"\nThe patch failure occurred near line {ln}.\n"
+                f"Use search_code to locate the error symbols or call read_file with start_line={max(1, ln - 30)} "
+                f"and end_line={ln + 50} to read around that area. Keep reading recursively until you have enough context.\n"
+            )
+    return (
+        "\nNo specific line numbers could be automatically extracted from the error.\n"
+        "You MUST first use search_code to locate the target symbols, files, or line numbers\n"
+        "before attempting any read or patch.\n"
+    )
+
+
+def _anchor_failure_hint(error_msg: str) -> str:
+    """One-line nudge toward the op best suited to an anchor failure."""
+    low = error_msg.lower()
+    if "appears" in low and "times" in low:
+        return (
+            "The search text is not unique. Either extend it with more surrounding context, "
+            "or target the block by line range with replace_range (the line numbers read_file returns)."
+        )
+    if "not found" in low:
+        return (
+            "The exact text was not found. replace_range is often the reliable choice here — "
+            "give start_line/end_line from read_file's line-numbered output and the new content, "
+            "instead of reproducing the exact text for search_replace."
+        )
+    return ""
+
+
+def _refocus_note(step: PlanStep) -> str:
+    """Appended to patch-failure feedback: pull the model back to the step goal and
+    push it to reuse the conversation history instead of re-reading the same content."""
+    return (
+        f"\n\nKEEP THE STEP GOAL IN VIEW: {step.goal}\n"
+        "You are fixing the patch — but do not lose sight of the goal above. Before issuing "
+        "another read, SEARCH the conversation history: you have very likely already read the "
+        "relevant lines, so reuse them rather than re-reading the same content (which wastes "
+        "budget and makes no progress)."
+    )
+
+
 @dataclass
 class VerifyResult:
     patch_document: dict[str, object]   # last applied patch (for artifact writing)
@@ -156,6 +215,23 @@ class ToolLoop:
         had_scope_violation: bool = False     # True if any patch was rejected for out-of-scope file
         _last_auto_checks_error: str = ""     # first ~300 chars of postpatch output when blocking
         _last_test_failure: str = ""          # first ~300 chars of last failing run_command output
+        # Postpatch baseline in the analyzer's own per-line fingerprint format,
+        # collected lazily from the pre-patch (real workspace) content of the
+        # touched files on the first patch. Replaces the validator-sourced
+        # static_baseline whose whole-message fingerprints never match the
+        # analyzer's per-line filter.
+        _postpatch_baseline: frozenset[str] | None = None
+        # Fix 1: consecutive-identical tool_call circuit-breaker. Distinct from the
+        # SM's emit_patch dedup — this catches a weak model repeating the SAME
+        # read/search. Cleared whenever the SM state changes (a transition means
+        # the workspace/context changed, so a repeat read is legitimate again).
+        _seen_tool_calls: dict[str, int] = {}
+        _prev_sm_state = sm.state
+        # Fix 2: budget phase tracks whether the step has landed its FIRST successful
+        # patch. Before that, all turns (including PATCH_FAILED_* recovery) draw on the
+        # generous explore budget — getting the first patch right is "exploration", not
+        # "verification". Only after a patch succeeds do we charge the tight verify budget.
+        _patch_succeeded_once = False
 
         retrieval_ctx = patch_request_context.get("retrieval_context") or {}
         if not isinstance(retrieval_ctx, dict):
@@ -174,6 +250,8 @@ class ToolLoop:
             "diagnostics": patch_request_context.get("diagnostics"),
             "last_failure": patch_request_context.get("last_failure"),
             "plan_markdown": patch_request_context.get("plan_markdown"),
+            "overall_goal": patch_request_context.get("overall_goal"),
+            "step_progress": patch_request_context.get("step_progress") or [],
             "prior_step_files": patch_request_context.get("prior_step_files") or [],
             "prior_step_patches": patch_request_context.get("prior_step_patches") or {},
         }
@@ -183,6 +261,15 @@ class ToolLoop:
         total_budget = max_explore + max_verify + 10  # generous outer cap
         for iteration in range(total_budget):
             phase = "explore" if sm.state == VerifyPhaseState.EXPLORE else "verify"
+            # Fix 1: a state change means the workspace/context moved on — clear the
+            # consecutive-repeat cache so a fresh read of the same target is allowed.
+            if sm.state != _prev_sm_state:
+                _seen_tool_calls.clear()
+                _prev_sm_state = sm.state
+            # Fix 2: budget phase is driven by whether a patch has landed, NOT by the
+            # SM state. PATCH_FAILED_* recovery before the first successful patch stays
+            # on the explore budget.
+            budget_phase = "verify" if _patch_succeeded_once else "explore"
             _all_defs = self._registry.definitions(phase=phase)
             _allowed = sm.allowed_tools()
             tool_defs = [t.model_dump() for t in _all_defs if t.name in _allowed]
@@ -199,18 +286,32 @@ class ToolLoop:
                     "payload": {"chunk": chunk},
                 })
 
+            _state_desc = sm.state_description(
+                iteration=iteration + 1,
+                error_summary=_last_auto_checks_error,
+                failure_summary=_last_test_failure,
+            )
+            _allowed_actions = sm.allowed_action_types()
+            # Persist exactly what the SM injected this turn (state_description carries
+            # the postpatch error_summary / test failure_summary; history tail carries
+            # the _patch_apply AUTO-CHECKS text). Removes guesswork about "what was
+            # sent to the model" after the fact.
+            self._dump_turn_debug(
+                step.id, iteration + 1,
+                sm_state=sm.state.value,
+                state_description=_state_desc,
+                allowed_tools=sorted(_allowed),
+                allowed_action_types=sorted(_allowed_actions),
+                history_tail=history[-8:],
+            )
             try:
                 response = await self._reasoning.create_tool_step(
                     step_context=step_context,
                     history=history,
                     tool_definitions=tool_defs,
                     on_thinking=_on_thinking,
-                    state_description=sm.state_description(
-                        iteration=iteration + 1,
-                        error_summary=_last_auto_checks_error,
-                        failure_summary=_last_test_failure,
-                    ),
-                    allowed_action_types=sm.allowed_action_types(),
+                    state_description=_state_desc,
+                    allowed_action_types=_allowed_actions,
                 )
             except RuntimeError as exc:
                 # Malformed / non-JSON response from the model. Inject into history
@@ -440,35 +541,49 @@ class ToolLoop:
                                 })
                                 continue  # stay in explore, agent corrects/revises
                         else:
+                            line_hint = _extract_line_hint(error_msg, _last_auto_checks_error)
                             if "appears" in error_msg and "times" in error_msg:
                                 feedback = (
                                     f"Patch FAILED: {error_msg}\n"
                                     "Your search string matches multiple locations — it is not unique.\n"
+                                    + _anchor_failure_hint(error_msg) + "\n"
                                     "DO NOT re-emit immediately. Instead:\n"
+                                    f"{line_hint}"
                                     "  1. Call search_code with the ambiguous text to see all occurrences.\n"
                                     "  2. Pick a longer, unique surrounding context from one occurrence.\n"
-                                    "  3. Re-emit using that longer string as your search field.\n"
+                                    "  3. Call read_file with start_line and end_line around that occurrence to verify it.\n"
+                                    "  4. Keep reading recursively around the target section until you have enough surrounding context.\n"
+                                    "  5. Re-emit using that longer string as your search field.\n"
                                     "\nsearch_code tool schema:\n" + _sc_json
                                 )
                             elif "not found" in error_msg.lower():
                                 feedback = (
                                     f"Patch FAILED: {error_msg}\n"
                                     "The search text does not exist in the file.\n"
-                                    "DO NOT re-emit immediately. You MUST read the file first:\n"
-                                    "  1. Call read_file on the target file to get its exact current content.\n"
-                                    "  2. Find the exact text as it exists now.\n"
-                                    "  3. Re-emit using ONLY text returned by read_file as your search field.\n"
+                                    + _anchor_failure_hint(error_msg) + "\n"
+                                    "DO NOT re-emit immediately. You MUST search and read first:\n"
+                                    f"{line_hint}"
+                                    "  1. Use search_code to locate error symbols or the exact code block you want to change (which shows line numbers).\n"
+                                    "  2. Call read_file with start_line and end_line parameters to read a window (e.g. 100-200 lines) around the target location.\n"
+                                    "  3. DO NOT call read_file without start_line/end_line on large files (it is capped at 500 lines).\n"
+                                    "  4. Keep reading recursively around that target location until you have complete and correct context.\n"
+                                    "  5. Re-emit using ONLY text returned by read_file as your search field.\n"
                                     "\nread_file tool schema:\n" + _rf_json + "\n"
-                                    "\nsearch_code tool schema (alternative):\n" + _sc_json
+                                    "\nsearch_code tool schema:\n" + _sc_json
                                 )
                             else:
                                 feedback = (
                                     f"Patch FAILED: {error_msg}\n"
-                                    "Call read_file or search_code to get the current file content, "
-                                    "then re-emit using only text you just read.\n"
+                                    "DO NOT re-emit immediately. You MUST search and read first:\n"
+                                    f"{line_hint}"
+                                    "  1. Use search_code to locate the error symbols or targeted lines.\n"
+                                    "  2. Call read_file with start_line and end_line parameters (e.g. window of 100-200 lines) around those locations.\n"
+                                    "  3. Keep reading recursively around the target section until you have enough surrounding context.\n"
+                                    "  4. Re-emit using ONLY text returned by read_file as your search field.\n"
                                     "\nread_file tool schema:\n" + _rf_json + "\n"
                                     "\nsearch_code tool schema:\n" + _sc_json
                                 )
+                            feedback += _refocus_note(step)
                             history.append({
                                 "role": "tool_result", "tool": "_patch_apply",
                                 "content": feedback,
@@ -527,11 +642,22 @@ class ToolLoop:
                 testing_strategy = step.testing_strategy or "not specified"
                 test_cmd_hint = step.test_command or "none — derive from testing_strategy and touched files"
                 _shadow_root = getattr(self._registry, "_shadow_root", None)
+                _real_root = getattr(self._registry, "_real_workspace_path", None)
+                # Collect the postpatch baseline ONCE per step, from the pre-patch
+                # (real workspace) content of the touched files. The real workspace
+                # reflects prior accepted steps but NOT the current step's just-applied
+                # patch (promotion happens after the step), so it is the correct
+                # pre-patch baseline. Fingerprints are in the analyzer's per-line
+                # format, so analyze()'s filter can actually match them.
+                if _postpatch_baseline is None and _real_root is not None:
+                    _postpatch_baseline = await _POST_PATCH_ANALYZER.collect_baseline(
+                        _real_root, all_touched_files,
+                    )
                 auto_checks, _blocking_clean = (
                     await _POST_PATCH_ANALYZER.analyze(
                         _shadow_root,
                         all_touched_files,
-                        baseline=self._static_baseline,
+                        baseline=_postpatch_baseline,
                     )
                     if _shadow_root is not None
                     else ("", True)
@@ -546,6 +672,7 @@ class ToolLoop:
                     else VerifyPhaseEvent.POSTPATCH_BLOCKING
                 )
                 sm.transition(postpatch_event)
+                _patch_succeeded_once = True  # subsequent turns draw on the verify budget
                 logger.info(
                     "[loop] patch applied: task=%s step=%s touched=%s state→%s",
                     self._task_id, step.id, all_touched_files, sm.state.value,
@@ -612,8 +739,35 @@ class ToolLoop:
                 })
                 continue
 
-            # Budget enforcement per phase
-            if phase == "explore":
+            # Fix 1: consecutive-identical tool_call circuit-breaker. If this exact
+            # (tool, args) already ran since the last SM transition, its result is
+            # already in history — don't burn a turn re-running it. Checked BEFORE
+            # budget so a blocked repeat doesn't drain the budget.
+            _call_key = f"{tool_name}:{json.dumps(args, sort_keys=True, default=str)}"
+            if _call_key in _seen_tool_calls:
+                logger.warning(
+                    "[loop] repeat tool_call blocked: task=%s step=%s tool=%s first_seen_iter=%d",
+                    self._task_id, step.id, tool_name, _seen_tool_calls[_call_key],
+                )
+                history.append({"role": "assistant", "content": json.dumps(response, default=str)})
+                history.append({
+                    "role": "tool_result", "tool": tool_name,
+                    "content": (
+                        f"You already ran {tool_name} with these exact arguments this round — "
+                        "its result is already in the conversation history above. "
+                        "Do NOT repeat the identical call. If the earlier result was truncated "
+                        "from history, read a DIFFERENT line range (shift start_line/end_line) "
+                        "or search a different pattern. If you already have the context you need, "
+                        "emit your patch now. Repeating the same call returns the same result and "
+                        "makes no progress."
+                    ),
+                })
+                continue
+            _seen_tool_calls[_call_key] = iteration + 1
+
+            # Budget enforcement per phase (budget_phase: pre-first-patch recovery
+            # counts as explore, not verify — see Fix 2).
+            if budget_phase == "explore":
                 if explore_calls >= max_explore:
                     if had_scope_violation:
                         # Agent kept burning budget after a scope rejection without emitting
@@ -787,6 +941,49 @@ class ToolLoop:
             )
         raise ToolBudgetExceededError(f"Step {step.id!r}: total budget exceeded")
 
+    def _dump_turn_debug(
+        self,
+        step_id: str,
+        iteration: int,
+        *,
+        sm_state: str,
+        state_description: str,
+        allowed_tools: list[str],
+        allowed_action_types: list[str],
+        history_tail: list[dict[str, object]],
+    ) -> None:
+        """Persist the SM-injected context for one tool-loop turn to artifacts.
+
+        Best-effort and non-fatal: the postpatch AUTO-CHECKS text lives in the
+        history tail (the _patch_apply entry) and the error/failure summaries live
+        in state_description, so this captures exactly what the model received.
+        """
+        try:
+            from agentd.runtime.artifacts import task_artifacts_root
+            real_root = getattr(self._registry, "_real_workspace_path", None)
+            ws = str(real_root) if real_root is not None else (
+                str(self._shadow_path) if self._shadow_path is not None else None
+            )
+            out = task_artifacts_root(self._task_id, ws) / f"step-{step_id}"
+            out.mkdir(parents=True, exist_ok=True)
+            (out / f"turn-{iteration:02d}.json").write_text(
+                json.dumps(
+                    {
+                        "iteration": iteration,
+                        "sm_state": sm_state,
+                        "allowed_tools": allowed_tools,
+                        "allowed_action_types": allowed_action_types,
+                        "state_description": state_description,
+                        "history_tail": history_tail,
+                    },
+                    indent=2,
+                    default=str,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
     async def _apply_patch_inline(
         self,
         patch_document: dict[str, object],
@@ -839,11 +1036,15 @@ def build_tool_registry(
     shadow_root: Path,
     retrieval_client: object | None = None,
     real_workspace_path: Path | None = None,
+    command_approval_callback: object | None = None,
 ) -> ToolRegistry:
-    """Construct a ToolRegistry for a step, extracting the semantic index if available."""
+    """Construct a ToolRegistry for a step, extracting the semantic index if available.
+    Thread `command_approval_callback` (built by the engine per task) so run_command
+    is gated by the user-approval flow."""
     semantic_index = getattr(retrieval_client, "_semantic_index", None)
     return ToolRegistry(
         shadow_root=shadow_root,
         real_workspace_path=real_workspace_path or shadow_root,
         semantic_index=semantic_index,
+        command_approval_callback=command_approval_callback,
     )
