@@ -1,13 +1,32 @@
 from __future__ import annotations
 
+import logging
 import os
+import sys
 from pathlib import Path
+
+# Attach handlers to the agentd logger directly so --reload doesn't suppress
+# them (basicConfig is a no-op when uvicorn already owns the root logger).
+_agentd_logger = logging.getLogger("agentd")
+_agentd_logger.setLevel(logging.INFO)
+if not _agentd_logger.handlers:
+    _fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    _h_stdout = logging.StreamHandler(sys.stdout)
+    _h_stdout.setFormatter(_fmt)
+    _agentd_logger.addHandler(_h_stdout)
+    # Also write to a file so logs are tailable regardless of how the server was started.
+    _log_file = Path(os.environ.get("AI_EDITOR_LOG_FILE", ".agentd/agentd.log"))
+    _log_file.parent.mkdir(parents=True, exist_ok=True)
+    _h_file = logging.FileHandler(_log_file)
+    _h_file.setFormatter(_fmt)
+    _agentd_logger.addHandler(_h_file)
+_agentd_logger.propagate = False
 
 from fastapi import FastAPI
 
 from agentd.api.routes import build_router
 from agentd.patch.engine import PatchEngine
-from agentd.domain.models import ScopePolicy, ScopeRemember, ScopeTrigger
+from agentd.domain.models import ScopePolicy, ScopeRemember, ScopeTrigger, ShellPolicy
 from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.providers.anthropic_transport import AnthropicJsonTransport
@@ -147,8 +166,9 @@ elif reasoning_backend == "gemini":
     thinking_budget = _optional_int_env("AI_EDITOR_GEMINI_THINKING_BUDGET")
     thinking_enabled = _bool_env("AI_EDITOR_GEMINI_THINKING_ENABLED", True)
     if thinking_enabled and thinking_budget is None and not thinking_level:
-        # Enable dynamic thinking by default for Gemini backend unless explicitly configured.
-        thinking_budget = -1
+        # Default to high reasoning for Gemini 3.x models (thinking_level, not thinking_budget).
+        # thinking_budget=-1 is the Gemini 2.5 dynamic-budget API; 3.x models use thinking_level.
+        thinking_level = "high"
 
     transport = GeminiJsonTransport(
         api_key=os.getenv("GEMINI_API_KEY"),
@@ -193,7 +213,9 @@ elif reasoning_backend == "openrouter":
 
     transport = OpenRouterJsonTransport(
         api_key=os.getenv("OPENROUTER_API_KEY"),
+        max_tokens=_int_env("AI_EDITOR_OPENROUTER_MAX_TOKENS", 4096),
         timeout_sec=_float_env("AI_EDITOR_OPENROUTER_TIMEOUT_SEC", 120.0),
+        max_retries=_int_env("AI_EDITOR_OPENROUTER_MAX_RETRIES", 4),
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv(
@@ -224,13 +246,9 @@ elif reasoning_backend == "ollama":
         transport=transport,
     )
 elif reasoning_backend == "turboquant":
-    transport = TurboQuantTransport(
-        host=os.getenv("TURBOQUANT_HOST", "http://localhost:11435"),
-        timeout_sec=_float_env("AI_EDITOR_TURBOQUANT_TIMEOUT_SEC", 600.0),
-        max_retries=_int_env("AI_EDITOR_TURBOQUANT_MAX_RETRIES", 4),
-    )
+    transport = TurboQuantTransport.from_env()
     reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_TURBOQUANT_MODEL", "qwen3.6:35b-a3b-q4_K_M"),
+        model=os.getenv("AI_EDITOR_TURBOQUANT_MODEL", "devstral-small-2:24b-q4_k_xl"),
         transport=transport,
     )
 else:
@@ -277,6 +295,14 @@ def _scope_trigger_env() -> ScopeTrigger:
         return ScopeTrigger.NEARBY
 
 
+def _shell_policy_env() -> ShellPolicy:
+    raw = os.getenv("AI_EDITOR_SHELL_POLICY", "ask").strip().lower()
+    try:
+        return ShellPolicy(raw)
+    except ValueError:
+        return ShellPolicy.ASK
+
+
 def _scope_remember_env() -> ScopeRemember:
     raw = os.getenv("AI_EDITOR_SCOPE_REMEMBER", "task").strip().lower()
     try:
@@ -284,6 +310,13 @@ def _scope_remember_env() -> ScopeRemember:
     except ValueError:
         return ScopeRemember.TASK
 
+
+from agentd.chat.agent import ChatAgent
+from agentd.chat.storage import ChatThreadStore
+
+_chat_db_path = Path(os.getenv("AI_EDITOR_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
+_chat_db_path.parent.mkdir(parents=True, exist_ok=True)
+_chat_thread_store = ChatThreadStore(_chat_db_path)
 
 orchestrator = AgentOrchestrator(
     store=store,
@@ -300,14 +333,10 @@ orchestrator = AgentOrchestrator(
     scope_trigger=_scope_trigger_env(),
     scope_remember=_scope_remember_env(),
     scope_timeout_sec=_float_env("AI_EDITOR_SCOPE_TIMEOUT_SEC", 600.0),
+    shell_policy=_shell_policy_env(),
+    command_decision_timeout_sec=_float_env("AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
+    chat_store=_chat_thread_store,
 )
-
-from agentd.chat.agent import ChatAgent
-from agentd.chat.storage import ChatThreadStore
-
-_chat_db_path = Path(os.getenv("AI_EDITOR_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
-_chat_db_path.parent.mkdir(parents=True, exist_ok=True)
-_chat_thread_store = ChatThreadStore(_chat_db_path)
 
 # workspace_path for ChatAgent — the real repo being edited; defaults to cwd if not set
 _chat_workspace_path = os.getenv("AI_EDITOR_WORKSPACE_PATH", str(Path.cwd()))

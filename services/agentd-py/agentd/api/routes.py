@@ -193,6 +193,7 @@ def build_router(
             mode=request.mode,
             budget=request.budget,
             step_review_auto_accept=request.step_review_auto_accept,
+            shell_policy=request.shell_policy,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
