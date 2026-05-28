@@ -142,10 +142,11 @@ Replaces static planning (single-shot markdown critique loop) with two cooperati
 - [x] `max_delta_replans` budget guard
 - [x] Automatic (no user gate) — `delta_replan_applied` SSE event
 
-### One-Step-Per-File Constraint
-- [x] Planning prompt enforces one step per file
-- [x] Post-emit validation rejects plans with duplicate file targets across steps
-- [x] Same check applied after `_apply_revision()`
+### One-Step-Per-File Constraint — REMOVED
+This constraint (planning prompt + post-emit duplicate-target validation) was
+intentionally dropped: real features legitimately touch the same file across
+multiple steps (e.g. a domain model edited for a new type, a new field, and a
+new enum value). Plans may now target a file in more than one step.
 
 ### Verify Phase Enhancements (shipped alongside)
 - [x] Verify phase always runs after patch — no skip for missing `test_command`
