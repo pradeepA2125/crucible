@@ -35,8 +35,12 @@ from agentd.domain.models import (
     PlanTarget,
     PlanTargetIntent,
     ScopeExtensionRequest,
+    CommandApprovalRequest,
+    CommandDecision,
+    CommandRule,
     ScopePolicy,
     ScopeRemember,
+    ShellPolicy,
     ScopeTrigger,
     StepExecutionTrace,
     StepReviewPayload,
@@ -186,6 +190,8 @@ class AgentOrchestrator:
         scope_trigger: ScopeTrigger = ScopeTrigger.NEARBY,
         scope_remember: ScopeRemember = ScopeRemember.TASK,
         scope_timeout_sec: float = 600.0,
+        shell_policy: ShellPolicy = ShellPolicy.ASK,
+        command_decision_timeout_sec: float = 0.0,
         chat_store: object | None = None,
     ) -> None:
         self._store = store
@@ -208,6 +214,10 @@ class AgentOrchestrator:
         self._pending_step_decisions: dict[str, asyncio.Future[str]] = {}
         # task_id → future resolved by POST /tasks/{id}/validation-decision (True=accept)
         self._pending_validation_decisions: dict[str, asyncio.Future[bool]] = {}
+        self._shell_policy = shell_policy
+        self._command_decision_timeout_sec = max(0.0, command_decision_timeout_sec)
+        # task_id → future resolved by POST /tasks/{id}/command-decision
+        self._pending_command_decisions: dict[str, asyncio.Future[CommandDecision]] = {}
         self._inline_shadows: dict[str, dict[str, object]] = {}  # inline_task_id → meta
         self._chat_store = chat_store
         import os
@@ -633,6 +643,11 @@ class AgentOrchestrator:
             self._pending_validation_decisions.pop(task.task_id, None)
         task = await self._store.get(task.task_id)
         if accept:
+            # TODO(pradeep): READY_FOR_REVIEW here is largely hollow — _partial_promote already
+            # wrote each completed step's changes to the real workspace during execution, so the
+            # final PROMOTE just re-copies the same files (nothing new to review/ship). Revisit:
+            # accept → SUCCEEDED directly, and/or drop the redundant final promote when per-step
+            # promotion already ran. Same critique applies to the normal pass path, not just this gate.
             task.diagnostics = [*persistent]
             task = transition(task, TaskStatus.VALIDATED, "validation errors accepted")
             await self._store.save(task)
@@ -1482,6 +1497,109 @@ class AgentOrchestrator:
                     for path in decision.extended_files:
                         if path not in task.execution_state.auto_approved_scope_files:
                             task.execution_state.auto_approved_scope_files.append(path)
+                await self._store.save(task)
+
+            return decision
+
+        return _cb
+
+    def _build_command_approval_callback(self, task_id: str):
+        """Mirror of _build_scope_callback for run_command gating.
+
+        Returns an async callback (command, args, cwd) -> CommandDecision that:
+        - approves silently when policy is ALLOW_ALL,
+        - approves silently when the command matches a per-task or per-workspace
+          remembered rule (token-aware match),
+        - otherwise pauses the task at AWAITING_COMMAND_DECISION, broadcasts a
+          `command_approval_requested` SSE event, awaits POST /command-decision,
+          and (if approve+remember) persists the user-chosen rule to both the
+          per-task set and the per-workspace CommandRuleStore.
+        """
+        from uuid import uuid4
+
+        from agentd.tools.command_rules import CommandRuleStore
+
+        async def _cb(command: str, args: list[str], cwd: str) -> CommandDecision:
+            task = await self._store.get(task_id)
+
+            policy = task.shell_policy or self._shell_policy
+            if policy == ShellPolicy.ALLOW_ALL:
+                return CommandDecision(approve=True)
+
+            # Per-task + per-workspace remembered approvals (token-aware match
+            # via the same CommandRuleStore.rule_matches used for the JSON store).
+            cmd_tokens = [command, *args]
+            for rule in task.execution_state.approved_commands:
+                if CommandRuleStore.rule_matches(rule, cmd_tokens):
+                    return CommandDecision(approve=True)
+            if CommandRuleStore(task.workspace_path).matches(command, args):
+                return CommandDecision(approve=True)
+
+            # ASK — pause + future + broadcast.
+            decision_id = uuid4().hex
+            step_id = task.execution_state.current_step_id or ""
+            future: asyncio.Future[CommandDecision] = (
+                asyncio.get_event_loop().create_future()
+            )
+            self._pending_command_decisions[task_id] = future
+            task.execution_state.pending_command_request = CommandApprovalRequest(
+                decision_id=decision_id,
+                command=command,
+                args=args,
+                cwd=cwd,
+                step_id=step_id,
+            )
+            try:
+                task = transition(task, TaskStatus.AWAITING_COMMAND_DECISION, "command gate")
+            except ValueError:
+                # Already in AWAITING_COMMAND_DECISION (re-entrant edge); leave status alone.
+                pass
+            await self._store.save(task)
+            self.broadcaster.broadcast(task_id, {
+                "type": "command_approval_requested",
+                "payload": {
+                    "decision_id": decision_id,
+                    "command": command,
+                    "args": args,
+                    "cwd": cwd,
+                    "step_id": step_id,
+                },
+            })
+
+            decision = CommandDecision(approve=False)
+            try:
+                if self._command_decision_timeout_sec > 0:
+                    decision = await asyncio.wait_for(
+                        future, timeout=self._command_decision_timeout_sec,
+                    )
+                else:
+                    decision = await future
+            except asyncio.TimeoutError:
+                decision = CommandDecision(approve=False)
+            finally:
+                self._pending_command_decisions.pop(task_id, None)
+                task = await self._store.get(task_id)
+                task.execution_state.pending_command_request = None
+                if task.status == TaskStatus.AWAITING_COMMAND_DECISION:
+                    task = transition(task, TaskStatus.EXECUTING, "command decision received")
+                if decision.approve and decision.remember:
+                    import shlex
+                    if decision.rule_value:
+                        value = decision.rule_value
+                    elif decision.scope == "binary":
+                        value = command.rsplit("/", 1)[-1]
+                    elif decision.scope == "exact":
+                        value = shlex.join([command, *args])
+                    else:  # prefix with no explicit value → lock command + first arg
+                        _toks = [command, *args]
+                        value = shlex.join(_toks[:2] if len(_toks) > 1 else _toks)
+                    rule = CommandRule(
+                        type=decision.scope,
+                        value=value,
+                        added_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                    task.execution_state.approved_commands.append(rule)
+                    CommandRuleStore(task.workspace_path).add(rule)
                 await self._store.save(task)
 
             return decision
