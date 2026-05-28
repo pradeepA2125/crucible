@@ -218,7 +218,8 @@ SSE event types from the chat message endpoint:
 - `AI_EDITOR_TOOL_LOOP_ENABLED` — set to `0` or `false` to fall back to single-shot `create_patch()` (default: `true`)
 - `AI_EDITOR_TOOL_RESULT_MAX_CHARS` — max chars of tool output injected into loop context (default: `4000`)
 - `AI_EDITOR_RIPGREP_CMD` — path to ripgrep binary used by `search_code` (default: `rg`)
-- `AI_EDITOR_SHELL_ALLOWLIST` — comma-separated commands `run_command` may execute (default: `pytest,npm,cargo,ruff,mypy,tsc,eslint`)
+- `AI_EDITOR_SHELL_POLICY` — `ask` (default, every `run_command` surfaces an Accept-once / Accept-and-remember-this-workspace / Reject card) or `allow_all` (skip the gate; run any command). Per-task override via the `shell_policy` field on the task submission. Replaces the old `AI_EDITOR_SHELL_ALLOWLIST` (removed).
+- `AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC` — seconds to wait for the user's command decision; `0` (default) = wait forever. On timeout the command is rejected (returned as a tool-result error so the agent adapts).
 
 **Scope extension** (controls how out-of-scope file writes are handled)
 - `AI_EDITOR_SCOPE_POLICY` — `strict` (auto-reject) | `ask` (pause + VS Code modal, **default via start-backend.sh**) | `auto` (silently approve + audit log)

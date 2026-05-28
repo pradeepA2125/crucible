@@ -2570,11 +2570,12 @@ class AgentOrchestrator:
             return ValidationResult(success=True, diagnostics=[], duration_ms=0)
         cmd, args = parts[0], parts[1:]
 
-        allowlist_raw = os.environ.get(
-            "AI_EDITOR_SHELL_ALLOWLIST",
-            "pytest,npm,cargo,ruff,mypy,tsc,eslint,jest,vitest",
-        )
-        allowlist = {c.strip() for c in allowlist_raw.split(",") if c.strip()}
+        # The validation `test_command` path has its own narrow allowlist of
+        # test runners — distinct from the agent's run_command, which is now
+        # gated by the interactive command-approval gate (AI_EDITOR_SHELL_POLICY).
+        # Hardcoded because expanding the set is rare and the env-var read used
+        # to share its name with the now-removed AI_EDITOR_SHELL_ALLOWLIST.
+        allowlist = {"pytest", "npm", "cargo", "ruff", "mypy", "tsc", "eslint", "jest", "vitest"}
         if cmd not in allowlist:
             return ValidationResult(
                 success=True,
