@@ -26,7 +26,7 @@ _DEFAULT_TIMEOUT_SEC = 60
 # (PYTHONPATH has no universal analogue): Node resolves via node_modules + symlinks,
 # Rust/cargo via the target dir + path/patch overrides in Cargo.toml, Go via the module
 # cache + replace directives. Needs deeper design before we support those toolchains.
-_PY_IMPORT_TOOLS = {"pytest", "mypy"}
+_PY_IMPORT_TOOLS = {"pytest", "mypy", "python", "python3"}
 
 
 async def run_command(
