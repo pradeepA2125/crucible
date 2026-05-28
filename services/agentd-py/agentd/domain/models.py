@@ -19,6 +19,7 @@ class TaskStatus(StrEnum):
     VALIDATING = "VALIDATING"
     REPAIRING = "REPAIRING"
     AWAITING_VALIDATION_DECISION = "AWAITING_VALIDATION_DECISION"
+    AWAITING_COMMAND_DECISION = "AWAITING_COMMAND_DECISION"
     VALIDATED = "VALIDATED"
     READY_FOR_REVIEW = "READY_FOR_REVIEW"
     PROMOTING = "PROMOTING"
@@ -148,6 +149,38 @@ class ValidationDecisionResponse(BaseModel):
     status: "TaskStatus"
 
 
+class ShellPolicy(StrEnum):
+    """How run_command is gated. Default ASK — every command surfaced for
+    Accept-once / Accept-and-remember / Reject. ALLOW_ALL skips the gate."""
+    ASK = "ask"
+    ALLOW_ALL = "allow_all"
+
+
+class CommandApprovalRequest(BaseModel):
+    """Persisted on the task while the engine waits for a command decision."""
+    decision_id: str
+    command: str
+    args: list[str] = Field(default_factory=list)
+    cwd: str = ""
+    step_id: str
+
+
+class CommandDecision(BaseModel):
+    approve: bool
+    remember: bool = False
+    scope: Literal["exact", "prefix", "binary"] = "exact"
+    # For approve+remember: the rule value the UI chose (e.g. "python -c").
+    # When omitted the engine derives it from the request per `scope`.
+    rule_value: str | None = None
+
+
+class CommandRule(BaseModel):
+    """A persisted user-approved shell command rule (workspace store + per-task set)."""
+    type: Literal["exact", "prefix", "binary"]
+    value: str
+    added_at: str
+
+
 class StepReviewPayload(BaseModel):
     """Persisted on the task while the engine waits for a per-step accept/discard decision."""
     step_id: str
@@ -167,6 +200,8 @@ class TaskExecutionState(BaseModel):
     auto_approved_scope_files: list[str] = Field(default_factory=list)
     pending_scope_request: ScopeExtensionRequest | None = None
     pending_step_review: StepReviewPayload | None = None
+    pending_command_request: CommandApprovalRequest | None = None
+    approved_commands: list[CommandRule] = Field(default_factory=list)
 
 
 class RevisedStep(BaseModel):
@@ -654,6 +689,7 @@ class TaskRecord(BaseModel):
     chat_channel_id: str | None = None
     initial_explore_context: list[dict[str, object]] | None = None
     planning_explore_context: list[dict[str, object]] | None = None
+    shell_policy: ShellPolicy | None = None  # per-task override; engine resolves task.shell_policy or self._shell_policy
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -670,6 +706,7 @@ class TaskCreateRequest(BaseModel):
     budget: TaskBudget = Field(default_factory=TaskBudget)
     initial_explore_context: list[dict[str, object]] | None = None
     step_review_auto_accept: bool = True
+    shell_policy: ShellPolicy | None = None  # per-task override of AI_EDITOR_SHELL_POLICY
 
 
 class TaskCreateResponse(BaseModel):
