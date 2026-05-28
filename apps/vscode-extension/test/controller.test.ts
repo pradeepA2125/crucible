@@ -2,6 +2,7 @@ import type {
   BackendTaskClient,
   ChatMessage,
   ChatThreadSummary,
+  CommandDecision,
   Diagnostic,
   TaskResult,
   TaskSubmission,
@@ -125,6 +126,8 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
     },
     resumeTask: async (_taskId) => ({ taskId: "task-child", resumeOfTaskId: _taskId }),
     sendScopeDecision: async (taskId, _decision) => ({ taskId, status: "EXECUTING" }),
+    sendValidationDecision: async (taskId, _decision) => ({ taskId, status: "AWAITING_VALIDATION_DECISION" as const }),
+    sendCommandDecision: async (taskId, _decision) => ({ taskId, status: "EXECUTING" as const }),
     streamPatch: async (_taskId, _onEvent, _signal) => {},
     streamPatchEvents: async function* (_taskId: string) {
       yield { type: "done" as const, payload: {} as Record<string, never> };
@@ -148,6 +151,7 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
     },
     applyInlineChange: async (_inlineTaskId: string) => {},
     discardInlineChange: async (_inlineTaskId: string) => {},
+    sendStepDecision: async (_taskId: string, _decision: "accept" | "discard") => {},
   };
 }
 
@@ -173,6 +177,12 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     setChatInputEnabled: (_enabled: boolean) => {},
     renderChatThreadList: (_threads: ChatThreadSummary[], _activeThreadId: string) => {},
     clearChatThread: () => {},
+    resolveInlineChangeCard: (_taskId: string, _resolution: "applied" | "discarded") => {},
+    updateThreadTitle: (_threadId: string, _title: string) => {},
+    appendChatThinkingEntry: (_text: string) => {},
+    appendChatThinkingChunk: (_chunk: string) => {},
+    finalizeAgentMessage: () => {},
+    showStepReview: () => {},
     ...overrides,
   };
 }
@@ -403,8 +413,9 @@ describe("AiEditorController — chat", () => {
     expect(chunks).toContain("The answer is 42.");
   });
 
-  test("thinking indicator: show on chat_agent_thinking, update on explore_tool_call, hide in finally", async () => {
-    const thinkingMessages: string[] = [];
+  test("thinking entries: chat_agent_thinking and explore_tool_call append entries, finally hides indicator", async () => {
+    const thinkingEntries: string[] = [];
+    let hideCalled = false;
 
     const chatBackend: BackendTaskClient = {
       ...createStubBackend({
@@ -424,7 +435,7 @@ describe("AiEditorController — chat", () => {
       }),
       sendChatMessage: async function* (_threadId: string, _message: string) {
         yield { type: "chat_agent_thinking" as const, payload: { message: "Exploring workspace…" } };
-        yield { type: "explore_tool_call" as const, payload: { tool: "search_code", args: { pattern: "auth" } } };
+        yield { type: "explore_tool_call" as const, payload: { tool: "search_code", args: { pattern: "auth" }, thought: "Looking for auth handling code" } };
         yield { type: "intent_classified" as const, payload: { intent: "qa", rationale: "", likely_targets: [] } };
         yield { type: "chat_response" as const, payload: { chunk: "It handles auth." } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
@@ -437,9 +448,8 @@ describe("AiEditorController — chat", () => {
       store,
       createSettings(),
       createUi({
-        showChatThinking: (m) => thinkingMessages.push(`show:${m}`),
-        updateChatThinking: (m) => thinkingMessages.push(`update:${m}`),
-        hideChatThinking: () => thinkingMessages.push("hide"),
+        appendChatThinkingEntry: (t) => thinkingEntries.push(t),
+        hideChatThinking: () => { hideCalled = true; },
       }),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z"
@@ -448,8 +458,43 @@ describe("AiEditorController — chat", () => {
     await controller.sendChatMessage("What does auth do?");
     controller.dispose();
 
-    expect(thinkingMessages[0]).toBe("show:Exploring workspace…");
-    expect(thinkingMessages[1]).toBe("update:search_code: auth");
-    expect(thinkingMessages).toContain("hide");
+    expect(thinkingEntries[0]).toBe("Exploring workspace…");
+    expect(thinkingEntries[1]).toBe("search_code — Looking for auth handling code");
+    expect(hideCalled).toBe(true);
+  });
+});
+
+describe("AiEditorController — command-decision", () => {
+  test("handleCommandDecisionFromChat posts the decision to the backend", async () => {
+    const sent: Array<{ taskId: string; decision: CommandDecision }> = [];
+    const backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+        rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+      }),
+      sendCommandDecision: async (taskId, decision) => {
+        sent.push({ taskId, decision });
+        return { taskId, status: "EXECUTING" as const };
+      },
+    };
+    const store = new MemorySessionStore();
+    const controller = new AiEditorController(
+      () => backend,
+      store,
+      createSettings(),
+      createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+
+    await controller.handleCommandDecisionFromChat("task-1", {
+      approve: true, remember: true, scope: "prefix", ruleValue: "python -c",
+    });
+    controller.dispose();
+
+    expect(sent).toEqual([{
+      taskId: "task-1",
+      decision: { approve: true, remember: true, scope: "prefix", ruleValue: "python -c" },
+    }]);
   });
 });

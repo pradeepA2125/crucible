@@ -2,6 +2,8 @@ import type {
   BackendTaskClient,
   ChatMessage,
   ChatThreadSummary,
+  CommandDecision,
+  DiffEntry,
   StreamEvent,
   ResumeTaskResponse,
   TaskResult,
@@ -60,6 +62,12 @@ export interface ControllerUI {
   setChatInputEnabled(enabled: boolean): void;
   renderChatThreadList(threads: ChatThreadSummary[], activeThreadId: string): void;
   clearChatThread(): void;
+  resolveInlineChangeCard(taskId: string, resolution: "applied" | "discarded"): void;
+  updateThreadTitle(threadId: string, title: string): void;
+  appendChatThinkingEntry(text: string): void;
+  appendChatThinkingChunk(chunk: string): void;
+  finalizeAgentMessage(): void;
+  showStepReview(taskId: string, stepId: string, stepTitle: string, diffEntries: DiffEntry[]): void;
 }
 
 export interface DiffService {
@@ -289,6 +297,8 @@ export class AiEditorController {
 
       this.pushPanel();
       if (normalizedFeedback) {
+        this.ui.showChatThinking("Regenerating plan with your feedback…");
+        this.ui.setChatInputEnabled(false);
         this.ui.showInfo(`Submitted plan feedback. Regenerating...`);
       } else {
         this.ui.showInfo(`Plan approved. Proceeding to execution...`);
@@ -345,6 +355,28 @@ export class AiEditorController {
     this.ui.showInfo(`Resumed as new task ${response.taskId}`);
   }
 
+  async openInlineDiff(relativePath: string, shadowPath: string): Promise<void> {
+    const workspacePath = this.ui.getWorkspacePath();
+    if (!workspacePath || !shadowPath) {
+      this.ui.showWarning("Diff is unavailable — shadow path missing.");
+      return;
+    }
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const entry = {
+      relativePath,
+      realPath: path.join(workspacePath, relativePath),
+      shadowPath,
+      existsReal: fs.existsSync(path.join(workspacePath, relativePath)),
+      existsShadow: fs.existsSync(shadowPath),
+    };
+    try {
+      await this.diffService.openDiff(entry);
+    } catch (error) {
+      this.ui.showError(`Failed to open diff: ${formatError(error)}`);
+    }
+  }
+
   async openDiffForFile(relativePath: string): Promise<void> {
     if (!this.session || !this.latestResult) {
       this.ui.showWarning("No review result is available for diff inspection.");
@@ -398,6 +430,17 @@ export class AiEditorController {
     }
     this.ui.openChatPanel();
     this.ui.renderChatThreadList(threads, this.activeThreadId ?? "");
+    if (this.activeThreadId) {
+      try {
+        const thread = await client.getChatThread(this.activeThreadId);
+        this.ui.clearChatThread();
+        for (const message of thread.messages) {
+          this.ui.appendChatMessage(message);
+        }
+      } catch {
+        // non-fatal — panel opens empty
+      }
+    }
   }
 
   async newChatThread(): Promise<void> {
@@ -458,18 +501,41 @@ export class AiEditorController {
     });
 
     this.ui.setChatInputEnabled(false);
+    let currentTaskId: string | undefined;
     try {
       for await (const event of client.sendChatMessage(threadId, text)) {
         if (event.type === "chat_agent_thinking") {
           const message = (event.payload["message"] as string) ?? "Thinking…";
-          this.ui.showChatThinking(message);
+          this.ui.appendChatThinkingEntry(message);
+        } else if (event.type === "chat_agent_thinking_chunk") {
+          const chunk = (event.payload["chunk"] as string) ?? "";
+          if (chunk) this.ui.appendChatThinkingChunk(chunk);
+        } else if (event.type === "tool_thinking_chunk") {
+          const chunk = (event.payload["chunk"] as string) ?? "";
+          if (chunk) this.ui.appendChatThinkingChunk(chunk);
         } else if (event.type === "explore_tool_call") {
           const tool = (event.payload["tool"] as string) ?? "";
+          const thought = (event.payload["thought"] as string) ?? "";
           const args = event.payload["args"] as Record<string, unknown> | undefined;
-          const argValues = args ? Object.values(args).map(String).join(", ") : "";
-          this.ui.updateChatThinking(`${tool}: ${argValues}`);
+          const path = args?.["path"] as string | undefined;
+          const label = path ? `${tool} ${path.split("/").pop()}` : tool;
+          this.ui.appendChatThinkingEntry(thought ? `${label} — ${thought}` : label);
+        } else if (event.type === "tool_call") {
+          const tool = (event.payload["tool"] as string) ?? "";
+          const thought = (event.payload["thought"] as string) ?? "";
+          const args = event.payload["args"] as Record<string, unknown> | undefined;
+          const filePath = args?.["path"] as string | undefined;
+          const fileName = filePath ? filePath.split("/").pop() : undefined;
+          const action = tool === "read_file" ? `read_file ${fileName ?? ""}`
+            : tool === "search_code" ? "search_code"
+            : tool === "run_command" ? `run_command ${(args?.["command"] as string ?? "")}`
+            : tool === "search_semantic" ? "search_semantic"
+            : tool;
+          this.ui.appendChatThinkingEntry(thought ? `${action} — ${thought.substring(0, 120)}` : action);
+        } else if (event.type === "patch_applied") {
+          this.ui.appendChatThinkingEntry("patch applied");
         } else if (event.type === "intent_classified") {
-          this.ui.hideChatThinking();
+          // no-op: intent classification doesn't need a persistent entry
         } else if (event.type === "chat_response") {
           const chunk = (event.payload["chunk"] as string) ?? "";
           this.ui.appendChatChunk(chunk);
@@ -481,36 +547,103 @@ export class AiEditorController {
             type: "diff_card",
             taskId,
             timestamp: this.now(),
-            metadata: { diff_entries: event.payload["diff_entries"] },
+            metadata: {
+              diff_entries: event.payload["diff_entries"],
+              thinking_log: event.payload["thinking_log"] ?? [],
+            },
           });
         } else if (event.type === "task_card") {
-          const taskId = (event.payload["task_id"] as string) ?? "";
+          currentTaskId = (event.payload["task_id"] as string) ?? "";
           this.ui.appendChatMessage({
             role: "agent",
-            content: taskId,
+            content: currentTaskId,
             type: "task_card",
-            taskId,
+            taskId: currentTaskId,
             timestamp: this.now(),
             metadata: {},
           });
+        } else if (event.type === "planning_thinking_chunk") {
+          const chunk = (event.payload["chunk"] as string) ?? "";
+          if (chunk) this.ui.appendChatThinkingChunk(chunk);
+        } else if (event.type === "planning_tool_call") {
+          const tool = (event.payload["tool"] as string) ?? "";
+          const thought = (event.payload["thought"] as string) ?? "";
+          const action = tool === "read_file" ? "read_file"
+            : tool === "list_directory" ? "list_directory"
+            : tool === "search_code" ? "search_code"
+            : tool === "search_semantic" ? "search_semantic"
+            : tool;
+          this.ui.appendChatThinkingEntry(thought ? `planning: ${action} — ${thought}` : `planning: ${action}`);
+        } else if (event.type === "planning_complete") {
+          const confidence = (event.payload["confidence"] as string) ?? "";
+          this.ui.appendChatThinkingEntry(`plan ready (${confidence} confidence)`);
         } else if (event.type === "task_status_changed") {
           const taskId = (event.payload["task_id"] as string) ?? "";
           const status = (event.payload["status"] as string) ?? "";
           const planMarkdown = event.payload["plan_markdown"] as string | undefined;
           this.ui.appendChatMessage({
             role: "agent",
-            content: `Task ${taskId}: ${status}`,
+            content: planMarkdown ?? `Task ${taskId}: ${status}`,
             type: planMarkdown ? "plan_card" : "text",
             taskId,
             timestamp: this.now(),
-            metadata: planMarkdown ? { plan_markdown: planMarkdown } : {},
+            metadata: planMarkdown ? { taskId, plan_markdown: planMarkdown } : {},
           });
+        } else if (event.type === "scope_extension_requested") {
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: "",
+            type: "scope_card",
+            taskId: event.payload["decision_id"] as string,
+            timestamp: this.now(),
+            metadata: {
+              taskId: currentTaskId ?? "",
+              decision_id: event.payload["decision_id"],
+              files: event.payload["files"],
+              reason: event.payload["reason"],
+              step_id: event.payload["step_id"],
+            },
+          });
+          this.ui.appendChatThinkingEntry("Waiting for scope approval…");
+        } else if (event.type === "validation_decision_requested") {
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: "",
+            type: "validation_card",
+            taskId: event.payload.task_id,
+            timestamp: this.now(),
+            metadata: { taskId: event.payload.task_id, diagnostics: event.payload.diagnostics },
+          });
+          this.ui.appendChatThinkingEntry("Waiting for validation decision…");
+        } else if (event.type === "command_approval_requested") {
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: "",
+            type: "command_card",
+            taskId: currentTaskId ?? "",
+            timestamp: this.now(),
+            metadata: {
+              taskId: currentTaskId ?? "",
+              decisionId: event.payload.decision_id,
+              command: event.payload.command,
+              args: event.payload.args,
+              cwd: event.payload.cwd,
+              stepId: event.payload.step_id,
+            },
+          });
+          this.ui.appendChatThinkingEntry("Waiting for command approval…");
+        } else if (event.type === "thread_title_updated") {
+          const threadId = (event.payload["thread_id"] as string) ?? "";
+          const title = (event.payload["title"] as string) ?? "";
+          this.ui.updateThreadTitle(threadId, title);
         } else if (event.type === "chat_done") {
+          this.ui.finalizeAgentMessage();
           break;
         }
       }
     } finally {
       this.ui.hideChatThinking();
+      this.ui.finalizeAgentMessage();
       this.ui.setChatInputEnabled(true);
     }
   }
@@ -534,9 +667,52 @@ export class AiEditorController {
       const client = this.createClient(this.settings.getBackendBaseUrl());
       try {
         await client.providePlanFeedback(taskId, feedback.trim());
-        this.ui.showInfo("Plan feedback submitted.");
       } catch (error) {
         this.ui.showError(`Failed to submit plan feedback: ${formatError(error)}`);
+        return;
+      }
+      this.ui.setChatInputEnabled(false);
+      this.ui.appendChatThinkingEntry("Replanning with feedback…");
+      const abort = new AbortController();
+      try {
+        await client.streamPatch(taskId, (event) => {
+          if (event.type === "planning_thinking_chunk") {
+            const chunk = (event.payload["chunk"] as string) ?? "";
+            if (chunk) this.ui.appendChatThinkingChunk(chunk);
+          } else if (event.type === "planning_tool_call") {
+            const tool = (event.payload["tool"] as string) ?? "";
+            const thought = (event.payload["thought"] as string) ?? "";
+            const action = tool === "read_file" ? "read_file"
+              : tool === "list_directory" ? "list_directory"
+              : tool === "search_code" ? "search_code"
+              : tool === "search_semantic" ? "search_semantic"
+              : tool;
+            this.ui.appendChatThinkingEntry(thought ? `planning: ${action} — ${thought}` : `planning: ${action}`);
+          } else if (event.type === "planning_complete") {
+            const confidence = (event.payload["confidence"] as string) ?? "";
+            this.ui.appendChatThinkingEntry(`plan ready (${confidence} confidence)`);
+            abort.abort();
+          }
+        }, abort.signal);
+      } catch {
+        // AbortError when we cancel after planning_complete — expected
+      }
+      try {
+        const task = await client.getTask(taskId);
+        if (task.status === "AWAITING_PLAN_APPROVAL" && task.planMarkdown) {
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: task.planMarkdown,
+            type: "plan_card",
+            taskId,
+            timestamp: this.now(),
+            metadata: { taskId, plan_markdown: task.planMarkdown },
+          });
+        } else if (task.status === "FAILED") {
+          this.ui.showError("Re-planning failed — the model used its full tool budget without producing a plan. Try submitting feedback again with more specific instructions.");
+        }
+      } finally {
+        this.ui.setChatInputEnabled(true);
       }
     }
   }
@@ -544,9 +720,33 @@ export class AiEditorController {
   async streamTaskIntoChatThread(taskId: string): Promise<void> {
     const client = this.createClient(this.settings.getBackendBaseUrl());
     this.ui.setChatInputEnabled(false);
+    this.ui.appendChatThinkingEntry("Generating execution plan…");
     try {
       for await (const event of client.streamPatchEvents(taskId)) {
-        if (event.type === "operation_success") {
+        if (event.type === "planning_thinking_chunk") {
+          const chunk = (event.payload["chunk"] as string) ?? "";
+          if (chunk) this.ui.appendChatThinkingChunk(chunk);
+        } else if (event.type === "tool_thinking_chunk") {
+          const chunk = (event.payload["chunk"] as string) ?? "";
+          if (chunk) this.ui.appendChatThinkingChunk(chunk);
+        } else if (event.type === "task_status_changed") {
+          const msg = (event.payload["message"] as string | undefined) ?? (event.payload["status"] as string) ?? "";
+          if (msg) this.ui.appendChatThinkingEntry(msg);
+        } else if (event.type === "tool_call") {
+          const tool = (event.payload["tool"] as string) ?? "";
+          const thought = (event.payload["thought"] as string) ?? "";
+          const action = tool === "read_file" ? "Reading file"
+            : tool === "search_code" ? "Searching codebase"
+            : tool === "run_command" ? "Running command"
+            : tool === "search_semantic" ? "Semantic search"
+            : tool;
+          this.ui.appendChatThinkingEntry(thought ? `${action} — ${thought.substring(0, 120)}` : `${action}…`);
+        } else if (event.type === "patch_applied") {
+          const files = event.payload.touched_files?.join(", ") ?? "";
+          this.ui.appendChatThinkingEntry(`patch applied${files ? ` (${files})` : ""}`);
+        } else if (event.type === "planning_complete") {
+          this.ui.appendChatThinkingEntry(`delta replan complete (${event.payload.confidence} confidence)`);
+        } else if (event.type === "operation_success") {
           this.ui.appendChatMessage({
             role: "agent",
             content: `✓ ${event.payload.op_type}: ${event.payload.path}`,
@@ -562,38 +762,93 @@ export class AiEditorController {
             timestamp: this.now(),
             metadata: {},
           });
-        } else if (event.type === "tool_call") {
+        } else if (event.type === "scope_extension_requested") {
+          this.ui.appendChatThinkingEntry("Waiting for scope approval…");
           this.ui.appendChatMessage({
             role: "agent",
-            content: `[${event.payload.phase}] ${event.payload.tool}: ${event.payload.thought}`,
-            type: "text",
+            content: "",
+            type: "scope_card",
+            taskId,
             timestamp: this.now(),
-            metadata: {},
+            metadata: {
+              taskId,
+              decision_id: event.payload.decision_id,
+              files: event.payload.files,
+              reason: event.payload.reason,
+              step_id: event.payload.step_id,
+            },
           });
-        } else if (event.type === "patch_applied") {
+        } else if (event.type === "validation_decision_requested") {
           this.ui.appendChatMessage({
             role: "agent",
-            content: `Patch applied for step ${event.payload.step_id} (${event.payload.touched_files.join(", ")})`,
-            type: "text",
+            content: "",
+            type: "validation_card",
+            taskId: event.payload.task_id,
             timestamp: this.now(),
-            metadata: {},
+            metadata: { taskId: event.payload.task_id, diagnostics: event.payload.diagnostics },
           });
-        } else if (event.type === "planning_complete") {
+        } else if (event.type === "command_approval_requested") {
           this.ui.appendChatMessage({
             role: "agent",
-            content: `Planning complete (confidence: ${event.payload.confidence}, examined ${event.payload.files_examined.length} files)`,
-            type: "text",
+            content: "",
+            type: "command_card",
+            taskId,
             timestamp: this.now(),
-            metadata: {},
+            metadata: {
+              taskId,
+              decisionId: event.payload.decision_id,
+              command: event.payload.command,
+              args: event.payload.args,
+              cwd: event.payload.cwd,
+              stepId: event.payload.step_id,
+            },
           });
         } else if (event.type === "done") {
+          const status = (event.payload["status"] as string | undefined) ?? "";
+          this.ui.hideChatThinking();
+          if (status === "READY_FOR_REVIEW") {
+            this.ui.appendChatMessage({
+              role: "agent",
+              content: "Execution complete — review the diff in the Tasks panel.",
+              type: "text",
+              timestamp: this.now(),
+              metadata: { task_id: taskId },
+            });
+          } else if (status === "FAILED" || status === "ABORTED") {
+            this.ui.appendChatMessage({
+              role: "agent",
+              content: `Execution ${status.toLowerCase()} — check the Tasks panel for details.`,
+              type: "text",
+              timestamp: this.now(),
+              metadata: { task_id: taskId },
+            });
+          }
           break;
         }
       }
     } catch (error) {
       this.ui.showError(`Stream error: ${formatError(error)}`);
     } finally {
+      this.ui.hideChatThinking();
       this.ui.setChatInputEnabled(true);
+    }
+  }
+
+  async acceptStep(taskId: string): Promise<void> {
+    const client = this.createClient(this.settings.getBackendBaseUrl());
+    try {
+      await client.sendStepDecision(taskId, "accept");
+    } catch (error) {
+      this.ui.showError(`Failed to accept step: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async discardStep(taskId: string): Promise<void> {
+    const client = this.createClient(this.settings.getBackendBaseUrl());
+    try {
+      await client.sendStepDecision(taskId, "discard");
+    } catch (error) {
+      this.ui.showError(`Failed to discard step: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -602,6 +857,7 @@ export class AiEditorController {
     try {
       await client.applyInlineChange(inlineTaskId);
       this.ui.showInfo("Changes applied to workspace.");
+      this.ui.resolveInlineChangeCard(inlineTaskId, "applied");
     } catch (error) {
       this.ui.showError(`Failed to apply inline change: ${formatError(error)}`);
     }
@@ -611,6 +867,7 @@ export class AiEditorController {
     const client = this.createClient(this.settings.getBackendBaseUrl());
     try {
       await client.discardInlineChange(inlineTaskId);
+      this.ui.resolveInlineChangeCard(inlineTaskId, "discarded");
     } catch (error) {
       this.ui.showError(`Failed to discard inline change: ${formatError(error)}`);
     }
@@ -630,9 +887,39 @@ export class AiEditorController {
       .streamPatch(taskId, (event) => {
         this.patchEvents = [...this.patchEvents, event];
         this.pushPanel();
-        if (event.type === "scope_extension_requested") {
+        if (event.type === "planning_tool_call") {
+          const tool = (event.payload as Record<string, unknown>)["tool"] as string ?? "";
+          const action = tool === "read_file" ? "Reading file"
+            : tool === "list_directory" ? "Listing directory"
+            : tool === "search_code" ? "Searching codebase"
+            : tool === "search_semantic" ? "Semantic search"
+            : tool;
+          this.ui.updateChatThinking(`Replanning: ${action}…`);
+        } else if (event.type === "planning_complete") {
+          void this.clientForSession().getTask(taskId).then((task) => {
+            if (task.planMarkdown) {
+              this.ui.appendChatMessage({
+                role: "agent",
+                content: task.planMarkdown,
+                type: "plan_card",
+                taskId,
+                timestamp: this.now(),
+                metadata: { taskId, plan_markdown: task.planMarkdown },
+              });
+            }
+            this.ui.hideChatThinking();
+            this.ui.setChatInputEnabled(true);
+          });
+        } else if (event.type === "scope_extension_requested") {
           // Fire and forget — prompt the user; on response, post the decision.
           void this.handleScopeExtensionRequest(taskId, event);
+        } else if (event.type === "step_review_requested") {
+          this.ui.showStepReview(
+            taskId,
+            event.payload.step_id,
+            event.payload.step_title,
+            event.payload.diff_entries,
+          );
         }
       }, signal)
       .catch((err: unknown) => {
@@ -642,6 +929,41 @@ export class AiEditorController {
       .finally(() => {
         this.streamController = null;
       });
+  }
+
+  async handleScopeDecisionFromChat(
+    taskId: string,
+    files: string[],
+    decision: "approve" | "reject",
+    remember: boolean
+  ): Promise<void> {
+    try {
+      await this.clientForSession().sendScopeDecision(taskId, { decision, files: decision === "approve" ? files : [], remember });
+    } catch (err) {
+      this.ui.showError(`Failed to send scope decision: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async handleValidationDecisionFromChat(
+    taskId: string,
+    decision: "accept" | "reject"
+  ): Promise<void> {
+    try {
+      await this.clientForSession().sendValidationDecision(taskId, decision);
+    } catch (err) {
+      this.ui.showError(`Failed to send validation decision: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async handleCommandDecisionFromChat(
+    taskId: string,
+    decision: CommandDecision
+  ): Promise<void> {
+    try {
+      await this.clientForSession().sendCommandDecision(taskId, decision);
+    } catch (err) {
+      this.ui.showError(`Failed to send command decision: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private async handleScopeExtensionRequest(
