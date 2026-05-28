@@ -16,6 +16,8 @@ from agentd.domain.models import (
     ResumeTaskResponse,
     ScopeDecisionRequest,
     ScopeDecisionResponse,
+    CommandDecision,
+    CommandDecisionResponse,
     ValidationDecisionRequest,
     ValidationDecisionResponse,
     StepDecisionRequest,
@@ -178,6 +180,7 @@ def build_router(
     # Guards against concurrent scope-decision posts for the same task_id.
     _in_flight_scope: set[str] = set()
     _in_flight_validation: set[str] = set()
+    _in_flight_command: set[str] = set()
 
     @router.post("/tasks", response_model=TaskCreateResponse)
     async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
@@ -530,6 +533,45 @@ def build_router(
             )
         finally:
             _in_flight_validation.discard(task_id)
+
+    @router.post("/tasks/{task_id}/command-decision", response_model=CommandDecisionResponse)
+    async def post_command_decision(
+        task_id: str, request: CommandDecision,
+    ) -> CommandDecisionResponse:
+        if task_id in _in_flight_command:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Command decision already in progress for task {task_id}",
+            )
+        _in_flight_command.add(task_id)
+        try:
+            try:
+                task = await store.get(task_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            if task.status != TaskStatus.AWAITING_COMMAND_DECISION:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} is not awaiting a command decision "
+                        f"(status={task.status})"
+                    ),
+                )
+
+            future = orchestrator._pending_command_decisions.get(task_id)
+            if future is None or future.done():
+                raise HTTPException(
+                    status_code=409,
+                    detail="No pending command decision for this task",
+                )
+
+            future.set_result(request)
+            # The orchestrator coroutine drives the resulting transition back
+            # to EXECUTING; report the post-decision status here.
+            return CommandDecisionResponse(task_id=task_id, status=TaskStatus.EXECUTING)
+        finally:
+            _in_flight_command.discard(task_id)
 
     _in_flight_step_decision: set[str] = set()
 

@@ -149,6 +149,11 @@ class ValidationDecisionResponse(BaseModel):
     status: "TaskStatus"
 
 
+class CommandDecisionResponse(BaseModel):
+    task_id: str
+    status: "TaskStatus"
+
+
 class ShellPolicy(StrEnum):
     """How run_command is gated. Default ASK — every command surfaced for
     Accept-once / Accept-and-remember / Reject. ALLOW_ALL skips the gate."""
