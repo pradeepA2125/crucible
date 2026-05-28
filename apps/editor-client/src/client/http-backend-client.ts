@@ -6,6 +6,7 @@ import {
   ResumeTaskResponseSchema,
   ScopeDecisionResponseSchema,
   ValidationDecisionResponseSchema,
+  CommandDecisionResponseSchema,
   ChatThreadSummarySchema,
   ChatThreadSchema,
   ChatEventSchema,
@@ -18,6 +19,8 @@ import {
   type ResumeTaskResponse,
   type ScopeDecisionRequest,
   type ScopeDecisionResponse,
+  type CommandDecision,
+  type CommandDecisionResponse,
   type ValidationDecisionResponse,
   type ChatThreadSummary,
   type ChatThread,
@@ -132,6 +135,30 @@ export class HttpBackendClient implements BackendTaskClient {
       }
     );
     return ValidationDecisionResponseSchema.parse({
+      taskId: this.readString(response, "taskId", "task_id"),
+      status: this.readString(response, "status")
+    });
+  }
+
+  async sendCommandDecision(
+    taskId: string,
+    decision: CommandDecision
+  ): Promise<CommandDecisionResponse> {
+    // camelCase → snake_case for the backend wire (ruleValue → rule_value).
+    const body: Record<string, unknown> = {
+      approve: decision.approve,
+      remember: decision.remember,
+      scope: decision.scope,
+    };
+    if (decision.ruleValue !== undefined) body.rule_value = decision.ruleValue;
+    const response = await this.fetchJson(
+      `/v1/tasks/${encodeURIComponent(taskId)}/command-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify(body)
+      }
+    );
+    return CommandDecisionResponseSchema.parse({
       taskId: this.readString(response, "taskId", "task_id"),
       status: this.readString(response, "status")
     });

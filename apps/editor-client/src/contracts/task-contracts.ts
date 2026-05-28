@@ -91,6 +91,21 @@ export const ValidationDecisionResponseSchema = z.object({
   status: TaskStatusSchema
 });
 
+export const CommandDecisionSchema = z.object({
+  approve: z.boolean(),
+  remember: z.boolean().default(false),
+  scope: z.enum(["exact", "prefix", "binary"]).default("exact"),
+  // For approve+remember: the rule value the UI chose (shlex-joined leading
+  // tokens for "prefix", full shlex-join for "exact"; omitted for "binary",
+  // engine derives basename). Mirrors backend CommandDecision.rule_value.
+  ruleValue: z.string().optional(),
+});
+
+export const CommandDecisionResponseSchema = z.object({
+  taskId: z.string().min(1),
+  status: TaskStatusSchema
+});
+
 export type TaskSubmission = z.infer<typeof TaskSubmissionSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
 export type TaskResult = z.infer<typeof TaskResultSchema>;
@@ -101,6 +116,8 @@ export type ScopeDecisionResponse = z.infer<typeof ScopeDecisionResponseSchema>;
 export type StepDecisionRequest = z.infer<typeof StepDecisionRequestSchema>;
 export type ValidationDecisionRequest = z.infer<typeof ValidationDecisionRequestSchema>;
 export type ValidationDecisionResponse = z.infer<typeof ValidationDecisionResponseSchema>;
+export type CommandDecision = z.infer<typeof CommandDecisionSchema>;
+export type CommandDecisionResponse = z.infer<typeof CommandDecisionResponseSchema>;
 
 export interface DiffEntry {
   path: string;
@@ -123,6 +140,8 @@ export type StreamEvent =
   | { type: "patch_applied"; payload: { step_id: string; phase: string; touched_files: string[] } }
   | { type: "patch_failed"; payload: { step_id: string; error: string } }
   | { type: "scope_extension_requested"; payload: { decision_id: string; files: string[]; reason: string; step_id: string } }
+  | { type: "validation_decision_requested"; payload: { task_id: string; diagnostics: Array<{ source: string; message: string; level: string }> } }
+  | { type: "command_approval_requested"; payload: { decision_id: string; command: string; args: string[]; cwd: string; step_id: string } }
   | { type: "tool_thinking_chunk"; payload: { chunk: string } }
   | { type: "chat_agent_thinking"; payload: { message: string } }
   | { type: "chat_agent_thinking_chunk"; payload: { chunk: string } }
@@ -144,7 +163,7 @@ export type PatchStreamEvent = StreamEvent;
 export const ChatMessageSchema = z.object({
   role: z.enum(["user", "agent"]),
   content: z.string(),
-  type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card"]).default("text"),
+  type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card", "validation_card", "command_card"]).default("text"),
   taskId: z.string().nullable().optional(),
   timestamp: z.string(),
   metadata: z.record(z.unknown()).default({}),
@@ -185,6 +204,7 @@ export interface BackendTaskClient {
   resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse>;
   sendScopeDecision(taskId: string, decision: ScopeDecisionRequest): Promise<ScopeDecisionResponse>;
   sendValidationDecision(taskId: string, decision: "accept" | "reject"): Promise<ValidationDecisionResponse>;
+  sendCommandDecision(taskId: string, decision: CommandDecision): Promise<CommandDecisionResponse>;
   sendStepDecision(taskId: string, decision: "accept" | "discard"): Promise<void>;
   streamPatch(taskId: string, onEvent: (event: StreamEvent) => void, signal?: AbortSignal): Promise<void>;
   streamPatchEvents(taskId: string): AsyncIterable<StreamEvent>;
