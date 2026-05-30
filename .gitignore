@@ -19,3 +19,6 @@ workspaces/
 apps/vscode-extension/tmp-review-files-*/
 generated.txt
 .worktrees/
+
+# Runtime SQLite databases
+**/agentd.db
