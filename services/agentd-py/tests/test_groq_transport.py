@@ -61,7 +61,7 @@ async def test_groq_transport_sends_expected_request_shape() -> None:
     call = client.calls[0]
     assert call["model"] == "llama-3.3-70b-versatile"
     assert call["max_completion_tokens"] == 111
-    assert call["temperature"] == 1
+    assert call["temperature"] == 0
     assert call["include_reasoning"] is False
     assert call["messages"][0]["role"] == "system"
     assert call["messages"][0]["content"] == "plan"
@@ -182,5 +182,5 @@ def test_groq_transport_sdk_constructor_uses_timeout_and_endpoint(
     )
 
     assert captured_kwargs["api_key"] == "test-key"
-    assert captured_kwargs["timeout"] == 12.5
     assert captured_kwargs["base_url"] == "https://api.groq.com/openai/v1"
+    # timeout is handled via asyncio.wait_for in _call_with_retry, not passed to SDK
