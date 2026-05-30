@@ -1,21 +1,42 @@
 """TurboQuant transport — llama-cpp-turboquant server, OpenAI chat-completions protocol.
 
-Talks to llama-server built from atomicmilkshake/llama-cpp-turboquant (or any compatible
-llama.cpp fork with TurboQuant KV-cache compression). The server exposes the standard
-OpenAI /v1/chat/completions endpoint, which supports response_format JSON Schema for
-structured output — same constraint mechanism as Gemini/Groq.
+Design
+------
+Strategy pattern (ModelProfile)
+  Every model family encapsulates its own sampling params and two behavioural hooks:
+    augment_body(body)     — inject model-specific request fields (template kwargs, budgets)
+    post_process_text(text) — clean model-specific artifacts from raw output (think blocks)
 
-Key difference from OllamaJsonTransport:
-  - Endpoint: /v1/chat/completions (not /api/chat)
-  - Structured output: response_format.json_schema (not format=<schema>)
-  - Response path: choices[0].message.content (not message.content)
+  TurboQuantTransport depends only on the ModelProfile abstraction (Dependency Inversion).
+  Adding a new model = subclass ModelProfile + register in PROFILES. Transport never changes.
+
+Built-in profiles
+  QWEN3    — Qwen3-family: JINJA thinking template, think-block stripping, anti-loop sampling
+  DEVSTRAL — Devstral/Mistral-family: no thinking, standard coding defaults
+
+Factory
+  TurboQuantTransport.from_env()        reads TURBOQUANT_MODEL_FAMILY (default: devstral),
+                                        then applies per-param env overrides
+  TurboQuantTransport.for_model("qwen3") selects a named profile with no env reads
+  TurboQuantTransport(profile=...)       fully explicit for tests / custom profiles
+
+Extending
+  To add Llama4 (hypothetical):
+    @dataclass(frozen=True)
+    class Llama4Profile(ModelProfile):
+        def augment_body(self, body): body["custom_field"] = "value"
+    PROFILES["llama4"] = Llama4Profile(temperature=0.4, top_p=0.9, top_k=50, min_p=0.0, ...)
 """
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -32,24 +53,188 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 )
 
 _DEFAULT_HOST = "http://localhost:11435"
+_DEFAULT_MAX_TOKENS = int(os.environ.get("TURBOQUANT_MAX_TOKENS", "32768"))
+_DEFAULT_CHUNK_TIMEOUT = float(os.environ.get("TURBOQUANT_STREAM_CHUNK_TIMEOUT_SEC", "600.0"))
 
+
+# ---------------------------------------------------------------------------
+# Strategy: model profiles
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ModelProfile:
+    """Sampling parameters and model-specific request/response hooks.
+
+    Subclass and override augment_body / post_process_text to add model-specific
+    behaviour. All other fields are shared and overridable via dataclasses.replace().
+
+    thinking_budget: 0 = disabled. >0 = cap the model's reasoning block to N tokens.
+                     Only meaningful for models that support a thinking mode (e.g. Qwen3).
+    """
+    temperature: float
+    top_p: float
+    top_k: int
+    min_p: float
+    presence_penalty: float
+    thinking_budget: int = 0
+
+    def augment_body(self, body: dict[str, object]) -> None:  # noqa: B027
+        """Inject model-specific fields into the request body in-place. No-op by default."""
+
+    def post_process_text(self, text: str) -> str:
+        """Remove model-specific artifacts from raw output before returning to caller.
+
+        Base implementation strips <think>…</think> blocks defensively — any model
+        could theoretically emit them. Subclasses should call super() and extend.
+        """
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        idx = text.find("<think>")
+        if idx != -1:
+            text = text[:idx].strip()
+        return text
+
+
+@dataclass(frozen=True)
+class Qwen3Profile(ModelProfile):
+    """Qwen3-family: JINJA thinking template. post_process_text inherited from base."""
+
+    def augment_body(self, body: dict[str, object]) -> None:
+        # Qwen3 JINJA template controls whether the model emits a <think> block.
+        if self.thinking_budget > 0:
+            body["thinking_budget_tokens"] = self.thinking_budget
+            body["chat_template_kwargs"] = {"enable_thinking": True, "preserve_thinking": True}
+        else:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+
+
+@dataclass(frozen=True)
+class DevstralProfile(ModelProfile):
+    """Devstral/Mistral-family: no thinking mode, standard coding defaults."""
+    # augment_body and post_process_text are no-ops — ModelProfile defaults apply.
+
+
+# ---------------------------------------------------------------------------
+# Named profile constants and registry
+# ---------------------------------------------------------------------------
+
+QWEN3 = Qwen3Profile(
+    temperature=0.6,
+    top_p=0.95,
+    top_k=20,
+    min_p=0.0,
+    presence_penalty=1.0,
+    thinking_budget=0,
+)
+
+DEVSTRAL = DevstralProfile(
+    temperature=0.3,
+    top_p=0.95,
+    top_k=40,
+    min_p=0.0,
+    presence_penalty=0.0,
+)
+
+# Register new model families here. Keys are matched against TURBOQUANT_MODEL_FAMILY env var.
+PROFILES: dict[str, ModelProfile] = {
+    "qwen3": QWEN3,
+    "devstral": DEVSTRAL,
+}
+
+
+# ---------------------------------------------------------------------------
+# Transport
+# ---------------------------------------------------------------------------
 
 class TurboQuantTransport(ModelJsonTransport):
-    """JSON transport backed by a llama-cpp-turboquant server."""
+    """JSON transport backed by a llama-cpp-turboquant server.
+
+    Receives a ModelProfile via constructor — does not know or care which model
+    family is active. All model-specific logic lives in the profile.
+    """
 
     def __init__(
         self,
         *,
+        profile: ModelProfile,
         host: str | None = None,
         timeout_sec: float = 600.0,
         max_retries: int = 4,
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        self._profile = profile
         self._host = (host or os.getenv("TURBOQUANT_HOST") or _DEFAULT_HOST).rstrip("/")
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
+        self._max_tokens = max_tokens
         self._owns_client = http_client is None
         self._client = http_client or httpx.AsyncClient(timeout=timeout_sec)
+
+    # ------------------------------------------------------------------
+    # Factory classmethods
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_env(cls) -> "TurboQuantTransport":
+        """Build from environment variables.
+
+        TURBOQUANT_MODEL_FAMILY  — profile to use (default: devstral)
+        TURBOQUANT_TEMPERATURE   — override profile temperature
+        TURBOQUANT_TOP_P         — override profile top_p
+        TURBOQUANT_TOP_K         — override profile top_k
+        TURBOQUANT_MIN_P         — override profile min_p
+        TURBOQUANT_PRESENCE_PENALTY — override profile presence_penalty
+        TURBOQUANT_THINKING_BUDGET  — override thinking_budget (Qwen3)
+        TURBOQUANT_MAX_TOKENS    — total output token budget (default 8192)
+        TURBOQUANT_HOST          — server URL (default http://localhost:11435)
+        """
+        family = os.environ.get("TURBOQUANT_MODEL_FAMILY", "devstral").lower()
+        if family not in PROFILES:
+            raise ValueError(
+                f"Unknown TURBOQUANT_MODEL_FAMILY={family!r}. "
+                f"Known profiles: {sorted(PROFILES)}"
+            )
+        profile = cls._apply_sampling_env_overrides(PROFILES[family])
+        return cls(
+            profile=profile,
+            host=os.getenv("TURBOQUANT_HOST"),
+            max_tokens=int(os.environ.get("TURBOQUANT_MAX_TOKENS", str(_DEFAULT_MAX_TOKENS))),
+        )
+
+    @classmethod
+    def for_model(cls, family: str, **kwargs: Any) -> "TurboQuantTransport":
+        """Convenience factory: select a named profile with no env reads.
+
+        Example:
+            transport = TurboQuantTransport.for_model("qwen3")
+            transport = TurboQuantTransport.for_model("devstral", max_tokens=4096)
+        """
+        if family not in PROFILES:
+            raise ValueError(
+                f"Unknown model family {family!r}. Known: {sorted(PROFILES)}"
+            )
+        return cls(profile=PROFILES[family], **kwargs)
+
+    @staticmethod
+    def _apply_sampling_env_overrides(profile: ModelProfile) -> ModelProfile:
+        """Return a copy of profile with any TURBOQUANT_* env vars applied."""
+        overrides: dict[str, Any] = {}
+        for field, env_var, cast in (
+            ("temperature",       "TURBOQUANT_TEMPERATURE",        float),
+            ("top_p",             "TURBOQUANT_TOP_P",              float),
+            ("top_k",             "TURBOQUANT_TOP_K",              int),
+            ("min_p",             "TURBOQUANT_MIN_P",              float),
+            ("presence_penalty",  "TURBOQUANT_PRESENCE_PENALTY",   float),
+            ("thinking_budget",   "TURBOQUANT_THINKING_BUDGET",    int),
+        ):
+            raw = os.environ.get(env_var)
+            if raw is not None:
+                overrides[field] = cast(raw)  # type: ignore[operator]
+        return dataclasses.replace(profile, **overrides) if overrides else profile
+
+    # ------------------------------------------------------------------
+    # ModelJsonTransport interface
+    # ------------------------------------------------------------------
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -63,30 +248,44 @@ class TurboQuantTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
-        # Use json_object (not json_schema) so the grammar constraint does NOT block
-        # </think>. With json_schema strict mode the grammar prevents </think> from
-        # being emitted, trapping the model in an infinite thinking loop. With
-        # json_object the model thinks naturally, closes </think>, then outputs JSON.
-        instructions_with_schema = (
+        # Use json_object (not json_schema) so the grammar constraint does NOT prevent
+        # Qwen3 from closing its <think> block — json_schema strict mode traps the model.
+        system = (
             f"{system_instructions}\n\n"
             f"REQUIRED OUTPUT FORMAT — JSON object matching this schema:\n"
             f"{json.dumps(schema, indent=2)}\n"
             "Return ONLY the JSON object. No markdown fences. No commentary."
         )
         contents = json.dumps(user_payload)
-        body = self._build_body(
-            model=model,
-            system=instructions_with_schema,
-            user_content=contents,
-            use_json_object=True,
-            max_tokens=0,
-        )
-        response = await self._call_with_retry(body)
-        self._log_usage(model, schema_name, system_instructions, contents, response)
-        output_text = self._extract_text(response)
-        logger.debug("turboquant raw output (%s): %s", schema_name, output_text[:600])
-        return self._parse_output_object(output_text, schema_name)
+        body = self._build_body(model=model, system=system, user_content=contents,
+                                use_json_object=True)
+        last_parse_exc: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            if attempt > 0:
+                delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                logger.warning(
+                    "TurboQuant malformed JSON for %s (attempt %d/%d), retrying in %.0fs",
+                    schema_name, attempt, self._max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+            try:
+                thinking_buf, output_text = await self._stream_with_retry(body, schema_name, on_thinking)
+                if thinking_buf:
+                    logger.info("turboquant think (%s): %s", schema_name, thinking_buf[:300])
+                logger.info(
+                    "turboquant call: model=%s schema=%s sys_chars=%d user_chars=%d",
+                    model, schema_name, len(system), len(contents),
+                )
+                return self._parse_output_object(output_text, schema_name)
+            except RuntimeError as exc:
+                if "not valid JSON" in str(exc) or "must be a JSON object" in str(exc):
+                    last_parse_exc = exc
+                    continue
+                raise
+        assert last_parse_exc is not None
+        raise last_parse_exc
 
     async def generate_text(
         self,
@@ -94,17 +293,21 @@ class TurboQuantTransport(ModelJsonTransport):
         model: str,
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: Callable[[str], None] | None = None,
     ) -> str:
         contents = json.dumps(user_payload)
-        body = self._build_body(
-            model=model,
-            system=system_instructions,
-            user_content=contents,
-            max_tokens=0,
+        body = self._build_body(model=model, system=system_instructions, user_content=contents)
+        _, raw_text = await self._stream_with_retry(body, "text", on_thinking)
+        logger.info(
+            "turboquant call: model=%s schema=text sys_chars=%d user_chars=%d",
+            model, len(system_instructions), len(contents),
         )
-        response = await self._call_with_retry(body)
-        self._log_usage(model, "text", system_instructions, contents, response)
-        return self._extract_text(response)
+        clean = self._profile.post_process_text(raw_text)
+        return clean or raw_text  # guard against stripping everything
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _build_body(
         self,
@@ -113,7 +316,6 @@ class TurboQuantTransport(ModelJsonTransport):
         system: str,
         user_content: str,
         use_json_object: bool = False,
-        max_tokens: int = 0,
     ) -> dict[str, object]:
         body: dict[str, object] = {
             "model": model,
@@ -121,122 +323,144 @@ class TurboQuantTransport(ModelJsonTransport):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
-            "temperature": 0,
+            "temperature": self._profile.temperature,
+            "top_p": self._profile.top_p,
+            "top_k": self._profile.top_k,
+            "min_p": self._profile.min_p,
+            "presence_penalty": self._profile.presence_penalty,
+            "max_tokens": self._max_tokens,
             "stream": False,
         }
-        if max_tokens > 0:
-            body["max_tokens"] = max_tokens
+        self._profile.augment_body(body)
         if use_json_object:
             body["response_format"] = {"type": "json_object"}
         return body
 
-    async def _call_with_retry(self, body: dict[str, object]) -> dict[str, Any]:
+    def _parse_output_object(self, output_text: str, schema_name: str) -> dict[str, object]:
+        # Profile cleans model-specific artifacts (think blocks, etc.) first.
+        text = self._profile.post_process_text(output_text.strip())
+        text = text or output_text.strip()
+        return _extract_json_object(text, schema_name)
+
+    async def _stream_with_retry(
+        self,
+        body: dict[str, object],
+        schema_name: str,
+        on_thinking: Callable[[str], None] | None,
+    ) -> tuple[str, str]:
+        """Stream a completion. Returns (thinking_content, output_content)."""
+        stream_body = {**body, "stream": True}
         url = f"{self._host}/v1/chat/completions"
+        timeout = httpx.Timeout(connect=10.0, read=_DEFAULT_CHUNK_TIMEOUT, write=10.0, pool=5.0)
         last_exc: Exception | None = None
+
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
                 delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
-                logger.warning(
-                    "TurboQuant transient error (attempt %d/%d), retrying in %.0fs",
-                    attempt, self._max_retries, delay,
-                )
+                logger.warning("TurboQuant stream retry %d/%d in %.0fs",
+                               attempt, self._max_retries, delay)
                 await asyncio.sleep(delay)
 
             try:
-                response = await asyncio.wait_for(
-                    self._client.post(url, json=body),
-                    timeout=self._timeout_sec,
+                thinking_parts: list[str] = []
+                content_parts: list[str] = []
+                async with self._client.stream("POST", url, json=stream_body,
+                                               timeout=timeout) as response:
+                    if response.status_code in _RETRYABLE_STATUS_CODES:
+                        last_exc = RuntimeError(f"TurboQuant returned {response.status_code}")
+                        continue
+                    if response.status_code >= 400:
+                        body_text = (await response.aread()).decode("utf-8", errors="replace")
+                        raise RuntimeError(
+                            f"TurboQuant returned {response.status_code}: {body_text[:500]}"
+                        )
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get("choices")
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {})
+                        if reasoning := delta.get("reasoning_content"):
+                            thinking_parts.append(reasoning)
+                            if on_thinking:
+                                on_thinking(reasoning)
+                        if text := delta.get("content"):
+                            content_parts.append(text)
+                return "".join(thinking_parts), "".join(content_parts)
+
+            except httpx.ReadTimeout as exc:
+                last_exc = RuntimeError(
+                    f"TurboQuant stream: no chunk for {_DEFAULT_CHUNK_TIMEOUT:.0f}s "
+                    f"({schema_name})"
                 )
-            except TimeoutError as exc:
-                msg = f"TurboQuant request timed out after {self._timeout_sec}s"
-                raise RuntimeError(msg) from exc
+                logger.warning("TurboQuant stream read timeout for %s: %s", schema_name, exc)
+                continue
             except _RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
                 continue
-            except Exception:
-                raise
-
-            if response.status_code in _RETRYABLE_STATUS_CODES:
-                last_exc = httpx.HTTPStatusError(
-                    f"TurboQuant returned {response.status_code}: {response.text[:200]}",
-                    request=response.request,
-                    response=response,
-                )
-                continue
-            if response.status_code >= 400:
-                raise RuntimeError(
-                    f"TurboQuant returned {response.status_code}: {response.text[:500]}"
-                )
-            try:
-                return response.json()
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    f"TurboQuant returned non-JSON body: {response.text[:200]}"
-                ) from exc
 
         assert last_exc is not None
         raise RuntimeError(
-            f"TurboQuant request failed after {self._max_retries} retries: {last_exc}"
+            f"TurboQuant stream failed after {self._max_retries} retries: {last_exc}"
         ) from last_exc
 
-    @staticmethod
-    def _extract_text(response: dict[str, Any]) -> str:
-        choices = response.get("choices")
-        if isinstance(choices, list) and choices:
-            message = choices[0].get("message", {})
-            content = message.get("content")
-            if isinstance(content, str) and content.strip():
-                return content.strip()
-            # Fallback: some llama-server builds emit JSON inside reasoning_content
-            # when the grammar constraint prevents clean separation of think/answer.
-            reasoning = message.get("reasoning_content")
-            if isinstance(reasoning, str) and reasoning.strip():
-                # Try to extract the last JSON object from the thinking trace
-                text = reasoning.strip()
-                last_brace = text.rfind("{")
-                if last_brace != -1:
-                    candidate = text[last_brace:]
-                    if candidate.rstrip().endswith("}"):
-                        return candidate.strip()
-        raise RuntimeError("TurboQuant response contained no text content")
 
-    @staticmethod
-    def _parse_output_object(output_text: str, schema_name: str) -> dict[str, object]:
-        text = output_text.strip()
-        # Find the start of the JSON object (skip any leading thinking trace)
-        start = text.find("{")
-        if start == -1:
+# ---------------------------------------------------------------------------
+# Module-level pure functions (no model-specific knowledge)
+# ---------------------------------------------------------------------------
+
+def _repair_json(text: str) -> str:
+    """Repair known llama-server JSON malformations before parsing."""
+    # Repair 1: model omits "args" key before the args object.
+    # {..., "tool": "read_file", {"path": ...}} → {..., "tool": "read_file", "args": {"path": ...}}
+    text = re.sub(
+        r'("tool"\s*:\s*"[^"]*"\s*),\s*(\{)',
+        r'\1, "args": \2',
+        text,
+    )
+    # Repair 2: unquoted property names (seen in Qwen3 no-think mode).
+    # {type: "tool_call", ...} → {"type": "tool_call", ...}
+    text = re.sub(
+        r'([{,]\s*)([a-zA-Z_]\w*)(\s*:(?!\s*/))',
+        lambda m: m.group(1) + '"' + m.group(2) + '"' + m.group(3),
+        text,
+    )
+    return text
+
+
+def _extract_json_object(text: str, schema_name: str) -> dict[str, object]:
+    """Extract and parse the first JSON object from text; attempt repair on failure."""
+    start = text.find("{")
+    if start == -1:
+        raise RuntimeError(
+            f"TurboQuant output contains no JSON object for {schema_name}: {text[:500]}"
+        )
+    text = text[start:]
+    try:
+        # raw_decode stops after the first complete value — ignores trailing garbage.
+        payload, _ = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        repaired = _repair_json(text)
+        if repaired == text:
             raise RuntimeError(
                 f"TurboQuant output is not valid JSON for {schema_name}: {text[:500]}"
             )
-        text = text[start:]
+        logger.warning("TurboQuant malformed JSON for %s — applied repair", schema_name)
         try:
-            # raw_decode consumes exactly one JSON value and ignores trailing garbage
-            # (e.g. extra closing braces emitted by qwen3-family models)
-            payload, _ = json.JSONDecoder().raw_decode(text)
+            payload, _ = json.JSONDecoder().raw_decode(repaired)
         except json.JSONDecodeError as exc:
-            msg = f"TurboQuant output is not valid JSON for {schema_name}: {text[:500]}"
-            raise RuntimeError(msg) from exc
-        if not isinstance(payload, dict):
-            msg = "TurboQuant output must be a JSON object"
-            raise RuntimeError(msg)
-        return payload
-
-    @staticmethod
-    def _log_usage(
-        model: str,
-        schema_name: str,
-        system_instructions: str,
-        contents: str,
-        response: dict[str, Any],
-    ) -> None:
-        usage = response.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens")
-        output_tokens = usage.get("completion_tokens")
-        logger.info(
-            "turboquant call: model=%s schema=%s sys_chars=%d user_chars=%d "
-            "prompt_tokens=%s output_tokens=%s",
-            model, schema_name,
-            len(system_instructions), len(contents),
-            prompt_tokens, output_tokens,
-        )
+            raise RuntimeError(
+                f"TurboQuant output is not valid JSON for {schema_name} "
+                f"(after repair): {repaired[:500]}"
+            ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("TurboQuant output must be a JSON object")
+    return payload
