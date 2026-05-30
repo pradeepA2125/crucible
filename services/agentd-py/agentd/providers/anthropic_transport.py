@@ -60,6 +60,7 @@ class AnthropicJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: object = None,
     ) -> dict[str, object]:
         response = await self._messages.create(
             model=model,
