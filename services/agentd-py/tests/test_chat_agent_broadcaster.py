@@ -36,7 +36,8 @@ class _InlineOrchestrator:
         self.task_calls: list[dict] = []
 
     async def run_inline_change(self, *, thread_id, goal, workspace_path,
-                                plan_markdown, explore_context, channel_id, store):
+                                plan_markdown, explore_context, channel_id, store,
+                                likely_targets=None, thinking_log=None):
         self.inline_calls.append({
             "thread_id": thread_id, "goal": goal, "plan_markdown": plan_markdown,
             "channel_id": channel_id,
@@ -46,6 +47,9 @@ class _InlineOrchestrator:
                                     explore_context, store) -> str:
         self.task_calls.append({"thread_id": thread_id, "goal": goal})
         return "task-from-chat-1"
+
+    async def await_plan_ready(self, task_id: str, timeout_sec: float = 3600.0) -> object:
+        return None
 
 
 @pytest.mark.asyncio

@@ -13,11 +13,11 @@ class ScriptedTransport:
     def __init__(self, text_response: str = "It handles login.") -> None:
         self._text = text_response
 
-    async def generate_text(self, *, model, system_instructions, user_payload) -> str:
+    async def generate_text(self, *, model, system_instructions, user_payload, on_thinking=None) -> str:
         return self._text
 
     async def generate_json(self, *, model, schema_name, schema,
-                            system_instructions, user_payload) -> dict:
+                            system_instructions, user_payload, on_thinking=None) -> dict:
         if schema_name == "explore_step":
             return {"action": "done"}  # skip exploration in tests
         return {"intent": "qa", "rationale": "scripted", "likely_targets": []}
@@ -79,12 +79,12 @@ async def test_explore_tool_calls_broadcast_events(tmp_path: Path, store: ChatTh
             return "answer"
 
         async def generate_json(self, *, model, schema_name, schema,
-                                system_instructions, user_payload) -> dict:
+                                system_instructions, user_payload, on_thinking=None) -> dict:
             if schema_name == "explore_step":
                 if not user_payload.get("tool_results"):
-                    return {"action": "tool_call", "tool": "search_code",
-                            "args": {"pattern": "auth"}}
-                return {"action": "done"}
+                    return {"thought": "Looking for auth patterns", "action": "tool_call",
+                            "tool": "search_code", "args": {"pattern": "auth"}}
+                return {"thought": "Have enough context", "action": "done"}
             return {"intent": "qa", "rationale": "ok", "likely_targets": []}
 
     broadcaster = EventBroadcaster()
@@ -104,6 +104,7 @@ async def test_explore_tool_calls_broadcast_events(tmp_path: Path, store: ChatTh
     tool_events = [e for e in events if e["type"] == "explore_tool_call"]
     assert len(tool_events) == 1
     assert tool_events[0]["payload"]["tool"] == "search_code"
+    assert tool_events[0]["payload"]["thought"] == "Looking for auth patterns"
 
 
 @pytest.mark.asyncio
@@ -115,11 +116,11 @@ async def test_explore_context_passed_to_classifier(tmp_path: Path, store: ChatT
             return "answer"
 
         async def generate_json(self, *, model, schema_name, schema,
-                                system_instructions, user_payload) -> dict:
+                                system_instructions, user_payload, on_thinking=None) -> dict:
             if schema_name == "explore_step":
                 if not user_payload.get("tool_results"):
-                    return {"action": "tool_call", "tool": "search_code",
-                            "args": {"pattern": "auth"}}
+                    return {"thought": "Looking for context", "action": "tool_call",
+                            "tool": "search_code", "args": {"pattern": "auth"}}
                 return {"action": "done"}
             classifier_payloads.append(user_payload)
             return {"intent": "qa", "rationale": "ok", "likely_targets": []}

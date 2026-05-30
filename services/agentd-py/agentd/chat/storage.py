@@ -94,6 +94,25 @@ class ChatThreadStore:
         )
         self._conn.commit()
 
+    def resolve_diff_card(self, inline_task_id: str, resolution: str) -> None:
+        """Mark a diff_card message as resolved (applied/discarded) across all threads."""
+        rows = self._conn.execute(
+            "SELECT thread_id, messages_json FROM chat_threads"
+        ).fetchall()
+        for row in rows:
+            messages: list[dict] = json.loads(row["messages_json"])
+            changed = False
+            for msg in messages:
+                if msg.get("type") == "diff_card" and msg.get("task_id") == inline_task_id:
+                    msg.setdefault("metadata", {})["resolved"] = resolution
+                    changed = True
+            if changed:
+                self._conn.execute(
+                    "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
+                    (json.dumps(messages), row["thread_id"]),
+                )
+        self._conn.commit()
+
     def add_touched_file(self, thread_id: str, file_path: str) -> None:
         row = self._conn.execute(
             "SELECT touched_files_json FROM chat_threads WHERE thread_id = ?", (thread_id,)

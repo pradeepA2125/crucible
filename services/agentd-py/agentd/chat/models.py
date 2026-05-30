@@ -11,6 +11,8 @@ class IntentType(StrEnum):
     QA = "qa"
     SMALL_CHANGE = "small_change"
     LARGE_CHANGE = "large_change"
+    RESUME = "resume"
+    CLARIFY = "clarify"
 
 
 class IntentClassification(BaseModel):
@@ -19,12 +21,13 @@ class IntentClassification(BaseModel):
     files_examined: list[str] = Field(default_factory=list)
     likely_targets: list[str] = Field(default_factory=list)
     answer: str | None = None
+    clarify_question: str | None = None
 
 
 class ChatMessage(BaseModel):
     role: Literal["user", "agent"]
     content: str
-    type: Literal["text", "plan_card", "diff_card", "diff_summary"] = "text"
+    type: Literal["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card"] = "text"
     task_id: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict[str, Any] = Field(default_factory=dict)
