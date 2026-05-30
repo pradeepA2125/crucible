@@ -1,20 +1,38 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.runtime.artifacts import provider_debug_root
+
+logger = logging.getLogger(__name__)
+
+_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 503})
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """True for models that support OpenRouter's reasoning extension (extra_body.reasoning).
+
+    Covers DeepSeek-R1 family and Qwen3 family (including qwen3-coder).
+    openrouter/free is intentionally excluded — it routes to whatever is available
+    and reasoning params cause it to return empty choices.
+    """
+    m = model.lower()
+    return any(x in m for x in ("deepseek-r1", "deepseek-r2", "qwen3"))
+
+
+def _is_retryable(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    return isinstance(status_code, int) and status_code in _RETRYABLE_STATUS_CODES
 
 
 class OpenRouterJsonTransport(ModelJsonTransport):
-    """
-    OpenRouter transport that is OpenAI-compatible but requires specific headers
-    and a custom base URL.
-    """
-
     def __init__(
         self,
         *,
@@ -22,9 +40,15 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         base_url: str = "https://openrouter.ai/api/v1",
         site_url: str | None = None,
         site_name: str | None = None,
+        max_tokens: int = 4096,
         timeout_sec: float = 120.0,
+        max_retries: int = 4,
         completions_client: Any | None = None,
     ) -> None:
+        self._max_tokens = max_tokens
+        self._timeout_sec = timeout_sec
+        self._max_retries = max(0, max_retries)
+
         if completions_client is not None:
             self._completions: Any = completions_client
             return
@@ -58,72 +82,100 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: object = None,
     ) -> dict[str, object]:
-        """
-        Generates JSON using OpenRouter with robust schema enforcement.
-        We attempt 'json_schema' (Structured Outputs) first and fallback
-        to 'json_object' if the provider does not support it.
-        """
-        # Enable reasoning for openrouter/free or via environment variable
-        reasoning_enabled = os.getenv("AI_EDITOR_OPENROUTER_REASONING_ENABLED", "true").lower() == "true"
-        
-        # Strategy 1: Attempt Structured Outputs (json_schema)
-        try:
-            create_kwargs: dict[str, Any] = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_instructions},
-                    {"role": "user", "content": json.dumps(user_payload)},
-                ],
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": schema_name,
-                        "strict": True,
-                        "schema": schema,
-                    },
-                },
-                "temperature": 1.0,
-            }
-            
-            if reasoning_enabled or model == "openrouter/free":
-                create_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
+        safe_schema_name = "".join(c for c in schema_name if c.isalnum())
 
-            response = await self._completions.create(**create_kwargs)
-            output_text = self._extract_text(response)
-            return self._parse_output_object(output_text)
-            
-        except Exception as e:
-            # Strategy 2: Fallback to json_object with schema in prompt
-            # Some providers (like StepFun) do not support 'json_schema'
-            # or 'strict' mode.
-            print(f"[DEBUG] OpenRouter json_schema failed, falling back to json_object: {e}")
-            
-            instructions_with_schema = (
-                f"{system_instructions}\n\n"
-                f"You MUST return a JSON object that strictly follows this schema:\n"
-                f"{json.dumps(schema, indent=2)}"
+        # Reasoning models require temperature=1 per OpenRouter docs.
+        temperature = 1 if _is_reasoning_model(model) else 0
+
+        base_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": json.dumps(user_payload)},
+            ],
+            "max_completion_tokens": self._max_tokens,
+            "temperature": temperature,
+        }
+        if _is_reasoning_model(model):
+            base_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
+
+        create_kwargs = {
+            **base_kwargs,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": safe_schema_name,
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+        }
+
+        out_dir = provider_debug_root("openrouter")
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / f"debug-req-{safe_schema_name}.json").write_text(
+                json.dumps(create_kwargs, indent=2, default=str), encoding="utf-8"
             )
-            
+        except Exception:
+            pass
+
+        try:
+            response = await self._call_with_retry(create_kwargs)
+            output_text = self._extract_text(response)
+            return self._parse_output_object(output_text, schema_name)
+        except Exception as e:
+            # Fall back to json_object with schema injected into system prompt.
+            # Some models/providers don't support json_schema strict mode.
+            logger.warning(
+                "OpenRouter json_schema failed for %s, falling back to json_object: %s",
+                schema_name, e,
+            )
             fallback_kwargs: dict[str, Any] = {
-                "model": model,
+                **base_kwargs,
                 "messages": [
-                    {"role": "system", "content": instructions_with_schema},
+                    {
+                        "role": "system",
+                        "content": (
+                            f"{system_instructions}\n\n"
+                            f"You MUST return a JSON object matching this schema:\n"
+                            f"{json.dumps(schema, indent=2)}"
+                        ),
+                    },
                     {"role": "user", "content": json.dumps(user_payload)},
                 ],
                 "response_format": {"type": "json_object"},
-                "temperature": 1.0,
             }
-            
-            if reasoning_enabled or model == "openrouter/free":
-                fallback_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
-
-            try:
-                response = await self._completions.create(**fallback_kwargs)
-                output_text = self._extract_text(response)
-                return self._parse_output_object(output_text)
-            except Exception as e2:
-                raise RuntimeError(f"OpenRouter API error (fallback also failed): {e2}") from e2
+            last_parse_exc: Exception | None = None
+            for attempt in range(self._max_retries + 1):
+                if attempt > 0:
+                    delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                    logger.warning(
+                        "OpenRouter malformed JSON for %s (attempt %d/%d), retrying in %.0fs",
+                        schema_name, attempt, self._max_retries, delay,
+                    )
+                    await asyncio.sleep(delay)
+                try:
+                    response = await self._call_with_retry(fallback_kwargs)
+                    output_text = self._extract_text(response)
+                    return self._parse_output_object(output_text, schema_name)
+                except RuntimeError as e2:
+                    if "not valid JSON" in str(e2) or "must be a JSON object" in str(e2):
+                        last_parse_exc = e2
+                        continue
+                    raise RuntimeError(
+                        f"OpenRouter API error for {schema_name} (fallback also failed): {e2}"
+                    ) from e2
+                except Exception as e2:
+                    raise RuntimeError(
+                        f"OpenRouter API error for {schema_name} (fallback also failed): {e2}"
+                    ) from e2
+            assert last_parse_exc is not None
+            raise RuntimeError(
+                f"OpenRouter API error for {schema_name} (fallback malformed JSON after retries): {last_parse_exc}"
+            ) from last_parse_exc
 
     async def generate_text(
         self,
@@ -131,53 +183,146 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         model: str,
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: object = None,
     ) -> str:
-        """Generates raw text using OpenRouter."""
+        temperature = 1 if _is_reasoning_model(model) else 0
+
         create_kwargs: dict[str, Any] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": json.dumps(user_payload)},
             ],
-            "temperature": 1.0,
+            "max_completion_tokens": self._max_tokens,
+            "temperature": temperature,
         }
+        if _is_reasoning_model(model):
+            create_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
+
+        if callable(on_thinking):
+            return await self._stream_with_thinking(create_kwargs, on_thinking=on_thinking)
 
         try:
-            response = await self._completions.create(**create_kwargs)
+            response = await self._call_with_retry(create_kwargs)
             return self._extract_text(response)
         except Exception as e:
             raise RuntimeError(f"OpenRouter API error: {e}") from e
 
-    def _extract_text(self, response: Any) -> str:
-        if not hasattr(response, "choices") or not response.choices:
-            raise RuntimeError("OpenRouter response missing choices")
+    async def _stream_with_thinking(
+        self,
+        create_kwargs: dict[str, Any],
+        *,
+        on_thinking: Any,
+    ) -> str:
+        """Stream response forwarding reasoning chunks to on_thinking callback.
 
-        content = response.choices[0].message.content
-        if not content or not content.strip():
+        OpenRouter surfaces reasoning in delta.reasoning (same field as Groq).
+        """
+        kwargs = {**create_kwargs, "stream": True}
+        last_exc: Exception | None = None
+
+        for attempt in range(self._max_retries + 1):
+            if attempt > 0:
+                delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                logger.warning(
+                    "OpenRouter transient error (attempt %d/%d), retrying in %.0fs",
+                    attempt, self._max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+            try:
+                content_parts: list[str] = []
+                stream = await asyncio.wait_for(
+                    self._completions.create(**kwargs),
+                    timeout=self._timeout_sec,
+                )
+                async for chunk in stream:
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    delta = getattr(choices[0], "delta", None)
+                    if delta is None:
+                        continue
+                    reasoning = getattr(delta, "reasoning", None)
+                    if reasoning:
+                        on_thinking(reasoning)
+                    content = getattr(delta, "content", None) or ""
+                    if content:
+                        content_parts.append(content)
+                return "".join(content_parts).strip()
+            except TimeoutError as exc:
+                raise RuntimeError(
+                    f"OpenRouter streaming timed out after {self._timeout_sec}s"
+                ) from exc
+            except Exception as exc:
+                if _is_retryable(exc):
+                    last_exc = exc
+                    continue
+                raise
+
+        assert last_exc is not None
+        raise last_exc
+
+    async def _call_with_retry(self, create_kwargs: dict[str, Any]) -> Any:
+        """Call chat.completions.create with timeout and exponential backoff."""
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            if attempt > 0:
+                delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                logger.warning(
+                    "OpenRouter transient error (attempt %d/%d), retrying in %.0fs",
+                    attempt, self._max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+            try:
+                return await asyncio.wait_for(
+                    self._completions.create(**create_kwargs),
+                    timeout=self._timeout_sec,
+                )
+            except TimeoutError as exc:
+                raise RuntimeError(
+                    f"OpenRouter chat.completions timed out after {self._timeout_sec}s"
+                ) from exc
+            except Exception as exc:
+                if _is_retryable(exc):
+                    last_exc = exc
+                    continue
+                raise
+
+        assert last_exc is not None
+        raise last_exc
+
+    def _extract_text(self, response: Any) -> str:
+        choices = getattr(response, "choices", None)
+        if not isinstance(choices, list) or not choices:
+            try:
+                raw = response.model_dump() if hasattr(response, "model_dump") else vars(response)
+                logger.warning("OpenRouter response missing choices — full response: %s", raw)
+            except Exception:
+                logger.warning("OpenRouter response missing choices — response: %r", response)
+            raise RuntimeError("OpenRouter response missing choices")
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None)
+        if not isinstance(content, str) or not content.strip():
             raise RuntimeError("OpenRouter response contained no text output")
         return content.strip()
 
-    def _parse_output_object(self, output_text: str) -> dict[str, object]:
-        # Strip potential markdown fences if present (some models do this even with schema)
-        payload_text = strip_json_code_fences(output_text)
+    def _parse_output_object(self, output_text: str, schema_name: str) -> dict[str, object]:
+        payload_text = _strip_json_code_fences(output_text)
         try:
             payload = json.loads(payload_text)
         except json.JSONDecodeError as exc:
-            msg = f"OpenRouter output is not valid JSON: {output_text[:500]}"
-            raise RuntimeError(msg) from exc
-
+            raise RuntimeError(
+                f"OpenRouter output is not valid JSON for {schema_name}: {output_text[:500]}"
+            ) from exc
         if not isinstance(payload, dict):
-            msg = "OpenRouter output must be a JSON object"
-            raise RuntimeError(msg)
-
+            raise RuntimeError("OpenRouter output must be a JSON object")
         return payload
 
 
-def strip_json_code_fences(text: str) -> str:
+def _strip_json_code_fences(text: str) -> str:
     raw = text.strip()
     if not raw.startswith("```"):
         return raw
-
     lines = raw.splitlines()
     if lines and lines[0].startswith("```"):
         lines = lines[1:]
