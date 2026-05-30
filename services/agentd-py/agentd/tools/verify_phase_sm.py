@@ -196,17 +196,37 @@ class VerifyPhaseStateMachine:
         if s == _S.EXPLORE:
             return (
                 f"CURRENT STATE: EXPLORE{iter_note}\n"
-                "No patch has been applied yet. Read the relevant files, search for symbols, "
-                "and understand the code structure. When you have enough context, emit your patch.\n"
+                "No patch has been applied yet. Read the relevant files, search for symbols,\n"
+                "and understand the code structure. When you have enough context,\n"
+                "emit your patch.\n"
                 "Available tools: read_file, search_code, list_directory, emit_patch"
             )
 
         if s == _S.PATCH_FAILED_MUST_READ:
+            summary = (
+                f"\nCompiler/static errors still active:\n{error_summary}\n"
+                if error_summary
+                else ""
+            )
             return (
                 f"CURRENT STATE: PATCH_FAILED{iter_note}\n"
-                "Last patch failed — the file may not match what the patch expected. "
-                "Reading the file gives you ground truth before deciding what to do next. "
-                "emit_patch is locked until you read; it unlocks automatically after.\n"
+                f"{summary}"
+                "Last patch failed — the file may not match what the patch expected.\n"
+                "You MUST search for and read the code around the error symbols or line numbers\n"
+                "first (emit_patch is locked).\n"
+                "Follow this approach:\n"
+                "  1. Identify the files, lines, or symbols involved in the failure or active\n"
+                "     compiler errors.\n"
+                "  2. Use search_code to locate the error symbols or lines if you are unsure\n"
+                "     of their exact location.\n"
+                "  3. Call read_file with start_line and end_line parameters to read a window\n"
+                "     (e.g. 100-200 lines) around the error location.\n"
+                "  4. DO NOT do a whole-file read (capped at 500 lines and will truncate).\n"
+                "     You MUST read targeted sections.\n"
+                "  5. Keep reading/searching recursively until you have complete and correct\n"
+                "     context around the lines to patch.\n"
+                "emit_patch will unlock automatically after you perform a successful\n"
+                "read_file or search_code.\n"
                 "Available tools: read_file, search_code, list_directory"
             )
 
@@ -215,7 +235,10 @@ class VerifyPhaseStateMachine:
                 f"CURRENT STATE: PATCH_FAILED — RETRY {rc} of {mx}{iter_note}\n"
                 "You've read the file. emit_patch is available. "
                 "Use what you observed to decide your next move — patch if needed, "
-                "read more if unsure, or switch op type if the current one keeps failing. "
+                "read more if unsure, or switch op type if the current one keeps failing.\n"
+                "If you are still unsure of the error context, continue searching code or reading\n"
+                "targeted line ranges. Keep reading recursively until you have complete and\n"
+                "correct context before retrying emit_patch.\n"
                 f"Retry counter ({rc}/{mx}) only increments on actual engine failures.\n"
                 "Available tools: read_file, search_code, list_directory, emit_patch"
             )
@@ -232,8 +255,14 @@ class VerifyPhaseStateMachine:
         if s == _S.POSTPATCH_CLEAN:
             return (
                 f"CURRENT STATE: POSTPATCH — CLEAN{iter_note}\n"
-                "Static checks passed. You can run tests, read more, "
-                "or call verify_done if the step is complete.\n"
+                "Static checks passed. Decide your next move: run tests, read more, or verify_done.\n"
+                "If THIS step created or modified a test file (or the code those tests cover), you "
+                "MUST run the relevant tests with run_command and see them PASS before calling "
+                "verify_done. Do NOT use verify_done to skip running tests you just wrote — passing "
+                "static checks (py_compile/ruff/mypy) is NOT the same as the tests passing.\n"
+                "Only call verify_done WITHOUT running tests when there is genuinely nothing to run "
+                "at this step (e.g. the test file is created by a LATER step, or no test exists "
+                "yet) — and never try to run a test file that does not exist.\n"
                 "Available tools: read_file, search_code, list_directory, run_command, verify_done"
             )
 

@@ -332,3 +332,131 @@ async def test_tool_gate_does_not_burn_budget(tmp_path: Path) -> None:
     # instead reach verify_done successfully.
     assert isinstance(result, VerifyResult)
     assert result.verified is True
+
+
+def test_extract_line_hint() -> None:
+    from agentd.tools.loop import _extract_line_hint
+
+    # 1. Compiler error with line number
+    err = "engine.py:1948: error: Item 'None' of 'Optional[PlanStep]' has no attribute 'id'"
+    hint = _extract_line_hint("", err)
+    assert "near line 1948" in hint
+    assert "start_line=1918" in hint
+    assert "end_line=1998" in hint
+
+    # 2. Patch failure message with line number
+    patch_err = "patch failed at engine.py:713: chunk not found"
+    hint = _extract_line_hint(patch_err, "")
+    assert "near line 713" in hint
+    assert "start_line=683" in hint
+    assert "end_line=763" in hint
+
+    # 3. No line number — falls back to a generic "search first" hint.
+    hint = _extract_line_hint("patch application failed", "some other compiler output")
+    assert "No specific line numbers" in hint
+    assert "search_code" in hint
+
+
+# ── Fix 1: consecutive-identical tool_call guard ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_repeat_identical_tool_call_blocked(tmp_path: Path) -> None:
+    """A model repeating the SAME read/search since the last SM transition is
+    blocked (not re-executed) and nudged to vary its arguments."""
+    executed: list[tuple[str, dict]] = []
+
+    class _CountingRegistry(ToolRegistry):
+        async def execute(self, name: str, args: dict):  # type: ignore[override]
+            executed.append((name, dict(args)))
+            return await super().execute(name, args)
+
+    class _RepeatEngine:
+        _turn = 0
+
+        async def create_tool_step(
+            self, step_context, history, tool_definitions,
+            on_thinking=None, state_description="", allowed_action_types=None,
+        ):
+            _ = (step_context, history, tool_definitions, on_thinking,
+                 state_description, allowed_action_types)
+            self._turn += 1
+            if self._turn <= 3:  # same read three times in EXPLORE
+                return {"type": "tool_call", "thought": "read",
+                        "tool": "read_file", "args": {"path": "a.py"}}
+            if self._turn == 4:
+                return {"type": "emit_patch", "thought": "p",
+                        "patch_ops": [{"op": "search_replace", "file": "a.py",
+                                        "search": "x = 1", "replace": "x = 2", "reason": "r"}]}
+            return {"type": "verify_done", "thought": "done",
+                    "verified": True, "test_output": "ok"}
+
+        async def create_patch(self, *a, **kw): return {}
+        async def create_planning_step(self, *a, **kw): return {}
+        async def create_plan(self, *a, **kw): return {}
+
+    ws = _setup_ws(tmp_path)
+    reg = _CountingRegistry(shadow_root=ws, real_workspace_path=ws)
+    loop = ToolLoop(_RepeatEngine(), reg, EventBroadcaster(), "task-rep",
+                    patch_engine=PatchEngine(), shadow_path=ws)
+    result = await loop.run(_step(), {}, TaskBudget(), TaskUsage())
+    assert isinstance(result, VerifyResult)
+    reads = [c for c in executed if c[0] == "read_file"]
+    assert len(reads) == 1, (
+        f"identical read should execute once (repeats blocked), got {len(reads)}"
+    )
+
+
+# ── Fix 2: pre-first-patch recovery uses the explore budget, not verify ────────
+
+
+@pytest.mark.asyncio
+async def test_pre_first_patch_recovery_uses_explore_budget(tmp_path: Path) -> None:
+    """A failed first patch + several distinct recovery searches must draw on the
+    generous explore budget — NOT the tight verify budget. With a verify budget of
+    2, the old accounting failed the step on the 2nd recovery search; now it
+    reaches the corrected patch and completes."""
+
+    class _RecoveryEngine:
+        _turn = 0
+
+        async def create_tool_step(
+            self, step_context, history, tool_definitions,
+            on_thinking=None, state_description="", allowed_action_types=None,
+        ):
+            _ = (step_context, history, tool_definitions, on_thinking,
+                 state_description, allowed_action_types)
+            self._turn += 1
+            if self._turn == 1:  # EXPLORE: bad patch → fail → MUST_READ
+                return {"type": "emit_patch", "thought": "bad",
+                        "patch_ops": [{"op": "search_replace", "file": "a.py",
+                                        "search": "NOPE", "replace": "y", "reason": "r"}]}
+            if self._turn == 2:  # MUST_READ: read to unlock → CAN_RETRY
+                return {"type": "tool_call", "thought": "read",
+                        "tool": "read_file", "args": {"path": "a.py"}}
+            if self._turn in (3, 4, 5, 6):  # CAN_RETRY: distinct searches (recovery)
+                return {"type": "tool_call", "thought": "search",
+                        "tool": "search_code", "args": {"pattern": f"pat{self._turn}"}}
+            if self._turn == 7:  # corrected patch → POSTPATCH_CLEAN
+                return {"type": "emit_patch", "thought": "good",
+                        "patch_ops": [{"op": "search_replace", "file": "a.py",
+                                        "search": "x = 1", "replace": "x = 2", "reason": "r"}]}
+            return {"type": "verify_done", "thought": "done",
+                    "verified": True, "test_output": "ok"}
+
+        async def create_patch(self, *a, **kw): return {}
+        async def create_planning_step(self, *a, **kw): return {}
+        async def create_plan(self, *a, **kw): return {}
+
+    ws = _setup_ws(tmp_path)
+    # Tiny verify budget (2) — would cut off recovery at search #2 under old accounting.
+    budget = TaskBudget(max_tool_calls_per_step=50, max_verify_calls_per_step=2)
+    loop = ToolLoop(_RecoveryEngine(), ToolRegistry(shadow_root=ws, real_workspace_path=ws),
+                    EventBroadcaster(), "task-budget",
+                    patch_engine=PatchEngine(), shadow_path=ws)
+    result = await loop.run(_step(), {}, budget, TaskUsage())
+    assert isinstance(result, VerifyResult)
+    assert result.verified is True, (
+        "pre-first-patch recovery searches must not drain the verify budget"
+    )
+
