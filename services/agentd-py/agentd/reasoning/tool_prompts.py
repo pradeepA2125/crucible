@@ -33,7 +33,7 @@ AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
             "items": {"type": "object", "additionalProperties": True},
             "description": (
                 "Patch operations to apply (required for emit_patch):"
-                " search_replace, create_file, apply_diff, delete_file."
+                " search_replace, replace_range, apply_diff, create_file, delete_file."
                 " MUST cover every file in the step's targets list — no partial patches."
             ),
         },
@@ -73,22 +73,37 @@ You are an expert code editor executing ONE specific step of a multi-step coding
 STEP FOCUS:
 - step_goal is the only thing to implement — nothing from other steps.
 - targets is your patch scope. Reads are never scope-restricted.
-- Prior steps are already promoted to real workspace — do not re-implement their work.
+- Prior steps are already promoted to the real workspace — to see what they changed, READ the
+  file (its current content already includes their edits); do not re-implement their work.
+- overall_goal is the full task objective; step_progress lists every step with its status
+  (completed/current/pending) so you can see where THIS step fits in the larger plan.
 - If the plan looks fundamentally wrong, read to confirm, then emit revision_needed with evidence.
 
-PATCH OPERATION FORMATS (for emit_patch):
-Each element of patch_ops must be one of:
+PATCH OPERATION FORMATS (for emit_patch) — pick the op best for the situation; none is preferred:
 
-  {{"op": "search_replace", "file": "path/to/file.rs", "search": "exact text to find", "replace": "new text", "reason": "why"}}
-  {{"op": "create_file",    "file": "path/to/new.ext",  "content": "full content", "reason": "why"}}
+  {{"op": "search_replace", "file": "path/to/file.py", "search": "exact unique text", "replace": "new text", "reason": "why"}}
+    Best for: small, localized edits where you can reproduce the exact, unique surrounding text.
+
+  {{"op": "replace_range", "file": "path/to/file.py", "anchor": {{"start_line": 10, "end_line": 14}}, "content": "new block", "reason": "why"}}
+    Best for: replacing a contiguous block by LINE NUMBERS (from read_file's line-numbered output).
+    Use it when the text is hard to reproduce exactly (whitespace/quotes) or an anchor keeps not matching.
+
   {{"op": "apply_diff",     "file": "path/to/file.ext", "diff": "@@ -1,3 +1,4 @@\\n context\\n+added\\n context", "reason": "why"}}
-  {{"op": "delete_file",    "file": "path/to/file.ext", "reason": "why"}}
+    Best for: multi-line hunk edits that carry surrounding context.
+
+  {{"op": "create_file",    "file": "path/to/new.ext",  "content": "full content", "reason": "why"}}   # new files
+  {{"op": "delete_file",    "file": "path/to/file.ext", "reason": "why"}}                               # removed files
 
 EMIT ALL TARGETS: emit_patch must include at least one patch_op for every file in targets.
 
 READ/SEARCH BEHAVIOR:
 - Before first patch: reads return real workspace content.
 - After first patch: reads automatically switch to shadow workspace (your patched files).
+- TARGETED READS/SEARCHES: read_file is capped at 500 lines. DO NOT read files without
+  start_line/end_line on large files. Instead, search the code around error symbols
+  or lines using search_code first, and then call read_file with start_line and
+  end_line parameters to read around those lines. Keep reading and searching
+  recursively until you have complete and correct context of the file.
 
 PRIOR STEP FILES:
 The prior_step_files field lists paths already modified by accepted earlier steps.
@@ -163,6 +178,14 @@ def build_tool_step_payload(
     prior_step_files = step_context.get("prior_step_files")
     if prior_step_files:
         payload["prior_step_files"] = prior_step_files
+
+    overall_goal = step_context.get("overall_goal")
+    if overall_goal:
+        payload["overall_goal"] = overall_goal
+
+    step_progress = step_context.get("step_progress")
+    if step_progress:
+        payload["step_progress"] = step_progress
 
     diagnostics = step_context.get("diagnostics")
     if diagnostics:

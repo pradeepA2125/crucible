@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 
 def test_task_budget_new_fields():
     b = TaskBudget()
-    assert b.max_planning_tool_calls == 20
-    assert b.max_revision_tool_calls == 10
+    assert b.max_planning_tool_calls == 50
+    assert b.max_revision_tool_calls == 50
     assert b.max_delta_replans == 3
 
 

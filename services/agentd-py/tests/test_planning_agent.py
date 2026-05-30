@@ -36,15 +36,13 @@ class ScriptedPlanningEngine:
         plan_context: dict,
         history: list,
         tool_definitions: list,
+        on_thinking: object = None,
     ) -> dict:
         idx = min(self._index, len(self._responses) - 1)
         self._index += 1
         return self._responses[idx]
 
     async def create_plan(self, *a, **kw): return {}
-    async def create_markdown_plan(self, *a, **kw): return ""
-    async def critique_markdown_plan(self, *a, **kw): return {"verdict": "pass", "issues": []}
-    async def critique_json_plan(self, *a, **kw): return {"verdict": "pass", "issues": []}
     async def create_patch(self, *a, **kw): return {}
     async def create_tool_step(self, *a, **kw): return {"type": "emit_patch", "thought": "", "patch_ops": []}
 

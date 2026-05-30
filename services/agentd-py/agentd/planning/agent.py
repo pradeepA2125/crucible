@@ -40,6 +40,7 @@ class PlanningAgent:
         initial_context: dict[str, object],
         budget: TaskBudget,
         pre_explored_context: list[dict[str, object]] | None = None,
+        chat_channel_id: str | None = None,
     ) -> PlanningResult:
         """Explore the workspace and produce a markdown plan.
 
@@ -62,6 +63,7 @@ class PlanningAgent:
             registry=self._registry,
             broadcaster=self._broadcaster,
             task_id=self._task_id,
+            chat_channel_id=chat_channel_id,
         )
         result = await loop.run(plan_context, budget, revision_mode=False)
         assert isinstance(result, PlanningResult)
@@ -116,5 +118,18 @@ class PlanningAgent:
             task_id=self._task_id,
         )
         result = await loop.run(plan_context, task.budget, revision_mode=True)
-        assert isinstance(result, PlanRevisionResult)
+        if not isinstance(result, PlanRevisionResult):
+            # Weak models sometimes emit a full plan (emit_plan) instead of a targeted
+            # revision. Retry once with an explicit correction passed in plan_context;
+            # the loop's mode-aware hint also now tells it to emit_revision.
+            plan_context["format_correction"] = (
+                "Your previous response used emit_plan, but this is a REVISION. You MUST emit "
+                "emit_revision with revised_steps and reverted_step_ids — NOT a full plan."
+            )
+            result = await loop.run(plan_context, task.budget, revision_mode=True)
+        if not isinstance(result, PlanRevisionResult):
+            raise ValueError(
+                "Delta-replan did not produce a valid emit_revision: the model returned a full "
+                "plan instead of a targeted revision, even after a correction retry."
+            )
         return result

@@ -21,11 +21,15 @@ from agentd.reasoning.contracts import ReasoningEngine
 
 logger = logging.getLogger(__name__)
 
-_MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "4000"))
+_MAX_PLANNING_RESULT_CHARS = int(os.environ.get("AI_EDITOR_PLANNING_RESULT_MAX_CHARS", "100000"))
 
 
 class PlanningBudgetExceededError(Exception):
     """Raised when the planning loop exhausts its tool-call budget."""
+
+    def __init__(self, message: str, partial_trace: "AgentToolTrace | None" = None) -> None:
+        super().__init__(message)
+        self.partial_trace = partial_trace
 
 
 def _validate_no_duplicate_file_targets(steps: list[dict[str, object]]) -> list[str]:
@@ -63,11 +67,26 @@ class PlanningLoop:
         registry: PlanningToolRegistry,
         broadcaster: PatchEventBroadcaster,
         task_id: str,
+        chat_channel_id: str | None = None,
     ) -> None:
         self._reasoning = reasoning_engine
         self._registry = registry
         self._broadcaster = broadcaster
         self._task_id = task_id
+        self._chat_channel_id = chat_channel_id
+
+    def _broadcast(self, event: dict) -> None:
+        self._broadcaster.broadcast(self._task_id, event)
+        if self._chat_channel_id:
+            self._broadcaster.broadcast(self._chat_channel_id, event)
+            event_type = event.get("type", "?")
+            payload = event.get("payload", {})
+            if event_type == "planning_tool_call":
+                logger.info("[chat→task] planning_tool_call: tool=%s iter=%s → %s",
+                            payload.get("tool"), payload.get("iteration"), self._chat_channel_id)
+            elif event_type == "planning_complete":
+                logger.info("[chat→task] planning_complete: confidence=%s → %s",
+                            payload.get("confidence"), self._chat_channel_id)
 
     async def run(
         self,
@@ -98,13 +117,38 @@ class PlanningLoop:
     ) -> PlanningResult | PlanRevisionResult:
         trace = AgentToolTrace(step_id="planning")
         history: list[dict[str, object]] = []
+        # key = (tool_name, canonical_args_json) → first iteration it was called
+        _seen_calls: dict[str, int] = {}
+
+        _MAX_STEP_RETRIES = 2
 
         for iteration in range(max_calls + 1):
-            response = await self._reasoning.create_planning_step(
-                plan_context=plan_context,
-                history=history,
-                tool_definitions=tool_defs,
-            )
+            def _on_thinking(chunk: str, _iter: int = iteration) -> None:
+                self._broadcast({
+                    "type": "planning_thinking_chunk",
+                    "payload": {"chunk": chunk, "iteration": _iter + 1},
+                })
+
+            last_step_exc: Exception | None = None
+            response: dict[str, object] = {}
+            for _attempt in range(_MAX_STEP_RETRIES + 1):
+                try:
+                    response = await self._reasoning.create_planning_step(
+                        plan_context=plan_context,
+                        history=history,
+                        tool_definitions=tool_defs,
+                        on_thinking=_on_thinking,
+                    )
+                    last_step_exc = None
+                    break
+                except Exception as exc:
+                    last_step_exc = exc
+                    logger.warning(
+                        "[plan] create_planning_step failed at iter=%d attempt=%d/%d: %s",
+                        iteration, _attempt + 1, _MAX_STEP_RETRIES + 1, exc,
+                    )
+            if last_step_exc is not None:
+                raise last_step_exc
 
             action_type = str(response.get("type", ""))
             thought = str(response.get("thought", ""))
@@ -113,13 +157,14 @@ class PlanningLoop:
                 plan_markdown = response.get("plan_markdown")
                 if not plan_markdown or not str(plan_markdown).strip():
                     raise PlanningBudgetExceededError(
-                        f"emit_plan response missing or empty 'plan_markdown' at iteration {iteration}"
+                        f"emit_plan response missing or empty 'plan_markdown' at iteration {iteration}",
+                        partial_trace=trace,
                     )
                 files_examined = list(response.get("files_examined", []))
                 confidence = str(response.get("confidence", "medium"))
                 if confidence not in ("high", "medium", "low"):
                     confidence = "medium"
-                self._broadcaster.broadcast(self._task_id, {
+                self._broadcast({
                     "type": "planning_complete",
                     "payload": {"files_examined": files_examined, "confidence": confidence},
                 })
@@ -134,7 +179,8 @@ class PlanningLoop:
                 raw_steps = response.get("revised_steps")
                 if not isinstance(raw_steps, list) or len(raw_steps) == 0:
                     raise PlanningBudgetExceededError(
-                        f"emit_revision response missing or empty 'revised_steps' at iteration {iteration}"
+                        f"emit_revision response missing or empty 'revised_steps' at iteration {iteration}",
+                        partial_trace=trace,
                     )
                 revised_steps = [
                     RevisedStep(
@@ -161,26 +207,68 @@ class PlanningLoop:
             if action_type != "tool_call":
                 raise PlanningBudgetExceededError(
                     f"Unexpected planning response type '{action_type}' at iteration {iteration}; "
-                    "expected tool_call, emit_plan, or emit_revision"
+                    "expected tool_call, emit_plan, or emit_revision",
+                    partial_trace=trace,
                 )
 
             if iteration >= max_calls:
                 raise PlanningBudgetExceededError(
-                    f"Planning loop used {max_calls} tool calls without emitting {emit_type}"
+                    f"Planning loop used {max_calls} tool calls without emitting {emit_type}",
+                    partial_trace=trace,
                 )
 
             tool_name = str(response.get("tool", ""))
             raw_args = response.get("args")
             args: dict[str, object] = raw_args if isinstance(raw_args, dict) else {}
 
-            self._broadcaster.broadcast(self._task_id, {
+            args_repr = json.dumps(args, default=str)[:300]
+            logger.info(
+                "[plan] iter=%d/%d  tool=%s  args=%s",
+                iteration + 1, max_calls, tool_name, args_repr,
+            )
+
+            # Duplicate call guard: if exact (tool, args) was seen before, inject correction
+            # instead of executing — prevents infinite search_code loops.
+            # For search_code, normalize out context_lines so bumping it doesn't bypass the guard.
+            _dedup_args = dict(args)
+            if tool_name == "search_code":
+                _dedup_args.pop("context_lines", None)
+            _call_key = f"{tool_name}:{json.dumps(_dedup_args, sort_keys=True, default=str)}"
+            if _call_key in _seen_calls:
+                _first_iter = _seen_calls[_call_key]
+                _dedup_msg = (
+                    f"DUPLICATE CALL BLOCKED: you already called `{tool_name}` with these "
+                    f"exact arguments at iteration {_first_iter}. Repeating it will return "
+                    "the same result. You MUST do something different:\n"
+                    "  • If you need to read more of a file, use `read_file` with explicit "
+                    "`start_line` and `end_line` from the line numbers you already saw.\n"
+                    f"  • If you have enough context, call `{emit_type}` now.\n"
+                    "Do NOT call the same tool with the same args again."
+                )
+                logger.warning(
+                    "[plan] iter=%d/%d  DUPLICATE BLOCKED: tool=%s first_seen_at_iter=%d",
+                    iteration + 1, max_calls, tool_name, _first_iter,
+                )
+                history.append({"role": "assistant", "content": json.dumps(response, default=str)})
+                history.append({"role": "tool_result", "tool": tool_name, "content": _dedup_msg})
+                continue
+            _seen_calls[_call_key] = iteration + 1
+
+            self._broadcast({
                 "type": "planning_tool_call",
                 "payload": {"tool": tool_name, "thought": thought[:300], "iteration": iteration + 1},
             })
 
             tool_output = await self._registry.execute(tool_name, args)
 
-            self._broadcaster.broadcast(self._task_id, {
+            out_chars = len(tool_output.output)
+            preview = tool_output.output[:200].replace("\n", "↵")
+            logger.info(
+                "[plan] iter=%d/%d  tool=%s  →  chars=%d  is_error=%s  preview=%r",
+                iteration + 1, max_calls, tool_name, out_chars, tool_output.is_error, preview,
+            )
+
+            self._broadcast({
                 "type": "planning_tool_result",
                 "payload": {"tool": tool_name, "output": tool_output.output[:500], "is_error": tool_output.is_error, "iteration": iteration + 1},
             })
@@ -190,7 +278,7 @@ class PlanningLoop:
             trace.results.append(ToolResult(
                 call_id=call_id,
                 tool_name=tool_name,
-                output=tool_output.output[:_MAX_OUTPUT_INJECT_CHARS],
+                output=tool_output.output[:_MAX_PLANNING_RESULT_CHARS],
                 is_error=tool_output.is_error,
             ))
 
@@ -198,7 +286,7 @@ class PlanningLoop:
             history.append({
                 "role": "tool_result",
                 "tool": tool_name,
-                "content": tool_output.output[:_MAX_OUTPUT_INJECT_CHARS],
+                "content": tool_output.output[:_MAX_PLANNING_RESULT_CHARS],
             })
 
-        raise PlanningBudgetExceededError("Planning loop exited without result")
+        raise PlanningBudgetExceededError("Planning loop exited without result", partial_trace=trace)

@@ -36,7 +36,7 @@ class PlanningToolRegistry:
                     "properties": {
                         "pattern": {"type": "string", "description": "Regex or literal pattern"},
                         "path_filter": {"type": "string", "description": "Glob to restrict search (e.g. '*.py', '*.ts', '*.rs')"},
-                        "context_lines": {"type": "integer", "description": "Lines of context (default 3)"},
+                        "context_lines": {"type": "integer", "description": "Lines of context around each match (default 10)"},
                         "fixed_strings": {"type": "boolean", "description": "Treat as literal string (default false)"},
                     },
                     "required": ["pattern"],
@@ -45,15 +45,16 @@ class PlanningToolRegistry:
             ToolDefinition(
                 name="read_file",
                 description=(
-                    "Read a file from the workspace. Use to confirm file structure "
-                    "before adding it to the plan."
+                    "Read a section of a file. Always use start_line and end_line based on "
+                    "line numbers from a prior search_code result. Do NOT read whole files — "
+                    "omitting start_line/end_line on a large file wastes your tool budget."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Relative file path"},
-                        "start_line": {"type": "integer", "description": "First line (1-indexed)"},
-                        "end_line": {"type": "integer", "description": "Last line (1-indexed)"},
+                        "start_line": {"type": "integer", "description": "First line (1-indexed) — required for large files"},
+                        "end_line": {"type": "integer", "description": "Last line (1-indexed) — required for large files"},
                     },
                     "required": ["path"],
                 },
@@ -96,7 +97,7 @@ class PlanningToolRegistry:
             return await search_code(
                 pattern=str(args.get("pattern", "")),
                 path_filter=str(args["path_filter"]) if "path_filter" in args else None,
-                context_lines=int(args.get("context_lines", 3)),  # type: ignore[call-overload]
+                context_lines=int(args.get("context_lines", 10)),  # type: ignore[call-overload]
                 fixed_strings=bool(args.get("fixed_strings", False)),
                 shadow_root=self._real_path,
                 ripgrep_cmd=self._ripgrep_cmd,
@@ -106,12 +107,31 @@ class PlanningToolRegistry:
             from agentd.tools.files import read_file
             start = args.get("start_line")
             end = args.get("end_line")
-            return await read_file(
+            result = await read_file(
                 path=str(args.get("path", "")),
                 start_line=int(start) if start is not None else None,  # type: ignore[call-overload]
                 end_line=int(end) if end is not None else None,  # type: ignore[call-overload]
                 shadow_root=self._real_path,
             )
+            # Hard enforcement: cap whole-file reads at 150 lines.
+            # The model must use start_line/end_line from search_code results.
+            if start is None and end is None and not result.is_error:
+                lines = result.output.splitlines()
+                if len(lines) > 150:
+                    truncated = "\n".join(lines[:150])
+                    total = len(lines)
+                    return ToolOutput(
+                        output=(
+                            truncated
+                            + f"\n\n[TRUNCATED: file has {total} lines, showing first 150. "
+                            "Use search_code or search_semantic to find the relevant section, "
+                            "then call read_file with start_line/end_line from those results. "
+                            "search_code shows line numbers as '155: def build_router'; "
+                            "search_semantic shows 'path:line_start-line_end'.]"
+                        ),
+                        is_error=False,
+                    )
+            return result
 
         if name == "list_directory":
             from agentd.tools.files import list_directory

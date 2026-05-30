@@ -113,6 +113,49 @@ async def test_reasoning_engine_rejects_schema_mismatch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_plan_payload_grounds_paths_and_omits_goal(tmp_path: Path) -> None:
+    """The markdown->JSON converter must (1) receive workspace_files_index so it
+    can ground target paths against real files, and (2) NOT receive the raw task
+    goal. The approved plan_markdown is the sole spec; feeding the enumerated goal
+    lets weak models re-add prerequisite steps the user removed during review and
+    invent paths that aren't in the repo."""
+    transport = FakeTransport(
+        json_outputs=[
+            {
+                "analysis": "Plan",
+                "steps": [
+                    {
+                        "id": "s1",
+                        "goal": "edit file",
+                        "targets": [{"path": "pkg/mod/a.py", "intent": "existing"}],
+                        "risk": "low",
+                    }
+                ],
+                "expected_files": ["pkg/mod/a.py"],
+                "stop_conditions": ["tests pass"],
+            }
+        ]
+    )
+    engine = DefaultReasoningEngine(model="gpt-5", transport=transport)
+    task = TaskRecord(
+        task_id="t1",
+        goal="(1) add enum (2) wire it (3) tests",
+        workspace_path=str(tmp_path),
+        plan_markdown="## Step 1\n- Targets: pkg/mod/a.py",
+    )
+    retrieval_context: dict[str, object] = {
+        "workspace_files_index": ["pkg/mod/a.py", "pkg/mod/b.py"]
+    }
+
+    await engine.create_plan(task, str(tmp_path), retrieval_context)
+
+    payload = transport.calls[0]["user_payload"]
+    assert payload["workspace_files_index"] == ["pkg/mod/a.py", "pkg/mod/b.py"]
+    assert "goal" not in payload
+    assert payload["plan_markdown"] == "## Step 1\n- Targets: pkg/mod/a.py"
+
+
+@pytest.mark.asyncio
 async def test_create_tool_step_filters_type_enum_by_allowed_action_types() -> None:
     """When allowed_action_types is passed, the schema's outer `type` enum is
     restricted to that subset — closes the schema-bypass gap for emit_patch

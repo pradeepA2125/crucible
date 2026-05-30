@@ -46,7 +46,7 @@ STEP DETAIL REQUIREMENTS
 
 For each step, you MUST include:
 
-implementation_details: Specific code changes, class/function names, imports, and implementation strategy. Be precise about what needs to be added/modified.
+implementation_details: Copy the corresponding plan_markdown step's full "Change" content VERBATIM into this field — including any code blocks, exact signatures, imports, and line references. Do NOT summarize, paraphrase, or shorten it. The execution agent relies on this exact detail to write the patch, so preserve every specific about what to add/modify.
 
 edge_cases: Edge cases to handle, error conditions, special scenarios, and how to address them.
 
@@ -72,11 +72,21 @@ PLANNING BLUEPRINT (SPEC-FIRST)
 
 The provided plan_markdown is your MANDATORY AUTHORITATIVE BLUEPRINT.
 - You MUST translate the high-level steps in plan_markdown into the "steps" JSON array.
-- Extract implementation details, edge cases, testing strategy, and design rationale from plan_markdown.
+- Copy implementation details, edge cases, testing strategy, and design rationale from plan_markdown VERBATIM — including code blocks and exact signatures. Do NOT summarize or shorten them; the execution agent needs the full detail, not a compressed version.
 - Do NOT diverge from the files or logic described in plan_markdown.
 - If plan_feedback is provided, it contains corrections to the previous plan. You MUST incorporate these corrections.
 
-Never invent file paths that don't exist in workspace_files_index.
+plan_markdown is the COMPLETE and ONLY specification for this conversion. The
+original task goal is intentionally NOT provided here. Do NOT add, infer, or
+"complete" steps that are absent from plan_markdown — not even ones that look
+like obvious prerequisites (e.g. adding an enum value or a base class). The set
+of steps you emit must correspond to the steps in plan_markdown and nothing more.
+
+Every target path you emit MUST be copied verbatim from workspace_files_index
+(for intent "existing") or be a new path under a directory that appears in
+workspace_files_index (for intent "new"). Never invent or guess a file path. If
+plan_markdown references a path that is not in workspace_files_index, use the
+matching real path from workspace_files_index instead.
 
 Use retrieval_context to ground the plan in real files/symbols when available.
 
@@ -1008,8 +1018,8 @@ def build_plan_payload(
             "goal": "Produce an ordered, executable plan for later patch generation.",
         },
         "task_id": task.task_id,
-        "goal": task.goal,
         "workspace_path": workspace_path,
+        "workspace_files_index": retrieval_context.get("workspace_files_index") or [],
         "modified_files": task.modified_files,
         "plan_markdown": plan_markdown or task.plan_markdown,
         "plan_feedback": plan_feedback,
