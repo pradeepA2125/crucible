@@ -169,6 +169,13 @@ impl IndexerService {
     }
 
     async fn handle_watch_event(&mut self, event: Event) -> Result<()> {
+        // Track whether the event actually moved the graph forward. If every
+        // path was filtered (ignored dir like `.ai-editor`, unsupported
+        // extension, or per-path debounce skip), persist_snapshot must NOT run
+        // — otherwise our own snapshot write under `.ai-editor` would re-trigger
+        // a watch event, get filtered, and still rewrite the snapshot, looping
+        // forever and flooding the backend with `/v1/index/build` POSTs.
+        let mut processed_any = false;
         for path in event.paths {
             if !is_supported_source_path(&path) || is_ignored_path(&path) {
                 continue;
@@ -186,6 +193,7 @@ impl IndexerService {
                 EventKind::Remove(_) => {
                     self.tracked_files.remove(&path);
                     self.lsp.close_file(&path).await?;
+                    processed_any = true;
                 }
                 EventKind::Modify(_) | EventKind::Create(_) | EventKind::Any => {
                     if !path.exists() || !path.is_file() {
@@ -203,6 +211,7 @@ impl IndexerService {
                             }
                             self.tracked_files.insert(path.clone());
                             self.lsp.upsert_file(&path, source).await?;
+                            processed_any = true;
                         }
                         Err(error) => {
                             self.push_index_warning(
@@ -221,8 +230,10 @@ impl IndexerService {
             }
         }
 
-        self.refresh_diagnostics().await?;
-        self.persist_snapshot().await?;
+        if processed_any {
+            self.refresh_diagnostics().await?;
+            self.persist_snapshot().await?;
+        }
         Ok(())
     }
 
