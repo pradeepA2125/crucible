@@ -30,7 +30,13 @@ async def search_code(
     if fixed_strings:
         cmd.append("--fixed-strings")
     if path_filter:
-        cmd += ["-g", path_filter]
+        # Ripgrep glob matching fails for exact relative paths (e.g. "a/b/c.py")
+        # when an explicit absolute search root is passed — they must be anchored.
+        # Prepend "**/" when the filter looks like an exact path (has "/" but no glob chars).
+        glob = path_filter
+        if "/" in glob and not any(c in glob for c in ("*", "?", "[", "{")):
+            glob = "**/" + glob
+        cmd += ["-g", glob]
     cmd += [pattern, str(shadow_root)]
 
     try:
@@ -98,7 +104,20 @@ async def search_code(
 
     result = "\n".join(matches)
     if len(result) > _MAX_OUTPUT_CHARS:
-        result = result[:_MAX_OUTPUT_CHARS] + f"\n... (output truncated at {_MAX_OUTPUT_CHARS} chars)"
+        # Find the last visible line number so the model knows where to read_file from.
+        last_line_num: str | None = None
+        for chunk in reversed(matches):
+            stripped = chunk.strip()
+            if stripped and stripped[0].isdigit() and ("|" in stripped or ":" in stripped):
+                last_line_num = stripped.split("|")[0].split(":")[0].strip()
+                break
+        hint = (
+            f" The result is cut off. Do NOT increase context_lines — it will not help. "
+            f"Instead call read_file with start_line/end_line around the line numbers shown above"
+            + (f" (last visible line: {last_line_num})" if last_line_num else "")
+            + " to read the section you need."
+        )
+        result = result[:_MAX_OUTPUT_CHARS] + f"\n...{hint}"
     return ToolOutput(output=result)
 
 
