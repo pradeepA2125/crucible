@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -186,13 +187,22 @@ def build_router(
     async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
         import asyncio
         task_id = f"task-{uuid4()}"
+        # Per-task override > AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT env > default True.
+        _env_step_review_default = os.environ.get(
+            "AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT", "true",
+        ).strip().lower() not in ("0", "false", "no", "off")
+        step_review = (
+            request.step_review_auto_accept
+            if request.step_review_auto_accept is not None
+            else _env_step_review_default
+        )
         task = TaskRecord(
             task_id=task_id,
             goal=request.goal,
             workspace_path=request.workspace_path,
             mode=request.mode,
             budget=request.budget,
-            step_review_auto_accept=request.step_review_auto_accept,
+            step_review_auto_accept=step_review,
             shell_policy=request.shell_policy,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),

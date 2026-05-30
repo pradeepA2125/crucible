@@ -220,6 +220,7 @@ SSE event types from the chat message endpoint:
 - `AI_EDITOR_RIPGREP_CMD` — path to ripgrep binary used by `search_code` (default: `rg`)
 - `AI_EDITOR_SHELL_POLICY` — `ask` (default, every `run_command` surfaces an Accept-once / Accept-and-remember-this-workspace / Reject card) or `allow_all` (skip the gate; run any command). Per-task override via the `shell_policy` field on the task submission. Replaces the old `AI_EDITOR_SHELL_ALLOWLIST` (removed).
 - `AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC` — seconds to wait for the user's command decision; `0` (default) = wait forever. On timeout the command is rejected (returned as a tool-result error so the agent adapts).
+- `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT` — workspace default for whether step diffs are auto-accepted (`true`, default) or surfaced for review (`false`). The submission payload's `step_review_auto_accept` field, when provided, overrides this; when omitted, the env value wins.
 
 **Scope extension** (controls how out-of-scope file writes are handled)
 - `AI_EDITOR_SCOPE_POLICY` — `strict` (auto-reject) | `ask` (pause + VS Code modal, **default via start-backend.sh**) | `auto` (silently approve + audit log)
