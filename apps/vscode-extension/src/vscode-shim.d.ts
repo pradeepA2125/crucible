@@ -36,6 +36,7 @@ declare module "vscode" {
   export namespace Uri {
     function file(path: string): Uri;
     function parse(value: string): Uri;
+    function joinPath(base: Uri, ...pathSegments: string[]): Uri;
   }
 
   export interface Webview {
@@ -43,6 +44,7 @@ declare module "vscode" {
     readonly cspSource: string;
     onDidReceiveMessage(listener: (e: unknown) => unknown): Disposable;
     postMessage(message: unknown): Thenable<boolean>;
+    asWebviewUri(localResource: Uri): Uri;
   }
 
   export interface WebviewPanel {
@@ -67,19 +69,34 @@ declare module "vscode" {
     ignoreFocusOut?: boolean;
   }
 
+  export interface MessageOptions {
+    modal?: boolean;
+    detail?: string;
+  }
+
+  export interface WebviewPanelSerializer {
+    deserializeWebviewPanel(webviewPanel: WebviewPanel, state: unknown): Thenable<void>;
+  }
+
   export namespace window {
     function showInputBox(options?: InputBoxOptions): Thenable<string | undefined>;
     function showInformationMessage(message: string): Thenable<string | undefined>;
+    function showInformationMessage(
+      message: string,
+      options: MessageOptions,
+      ...items: string[]
+    ): Thenable<string | undefined>;
     function showWarningMessage(message: string): Thenable<string | undefined>;
     function showErrorMessage(message: string): Thenable<string | undefined>;
     function createWebviewPanel(
       viewType: string,
       title: string,
       showOptions: ViewColumn,
-      options: { enableScripts?: boolean; retainContextWhenHidden?: boolean }
+      options: { enableScripts?: boolean; retainContextWhenHidden?: boolean; localResourceRoots?: readonly Uri[] }
     ): WebviewPanel;
     function showQuickPick(items: readonly string[], options?: { placeHolder?: string }): Thenable<string | undefined>;
     function setStatusBarMessage(text: string, hideAfterTimeout?: number): Disposable;
+    function registerWebviewPanelSerializer(viewType: string, serializer: WebviewPanelSerializer): Disposable;
   }
 
   export namespace workspace {

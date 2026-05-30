@@ -119,6 +119,12 @@ for attempt in $(seq 1 240); do
     READY_FOR_REVIEW|SUCCEEDED|FAILED|ABORTED)
       break
       ;;
+    AWAITING_PLAN_APPROVAL)
+      echo "  => auto-approving plan..."
+      curl -sS -X POST "$BASE_URL/v1/tasks/$TASK_ID/plan/feedback" \
+        -H "content-type: application/json" \
+        -d '{"feedback": null}' >/dev/null
+      ;;
   esac
   sleep 1
 done

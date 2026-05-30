@@ -478,6 +478,13 @@ describe("AiEditorController — command-decision", () => {
       },
     };
     const store = new MemorySessionStore();
+    store.value = {
+      taskId: "task-1",
+      status: "AWAITING_COMMAND_DECISION",
+      workspacePath: "/tmp/workspace",
+      backendBaseUrl: "http://127.0.0.1:8000",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    };
     const controller = new AiEditorController(
       () => backend,
       store,
@@ -486,6 +493,7 @@ describe("AiEditorController — command-decision", () => {
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z"
     );
+    await controller.initialize();
 
     await controller.handleCommandDecisionFromChat("task-1", {
       approve: true, remember: true, scope: "prefix", ruleValue: "python -c",

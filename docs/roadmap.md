@@ -70,28 +70,51 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 
 ### Remaining
 - [x] Incremental per-operation validation (syntax check after each file write, collect all errors)
-- [ ] Post-apply linter integration (ruff, eslint, clippy — configurable per workspace)
-- [ ] Sandbox test execution in shadow workspace before promotion
+- [x] Post-apply linter integration — agent runs ruff/mypy/tsc/clippy in verify phase
+- [x] Sandbox test execution in shadow workspace before promotion — verify phase runs tests in shadow; promotion only on verified=true
 
 ---
 
-## Phase 4 (Weeks 15-19): Agentic Tools & Shell Integration
-**Status**: Planned. Reframed from "API Integration" to close the gap with Claude Code and Cursor agent modes.
+## Phase 4a (Weeks 15-17): Agentic Tools & Shell Integration ✅ COMPLETE
 
-### Code Search Tools
-Two complementary tools the agent can call mid-task — replaces the need for exhaustive pre-task retrieval:
+### PlanningAgent — Explore-then-Commit Loop ✅ Done
+- [x] `PlanningAgent` with `PlanningLoop`: ReAct explore-then-commit loop before committing to a plan
+- [x] `PlanningToolRegistry`: read-only tools (`search_code`, `read_file`, `list_directory`) for planning phase
+- [x] `create_planning_step()` protocol on `ReasoningEngine` — all providers implement it
+- [x] Markdown plan emitted at `AWAITING_PLAN_APPROVAL`; user can provide feedback to re-explore
+- [x] Delta replan (`revision_needed` signal → `PlanningAgent.revise()`) — targeted step revisions without full restart; budget: `max_delta_replans`
+- [x] Planning tool call trace written to `planning-trace.json` artifact
 
-- [ ] **`search_code`** (ripgrep): exact/regex pattern search across the shadow workspace; file-type filters, context lines, structured output (file, line, match). Use when the agent knows exactly what to look for (callers of a function, usages of a class, occurrences of a pattern).
-- [ ] **`search_semantic`**: vector similarity search against the live semantic index; returns ranked chunks. Use when the agent needs to discover related code it doesn't know the name of ("find code similar to phone number validation").
-- [ ] Both tools produce structured results injected into the agent's step context
-- [ ] Tool calls recorded in step artifacts alongside patch ops
+### ToolLoop — Two-Phase ReAct Execution ✅ Done
+- [x] `ToolLoop`: per-step ReAct loop (Thought → Tool → Observe) replacing single-shot patch call
+- [x] Phase 1 (explore): agent calls tools, emits patch when confident
+- [x] Phase 2 (verify): agent always enters verify after patch — no skip for missing `test_command`; agent discovers run targets from `testing_strategy` and touched files
+- [x] Guard 2: blocks `verify_done(verified=true)` when last `run_command` in verify phase exited non-zero
+- [x] `testing_strategy` vs `test_command` split: planner sets `testing_strategy` (hint) on every code step; `test_command` only when test file is itself a step target — prevents running stale tests before import is updated
+- [x] Pre-existing failure baseline: `_normalize_error_message` fingerprints pytest + cargo failures before patching; post-patch comparison filters them out so pre-existing red tests don't block promotion
+- [x] PRE-EXISTING FAILURES prompt rule: agent instructed to run scoped test command (e.g. `pytest tests/test_foo.py::test_bar`) instead of full suite when unrelated failures are present
+- [x] `read_file` source-of-truth rule: agent always reads original workspace; must reason from conversation history for post-patch state — documented in `tool_prompts.py`
+- [x] Scope extension callback: out-of-scope file writes routed to approval callback; conventional files auto-approved
+- [x] Step tool call trace written to `step-<id>/tool-trace.json` artifact
 
-### Shell / Terminal Tool
-- [ ] Agent can run shell commands inside a sandboxed environment (workspace-scoped, no network by default)
-- [ ] Command allowlist policy (`ToolPolicy` model): read-only vs mutating vs network
-- [ ] Output captured and injected into agent context (stdout, stderr, exit code)
-- [ ] Supports: test runners (`pytest`, `npm test`, `cargo test`), linters, build commands
-- [ ] Audit log: every command invocation recorded with task ID + timestamp
+### Code Search Tools ✅ Done
+- [x] **`search_code`** (ripgrep): exact/regex pattern search; file-type filters, context lines, structured output
+- [x] **`search_semantic`**: vector similarity search against live semantic index; ranked chunks
+- [x] Both tools available in both planning and execution loops with phase-gated access
+- [x] Tool calls recorded in `AgentToolTrace` alongside patch ops
+
+### Shell / Terminal Tool ✅ Done
+- [x] **`run_command`**: agent runs shell commands in shadow workspace; stdout/stderr/exit code injected into context
+- [x] Command allowlist policy: `AI_EDITOR_SHELL_ALLOWLIST` (default: pytest, npm, cargo, ruff, mypy, tsc, eslint)
+- [x] **`find_binary`**: probes `.venv/bin`, `node_modules/.bin`, PATH; emits `AGENT SHOULD: setup_env` hint on miss
+- [x] **`setup_env`**: installs dependencies from manifest (uv, pip, npm ci, yarn, pnpm, go mod, rustup); reads patched shadow manifest
+- [x] **`init_workspace`**: scaffolds minimal valid manifest for bare workspaces (Python/Node/Rust/Go)
+- [x] Pre-existing failure baseline: cargo/pytest failures present before patching are fingerprinted and filtered from post-patch validation
+
+---
+
+## Phase 4b (Weeks 19-22): Extended Agentic Capabilities
+**Status**: 🔲 Not started.
 
 ### Web Search & Documentation Tool
 - [ ] Agent can query web for error messages, API docs, library versions
@@ -114,11 +137,6 @@ Two complementary tools the agent can call mid-task — replaces the need for ex
 - [ ] `auto-plan` — approve plan only, execution runs unattended
 - [ ] `autonomous` — full end-to-end with no gates (requires explicit opt-in)
 - [ ] Per-task mode override in submission payload
-
-### Success Metrics
-- Shell tool: <2s latency overhead vs direct execution
-- Zero unauthorized file writes outside workspace root
-- MCP tool round-trip: <500ms
 
 ---
 
@@ -180,6 +198,12 @@ Two complementary tools the agent can call mid-task — replaces the need for ex
 
 ---
 
+## Deferred Refactors / Tech Debt
+
+- [ ] **Unify the three decision gates** — `AWAITING_SCOPE_DECISION`, `AWAITING_VALIDATION_DECISION`, and the new `AWAITING_COMMAND_DECISION` each duplicate the same future-dict + status-transition + broadcast + resume boilerplate in `orchestrator/engine.py`. Extract a shared `_pause_for_decision(kind, payload, timeout)` scaffold (rule of three). **Deferred on purpose:** do it *after* the command-approval gate lands — folding it into that feature would risk the two already-working gates. See `docs/superpowers/specs/2026-05-28-shell-command-approval-gate-design.md`.
+
+---
+
 ## Implementation Timeline Summary
 
 | Phase | Weeks | Focus | Status |
@@ -188,7 +212,8 @@ Two complementary tools the agent can call mid-task — replaces the need for ex
 | Phase 1 | 3-6 | Enhanced patch operations | ✅ Complete (benchmarks pending) |
 | Phase 2 | 7-10 | Two-stage retrieval | ✅ Substantially complete |
 | Phase 3 | 11-14 | Streaming, resume/rollback | ✅ Substantially complete |
-| Phase 4 | 15-19 | Agentic tools, shell, MCP | 🔲 Not started |
+| Phase 4a | 15-17 | Agentic tools, shell, verify phase | ✅ Complete |
+| Phase 4b | 19-22 | Web search, MCP, context attachments, autonomy modes | 🔲 Not started |
 | Phase 5 | 20-22 | Chat, inline editing, GitHub | 🔲 Not started |
 | Phase 6 | 23-24 | Memory, multi-agent, autonomy | 🔲 Not started |
 
