@@ -212,6 +212,22 @@ class ToolLoop:
         verify_calls = 0
         last_patch_document: dict[str, object] = {}
         all_touched_files: list[str] = []
+        # Loop-local env-profile state for manifest-write auto-sync. When a
+        # patch touches a known manifest, set to that ecosystem's scope_key;
+        # consumed (and cleared) by the next run_command via auto_sync.
+        _pending_install_for_scope: str | None = None
+        # Read the env profile once at step start; cheap (single JSON read).
+        # Used by both the resolver (after patch) and the helper (before
+        # run_command). None when the workspace has no profile yet.
+        from agentd.env.profile_store import EnvProfileStore as _EnvProfileStore
+        _real_root_for_profile: Path | None = getattr(
+            self._registry, "_real_workspace_path", None
+        )
+        _env_profile = (
+            _EnvProfileStore().read(_real_root_for_profile)
+            if isinstance(_real_root_for_profile, Path)
+            else None
+        )
         had_scope_violation: bool = False     # True if any patch was rejected for out-of-scope file
         _last_auto_checks_error: str = ""     # first ~300 chars of postpatch output when blocking
         _last_test_failure: str = ""          # first ~300 chars of last failing run_command output
@@ -618,6 +634,18 @@ class ToolLoop:
                         for f in touched:
                             if f not in all_touched_files:
                                 all_touched_files.append(str(f))
+                        # Manifest-write auto-sync: if any touched file is a
+                        # manifest known to the profile, schedule its install
+                        # before the next run_command.
+                        if _env_profile is not None:
+                            from agentd.env.manifest_match import (
+                                resolve_manifest_scope_key as _resolve_scope,
+                            )
+                            _resolved = _resolve_scope(
+                                [str(f) for f in touched], _env_profile
+                            )
+                            if _resolved is not None:
+                                _pending_install_for_scope = _resolved
                 else:
                     # No patch engine (scripted tests without inline apply) — extract touched files
                     for op in patch_ops:
@@ -829,6 +857,23 @@ class ToolLoop:
                 path = str(args.get("path", "")) if isinstance(args, dict) else ""
                 file_label = f" {path.split('/')[-1]}" if path else ""
                 self._thinking_log.append(f"{tool_name}{file_label} — {thought[:200]}" if thought else f"{tool_name}{file_label}")
+
+            # Manifest-write auto-sync: if a prior emit_patch touched a known
+            # manifest, run its install_command before the next run_command.
+            # One-shot: the scope_key is cleared regardless of install outcome.
+            if tool_name == "run_command" and _pending_install_for_scope is not None:
+                from agentd.env.auto_sync import maybe_run_pending_install
+                _shadow_for_install = getattr(self._registry, "_shadow_root", None)
+                _real_for_install = getattr(self._registry, "_real_workspace_path", None)
+                if isinstance(_shadow_for_install, Path) and isinstance(_real_for_install, Path):
+                    await maybe_run_pending_install(
+                        scope_key=_pending_install_for_scope,
+                        real_workspace=_real_for_install,
+                        shadow_root=_shadow_for_install,
+                        broadcaster=self._broadcaster,
+                        broadcast_key=self._broadcast_key,
+                    )
+                _pending_install_for_scope = None
 
             tool_output = await self._registry.execute(tool_name, args)
             usage.tool_calls_used += 1
