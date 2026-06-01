@@ -53,6 +53,7 @@ from agentd.domain.models import (
     ValidationResult,
 )
 from agentd.domain.state_machine import assert_budget, bump_usage, transition
+from agentd.env.ensure import EnvProfileEnsurer
 from agentd.orchestrator.broadcaster import PatchEventBroadcaster
 from agentd.patch.engine import PatchEngine
 from agentd.planning.agent import PlanningAgent
@@ -205,6 +206,10 @@ class AgentOrchestrator:
         self._step_scoped_mode = step_scoped_mode
         self._patch_candidate_count = max(1, patch_candidate_count)
         self.broadcaster = PatchEventBroadcaster()
+        self._env_ensurer = EnvProfileEnsurer(
+            reasoner=self._reasoning_engine,
+            broadcaster=self.broadcaster,
+        )
         self._running_tasks: set[str] = set()
         self._scope_policy = scope_policy
         self._scope_trigger = scope_trigger
@@ -229,6 +234,7 @@ class AgentOrchestrator:
 
     async def run_task(self, task_id: str) -> TaskRecord:
         task = await self._store.get(task_id)
+        await self._env_ensurer.ensure(Path(task.workspace_path))
         self._running_tasks.add(task_id)
         started_at_ms = int(time.time() * 1000)
         retrieval_context = RetrievalContext.empty()
@@ -524,6 +530,7 @@ class AgentOrchestrator:
         the task channel (used by the chat resume path to stream events to the chat SSE).
         """
         task = await self._store.get(task_id)
+        await self._env_ensurer.ensure(Path(task.workspace_path))
         self._running_tasks.add(task_id)
         task.artifacts_root_path = str(self._artifacts_root(task.task_id, task.workspace_path))
         started_at_ms = int(time.time() * 1000)
@@ -672,6 +679,7 @@ class AgentOrchestrator:
         chat_done itself in this case — this method's background task owns that.
         """
         parent = await self._store.get(parent_task_id)
+        await self._env_ensurer.ensure(Path(parent.workspace_path))
         if parent.status not in {TaskStatus.FAILED, TaskStatus.ABORTED}:
             raise ValueError(f"Cannot resume task in {parent.status} state (must be FAILED or ABORTED)")
         if not parent.plan:
