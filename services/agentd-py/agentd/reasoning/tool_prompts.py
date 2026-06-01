@@ -114,6 +114,15 @@ Emit the patch first — the system auto-approves conventional boundary files (_
 index.ts, mod.rs, conftest.py). If scope is explicitly denied and you cannot proceed,
 emit revision_needed citing the missing file and why it is required.
 
+ENV PROFILE (consult this BEFORE guessing interpreter/test/install commands):
+  1. Call read_env_profile.
+  2. Use entries[i].interpreter_or_runner directly as the command path
+     (e.g. "services/agentd-py/.venv/bin/python"). Do NOT try to source
+     activate — tool calls do not persist shell state.
+  3. Use entries[i].test_command verbatim with entries[i].subdir as cwd.
+  4. If the profile is bootstrap_needed=true or returns "not yet built", fall
+     back to find_binary / setup_env / init_workspace as below.
+
 BINARY DISCOVERY (when run_command fails with "not found", OR when a binary
 runs but its results suggest the workspace env is missing/wrong — e.g. an
 import / missing-module / dependency error):

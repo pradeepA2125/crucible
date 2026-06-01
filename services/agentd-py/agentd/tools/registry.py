@@ -103,6 +103,19 @@ class ToolRegistry:
                 },
             ),
             ToolDefinition(
+                name="read_env_profile",
+                description=(
+                    "Return the workspace's env profile (JSON). Tells you the "
+                    "package manager, install command, interpreter path, and "
+                    "test command per ecosystem. Always call this before "
+                    "guessing python/node/cargo commands. The "
+                    "'interpreter_or_runner' field is the binary to call "
+                    "directly — don't try to activate a venv (it won't persist "
+                    "across tool calls)."
+                ),
+                parameters={"type": "object", "properties": {}, "required": []},
+            ),
+            ToolDefinition(
                 name="run_command",
                 description=(
                     "Run a shell command inside the shadow workspace. Each command "
@@ -323,6 +336,10 @@ class ToolRegistry:
                 dev_deps=dev_deps,
                 shadow_root=self._shadow_root,
             )
+
+        if name == "read_env_profile":
+            from agentd.tools.env_profile import read_env_profile
+            return await read_env_profile(real_workspace=self._real_workspace_path)
 
         if name == "search_semantic":
             from agentd.tools.search import search_semantic
