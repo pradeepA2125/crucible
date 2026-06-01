@@ -352,6 +352,32 @@ async def _run_capture(
     return proc.returncode or 0, stdout.decode("utf-8", errors="replace")
 
 
+def _post_install_interpreter_hint(
+    binary: str, install_root: Path, real_workspace: Path
+) -> str | None:
+    """E1: after a successful install, point the agent at the now-ready
+    interpreter/runner. Profile JSON still says null (it was generated before
+    setup_env ran); this line tells the agent where to point run_command next.
+    """
+    if binary in _PYTHON_PMS:
+        venv_python = install_root / ".venv" / "bin" / "python"
+        if venv_python.is_file():
+            try:
+                rel = venv_python.relative_to(real_workspace)
+                return f"AGENT INFO: interpreter now ready at {rel}"
+            except ValueError:
+                return f"AGENT INFO: interpreter now ready at {venv_python}"
+    if binary in _NODE_PMS:
+        bin_dir = install_root / "node_modules" / ".bin"
+        if bin_dir.is_dir():
+            try:
+                rel = bin_dir.relative_to(real_workspace)
+                return f"AGENT INFO: runner binaries now ready under {rel}"
+            except ValueError:
+                return f"AGENT INFO: runner binaries now ready under {bin_dir}"
+    return None
+
+
 async def setup_env(
     *,
     command: str,
@@ -376,6 +402,21 @@ async def setup_env(
     parts = command.strip().split()
     if not parts:
         return ToolOutput(output="Error: command is required", is_error=True)
+
+    # E3 defense: when cwd is specified it must exist in the shadow workspace
+    # — otherwise _resolve_workspace_cwd silently clamps to shadow_root and the
+    # install runs against the wrong manifest. Refuse rather than misbehave.
+    if cwd:
+        target = shadow_root / cwd
+        if not target.is_dir():
+            return ToolOutput(
+                output=(
+                    f"Error: setup_env requested cwd '{cwd}' is not present "
+                    f"in the shadow workspace. The subdir must be among the "
+                    f"cloned files for the install to target the right manifest."
+                ),
+                is_error=True,
+            )
 
     binary = parts[0]
     if binary not in _SETUP_ENV_BINARIES:
@@ -466,6 +507,13 @@ async def setup_env(
     exit_code = proc.returncode or 0
     header = f"$ {command}\n(exit code: {exit_code})\n"
     full = header + output
+
+    # E1: surface the now-ready interpreter so the agent doesn't have to guess
+    # or re-call read_env_profile (profile JSON still has interpreter_or_runner=null).
+    if exit_code == 0:
+        hint = _post_install_interpreter_hint(binary, install_root, real_workspace)
+        if hint:
+            full += f"\n{hint}"
     if len(full) > _MAX_OUTPUT_CHARS:
         keep = _MAX_OUTPUT_CHARS - len(header) - 80
         full = header + "...(truncated)...\n" + output[-keep:]

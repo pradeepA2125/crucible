@@ -35,6 +35,58 @@ def _python_profile(workspace: Path, subdir: str = "services/agentd-py") -> None
 
 
 @pytest.mark.asyncio
+async def test_returns_changed_lockfiles_for_promotion(tmp_path: Path):
+    """E2: when setup_env updates a lockfile (uv sync after manifest patch),
+    return the relative path so the loop folds it into all_touched_files."""
+    _python_profile(tmp_path, subdir="services/agentd-py")
+    # Pre-existing uv.lock; setup_env will 'modify' it.
+    lock_path = tmp_path / "services" / "agentd-py" / "uv.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text("old\n")
+    original_mtime = lock_path.stat().st_mtime
+    # Backdate so setup_env's touch is detectable
+    import os, time
+    os.utime(lock_path, (original_mtime - 10, original_mtime - 10))
+
+    async def fake_setup_env(*, command, shadow_root, real_workspace, cwd=None, **_):
+        # Simulate uv sync updating uv.lock by touching it (newer mtime).
+        target = (shadow_root / cwd if cwd else shadow_root) / "uv.lock"
+        target.write_text("new\n")
+        from agentd.tools.registry import ToolOutput
+        return ToolOutput(output="installed", is_error=False)
+
+    with mock_patch("agentd.tools.env.setup_env", fake_setup_env):
+        changed = await maybe_run_pending_install(
+            scope_key="python:services/agentd-py",
+            real_workspace=tmp_path,
+            shadow_root=tmp_path,
+            broadcaster=_RecordingBroadcaster(),
+            broadcast_key="ch",
+        )
+
+    assert changed == ["services/agentd-py/uv.lock"]
+
+
+@pytest.mark.asyncio
+async def test_returns_empty_list_when_no_lockfile_changed(tmp_path: Path):
+    _python_profile(tmp_path)
+
+    async def fake_setup_env(*a, **k):
+        from agentd.tools.registry import ToolOutput
+        return ToolOutput(output="", is_error=False)
+
+    with mock_patch("agentd.tools.env.setup_env", fake_setup_env):
+        changed = await maybe_run_pending_install(
+            scope_key="python:services/agentd-py",
+            real_workspace=tmp_path,
+            shadow_root=tmp_path,
+            broadcaster=_RecordingBroadcaster(),
+            broadcast_key="ch",
+        )
+    assert changed == []
+
+
+@pytest.mark.asyncio
 async def test_does_nothing_when_scope_key_is_none(tmp_path: Path):
     _python_profile(tmp_path)
     broadcaster = _RecordingBroadcaster()
@@ -46,7 +98,7 @@ async def test_does_nothing_when_scope_key_is_none(tmp_path: Path):
         return ToolOutput(output="", is_error=False)
 
     with mock_patch("agentd.tools.env.setup_env", fake_setup_env):
-        await maybe_run_pending_install(
+        changed = await maybe_run_pending_install(
             scope_key=None,
             real_workspace=tmp_path,
             shadow_root=tmp_path,
@@ -56,6 +108,7 @@ async def test_does_nothing_when_scope_key_is_none(tmp_path: Path):
 
     assert calls == []
     assert broadcaster.events == []
+    assert changed == []
 
 
 @pytest.mark.asyncio

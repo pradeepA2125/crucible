@@ -116,11 +116,22 @@ emit revision_needed citing the missing file and why it is required.
 
 ENV PROFILE (consult this BEFORE guessing interpreter/test/install commands):
   1. Call read_env_profile.
-  2. Use entries[i].interpreter_or_runner directly as the command path
-     (e.g. "services/agentd-py/.venv/bin/python"). Do NOT try to source
-     activate — tool calls do not persist shell state.
-  3. Use entries[i].test_command verbatim with entries[i].subdir as cwd.
-  4. If the profile is bootstrap_needed=true or returns "not yet built", fall
+  2. If entries[i].interpreter_or_runner is set, use it directly as the
+     command path (e.g. "services/agentd-py/.venv/bin/python"). Do NOT try
+     to source activate — tool calls do not persist shell state.
+  3. If entries[i].interpreter_or_runner is null, scan diagnostics:
+     - *_ABSENT codes (VENV_ABSENT, NODE_MODULES_ABSENT, ...) mean the
+       runtime needs bootstrapping. Call setup_env with the entry's
+       install_command verbatim and subdir as cwd. The tool output ends
+       with "AGENT INFO: interpreter now ready at <path>" on success —
+       use that path for run_command next.
+     - *_RISK codes (e.g. about manifest layout or build-system config)
+       mean the manifest itself needs a quality fix before install can
+       succeed. emit_patch the manifest to address the cited issue
+       FIRST; the manifest write triggers auto-sync of the install in
+       a single round.
+  4. Use entries[i].test_command verbatim with entries[i].subdir as cwd.
+  5. If the profile is bootstrap_needed=true or returns "not yet built", fall
      back to find_binary / setup_env / init_workspace as below.
 
 BINARY DISCOVERY (when run_command fails with "not found", OR when a binary

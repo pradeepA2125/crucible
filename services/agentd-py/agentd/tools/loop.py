@@ -246,13 +246,20 @@ class ToolLoop:
                 _pending_install_for_scope = None
                 return
             from agentd.env.auto_sync import maybe_run_pending_install
-            await maybe_run_pending_install(
+            changed_lockfiles = await maybe_run_pending_install(
                 scope_key=_pending_install_for_scope,
                 real_workspace=_real_root_for_profile,
                 shadow_root=_shadow_root_for_install,
                 broadcaster=self._broadcaster,
                 broadcast_key=self._broadcast_key,
             )
+            # E2: lockfile updates from `uv sync` etc. must appear in
+            # touched_files so promotion includes them and the user sees the
+            # diff. They're modified by a subprocess (not the patch engine),
+            # so the loop has to fold them in here.
+            for path in changed_lockfiles:
+                if path not in all_touched_files:
+                    all_touched_files.append(path)
             _pending_install_for_scope = None
 
         had_scope_violation: bool = False     # True if any patch was rejected for out-of-scope file
@@ -895,13 +902,18 @@ class ToolLoop:
                 _shadow_for_install = getattr(self._registry, "_shadow_root", None)
                 _real_for_install = getattr(self._registry, "_real_workspace_path", None)
                 if isinstance(_shadow_for_install, Path) and isinstance(_real_for_install, Path):
-                    await maybe_run_pending_install(
+                    _changed = await maybe_run_pending_install(
                         scope_key=_pending_install_for_scope,
                         real_workspace=_real_for_install,
                         shadow_root=_shadow_for_install,
                         broadcaster=self._broadcaster,
                         broadcast_key=self._broadcast_key,
                     )
+                    # E2: fold lockfile updates into touched_files so promote
+                    # includes them in the user-facing diff.
+                    for _path in _changed:
+                        if _path not in all_touched_files:
+                            all_touched_files.append(_path)
                 _pending_install_for_scope = None
 
             tool_output = await self._registry.execute(tool_name, args)
