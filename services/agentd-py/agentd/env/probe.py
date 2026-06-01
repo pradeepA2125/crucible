@@ -3,8 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# TOML allows whitespace around the `=` between key and value, so any string-
+# matching on a build-backend line must tolerate both `build-backend="x"` and
+# `build-backend = "x"`. Pre-compiled here so _diagnose stays cheap.
+_SETUPTOOLS_BUILD_BACKEND_RE = re.compile(
+    r'build-backend\s*=\s*"setuptools\.build_meta"'
+)
 
 
 _MANIFEST_TO_ECOSYSTEM: dict[str, str] = {
@@ -166,7 +174,7 @@ class EcosystemProbe:
     ) -> None:
         if ecosystem == "python":
             if (
-                "build-backend = \"setuptools.build_meta\"" in text
+                _SETUPTOOLS_BUILD_BACKEND_RE.search(text) is not None
                 and "[tool.setuptools.packages.find]" not in text
                 and len([d for d in top_dirs if not d.startswith(".")]) >= 2
             ):
