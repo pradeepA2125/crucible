@@ -198,27 +198,29 @@ async def mode_resume_task(client: httpx.AsyncClient, parent_task_id: str,
                                body={"feedback": None})
                     evt["_handled"] = True
             elif t == "step_review_requested" and not evt.get("_handled"):
+                # StepDecisionRequest: {decision: "accept"|"discard"}
                 print(f"[{stamp()}]   >>> auto-accepting step {payload.get('step_id')}")
                 await post(client, f"/v1/tasks/{child_id}/step-decision",
-                           body={"decision": "accept", "step_id": payload.get("step_id")})
+                           body={"decision": "accept"})
                 evt["_handled"] = True
             elif t == "command_approval_requested" and not evt.get("_handled"):
+                # CommandDecision: {approve, remember, scope, rule_value}
                 print(f"[{stamp()}]   >>> auto-approving command")
                 await post(client, f"/v1/tasks/{child_id}/command-decision",
-                           body={"decision_id": payload.get("decision_id"),
-                                 "approve": True, "remember": False})
+                           body={"approve": True, "remember": False, "scope": "exact"})
                 evt["_handled"] = True
             elif t == "validation_decision_requested" and not evt.get("_handled"):
+                # ValidationDecisionRequest: {decision: "accept"|"reject"}
                 print(f"[{stamp()}]   >>> auto-accepting validation")
                 await post(client, f"/v1/tasks/{child_id}/validation-decision",
-                           body={"accept": True})
+                           body={"decision": "accept"})
                 evt["_handled"] = True
             elif t == "scope_extension_requested" and not evt.get("_handled"):
+                # ScopeDecisionRequest: {decision: "approve"|"reject", files, remember}
                 print(f"[{stamp()}]   >>> auto-approving scope extension")
                 await post(client, f"/v1/tasks/{child_id}/scope-decision",
-                           body={"decision_id": payload.get("decision_id"),
-                                 "approve": True,
-                                 "approved_files": payload.get("files", []),
+                           body={"decision": "approve",
+                                 "files": payload.get("files", []),
                                  "remember": False})
                 evt["_handled"] = True
             elif t == "done":

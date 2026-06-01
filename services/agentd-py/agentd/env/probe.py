@@ -203,11 +203,9 @@ class EcosystemProbe:
                 diagnostics.append(
                     f"NODE_MODULES_ABSENT:{rel_manifest}:node_modules not yet installed"
                 )
-        elif ecosystem == "rust":
-            if manifest_dir is not None and not (manifest_dir / "target").is_dir():
-                diagnostics.append(
-                    f"CARGO_TARGET_ABSENT:{rel_manifest}:target/ not yet built"
-                )
+        # NOTE: no rust 'target/ absent' diagnostic — cargo creates target/ on
+        # the first invocation; its absence on a fresh checkout is normal, not
+        # actionable. Emitting it as a diagnostic was misleading.
 
         # W8: lockfile-missing signal (applies to ecosystems where a lockfile is
         # standard practice — Python and Node especially). Helps the consumer

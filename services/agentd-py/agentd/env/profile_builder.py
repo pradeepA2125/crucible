@@ -29,7 +29,13 @@ def _path_join_subdir(subdir: str, rel: str) -> str:
 
 
 def _python_dep_strings_from_pyproject(text: str) -> list[str]:
-    """Extract dependencies from a pyproject.toml — verbatim strings."""
+    """Extract dependencies from a pyproject.toml — verbatim strings.
+
+    Reads only [project.dependencies] (PEP 621). Misses [tool.poetry.dependencies],
+    [tool.pdm.dependencies], and PEP 735 [dependency-groups]. For Poetry/PDM
+    workspaces declared_dependencies_top will be empty; the LLM fallback path
+    can still fill in conventions_notes from the raw manifest text.
+    """
     try:
         import tomllib
         data = tomllib.loads(text)
