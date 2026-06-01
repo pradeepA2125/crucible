@@ -207,6 +207,40 @@ class TaskExecutionState(BaseModel):
     pending_step_review: StepReviewPayload | None = None
     pending_command_request: CommandApprovalRequest | None = None
     approved_commands: list[CommandRule] = Field(default_factory=list)
+    pending_install_for_scope: str | None = None  # ecosystem scope_key needing setup_env before next run_command
+
+
+class EnvEcosystemEntry(BaseModel):
+    """One ecosystem-scope in an EnvProfile.
+
+    Identified by (ecosystem, subdir). The scope_key property is the
+    deterministic key used by manifest-write auto-sync.
+    """
+
+    ecosystem: Literal["python", "node", "rust", "go"]
+    subdir: str  # relative to workspace; "" = root
+    manifest_path: str  # relative to workspace
+    package_manager: str  # "uv" | "pip" | "npm" | "yarn" | "pnpm" | "cargo" | "go"
+    install_command: str  # ready for setup_env (e.g. "uv sync")
+    interpreter_or_runner: str | None  # rel path (e.g. ".venv/bin/python")
+    test_command: str | None  # rel cmd used with subdir as cwd (e.g. "pytest")
+    declared_dependencies_top: list[str] = Field(default_factory=list)  # top ~20 manifest deps verbatim
+    notes: str | None = None  # LLM-supplied quirks
+
+    @property
+    def scope_key(self) -> str:
+        return f"{self.ecosystem}:{self.subdir}"
+
+
+class EnvProfile(BaseModel):
+    """Workspace-level env conventions persisted at <workspace>/.agentd/env_profile.json."""
+
+    workspace_root: str
+    built_at: datetime
+    bootstrap_needed: bool = False  # probe found nothing usable; agent falls back to find_binary/init_workspace
+    ecosystems: list[EnvEcosystemEntry] = Field(default_factory=list)
+    conventions_notes: str | None = None  # short free-form summary from the LLM
+    diagnostics: list[str] = Field(default_factory=list)  # probe warnings
 
 
 class RevisedStep(BaseModel):
