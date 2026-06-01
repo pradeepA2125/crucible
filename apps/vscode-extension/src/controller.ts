@@ -636,6 +636,26 @@ export class AiEditorController {
           const threadId = (event.payload["thread_id"] as string) ?? "";
           const title = (event.payload["title"] as string) ?? "";
           this.ui.updateThreadTitle(threadId, title);
+        } else if (event.type === "env_profile_building") {
+          this.ui.appendChatThinkingEntry("Preparing workspace env profile…");
+        } else if (event.type === "env_profile_built") {
+          const count = (event.payload["ecosystems_count"] as number) ?? 0;
+          const bootstrap = (event.payload["bootstrap_needed"] as boolean) ?? false;
+          this.ui.appendChatThinkingEntry(
+            bootstrap
+              ? "Env profile: workspace has no manifests yet (bootstrap_needed)"
+              : `Env profile ready (${count} ecosystem${count === 1 ? "" : "s"})`,
+          );
+        } else if (event.type === "env_install_running") {
+          const cmd = (event.payload["command"] as string) ?? "";
+          const scope = (event.payload["scope_key"] as string) ?? "";
+          this.ui.appendChatThinkingEntry(`Syncing deps: ${cmd} (${scope})`);
+        } else if (event.type === "env_install_done") {
+          const ok = (event.payload["exit_ok"] as boolean) ?? false;
+          const scope = (event.payload["scope_key"] as string) ?? "";
+          this.ui.appendChatThinkingEntry(
+            ok ? `Deps synced for ${scope}` : `Deps sync FAILED for ${scope}`,
+          );
         } else if (event.type === "chat_done") {
           this.ui.finalizeAgentMessage();
           break;

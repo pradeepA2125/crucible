@@ -240,8 +240,14 @@ async def _python_pm_fallback(
     shadow_root: Path,
     real_workspace: Path,
     timeout_sec: int,
+    install_root: Path | None = None,
 ) -> ToolOutput:
-    """Bootstrap a venv via system python3 + pip when the requested PM is missing."""
+    """Bootstrap a venv via system python3 + pip when the requested PM is missing.
+
+    install_root: where the venv lands. Defaults to real_workspace. Pass a
+    subdir (e.g. real_workspace/services/agentd-py) for monorepos so the venv
+    co-locates with the manifest.
+    """
     if binary == "poetry":
         # Poetry's lockfile semantics can't be faithfully reproduced via pip — escalate.
         return _structured_pm_missing(binary)
@@ -262,7 +268,9 @@ async def _python_pm_fallback(
             )
     python = python.strip()
 
-    venv_path = real_workspace / ".venv"
+    if install_root is None:
+        install_root = real_workspace
+    venv_path = install_root / ".venv"
     venv_python = venv_path / ("Scripts" if os.name == "nt" else "bin") / (
         "python.exe" if os.name == "nt" else "python"
     )
@@ -395,29 +403,37 @@ async def setup_env(
     env = os.environ.copy()
     cmd_parts = list(parts)
 
+    # The install root is the REAL workspace path that corresponds to the agent-
+    # supplied cwd: venvs/node_modules/etc. land here, not at the workspace root,
+    # so monorepo subdirs (e.g. services/agentd-py) get their own envs.
+    install_root = real_workspace / (cwd or "")
+
     if binary == "uv":
-        env["UV_PROJECT_ENVIRONMENT"] = str(real_workspace / ".venv")
+        env["UV_PROJECT_ENVIRONMENT"] = str(install_root / ".venv")
 
     elif binary in ("pip3", "pip"):
-        real_pip = real_workspace / ".venv" / "bin" / binary
+        real_pip = install_root / ".venv" / "bin" / binary
         if real_pip.exists():
             cmd_parts[0] = str(real_pip)
         else:
             # No .venv present — bootstrap one via the same Python that hosts pip,
             # then re-target. Avoids polluting system Python while keeping the
             # agent's "pip install X" command working.
-            return await _python_pm_fallback(binary, parts, shadow_root, real_workspace, timeout_sec)
+            return await _python_pm_fallback(
+                binary, parts, shadow_root, real_workspace, timeout_sec,
+                install_root=install_root,
+            )
 
     elif binary == "npm":
-        env["npm_config_prefix"] = str(real_workspace)
+        env["npm_config_prefix"] = str(install_root)
 
     elif binary == "yarn":
         if "--modules-dir" not in command:
-            cmd_parts += ["--modules-dir", str(real_workspace / "node_modules")]
+            cmd_parts += ["--modules-dir", str(install_root / "node_modules")]
 
     elif binary == "pnpm":
         if "--modules-dir" not in command:
-            cmd_parts += ["--modules-dir", str(real_workspace / "node_modules")]
+            cmd_parts += ["--modules-dir", str(install_root / "node_modules")]
 
     # cargo/go/poetry/rustup: cwd=shadow_root is sufficient; they use global caches/toolchains
 

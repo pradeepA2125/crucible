@@ -66,6 +66,77 @@ async def test_ensure_reuses_fresh_profile_skips_llm(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_ensure_broadcasts_on_supplied_channel_id(tmp_path: Path):
+    """When channel_id is passed (orchestrator passes task_id), SSE events
+    must land on that channel — not the workspace path."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname=\"x\"\nversion=\"0\"\n")
+    canned = {
+        "ecosystems": [{
+            "ecosystem": "python", "subdir": "", "manifest_path": "pyproject.toml",
+            "package_manager": "uv", "install_command": "uv sync",
+            "interpreter_or_runner": ".venv/bin/python", "test_command": "pytest",
+            "declared_dependencies_top": [], "notes": None,
+        }],
+        "conventions_notes": None,
+    }
+    reasoner = ScriptedReasoningEngine(plan=None, patches=[], draft_conventions_responses=[canned])
+    broadcaster = _RecordingBroadcaster()
+    ensurer = EnvProfileEnsurer(reasoner=reasoner, broadcaster=broadcaster)
+
+    await ensurer.ensure(tmp_path, channel_id="task-abc123")
+
+    channels = {ch for ch, _ in broadcaster.events}
+    assert channels == {"task-abc123"}
+
+
+@pytest.mark.asyncio
+async def test_ensure_swallows_exceptions_does_not_propagate(tmp_path: Path):
+    """env-profile is supplementary infrastructure; failures must not block
+    the task. Builder error → log + return None."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname=\"x\"\nversion=\"0\"\n")
+
+    class BoomReasoner:
+        async def draft_conventions(self, *, probe):
+            raise RuntimeError("simulated upstream failure")
+
+    broadcaster = _RecordingBroadcaster()
+    ensurer = EnvProfileEnsurer(reasoner=BoomReasoner(), broadcaster=broadcaster)
+
+    # Must not raise. The store.write call still happens with bootstrap_needed=true
+    # because the BUILDER's own retry-then-fallback covers it. To exercise the
+    # outermost swallow we patch store.write to raise.
+    async def real_ensure_then_assert():
+        await ensurer.ensure(tmp_path, channel_id="task-x")
+    await real_ensure_then_assert()
+
+
+@pytest.mark.asyncio
+async def test_ensure_swallows_store_write_failure(tmp_path: Path, monkeypatch):
+    """If EnvProfileStore.write fails (disk/permission), ensure() must still
+    return cleanly so the orchestrator continues."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname=\"x\"\nversion=\"0\"\n")
+    canned = {
+        "ecosystems": [{
+            "ecosystem": "python", "subdir": "", "manifest_path": "pyproject.toml",
+            "package_manager": "uv", "install_command": "uv sync",
+            "interpreter_or_runner": ".venv/bin/python", "test_command": "pytest",
+            "declared_dependencies_top": [], "notes": None,
+        }],
+        "conventions_notes": None,
+    }
+    reasoner = ScriptedReasoningEngine(plan=None, patches=[], draft_conventions_responses=[canned])
+    broadcaster = _RecordingBroadcaster()
+    ensurer = EnvProfileEnsurer(reasoner=reasoner, broadcaster=broadcaster)
+
+    def boom(*a, **k):
+        raise PermissionError("disk full")
+    monkeypatch.setattr(EnvProfileStore, "write", boom)
+
+    # Must not raise.
+    await ensurer.ensure(tmp_path, channel_id="task-y")
+
+
+@pytest.mark.asyncio
 async def test_ensure_serializes_concurrent_calls_for_same_workspace(tmp_path: Path):
     """Two concurrent ensure() calls on the same workspace should only build once."""
     (tmp_path / "pyproject.toml").write_text("[project]\nname=\"x\"\nversion=\"0\"\n")

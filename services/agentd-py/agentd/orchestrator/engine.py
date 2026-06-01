@@ -234,7 +234,7 @@ class AgentOrchestrator:
 
     async def run_task(self, task_id: str) -> TaskRecord:
         task = await self._store.get(task_id)
-        await self._env_ensurer.ensure(Path(task.workspace_path))
+        await self._env_ensurer.ensure(Path(task.workspace_path), channel_id=task.task_id)
         self._running_tasks.add(task_id)
         started_at_ms = int(time.time() * 1000)
         retrieval_context = RetrievalContext.empty()
@@ -530,7 +530,7 @@ class AgentOrchestrator:
         the task channel (used by the chat resume path to stream events to the chat SSE).
         """
         task = await self._store.get(task_id)
-        await self._env_ensurer.ensure(Path(task.workspace_path))
+        await self._env_ensurer.ensure(Path(task.workspace_path), channel_id=task.task_id)
         self._running_tasks.add(task_id)
         task.artifacts_root_path = str(self._artifacts_root(task.task_id, task.workspace_path))
         started_at_ms = int(time.time() * 1000)
