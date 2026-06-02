@@ -1071,6 +1071,14 @@ class AgentOrchestrator:
             mode="project_edit",
             initial_explore_context=explore_context,
         )
+        # Honor AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT the same way POST /v1/tasks does.
+        # Pre-fix this code path silently defaulted to True (TaskRecord field default),
+        # so the env knob had no effect on chat-created tasks and step diffs were
+        # auto-accepted regardless. Now matches the API-created behaviour.
+        import os
+        _env_step_review_default = os.environ.get(
+            "AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT", "true",
+        ).strip().lower() not in ("0", "false", "no", "off")
         task = TaskRecord(
             task_id=f"task-{uuid4().hex[:12]}",
             goal=request.goal,
@@ -1079,6 +1087,7 @@ class AgentOrchestrator:
             status=TaskStatus.QUEUED,
             initial_explore_context=explore_context,
             chat_channel_id=f"chat:{thread_id}",
+            step_review_auto_accept=_env_step_review_default,
         )
         await self._store.create(task)
         asyncio.create_task(self.run_task(task.task_id))
