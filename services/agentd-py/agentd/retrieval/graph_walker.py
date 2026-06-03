@@ -69,6 +69,25 @@ def _root_priority(node: dict[str, object]) -> tuple[int, str]:
     return rank, str(node.get("id", ""))
 
 
+def _coerce_int(value: object, default: int) -> int:
+    """Best-effort int coercion. Returns `default` on `None`, on non-numeric
+    strings, or on any other type that can't round-trip through `int(...)`.
+    Used so a tool call with `depth="medium"` or `limit=null` doesn't crash
+    the planning loop — the walker clamps the result anyway."""
+    if value is None:
+        return default
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+class GraphWalkerSnapshotError(RuntimeError):
+    """Raised when the symbol-graph snapshot can't be loaded (missing,
+    truncated, malformed). Callers translate this into a tool-output error
+    rather than letting it propagate through the planning loop."""
+
+
 # ── Walker ────────────────────────────────────────────────────────────────────
 
 _ALLOWED_EDGE_KINDS = {"Calls", "Imports", "References", "Inherits", "Implements"}
@@ -116,11 +135,28 @@ class GraphWalker:
                                           methods/fields of a class are
                                           visible.
         """
-        depth = max(1, min(int(depth), _MAX_DEPTH))
-        limit = max(1, min(int(limit), _MAX_LIMIT))
+        # Coerce defensively. The LLM occasionally sends `depth=null` or a
+        # string like "medium"; we don't want a malformed tool arg to crash
+        # the planning loop.
+        depth = max(1, min(_coerce_int(depth, _DEFAULT_DEPTH), _MAX_DEPTH))
+        limit = max(1, min(_coerce_int(limit, _DEFAULT_LIMIT), _MAX_LIMIT))
         kinds_filter = self._normalize_edge_kinds(edge_kinds)
 
-        self._ensure_loaded()
+        # Hold the lock across the entire BFS so a concurrent reload doesn't
+        # swap the index maps out from under us. The lock is contended only
+        # on the rare reload path; query-after-load takes it for the duration
+        # of the walk but never blocks on I/O.
+        with self._lock:
+            self._ensure_loaded_locked()
+            return self._query_locked(node, depth, limit, kinds_filter)
+
+    def _query_locked(
+        self,
+        node: str,
+        depth: int,
+        limit: int,
+        kinds_filter: set[str],
+    ) -> QueryResult:
 
         symbol_seed = ":" in node
         roots = self._resolve_roots(node)
@@ -208,55 +244,66 @@ class GraphWalker:
 
     # ── Internals ─────────────────────────────────────────────────────────
 
-    def _ensure_loaded(self) -> None:
+    def _ensure_loaded_locked(self) -> None:
         """Load the snapshot if it has changed since last load. Cheap NOOP
-        when nothing's moved."""
-        with self._lock:
-            try:
-                mtime_ns = self._snapshot_path.stat().st_mtime_ns
-            except (FileNotFoundError, NotADirectoryError):
-                if self._loaded_at_mtime_ns is None:
-                    raise
-                # Snapshot disappeared after first load — keep what we have.
-                return
-            if self._loaded_at_mtime_ns == mtime_ns and self._nodes_by_id:
-                return
+        when nothing's moved. Caller MUST hold `self._lock`."""
+        try:
+            mtime_ns = self._snapshot_path.stat().st_mtime_ns
+        except (FileNotFoundError, NotADirectoryError):
+            if self._loaded_at_mtime_ns is None:
+                raise
+            # Snapshot disappeared after first load — keep what we have.
+            return
+        if self._loaded_at_mtime_ns == mtime_ns and self._nodes_by_id:
+            return
 
+        try:
             with self._snapshot_path.open(encoding="utf-8") as fh:
                 payload = json.load(fh)
+        except json.JSONDecodeError as exc:
+            # Snapshot is mid-rewrite or otherwise garbled. Don't blow up the
+            # planning loop — keep any existing state and raise a typed
+            # error the tool layer translates to a friendly message. First-
+            # load failures still propagate (caller has no cached state to
+            # serve), but with a clearer exception than raw JSONDecodeError.
+            if self._loaded_at_mtime_ns is None:
+                raise GraphWalkerSnapshotError(
+                    f"snapshot JSON is malformed: {exc.msg}"
+                ) from exc
+            return
 
-            graph = payload.get("graph", {})
-            nodes = graph.get("nodes", []) or []
-            edges = graph.get("edges", []) or []
+        graph = payload.get("graph", {}) if isinstance(payload, dict) else {}
+        nodes = graph.get("nodes", []) or []
+        edges = graph.get("edges", []) or []
 
-            self._nodes_by_id = {
-                node["id"]: node for node in nodes if isinstance(node, dict) and "id" in node
-            }
+        self._nodes_by_id = {
+            node["id"]: node for node in nodes if isinstance(node, dict) and "id" in node
+        }
 
-            outbound: dict[str, list[tuple[str, str]]] = {}
-            inbound: dict[str, list[tuple[str, str]]] = {}
-            for edge in edges:
-                if not isinstance(edge, dict):
-                    continue
-                src = edge.get("from")
-                dst = edge.get("to")
-                kind = edge.get("kind")
-                if not (isinstance(src, str) and isinstance(dst, str) and isinstance(kind, str)):
-                    continue
-                outbound.setdefault(src, []).append((dst, kind))
-                inbound.setdefault(dst, []).append((src, kind))
-            self._outbound = outbound
-            self._inbound = inbound
+        outbound: dict[str, list[tuple[str, str]]] = {}
+        inbound: dict[str, list[tuple[str, str]]] = {}
+        for edge in edges:
+            if not isinstance(edge, dict):
+                continue
+            src = edge.get("from")
+            dst = edge.get("to")
+            kind = edge.get("kind")
+            if not (isinstance(src, str) and isinstance(dst, str) and isinstance(kind, str)):
+                continue
+            outbound.setdefault(src, []).append((dst, kind))
+            inbound.setdefault(dst, []).append((src, kind))
+        self._outbound = outbound
+        self._inbound = inbound
 
-            nodes_by_file: dict[str, list[str]] = {}
-            for node_id, node in self._nodes_by_id.items():
-                rel = self._workspace_relative(node.get("path"))
-                if rel is None:
-                    continue
-                nodes_by_file.setdefault(rel, []).append(node_id)
-            self._nodes_by_file = nodes_by_file
+        nodes_by_file: dict[str, list[str]] = {}
+        for node_id, node in self._nodes_by_id.items():
+            rel = self._workspace_relative(node.get("path"))
+            if rel is None:
+                continue
+            nodes_by_file.setdefault(rel, []).append(node_id)
+        self._nodes_by_file = nodes_by_file
 
-            self._loaded_at_mtime_ns = mtime_ns
+        self._loaded_at_mtime_ns = mtime_ns
 
     def _resolve_roots(self, node: str) -> list[dict[str, Any]]:
         """Parse the `node` argument and return matching snapshot node dicts."""

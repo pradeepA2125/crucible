@@ -220,19 +220,42 @@ class PlanningToolRegistry:
         node = str(args.get("node", "")).strip()
         if not node:
             return ToolOutput(output="Error: 'node' is required", is_error=True)
-        depth = int(args.get("depth", 1) or 1)  # type: ignore[call-overload]
-        limit = int(args.get("limit", 20) or 20)  # type: ignore[call-overload]
+        # Coerce defensively at the registry boundary — `int("medium")`
+        # would raise and the broad `except Exception` below would still
+        # save us, but reporting "ValueError: invalid literal for int()"
+        # to the model is noise. Default + clamp inside the walker.
+        from agentd.retrieval.graph_walker import _coerce_int
+        depth = _coerce_int(args.get("depth"), 1)
+        limit = _coerce_int(args.get("limit"), 20)
         edge_kinds_raw = args.get("edge_kinds")
         edge_kinds: list[str] | None
         if isinstance(edge_kinds_raw, list):
             edge_kinds = [str(k) for k in edge_kinds_raw]
         else:
             edge_kinds = None
+        from agentd.retrieval.graph_walker import GraphWalkerSnapshotError
+
         try:
             result = walker.query(node, depth=depth, limit=limit, edge_kinds=edge_kinds)
         except FileNotFoundError:
             return ToolOutput(
                 output="Error: symbol-graph snapshot not available (indexer hasn't run).",
+                is_error=True,
+            )
+        except GraphWalkerSnapshotError as exc:
+            # Snapshot exists but isn't loadable (mid-rewrite, truncated, or
+            # otherwise garbled). Better to keep the planning loop alive and
+            # nudge the model toward read_file/search_code than to crash.
+            return ToolOutput(
+                output=f"Error: symbol-graph snapshot is unreadable ({exc}); use search_code/read_file instead.",
+                is_error=True,
+            )
+        except Exception as exc:  # noqa: BLE001 — last-line defence
+            # Anything else: bad arg shape, a node-id with surprise structure,
+            # a JSON dict that decodes but isn't shaped like a snapshot.
+            # Surface to the model as a tool failure, log for the operator.
+            return ToolOutput(
+                output=f"Error: query_graph failed: {type(exc).__name__}: {exc}",
                 is_error=True,
             )
         return ToolOutput(output=_render_query_result(node, result))

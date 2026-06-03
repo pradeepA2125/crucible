@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agentd.retrieval.graph_walker import GraphWalker
+import pytest
+
+from agentd.retrieval.graph_walker import GraphWalker, GraphWalkerSnapshotError
 
 
 def _write_snapshot(path: Path, nodes: list[dict], edges: list[dict]) -> None:
@@ -148,6 +150,70 @@ def test_edge_kind_filter_applied(tmp_path: Path) -> None:
     # outbound edges are Calls, not Implements).
     result = walker.query("src/engine.py:run_task", depth=1, limit=20, edge_kinds=["Implements"])
     assert result.neighbors == []
+
+
+def test_missing_snapshot_first_load_raises_filenotfound(tmp_path: Path) -> None:
+    """Caller has nothing to fall back to — propagate so the tool layer can
+    translate to a clear 'run the indexer' message rather than silently
+    returning an empty graph."""
+    walker = GraphWalker(tmp_path / ".ai-editor" / "index-snapshot.json", tmp_path)
+    with pytest.raises(FileNotFoundError):
+        walker.query("anything", depth=1, limit=10)
+
+
+def test_corrupt_snapshot_first_load_raises_typed_error(tmp_path: Path) -> None:
+    """Garbled JSON on first load must surface as `GraphWalkerSnapshotError`,
+    NOT a raw `json.JSONDecodeError` that the tool registry doesn't know how
+    to handle. Without this, the planning loop would crash."""
+    snapshot = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text("{ this isn't json at all", encoding="utf-8")
+    walker = GraphWalker(snapshot, tmp_path)
+    with pytest.raises(GraphWalkerSnapshotError):
+        walker.query("anything", depth=1, limit=10)
+
+
+def test_corrupt_snapshot_after_successful_load_keeps_cached_state(tmp_path: Path) -> None:
+    """The indexer overwrites the snapshot mid-rebuild on some paths. If the
+    file is briefly malformed AFTER we've already loaded once, the walker
+    must serve the cached state rather than crash the loop."""
+    snapshot = _fixture(tmp_path)
+    walker = GraphWalker(snapshot, tmp_path)
+
+    # Prime the cache with a valid load.
+    first = walker.query("src/engine.py:run_task", depth=1, limit=10, edge_kinds=["Calls"])
+    assert first.neighbors  # sanity: cache is populated
+
+    # Now scramble the file + bump mtime so `_ensure_loaded_locked` will try
+    # to reload but hit a JSONDecodeError.
+    snapshot.write_text("{ broken", encoding="utf-8")
+    import os, time
+    new_ts = time.time() + 1
+    os.utime(snapshot, (new_ts, new_ts))
+
+    # The next query MUST NOT raise; it serves cached state.
+    second = walker.query("src/engine.py:run_task", depth=1, limit=10, edge_kinds=["Calls"])
+    assert second.matched_roots == first.matched_roots
+    assert {n.node.symbol for n in second.neighbors} == {n.node.symbol for n in first.neighbors}
+
+
+def test_bad_arg_types_do_not_crash(tmp_path: Path) -> None:
+    """If the LLM sends `depth="medium"` or `limit=None`, the walker clamps
+    rather than raising. Without this, a single malformed tool call would
+    crash the planning loop."""
+    snapshot = _fixture(tmp_path)
+    walker = GraphWalker(snapshot, tmp_path)
+
+    # int/None/string mix — none should raise.
+    result = walker.query(
+        "src/engine.py:run_task",
+        depth="medium",      # type: ignore[arg-type]
+        limit=None,          # type: ignore[arg-type]
+        edge_kinds=["Calls"],
+    )
+    assert isinstance(result.matched_roots, list)
+    assert result.stats["depth"] >= 1
+    assert result.stats["limit"] >= 1
 
 
 def test_snapshot_reload_when_mtime_changes(tmp_path: Path) -> None:

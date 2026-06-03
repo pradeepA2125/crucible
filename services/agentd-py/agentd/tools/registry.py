@@ -431,8 +431,9 @@ class ToolRegistry:
                 is_error=True,
             )
 
-        depth = int(args.get("depth", 1) or 1)  # type: ignore[call-overload]
-        limit = int(args.get("limit", 20) or 20)  # type: ignore[call-overload]
+        from agentd.retrieval.graph_walker import _coerce_int
+        depth = _coerce_int(args.get("depth"), 1)
+        limit = _coerce_int(args.get("limit"), 20)
         edge_kinds_raw = args.get("edge_kinds")
         edge_kinds: list[str] | None
         if isinstance(edge_kinds_raw, list):
@@ -440,12 +441,24 @@ class ToolRegistry:
         else:
             edge_kinds = None
 
+        from agentd.retrieval.graph_walker import GraphWalkerSnapshotError
+
         walker = GraphWalker(snapshot, self._real_workspace_path)
         try:
             result = walker.query(node, depth=depth, limit=limit, edge_kinds=edge_kinds)
         except FileNotFoundError:
             return ToolOutput(
                 output="Error: symbol-graph snapshot not available (indexer hasn't run).",
+                is_error=True,
+            )
+        except GraphWalkerSnapshotError as exc:
+            return ToolOutput(
+                output=f"Error: symbol-graph snapshot is unreadable ({exc}); use search_code/read_file instead.",
+                is_error=True,
+            )
+        except Exception as exc:  # noqa: BLE001 — last-line defence
+            return ToolOutput(
+                output=f"Error: query_graph failed: {type(exc).__name__}: {exc}",
                 is_error=True,
             )
         return ToolOutput(output=_render_query_result(node, result))
