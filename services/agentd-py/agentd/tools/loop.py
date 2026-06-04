@@ -336,10 +336,16 @@ class ToolLoop:
                     "payload": {"chunk": chunk},
                 })
 
+            _budget_note = (
+                f"explore: {explore_calls}/{max_explore} calls used"
+                if budget_phase == "explore"
+                else f"verify: {verify_calls}/{max_verify} calls used"
+            )
             _state_desc = sm.state_description(
                 iteration=iteration + 1,
                 error_summary=_last_auto_checks_error,
                 failure_summary=_last_test_failure,
+                budget_note=_budget_note,
             )
             _allowed_actions = sm.allowed_action_types()
             # Persist exactly what the SM injected this turn (state_description carries

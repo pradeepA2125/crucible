@@ -238,8 +238,9 @@ def build_tool_step_payload(
             # model which state it's in, what's available, and what to do next.
             payload["instruction"] = state_description
         else:
-            # Back-compat path: explore-phase budget hints when no SM context is wired.
-            iteration = len(history) // 2
+            # Back-compat path (no verify-phase SM context wired). Failure-driven
+            # hints are kept; iteration-count pressure is NOT — explore until the
+            # code is understood, the loop enforces the real ceiling separately.
             recent = [str(m.get("content", "")) for m in history[-6:]]
             patch_fail_count = sum(1 for m in recent if "patch failed" in m.lower() or "not found in" in m)
 
@@ -254,17 +255,8 @@ def build_tool_step_payload(
                     "⚠ Last patch failed. The file content may not match your expectations — "
                     "reading it first can help you get the right content before retrying."
                 )
-            elif iteration >= 12:
-                payload["instruction"] = (
-                    f"⚠ {iteration} tool calls used — pace up. "
-                    "Wrap up exploration and move toward your next action."
-                )
-            elif iteration >= 6:
-                payload["instruction"] = (
-                    f"Tool calls used: {iteration}. Consider wrapping up exploration soon."
-                )
             else:
-                payload["instruction"] = "Continue."
+                payload["instruction"] = "Continue exploring until you understand the code, then act."
     else:
         payload["instruction"] = "Start exploring — search or read to understand the code before making changes."
 

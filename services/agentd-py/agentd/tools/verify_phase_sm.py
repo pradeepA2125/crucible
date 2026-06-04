@@ -189,19 +189,27 @@ class VerifyPhaseStateMachine:
         iteration: int = 0,
         error_summary: str = "",
         failure_summary: str = "",
+        budget_note: str = "",
     ) -> str:
         """Contextual prompt injected into the model's instruction field each turn."""
         s = self.state
         rc, mx = self._retry_count, MAX_PATCH_RETRIES
         iter_note = f" [iteration {iteration}]" if iteration else ""
+        # Surface the live phase budget (e.g. "explore: 12/50 calls used") so the
+        # model paces itself instead of guessing how much room it has.
+        if budget_note:
+            iter_note += f" [{budget_note}]"
 
         if s == _S.EXPLORE:
             return (
                 f"CURRENT STATE: EXPLORE{iter_note}\n"
                 "No patch has been applied yet. Read the relevant files, search for symbols,\n"
-                "and understand the code structure. When you have enough context,\n"
-                "emit your patch.\n"
-                "Available tools: read_file, search_code, list_directory, emit_patch"
+                "and understand the code structure. When your change alters a symbol other code\n"
+                "depends on, call query_graph(node=\"<file>:Symbol\") to find its callers and\n"
+                "implementers, then read those connected files so your patch covers them — read\n"
+                "only files you have not already seen. When you have enough context, emit your patch.\n"
+                "Available tools: read_file, search_code, search_semantic, list_directory, "
+                "query_graph, emit_patch"
             )
 
         if s == _S.PATCH_FAILED_MUST_READ:
@@ -229,7 +237,7 @@ class VerifyPhaseStateMachine:
                 "     context around the lines to patch.\n"
                 "emit_patch will unlock automatically after you perform a successful\n"
                 "read_file or search_code.\n"
-                "Available tools: read_file, search_code, list_directory"
+                "Available tools: read_file, search_code, search_semantic, list_directory, query_graph"
             )
 
         if s == _S.PATCH_FAILED_CAN_RETRY:
@@ -242,7 +250,8 @@ class VerifyPhaseStateMachine:
                 "targeted line ranges. Keep reading recursively until you have complete and\n"
                 "correct context before retrying emit_patch.\n"
                 f"Retry counter ({rc}/{mx}) only increments on actual engine failures.\n"
-                "Available tools: read_file, search_code, list_directory, emit_patch"
+                "Available tools: read_file, search_code, search_semantic, list_directory, "
+                "query_graph, emit_patch"
             )
 
         if s == _S.POSTPATCH_BLOCKING:
@@ -251,7 +260,8 @@ class VerifyPhaseStateMachine:
                 f"CURRENT STATE: POSTPATCH — BLOCKING ERRORS{iter_note}{summary}\n"
                 "Patch applied, but static analysis found errors that need resolving "
                 "before tests can run. run_command is locked for now.\n"
-                "Available tools: read_file, search_code, list_directory, emit_patch"
+                "Available tools: read_file, search_code, search_semantic, list_directory, "
+                "query_graph, emit_patch"
             )
 
         if s == _S.POSTPATCH_CLEAN:
@@ -274,7 +284,8 @@ class VerifyPhaseStateMachine:
                 f"CURRENT STATE: TEST_FAILED{iter_note}{summary}\n"
                 "Tests failed. Read the output, patch if needed, "
                 "or re-run a narrower command to narrow down the issue.\n"
-                "Available tools: read_file, search_code, list_directory, emit_patch, run_command"
+                "Available tools: read_file, search_code, search_semantic, list_directory, "
+                "query_graph, emit_patch, run_command"
             )
 
         if s == _S.TEST_PASSED:
