@@ -136,6 +136,14 @@ struct LspSession {
     /// method)`. Invalidated for a given `file_path` whenever its
     /// `file_versions` entry bumps via `open_file` / `change_file` / `close_file`.
     resolution_cache: HashMap<(PathBuf, u32, u32, &'static str), CachedResolution>,
+    /// Server-side `$/progress` tokens currently in-flight (begin seen, end not
+    /// yet). Used to know when the server has finished its initial indexing /
+    /// cache-priming so the resolver doesn't race a cold server and get nulls.
+    active_progress: std::collections::HashSet<String>,
+    /// True once we've observed at least one `$/progress` begin from this
+    /// server. Distinguishes "server reported work and finished" (ready) from
+    /// "server never reports progress" (assume ready after a quiet window).
+    saw_progress: bool,
 }
 
 impl Drop for LspSession {
@@ -190,6 +198,8 @@ impl LspSession {
             file_versions: HashMap::new(),
             diagnostics_by_uri: HashMap::new(),
             resolution_cache: HashMap::new(),
+            active_progress: std::collections::HashSet::new(),
+            saw_progress: false,
         };
 
         session.initialize()?;
@@ -207,7 +217,12 @@ impl LspSession {
         let mut params = json!({
             "processId": std::process::id(),
             "rootUri": workspace_uri,
-            "capabilities": {},
+            // Advertise workDoneProgress so the server streams `$/progress`
+            // begin/end around its initial indexing — that's how we know it's
+            // warm enough to answer definition/implementation queries.
+            "capabilities": {
+                "window": { "workDoneProgress": true }
+            },
             "workspaceFolders": [{
                 "uri": workspace_uri,
                 "name": name
@@ -428,6 +443,12 @@ impl LspSession {
             .get("method")
             .and_then(Value::as_str)
             .unwrap_or_default();
+
+        if method == "$/progress" {
+            self.handle_progress(payload);
+            return Ok(());
+        }
+
         if method != "textDocument/publishDiagnostics" {
             return Ok(());
         }
@@ -459,6 +480,81 @@ impl LspSession {
         }
 
         Ok(())
+    }
+
+    /// Track `$/progress` begin/end so `wait_until_indexed` knows when the
+    /// server has finished its initial indexing. `value.kind` is "begin" |
+    /// "report" | "end"; we only care about begin (work started) and end
+    /// (work finished) keyed by the progress token.
+    fn handle_progress(&mut self, payload: &Value) {
+        let params = match payload.get("params") {
+            Some(p) => p,
+            None => return,
+        };
+        let token = match params.get("token") {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Number(n)) => n.to_string(),
+            _ => return,
+        };
+        let kind = params
+            .get("value")
+            .and_then(|v| v.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        match kind {
+            "begin" => {
+                self.saw_progress = true;
+                self.active_progress.insert(token);
+            }
+            "end" => {
+                self.active_progress.remove(&token);
+            }
+            _ => {}
+        }
+    }
+
+    /// Block until the server has finished its initial indexing, so the
+    /// resolver's definition/implementation queries hit a warm server instead
+    /// of racing a cold one (which returns nulls / times out). Readiness =
+    /// we saw at least one progress cycle and all tokens have ended. If the
+    /// server reports no progress at all within `quiet_window`, assume it has
+    /// nothing to report (already warm or doesn't implement progress) and
+    /// proceed. Bounded by `deadline`.
+    fn wait_until_indexed(&mut self, deadline: Instant, quiet_window: Duration) -> Result<()> {
+        let mut last_message = Instant::now();
+        loop {
+            if self.saw_progress && self.active_progress.is_empty() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    language = %self.language.as_str(),
+                    "LSP indexing wait hit deadline; resolving against a possibly-cold server"
+                );
+                return Ok(());
+            }
+            // If the server has gone quiet without ever reporting progress,
+            // it probably won't — stop waiting.
+            if !self.saw_progress && last_message.elapsed() >= quiet_window {
+                return Ok(());
+            }
+
+            match self.messages.recv_timeout(Duration::from_millis(500)) {
+                Ok(payload) => {
+                    last_message = Instant::now();
+                    if payload.get("method").is_some() {
+                        self.handle_notification(&payload)?;
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(anyhow!(
+                        "{} language server exited while waiting for indexing",
+                        self.language.as_str()
+                    ));
+                }
+            }
+        }
     }
 
     fn write_message(&mut self, payload: &Value) -> Result<()> {
@@ -757,6 +853,46 @@ impl LspAdapter {
                 path: file_path.to_path_buf(),
             },
         )
+    }
+
+    /// Block until every started language session has finished its initial
+    /// indexing (or the deadline passes), so the resolver runs against warm
+    /// servers. Call this once, after `open_workspace_files`, before the
+    /// bootstrap resolve pass. No-op when LSP is disabled. Sessions are warmed
+    /// sequentially; the per-language wait shares the overall deadline budget.
+    pub fn wait_for_indexing(&mut self, deadline: Instant, quiet_window: Duration) {
+        if !self.enabled {
+            return;
+        }
+        let languages = [LspLanguage::TypeScript, LspLanguage::Python, LspLanguage::Rust];
+        for language in languages {
+            if self.ensure_session(language).is_err() {
+                continue;
+            }
+            let Some(slot) = self.sessions.get_mut(&language) else {
+                continue;
+            };
+            if slot.disabled_reason.is_some() {
+                continue;
+            }
+            if let Some(session) = slot.session.as_mut() {
+                let started = Instant::now();
+                match session.wait_until_indexed(deadline, quiet_window) {
+                    Ok(()) => tracing::info!(
+                        language = %language.as_str(),
+                        waited_ms = started.elapsed().as_millis() as u64,
+                        "LSP initial indexing complete"
+                    ),
+                    Err(error) => {
+                        tracing::warn!(
+                            language = %language.as_str(),
+                            error = %error,
+                            "LSP indexing wait failed; proceeding"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Resolve a call site's static declaration via LSP. Returns `None` when:

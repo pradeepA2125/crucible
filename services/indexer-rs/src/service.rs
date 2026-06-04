@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::IndexerConfig;
 use crate::graph::{SymbolEdge, SymbolGraph, SymbolNode};
@@ -73,10 +73,19 @@ impl IndexerService {
         if self.config.lsp_enabled {
             let files: Vec<PathBuf> = self.tracked_files.iter().cloned().collect();
             self.lsp.open_workspace_files(&files).await?;
-            // Run the LSP-backed Calls/Implements resolver after every file
-            // has been told to the LSP — otherwise pyright/tsserver wouldn't
-            // know the cross-file context yet and `textDocument/definition`
-            // would return nothing for most call sites.
+            // Wait for the servers to finish initial indexing BEFORE resolving.
+            // Without this the resolver races a cold rust-analyzer/pyright and
+            // gets nulls/timeouts for thousands of call sites, leaving the
+            // bootstrap snapshot under-resolved until files change. Budget the
+            // wait off the LSP startup timeout (rust-analyzer cache-priming on a
+            // large workspace dominates); a server that reports no progress for
+            // `quiet_window` is assumed already-warm and skipped.
+            let deadline = Instant::now()
+                + Duration::from_millis(self.config.lsp_startup_timeout_ms);
+            self.lsp
+                .wait_for_indexing(deadline, Duration::from_secs(10));
+            // Run the LSP-backed Calls/Implements/Inherits resolver now that
+            // the servers are warm and answer definition/implementation fast.
             crate::resolver::resolve_placeholders(&mut self.graph, &mut self.lsp);
             self.refresh_diagnostics().await?;
         } else {

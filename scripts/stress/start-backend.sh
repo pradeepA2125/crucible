@@ -474,6 +474,7 @@ if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_
     AI_EDITOR_LSP_RS_CMD="${AI_EDITOR_LSP_RS_CMD:-rust-analyzer}" \
     AI_EDITOR_LSP_STARTUP_TIMEOUT_MS="${AI_EDITOR_LSP_STARTUP_TIMEOUT_MS:-180000}" \
     AI_EDITOR_LSP_REQUEST_TIMEOUT_MS="${AI_EDITOR_LSP_REQUEST_TIMEOUT_MS:-20000}" \
+    RUST_LOG="${RUST_LOG:-ai_editor_indexer::resolver=info,ai_editor_indexer::lsp=info,ai_editor_indexer::service=info}" \
     "$_INDEXER_BIN" index --workspace "$WORKSPACE" --snapshot-path "$SNAPSHOT_PATH" --watch true \
     >> "$LOG_DIR/indexer-watch.log" 2>&1 &
   _WATCHER_PID=$!
