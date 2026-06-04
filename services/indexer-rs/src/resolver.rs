@@ -116,8 +116,9 @@ pub fn resolve_inner<O: CallSiteOracle>(
             continue;
         };
 
-        // Drop the placeholder's external:call edge and replace with a Calls
-        // edge to the declaration.
+        // Drop the placeholder's external edge and replace with one to the
+        // resolved workspace declaration, preserving the placeholder's kind
+        // (Calls for call sites, Inherits for base-class references).
         let external_edge = SymbolEdge {
             from: placeholder.from_id.clone(),
             to: placeholder.external_to_id.clone(),
@@ -130,6 +131,13 @@ pub fn resolve_inner<O: CallSiteOracle>(
             kind: placeholder.edge_kind.clone(),
         });
         resolved_count += 1;
+
+        // Implementations fan-out is call-site semantics only. For an
+        // Inherits placeholder (a base-class reference) the "implementation"
+        // query is meaningless — skip it. Only Calls placeholders fan out.
+        if placeholder.edge_kind != EdgeKind::Calls {
+            continue;
+        }
 
         // Fan out implementations. LSP often includes the declaration in the
         // implementations response — filter it out so we don't emit

@@ -442,8 +442,25 @@ fn walk_python_body(
                         );
                         graph.add_edge(SymbolEdge {
                             from: class_id.clone(),
-                            to: parent_id,
+                            to: parent_id.clone(),
                             kind: EdgeKind::Inherits,
+                        });
+                        // Park an Inherits placeholder so the resolver can
+                        // rewrite this external base to the workspace class via
+                        // pyright `definition` — turning `class X(TaskStore)`
+                        // into a navigable `X -Inherits-> base.py:TaskStore`
+                        // edge. pyright has no `implementation` support, so
+                        // this (definition on the base name) is the only way to
+                        // make nominal Protocol/ABC implementers discoverable.
+                        let base_offset = python_callable_offset(source, base);
+                        let (lsp_line, lsp_char) = py_offset_to_lsp_position(source, base_offset);
+                        graph.push_placeholder(PlaceholderEdge {
+                            from_id: class_id.clone(),
+                            external_to_id: parent_id,
+                            file_path: file_path.to_path_buf(),
+                            line: lsp_line,
+                            character: lsp_char,
+                            edge_kind: EdgeKind::Inherits,
                         });
                     }
                 }

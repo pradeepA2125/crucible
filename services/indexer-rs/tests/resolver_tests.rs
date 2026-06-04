@@ -192,6 +192,91 @@ fn resolves_simple_cross_file_call() {
 }
 
 #[test]
+fn resolves_inherits_placeholder_to_workspace_base_without_implements_fanout() {
+    // `class InMemoryTaskStore(TaskStore)` — the parser emits an external
+    // Inherits edge + an Inherits placeholder at the base-class position.
+    // The resolver should rewrite it to the workspace TaskStore class via
+    // `definition`, and must NOT run the implementations fan-out (that's
+    // call-site-only). This is the path that makes nominal Protocol/ABC
+    // implementers discoverable for Python, where pyright has no
+    // `implementation` support.
+    let (mut graph, _engine, _sm, _sqlite, _memory) = fixture_graph();
+    let base_path = PathBuf::from("/ws/src/storage/base.py");
+    let memory_path = PathBuf::from("/ws/src/storage/memory.py");
+
+    // The TaskStore CLASS node (declaration target), at base.py line 8.
+    graph.upsert_node(SymbolNode {
+        id: "class:base:TaskStore".to_string(),
+        path: base_path.to_string_lossy().to_string(),
+        name: "TaskStore".to_string(),
+        kind: SymbolKind::Class,
+        line: 8,
+    });
+    // The subclass node.
+    graph.upsert_node(SymbolNode {
+        id: "class:memory:InMemoryTaskStore".to_string(),
+        path: memory_path.to_string_lossy().to_string(),
+        name: "InMemoryTaskStore".to_string(),
+        kind: SymbolKind::Class,
+        line: 9,
+    });
+    // Parser's pre-emitted external Inherits edge + node.
+    let ext_id = "external:class:TaskStore".to_string();
+    graph.upsert_node(SymbolNode {
+        id: ext_id.clone(),
+        path: memory_path.to_string_lossy().to_string(),
+        name: "TaskStore".to_string(),
+        kind: SymbolKind::Class,
+        line: 9,
+    });
+    graph.add_edge(SymbolEdge {
+        from: "class:memory:InMemoryTaskStore".to_string(),
+        to: ext_id.clone(),
+        kind: EdgeKind::Inherits,
+    });
+    let p = PlaceholderEdge {
+        from_id: "class:memory:InMemoryTaskStore".to_string(),
+        external_to_id: ext_id.clone(),
+        file_path: memory_path.clone(),
+        line: 8,        // 0-indexed position of `TaskStore` in `class ...(TaskStore)`
+        character: 28,
+        edge_kind: EdgeKind::Inherits,
+    };
+
+    let mut oracle = StubOracle::default();
+    oracle.set_definition(
+        (memory_path.clone(), 8, 28),
+        LspLocation { path: base_path.clone(), line: 7, character: 6 },  // 0-idx → base.py line 8
+    );
+    // Give it implementations too — the resolver MUST ignore them for Inherits.
+    oracle.set_implementations(
+        (memory_path.clone(), 8, 28),
+        vec![LspLocation { path: memory_path.clone(), line: 8, character: 6 }],
+    );
+
+    resolve_inner(&mut graph, &mut oracle, vec![p]);
+
+    let edges = graph.all_edges();
+    // External Inherits dropped, workspace Inherits added.
+    assert!(
+        !edges.iter().any(|e| e.kind == EdgeKind::Inherits && e.to == ext_id),
+        "external Inherits edge should have been removed"
+    );
+    assert!(
+        edges.iter().any(|e| e.kind == EdgeKind::Inherits
+            && e.from == "class:memory:InMemoryTaskStore"
+            && e.to == "class:base:TaskStore"),
+        "resolved Inherits edge to base.py:TaskStore missing; edges: {:#?}",
+        edges
+    );
+    // No Implements fan-out for an Inherits placeholder.
+    assert!(
+        !edges.iter().any(|e| e.kind == EdgeKind::Implements),
+        "Inherits resolution must not emit Implements edges"
+    );
+}
+
+#[test]
 fn protocol_call_fans_out_implements_edges() {
     let (mut graph, engine_path, _, sqlite_path, memory_path) = fixture_graph();
     let base_path = PathBuf::from("/ws/src/storage/base.py");

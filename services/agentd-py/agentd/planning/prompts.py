@@ -259,9 +259,13 @@ Common patterns:
   • "Where is X defined?" — query_graph(node="<file_you_read>:X", edge_kinds=["Calls","References"])
     and look at the outbound (`->`) edge.
   • "Who calls X?" — same call, look at inbound (`<-`) edges of kind Calls.
-  • "Protocol dispatch" — when a Calls edge lands on a Protocol/ABC/interface method (you'll see
-    its declaration is a stub `def save(self, ...): ...` in some base file), query_graph that
-    declaration with edge_kinds=["Implements"] — the inbound edges fan out to the concrete classes.
+  • "Who implements / subclasses X?" — query_graph the base class with edge_kinds=["Inherits"]
+    and read the inbound (`<-`) edges: every class that declares `class Sub(X)` shows up. This is
+    how you find concrete implementers of a Protocol/ABC/interface for Python and TS. (Rust trait
+    impls also appear as Implements edges — try edge_kinds=["Inherits","Implements"] to cover
+    both.) Caveat: only NOMINAL subclassing is tracked — a Python class that conforms to a
+    Protocol structurally without declaring it as a base is not discoverable via the graph; fall
+    back to search_code for its methods.
 
 Depth=2 reaches grandchildren in one call (e.g. caller → Protocol → implementations) and is
 usually enough; depth=3 is the hard cap. limit defaults to 20; raise to 40 or 60 when needed.

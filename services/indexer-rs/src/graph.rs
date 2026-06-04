@@ -240,21 +240,25 @@ impl SymbolGraph {
         true
     }
 
-    /// Drop every `Calls` and `Implements` edge whose source node lives in the
-    /// given file. The watch loop calls this before re-parsing a file so the
-    /// next resolver pass starts from a clean slate. Pure pruning — no
-    /// node deletion, since nodes may still be referenced from other files.
+    /// Drop every resolver-managed edge (`Calls`, `Implements`, `Inherits`)
+    /// whose source node lives in the given file. The watch loop calls this
+    /// before re-parsing a file so the next resolver pass starts from a clean
+    /// slate — otherwise an edge that the new source no longer produces would
+    /// linger as an orphan. Pure pruning — no node deletion, since nodes may
+    /// still be referenced from other files.
     pub fn prune_resolved_calls_from_file(&mut self, file_path: &std::path::Path) {
         let target = file_path.to_string_lossy().to_string();
         let victims: Vec<SymbolEdge> = self
             .all_edges()
             .into_iter()
             .filter(|edge| {
-                matches!(edge.kind, EdgeKind::Calls | EdgeKind::Implements)
-                    && self
-                        .nodes
-                        .get(&edge.from)
-                        .is_some_and(|node| node.path == target)
+                matches!(
+                    edge.kind,
+                    EdgeKind::Calls | EdgeKind::Implements | EdgeKind::Inherits
+                ) && self
+                    .nodes
+                    .get(&edge.from)
+                    .is_some_and(|node| node.path == target)
             })
             .collect();
         for edge in victims {
