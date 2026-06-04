@@ -290,6 +290,61 @@ def _render_query_result(query_node: str, result: object) -> str:
             "the path/symbol exists in the workspace, then retry."
         )
 
+    # File-seeded result: file_neighbors populated, neighbors empty. Render a
+    # file-level view grouped by direction.
+    if result.file_neighbors or (not result.neighbors and ":" not in query_node):
+        return _render_file_seed(query_node, result)
+    return _render_symbol_seed(result)
+
+
+def _render_file_seed(query_node: str, result: object) -> str:
+    from agentd.retrieval.graph_walker import QueryResult  # noqa: F811
+    assert isinstance(result, QueryResult)
+
+    # matched_roots for a file seed = every node in the file (noisy). Show the
+    # file once, not all its symbols.
+    seed_file = result.matched_roots[0].file if result.matched_roots else query_node
+    out_rows = [fn for fn in result.file_neighbors if fn.direction == "out"]
+    in_rows = [fn for fn in result.file_neighbors if fn.direction == "in"]
+
+    lines: list[str] = [f"{seed_file} — graph neighbours by direction:"]
+    lines.append("")
+    lines.append(f"depends on / connects out ({len(out_rows)}):")
+    if out_rows:
+        for fn in out_rows:
+            kinds = ",".join(fn.edge_kinds)
+            count = f" x{fn.edge_count}" if fn.edge_count > 1 else ""
+            lines.append(f"  -> {fn.file:60s} {kinds}{count}")
+    else:
+        lines.append("  (none)")
+    lines.append("")
+    lines.append(f"used by / connected in ({len(in_rows)}):")
+    if in_rows:
+        for fn in in_rows:
+            kinds = ",".join(fn.edge_kinds)
+            count = f" x{fn.edge_count}" if fn.edge_count > 1 else ""
+            lines.append(f"  <- {fn.file:60s} {kinds}{count}")
+    else:
+        lines.append("  (none)")
+    if result.truncated:
+        lines.append("")
+        lines.append(
+            "[TRUNCATED: more neighbour files exist than the limit. "
+            "Re-query with a higher limit, or query a specific symbol "
+            "(path:Symbol) to narrow the walk.]"
+        )
+    lines.append("")
+    lines.append(
+        "Tip: to see WHAT connects (which function calls which), query a "
+        "specific symbol: query_graph(node=\"<file>:<Symbol>\")."
+    )
+    return "\n".join(lines)
+
+
+def _render_symbol_seed(result: object) -> str:
+    from agentd.retrieval.graph_walker import QueryResult  # noqa: F811
+    assert isinstance(result, QueryResult)
+
     lines: list[str] = []
     lines.append(f"matched_roots ({len(result.matched_roots)}):")
     for root in result.matched_roots:

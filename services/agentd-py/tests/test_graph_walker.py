@@ -84,6 +84,72 @@ def test_query_by_file_returns_all_nodes_in_file(tmp_path: Path) -> None:
     assert "other" in names
 
 
+def test_file_seed_aggregates_to_distinct_files_grouped_by_direction(tmp_path: Path) -> None:
+    """File-seeded query returns file_neighbors (file-level), not neighbors
+    (symbol-level). engine.py calls into state_machine.py + storage/base.py
+    (out), so both appear as outbound file neighbours."""
+    snapshot = _fixture(tmp_path)
+    walker = GraphWalker(snapshot, tmp_path)
+
+    result = walker.query("src/engine.py", depth=1, limit=20)
+
+    # Symbol-level list is empty; file-level list is populated.
+    assert result.neighbors == []
+    assert result.file_neighbors
+
+    out_files = {fn.file for fn in result.file_neighbors if fn.direction == "out"}
+    # run_task calls transition (state_machine.py) and save (base.py Protocol).
+    assert "src/state_machine.py" in out_files
+    assert "src/storage/base.py" in out_files
+    # The seed file itself must not appear as its own neighbour.
+    assert "src/engine.py" not in {fn.file for fn in result.file_neighbors}
+
+
+def test_file_seed_collapses_multiple_edges_into_one_row_with_count(tmp_path: Path) -> None:
+    """Two symbol edges from engine.py into state_machine.py collapse to a
+    single file row whose edge_count reflects the aggregation."""
+    snapshot = _fixture(tmp_path)
+    # Add a second call from `other` into state_machine.py:transition.
+    payload = json.loads(snapshot.read_text())
+    payload["graph"]["edges"].append(
+        {"from": "fn:engine:other", "to": "fn:sm:transition", "kind": "Calls"}
+    )
+    snapshot.write_text(json.dumps(payload), encoding="utf-8")
+    import os, time
+    ts = time.time() + 1
+    os.utime(snapshot, (ts, ts))
+
+    walker = GraphWalker(snapshot, tmp_path)
+    result = walker.query("src/engine.py", depth=1, limit=20)
+
+    sm_rows = [
+        fn for fn in result.file_neighbors
+        if fn.file == "src/state_machine.py" and fn.direction == "out"
+    ]
+    assert len(sm_rows) == 1, "should be a single aggregated row per (file, direction)"
+    assert sm_rows[0].edge_count >= 2
+
+
+def test_file_seed_truncates_on_distinct_files_not_edges(tmp_path: Path) -> None:
+    snapshot = _fixture(tmp_path)
+    walker = GraphWalker(snapshot, tmp_path)
+    # limit=1 → at most one file row; truncated set because more files exist.
+    result = walker.query("src/engine.py", depth=1, limit=1)
+    assert len(result.file_neighbors) == 1
+    assert result.truncated is True
+
+
+def test_symbol_seed_still_returns_symbol_level_neighbors(tmp_path: Path) -> None:
+    """The aggregation is file-seed only; symbol seeds keep symbol detail."""
+    snapshot = _fixture(tmp_path)
+    walker = GraphWalker(snapshot, tmp_path)
+
+    result = walker.query("src/engine.py:run_task", depth=1, limit=20, edge_kinds=["Calls"])
+    assert result.file_neighbors == []
+    assert result.neighbors
+    assert {n.node.symbol for n in result.neighbors} == {"transition", "TaskStore.save"}
+
+
 def test_calls_neighbors_resolve_to_workspace_symbols(tmp_path: Path) -> None:
     snapshot = _fixture(tmp_path)
     walker = GraphWalker(snapshot, tmp_path)

@@ -59,8 +59,12 @@ def _files_reached(
         result = walker.query(seed, depth=depth, limit=limit, edge_kinds=edge_kinds)
         for root in result.matched_roots:
             reached.add(root.file)
+        # Symbol-seeded queries populate `neighbors`; file-seeded queries
+        # populate `file_neighbors` (aggregated to distinct files).
         for n in result.neighbors:
             reached.add(n.node.file)
+        for fn in result.file_neighbors:
+            reached.add(fn.file)
     return reached
 
 

@@ -246,21 +246,29 @@ Calls), and the same for Imports/References/Inherits/Implements. This is the sam
 `transition`, ask the graph where `transition` is defined and what implementations it has, then
 read just those files — no whole-codebase grep needed.
 
+The `node` argument has two modes with different answers:
+  • FILE seed — node="<file>" (no colon). Answers "which files connect to this file", aggregated
+    to distinct files and grouped by direction: "depends on / connects out" (files this file
+    imports or calls into) and "used by / connected in" (files that import or call into it). Use
+    this first, right after a file lands in your evidence, to map its blast radius.
+  • SYMBOL seed — node="<file>:Symbol". Answers "what does this symbol call / who calls it",
+    symbol by symbol with line numbers. Use this to drill into a specific function.
+
 Common patterns:
+  • "What is engine.py wired to?" — query_graph(node="<file>") → the out/in file lists.
   • "Where is X defined?" — query_graph(node="<file_you_read>:X", edge_kinds=["Calls","References"])
-    and look at the outbound edge.
+    and look at the outbound (`->`) edge.
   • "Who calls X?" — same call, look at inbound (`<-`) edges of kind Calls.
   • "Protocol dispatch" — when a Calls edge lands on a Protocol/ABC/interface method (you'll see
     its declaration is a stub `def save(self, ...): ...` in some base file), query_graph that
     declaration with edge_kinds=["Implements"] — the inbound edges fan out to the concrete classes.
-  • "What does this file depend on?" — query_graph(node="<file>") with no symbol, edge_kinds=["Imports"].
 
 Depth=2 reaches grandchildren in one call (e.g. caller → Protocol → implementations) and is
 usually enough; depth=3 is the hard cap. limit defaults to 20; raise to 40 or 60 when needed.
 
-Do NOT use query_graph as a substitute for read_file — it tells you WHERE symbols live, not what
-they do. Pattern: read_file to understand a function, query_graph to find the next file to read,
-read_file again.
+Do NOT use query_graph as a substitute for read_file — it tells you WHERE symbols/files connect,
+not what they do. Pattern: read_file to understand a function, query_graph to find the next file
+to read, read_file again.
 
 BEFORE EMITTING THE PLAN, VERIFY:
 □ Each targeted file appeared in at least one search or read result this session (or pre_explored_context).
