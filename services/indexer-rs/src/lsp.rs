@@ -1452,6 +1452,7 @@ while True:
             lsp_startup_timeout_ms: 2_000,
             lsp_request_timeout_ms: 2_000,
             snapshot_output_path: root.join("snapshot.json"),
+            backend_url: None,
         };
 
         let mut adapter = LspAdapter::new(&config);
@@ -1521,6 +1522,7 @@ while True:
             lsp_startup_timeout_ms: 100,
             lsp_request_timeout_ms: 100,
             snapshot_output_path: root.join("snapshot.json"),
+            backend_url: None,
         };
 
         let mut adapter = LspAdapter::new(&config);

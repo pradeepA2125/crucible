@@ -35,6 +35,62 @@ export function buildService() {
 }
 
 #[test]
+fn typescript_parser_emits_inherits_placeholders_for_extends_and_implements() {
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
+    let mut graph = SymbolGraph::default();
+    // Class extends a base AND implements an interface; interface extends
+    // another interface. The legacy regex captured only `extends`; the walker
+    // must capture both, with placeholders for resolution.
+    let source = r#"
+export class TaskPoller extends BasePoller implements IPoller {
+  poll() {}
+}
+export interface IPoller extends IDisposable {
+  poll(): void;
+}
+"#;
+    parser
+        .parse_file(Path::new("src/poller.ts"), source, &mut graph)
+        .expect("parse");
+
+    let edges = graph.all_edges();
+    // Inherits edges to the external bases (pre-resolution).
+    let inherits_targets: Vec<String> = edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Inherits)
+        .map(|e| e.to.clone())
+        .collect();
+    assert!(
+        inherits_targets.iter().any(|t| t.contains("BasePoller")),
+        "missing extends edge to BasePoller; got {inherits_targets:?}"
+    );
+    assert!(
+        inherits_targets.iter().any(|t| t.contains("IPoller")),
+        "missing implements edge to IPoller; got {inherits_targets:?}"
+    );
+    assert!(
+        inherits_targets.iter().any(|t| t.contains("IDisposable")),
+        "missing interface extends edge to IDisposable; got {inherits_targets:?}"
+    );
+
+    // Each heritage base has a matching Inherits placeholder for the resolver.
+    let placeholders = graph.take_placeholders();
+    let inherits_placeholders: Vec<&str> = placeholders
+        .iter()
+        .filter(|p| p.edge_kind == EdgeKind::Inherits)
+        .map(|p| p.external_to_id.as_str())
+        .collect();
+    assert!(
+        inherits_placeholders.iter().any(|t| t.contains("BasePoller")),
+        "no Inherits placeholder for BasePoller; got {inherits_placeholders:?}"
+    );
+    assert!(
+        inherits_placeholders.iter().any(|t| t.contains("IPoller")),
+        "no Inherits placeholder for IPoller (implements); got {inherits_placeholders:?}"
+    );
+}
+
+#[test]
 fn python_parser_emits_symbols_and_edges() {
     use std::io::Write;
     // Create a real workspace so cross-file import resolution can be tested.

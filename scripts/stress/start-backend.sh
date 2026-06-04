@@ -454,16 +454,30 @@ fi
 
 # Self-updating index: launch the incremental indexer watcher. It re-indexes changed source
 # files → rewrites the snapshot (atomic) → notifies the backend via AI_EDITOR_BACKEND_URL, which
-# delta-re-embeds. LSP off here — embedding only needs the tree-sitter symbol graph, and a full
-# LSP (rust-analyzer/pyright) is memory-heavy.
+# delta-re-embeds.
+#
+# LSP ON here: the watcher is where Calls/Implements/Inherits edges get resolved to workspace
+# symbols (pyright/tsserver/rust-analyzer answer textDocument/definition + implementation). Those
+# resolved edges are what make graph_neighbor_files and the query_graph tool useful — without them
+# the symbol graph is keyword/tree-sitter only and the planner can't navigate cross-file structure.
+# The watcher is a single long-lived process (one LSP warmup per backend launch, then incremental
+# per-file resolution), so the memory/warmup cost is paid once, not per task. A language server
+# that fails to start is disabled gracefully and the other languages still resolve. Override the
+# LSP commands/timeouts below via env if your toolchain differs.
 _INDEXER_BIN="$AGENTD_DIR/../indexer-rs/target/release/ai-editor-indexer"
 _WATCHER_PID=""
 if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_BIN" ]]; then
-  AI_EDITOR_BACKEND_URL="http://localhost:${PORT}" AI_EDITOR_LSP_ENABLED=false \
+  AI_EDITOR_BACKEND_URL="http://localhost:${PORT}" \
+    AI_EDITOR_LSP_ENABLED="${AI_EDITOR_LSP_ENABLED:-true}" \
+    AI_EDITOR_LSP_PY_CMD="${AI_EDITOR_LSP_PY_CMD:-pyright-langserver --stdio}" \
+    AI_EDITOR_LSP_TS_CMD="${AI_EDITOR_LSP_TS_CMD:-typescript-language-server --stdio}" \
+    AI_EDITOR_LSP_RS_CMD="${AI_EDITOR_LSP_RS_CMD:-rust-analyzer}" \
+    AI_EDITOR_LSP_STARTUP_TIMEOUT_MS="${AI_EDITOR_LSP_STARTUP_TIMEOUT_MS:-180000}" \
+    AI_EDITOR_LSP_REQUEST_TIMEOUT_MS="${AI_EDITOR_LSP_REQUEST_TIMEOUT_MS:-20000}" \
     "$_INDEXER_BIN" index --workspace "$WORKSPACE" --snapshot-path "$SNAPSHOT_PATH" --watch true \
     >> "$LOG_DIR/indexer-watch.log" 2>&1 &
   _WATCHER_PID=$!
-  echo "==> indexer watch started (self-updating index): pid=$_WATCHER_PID log=$LOG_DIR/indexer-watch.log"
+  echo "==> indexer watch started (self-updating index, LSP-resolved edges): pid=$_WATCHER_PID log=$LOG_DIR/indexer-watch.log"
 elif [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
   echo "==> indexer watch NOT started — binary missing: $_INDEXER_BIN (build: cargo build --release in services/indexer-rs)" >&2
 fi

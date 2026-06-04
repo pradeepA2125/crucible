@@ -360,7 +360,17 @@ class RetrievalArtifactClient:
         if not auto_indexer:
             return None
 
+        # This is the LAST-RESORT fallback: agentd shells out synchronously
+        # (subprocess.run with a timeout) when a task needs context but no
+        # snapshot exists and the watcher hasn't produced one yet. Force LSP
+        # OFF here — an LSP warmup (rust-analyzer can take 40-120s) would blow
+        # the auto-index timeout and stall the task. The result is a fast,
+        # tree-sitter-only snapshot (unresolved Calls/Implements/Inherits);
+        # the self-updating watcher, which DOES run LSP, re-resolves it within
+        # ~a minute and overwrites this snapshot. So the unresolved graph is a
+        # brief bootstrap state, not the steady state.
         return (
+            "AI_EDITOR_LSP_ENABLED=0 "
             f"{shlex.quote(auto_indexer)} index "
             f"--workspace {shlex.quote(workspace)} "
             f"--snapshot-path {shlex.quote(str(snapshot_path))} "

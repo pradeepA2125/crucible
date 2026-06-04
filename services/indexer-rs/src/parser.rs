@@ -177,7 +177,13 @@ fn extract_typescript(
                     kind: EdgeKind::References,
                 });
 
-                for parent_name in extract_extends_targets(&node_text(node, source).unwrap_or_default()) {
+                // Heritage (extends + implements) with precise positions, so
+                // the resolver can rewrite each external base to its workspace
+                // class/interface via LSP `definition`. The old regex path
+                // handled only `extends` and gave no positions; this also
+                // captures `implements IFoo` — the TS analogue of a Python
+                // Protocol implementer.
+                for (parent_name, pos) in typescript_heritage_targets(node, source) {
                     let parent_id = upsert_external_symbol(
                         graph,
                         file_path,
@@ -188,8 +194,16 @@ fn extract_typescript(
                     );
                     graph.add_edge(SymbolEdge {
                         from: class_id.clone(),
-                        to: parent_id,
+                        to: parent_id.clone(),
                         kind: EdgeKind::Inherits,
+                    });
+                    graph.push_placeholder(PlaceholderEdge {
+                        from_id: class_id.clone(),
+                        external_to_id: parent_id,
+                        file_path: file_path.to_path_buf(),
+                        line: pos.row as u32,
+                        character: pos.column as u32,
+                        edge_kind: EdgeKind::Inherits,
                     });
                 }
 
@@ -213,7 +227,7 @@ fn extract_typescript(
                     to: interface_id.clone(),
                     kind: EdgeKind::References,
                 });
-                for parent_name in extract_extends_targets(&node_text(node, source).unwrap_or_default()) {
+                for (parent_name, pos) in typescript_heritage_targets(node, source) {
                     let parent_id = upsert_external_symbol(
                         graph,
                         file_path,
@@ -224,8 +238,16 @@ fn extract_typescript(
                     );
                     graph.add_edge(SymbolEdge {
                         from: interface_id.clone(),
-                        to: parent_id,
+                        to: parent_id.clone(),
                         kind: EdgeKind::Inherits,
+                    });
+                    graph.push_placeholder(PlaceholderEdge {
+                        from_id: interface_id.clone(),
+                        external_to_id: parent_id,
+                        file_path: file_path.to_path_buf(),
+                        line: pos.row as u32,
+                        character: pos.column as u32,
+                        edge_kind: EdgeKind::Inherits,
                     });
                 }
             }
@@ -1715,29 +1737,110 @@ fn extract_quoted_fragment(text: &str) -> Option<String> {
     None
 }
 
-fn extract_extends_targets(text: &str) -> Vec<String> {
-    let compact = text.replace('\n', " ");
-    let Some(index) = compact.find("extends") else {
-        return Vec::new();
-    };
-    let mut tail = compact[index + "extends".len()..].trim().to_string();
-    for marker in ["implements", "{", "("] {
-        if let Some(position) = tail.find(marker) {
-            tail = tail[..position].trim().to_string();
+/// Collect (base_name, position) for every type a class/interface extends or
+/// implements, walking the tree-sitter heritage subtree. Position points at the
+/// base identifier so the resolver can ask the LSP for its definition and
+/// rewrite the external Inherits edge to the workspace class/interface. Unlike
+/// the legacy `extract_extends_targets` regex, this captures BOTH `extends` and
+/// `implements`, and skips generic type arguments (`extends Foo<Bar>` records
+/// only `Foo`).
+fn typescript_heritage_targets(
+    node: Node<'_>,
+    source: &str,
+) -> Vec<(String, tree_sitter::Point)> {
+    let mut out: Vec<(String, tree_sitter::Point)> = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            // Classes wrap clauses in a `class_heritage`; interfaces use the
+            // clause node directly.
+            "class_heritage" => {
+                let mut c2 = child.walk();
+                for clause in child.children(&mut c2) {
+                    collect_ts_heritage_clause(clause, source, &mut out);
+                }
+            }
+            "extends_clause" | "implements_clause" | "extends_type_clause" => {
+                collect_ts_heritage_clause(child, source, &mut out);
+            }
+            _ => {}
         }
     }
-
-    let mut targets = Vec::new();
-    for part in tail.split(',') {
-        if let Some(identifier) = first_identifier(part.trim()) {
-            targets.push(identifier);
-        }
-    }
-    targets.sort();
-    targets.dedup();
-    targets
+    out
 }
 
+fn collect_ts_heritage_clause(
+    clause: Node<'_>,
+    source: &str,
+    out: &mut Vec<(String, tree_sitter::Point)>,
+) {
+    if !matches!(
+        clause.kind(),
+        "extends_clause" | "implements_clause" | "extends_type_clause"
+    ) {
+        return;
+    }
+    let mut cursor = clause.walk();
+    for base in clause.children(&mut cursor) {
+        match base.kind() {
+            "identifier" | "type_identifier" => {
+                if let Some(text) = node_text(base, source) {
+                    out.push((text, base.start_position()));
+                }
+            }
+            // `a.b.C` / `Foo.Bar` — resolve at the last identifier so the LSP
+            // points at the actual type, not the namespace head.
+            "nested_type_identifier" | "member_expression" => {
+                if let Some(pair) = ts_last_identifier_with_pos(base, source) {
+                    out.push(pair);
+                }
+            }
+            // `Foo<T>` — record only the name, not the type argument.
+            "generic_type" => {
+                if let Some(name_node) = base.child(0) {
+                    match name_node.kind() {
+                        "identifier" | "type_identifier" => {
+                            if let Some(text) = node_text(name_node, source) {
+                                out.push((text, name_node.start_position()));
+                            }
+                        }
+                        "nested_type_identifier" | "member_expression" => {
+                            if let Some(pair) = ts_last_identifier_with_pos(name_node, source) {
+                                out.push(pair);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // `extends` / `implements` keywords and `,` separators — ignore.
+            _ => {}
+        }
+    }
+}
+
+/// Find the last identifier-like leaf under `node` (for dotted names like
+/// `a.b.C`, returns `C` with its position).
+fn ts_last_identifier_with_pos(
+    node: Node<'_>,
+    source: &str,
+) -> Option<(String, tree_sitter::Point)> {
+    fn rec<'a>(n: Node<'a>, last: &mut Option<Node<'a>>) {
+        if matches!(
+            n.kind(),
+            "identifier" | "type_identifier" | "property_identifier"
+        ) {
+            *last = Some(n);
+        }
+        let mut cursor = n.walk();
+        for child in n.children(&mut cursor) {
+            rec(child, last);
+        }
+    }
+    let mut last: Option<Node<'_>> = None;
+    rec(node, &mut last);
+    last.and_then(|n| node_text(n, source).map(|t| (t, n.start_position())))
+}
 
 fn extract_rust_use_module(text: &str) -> Option<String> {
     let compact = text.replace('\n', " ");
