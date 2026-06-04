@@ -178,12 +178,17 @@ class DefaultReasoningEngine(ReasoningEngine):
         on_thinking: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         from agentd.planning.prompts import (
+            _DEFAULT_MAX_TOOL_CALLS,
             PLANNING_STEP_RESPONSE_SCHEMA,
             build_planning_step_payload,
             format_planning_system_prompt,
         )
         revision_mode = "revision_request" in plan_context
-        system_instructions = format_planning_system_prompt(tool_definitions, revision_mode=revision_mode)
+        _raw_max = plan_context.get("max_tool_calls", _DEFAULT_MAX_TOOL_CALLS)
+        max_calls = int(_raw_max) if isinstance(_raw_max, (int, str)) else _DEFAULT_MAX_TOOL_CALLS
+        system_instructions = format_planning_system_prompt(
+            tool_definitions, max_calls=max_calls, revision_mode=revision_mode
+        )
         user_payload = build_planning_step_payload(plan_context, history, tool_definitions)
         result = await self._transport.generate_json(
             model=self._model,

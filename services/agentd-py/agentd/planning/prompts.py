@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import json
 
+# Fallback when the caller does not thread the real budget through plan_context.
+# Mirrors TaskBudget.max_planning_tool_calls / max_revision_tool_calls in domain/models.py.
+_DEFAULT_MAX_TOOL_CALLS = 50
+
 # Flat schema compatible with Gemini's constrained JSON decoding.
 # Gemini does not support oneOf/anyOf discriminated unions — it deadlocks on them.
 # All fields are optional except "type" and "thought"; the system prompt instructs
@@ -53,8 +57,10 @@ PLANNING_STEP_RESPONSE_SCHEMA: dict[str, object] = {
 PLANNING_SYSTEM_PROMPT = """\
 You are an expert software architect planning code changes for a task.
 You have read-only access to tools to explore the workspace before committing to a plan.
-You have a budget of roughly 15 tool calls. Use them efficiently — explore the uncertain parts,
-then emit_plan. Do not keep searching once you know the target files and the change needed.
+You have a budget of {max_calls} tool calls before you must commit. There is no penalty for
+exploring thoroughly — use as many as you need to become confident. Explore the uncertain parts,
+then emit_plan once you know the target files and the change needed. Do not rush to commit while
+anything material is still unknown; equally, do not keep re-reading code you already understand.
 
 AVAILABLE TOOLS:
 {tools_json}
@@ -355,10 +361,11 @@ Variant 3 — emit revision (required fields: type, thought, revised_steps, reve
 def format_planning_system_prompt(
     tool_definitions: list[dict[str, object]],
     *,
+    max_calls: int = _DEFAULT_MAX_TOOL_CALLS,
     revision_mode: bool = False,
 ) -> str:
     tools_json = json.dumps(tool_definitions, indent=2)
-    base = PLANNING_SYSTEM_PROMPT.format(tools_json=tools_json)
+    base = PLANNING_SYSTEM_PROMPT.format(tools_json=tools_json, max_calls=max_calls)
     if revision_mode:
         base += REVISION_SYSTEM_PROMPT_SUFFIX
     return base
@@ -396,42 +403,69 @@ def build_planning_step_payload(
     if plan_feedback:
         payload["plan_feedback"] = plan_feedback
 
+    # Each completed iteration adds 2 history entries (assistant + tool_result).
+    iteration = len(history) // 2
+    _raw_max = plan_context.get("max_tool_calls", _DEFAULT_MAX_TOOL_CALLS)
+    max_calls = int(_raw_max) if isinstance(_raw_max, (int, str)) else _DEFAULT_MAX_TOOL_CALLS
+    # query_graph is only registered when an index snapshot exists — gate the
+    # per-turn nudge on its actual availability so we never point the model at a
+    # tool it cannot call.
+    has_query_graph = any(t.get("name") == "query_graph" for t in tool_definitions)
+    graph_hint = (
+        "Once you have read a target file, use "
+        'query_graph(node="<file>" or "<file>:Symbol") to map its blast radius — the callers, '
+        "callees, and implementers you may also need to change. Use it to DISCOVER connected files "
+        "you have NOT yet read, then read only those new files; do not re-read files already in "
+        "your history, and do not re-query a node you have already mapped. "
+        if has_query_graph
+        else ""
+    )
+    # Always report the live budget so the model can pace itself — no artificial
+    # scarcity, just the real count. Pressure to commit is applied ONLY on the
+    # final permitted call (iteration == max_calls - 1); below that the model is
+    # free to keep exploring.
+    payload["budget_status"] = f"{iteration}/{max_calls} tool calls used"
+
     if history:
         payload["conversation_history"] = history
-        # Each completed iteration adds 2 history entries (assistant + tool_result).
-        iteration = len(history) // 2
-        if iteration >= 12:
+        if iteration >= max_calls - 1:
             payload["instruction"] = (
-                f"⚠ BUDGET: {iteration} tool calls used. You MUST pace up the process NOW. "
-                "Do NOT call any more tools unless a file is completely absent from your history. "
-                "Any file you have evidence for is sufficient — commit to the plan immediately."
-            )
-        elif iteration >= 6:
-            payload["instruction"] = (
-                f"You have used {iteration} tool calls. pace up the process. "
-                "Only call another tool if a specific file or symbol is still UNKNOWN. "
-                "focus now. Output your NEXT action."
+                f"⚠ FINAL TOOL CALL: you have used {iteration}/{max_calls} tool calls. "
+                "This is your LAST opportunity to call a tool — after this you MUST emit_plan. "
+                "Read anything still missing now, then commit to the plan."
             )
         else:
             payload["instruction"] = (
-                "Continue exploring. Remember: every search result with a line number REQUIRES a "
-                "follow-up read_file call to read that section — do not search again before reading. "
-                "When you have read the key sections for each target file, emit_plan. Output your NEXT action."
+                f"You have used {iteration} of your {max_calls} tool calls — continue exploring "
+                "until you are confident; there is no penalty for using more. Remember: every search "
+                "result with a line number REQUIRES a follow-up read_file call to read that section — "
+                "do not search again before reading. " + graph_hint + "When you have read the key "
+                "sections for each target file, emit_plan. Output your NEXT action."
             )
     elif plan_feedback:
         payload["instruction"] = (
-            "You have user feedback on a previous plan. Your job is to incorporate that feedback "
-            "and emit_plan quickly. You MAY call 1-3 targeted search_code or read_file calls ONLY "
-            "if the feedback references code you have not yet seen. "
-            "Do NOT re-read files already in pre_explored_context or initial_context. "
-            "Output your first action as a JSON object."
+            "You have user feedback on a previous plan. Incorporate that feedback into a revised "
+            "plan. Explore as much as you need to address it properly — you have your full "
+            f"{max_calls}-call budget. Read and re-reason about any code the feedback references "
+            "that you have not already examined; do not rush to emit_plan before you understand "
+            "what the feedback is asking for. Avoid re-reading files already in pre_explored_context "
+            "or initial_context unless the feedback specifically calls them into question. When you "
+            "have the evidence to satisfy the feedback, emit_plan. Output your first action as a "
+            "JSON object."
         )
     else:
+        graph_intro = (
+            "Plan your exploration: search to locate targets, read them, then use query_graph to "
+            "map each target's blast radius (callers, callees, implementers) so connected files "
+            "that also need changes end up in the plan. "
+            if has_query_graph
+            else ""
+        )
         payload["instruction"] = (
             "Start by SEARCHING for the relevant code — call search_code or search_semantic "
             "with a function, class, or pattern name from the goal. "
-            "Do NOT call read_file as your first action. "
-            "Output your first action as a JSON object."
+            "Do NOT call read_file as your first action. " + graph_intro
+            + "Output your first action as a JSON object."
         )
 
     return payload

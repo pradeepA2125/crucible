@@ -468,7 +468,13 @@ def test_real_subsequent_turn_payload_includes_history(tmp_path: Path) -> None:
 
     assert "conversation_history" in payload
     assert payload["conversation_history"] == history
-    assert "Continue exploring" in str(payload["instruction"])
+    instruction = str(payload["instruction"])
+    assert "continue exploring" in instruction.lower()
+    # Live budget is surfaced both as a standalone status and inlined in the
+    # instruction so the model knows which iteration it is on. One history
+    # entry pair == iteration 1; default budget is 50.
+    assert payload["budget_status"] == "1/50 tool calls used"
+    assert "1 of your 50" in instruction
 
 
 @pytest.mark.asyncio
@@ -570,10 +576,11 @@ async def test_emit_plan_with_real_planning_inputs(tmp_path: Path) -> None:
     assert "# Plan" in str(result["plan_markdown"])
     assert "routes.py" in str(result["files_examined"])
 
-    # Subsequent-turn payload carries history and the "Continue" instruction
+    # Subsequent-turn payload carries history and the "continue exploring" instruction
     user_json = json.loads(client.calls[0]["body"]["messages"][1]["content"])
     assert "conversation_history" in user_json
-    assert "Continue exploring" in user_json["instruction"]
+    assert "continue exploring" in user_json["instruction"].lower()
+    assert "tool calls used" in user_json["budget_status"]
 
 
 @pytest.mark.asyncio

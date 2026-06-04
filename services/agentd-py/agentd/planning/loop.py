@@ -115,6 +115,9 @@ class PlanningLoop:
         max_calls: int,
         emit_type: str,
     ) -> PlanningResult | PlanRevisionResult:
+        # Thread the real budget into plan_context so the prompt builders report
+        # an accurate "N/max" status and only pressure the model on the final call.
+        plan_context = {**plan_context, "max_tool_calls": max_calls}
         trace = AgentToolTrace(step_id="planning")
         history: list[dict[str, object]] = []
         # key = (tool_name, canonical_args_json) → first iteration it was called
