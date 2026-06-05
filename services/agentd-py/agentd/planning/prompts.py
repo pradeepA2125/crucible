@@ -50,9 +50,41 @@ PLANNING_STEP_RESPONSE_SCHEMA: dict[str, object] = {
             "type": "string",
             "description": "Human-readable summary of what changed and why (required for emit_revision)",
         },
+        # emit_plan_patch fields (feedback rounds only)
+        "ops": {
+            "type": "array",
+            "description": "search_replace ops editing the current plan (required for emit_plan_patch)",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["search_replace"]},
+                    "search": {"type": "string", "description": "exact, unique snippet copied from the current plan"},
+                    "replace": {"type": "string", "description": "replacement text"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["op", "search", "replace"],
+            },
+        },
     },
     "required": ["type", "thought"],
 }
+
+
+def planning_response_schema(*, allow_plan_patch: bool) -> dict[str, object]:
+    """Return the planning response schema, gating emit_plan_patch per round.
+
+    emit_plan_patch is only offered on feedback rounds (a plan exists to patch).
+    Returns a copy — never mutates the module-level base schema.
+    """
+    import copy
+
+    schema = copy.deepcopy(PLANNING_STEP_RESPONSE_SCHEMA)
+    type_prop = schema["properties"]["type"]  # type: ignore[index]
+    enum = list(type_prop["enum"])  # type: ignore[index]
+    if allow_plan_patch and "emit_plan_patch" not in enum:
+        enum.append("emit_plan_patch")
+    type_prop["enum"] = enum  # type: ignore[index]
+    return schema
 
 PLANNING_SYSTEM_PROMPT = """\
 You are an expert software architect planning code changes for a task.
@@ -62,6 +94,13 @@ NUMBER of tool calls — but HOW you explore is critical (see CONTEXT DISCIPLINE
 uncertain parts, then emit_plan once you know the target files and the change needed. Do not rush
 to commit while anything material is still unknown; equally, do not keep re-reading code you
 already understand.
+
+FEEDBACK ROUNDS: when the conversation already contains a plan you produced and the user has
+given feedback on it, prefer emit_plan_patch — a list of search_replace ops that edit the
+current plan in place — for small or scattered changes. Each op's "search" MUST be an exact,
+unique snippet copied verbatim from the current plan; "replace" is the new text. Use emit_plan
+(a full rewrite) only when the change is large or structural. emit_plan_patch is offered only
+on feedback rounds.
 
 ⚠ CONTEXT DISCIPLINE — THIS DETERMINES WHETHER YOU SUCCEED:
 Your context window — not your tool-call count — is the scarce resource. Every file you read is

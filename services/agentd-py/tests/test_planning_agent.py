@@ -308,3 +308,24 @@ def test_no_cross_step_duplicates_with_different_files():
         {"id": "s2", "targets": [{"path": "c.py"}, {"path": "d.py"}]},
     ]
     assert _validate_no_duplicate_file_targets(steps) == []
+
+
+# --- emit_plan_patch schema gating (Task 2) ---
+from agentd.planning.prompts import planning_response_schema
+
+
+def test_emit_plan_patch_absent_when_no_current_plan() -> None:
+    schema = planning_response_schema(allow_plan_patch=False)
+    assert "emit_plan_patch" not in schema["properties"]["type"]["enum"]
+
+
+def test_emit_plan_patch_present_on_feedback_round() -> None:
+    schema = planning_response_schema(allow_plan_patch=True)
+    assert "emit_plan_patch" in schema["properties"]["type"]["enum"]
+    assert "ops" in schema["properties"]
+
+
+def test_planning_response_schema_does_not_mutate_base() -> None:
+    from agentd.planning.prompts import PLANNING_STEP_RESPONSE_SCHEMA
+    planning_response_schema(allow_plan_patch=True)
+    assert "emit_plan_patch" not in PLANNING_STEP_RESPONSE_SCHEMA["properties"]["type"]["enum"]
