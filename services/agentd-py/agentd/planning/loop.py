@@ -24,6 +24,19 @@ logger = logging.getLogger(__name__)
 _MAX_PLANNING_RESULT_CHARS = int(os.environ.get("AI_EDITOR_PLANNING_RESULT_MAX_CHARS", "100000"))
 
 
+def _assistant_turn(response: dict[str, object]) -> dict[str, object]:
+    """Build the assistant history entry for a model turn WITHOUT its 'thought'.
+
+    Persisting the model's verbatim 'thought' lets a weak model copy-continue its own
+    prior reasoning, which compounds into a repetition attractor (the same call emitted
+    turn after turn). Keep the actionable fields (type/tool/args) so history still
+    reflects what action was taken; drop the free-text reasoning. Append-only, so the
+    KV-cache prefix is unaffected.
+    """
+    persisted = {k: v for k, v in response.items() if k != "thought"}
+    return {"role": "assistant", "content": json.dumps(persisted, default=str)}
+
+
 class PlanningBudgetExceededError(Exception):
     """Raised when the planning loop exhausts its tool-call budget."""
 
@@ -94,8 +107,13 @@ class PlanningLoop:
         budget: TaskBudget,
         *,
         revision_mode: bool = False,
+        seed_history: list[dict[str, object]] | None = None,
     ) -> PlanningResult | PlanRevisionResult:
-        """Run one planning loop. Returns PlanningResult or PlanRevisionResult."""
+        """Run one planning loop. Returns PlanningResult or PlanRevisionResult.
+
+        seed_history: prior planning turns to replay as the cacheable prefix (a
+        feedback round passes the persisted history with the feedback appended).
+        """
         tool_defs = [t.model_dump() for t in self._registry.definitions()]
         max_calls = (
             budget.max_revision_tool_calls if revision_mode else budget.max_planning_tool_calls
@@ -106,6 +124,7 @@ class PlanningLoop:
             tool_defs=tool_defs,
             max_calls=max_calls,
             emit_type=emit_type,
+            seed_history=seed_history,
         )
 
     async def _run_single_pass(
@@ -114,16 +133,25 @@ class PlanningLoop:
         tool_defs: list[dict[str, object]],
         max_calls: int,
         emit_type: str,
+        seed_history: list[dict[str, object]] | None = None,
     ) -> PlanningResult | PlanRevisionResult:
         # Thread the real budget into plan_context so the prompt builders report
         # an accurate "N/max" status and only pressure the model on the final call.
         plan_context = {**plan_context, "max_tool_calls": max_calls}
         trace = AgentToolTrace(step_id="planning")
-        history: list[dict[str, object]] = []
+        # Replay any prior planning turns verbatim, then grow by append — the seed is
+        # the KV-cache prefix the continuation reuses.
+        history: list[dict[str, object]] = [dict(m) for m in seed_history] if seed_history else []
         # key = (tool_name, canonical_args_json) → first iteration it was called
         _seen_calls: dict[str, int] = {}
 
         _MAX_STEP_RETRIES = 2
+        # Weak local models (e.g. qwen3.6 under a large context) intermittently
+        # return an empty/typeless JSON object. Treat that as a recoverable turn —
+        # inject a correction and retry — rather than killing the whole task. Bail
+        # only after this many CONSECUTIVE malformed responses.
+        _MAX_MALFORMED = 3
+        _consecutive_malformed = 0
 
         for iteration in range(max_calls + 1):
             def _on_thinking(chunk: str, _iter: int = iteration) -> None:
@@ -150,6 +178,23 @@ class PlanningLoop:
                         "[plan] create_planning_step failed at iter=%d attempt=%d/%d: %s",
                         iteration, _attempt + 1, _MAX_STEP_RETRIES + 1, exc,
                     )
+                    # A parse failure (e.g. the model returned prose with no JSON object)
+                    # is input-determined: retrying with the SAME prompt reproduces the
+                    # SAME unparseable output. Inject a correction into history so the next
+                    # attempt sees a CHANGED prompt and has a real chance to recover.
+                    # Append a balanced (assistant + tool_result) pair to match the
+                    # malformed-response path and keep history pairing intact.
+                    if _attempt < _MAX_STEP_RETRIES:
+                        history.append({"role": "assistant", "content": "{}"})
+                        history.append({
+                            "role": "tool_result",
+                            "tool": "",
+                            "content": (
+                                "Your previous reply had no JSON object. Respond with ONLY a "
+                                "single JSON object matching the required schema — no prose, no "
+                                "explanation, no markdown fences."
+                            ),
+                        })
             if last_step_exc is not None:
                 raise last_step_exc
 
@@ -171,11 +216,17 @@ class PlanningLoop:
                     "type": "planning_complete",
                     "payload": {"files_examined": files_examined, "confidence": confidence},
                 })
+                # Record the emitted plan as the final history turn so a later feedback
+                # round REPLAYS the actual plan being revised (not just the exploration
+                # that led to it). _assistant_turn keeps plan_markdown — it strips only
+                # the free-text 'thought'.
+                history.append(_assistant_turn(response))
                 return PlanningResult(
                     plan_markdown=str(plan_markdown),
                     files_examined=files_examined,
                     confidence=confidence,  # type: ignore[arg-type]
                     tool_trace=trace,
+                    conversation_history=history,
                 )
 
             if action_type == "emit_revision":
@@ -208,11 +259,28 @@ class PlanningLoop:
                 )
 
             if action_type != "tool_call":
-                raise PlanningBudgetExceededError(
-                    f"Unexpected planning response type '{action_type}' at iteration {iteration}; "
-                    "expected tool_call, emit_plan, or emit_revision",
-                    partial_trace=trace,
+                _consecutive_malformed += 1
+                if _consecutive_malformed > _MAX_MALFORMED:
+                    raise PlanningBudgetExceededError(
+                        f"Planning model returned {_consecutive_malformed} consecutive malformed "
+                        f"responses (last type {action_type!r}) at iteration {iteration}; "
+                        "expected tool_call, emit_plan, or emit_revision",
+                        partial_trace=trace,
+                    )
+                logger.warning(
+                    "[plan] iter=%d/%d  MALFORMED response (type=%r, %d/%d) — injecting correction",
+                    iteration + 1, max_calls, action_type, _consecutive_malformed, _MAX_MALFORMED,
                 )
+                _correction = (
+                    "Your previous response was empty or had no valid 'type'. Reply with EXACTLY "
+                    "ONE JSON object whose 'type' is one of: 'tool_call' (explore with a tool), "
+                    "'emit_plan' (you have enough context — include plan_markdown, files_examined, "
+                    "confidence), or 'emit_revision'. Do NOT return an empty object."
+                )
+                history.append(_assistant_turn(response))
+                history.append({"role": "tool_result", "tool": "", "content": _correction})
+                continue
+            _consecutive_malformed = 0
 
             if iteration >= max_calls:
                 raise PlanningBudgetExceededError(
@@ -252,7 +320,13 @@ class PlanningLoop:
                     "[plan] iter=%d/%d  DUPLICATE BLOCKED: tool=%s first_seen_at_iter=%d",
                     iteration + 1, max_calls, tool_name, _first_iter,
                 )
-                history.append({"role": "assistant", "content": json.dumps(response, default=str)})
+                # Prong 1: do NOT echo the rejected duplicate call back into history.
+                # Re-appending it (with its thought) compounds into a repetition attractor
+                # that statistically drowns out this correction — the model just continues
+                # its own dominant pattern. A neutral placeholder preserves the
+                # assistant/tool_result pairing without reinforcing the repeat. Append-only,
+                # so the KV-cache prefix is unaffected.
+                history.append({"role": "assistant", "content": "{}"})
                 history.append({"role": "tool_result", "tool": tool_name, "content": _dedup_msg})
                 continue
             _seen_calls[_call_key] = iteration + 1
@@ -285,7 +359,7 @@ class PlanningLoop:
                 is_error=tool_output.is_error,
             ))
 
-            history.append({"role": "assistant", "content": json.dumps(response, default=str)})
+            history.append(_assistant_turn(response))
             history.append({
                 "role": "tool_result",
                 "tool": tool_name,

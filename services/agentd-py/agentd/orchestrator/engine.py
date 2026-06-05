@@ -122,6 +122,24 @@ def _is_nearby_file(out_of_scope: str, allowed: list[str]) -> bool:
     return False
 
 
+def _format_feedback_turn(feedback: str) -> dict[str, object]:
+    """Wrap user plan-feedback as the final turn of the planning conversation.
+
+    Appended after the replayed history so the model reads it as the latest message
+    without disturbing the cacheable prefix that precedes it.
+    """
+    return {
+        "role": "user",
+        "content": (
+            "The user reviewed your plan and gave this feedback:\n\n"
+            f"{feedback}\n\n"
+            "Revise the plan to address it. Explore further only if the feedback raises "
+            "something you have not already examined; otherwise emit_plan with the "
+            "revised plan."
+        ),
+    }
+
+
 def _merge_validation_results(a: "ValidationResult", b: "ValidationResult") -> "ValidationResult":
     return ValidationResult(
         success=a.success and b.success,
@@ -291,14 +309,11 @@ class AgentOrchestrator:
                 f"Confidence: {planning_result.confidence}"
             )
             task.plan_markdown = planning_result.plan_markdown
-            # Persist planning tool results so feedback re-planning can skip re-reading.
-            task.planning_explore_context = [
-                {"tool": c.tool_name, "args": c.arguments, "result": r.output, "is_error": r.is_error}
-                for c, r in zip(
-                    planning_result.tool_trace.calls,
-                    planning_result.tool_trace.results,
-                )
-            ]
+            # Persist the verbatim planning conversation + the exact initial_context it
+            # used, so a feedback round REPLAYS this history (with the feedback appended)
+            # against a byte-identical prefix instead of reprefilling from scratch.
+            task.planning_conversation_history = planning_result.conversation_history
+            task.planning_initial_context = plan_context_payload
             confidence_diagnostics: list[Diagnostic] = []
             if planning_result.confidence == "low":
                 confidence_diagnostics = [Diagnostic(
@@ -368,26 +383,37 @@ class AgentOrchestrator:
         try:
             shadow_workspace = await self._workspace_manager.prepare(task.task_id, task.workspace_path)
             task.shadow_workspace_path = str(shadow_workspace.shadow_path)
-            
-            retrieval_context, retrieval_warnings = self._retrieval_client.load_context(
-                task.workspace_path,
-                task.goal,
-            )
-            workspace_files_index = self._collect_workspace_file_index(
-                Path(shadow_workspace.shadow_path)
-            )
-            workspace_files_set = set(workspace_files_index)
-            plan_context_payload = retrieval_context.as_prompt_payload()
-            plan_context_payload["workspace_files_index"] = workspace_files_index
-            self._write_debug_artifact(
-                task.task_id,
-                "plan-evidence",
-                {
-                    "planner_evidence": plan_context_payload.get("planner_evidence"),
-                    "diagnostics_excerpt": plan_context_payload.get("diagnostics_excerpt"),
-                },
-                artifacts_root_path=task.artifacts_root_path,
-            )
+
+            # A feedback round with a pinned planning context reuses round 1's retrieval:
+            # the workspace is unchanged since the plan, so a fresh load_context buys
+            # nothing — and it can DIVERGE (background re-index / staleness auto-reindex
+            # rewrites the snapshot) which would break the cached prompt prefix, while
+            # paying for a reindex it then discards. Skip it on that path only; the
+            # approval path (and feedback without a pin) still computes fresh retrieval.
+            retrieval_context = None
+            reuse_pinned_context = bool(feedback and task.planning_initial_context)
+            if reuse_pinned_context:
+                retrieval_warnings = []
+                plan_context_payload: dict[str, object] = {}
+            else:
+                retrieval_context, retrieval_warnings = self._retrieval_client.load_context(
+                    task.workspace_path,
+                    task.goal,
+                )
+                workspace_files_index = self._collect_workspace_file_index(
+                    Path(shadow_workspace.shadow_path)
+                )
+                plan_context_payload = retrieval_context.as_prompt_payload()
+                plan_context_payload["workspace_files_index"] = workspace_files_index
+                self._write_debug_artifact(
+                    task.task_id,
+                    "plan-evidence",
+                    {
+                        "planner_evidence": plan_context_payload.get("planner_evidence"),
+                        "diagnostics_excerpt": plan_context_payload.get("diagnostics_excerpt"),
+                    },
+                    artifacts_root_path=task.artifacts_root_path,
+                )
 
             if feedback:
                 # User provided feedback, regenerate markdown plan
@@ -395,16 +421,22 @@ class AgentOrchestrator:
                 await self._store.save(task)
 
                 planning_agent = self._build_planning_agent(task.task_id, task.workspace_path)
-                _feedback_pre_explored = [
-                    *(task.initial_explore_context or []),
-                    *(task.planning_explore_context or []),
+                # Continue the SAME planning conversation: replay the persisted history
+                # and append the feedback as the final turn. Everything before the history
+                # (initial_context, pre_explored_context) is pinned to round 1's values so
+                # the prompt prefix stays byte-identical and the KV cache is reused.
+                pinned_initial_context = task.planning_initial_context or plan_context_payload
+                seed_history = [
+                    *(task.planning_conversation_history or []),
+                    _format_feedback_turn(feedback),
                 ]
                 planning_result = await planning_agent.generate_plan(
                     task=task,
-                    initial_context={**plan_context_payload, "plan_feedback": feedback},
+                    initial_context=pinned_initial_context,
                     budget=task.budget,
-                    pre_explored_context=_feedback_pre_explored or None,
+                    pre_explored_context=task.initial_explore_context or None,
                     chat_channel_id=task.chat_channel_id,
+                    seed_history=seed_history,
                 )
                 self._write_debug_artifact(
                     task.task_id,
@@ -412,16 +444,9 @@ class AgentOrchestrator:
                     planning_result.tool_trace.model_dump(mode="json"),
                     artifacts_root_path=task.artifacts_root_path,
                 )
-                # Accumulate feedback pass tool results so subsequent feedback rounds
-                # also skip re-reading files explored in this pass.
-                new_entries = [
-                    {"tool": c.tool_name, "args": c.arguments, "result": r.output, "is_error": r.is_error}
-                    for c, r in zip(
-                        planning_result.tool_trace.calls,
-                        planning_result.tool_trace.results,
-                    )
-                ]
-                task.planning_explore_context = [*(task.planning_explore_context or []), *new_entries]
+                # Re-persist the grown conversation so the NEXT feedback round replays
+                # this round's turns too (append-only across rounds).
+                task.planning_conversation_history = planning_result.conversation_history
                 task.plan_markdown = planning_result.plan_markdown
                 confidence_diagnostics_fb: list[Diagnostic] = [Diagnostic(
                     source="planning_agent",

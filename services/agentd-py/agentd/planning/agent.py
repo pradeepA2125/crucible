@@ -41,6 +41,7 @@ class PlanningAgent:
         budget: TaskBudget,
         pre_explored_context: list[dict[str, object]] | None = None,
         chat_channel_id: str | None = None,
+        seed_history: list[dict[str, object]] | None = None,
     ) -> PlanningResult:
         """Explore the workspace and produce a markdown plan.
 
@@ -50,10 +51,13 @@ class PlanningAgent:
             budget: Controls max_planning_tool_calls.
             pre_explored_context: Tool results from a prior explore phase (e.g. chat agent).
                 The planner can cite these as EXISTING evidence without re-reading.
+            seed_history: Prior planning conversation to replay (feedback round). The
+                continuation grows it by append, keeping the prompt-prefix cache warm.
         """
         plan_context: dict[str, object] = {
             "goal": task.goal,
             "workspace_path": task.workspace_path,
+            "task_id": task.task_id,
             "initial_context": initial_context,
         }
         if pre_explored_context:
@@ -65,7 +69,9 @@ class PlanningAgent:
             task_id=self._task_id,
             chat_channel_id=chat_channel_id,
         )
-        result = await loop.run(plan_context, budget, revision_mode=False)
+        result = await loop.run(
+            plan_context, budget, revision_mode=False, seed_history=seed_history
+        )
         assert isinstance(result, PlanningResult)
         return result
 
@@ -101,6 +107,7 @@ class PlanningAgent:
         plan_context: dict[str, object] = {
             "goal": task.goal,
             "workspace_path": str(real_path),
+            "task_id": task.task_id,
             "plan_steps": plan_steps_context,
             "revision_request": {
                 "failed_step_id": request.requested_by_step_id,

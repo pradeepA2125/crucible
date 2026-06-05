@@ -57,10 +57,36 @@ PLANNING_STEP_RESPONSE_SCHEMA: dict[str, object] = {
 PLANNING_SYSTEM_PROMPT = """\
 You are an expert software architect planning code changes for a task.
 You have read-only access to tools to explore the workspace before committing to a plan.
-You have a budget of {max_calls} tool calls before you must commit. There is no penalty for
-exploring thoroughly — use as many as you need to become confident. Explore the uncertain parts,
-then emit_plan once you know the target files and the change needed. Do not rush to commit while
-anything material is still unknown; equally, do not keep re-reading code you already understand.
+You have a budget of {max_calls} tool calls before you must commit. There is no penalty for the
+NUMBER of tool calls — but HOW you explore is critical (see CONTEXT DISCIPLINE below). Explore the
+uncertain parts, then emit_plan once you know the target files and the change needed. Do not rush
+to commit while anything material is still unknown; equally, do not keep re-reading code you
+already understand.
+
+⚠ CONTEXT DISCIPLINE — THIS DETERMINES WHETHER YOU SUCCEED:
+Your context window — not your tool-call count — is the scarce resource. Every file you read is
+appended to your context for the rest of the session. Reading broadly is the #1 cause of planning
+FAILURE: a bloated context slows every later turn and degrades your output until you stop producing
+valid plans entirely. Locating code precisely before reading is REWARDED with compact, structured
+context; reading to "look around" is PENALIZED with context bloat that will make you fail.
+
+  REWARDED (compact, structured context — do this):
+    • search_code / search_semantic to LOCATE the exact file, symbol, and line numbers.
+    • query_graph to map a symbol's callers/implementers — it returns locations and edges, NOT
+      file text, so it costs almost no context. Prefer it to discover what a change touches.
+    • THEN read_file the SPECIFIC function, class, or region you located — read it in full if
+      needed (a single function may be 400+ lines; reading all of it is fine), but ONE located
+      symbol/region per read. The unit is the symbol you will change, not the file around it.
+
+  PENALIZED (context bloat — do NOT do this):
+    • Calling read_file before a search or query_graph has told you WHICH symbol/lines to read.
+    • Reading a WHOLE FILE — or sweeping it in large sequential chunks — to "understand" it, when
+      you only need one function. Locate the function, read that function; skip the rest of the file.
+    • Re-reading a file or region already in your history.
+
+  HARD RULE: never read_file until search_code / search_semantic / query_graph has located the
+  symbol or lines. Then read that located function/region (in full if needed), ONE at a time — not
+  the whole file. One targeted locate + one function read beats sweeping a file in chunks.
 
 AVAILABLE TOOLS:
 {tools_json}
@@ -396,12 +422,10 @@ def build_planning_step_payload(
         payload["revision_request"] = revision_request
         payload["revertable_step_ids"] = plan_context.get("revertable_step_ids", [])
 
-    _initial_ctx = plan_context.get("initial_context")
-    plan_feedback = (
-        _initial_ctx.get("plan_feedback") if isinstance(_initial_ctx, dict) else None  # type: ignore[union-attr]
-    )
-    if plan_feedback:
-        payload["plan_feedback"] = plan_feedback
+    # User feedback no longer rides in the payload (it used to land here, BEFORE
+    # conversation_history, which reprefills the whole history every turn). It now
+    # enters as the final appended turn of conversation_history — see
+    # AgentOrchestrator.continue_task — so the prompt prefix stays cache-stable.
 
     # Each completed iteration adds 2 history entries (assistant + tool_result).
     iteration = len(history) // 2
@@ -420,12 +444,6 @@ def build_planning_step_payload(
         if has_query_graph
         else ""
     )
-    # Always report the live budget so the model can pace itself — no artificial
-    # scarcity, just the real count. Pressure to commit is applied ONLY on the
-    # final permitted call (iteration == max_calls - 1); below that the model is
-    # free to keep exploring.
-    payload["budget_status"] = f"{iteration}/{max_calls} tool calls used"
-
     if history:
         payload["conversation_history"] = history
         if iteration >= max_calls - 1:
@@ -436,23 +454,20 @@ def build_planning_step_payload(
             )
         else:
             payload["instruction"] = (
-                f"You have used {iteration} of your {max_calls} tool calls — continue exploring "
-                "until you are confident; there is no penalty for using more. Remember: every search "
-                "result with a line number REQUIRES a follow-up read_file call to read that section — "
-                "do not search again before reading. " + graph_hint + "When you have read the key "
-                "sections for each target file, emit_plan. Output your NEXT action."
+                f"You have used {iteration} of {max_calls} tool calls. "
+                "FIRST, reflect on what you have learned so far: which target files, symbols, and "
+                "concrete edits can you already name, and what — if anything — material to the change "
+                "is still genuinely unknown?\n"
+                "THEN choose ONE of two options, based only on your own reflection:\n"
+                "  (A) READ MORE — if something material is still unknown, locate it with "
+                "search_code / search_semantic / query_graph, then read the specific function or "
+                "region you located. Follow the CONTEXT DISCIPLINE: read only that located region, "
+                "never sweep a whole file, and do not re-read anything already in your history.\n"
+                "  (B) EMIT THE PLAN — if you can already name the target files, the symbols to "
+                "change, and the edits, you have enough context; call emit_plan now.\n"
+                "Neither option is penalized and neither is forced — pick the one your reflection "
+                "supports. " + graph_hint + "Output your next action."
             )
-    elif plan_feedback:
-        payload["instruction"] = (
-            "You have user feedback on a previous plan. Incorporate that feedback into a revised "
-            "plan. Explore as much as you need to address it properly — you have your full "
-            f"{max_calls}-call budget. Read and re-reason about any code the feedback references "
-            "that you have not already examined; do not rush to emit_plan before you understand "
-            "what the feedback is asking for. Avoid re-reading files already in pre_explored_context "
-            "or initial_context unless the feedback specifically calls them into question. When you "
-            "have the evidence to satisfy the feedback, emit_plan. Output your first action as a "
-            "JSON object."
-        )
     else:
         graph_intro = (
             "Plan your exploration: search to locate targets, read them, then use query_graph to "
@@ -467,5 +482,12 @@ def build_planning_step_payload(
             "Do NOT call read_file as your first action. " + graph_intro
             + "Output your first action as a JSON object."
         )
+
+    # KV-CACHE ORDERING: budget_status changes every turn ("15/50" → "16/50"), so it
+    # MUST be the LAST key — after conversation_history (which only grows by append) and
+    # after instruction. If it appeared before the history, the llama-server prompt cache
+    # would diverge here every turn and re-prefill the entire growing history, making each
+    # iteration scale with total context. Keep all per-turn-varying fields after the history.
+    payload["budget_status"] = f"{iteration}/{max_calls} tool calls used"
 
     return payload

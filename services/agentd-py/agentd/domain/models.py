@@ -266,6 +266,10 @@ class PlanningResult(BaseModel):
     files_examined: list[str]
     confidence: Literal["high", "medium", "low"]
     tool_trace: AgentToolTrace
+    # Verbatim planning conversation the loop ended with. Persisted on the task so a
+    # later feedback round can REPLAY it (not re-digest it) with the new feedback
+    # appended as the final turn — keeping the llama-server prompt-prefix cache warm.
+    conversation_history: list[dict[str, object]] = Field(default_factory=list)
 
 
 class TaskEvent(BaseModel):
@@ -727,7 +731,15 @@ class TaskRecord(BaseModel):
     step_review_auto_accept: bool = True
     chat_channel_id: str | None = None
     initial_explore_context: list[dict[str, object]] | None = None
-    planning_explore_context: list[dict[str, object]] | None = None
+    # The planner's own exploration is kept as the verbatim conversation it produced
+    # (replaces the lossy planning_explore_context digest). A feedback round seeds the
+    # planning loop with this and appends the feedback as the final turn, so the KV
+    # prefix is reused instead of reprefilled.
+    planning_conversation_history: list[dict[str, object]] | None = None
+    # The exact initial_context the first planning loop used. Pinned and reused on
+    # every feedback round so the payload prefix BEFORE conversation_history stays
+    # byte-identical (recomputing retrieval could otherwise diverge it and defeat the cache).
+    planning_initial_context: dict[str, object] | None = None
     shell_policy: ShellPolicy | None = None  # per-task override; engine resolves task.shell_policy or self._shell_policy
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

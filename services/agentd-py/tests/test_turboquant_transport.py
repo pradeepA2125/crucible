@@ -469,12 +469,12 @@ def test_real_subsequent_turn_payload_includes_history(tmp_path: Path) -> None:
     assert "conversation_history" in payload
     assert payload["conversation_history"] == history
     instruction = str(payload["instruction"])
-    assert "continue exploring" in instruction.lower()
+    assert "reflect" in instruction.lower()
     # Live budget is surfaced both as a standalone status and inlined in the
     # instruction so the model knows which iteration it is on. One history
     # entry pair == iteration 1; default budget is 50.
     assert payload["budget_status"] == "1/50 tool calls used"
-    assert "1 of your 50" in instruction
+    assert "1 of 50 tool calls" in instruction
 
 
 @pytest.mark.asyncio
@@ -513,15 +513,18 @@ async def test_tool_call_with_real_planning_inputs(tmp_path: Path) -> None:
     assert result["args"]["pattern"] == "def create_task"
     assert len(thinking_received) == 2
 
-    # Request body has real planning system prompt with tool defs embedded
+    # Request body has real planning system prompt with tool defs embedded.
+    # The schema/format directive lives in the USER content (trailing), NOT the
+    # system message — so the system prefix stays constant and cacheable.
     messages = client.calls[0]["body"]["messages"]
     system_content = messages[0]["content"]
     assert "PLANNING RULES" in system_content
     assert "search_code" in system_content  # tool defs present
-    assert "REQUIRED OUTPUT FORMAT" in system_content  # schema appended
+    assert "REQUIRED OUTPUT FORMAT" not in system_content  # schema NOT in system
+    assert "REQUIRED OUTPUT FORMAT" in messages[1]["content"]  # schema in user content (trailing)
 
-    # User message is JSON-encoded payload with goal + first-turn instruction
-    user_json = json.loads(messages[1]["content"])
+    # User message is JSON-encoded payload (then the trailing format directive)
+    user_json = json.loads(messages[1]["content"].split("\n\nREQUIRED OUTPUT FORMAT")[0])
     assert user_json["goal"] == "add a resume endpoint to the API"
     assert "SEARCHING" in user_json["instruction"]
     assert "conversation_history" not in user_json
@@ -576,10 +579,11 @@ async def test_emit_plan_with_real_planning_inputs(tmp_path: Path) -> None:
     assert "# Plan" in str(result["plan_markdown"])
     assert "routes.py" in str(result["files_examined"])
 
-    # Subsequent-turn payload carries history and the "continue exploring" instruction
-    user_json = json.loads(client.calls[0]["body"]["messages"][1]["content"])
+    # Subsequent-turn payload carries history and the "reflect / read more or emit" instruction
+    raw_user = client.calls[0]["body"]["messages"][1]["content"]
+    user_json = json.loads(raw_user.split("\n\nREQUIRED OUTPUT FORMAT")[0])
     assert "conversation_history" in user_json
-    assert "continue exploring" in user_json["instruction"].lower()
+    assert "reflect" in user_json["instruction"].lower()
     assert "tool calls used" in user_json["budget_status"]
 
 

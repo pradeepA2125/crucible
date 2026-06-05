@@ -15,6 +15,22 @@ from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
+def _extract_feedback_from_history(history: list[dict[str, object]]) -> str | None:
+    """Recover the raw feedback text from the appended user turn the orchestrator adds.
+
+    Mirrors AgentOrchestrator._format_feedback_turn — the contract is that plan
+    feedback travels as the final conversation turn, not as a payload field.
+    """
+    marker = "gave this feedback:\n\n"
+    for msg in reversed(history):
+        if msg.get("role") != "user":
+            continue
+        content = str(msg.get("content", ""))
+        if marker in content:
+            return content.split(marker, 1)[1].split("\n\nRevise", 1)[0].strip()
+    return None
+
+
 class SpecFirstReasoner:
     def __init__(self) -> None:
         self.markdown_feedbacks: list[str | None] = []
@@ -104,9 +120,10 @@ class SpecFirstReasoner:
         state_description: str = "",
         allowed_action_types: frozenset[str] | None = None,
     ) -> dict:
-        _ = (history, tool_definitions)
-        initial_context = plan_context.get("initial_context", {})
-        feedback = initial_context.get("plan_feedback")
+        _ = (plan_context, tool_definitions)
+        # Feedback now arrives as the final appended turn of the planning conversation
+        # (not as initial_context["plan_feedback"]) — recover it from there.
+        feedback = _extract_feedback_from_history(history)
         if isinstance(feedback, str) and feedback.strip():
             self.markdown_feedbacks.append(feedback)
             return {
