@@ -179,9 +179,9 @@ class DefaultReasoningEngine(ReasoningEngine):
     ) -> dict[str, object]:
         from agentd.planning.prompts import (
             _DEFAULT_MAX_TOOL_CALLS,
-            PLANNING_STEP_RESPONSE_SCHEMA,
             build_planning_step_payload,
             format_planning_system_prompt,
+            planning_response_schema,
         )
         revision_mode = "revision_request" in plan_context
         _raw_max = plan_context.get("max_tool_calls", _DEFAULT_MAX_TOOL_CALLS)
@@ -204,10 +204,16 @@ class DefaultReasoningEngine(ReasoningEngine):
                 {"system_instructions": system_instructions, "user_payload": user_payload},
                 workspace_path=_dbg_workspace,
             )
+        # Gate emit_plan_patch into the response schema only on feedback rounds. The
+        # schema is appended trailing in the payload, so this does not disturb the
+        # KV prefix (see planning/prompts.py::planning_response_schema).
+        response_schema = planning_response_schema(
+            allow_plan_patch=bool(plan_context.get("allow_plan_patch"))
+        )
         result = await self._transport.generate_json(
             model=self._model,
             schema_name="planning_step_response",
-            schema=PLANNING_STEP_RESPONSE_SCHEMA,
+            schema=response_schema,
             system_instructions=system_instructions,
             user_payload=user_payload,
             on_thinking=on_thinking,

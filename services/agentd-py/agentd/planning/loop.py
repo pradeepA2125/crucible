@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 from uuid import uuid4
 
 from agentd.domain.models import (
@@ -256,6 +257,44 @@ class PlanningLoop:
                     reverted_step_ids=reverted_step_ids,
                     revision_summary=revision_summary,
                     tool_trace=trace,
+                )
+
+            if action_type == "emit_plan_patch":
+                from agentd.planning.plan_patch import PlanPatchError, apply_plan_patch
+                current_plan = str(plan_context.get("current_plan_markdown", ""))
+                scratch = plan_context.get("plan_patch_scratch_dir")
+                raw_ops = response.get("ops")
+                ops = raw_ops if isinstance(raw_ops, list) else []
+                try:
+                    new_plan = await apply_plan_patch(
+                        current_plan, ops, scratch_dir=Path(str(scratch))
+                    )
+                except PlanPatchError as exc:
+                    # Non-fatal: inject a correction and let the model retry or emit_plan.
+                    logger.warning(
+                        "[plan] iter=%d/%d  PLAN PATCH FAILED: %s", iteration + 1, max_calls, exc
+                    )
+                    history.append(_assistant_turn(response))
+                    history.append({
+                        "role": "tool_result", "tool": "",
+                        "content": (
+                            f"PLAN PATCH FAILED: {exc}. Each `search` must be an exact, unique "
+                            "snippet copied verbatim from the current plan. Fix the op(s), or "
+                            "reply with emit_plan for a full rewrite."
+                        ),
+                    })
+                    continue
+                self._broadcast({
+                    "type": "planning_complete",
+                    "payload": {"files_examined": [], "confidence": "medium", "patched": True},
+                })
+                history.append(_assistant_turn(response))
+                return PlanningResult(
+                    plan_markdown=new_plan,
+                    files_examined=[],
+                    confidence="medium",
+                    tool_trace=trace,
+                    conversation_history=history,
                 )
 
             if action_type != "tool_call":

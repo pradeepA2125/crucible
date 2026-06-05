@@ -42,6 +42,9 @@ class PlanningAgent:
         pre_explored_context: list[dict[str, object]] | None = None,
         chat_channel_id: str | None = None,
         seed_history: list[dict[str, object]] | None = None,
+        current_plan_markdown: str | None = None,
+        plan_patch_scratch_dir: str | None = None,
+        allow_plan_patch: bool = False,
     ) -> PlanningResult:
         """Explore the workspace and produce a markdown plan.
 
@@ -53,6 +56,10 @@ class PlanningAgent:
                 The planner can cite these as EXISTING evidence without re-reading.
             seed_history: Prior planning conversation to replay (feedback round). The
                 continuation grows it by append, keeping the prompt-prefix cache warm.
+            current_plan_markdown: The plan being revised (feedback round) — patched by
+                emit_plan_patch ops.
+            plan_patch_scratch_dir: Shadow dir where plan.md is written for patching.
+            allow_plan_patch: Offer the emit_plan_patch action (feedback rounds only).
         """
         plan_context: dict[str, object] = {
             "goal": task.goal,
@@ -62,6 +69,11 @@ class PlanningAgent:
         }
         if pre_explored_context:
             plan_context["pre_explored_context"] = pre_explored_context
+        if current_plan_markdown is not None:
+            plan_context["current_plan_markdown"] = current_plan_markdown
+        if plan_patch_scratch_dir is not None:
+            plan_context["plan_patch_scratch_dir"] = plan_patch_scratch_dir
+        plan_context["allow_plan_patch"] = allow_plan_patch
         loop = PlanningLoop(
             reasoning_engine=self._reasoning,
             registry=self._registry,

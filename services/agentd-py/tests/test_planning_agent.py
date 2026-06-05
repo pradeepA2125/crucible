@@ -329,3 +329,32 @@ def test_planning_response_schema_does_not_mutate_base() -> None:
     from agentd.planning.prompts import PLANNING_STEP_RESPONSE_SCHEMA
     planning_response_schema(allow_plan_patch=True)
     assert "emit_plan_patch" not in PLANNING_STEP_RESPONSE_SCHEMA["properties"]["type"]["enum"]
+
+
+# --- emit_plan_patch loop handling (Task 3) ---
+@pytest.mark.asyncio
+async def test_planning_loop_applies_plan_patch_and_recovers_from_bad_op(tmp_path: Path):
+    engine = ScriptedPlanningEngine([
+        {"type": "emit_plan_patch", "thought": "bad op",
+         "ops": [{"op": "search_replace", "search": "NOPE", "replace": "x", "reason": "r"}]},
+        {"type": "emit_plan_patch", "thought": "good op",
+         "ops": [{"op": "search_replace", "search": "- do beta",
+                  "replace": "- do beta FIXED", "reason": "r"}]},
+    ])
+    loop = PlanningLoop(
+        reasoning_engine=engine,
+        registry=_make_registry(tmp_path),
+        broadcaster=_make_broadcaster(),
+        task_id="t1",
+    )
+    plan_ctx = {
+        "goal": "g", "workspace_path": str(tmp_path),
+        "current_plan_markdown": "# Plan\n\n## Step 2: Beta\n- do beta\n",
+        "plan_patch_scratch_dir": str(tmp_path / "scratch"),
+        "allow_plan_patch": True,
+    }
+    result = await loop.run(
+        plan_ctx, TaskBudget(), seed_history=[{"role": "user", "content": "feedback"}]
+    )
+    assert isinstance(result, PlanningResult)
+    assert "- do beta FIXED" in result.plan_markdown
