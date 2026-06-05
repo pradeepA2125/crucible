@@ -252,13 +252,20 @@ class TurboQuantTransport(ModelJsonTransport):
     ) -> dict[str, object]:
         # Use json_object (not json_schema) so the grammar constraint does NOT prevent
         # Qwen3 from closing its <think> block — json_schema strict mode traps the model.
-        system = (
-            f"{system_instructions}\n\n"
-            f"REQUIRED OUTPUT FORMAT — JSON object matching this schema:\n"
-            f"{json.dumps(schema, indent=2)}\n"
-            "Return ONLY the JSON object. No markdown fences. No commentary."
+        #
+        # KV-CACHE: the schema is per-turn-variable (the execution loop filters its
+        # `type` enum per SM state). Keeping it in the system message — the prompt's
+        # prefix root — would invalidate the cached prefix on every state transition and
+        # re-prefill the ENTIRE history. So the system message is held CONSTANT and the
+        # schema/format directive is appended to the END of the user content (after the
+        # history), where a per-turn change only re-prefills the short trailing block.
+        system = system_instructions
+        contents = (
+            f"{json.dumps(user_payload)}\n\n"
+            "REQUIRED OUTPUT FORMAT — return ONLY a JSON object matching this schema "
+            "(no markdown fences, no commentary):\n"
+            f"{json.dumps(schema, indent=2)}"
         )
-        contents = json.dumps(user_payload)
         body = self._build_body(model=model, system=system, user_content=contents,
                                 use_json_object=True)
         last_parse_exc: Exception | None = None
