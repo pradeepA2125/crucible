@@ -1,18 +1,40 @@
 from __future__ import annotations
 
+import logging
 import os
+import sys
 from pathlib import Path
+
+# Attach handlers to the agentd logger directly so --reload doesn't suppress
+# them (basicConfig is a no-op when uvicorn already owns the root logger).
+_agentd_logger = logging.getLogger("agentd")
+_agentd_logger.setLevel(logging.INFO)
+if not _agentd_logger.handlers:
+    _fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    _h_stdout = logging.StreamHandler(sys.stdout)
+    _h_stdout.setFormatter(_fmt)
+    _agentd_logger.addHandler(_h_stdout)
+    # Also write to a file so logs are tailable regardless of how the server was started.
+    _log_file = Path(os.environ.get("AI_EDITOR_LOG_FILE", ".agentd/agentd.log"))
+    _log_file.parent.mkdir(parents=True, exist_ok=True)
+    _h_file = logging.FileHandler(_log_file)
+    _h_file.setFormatter(_fmt)
+    _agentd_logger.addHandler(_h_file)
+_agentd_logger.propagate = False
 
 from fastapi import FastAPI
 
 from agentd.api.routes import build_router
 from agentd.patch.engine import PatchEngine
+from agentd.domain.models import ScopePolicy, ScopeRemember, ScopeTrigger, ShellPolicy
 from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.providers.anthropic_transport import AnthropicJsonTransport
 from agentd.providers.gemini_transport import GeminiJsonTransport
 from agentd.providers.groq_transport import GroqJsonTransport
 from agentd.providers.huggingface_transport import HuggingFaceJsonTransport
+from agentd.providers.ollama_transport import OllamaJsonTransport
+from agentd.providers.turboquant_transport import TurboQuantTransport
 from agentd.providers.openai_transport import OpenAIJsonTransport
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.engine import DefaultReasoningEngine
@@ -22,7 +44,6 @@ from agentd.storage.sqlite_store import SQLiteTaskStore
 from agentd.validation.command_validator import CommandValidator
 from agentd.workspace.shadow import ShadowWorkspaceManager
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
-from agentd.providers.turboquant_transport import TurboQuantJsonTransport
 from agentd.providers.watsonx_transport import WatsonxJsonTransport
 
 
@@ -145,8 +166,9 @@ elif reasoning_backend == "gemini":
     thinking_budget = _optional_int_env("AI_EDITOR_GEMINI_THINKING_BUDGET")
     thinking_enabled = _bool_env("AI_EDITOR_GEMINI_THINKING_ENABLED", True)
     if thinking_enabled and thinking_budget is None and not thinking_level:
-        # Enable dynamic thinking by default for Gemini backend unless explicitly configured.
-        thinking_budget = -1
+        # Default to high reasoning for Gemini 3.x models (thinking_level, not thinking_budget).
+        # thinking_budget=-1 is the Gemini 2.5 dynamic-budget API; 3.x models use thinking_level.
+        thinking_level = "high"
 
     transport = GeminiJsonTransport(
         api_key=os.getenv("GEMINI_API_KEY"),
@@ -181,6 +203,7 @@ elif reasoning_backend == "groq":
         endpoint=os.getenv("AI_EDITOR_GROQ_ENDPOINT"),
         max_tokens=_int_env("AI_EDITOR_GROQ_MAX_TOKENS", 4096),
         timeout_sec=_float_env("AI_EDITOR_GROQ_TIMEOUT_SEC", 60.0),
+        max_retries=_int_env("AI_EDITOR_GROQ_MAX_RETRIES", 4),
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv("AI_EDITOR_GROQ_MODEL", "openai/gpt-oss-120b"),
@@ -190,7 +213,9 @@ elif reasoning_backend == "openrouter":
 
     transport = OpenRouterJsonTransport(
         api_key=os.getenv("OPENROUTER_API_KEY"),
+        max_tokens=_int_env("AI_EDITOR_OPENROUTER_MAX_TOKENS", 4096),
         timeout_sec=_float_env("AI_EDITOR_OPENROUTER_TIMEOUT_SEC", 120.0),
+        max_retries=_int_env("AI_EDITOR_OPENROUTER_MAX_RETRIES", 4),
     )
     reasoning_engine = DefaultReasoningEngine(
         model=os.getenv(
@@ -209,14 +234,21 @@ elif reasoning_backend == "watsonx":
         model=os.getenv("AI_EDITOR_WATSONX_MODEL", "ibm/granite-3-8b-instruct"),
         transport=transport,
     )
-elif reasoning_backend == "turboquant":
-    transport = TurboQuantJsonTransport(
-        host=os.getenv("TURBOQUANT_HOST", "http://localhost:11435"),
-        timeout_sec=_float_env("AI_EDITOR_TURBOQUANT_TIMEOUT_SEC", 600.0),
-        max_retries=_int_env("AI_EDITOR_TURBOQUANT_MAX_RETRIES", 4),
+elif reasoning_backend == "ollama":
+    transport = OllamaJsonTransport(
+        host=os.getenv("OLLAMA_HOST"),
+        keep_alive=os.getenv("AI_EDITOR_OLLAMA_KEEP_ALIVE"),
+        timeout_sec=_float_env("AI_EDITOR_OLLAMA_TIMEOUT_SEC", 600.0),
+        max_retries=_int_env("AI_EDITOR_OLLAMA_MAX_RETRIES", 4),
     )
     reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_TURBOQUANT_MODEL", "qwen3.6:35b-a3b-q4_K_M"),
+        model=os.getenv("AI_EDITOR_OLLAMA_MODEL", "glm-4.7-flash:latest"),
+        transport=transport,
+    )
+elif reasoning_backend == "turboquant":
+    transport = TurboQuantTransport.from_env()
+    reasoning_engine = DefaultReasoningEngine(
+        model=os.getenv("AI_EDITOR_TURBOQUANT_MODEL", "devstral-small-2:24b-q4_k_xl"),
         transport=transport,
     )
 else:
@@ -247,6 +279,45 @@ retrieval_client = RetrievalArtifactClient.from_env(
     evidence_adapter=evidence_adapter,
     semantic_index=_semantic_index,
 )
+def _scope_policy_env() -> ScopePolicy:
+    raw = os.getenv("AI_EDITOR_SCOPE_POLICY", "strict").strip().lower()
+    try:
+        return ScopePolicy(raw)
+    except ValueError:
+        return ScopePolicy.STRICT
+
+
+def _scope_trigger_env() -> ScopeTrigger:
+    raw = os.getenv("AI_EDITOR_SCOPE_TRIGGER", "nearby").strip().lower()
+    try:
+        return ScopeTrigger(raw)
+    except ValueError:
+        return ScopeTrigger.NEARBY
+
+
+def _shell_policy_env() -> ShellPolicy:
+    raw = os.getenv("AI_EDITOR_SHELL_POLICY", "ask").strip().lower()
+    try:
+        return ShellPolicy(raw)
+    except ValueError:
+        return ShellPolicy.ASK
+
+
+def _scope_remember_env() -> ScopeRemember:
+    raw = os.getenv("AI_EDITOR_SCOPE_REMEMBER", "task").strip().lower()
+    try:
+        return ScopeRemember(raw)
+    except ValueError:
+        return ScopeRemember.TASK
+
+
+from agentd.chat.agent import ChatAgent
+from agentd.chat.storage import ChatThreadStore
+
+_chat_db_path = Path(os.getenv("AI_EDITOR_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
+_chat_db_path.parent.mkdir(parents=True, exist_ok=True)
+_chat_thread_store = ChatThreadStore(_chat_db_path)
+
 orchestrator = AgentOrchestrator(
     store=store,
     reasoning_engine=reasoning_engine,
@@ -258,9 +329,45 @@ orchestrator = AgentOrchestrator(
     max_attempts_per_step=_int_env("AI_EDITOR_MAX_ATTEMPTS_PER_STEP", 3),
     step_scoped_mode=_bool_env("AI_EDITOR_STEP_SCOPED_MODE", True),
     patch_candidate_count=_int_env("AI_EDITOR_PATCH_CANDIDATE_COUNT", 3),
+    scope_policy=_scope_policy_env(),
+    scope_trigger=_scope_trigger_env(),
+    scope_remember=_scope_remember_env(),
+    scope_timeout_sec=_float_env("AI_EDITOR_SCOPE_TIMEOUT_SEC", 600.0),
+    shell_policy=_shell_policy_env(),
+    command_decision_timeout_sec=_float_env("AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
+    chat_store=_chat_thread_store,
 )
 
-app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client))
+# workspace_path for ChatAgent — the real repo being edited; defaults to cwd if not set
+_chat_workspace_path = os.getenv("AI_EDITOR_WORKSPACE_PATH", str(Path.cwd()))
+_BACKEND_MODEL_ENVVAR: dict[str, str] = {
+    "anthropic":   "AI_EDITOR_ANTHROPIC_MODEL",
+    "gemini":      "AI_EDITOR_GEMINI_MODEL",
+    "huggingface": "AI_EDITOR_HUGGINGFACE_MODEL",
+    "groq":        "AI_EDITOR_GROQ_MODEL",
+    "openrouter":  "AI_EDITOR_OPENROUTER_MODEL",
+    "watsonx":     "AI_EDITOR_WATSONX_MODEL",
+    "ollama":      "AI_EDITOR_OLLAMA_MODEL",
+    "turboquant":  "AI_EDITOR_TURBOQUANT_MODEL",
+    "openai":      "AI_EDITOR_OPENAI_MODEL",
+}
+_chat_model = os.getenv(
+    _BACKEND_MODEL_ENVVAR.get(reasoning_backend, "AI_EDITOR_OPENAI_MODEL"), "gpt-4o"
+)
+
+# scripted backend has no provider transport — ChatAgent requires a real one
+_chat_agent = ChatAgent(
+    workspace_path=_chat_workspace_path,
+    transport=transport,  # type: ignore[possibly-unbound]  # defined for all real backends
+    model=_chat_model,
+    thread_store=_chat_thread_store,
+    orchestrator=orchestrator,
+    broadcaster=orchestrator.broadcaster,
+    retrieval_client=retrieval_client,
+) if reasoning_backend != "scripted" else None
+
+app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client, _chat_agent))
+
 
 
 @app.get("/health")

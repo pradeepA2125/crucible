@@ -70,27 +70,51 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 
 ### Remaining
 - [x] Incremental per-operation validation (syntax check after each file write, collect all errors)
-- [ ] Post-apply linter integration (ruff, eslint, clippy — configurable per workspace)
-- [ ] Sandbox test execution in shadow workspace before promotion
+- [x] Post-apply linter integration — agent runs ruff/mypy/tsc/clippy in verify phase
+- [x] Sandbox test execution in shadow workspace before promotion — verify phase runs tests in shadow; promotion only on verified=true
 
 ---
 
-## Phase 4 (Weeks 15-19): Agentic Tools & Shell Integration
-**Status**: Core tool loop shipped (code search + shell). Web search, MCP, context attachments, and autonomy modes not yet started.
+## Phase 4a (Weeks 15-17): Agentic Tools & Shell Integration ✅ COMPLETE
 
-### Code Search Tools ✅ Shipped
-Two complementary tools the agent can call mid-task — replaces the need for exhaustive pre-task retrieval:
+### PlanningAgent — Explore-then-Commit Loop ✅ Done
+- [x] `PlanningAgent` with `PlanningLoop`: ReAct explore-then-commit loop before committing to a plan
+- [x] `PlanningToolRegistry`: read-only tools (`search_code`, `read_file`, `list_directory`) for planning phase
+- [x] `create_planning_step()` protocol on `ReasoningEngine` — all providers implement it
+- [x] Markdown plan emitted at `AWAITING_PLAN_APPROVAL`; user can provide feedback to re-explore
+- [x] Delta replan (`revision_needed` signal → `PlanningAgent.revise()`) — targeted step revisions without full restart; budget: `max_delta_replans`
+- [x] Planning tool call trace written to `planning-trace.json` artifact
 
-- [x] **`search_code`** (ripgrep): exact/regex pattern search across the shadow workspace; file-type filters, context lines, structured output (file, line, match).
-- [x] **`search_semantic`**: vector similarity search against the live semantic index; returns ranked chunks.
-- [x] Both tools produce structured results injected into the agent's step context
-- [x] Tool calls recorded in step artifacts alongside patch ops
+### ToolLoop — Two-Phase ReAct Execution ✅ Done
+- [x] `ToolLoop`: per-step ReAct loop (Thought → Tool → Observe) replacing single-shot patch call
+- [x] Phase 1 (explore): agent calls tools, emits patch when confident
+- [x] Phase 2 (verify): agent always enters verify after patch — no skip for missing `test_command`; agent discovers run targets from `testing_strategy` and touched files
+- [x] Guard 2: blocks `verify_done(verified=true)` when last `run_command` in verify phase exited non-zero
+- [x] `testing_strategy` vs `test_command` split: planner sets `testing_strategy` (hint) on every code step; `test_command` only when test file is itself a step target — prevents running stale tests before import is updated
+- [x] Pre-existing failure baseline: `_normalize_error_message` fingerprints pytest + cargo failures before patching; post-patch comparison filters them out so pre-existing red tests don't block promotion
+- [x] PRE-EXISTING FAILURES prompt rule: agent instructed to run scoped test command (e.g. `pytest tests/test_foo.py::test_bar`) instead of full suite when unrelated failures are present
+- [x] `read_file` source-of-truth rule: agent always reads original workspace; must reason from conversation history for post-patch state — documented in `tool_prompts.py`
+- [x] Scope extension callback: out-of-scope file writes routed to approval callback; conventional files auto-approved
+- [x] Step tool call trace written to `step-<id>/tool-trace.json` artifact
 
-### Shell / Terminal Tool ✅ Shipped
-- [x] Agent can run shell commands inside a sandboxed environment (workspace-scoped)
-- [x] Command allowlist policy: configurable via `AI_EDITOR_SHELL_ALLOWLIST` env var
-- [x] Output captured and injected into agent context (stdout, stderr, exit code)
-- [x] Supports: `pytest`, `npm`, `cargo`, `ruff`, `mypy`, `tsc`, `eslint`
+### Code Search Tools ✅ Done
+- [x] **`search_code`** (ripgrep): exact/regex pattern search; file-type filters, context lines, structured output
+- [x] **`search_semantic`**: vector similarity search against live semantic index; ranked chunks
+- [x] Both tools available in both planning and execution loops with phase-gated access
+- [x] Tool calls recorded in `AgentToolTrace` alongside patch ops
+
+### Shell / Terminal Tool ✅ Done
+- [x] **`run_command`**: agent runs shell commands in shadow workspace; stdout/stderr/exit code injected into context
+- [x] Command allowlist policy: `AI_EDITOR_SHELL_ALLOWLIST` (default: pytest, npm, cargo, ruff, mypy, tsc, eslint)
+- [x] **`find_binary`**: probes `.venv/bin`, `node_modules/.bin`, PATH; emits `AGENT SHOULD: setup_env` hint on miss
+- [x] **`setup_env`**: installs dependencies from manifest (uv, pip, npm ci, yarn, pnpm, go mod, rustup); reads patched shadow manifest
+- [x] **`init_workspace`**: scaffolds minimal valid manifest for bare workspaces (Python/Node/Rust/Go)
+- [x] Pre-existing failure baseline: cargo/pytest failures present before patching are fingerprinted and filtered from post-patch validation
+
+---
+
+## Phase 4b (Weeks 19-22): Extended Agentic Capabilities
+**Status**: 🔲 Not started.
 
 ### Web Search & Documentation Tool
 - [ ] Agent can query web for error messages, API docs, library versions
@@ -109,51 +133,10 @@ Two complementary tools the agent can call mid-task — replaces the need for ex
 - [ ] `@diagnostics` — attach current workspace LSP diagnostics
 
 ### Agent Autonomy Modes (granular)
-These are modes for a **single agent session** — not spawned subagents. A single ReAct loop runs end-to-end; the mode controls which gates require user confirmation.
 - [ ] `supervised` — every step requires approval (current default)
 - [ ] `auto-plan` — approve plan only, execution runs unattended
 - [ ] `autonomous` — full end-to-end with no gates (requires explicit opt-in)
 - [ ] Per-task mode override in submission payload
-
-### Success Metrics
-- Shell tool: <2s latency overhead vs direct execution
-- Zero unauthorized file writes outside workspace root
-- MCP tool round-trip: <500ms
-
----
-
-## Phase 4b (Weeks 19-22): Agentic Planning + Delta Replan ✅ COMPLETE
-**Status**: Shipped. Spec: `docs/superpowers/specs/2026-04-27-agentic-planning-delta-replan-design.md`. Plan: `docs/superpowers/plans/2026-04-27-agentic-planning-delta-replan.md`.
-
-Replaces static planning (single-shot markdown critique loop) with two cooperating agents. All industry evidence (Claude Code, Cursor, SWE-agent, OpenHands) shows these operate as a single-agent-per-session ReAct loop with specialized roles — not spawned subagents.
-
-### PlanningAgent (explore-then-commit)
-- [x] Replace static markdown critique loop with `PlanningAgent`: explore-then-commit ReAct loop
-- [x] Planning tools: `search_code`, `read_file`, `list_directory`, `search_semantic`
-- [x] `emit_plan` response with `files_examined` + `confidence` signal
-- [x] Low-confidence planning → warning diagnostic surfaced to user
-- [x] `planning_tool_call` / `planning_tool_result` / `planning_complete` SSE events
-
-### Delta Replan (execution → planning handoff)
-- [x] `ToolLoop.run()` returns `StepOutcome = PatchResult | PlanHandoff` — no exceptions across agent boundaries
-- [x] `revision_needed` action: step signals fundamentally wrong plan, hands off to `PlanningAgent`
-- [x] `PlanningAgent.revise()` explores real workspace, returns targeted step revision
-- [x] `_apply_revision()`: checkpoint rollback + wholesale step replacement
-- [x] `max_delta_replans` budget guard
-- [x] Automatic (no user gate) — `delta_replan_applied` SSE event
-
-### One-Step-Per-File Constraint — REMOVED
-This constraint (planning prompt + post-emit duplicate-target validation) was
-intentionally dropped: real features legitimately touch the same file across
-multiple steps (e.g. a domain model edited for a new type, a new field, and a
-new enum value). Plans may now target a file in more than one step.
-
-### Verify Phase Enhancements (shipped alongside)
-- [x] Verify phase always runs after patch — no skip for missing `test_command`
-- [x] `testing_strategy` (always set) vs `test_command` (only when test file is a step target) split
-- [x] Guard 2: blocks `verify_done(verified=true)` when last `run_command` exited non-zero
-- [x] PRE-EXISTING FAILURES rule: agent runs scoped test command instead of full suite
-- [x] Pre-existing failure baseline normalization for pytest + cargo test output
 
 ---
 
@@ -198,11 +181,10 @@ new enum value). Plans may now target a file in more than one step.
 - [ ] Memory scoped per workspace; exportable and auditable
 
 ### Multi-Agent Orchestration
-The `PlanningAgent` + `ExecutionAgent` (ToolLoop) shared-state pipeline from Phase 4b is the foundational multi-agent architecture — specialized roles coordinated through `TaskRecord`, not spawned subagents. Phase 6 extends it:
-- [ ] Parallel step execution where the dependency graph allows genuine concurrent subagents (steps with no shared file targets run simultaneously)
-- [ ] Per-role model selection: cheap/fast model for retrieval and search, strong model for planning and patching
-- [ ] Verifier agent: dedicated post-step validation pass with its own tool scope (runs tests, checks types, reports structured results)
-- [ ] Dependency graph inference: planner emits step preconditions; coordinator uses them to schedule parallel vs. sequential execution
+- [ ] Specialized sub-agents: Planner, Retriever, Patcher, Verifier — each with its own LLM call and tool scope
+- [ ] Agent communication via message passing; coordinator drives the pipeline
+- [ ] Parallel step execution where dependency graph allows
+- [ ] Per-agent model selection (cheap model for retrieval, strong model for planning)
 
 ### Autonomous Refactor Mode
 - [ ] Long-running tasks with staged promotion (promote file-by-file, not all-or-nothing)
@@ -216,18 +198,9 @@ The `PlanningAgent` + `ExecutionAgent` (ToolLoop) shared-state pipeline from Pha
 
 ---
 
-## Distribution & Packaging (Shadow Forge installer) — PARKED, design pending
+## Deferred Refactors / Tech Debt
 
-**Status**: 🔲 Not started. To be designed. Goal: a one-command install for "AI Editor" (officially **Shadow Forge**) that stands up the whole stack on a clean machine.
-
-Open questions to resolve in the design discussion:
-- [ ] Cross-platform story (macOS arm64 first; Linux x86_64/arm64; Windows?)
-- [ ] Rust indexer (`indexer-rs`): ship prebuilt binaries per platform vs. build-from-source on install (`cargo build --release` is a multi-minute compile). Relates to the `start-backend.sh` watcher autobuild question — gate behind `AI_EDITOR_INDEXER_AUTOBUILD`.
-- [ ] Python backend (`agentd-py`): venv bootstrap + `pip install -e .` vs. packaged wheel vs. container image
-- [ ] VS Code extension: package as `.vsix` + marketplace listing vs. sideload
-- [ ] Model/provider setup: interactive prompt for provider + API keys → write `.env`; local-model path (Ollama/TurboQuant) detection
-- [ ] Semantic index deps (LanceDB, sentence-transformers, torch) — heavy; optional install profile (`--semantic`)?
-- [ ] Health-check + first-run pre-warm so semantic search isn't cold on first task
+- [ ] **Unify the three decision gates** — `AWAITING_SCOPE_DECISION`, `AWAITING_VALIDATION_DECISION`, and the new `AWAITING_COMMAND_DECISION` each duplicate the same future-dict + status-transition + broadcast + resume boilerplate in `orchestrator/engine.py`. Extract a shared `_pause_for_decision(kind, payload, timeout)` scaffold (rule of three). **Deferred on purpose:** do it *after* the command-approval gate lands — folding it into that feature would risk the two already-working gates. See `docs/superpowers/specs/2026-05-28-shell-command-approval-gate-design.md`.
 
 ---
 
@@ -239,10 +212,10 @@ Open questions to resolve in the design discussion:
 | Phase 1 | 3-6 | Enhanced patch operations | ✅ Complete (benchmarks pending) |
 | Phase 2 | 7-10 | Two-stage retrieval | ✅ Substantially complete |
 | Phase 3 | 11-14 | Streaming, resume/rollback | ✅ Substantially complete |
-| Phase 4 | 15-19 | Agentic tools, shell, MCP | 🔶 Tool loop shipped; web search/MCP/autonomy modes not started |
-| Phase 4b | 19-22 | Agentic planning + delta replan | 🔲 Spec complete, implementation planned |
-| Phase 5 | 22-24 | Chat, inline editing, GitHub | 🔲 Not started |
-| Phase 6 | 24-26 | Memory, multi-agent, autonomy | 🔲 Not started |
+| Phase 4a | 15-17 | Agentic tools, shell, verify phase | ✅ Complete |
+| Phase 4b | 19-22 | Web search, MCP, context attachments, autonomy modes | 🔲 Not started |
+| Phase 5 | 20-22 | Chat, inline editing, GitHub | 🔲 Not started |
+| Phase 6 | 23-24 | Memory, multi-agent, autonomy | 🔲 Not started |
 
 ## Supporting Artifacts
 - Implementation plan: `docs/implementation-plan.md`
