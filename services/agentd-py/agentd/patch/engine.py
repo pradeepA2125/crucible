@@ -348,7 +348,9 @@ class PatchEngine:
 
         return PatchResult(touched_files=sorted(touched))
 
-    def _apply_replace_range(self, base_path: Path, operation: ReplaceRangeOp) -> None:
+    def _apply_replace_range(
+        self, base_path: Path, operation: ReplaceRangeOp, *, check_syntax: bool = True
+    ) -> None:
         target = self._resolve_inside(base_path, operation.file)
         lines = target.read_text(encoding="utf-8").splitlines()
         start = operation.anchor.start_line - 1
@@ -374,7 +376,7 @@ class PatchEngine:
         replacement = operation.content.splitlines()
         updated_lines = [*lines[:start], *replacement, *lines[end + 1 :]]
         updated_text = "\n".join(updated_lines)
-        if operation.file.endswith(".py"):
+        if check_syntax and operation.file.endswith(".py"):
             _python_syntax_check(updated_text, label=operation.file)
         target.write_text(updated_text, encoding="utf-8")
 
@@ -419,7 +421,9 @@ class PatchEngine:
             return
 
 
-    def _apply_search_replace(self, base_path: Path, operation: SearchReplaceOpV2) -> None:
+    def _apply_search_replace(
+        self, base_path: Path, operation: SearchReplaceOpV2, *, check_syntax: bool = True
+    ) -> None:
         """Apply search/replace operation (Fast Apply).
         
         O(N) text search and replace - very fast for large files.
@@ -445,7 +449,7 @@ class PatchEngine:
         
         # Apply replacement
         new_content = original_content.replace(operation.search, operation.replace, 1)
-        if operation.file.endswith(".py"):
+        if check_syntax and operation.file.endswith(".py"):
             _python_syntax_check(new_content, label=operation.file)
         target.write_text(new_content, encoding="utf-8")
 
@@ -955,6 +959,36 @@ class PatchEngine:
                 )
                 continue
 
+        # Final whole-patch syntax check: validate the COMBINED result of all ops,
+        # not each op individually. Accepts changes that are only valid once all ops
+        # apply (e.g. a try: in one op and its except: in another) while still
+        # rejecting a genuinely-malformed final result.
+        # Skip files touched by node ops (replace_node/insert_after_node): their
+        # preflight simulation is a naive string splice that libcst re-indents at apply
+        # time, so syntax-checking the simulated text would false-positive. Those ops
+        # retain their own per-op apply-time syntax validation.
+        _node_op_files = {
+            op.file
+            for op in candidate.patch_ops
+            if isinstance(op, (ReplaceNodeOpV2, InsertAfterNodeOpV2))
+        }
+        for file in sorted(mutated_files):
+            if file in _node_op_files:
+                continue
+            content = simulated_sources.get(file)
+            if content is None or not file.endswith(".py"):
+                continue
+            try:
+                _python_syntax_check(content, label=file)
+            except RuntimeError as exc:
+                issues.append(
+                    PatchPreflightIssue(
+                        code=PatchFailureCode.APPLY_ERROR,
+                        file=file,
+                        message=str(exc),
+                    )
+                )
+
         return PatchPreflightReport(success=not issues, issues=issues)
 
     async def apply_patch_candidate(
@@ -989,11 +1023,11 @@ class PatchEngine:
                 elif isinstance(operation, InsertAfterNodeOpV2):
                     self._apply_insert_after_node(base_path, operation)
                 elif isinstance(operation, SearchReplaceOpV2):
-                    self._apply_search_replace(base_path, operation)
+                    self._apply_search_replace(base_path, operation, check_syntax=False)
                 elif isinstance(operation, ApplyDiffOpV2):
                     self._apply_diff(base_path, operation)
                 elif isinstance(operation, ReplaceRangeOp):
-                    self._apply_replace_range(base_path, operation)
+                    self._apply_replace_range(base_path, operation, check_syntax=False)
                 elif isinstance(operation, CreateFileOpV2):
                     self._apply_create_file(base_path, operation)
                 elif isinstance(operation, DeleteFileOpV2):
@@ -1002,7 +1036,7 @@ class PatchEngine:
                     msg = f"Unsupported patch operation type: {type(operation).__name__}"
                     raise RuntimeError(msg)
                 if on_patch_event:
-                    on_patch_event({"type": "operation_success", "op_type": operation.op, "path": operation.file})
+                    on_patch_event({"type": "operation_success", "payload": {"op_type": operation.op, "path": operation.file}})
                 touched.add(operation.file)
                 if is_write and incremental_validator is not None:
                     iv_result = await incremental_validator([operation.file])
@@ -1011,7 +1045,7 @@ class PatchEngine:
                             incremental_errors.append(f"{operation.file}: {diag.message}")
             except Exception as exc:
                 if on_patch_event:
-                    on_patch_event({"type": "operation_error", "op_type": operation.op, "path": operation.file, "error": str(exc)})
+                    on_patch_event({"type": "operation_error", "payload": {"op_type": operation.op, "path": operation.file, "error": str(exc)}})
                 incremental_errors.append(f"{operation.file}: {exc}")
 
         if incremental_errors:

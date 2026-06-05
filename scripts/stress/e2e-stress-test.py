@@ -89,6 +89,21 @@ class E2EStressTest:
                         print(f" {prefix} Step {step_id} (Attempt {attempt}): {ev_status} | {msg}")
                     self.last_event_count = len(trace)
 
+                # Auto-approve plan (stress test skips human review gate)
+                if status == "AWAITING_PLAN_APPROVAL":
+                    plan_md = task.get("plan_markdown", "")
+                    print(f"\n📄 Plan ready ({len(plan_md)} chars). Auto-approving...")
+                    approve_resp = await client.post(
+                        f"{BASE_URL}/v1/tasks/{self.task_id}/plan/feedback",
+                        json={"feedback": None},
+                    )
+                    if approve_resp.status_code != 200:
+                        print(f"❌ Plan approval failed: {approve_resp.text}")
+                        sys.exit(1)
+                    print("✅ Plan approved — execution starting.")
+                    await asyncio.sleep(POLL_INTERVAL)
+                    continue
+
                 # Check terminal states
                 if status == "READY_FOR_REVIEW":
                     print("\n✅ READY FOR REVIEW. Validating Patch...")

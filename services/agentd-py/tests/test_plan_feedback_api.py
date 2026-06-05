@@ -15,41 +15,36 @@ from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
+def _extract_feedback_from_history(history: list[dict[str, object]]) -> str | None:
+    """Recover the raw feedback text from the appended user turn the orchestrator adds.
+
+    Mirrors AgentOrchestrator._format_feedback_turn — the contract is that plan
+    feedback travels as the final conversation turn, not as a payload field.
+    """
+    marker = "gave this feedback:\n\n"
+    for msg in reversed(history):
+        if msg.get("role") != "user":
+            continue
+        content = str(msg.get("content", ""))
+        if marker in content:
+            # Feedback runs from the marker to the next blank line; the current-plan
+            # block (when embedded) follows that, so stop at the first "\n\n".
+            return content.split(marker, 1)[1].split("\n\n", 1)[0].strip()
+    return None
+
+
 class SpecFirstReasoner:
     def __init__(self) -> None:
         self.markdown_feedbacks: list[str | None] = []
-
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path)
-        feedback = retrieval_context.get("plan_feedback")
-        if isinstance(feedback, str) and feedback.strip():
-            self.markdown_feedbacks.append(feedback)
-            return f"# Revised Plan\n\n- {feedback}"
-        self.markdown_feedbacks.append(None)
-        return "# Initial Plan\n\n- Create generated file"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, plan_markdown)
-        return {"verdict": "pass", "issues": []}
 
     async def create_plan(
         self,
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path, retrieval_context)
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         return {
             "analysis": "Create a generated file for verification.",
             "steps": [
@@ -89,54 +84,89 @@ class SpecFirstReasoner:
             ]
         }
 
-    async def critique_json_plan(
+    async def create_tool_step(
         self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, candidate_plan)
-        return {"verdict": "pass", "issues": []}
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        _ = (step_context, tool_definitions, on_thinking)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "create_file",
+                    "file": "generated.txt",
+                    "content": "ok\n",
+                    "reason": "create generated file",
+                }
+            ],
+        }
+
+    async def create_planning_step(
+        self,
+        plan_context: dict,
+        history: list,
+        tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict:
+        _ = (plan_context, tool_definitions)
+        # Feedback now arrives as the final appended turn of the planning conversation
+        # (not as initial_context["plan_feedback"]) — recover it from there.
+        feedback = _extract_feedback_from_history(history)
+        if isinstance(feedback, str) and feedback.strip():
+            self.markdown_feedbacks.append(feedback)
+            return {
+                "type": "emit_plan",
+                "thought": "revised with feedback",
+                "plan_markdown": f"# Revised Plan\n\n- {feedback}",
+                "files_examined": [],
+                "confidence": "high",
+            }
+        self.markdown_feedbacks.append(None)
+        return {
+            "type": "emit_plan",
+            "thought": "stub: planning agent bypassed",
+            "plan_markdown": "# Initial Plan\n\n- Create generated file",
+            "files_examined": [],
+            "confidence": "high",
+        }
 
 
 class AutoCritiqueReasoner(SpecFirstReasoner):
-    def __init__(self) -> None:
-        super().__init__()
-        self.markdown_calls = 0
+    # The auto-critique loop (create_markdown_plan → critique_markdown_plan → revise)
+    # is replaced by the PlanningAgent's explore-then-commit loop. The agent is
+    # expected to produce the correct plan in one shot via create_planning_step().
 
-    async def create_markdown_plan(
+    async def create_planning_step(
         self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path, retrieval_context)
-        self.markdown_calls += 1
-        if self.markdown_calls == 1:
-            return "# Draft Plan\n\n- Update `agentd/api/tasks.py`"
-        return "# Revised Plan\n\n- Update `services/agentd-py/agentd/api/routes.py`"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context)
-        if "agentd/api/tasks.py" in plan_markdown:
-            return {
-                "verdict": "revise",
-                "issues": [
-                    {
-                        "code": "invented_file",
-                        "message": "Use the existing routes file instead of inventing agentd/api/tasks.py.",
-                        "file": "agentd/api/tasks.py",
-                    }
-                ],
-            }
-        return {"verdict": "pass", "issues": []}
+        plan_context: dict,
+        history: list,
+        tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict:
+        _ = (plan_context, history, tool_definitions)
+        return {
+            "type": "emit_plan",
+            "thought": "planning agent explored workspace and identified correct file",
+            "plan_markdown": "# Revised Plan\n\n- Update `services/agentd-py/agentd/api/routes.py`",
+            "files_examined": ["services/agentd-py/agentd/api/routes.py"],
+            "confidence": "high",
+        }
 
 
 class AlwaysPassValidator:
@@ -309,7 +339,6 @@ async def test_create_task_auto_critiques_markdown_before_approval(tmp_path: Pat
         task_id = response.json()["task_id"]
         payload = await _wait_for_status(client, task_id, "AWAITING_PLAN_APPROVAL")
 
-    assert reasoner.markdown_calls == 2
     assert payload["plan_markdown"] == "# Revised Plan\n\n- Update `services/agentd-py/agentd/api/routes.py`"
 
 

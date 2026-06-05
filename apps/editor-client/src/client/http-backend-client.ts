@@ -4,13 +4,27 @@ import {
   TaskSubmissionSchema,
   TaskViewSchema,
   ResumeTaskResponseSchema,
+  ScopeDecisionResponseSchema,
+  ValidationDecisionResponseSchema,
+  CommandDecisionResponseSchema,
+  ChatThreadSummarySchema,
+  ChatThreadSchema,
+  ChatEventSchema,
   type BackendTaskClient,
   type PatchStreamEvent,
   type TaskResult,
   type TaskSubmission,
   type TaskView,
   type ResumeTaskRequest,
-  type ResumeTaskResponse
+  type ResumeTaskResponse,
+  type ScopeDecisionRequest,
+  type ScopeDecisionResponse,
+  type CommandDecision,
+  type CommandDecisionResponse,
+  type ValidationDecisionResponse,
+  type ChatThreadSummary,
+  type ChatThread,
+  type StreamEvent,
 } from "../contracts/task-contracts.js";
 import type { TaskStatus } from "../domain/types.js";
 
@@ -88,6 +102,78 @@ export class HttpBackendClient implements BackendTaskClient {
     return this.toTaskView(response);
   }
 
+  async sendScopeDecision(
+    taskId: string,
+    decision: ScopeDecisionRequest
+  ): Promise<ScopeDecisionResponse> {
+    const response = await this.fetchJson(
+      `/v1/tasks/${encodeURIComponent(taskId)}/scope-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          decision: decision.decision,
+          files: decision.files ?? [],
+          remember: decision.remember ?? false
+        })
+      }
+    );
+    return ScopeDecisionResponseSchema.parse({
+      taskId: this.readString(response, "taskId", "task_id"),
+      status: this.readString(response, "status")
+    });
+  }
+
+  async sendValidationDecision(
+    taskId: string,
+    decision: "accept" | "reject"
+  ): Promise<ValidationDecisionResponse> {
+    const response = await this.fetchJson(
+      `/v1/tasks/${encodeURIComponent(taskId)}/validation-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision })
+      }
+    );
+    return ValidationDecisionResponseSchema.parse({
+      taskId: this.readString(response, "taskId", "task_id"),
+      status: this.readString(response, "status")
+    });
+  }
+
+  async sendCommandDecision(
+    taskId: string,
+    decision: CommandDecision
+  ): Promise<CommandDecisionResponse> {
+    // camelCase → snake_case for the backend wire (ruleValue → rule_value).
+    const body: Record<string, unknown> = {
+      approve: decision.approve,
+      remember: decision.remember,
+      scope: decision.scope,
+    };
+    if (decision.ruleValue !== undefined) body.rule_value = decision.ruleValue;
+    const response = await this.fetchJson(
+      `/v1/tasks/${encodeURIComponent(taskId)}/command-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify(body)
+      }
+    );
+    return CommandDecisionResponseSchema.parse({
+      taskId: this.readString(response, "taskId", "task_id"),
+      status: this.readString(response, "status")
+    });
+  }
+
+  async sendStepDecision(taskId: string, decision: "accept" | "discard"): Promise<void> {
+    await this.fetchJson(
+      `/v1/tasks/${encodeURIComponent(taskId)}/step-decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision })
+      }
+    );
+  }
+
   async resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse> {
     const body: Record<string, unknown> = { stage: options?.stage ?? "execute" };
     if (options?.budgetOverride) {
@@ -146,6 +232,143 @@ export class HttpBackendClient implements BackendTaskClient {
     } finally {
       reader.cancel().catch(() => {});
     }
+  }
+
+  async *streamPatchEvents(taskId: string): AsyncIterable<PatchStreamEvent> {
+    // Wraps the callback-based streamPatch as an async iterable so callers
+    // can use for-await without holding an AbortController.
+    const events: PatchStreamEvent[] = [];
+    let notify: (() => void) | null = null;
+    let streamDone = false;
+
+    const push = (event: PatchStreamEvent) => {
+      events.push(event);
+      notify?.();
+      notify = null;
+    };
+
+    const streamPromise = this.streamPatch(taskId, push);
+    streamPromise.finally(() => {
+      streamDone = true;
+      notify?.();
+      notify = null;
+    });
+
+    while (true) {
+      if (events.length === 0 && !streamDone) {
+        await new Promise<void>((resolve) => { notify = resolve; });
+      }
+      while (events.length > 0) {
+        const event = events.shift()!;
+        yield event;
+        if (event.type === "done") return;
+      }
+      if (streamDone) return;
+    }
+  }
+
+  async listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads?workspace=${encodeURIComponent(workspacePath)}`
+    ) as Record<string, unknown>;
+    const threads = Array.isArray(raw["threads"]) ? raw["threads"] : [];
+    return (threads as Record<string, unknown>[]).map((t) =>
+      ChatThreadSummarySchema.parse({
+        threadId: t["thread_id"],
+        workspacePath: t["workspace_path"],
+        title: t["title"],
+        createdAt: t["created_at"],
+      })
+    );
+  }
+
+  async createChatThread(workspacePath: string, title = "New Chat"): Promise<ChatThreadSummary> {
+    const raw = await this.fetchJson("/v1/chat/threads", {
+      method: "POST",
+      body: JSON.stringify({ workspace: workspacePath, title }),
+    }) as Record<string, unknown>;
+    return ChatThreadSummarySchema.parse({
+      threadId: raw["thread_id"],
+      workspacePath: raw["workspace_path"],
+      title: raw["title"],
+      createdAt: raw["created_at"],
+    });
+  }
+
+  async getChatThread(threadId: string): Promise<ChatThread> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}`
+    ) as Record<string, unknown>;
+    const messages = Array.isArray(raw["messages"]) ? raw["messages"] : [];
+    return ChatThreadSchema.parse({
+      threadId: raw["thread_id"],
+      workspacePath: raw["workspace_path"],
+      title: raw["title"],
+      messages: (messages as Record<string, unknown>[]).map((m) => ({
+        role: m["role"],
+        content: m["content"],
+        type: m["type"] ?? "text",
+        taskId: m["task_id"] ?? null,
+        timestamp: typeof m["timestamp"] === "string"
+          ? m["timestamp"]
+          : new Date(m["timestamp"] as string).toISOString(),
+        metadata: (typeof m["metadata"] === "object" && m["metadata"] !== null)
+          ? m["metadata"]
+          : {},
+      })),
+      touchedFiles: Array.isArray(raw["touched_files"]) ? raw["touched_files"] : [],
+    });
+  }
+
+  async *sendChatMessage(threadId: string, message: string): AsyncIterable<StreamEvent> {
+    const response = await this.fetchFn(
+      `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: message }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Chat message failed (${response.status}) for thread ${threadId}`);
+    }
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
+          } catch {
+            // skip malformed SSE line
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  }
+
+  async applyInlineChange(inlineTaskId: string): Promise<void> {
+    await this.fetchJson(
+      `/v1/chat/inline-changes/${encodeURIComponent(inlineTaskId)}/promote`,
+      { method: "POST" }
+    );
+  }
+
+  async discardInlineChange(inlineTaskId: string): Promise<void> {
+    await this.fetchFn(
+      `${this.options.baseUrl}/v1/chat/inline-changes/${encodeURIComponent(inlineTaskId)}`,
+      { method: "DELETE", headers: { "content-type": "application/json" } }
+    );
   }
 
   private async fetchJson(path: string, init: RequestInit = {}): Promise<unknown> {

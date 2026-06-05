@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
 
 
@@ -12,6 +13,7 @@ class ModelJsonTransport(Protocol):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: Callable[[str], None] | None = None,
     ) -> dict[str, object]: ...
 
     async def generate_text(
@@ -20,4 +22,5 @@ class ModelJsonTransport(Protocol):
         model: str,
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: Callable[[str], None] | None = None,
     ) -> str: ...

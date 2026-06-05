@@ -45,6 +45,32 @@ async def test_command_validator_reports_failure(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_command_validator_prepends_shadow_import_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Full validation runs against the shadow; its subprocesses must import the shadow's
+    # copy of an edited package, not an installed one. Verify the shadow import root lands
+    # on the child's PYTHONPATH.
+    from agentd.tools import _paths
+
+    (tmp_path / "pkgs" / "mypkg").mkdir(parents=True)
+    (tmp_path / "pkgs" / "mypkg" / "__init__.py").write_text("")
+    monkeypatch.setattr(_paths, "editable_package_names", lambda: {"mypkg"})
+
+    validator = CommandValidator(
+        configured_commands=[
+            ValidationCommand(
+                stage="test",
+                name="show-pythonpath",
+                command=f'"{sys.executable}" -c \'import os,sys; print(os.environ.get("PYTHONPATH","")); sys.exit(1)\'',
+            )
+        ]
+    )
+
+    result = await validator.run(str(tmp_path))
+    assert not result.success
+    assert str(tmp_path / "pkgs") in result.diagnostics[0].message
+
+
+@pytest.mark.asyncio
 async def test_command_validator_fails_when_no_commands_detected(tmp_path: Path) -> None:
     validator = CommandValidator(configured_commands=None)
 
@@ -67,6 +93,52 @@ async def test_run_touched_python_syntax_error_fails(tmp_path: Path) -> None:
         and diagnostic.level == "error"
         for diagnostic in result.diagnostics
     )
+
+
+def _make_executable(path: Path, content: str = "#!/bin/sh\nexit 0\n") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    path.chmod(0o755)
+    return path
+
+
+def test_detect_default_commands_finds_venv_pytest(tmp_path: Path) -> None:
+    """When pytest is in <workspace>/.venv/bin, the validator picks the absolute path."""
+    (tmp_path / "x.py").write_text("x = 1\n")
+    pytest_bin = _make_executable(tmp_path / ".venv" / "bin" / "pytest")
+    validator = CommandValidator(configured_commands=None)
+    cmds = validator._detect_default_commands(tmp_path)
+    pytest_cmd = next((c for c in cmds if c.name == "pytest"), None)
+    assert pytest_cmd is not None, [c.name for c in cmds]
+    assert str(pytest_bin) in pytest_cmd.command
+
+
+def test_detect_default_commands_finds_node_modules_vitest_without_scripts(tmp_path: Path) -> None:
+    """vitest in node_modules/.bin is detected even if package.json scripts.test missing."""
+    (tmp_path / "package.json").write_text('{"name":"x","version":"0.0.0"}\n')
+    vitest_bin = _make_executable(tmp_path / "node_modules" / ".bin" / "vitest")
+    validator = CommandValidator(configured_commands=None)
+    cmds = validator._detect_default_commands(tmp_path)
+    vitest_cmd = next((c for c in cmds if c.name == "vitest"), None)
+    assert vitest_cmd is not None, [c.name for c in cmds]
+    assert str(vitest_bin) in vitest_cmd.command
+
+
+def test_detect_default_commands_prefers_workspace_over_system(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Workspace-local mypy ranks above any system mypy."""
+    (tmp_path / "x.py").write_text("x = 1\n")
+    workspace_mypy = _make_executable(tmp_path / ".venv" / "bin" / "mypy")
+    monkeypatch.setattr(
+        "shutil.which", lambda name: "/usr/local/bin/mypy" if name == "mypy" else None
+    )
+    validator = CommandValidator(configured_commands=None)
+    cmds = validator._detect_default_commands(tmp_path)
+    mypy_cmd = next((c for c in cmds if c.name == "mypy"), None)
+    assert mypy_cmd is not None
+    assert str(workspace_mypy) in mypy_cmd.command
+    assert "/usr/local/bin/mypy" not in mypy_cmd.command
 
 
 @pytest.mark.asyncio

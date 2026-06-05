@@ -21,32 +21,14 @@ class RepairReasoningEngine:
     def __init__(self) -> None:
         self.patch_calls = 0
 
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path, retrieval_context)
-        return "# Plan\n\n- Insert marker"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, plan_markdown)
-        return {"verdict": "pass", "issues": []}
-
     async def create_plan(
         self,
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path, retrieval_context)
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         return {
             "analysis": "Insert a marker line after class declaration.",
             "steps": [
@@ -89,15 +71,55 @@ class RepairReasoningEngine:
             ]
         }
 
-    async def critique_json_plan(
+    async def create_tool_step(
         self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, candidate_plan)
-        return {"verdict": "pass", "issues": []}
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        _ = (step_context, tool_definitions, on_thinking)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
+        self.patch_calls += 1
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "replace_node",
+                    "file": "src/example.py",
+                    "language": "python",
+                    "selector": {"kind": "symbol", "value": "X", "match": "exact"},
+                    "content": "class X:\n    pass\n    injected = True\n",
+                    "reason": "repair rollback regression test",
+                }
+            ],
+        }
+
+    async def create_planning_step(
+        self,
+        plan_context: dict,
+        history: list,
+        tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict:
+        _ = (plan_context, history, tool_definitions)
+        return {
+            "type": "emit_plan",
+            "thought": "stub: planning agent bypassed",
+            "plan_markdown": "# Stub Plan\n\n- Review generated changes",
+            "files_examined": [],
+            "confidence": "high",
+        }
 
 
 class FailOnceValidator:
@@ -157,7 +179,9 @@ async def test_orchestrator_rolls_back_failed_repair_iteration(tmp_path: Path) -
 
     assert result.status == TaskStatus.READY_FOR_REVIEW
     assert reasoner.patch_calls == 1
-    assert validator.fast_calls == 3  # 1 candidate eval + 1 incremental per-op + 1 post-apply
+    # Tool-loop inline apply bypasses _evaluate_candidates — run_touched is no longer called
+    # per step; verify phase owns validation now.
+    assert validator.fast_calls == 0
     assert validator.calls == 2  # 1 baseline capture + 1 post-execution full validation
     assert result.shadow_workspace_path is not None
     assert result.completed_step_ids == ["S1"]

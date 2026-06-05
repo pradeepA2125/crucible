@@ -28,11 +28,13 @@ class OpenAIReasoningEngine:
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
         return await self._engine.create_plan(
             task,
             workspace_path,
             retrieval_context,
+            on_thinking=on_thinking,  # type: ignore[arg-type]
         )
 
     async def create_markdown_plan(

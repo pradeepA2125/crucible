@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 
+import type { DiffEntry } from "@ai-editor/editor-client";
 import type { ReviewPanelViewModel } from "./types.js";
 
 export interface ReviewPanelHandlers {
@@ -8,12 +9,15 @@ export interface ReviewPanelHandlers {
   onAccept: () => void;
   onReject: () => void;
   onProvidePlanFeedback: (feedback: string) => void;
+  onStepDecision: (taskId: string, decision: "accept" | "discard") => void;
 }
 
 interface PanelMessage {
   type?: string;
   relativePath?: string;
   feedback?: string;
+  taskId?: string;
+  decision?: "accept" | "discard";
 }
 
 export class ReviewPanel {
@@ -63,6 +67,12 @@ export class ReviewPanel {
     );
   }
 
+  showStepReview(taskId: string, stepId: string, stepTitle: string, diffEntries: DiffEntry[]): void {
+    const panel = this.ensurePanel();
+    panel.reveal(vscode.ViewColumn.One);
+    void panel.webview.postMessage({ type: "showStepReview", taskId, stepId, stepTitle, diffEntries });
+  }
+
   dispose(): void {
     this.panel?.dispose();
     this.panel = null;
@@ -108,6 +118,9 @@ export class ReviewPanel {
       if (message.type === "providePlanFeedback" && message.feedback !== undefined) {
         this.handlers.onProvidePlanFeedback(message.feedback);
       }
+      if (message.type === "stepDecision" && message.taskId && message.decision) {
+        this.handlers.onStepDecision(message.taskId, message.decision);
+      }
     });
 
     this.panel = panel;
@@ -131,10 +144,10 @@ export function renderPanelHtml(model: ReviewPanelViewModel): string {
   const activityRows = opEvents
     .map((ev) => {
       if (ev.type === "operation_success") {
-        return `<li><span class="ev-ok">✓</span> ${escapeHtml(ev.op_type)} — <code>${escapeHtml(ev.path)}</code></li>`;
+        return `<li><span class="ev-ok">✓</span> ${escapeHtml(ev.payload.op_type)} — <code>${escapeHtml(ev.payload.path)}</code></li>`;
       }
       if (ev.type === "operation_error") {
-        return `<li><span class="ev-err">✗</span> ${escapeHtml(ev.op_type)} — <code>${escapeHtml(ev.path)}</code>: ${escapeHtml(ev.error)}</li>`;
+        return `<li><span class="ev-err">✗</span> ${escapeHtml(ev.payload.op_type)} — <code>${escapeHtml(ev.payload.path)}</code>: ${escapeHtml(ev.payload.error)}</li>`;
       }
       return "";
     })

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::IndexerConfig;
 use crate::graph::{SymbolEdge, SymbolGraph, SymbolNode};
@@ -73,7 +73,25 @@ impl IndexerService {
         if self.config.lsp_enabled {
             let files: Vec<PathBuf> = self.tracked_files.iter().cloned().collect();
             self.lsp.open_workspace_files(&files).await?;
+            // Wait for the servers to finish initial indexing BEFORE resolving.
+            // Without this the resolver races a cold rust-analyzer/pyright and
+            // gets nulls/timeouts for thousands of call sites, leaving the
+            // bootstrap snapshot under-resolved until files change. Budget the
+            // wait off the LSP startup timeout (rust-analyzer cache-priming on a
+            // large workspace dominates); a server that reports no progress for
+            // `quiet_window` is assumed already-warm and skipped.
+            let deadline = Instant::now()
+                + Duration::from_millis(self.config.lsp_startup_timeout_ms);
+            self.lsp
+                .wait_for_indexing(deadline, Duration::from_secs(10));
+            // Run the LSP-backed Calls/Implements/Inherits resolver now that
+            // the servers are warm and answer definition/implementation fast.
+            crate::resolver::resolve_placeholders(&mut self.graph, &mut self.lsp);
             self.refresh_diagnostics().await?;
+        } else {
+            // Drop placeholders we collected during parse — LSP isn't going to
+            // help us resolve them, and keeping them around would leak memory.
+            let _ = self.graph.take_placeholders();
         }
 
         self.persist_snapshot().await?;
@@ -169,6 +187,13 @@ impl IndexerService {
     }
 
     async fn handle_watch_event(&mut self, event: Event) -> Result<()> {
+        // Track whether the event actually moved the graph forward. If every
+        // path was filtered (ignored dir like `.ai-editor`, unsupported
+        // extension, or per-path debounce skip), persist_snapshot must NOT run
+        // — otherwise our own snapshot write under `.ai-editor` would re-trigger
+        // a watch event, get filtered, and still rewrite the snapshot, looping
+        // forever and flooding the backend with `/v1/index/build` POSTs.
+        let mut processed_any = false;
         for path in event.paths {
             if !is_supported_source_path(&path) || is_ignored_path(&path) {
                 continue;
@@ -186,6 +211,7 @@ impl IndexerService {
                 EventKind::Remove(_) => {
                     self.tracked_files.remove(&path);
                     self.lsp.close_file(&path).await?;
+                    processed_any = true;
                 }
                 EventKind::Modify(_) | EventKind::Create(_) | EventKind::Any => {
                     if !path.exists() || !path.is_file() {
@@ -194,6 +220,12 @@ impl IndexerService {
 
                     match std::fs::read_to_string(&path) {
                         Ok(source) => {
+                            // Wipe stale Calls/Implements edges originating
+                            // from this file before re-parsing. The resolver
+                            // will re-emit them from the fresh placeholders.
+                            // Without this, edges that no longer match the
+                            // new source would linger as orphans.
+                            self.graph.prune_resolved_calls_from_file(&path);
                             if let Err(error) = self.parser.parse_file(&path, &source, &mut self.graph) {
                                 self.push_index_warning(
                                     &path,
@@ -203,6 +235,16 @@ impl IndexerService {
                             }
                             self.tracked_files.insert(path.clone());
                             self.lsp.upsert_file(&path, source).await?;
+                            if self.config.lsp_enabled {
+                                crate::resolver::resolve_placeholders_for_file(
+                                    &mut self.graph,
+                                    &mut self.lsp,
+                                    &path,
+                                );
+                            } else {
+                                let _ = self.graph.take_placeholders_for_file(&path);
+                            }
+                            processed_any = true;
                         }
                         Err(error) => {
                             self.push_index_warning(
@@ -221,8 +263,10 @@ impl IndexerService {
             }
         }
 
-        self.refresh_diagnostics().await?;
-        self.persist_snapshot().await?;
+        if processed_any {
+            self.refresh_diagnostics().await?;
+            self.persist_snapshot().await?;
+        }
         Ok(())
     }
 
@@ -240,7 +284,11 @@ impl IndexerService {
             tokio::fs::create_dir_all(parent).await?;
         }
         let payload = serde_json::to_vec_pretty(&snapshot)?;
-        tokio::fs::write(&self.config.snapshot_output_path, payload).await?;
+        // Atomic write: serialize to a temp sibling then rename, so a reader (the backend's
+        // trigger_index_build) never observes a half-written snapshot (torn read).
+        let tmp_path = self.config.snapshot_output_path.with_extension("json.tmp");
+        tokio::fs::write(&tmp_path, payload).await?;
+        tokio::fs::rename(&tmp_path, &self.config.snapshot_output_path).await?;
 
         if let Some(backend_url) = &self.config.backend_url {
             let url = format!("{}/v1/index/build", backend_url.trim_end_matches('/'));

@@ -160,4 +160,179 @@ describe("HttpBackendClient", () => {
     expect(JSON.parse(body)).toEqual({ feedback: null });
     expect(result.planMarkdown).toBe("# Plan");
   });
+
+  test("sendScopeDecision posts approve body and parses response", async () => {
+    let url = "";
+    let body = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (input, init) => {
+        url = String(input);
+        body = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({ task_id: "task-1", status: "EXECUTING" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+    });
+    const result = await client.sendScopeDecision("task-1", {
+      decision: "approve",
+      files: ["tests/__init__.py"],
+      remember: true
+    });
+    expect(url).toContain("/v1/tasks/task-1/scope-decision");
+    expect(JSON.parse(body)).toEqual({
+      decision: "approve",
+      files: ["tests/__init__.py"],
+      remember: true
+    });
+    expect(result.taskId).toBe("task-1");
+    expect(result.status).toBe("EXECUTING");
+  });
+
+  test("sendScopeDecision throws on 409", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(JSON.stringify({ detail: "not awaiting" }), { status: 409 })
+    });
+    await expect(
+      client.sendScopeDecision("task-x", { decision: "approve", files: [], remember: false })
+    ).rejects.toThrow();
+  });
+
+  test("sendValidationDecision posts decision and parses response", async () => {
+    let url = "";
+    let body = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (input, init) => {
+        url = String(input);
+        body = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({ task_id: "task-1", status: "AWAITING_VALIDATION_DECISION" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+    });
+    const result = await client.sendValidationDecision("task-1", "accept");
+    expect(url).toContain("/v1/tasks/task-1/validation-decision");
+    expect(JSON.parse(body)).toEqual({ decision: "accept" });
+    expect(result.taskId).toBe("task-1");
+    expect(result.status).toBe("AWAITING_VALIDATION_DECISION");
+  });
+
+  test("sendValidationDecision throws on 409", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(JSON.stringify({ detail: "not awaiting" }), { status: 409 })
+    });
+    await expect(client.sendValidationDecision("task-x", "accept")).rejects.toThrow();
+  });
+
+  // ── Chat API ──────────────────────────────────────────────────────────────
+
+  test("createChatThread sends correct body and maps response", async () => {
+    let capturedUrl = "";
+    let capturedBody = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (url, init) => {
+        capturedUrl = String(url);
+        capturedBody = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({
+            thread_id: "chat-xyz",
+            workspace_path: "/ws",
+            title: "My thread",
+            created_at: "2026-05-11T00:00:00Z",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+    });
+    const result = await client.createChatThread("/ws", "My thread");
+    expect(capturedUrl).toContain("/v1/chat/threads");
+    expect(JSON.parse(capturedBody)).toEqual({ workspace: "/ws", title: "My thread" });
+    expect(result.threadId).toBe("chat-xyz");
+    expect(result.createdAt).toBe("2026-05-11T00:00:00Z");
+  });
+
+  test("listChatThreads maps snake_case to camelCase", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            threads: [
+              {
+                thread_id: "chat-abc123",
+                workspace_path: "/ws",
+                title: "My chat",
+                created_at: "2026-05-11T00:00:00Z",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const result = await client.listChatThreads("/ws");
+    expect(result).toHaveLength(1);
+    expect(result[0].threadId).toBe("chat-abc123");
+    expect(result[0].title).toBe("My chat");
+    expect(result[0].createdAt).toBe("2026-05-11T00:00:00Z");
+  });
+
+  test("getChatThread maps thread and messages", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            thread_id: "chat-abc123",
+            workspace_path: "/ws",
+            title: "My chat",
+            created_at: "2026-05-11T00:00:00Z",
+            messages: [
+              {
+                role: "user",
+                content: "hello",
+                type: "text",
+                task_id: null,
+                timestamp: "2026-05-11T00:00:01Z",
+                metadata: {},
+              },
+            ],
+            touched_files: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const result = await client.getChatThread("chat-abc123");
+    expect(result.threadId).toBe("chat-abc123");
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].role).toBe("user");
+    expect(result.messages[0].content).toBe("hello");
+  });
+
+  test("sendChatMessage streams SSE events", async () => {
+    const sseBody =
+      'data: {"type":"intent_classified","payload":{"intent":"qa"}}\n\n' +
+      'data: {"type":"chat_done","payload":{}}\n\n';
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(new TextEncoder().encode(sseBody), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+    const events: Array<{ type: string }> = [];
+    for await (const event of client.sendChatMessage("chat-abc123", "hello")) {
+      events.push(event);
+    }
+    expect(events[0].type).toBe("intent_classified");
+    expect(events[1].type).toBe("chat_done");
+  });
 });

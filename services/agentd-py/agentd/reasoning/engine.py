@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path as _Path
+from collections.abc import Callable
 
 from agentd.domain.models import (
     Diagnostic,
     PatchDocumentV2,
-    PlanCritiqueResult,
     PlanDocument,
     PlanStep,
     TaskRecord,
@@ -14,42 +13,12 @@ from agentd.domain.models import (
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.prompt_builder import (
-    JSON_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS,
-    MARKDOWN_PLAN_SYSTEM_INSTRUCTIONS,
-    MARKDOWN_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS,
     PATCH_SYSTEM_INSTRUCTIONS,
     PLAN_SYSTEM_INSTRUCTIONS,
-    build_json_plan_critique_payload,
-    build_markdown_plan_critique_payload,
     build_patch_payload,
     build_plan_payload,
 )
 from agentd.runtime.artifacts import task_artifacts_root
-
-
-def _debug_dump_input(
-    task_id: str,
-    name: str,
-    system_instructions: str,
-    user_payload: object,
-    *,
-    workspace_path: str,
-) -> None:
-    """Dump the complete LLM input (system + user) for token analysis."""
-    try:
-        out = task_artifacts_root(task_id, workspace_path)
-        out.mkdir(parents=True, exist_ok=True)
-        full_input = {
-            "system_instructions": system_instructions,
-            "user_payload": user_payload,
-            "system_token_estimate": len(system_instructions) // 4,
-            "user_payload_token_estimate": len(json.dumps(user_payload, default=str)) // 4,
-        }
-        (out / f"debug-input-{name}.json").write_text(
-            json.dumps(full_input, indent=2, default=str), encoding="utf-8"
-        )
-    except Exception:
-        pass
 
 
 def _debug_dump(
@@ -87,6 +56,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: Callable[[str], None] | None = None,
     ) -> object:
         payload = await self._transport.generate_json(
             model=self._model,
@@ -99,104 +69,13 @@ class DefaultReasoningEngine(ReasoningEngine):
                 retrieval_context=retrieval_context,
                 plan_validation_feedback=retrieval_context.get("plan_validation_feedback")
                 if isinstance(retrieval_context.get("plan_validation_feedback"), dict)
-                else None,
+                else None,  # type: ignore[arg-type]
             ),
+            on_thinking=on_thinking,
         )
         _debug_dump(task.task_id, "plan-raw", payload, workspace_path=task.workspace_path)
         return PlanDocument.model_validate(payload).model_dump(mode="json")
 
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        user_payload = build_plan_payload(
-            task,
-            workspace_path=workspace_path,
-            retrieval_context=retrieval_context,
-            plan_feedback=retrieval_context.get("plan_feedback"),
-        )
-        _debug_dump_input(
-            task.task_id,
-            "markdown-plan",
-            MARKDOWN_PLAN_SYSTEM_INSTRUCTIONS,
-            user_payload,
-            workspace_path=task.workspace_path,
-        )
-        content = await self._transport.generate_text(
-            model=self._model,
-            system_instructions=MARKDOWN_PLAN_SYSTEM_INSTRUCTIONS,
-            user_payload=user_payload,
-        )
-        _debug_dump(
-            task.task_id,
-            "plan-markdown",
-            {"content": content},
-            workspace_path=task.workspace_path,
-        )
-        return content
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        payload = await self._transport.generate_json(
-            model=self._model,
-            schema_name="markdown_plan_critique",
-            schema=PlanCritiqueResult.model_json_schema(),
-            system_instructions=MARKDOWN_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS,
-            user_payload=build_markdown_plan_critique_payload(
-                task,
-                workspace_path=workspace_path,
-                retrieval_context=retrieval_context,
-                plan_markdown=plan_markdown,
-                plan_feedback=retrieval_context.get("plan_feedback")
-                if isinstance(retrieval_context.get("plan_feedback"), str)
-                else None,
-            ),
-        )
-        _debug_dump(
-            task.task_id,
-            "markdown-plan-critique-raw",
-            payload,
-            workspace_path=task.workspace_path,
-        )
-        return PlanCritiqueResult.model_validate(payload).model_dump(mode="json")
-
-    async def critique_json_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        payload = await self._transport.generate_json(
-            model=self._model,
-            schema_name="json_plan_critique",
-            schema=PlanCritiqueResult.model_json_schema(),
-            system_instructions=JSON_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS,
-            user_payload=build_json_plan_critique_payload(
-                task,
-                workspace_path=workspace_path,
-                retrieval_context=retrieval_context,
-                plan_markdown=task.plan_markdown or "",
-                candidate_plan=candidate_plan,
-                plan_validation_feedback=retrieval_context.get("plan_validation_feedback")
-                if isinstance(retrieval_context.get("plan_validation_feedback"), dict)
-                else None,
-            ),
-        )
-        _debug_dump(
-            task.task_id,
-            "json-plan-critique-raw",
-            payload,
-            workspace_path=task.workspace_path,
-        )
-        return PlanCritiqueResult.model_validate(payload).model_dump(mode="json")
 
     async def create_patch(
         self,
@@ -241,3 +120,118 @@ class DefaultReasoningEngine(ReasoningEngine):
             step_id=current_step.id if current_step else None,
         )
         return PatchDocumentV2.model_validate(patch_payload).model_dump(mode="json")
+
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: Callable[[str], None] | None = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        import copy
+
+        from agentd.reasoning.tool_prompts import (
+            AGENT_STEP_RESPONSE_SCHEMA,
+            build_tool_step_payload,
+            format_tool_system_prompt,
+            inject_tools_into_payload,
+        )
+        user_payload = build_tool_step_payload(
+            step_context, history, state_description=state_description,
+        )
+        inject_tools_into_payload(user_payload, tool_definitions)
+        system_instructions = format_tool_system_prompt()
+
+        # Filter the outer `type` enum per SM state when caller specifies what's
+        # allowed. Deep-copy the module-level schema so other callers aren't affected.
+        schema: dict[str, object] = AGENT_STEP_RESPONSE_SCHEMA
+        if allowed_action_types is not None:
+            schema = copy.deepcopy(AGENT_STEP_RESPONSE_SCHEMA)
+            props = schema.get("properties")
+            if isinstance(props, dict):
+                type_prop = props.get("type")
+                if isinstance(type_prop, dict):
+                    # Preserve original ordering for stability.
+                    original_enum = type_prop.get("enum")
+                    if isinstance(original_enum, list):
+                        type_prop["enum"] = [
+                            t for t in original_enum if t in allowed_action_types
+                        ]
+
+        result = await self._transport.generate_json(
+            model=self._model,
+            schema_name="agent_step_response",
+            schema=schema,
+            system_instructions=system_instructions,
+            user_payload=user_payload,
+            on_thinking=on_thinking,
+        )
+        return result
+
+    async def create_planning_step(
+        self,
+        plan_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: Callable[[str], None] | None = None,
+    ) -> dict[str, object]:
+        from agentd.planning.prompts import (
+            _DEFAULT_MAX_TOOL_CALLS,
+            build_planning_step_payload,
+            format_planning_system_prompt,
+            planning_response_schema,
+        )
+        revision_mode = "revision_request" in plan_context
+        _raw_max = plan_context.get("max_tool_calls", _DEFAULT_MAX_TOOL_CALLS)
+        max_calls = int(_raw_max) if isinstance(_raw_max, (int, str)) else _DEFAULT_MAX_TOOL_CALLS
+        system_instructions = format_planning_system_prompt(
+            tool_definitions, max_calls=max_calls, revision_mode=revision_mode
+        )
+        user_payload = build_planning_step_payload(plan_context, history, tool_definitions)
+        # Per-turn payload capture: dump the EXACT system + user strings sent to the model
+        # before the call fires, so a stuck or context-overflowing loop can be inspected
+        # byte-for-byte from artifacts even when the call itself 400s. Skipped (via the
+        # type guards) on code paths where task_id/workspace_path aren't in plan_context.
+        _dbg_task_id = plan_context.get("task_id")
+        _dbg_workspace = plan_context.get("workspace_path")
+        if isinstance(_dbg_task_id, str) and isinstance(_dbg_workspace, str):
+            _turn = len(history) // 2 + 1
+            _debug_dump(
+                _dbg_task_id,
+                f"plan-turn-{_turn:02d}",
+                {"system_instructions": system_instructions, "user_payload": user_payload},
+                workspace_path=_dbg_workspace,
+            )
+        # Gate emit_plan_patch into the response schema only on feedback rounds. The
+        # schema is appended trailing in the payload, so this does not disturb the
+        # KV prefix (see planning/prompts.py::planning_response_schema).
+        response_schema = planning_response_schema(
+            allow_plan_patch=bool(plan_context.get("allow_plan_patch"))
+        )
+        result = await self._transport.generate_json(
+            model=self._model,
+            schema_name="planning_step_response",
+            schema=response_schema,
+            system_instructions=system_instructions,
+            user_payload=user_payload,
+            on_thinking=on_thinking,
+        )
+        return result if isinstance(result, dict) else {}
+
+    async def draft_conventions(self, *, probe: object) -> dict[str, object]:
+        from agentd.reasoning.env_prompts import (
+            DRAFT_CONVENTIONS_RESPONSE_SCHEMA,
+            DRAFT_CONVENTIONS_SYSTEM_PROMPT,
+            build_draft_conventions_payload,
+        )
+        payload = build_draft_conventions_payload(probe)  # type: ignore[arg-type]
+        result = await self._transport.generate_json(
+            model=self._model,
+            schema_name="env_profile_conventions",
+            schema=DRAFT_CONVENTIONS_RESPONSE_SCHEMA,
+            system_instructions=DRAFT_CONVENTIONS_SYSTEM_PROMPT,
+            user_payload=payload,
+        )
+        return result if isinstance(result, dict) else {}

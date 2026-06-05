@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Union
@@ -13,8 +14,12 @@ class TaskStatus(StrEnum):
     AWAITING_PLAN_APPROVAL = "AWAITING_PLAN_APPROVAL"
     PLANNED = "PLANNED"
     EXECUTING = "EXECUTING"
+    AWAITING_SCOPE_DECISION = "AWAITING_SCOPE_DECISION"
+    AWAITING_STEP_REVIEW = "AWAITING_STEP_REVIEW"
     VALIDATING = "VALIDATING"
     REPAIRING = "REPAIRING"
+    AWAITING_VALIDATION_DECISION = "AWAITING_VALIDATION_DECISION"
+    AWAITING_COMMAND_DECISION = "AWAITING_COMMAND_DECISION"
     VALIDATED = "VALIDATED"
     READY_FOR_REVIEW = "READY_FOR_REVIEW"
     PROMOTING = "PROMOTING"
@@ -56,12 +61,215 @@ class TaskBudget(BaseModel):
     max_iterations: int = 6
     max_files_touched: int = 20
     max_tokens: int = 120_000
-    max_runtime_ms: int = 20 * 60 * 1000
+    max_runtime_ms: int = 90 * 60 * 1000
+    max_tool_calls_per_step: int = 50
+    max_planning_tool_calls: int = 50
+    max_revision_tool_calls: int = 50
+    max_delta_replans: int = 3
+    max_verify_calls_per_step: int = 8
 
 
 class TaskUsage(BaseModel):
     iterations: int = 0
     tokens_used: int = 0
+    tool_calls_used: int = 0
+
+
+class ToolCall(BaseModel):
+    call_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+
+
+class ToolResult(BaseModel):
+    call_id: str
+    tool_name: str
+    output: str
+    is_error: bool = False
+
+
+class AgentToolTrace(BaseModel):
+    step_id: str
+    calls: list[ToolCall] = Field(default_factory=list)
+    results: list[ToolResult] = Field(default_factory=list)
+
+
+class DeltaReplanRequest(BaseModel):
+    requested_by_step_id: str
+    reason: str
+    evidence: str
+    hinted_affected_steps: list[str]
+    requested_at: datetime
+
+
+class ScopePolicy(StrEnum):
+    """How the engine handles patches that target files outside the step's scope."""
+    STRICT = "strict"   # auto-reject (default — current behavior)
+    ASK = "ask"         # pause + user gate via POST /scope-decision
+    AUTO = "auto"       # auto-approve + audit log
+
+
+class ScopeTrigger(StrEnum):
+    """Which out-of-scope files trip the gate."""
+    NEARBY = "nearby"   # same dir as a target OR conventional pattern (__init__.py, conftest.py)
+    ANY = "any"         # every out-of-scope file
+
+
+class ScopeRemember(StrEnum):
+    """How long an approval persists."""
+    TASK = "task"       # remember within current task
+    NONE = "none"       # ask every time
+
+
+class ScopeExtensionRequest(BaseModel):
+    """Persisted on the task while the engine waits for a scope decision."""
+    decision_id: str
+    files: list[str]
+    reason: str
+    step_id: str
+
+
+class ScopeDecisionRequest(BaseModel):
+    decision: Literal["approve", "reject"]
+    files: list[str] = Field(default_factory=list)
+    remember: bool = False
+
+
+class ScopeDecisionResponse(BaseModel):
+    task_id: str
+    status: "TaskStatus"
+
+
+class ValidationDecisionRequest(BaseModel):
+    decision: Literal["accept", "reject"]
+
+
+class ValidationDecisionResponse(BaseModel):
+    task_id: str
+    status: "TaskStatus"
+
+
+class CommandDecisionResponse(BaseModel):
+    task_id: str
+    status: "TaskStatus"
+
+
+class ShellPolicy(StrEnum):
+    """How run_command is gated. Default ASK — every command surfaced for
+    Accept-once / Accept-and-remember / Reject. ALLOW_ALL skips the gate."""
+    ASK = "ask"
+    ALLOW_ALL = "allow_all"
+
+
+class CommandApprovalRequest(BaseModel):
+    """Persisted on the task while the engine waits for a command decision."""
+    decision_id: str
+    command: str
+    args: list[str] = Field(default_factory=list)
+    cwd: str = ""
+    step_id: str
+
+
+class CommandDecision(BaseModel):
+    approve: bool
+    remember: bool = False
+    scope: Literal["exact", "prefix", "binary"] = "exact"
+    # For approve+remember: the rule value the UI chose (e.g. "python -c").
+    # When omitted the engine derives it from the request per `scope`.
+    rule_value: str | None = None
+
+
+class CommandRule(BaseModel):
+    """A persisted user-approved shell command rule (workspace store + per-task set)."""
+    type: Literal["exact", "prefix", "binary"]
+    value: str
+    added_at: str
+
+
+class StepReviewPayload(BaseModel):
+    """Persisted on the task while the engine waits for a per-step accept/discard decision."""
+    step_id: str
+    step_title: str
+    diff_entries: list[dict[str, Any]]  # serialized DiffEntry objects
+
+
+class StepDecisionRequest(BaseModel):
+    decision: Literal["accept", "discard"]
+
+
+class TaskExecutionState(BaseModel):
+    current_step_id: str | None = None
+    step_checkpoints: dict[str, str] = Field(default_factory=dict)
+    delta_replan_requests: list[DeltaReplanRequest] = Field(default_factory=list)
+    delta_replans_used: int = 0
+    auto_approved_scope_files: list[str] = Field(default_factory=list)
+    pending_scope_request: ScopeExtensionRequest | None = None
+    pending_step_review: StepReviewPayload | None = None
+    pending_command_request: CommandApprovalRequest | None = None
+    approved_commands: list[CommandRule] = Field(default_factory=list)
+    pending_install_for_scope: str | None = None  # ecosystem scope_key needing setup_env before next run_command
+
+
+class EnvEcosystemEntry(BaseModel):
+    """One ecosystem-scope in an EnvProfile.
+
+    Identified by (ecosystem, subdir). The scope_key property is the
+    deterministic key used by manifest-write auto-sync.
+    """
+
+    ecosystem: Literal["python", "node", "rust", "go"]
+    subdir: str  # relative to workspace; "" = root
+    manifest_path: str  # relative to workspace
+    package_manager: str  # "uv" | "pip" | "npm" | "yarn" | "pnpm" | "cargo" | "go"
+    install_command: str  # ready for setup_env (e.g. "uv sync")
+    interpreter_or_runner: str | None  # rel path (e.g. ".venv/bin/python")
+    test_command: str | None  # rel cmd used with subdir as cwd (e.g. "pytest")
+    declared_dependencies_top: list[str] = Field(default_factory=list)  # top ~20 manifest deps verbatim
+    notes: str | None = None  # LLM-supplied quirks
+
+    @property
+    def scope_key(self) -> str:
+        return f"{self.ecosystem}:{self.subdir}"
+
+
+class EnvProfile(BaseModel):
+    """Workspace-level env conventions persisted at <workspace>/.agentd/env_profile.json."""
+
+    workspace_root: str
+    built_at: datetime
+    bootstrap_needed: bool = False  # probe found nothing usable; agent falls back to find_binary/init_workspace
+    ecosystems: list[EnvEcosystemEntry] = Field(default_factory=list)
+    conventions_notes: str | None = None  # short free-form summary from the LLM
+    diagnostics: list[str] = Field(default_factory=list)  # probe warnings
+
+
+class RevisedStep(BaseModel):
+    step_id: str
+    goal: str
+    targets: list[dict[str, str]]
+    implementation_details: str
+    edge_cases: str = ""
+    testing_strategy: str = ""
+    risk: str = "low"
+    test_command: str | None = None
+
+
+class PlanRevisionResult(BaseModel):
+    revised_steps: list[RevisedStep]
+    reverted_step_ids: list[str]
+    revision_summary: str
+    tool_trace: AgentToolTrace
+
+
+class PlanningResult(BaseModel):
+    plan_markdown: str
+    files_examined: list[str]
+    confidence: Literal["high", "medium", "low"]
+    tool_trace: AgentToolTrace
+    # Verbatim planning conversation the loop ended with. Persisted on the task so a
+    # later feedback round can REPLAY it (not re-digest it) with the new feedback
+    # appended as the final turn — keeping the llama-server prompt-prefix cache warm.
+    conversation_history: list[dict[str, object]] = Field(default_factory=list)
 
 
 class TaskEvent(BaseModel):
@@ -106,6 +314,7 @@ class PlanStep(BaseModel):
     edge_cases: str | None = None                  # Edge cases to handle in implementation
     testing_strategy: str | None = None           # Verification approach and testing criteria
     design_rationale: str | None = None            # Technical considerations and constraints
+    test_command: str | None = None               # Runnable test command (e.g. "pytest tests/test_auth.py::test_login"); only set when test file is verified or is a NEW target in this step
 
     @model_validator(mode="before")
     @classmethod
@@ -225,7 +434,7 @@ class PlanCritiqueCode(StrEnum):
     VERIFICATION_MISMATCH = "verification_mismatch"
     PATH_PREFIX_MISMATCH = "path_prefix_mismatch"
     TEST_SCOPE_MISMATCH = "test_scope_mismatch"
-    # Step-detail quality codes — must match MARKDOWN_PLAN_CRITIQUE_SYSTEM_INSTRUCTIONS
+    # Step-detail quality codes
     INSUFFICIENT_IMPLEMENTATION_DETAILS = "insufficient_implementation_details"
     INCOMPLETE_EDGE_CASES = "incomplete_edge_cases"
     VAGUE_TESTING_STRATEGY = "vague_testing_strategy"
@@ -469,6 +678,7 @@ class StepRunResult(BaseModel):
     attempts_used: int
     selected_candidate_id: str | None = None
     touched_files: list[str] = Field(default_factory=list)
+    patch_ops_by_file: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
     trace_entries: list[StepExecutionTrace] = Field(default_factory=list)
     checkpoint_manifests: list[CheckpointManifest] = Field(default_factory=list)
@@ -505,13 +715,32 @@ class TaskRecord(BaseModel):
     plan_approval_snapshot: TaskMilestoneSnapshot | None = None
     completed_step_ids: list[str] = Field(default_factory=list)
     modified_files: list[str] = Field(default_factory=list)
+    # Normalized fingerprints of diagnostics present BEFORE this task's work began,
+    # captured at the start of _execute_plan. Persisted so a `validate`-stage resume can
+    # reuse the ORIGINAL baseline instead of re-collecting it on the already-mutated shadow.
+    baseline_error_fingerprints: list[str] = Field(default_factory=list)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
     budget: TaskBudget = Field(default_factory=TaskBudget)
     usage: TaskUsage = Field(default_factory=TaskUsage)
     events: list[TaskEvent] = Field(default_factory=list)
     execution_trace: list[StepExecutionTrace] = Field(default_factory=list)
     checkpoints: list[CheckpointManifest] = Field(default_factory=list)
+    execution_state: TaskExecutionState = Field(default_factory=TaskExecutionState)
     artifacts_root_path: str | None = None
+    is_inline_change: bool = False
+    step_review_auto_accept: bool = True
+    chat_channel_id: str | None = None
+    initial_explore_context: list[dict[str, object]] | None = None
+    # The planner's own exploration is kept as the verbatim conversation it produced
+    # (replaces the lossy planning_explore_context digest). A feedback round seeds the
+    # planning loop with this and appends the feedback as the final turn, so the KV
+    # prefix is reused instead of reprefilled.
+    planning_conversation_history: list[dict[str, object]] | None = None
+    # The exact initial_context the first planning loop used. Pinned and reused on
+    # every feedback round so the payload prefix BEFORE conversation_history stays
+    # byte-identical (recomputing retrieval could otherwise diverge it and defeat the cache).
+    planning_initial_context: dict[str, object] | None = None
+    shell_policy: ShellPolicy | None = None  # per-task override; engine resolves task.shell_policy or self._shell_policy
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -526,6 +755,10 @@ class TaskCreateRequest(BaseModel):
     workspace_path: str
     mode: Literal["inline", "file_edit", "project_edit", "autonomous"] = "project_edit"
     budget: TaskBudget = Field(default_factory=TaskBudget)
+    initial_explore_context: list[dict[str, object]] | None = None
+    # `None` = use AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT env default (default: true).
+    step_review_auto_accept: bool | None = None
+    shell_policy: ShellPolicy | None = None  # per-task override of AI_EDITOR_SHELL_POLICY
 
 
 class TaskCreateResponse(BaseModel):
@@ -583,7 +816,7 @@ class BudgetOverride(BaseModel):
 
 
 class ResumeTaskRequest(BaseModel):
-    stage: Literal["plan", "feedback", "execute"]
+    stage: Literal["plan", "feedback", "execute", "validate"]
     budget_override: BudgetOverride | None = None
 
 
@@ -604,3 +837,18 @@ class TaskArtifactsResponse(BaseModel):
     task_id: str
     artifacts_root_path: str | None = None
     entries: list[TaskArtifactEntry] = Field(default_factory=list)
+
+
+@dataclass
+class DiffEntry:
+    path: str
+    additions: int
+    deletions: int
+    temp_path: str
+
+
+@dataclass
+class InlineChangeResult:
+    task_id: str
+    diff_entries: list[DiffEntry]
+    plan_document: dict[str, Any]

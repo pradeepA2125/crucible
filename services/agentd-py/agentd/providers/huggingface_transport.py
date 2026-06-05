@@ -63,6 +63,7 @@ class HuggingFaceJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: object = None,
     ) -> dict[str, object]:
         prompt = self._build_prompt(
             system_instructions=system_instructions,

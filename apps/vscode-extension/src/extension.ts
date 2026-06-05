@@ -1,6 +1,7 @@
 import { HttpBackendClient } from "@ai-editor/editor-client";
 import * as vscode from "vscode";
 
+import { ChatPanel } from "./chat-panel.js";
 import {
   AiEditorController,
   type BackendClientFactory,
@@ -17,6 +18,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   let controller: AiEditorController;
 
+  const chatPanel = new ChatPanel(
+    context.extensionUri,
+    (message) => controller.sendChatMessage(message),
+    (taskId, action, feedback) => controller.handlePlanCardAction(taskId, action, feedback),
+    () => controller.newChatThread(),
+    (threadId) => controller.switchChatThread(threadId),
+    (taskId) => controller.applyInlineChange(taskId),
+    (taskId) => controller.discardInlineChange(taskId),
+    (relativePath, shadowPath) => controller.openInlineDiff(relativePath, shadowPath),
+    (taskId, files, decision, remember) => controller.handleScopeDecisionFromChat(taskId, files, decision, remember),
+    (taskId, decision) => controller.handleValidationDecisionFromChat(taskId, decision),
+    (taskId, decision) => controller.handleCommandDecisionFromChat(taskId, decision),
+    () => controller.openChat()
+  );
+
   const panel = new ReviewPanel({
     onOpenDiff: (relativePath) => {
       void controller.openDiffForFile(relativePath);
@@ -32,6 +48,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     onProvidePlanFeedback: (feedback) => {
       void controller.providePlanFeedback(feedback);
+    },
+    onStepDecision: (taskId, decision) => {
+      if (decision === "accept") {
+        void controller.acceptStep(taskId);
+      } else {
+        void controller.discardStep(taskId);
+      }
     },
   });
 
@@ -81,6 +104,66 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         placeHolder: "task-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         ignoreFocusOut: true,
       }),
+    promptForScopeDecision: async ({ files, reason, stepId }) => {
+      const fileList = files.length === 1 ? files[0] : `${files.length} files (${files.join(", ")})`;
+      const choice = await vscode.window.showInformationMessage(
+        `[Step ${stepId}] Agent wants to also modify ${fileList}.\n\nReason: ${reason}`,
+        { modal: true },
+        "Approve",
+        "Approve & Remember",
+        "Reject"
+      );
+      if (!choice) return undefined;
+      return {
+        decision: choice.startsWith("Approve") ? "approve" : "reject",
+        remember: choice === "Approve & Remember",
+      };
+    },
+    openChatPanel: () => {
+      chatPanel.show();
+    },
+    appendChatMessage: (message) => {
+      chatPanel.appendMessage(message);
+    },
+    appendChatChunk: (chunk) => {
+      chatPanel.appendChunk(chunk);
+    },
+    showChatThinking: (message) => {
+      chatPanel.showThinking(message);
+    },
+    updateChatThinking: (message) => {
+      chatPanel.updateThinking(message);
+    },
+    hideChatThinking: () => {
+      chatPanel.hideThinking();
+    },
+    setChatInputEnabled: (enabled) => {
+      chatPanel.setInputEnabled(enabled);
+    },
+    renderChatThreadList: (threads, activeThreadId) => {
+      chatPanel.renderThreadList(threads, activeThreadId);
+    },
+    clearChatThread: () => {
+      chatPanel.clearThread();
+    },
+    resolveInlineChangeCard: (taskId, resolution) => {
+      chatPanel.resolveInlineChangeCard(taskId, resolution);
+    },
+    updateThreadTitle: (threadId, title) => {
+      chatPanel.updateThreadTitle(threadId, title);
+    },
+    appendChatThinkingEntry: (text) => {
+      chatPanel.appendThinkingEntry(text);
+    },
+    appendChatThinkingChunk: (chunk) => {
+      chatPanel.appendThinkingChunk(chunk);
+    },
+    finalizeAgentMessage: () => {
+      chatPanel.finalizeAgentMessage();
+    },
+    showStepReview: (taskId, stepId, stepTitle, diffEntries) => {
+      panel.showStepReview(taskId, stepId, stepTitle, diffEntries);
+    },
   };
 
   const clientFactory: BackendClientFactory = (baseUrl) => new HttpBackendClient({ baseUrl });
@@ -114,6 +197,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("aiEditor.attachToTask", async () => {
       await controller.attachToTask();
       panel.show();
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiEditor.openChat", () => {
+      void controller.openChat();
+    })
+  );
+  // Re-attach message handler when VS Code restores the chat panel after a
+  // host restart (without this, the panel is visible but Send does nothing).
+  context.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer("aiEditorChat", {
+      deserializeWebviewPanel(restoredPanel: vscode.WebviewPanel) {
+        chatPanel.reattach(restoredPanel);
+        // Reload thread list + active thread messages after panel is restored.
+        void controller.openChat();
+        return Promise.resolve();
+      },
     })
   );
   context.subscriptions.push({

@@ -14,41 +14,37 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 class RecordingReasoningEngine:
     def __init__(self) -> None:
-        self.markdown_plan_calls: list[dict[str, object]] = []
+        self.planning_step_calls: list[dict[str, object]] = []
         self.plan_calls: list[dict[str, object]] = []
         self.patch_calls: list[dict[str, object]] = []
 
-    async def create_markdown_plan(
+    async def create_planning_step(
         self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        self.markdown_plan_calls.append(
-            {
-                "task_id": task.task_id,
-                "workspace_path": workspace_path,
-                "retrieval_context": retrieval_context,
-            }
-        )
-        return "# Plan\n\n- Create helper"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, plan_markdown)
-        return {"verdict": "pass", "issues": []}
+        plan_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        _ = (history, tool_definitions)
+        self.planning_step_calls.append({"plan_context": plan_context})
+        return {
+            "type": "emit_plan",
+            "thought": "stub",
+            "plan_markdown": "# Plan\n\n- Create helper",
+            "files_examined": [],
+            "confidence": "high",
+        }
 
     async def create_plan(
         self,
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
+        _ = on_thinking
         self.plan_calls.append(
             {
                 "task_id": task.task_id,
@@ -103,15 +99,43 @@ class RecordingReasoningEngine:
             ]
         }
 
-    async def critique_json_plan(
+    async def create_tool_step(
         self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, candidate_plan)
-        return {"verdict": "pass", "issues": []}
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        _ = (tool_definitions, on_thinking)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
+        self.patch_calls.append(
+            {
+                "task_id": None,
+                "workspace_path": None,
+                "diagnostics": [],
+                "retrieval_context": step_context,
+            }
+        )
+        return {
+            "type": "emit_patch",
+            "thought": "stub",
+            "patch_ops": [
+                {
+                    "op": "create_file",
+                    "file": "generated.txt",
+                    "content": "ok",
+                    "reason": "retrieval-driven edit",
+                }
+            ],
+        }
+
 
 
 class AlwaysPassValidator:
@@ -187,20 +211,21 @@ async def test_orchestrator_passes_retrieval_context_to_plan_and_patch(tmp_path:
         (str(real_workspace), "Generate helper"),
         (str(real_workspace), "Generate helper"),
     ]
-    assert len(reasoner.markdown_plan_calls) == 1
+    assert len(reasoner.planning_step_calls) == 1
     assert len(reasoner.plan_calls) == 1
     assert len(reasoner.patch_calls) == 1
 
-    markdown_context = reasoner.markdown_plan_calls[0]["retrieval_context"]
+    # Retrieval context reaches create_planning_step via initial_context
+    planning_initial = reasoner.planning_step_calls[0]["plan_context"].get("initial_context", {})
     plan_context = reasoner.plan_calls[0]["retrieval_context"]
     patch_context = reasoner.patch_calls[0]["retrieval_context"]
-    assert isinstance(markdown_context, dict)
+    assert isinstance(planning_initial, dict)
     assert isinstance(plan_context, dict)
     assert isinstance(patch_context, dict)
-    assert "repository_structure" in markdown_context
+    assert "repository_structure" in planning_initial
     assert "file_outlines" in plan_context
     assert "file_contents" in patch_context
-    assert "planner_evidence" in markdown_context
+    assert "planner_evidence" in planning_initial
 
     assert result.diagnostics
     assert result.diagnostics[0].source == "retrieval"

@@ -1,6 +1,6 @@
 # Agentic Planning + Delta Replan Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Replace the static plan-then-patch loop with two cooperating agents: a PlanningAgent that explores the workspace before committing to a plan, and an ExecutionAgent (ToolLoop) that hands off to the planner when a step's approach is fundamentally wrong.
 
@@ -44,7 +44,7 @@
 - Modify: `agentd/domain/models.py`
 - Test: `tests/test_planning_domain_models.py` (new)
 
-- [ ] **Step 1: Write failing tests for new domain types**
+- [x] **Step 1: Write failing tests for new domain types**
 
 ```python
 # tests/test_planning_domain_models.py  (new file)
@@ -94,7 +94,7 @@ def test_delta_replan_request_fields():
     assert r.hinted_affected_steps == ["s3"]
 ```
 
-- [ ] **Step 2: Run tests to confirm they fail**
+- [x] **Step 2: Run tests to confirm they fail**
 
 ```bash
 cd services/agentd-py && source .venv/bin/activate
@@ -102,7 +102,7 @@ pytest tests/test_planning_domain_models.py -v 2>&1 | head -30
 ```
 Expected: ImportError or AttributeError — types don't exist yet.
 
-- [ ] **Step 3: Extend `TaskBudget` with three new fields**
+- [x] **Step 3: Extend `TaskBudget` with three new fields**
 
 Replace the existing `TaskBudget` class:
 ```python
@@ -117,7 +117,7 @@ class TaskBudget(BaseModel):
     max_delta_replans: int = 3
 ```
 
-- [ ] **Step 5: Add `TaskExecutionState` and `DeltaReplanRequest` models**
+- [x] **Step 5: Add `TaskExecutionState` and `DeltaReplanRequest` models**
 
 Add after `AgentToolTrace` (before `TaskEvent`):
 ```python
@@ -136,7 +136,7 @@ class TaskExecutionState(BaseModel):
     delta_replans_used: int = 0
 ```
 
-- [ ] **Step 6: Add `RevisedStep` and `PlanRevisionResult` models**
+- [x] **Step 6: Add `RevisedStep` and `PlanRevisionResult` models**
 
 Add after `PlanCritiqueResult`:
 ```python
@@ -157,7 +157,7 @@ class PlanRevisionResult(BaseModel):
     tool_trace: "AgentToolTrace"
 ```
 
-- [ ] **Step 7: Add `PlanningResult` model**
+- [x] **Step 7: Add `PlanningResult` model**
 
 Add after `PlanRevisionResult`:
 ```python
@@ -168,21 +168,21 @@ class PlanningResult(BaseModel):
     tool_trace: "AgentToolTrace"
 ```
 
-- [ ] **Step 8: Add `execution_state` field to `TaskRecord`**
+- [x] **Step 8: Add `execution_state` field to `TaskRecord`**
 
 Add after `checkpoints: list[CheckpointManifest]`:
 ```python
     execution_state: TaskExecutionState = Field(default_factory=TaskExecutionState)
 ```
 
-- [ ] **Step 9: Run tests to confirm they pass**
+- [x] **Step 9: Run tests to confirm they pass**
 
 ```bash
 pytest tests/test_planning_domain_models.py -v
 ```
 Expected: All 5 tests PASS.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add agentd/domain/models.py tests/test_planning_domain_models.py
@@ -197,7 +197,7 @@ git commit -m "feat(models): add planning agent domain types — TaskExecutionSt
 - Create: `agentd/planning/prompts.py`
 - Test: inline in Task 4's loop tests
 
-- [ ] **Step 1: Create `agentd/planning/prompts.py`**
+- [x] **Step 1: Create `agentd/planning/prompts.py`**
 
 ```python
 """Prompts and schemas for the PlanningAgent explore-then-commit loop."""
@@ -350,14 +350,14 @@ def build_planning_step_payload(
     return payload
 ```
 
-- [ ] **Step 2: Verify it parses without errors**
+- [x] **Step 2: Verify it parses without errors**
 
 ```bash
 cd services/agentd-py && python -c "from agentd.planning.prompts import PLANNING_SYSTEM_PROMPT, PLANNING_STEP_RESPONSE_SCHEMA; print('OK')"
 ```
 Expected: `OK`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add agentd/planning/prompts.py
@@ -372,7 +372,7 @@ git commit -m "feat(planning): planning agent system prompts and response schema
 - Create: `agentd/planning/registry.py`
 - Test: `tests/test_planning_agent.py` (written in Task 6)
 
-- [ ] **Step 1: Create `agentd/planning/registry.py`**
+- [x] **Step 1: Create `agentd/planning/registry.py`**
 
 ```python
 """Read-only tool registry for the PlanningAgent loop."""
@@ -544,14 +544,14 @@ class PlanningToolRegistry:
                 self._walk_dir(entry, root, max_depth, current_depth + 1, out)
 ```
 
-- [ ] **Step 2: Verify it parses**
+- [x] **Step 2: Verify it parses**
 
 ```bash
 python -c "from agentd.planning.registry import PlanningToolRegistry; print('OK')"
 ```
 Expected: `OK`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add agentd/planning/registry.py
@@ -565,7 +565,7 @@ git commit -m "feat(planning): PlanningToolRegistry with read-only tools and lis
 **Files:**
 - Create: `agentd/planning/loop.py`
 
-- [ ] **Step 1: Create `agentd/planning/loop.py`**
+- [x] **Step 1: Create `agentd/planning/loop.py`**
 
 ```python
 """Explore-then-commit ReAct loop for the PlanningAgent."""
@@ -807,14 +807,14 @@ class PlanningLoop:
         raise PlanningBudgetExceededError("Planning loop exited without result")
 ```
 
-- [ ] **Step 2: Verify it parses**
+- [x] **Step 2: Verify it parses**
 
 ```bash
 python -c "from agentd.planning.loop import PlanningLoop; print('OK')"
 ```
 Expected: `OK`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add agentd/planning/loop.py
@@ -829,7 +829,7 @@ git commit -m "feat(planning): PlanningLoop explore-then-commit ReAct loop"
 - Create: `agentd/planning/agent.py`
 - Create: `agentd/planning/__init__.py`
 
-- [ ] **Step 1: Create `agentd/planning/agent.py`**
+- [x] **Step 1: Create `agentd/planning/agent.py`**
 
 ```python
 """PlanningAgent: owns plan correctness for the agentic editor."""
@@ -950,7 +950,7 @@ class PlanningAgent:
         return result
 ```
 
-- [ ] **Step 2: Create `agentd/planning/__init__.py`**
+- [x] **Step 2: Create `agentd/planning/__init__.py`**
 
 ```python
 """PlanningAgent package for Phase 5 agentic planning."""
@@ -961,14 +961,14 @@ from agentd.planning.registry import PlanningToolRegistry
 __all__ = ["PlanningAgent", "PlanningBudgetExceededError", "PlanningLoop", "PlanningToolRegistry"]
 ```
 
-- [ ] **Step 3: Verify package imports**
+- [x] **Step 3: Verify package imports**
 
 ```bash
 python -c "from agentd.planning import PlanningAgent, PlanningLoop, PlanningToolRegistry; print('OK')"
 ```
 Expected: `OK`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add agentd/planning/agent.py agentd/planning/__init__.py
@@ -982,7 +982,7 @@ git commit -m "feat(planning): PlanningAgent with generate_plan() and revise()"
 **Files:**
 - Create: `tests/test_planning_agent.py`
 
-- [ ] **Step 1: Create the test file**
+- [x] **Step 1: Create the test file**
 
 ```python
 # tests/test_planning_agent.py
@@ -1236,14 +1236,14 @@ async def test_planning_agent_revise(tmp_path: Path):
     assert result.revised_steps[0].goal == "Retargeted"
 ```
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 ```bash
 pytest tests/test_planning_agent.py -v
 ```
 Expected: All tests PASS. (The `list_directory` tool call returns empty dir listing; that's fine.)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_planning_agent.py
@@ -1259,7 +1259,7 @@ git commit -m "test(planning): PlanningLoop and PlanningAgent unit tests"
 - Modify: `agentd/reasoning/engine.py`
 - Modify: `agentd/orchestrator/scripted_engine.py`
 
-- [ ] **Step 1: Write a failing test that calls `create_planning_step()` on `DefaultReasoningEngine`**
+- [x] **Step 1: Write a failing test that calls `create_planning_step()` on `DefaultReasoningEngine`**
 
 This test can't be run until Task 7 is done, but we note the shape so we can confirm it passes:
 ```python
@@ -1267,7 +1267,7 @@ This test can't be run until Task 7 is done, but we note the shape so we can con
 # Just confirm the protocol has the method after this task.
 ```
 
-- [ ] **Step 2: Add `create_planning_step()` to `agentd/reasoning/contracts.py`**
+- [x] **Step 2: Add `create_planning_step()` to `agentd/reasoning/contracts.py`**
 
 Add after the `create_tool_step()` definition:
 ```python
@@ -1287,7 +1287,7 @@ Add after the `create_tool_step()` definition:
         ...
 ```
 
-- [ ] **Step 3: Implement `create_planning_step()` in `agentd/reasoning/engine.py`**
+- [x] **Step 3: Implement `create_planning_step()` in `agentd/reasoning/engine.py`**
 
 In `DefaultReasoningEngine`, add after `create_tool_step()`:
 ```python
@@ -1329,7 +1329,7 @@ grep -n "_task_id\|_workspace_path" services/agentd-py/agentd/reasoning/engine.p
 
 If the attributes don't exist, replace `_debug_dump(...)` with `pass` and add a TODO comment.
 
-- [ ] **Step 4: Add `create_planning_step()` stub to `ScriptedReasoningEngine`**
+- [x] **Step 4: Add `create_planning_step()` stub to `ScriptedReasoningEngine`**
 
 In `agentd/orchestrator/scripted_engine.py`, add after `create_tool_step()`:
 ```python
@@ -1349,14 +1349,14 @@ In `agentd/orchestrator/scripted_engine.py`, add after `create_tool_step()`:
         }
 ```
 
-- [ ] **Step 5: Verify all existing tests still pass**
+- [x] **Step 5: Verify all existing tests still pass**
 
 ```bash
 pytest tests/ -v --tb=short -q 2>&1 | tail -20
 ```
 Expected: All previously passing tests still pass. `create_planning_step()` is additive.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add agentd/reasoning/contracts.py agentd/reasoning/engine.py agentd/orchestrator/scripted_engine.py
@@ -1373,7 +1373,7 @@ git commit -m "feat(reasoning): add create_planning_step() to ReasoningEngine pr
 
 The `ToolLoop.run()` currently returns `tuple[dict, AgentToolTrace]`. After this task it returns `StepOutcome = PatchResult | PlanHandoff`. The engine call site in `_run_step_with_retries` must be updated in Task 9.
 
-- [ ] **Step 1: Write failing test for `PlanHandoff` return**
+- [x] **Step 1: Write failing test for `PlanHandoff` return**
 
 ```python
 # tests/test_delta_replan.py  (new file — full test in Task 13; this seeds it)
@@ -1428,14 +1428,14 @@ async def test_tool_loop_returns_plan_handoff_on_revision_needed(tmp_path: Path)
     assert outcome.hinted_affected_steps == ["s2"]
 ```
 
-- [ ] **Step 2: Run the test to confirm it fails**
+- [x] **Step 2: Run the test to confirm it fails**
 
 ```bash
 pytest tests/test_delta_replan.py::test_tool_loop_returns_plan_handoff_on_revision_needed -v
 ```
 Expected: FAIL — `PlanHandoff`, `PatchResult`, `StepOutcome` not imported.
 
-- [ ] **Step 3: Add `revision_needed` to `AGENT_STEP_RESPONSE_SCHEMA` in `tool_prompts.py`**
+- [x] **Step 3: Add `revision_needed` to `AGENT_STEP_RESPONSE_SCHEMA` in `tool_prompts.py`**
 
 In `agentd/reasoning/tool_prompts.py`, change the `type` enum:
 ```python
@@ -1470,7 +1470,7 @@ Also update the `TOOL_LOOP_SYSTEM_PROMPT` to mention the new action:
   Provide specific evidence from your tool calls.
 ```
 
-- [ ] **Step 4: Add `PatchResult`, `PlanHandoff`, `StepOutcome` to `agentd/tools/loop.py`**
+- [x] **Step 4: Add `PatchResult`, `PlanHandoff`, `StepOutcome` to `agentd/tools/loop.py`**
 
 Add these dataclasses at the top of `loop.py`, after imports:
 ```python
@@ -1494,7 +1494,7 @@ class PlanHandoff:
 StepOutcome = PatchResult | PlanHandoff
 ```
 
-- [ ] **Step 5: Update `ToolLoop.run()` to return `StepOutcome`**
+- [x] **Step 5: Update `ToolLoop.run()` to return `StepOutcome`**
 
 Change the return type annotation:
 ```python
@@ -1550,14 +1550,14 @@ Add `revision_needed` handling between the `emit_patch` block and the `tool_call
                 )
 ```
 
-- [ ] **Step 6: Run the delta replan test**
+- [x] **Step 6: Run the delta replan test**
 
 ```bash
 pytest tests/test_delta_replan.py::test_tool_loop_returns_plan_handoff_on_revision_needed -v
 ```
 Expected: PASS.
 
-- [ ] **Step 7: Run full test suite to check for regressions**
+- [x] **Step 7: Run full test suite to check for regressions**
 
 The engine still calls `patch_raw, tool_trace = await tool_loop.run(...)` — this will now fail because `run()` returns `StepOutcome`, not a tuple. We expect those tests to fail until Task 9.
 
@@ -1566,7 +1566,7 @@ pytest tests/ -v --tb=line -q 2>&1 | tail -30
 ```
 Note which tests fail and confirm they fail only because of the `tool_loop.run()` tuple unpack. That's expected — Task 9 fixes it.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add agentd/reasoning/tool_prompts.py agentd/tools/loop.py tests/test_delta_replan.py
@@ -1582,7 +1582,7 @@ git commit -m "feat(tools): ToolLoop returns StepOutcome union; add revision_nee
 
 After this task, `_run_step_with_retries` returns `StepRunResult | PlanHandoff`. The `_execute_plan` `for` loop becomes a `while` loop. Existing behaviour (no delta replan) is preserved — the dispatch only does `isinstance(step_result, PlanHandoff)` → fail (delta replan dispatch added in Task 11).
 
-- [ ] **Step 1: Add `_next_incomplete_step()` method to `AgentOrchestrator`**
+- [x] **Step 1: Add `_next_incomplete_step()` method to `AgentOrchestrator`**
 
 Add this private method after `_merge_step_result()`:
 ```python
@@ -1594,7 +1594,7 @@ Add this private method after `_merge_step_result()`:
         return next((s for s in task.plan.steps if s.id not in completed), None)
 ```
 
-- [ ] **Step 2: Update `_run_step_with_retries` return type and import `PlanHandoff`**
+- [x] **Step 2: Update `_run_step_with_retries` return type and import `PlanHandoff`**
 
 Add `PlanHandoff, PatchResult, StepOutcome` to the import from `agentd.tools.loop`:
 ```python
@@ -1609,7 +1609,7 @@ Change the return type annotation of `_run_step_with_retries`:
     ) -> StepRunResult | PlanHandoff:
 ```
 
-- [ ] **Step 3: Handle `PlanHandoff` inside `_run_step_with_retries`**
+- [x] **Step 3: Handle `PlanHandoff` inside `_run_step_with_retries`**
 
 In the tool-loop-enabled branch, replace:
 ```python
@@ -1641,7 +1641,7 @@ With:
                     tool_trace = step_outcome.tool_trace
 ```
 
-- [ ] **Step 4: Replace the `for` step loop in `_execute_plan` with `while _next_incomplete_step()`**
+- [x] **Step 4: Replace the `for` step loop in `_execute_plan` with `while _next_incomplete_step()`**
 
 Replace:
 ```python
@@ -1696,14 +1696,14 @@ With:
                     return task
 ```
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 ```bash
 pytest tests/ -v --tb=short -q 2>&1 | tail -30
 ```
 Expected: All previously passing tests pass again (the tuple-unpack issue is fixed). The delta replan test from Task 8 still passes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add agentd/orchestrator/engine.py
@@ -1719,7 +1719,7 @@ git commit -m "refactor(engine): while _next_incomplete_step loop; _run_step_wit
 
 The engine will call `create_planning_step()` once we wire up `PlanningAgent.generate_plan()` in Task 11. Until then, existing tests that call `run_task()` directly need the stub. Do this proactively to avoid cascading failures.
 
-- [ ] **Step 1: Find all test files with inline stub reasoning engines**
+- [x] **Step 1: Find all test files with inline stub reasoning engines**
 
 ```bash
 grep -rn "async def create_markdown_plan\|async def create_plan" services/agentd-py/tests/ | grep -v ScriptedReasoning
@@ -1727,7 +1727,7 @@ grep -rn "async def create_markdown_plan\|async def create_plan" services/agentd
 
 Note the files returned. Typically: `test_orchestrator_repair_rollback.py`, `test_orchestrator_candidate_scoring.py`, `test_orchestrator_plan_target_validation.py`, `test_orchestrator_retrieval.py`, `test_plan_feedback_api.py`.
 
-- [ ] **Step 2: Add `create_planning_step()` stub to each inline engine**
+- [x] **Step 2: Add `create_planning_step()` stub to each inline engine**
 
 For each stub class found, add:
 ```python
@@ -1749,14 +1749,14 @@ For each stub class found, add:
 
 Apply this to every class that implements the `ReasoningEngine` protocol in test files. Do NOT modify `ScriptedReasoningEngine` — it already has the stub from Task 7.
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 ```bash
 pytest tests/ -v --tb=short -q 2>&1 | tail -20
 ```
 Expected: All tests pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/
@@ -1772,7 +1772,7 @@ git commit -m "test: add create_planning_step() stub to all inline test reasonin
 
 Replace `_generate_repo_grounded_markdown_plan()` calls in `run_task()` and `continue_task()` with `PlanningAgent.generate_plan()`. Also simplify the JSON plan critique loop in `continue_task()` to a single `create_plan()` call.
 
-- [ ] **Step 1: Add planning imports to `engine.py`**
+- [x] **Step 1: Add planning imports to `engine.py`**
 
 Add after existing imports:
 ```python
@@ -1780,7 +1780,7 @@ from agentd.planning.agent import PlanningAgent
 from agentd.planning.registry import PlanningToolRegistry
 ```
 
-- [ ] **Step 2: Add `_build_planning_agent()` helper to `AgentOrchestrator`**
+- [x] **Step 2: Add `_build_planning_agent()` helper to `AgentOrchestrator`**
 
 ```python
     def _build_planning_agent(self, task_id: str, workspace_path: str) -> PlanningAgent:
@@ -1797,7 +1797,7 @@ from agentd.planning.registry import PlanningToolRegistry
         )
 ```
 
-- [ ] **Step 3: Replace the planning call in `run_task()`**
+- [x] **Step 3: Replace the planning call in `run_task()`**
 
 In `run_task()`, replace:
 ```python
@@ -1844,7 +1844,7 @@ With:
             task.diagnostics = [*persistent_diagnostics, *confidence_diagnostics]
 ```
 
-- [ ] **Step 4: Replace the planning call in `continue_task()` feedback branch**
+- [x] **Step 4: Replace the planning call in `continue_task()` feedback branch**
 
 In `continue_task()`, in the `if feedback:` branch, replace:
 ```python
@@ -1880,7 +1880,7 @@ With:
                 task.diagnostics = [*retrieval_warnings, *confidence_diagnostics]
 ```
 
-- [ ] **Step 5: Simplify the JSON plan critique loop in `continue_task()` approved branch**
+- [x] **Step 5: Simplify the JSON plan critique loop in `continue_task()` approved branch**
 
 In `continue_task()`, in the `# Approved!` branch, replace the entire `for attempt in range(3):` loop (including `plan_draft_rounds`, `plan_critique_rounds`, `unresolved_targets`, `grounding_issues`, `schema_errors`, and the `_write_debug_artifact` calls for those) with:
 
@@ -1919,14 +1919,14 @@ In `continue_task()`, in the `# Approved!` branch, replace the entire `for attem
 
 Remove the `_write_debug_artifact` calls for `json-plan-critique` and `json-plan-final` since they no longer exist.
 
-- [ ] **Step 6: Run full test suite**
+- [x] **Step 6: Run full test suite**
 
 ```bash
 pytest tests/ -v --tb=short -q 2>&1 | tail -30
 ```
 Expected: All tests pass. Tests that call `run_task()` now call the planning agent stub (which immediately emits `emit_plan`), so the snapshot and plan-approval flow still works.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add agentd/orchestrator/engine.py
@@ -1942,7 +1942,7 @@ git commit -m "feat(engine): replace static planning with PlanningAgent.generate
 
 Wire up `PlanHandoff` dispatch in `_execute_plan`. Add `_apply_revision()`. Replace the temporary "fail cleanly" placeholder from Task 9.
 
-- [ ] **Step 1: Write failing test for the full delta replan flow**
+- [x] **Step 1: Write failing test for the full delta replan flow**
 
 In `tests/test_delta_replan.py`, add:
 
@@ -2051,7 +2051,7 @@ async def test_engine_delta_replan_flow(tmp_path: Path):
 
 Note: This is a partial test skeleton. Complete it based on how the existing integration tests in `test_orchestrator_repair_rollback.py` call the engine. Look at that file for the exact pattern.
 
-- [ ] **Step 2: Add `_apply_revision()` to `AgentOrchestrator`**
+- [x] **Step 2: Add `_apply_revision()` to `AgentOrchestrator`**
 
 ```python
     async def _apply_revision(
@@ -2119,7 +2119,7 @@ Note: This is a partial test skeleton. Complete it based on how the existing int
         })
 ```
 
-- [ ] **Step 3: Replace temporary `PlanHandoff` handler in `_execute_plan` with full dispatch**
+- [x] **Step 3: Replace temporary `PlanHandoff` handler in `_execute_plan` with full dispatch**
 
 Replace the temporary block:
 ```python
@@ -2181,14 +2181,14 @@ from agentd.domain.models import (
 )
 ```
 
-- [ ] **Step 4: Instantiate `PlanningAgent` in `_execute_plan` before the `while` loop**
+- [x] **Step 4: Instantiate `PlanningAgent` in `_execute_plan` before the `while` loop**
 
 Add before `while (step := self._next_incomplete_step(task)) is not None:`:
 ```python
             planning_agent = self._build_planning_agent(task.task_id, task.workspace_path)
 ```
 
-- [ ] **Step 5: Add `step_checkpoints` recording after successful step completion**
+- [x] **Step 5: Add `step_checkpoints` recording after successful step completion**
 
 After `self._merge_step_result(task, step_result, persistent_diagnostics)` and `await self._store.save(task)`, add:
 ```python
@@ -2199,14 +2199,14 @@ After `self._merge_step_result(task, step_result, persistent_diagnostics)` and `
                     await self._store.save(task)
 ```
 
-- [ ] **Step 6: Run full test suite**
+- [x] **Step 6: Run full test suite**
 
 ```bash
 pytest tests/ -v --tb=short -q 2>&1 | tail -30
 ```
 Expected: All existing tests still pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add agentd/orchestrator/engine.py
@@ -2222,7 +2222,7 @@ git commit -m "feat(engine): delta replan dispatch, _apply_revision(), step_chec
 
 Remove `_generate_repo_grounded_markdown_plan()` (now replaced), `_validate_plan_grounding()` (replaced by one-step-per-file prompt + planning agent inline verification), and unused imports.
 
-- [ ] **Step 1: Confirm nothing calls the deleted methods**
+- [x] **Step 1: Confirm nothing calls the deleted methods**
 
 ```bash
 grep -n "_generate_repo_grounded_markdown_plan\|_validate_plan_grounding\|critique_json_plan\|critique_markdown_plan" services/agentd-py/agentd/orchestrator/engine.py
@@ -2230,7 +2230,7 @@ grep -n "_generate_repo_grounded_markdown_plan\|_validate_plan_grounding\|critiq
 
 Expected: Zero hits inside method bodies (only the method definitions themselves). If any remain, they're unreachable — safe to delete.
 
-- [ ] **Step 2: Delete `_generate_repo_grounded_markdown_plan()` from `engine.py`**
+- [x] **Step 2: Delete `_generate_repo_grounded_markdown_plan()` from `engine.py`**
 
 Remove the entire method body (it's roughly 100 lines). Find its start:
 ```bash
@@ -2239,7 +2239,7 @@ grep -n "def _generate_repo_grounded_markdown_plan" services/agentd-py/agentd/or
 
 Delete from `async def _generate_repo_grounded_markdown_plan(` through the final `return final_markdown, self._critique_diagnostics(...)` line.
 
-- [ ] **Step 3: Delete `_validate_plan_grounding()` from `engine.py`**
+- [x] **Step 3: Delete `_validate_plan_grounding()` from `engine.py`**
 
 ```bash
 grep -n "def _validate_plan_grounding" services/agentd-py/agentd/orchestrator/engine.py
@@ -2247,7 +2247,7 @@ grep -n "def _validate_plan_grounding" services/agentd-py/agentd/orchestrator/en
 
 Delete the entire method.
 
-- [ ] **Step 4: Remove now-unused imports in `engine.py`**
+- [x] **Step 4: Remove now-unused imports in `engine.py`**
 
 Check for and remove:
 - `PlanCritiqueResult` (no longer used — critiques removed)
@@ -2261,11 +2261,11 @@ python -m ruff check agentd/orchestrator/engine.py --select F401
 
 Remove flagged unused imports.
 
-- [ ] **Step 5: Remove now-unused imports in `reasoning/contracts.py` and `reasoning/engine.py`**
+- [x] **Step 5: Remove now-unused imports in `reasoning/contracts.py` and `reasoning/engine.py`**
 
 The critique methods (`critique_markdown_plan`, `critique_json_plan`) remain in the Protocol for backward compatibility (existing providers implement them). Leave them in `contracts.py`. Remove only truly dead code.
 
-- [ ] **Step 6: Run full test suite**
+- [x] **Step 6: Run full test suite**
 
 ```bash
 pytest tests/ -v --tb=short -q 2>&1 | tail -20
@@ -2274,7 +2274,7 @@ mypy agentd/orchestrator/engine.py --no-error-summary 2>&1 | tail -20
 ```
 Expected: Zero test failures. Zero unused import warnings.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add agentd/orchestrator/engine.py agentd/reasoning/
@@ -2290,7 +2290,7 @@ git commit -m "refactor(engine): delete _generate_repo_grounded_markdown_plan an
 
 Complete the integration tests started in Task 8. Test the full `revision_needed → PlanHandoff → PlanningAgent.revise() → _apply_revision()` round-trip.
 
-- [ ] **Step 1: Complete `tests/test_delta_replan.py`**
+- [x] **Step 1: Complete `tests/test_delta_replan.py`**
 
 Add these tests (the file already has the `test_tool_loop_returns_plan_handoff_on_revision_needed` test from Task 8):
 
@@ -2524,21 +2524,21 @@ async def test_max_delta_replans_guard(tmp_path: Path):
     assert any("budget exhausted" in d.message for d in result.diagnostics)
 ```
 
-- [ ] **Step 2: Run the new delta replan tests**
+- [x] **Step 2: Run the new delta replan tests**
 
 ```bash
 pytest tests/test_delta_replan.py -v
 ```
 Expected: All tests PASS.
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 ```bash
 pytest tests/ -v --tb=short -q 2>&1 | tail -20
 ```
 Expected: All tests pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/test_delta_replan.py
@@ -2559,7 +2559,7 @@ The plan markdown emitted by the planning agent doesn't directly contain structu
 
 **Decision:** Apply the one-step-per-file validation at JSON plan generation time in `continue_task()`, not inside `PlanningLoop`. The planning prompt already instructs the LLM not to split files, so violations should be rare. If `candidate_plan` has duplicates, fail with a clear diagnostic rather than a silent retry.
 
-- [ ] **Step 1: Add duplicate-target check after `PlanDocument.model_validate()` in `continue_task()`**
+- [x] **Step 1: Add duplicate-target check after `PlanDocument.model_validate()` in `continue_task()`**
 
 After `candidate_plan = PlanDocument.model_validate(plan_raw)` in `engine.py`:
 ```python
@@ -2609,7 +2609,7 @@ Also apply the same check in `_apply_revision()` after step replacements:
             raise ValueError("Revision created duplicate file targets across steps")
 ```
 
-- [ ] **Step 2: Write tests for the duplicate-target check**
+- [x] **Step 2: Write tests for the duplicate-target check**
 
 Add to `tests/test_planning_agent.py`:
 ```python
@@ -2633,14 +2633,14 @@ def test_no_cross_step_duplicates_with_different_files():
     assert _validate_no_duplicate_file_targets(steps) == []
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 ```bash
 pytest tests/test_planning_agent.py tests/test_delta_replan.py -v
 ```
 Expected: All tests PASS.
 
-- [ ] **Step 4: Run full suite and linting**
+- [x] **Step 4: Run full suite and linting**
 
 ```bash
 pytest tests/ -q --tb=short 2>&1 | tail -10
@@ -2648,7 +2648,7 @@ ruff check agentd/ && mypy agentd/planning/ --no-error-summary 2>&1 | tail -10
 ```
 Expected: No failures.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add agentd/orchestrator/engine.py agentd/planning/loop.py tests/test_planning_agent.py

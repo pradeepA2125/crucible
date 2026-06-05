@@ -27,33 +27,14 @@ class ReplanningReasoner:
         self.plan_calls = 0
         self.plan_contexts: list[dict[str, object]] = []
 
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path, retrieval_context)
-        self.markdown_plan_calls += 1
-        return "# Plan\n\n- Update endpoint"
-
-    async def critique_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        plan_markdown: str,
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, plan_markdown)
-        return {"verdict": "pass", "issues": []}
-
     async def create_plan(
         self,
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path)
+        _ = (task, workspace_path, on_thinking)
         self.plan_calls += 1
         self.plan_contexts.append(dict(retrieval_context))
         if self.plan_calls == 1:
@@ -111,15 +92,54 @@ class ReplanningReasoner:
             ]
         }
 
-    async def critique_json_plan(
+    async def create_tool_step(
         self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context, candidate_plan)
-        return {"verdict": "pass", "issues": []}
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        _ = (step_context, tool_definitions, on_thinking)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "replace_node",
+                    "file": "src/example.py",
+                    "language": "python",
+                    "selector": {"kind": "symbol", "value": "X", "match": "exact"},
+                    "content": "class X:\n    pass\n    updated = True\n",
+                    "reason": "apply update",
+                }
+            ],
+        }
+
+    async def create_planning_step(
+        self,
+        plan_context: dict,
+        history: list,
+        tool_definitions: list,
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict:
+        _ = (plan_context, history, tool_definitions)
+        return {
+            "type": "emit_plan",
+            "thought": "stub: planning agent bypassed",
+            "plan_markdown": "# Stub Plan\n\n- Review generated changes",
+            "files_examined": [],
+            "confidence": "high",
+        }
 
 
 class AlwaysBadReasoner(ReplanningReasoner):
@@ -128,8 +148,9 @@ class AlwaysBadReasoner(ReplanningReasoner):
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path)
+        _ = (task, workspace_path, on_thinking)
         self.plan_calls += 1
         self.plan_contexts.append(dict(retrieval_context))
         return {
@@ -149,23 +170,14 @@ class AlwaysBadReasoner(ReplanningReasoner):
 
 
 class MarkdownBlueprintReasoner(ReplanningReasoner):
-    async def create_markdown_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-    ) -> str:
-        _ = (task, workspace_path, retrieval_context)
-        self.markdown_plan_calls += 1
-        return "# Plan\n\n- Update `services/agentd-py/agentd/api/routes.py`"
-
     async def create_plan(
         self,
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path)
+        _ = (task, workspace_path, on_thinking)
         self.plan_calls += 1
         self.plan_contexts.append(dict(retrieval_context))
         if self.plan_calls == 1:
@@ -206,31 +218,6 @@ class MarkdownBlueprintReasoner(ReplanningReasoner):
             "stop_conditions": ["tests pass"],
         }
 
-    async def critique_json_plan(
-        self,
-        task: TaskRecord,
-        workspace_path: str,
-        retrieval_context: dict[str, object],
-        candidate_plan: dict[str, object],
-    ) -> object:
-        _ = (task, workspace_path, retrieval_context)
-        # Check if plan targets drift from markdown blueprint
-        if self.plan_calls == 1:
-            # First call has drift - return issues
-            return {
-                "verdict": "revise",
-                "issues": [
-                    {
-                        "code": "path_prefix_mismatch",
-                        "message": "JSON plan target 'services/agentd-py/agentd/storage/base.py' is not part of the approved markdown blueprint.",
-                        "file": "services/agentd-py/agentd/storage/base.py",
-                        "evidence": "services/agentd-py/agentd/api/routes.py",
-                    }
-                ]
-            }
-        # Second call should pass
-        return {"verdict": "pass", "issues": []}
-
     async def create_patch(
         self,
         task: TaskRecord,
@@ -257,6 +244,36 @@ class MarkdownBlueprintReasoner(ReplanningReasoner):
             ]
         }
 
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        _ = (step_context, tool_definitions, on_thinking)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "search_replace",
+                    "file": "services/agentd-py/agentd/api/routes.py",
+                    "search": "router = object()",
+                    "replace": "router = object()\nTASK_EVENTS_ROUTE = True",
+                    "reason": "apply minimal endpoint marker for validation",
+                }
+            ],
+        }
+
 
 class NewFileIntentReasoner(ReplanningReasoner):
     async def create_plan(
@@ -264,8 +281,9 @@ class NewFileIntentReasoner(ReplanningReasoner):
         task: TaskRecord,
         workspace_path: str,
         retrieval_context: dict[str, object],
+        on_thinking: object = None,
     ) -> object:
-        _ = (task, workspace_path, retrieval_context)
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         self.plan_calls += 1
         self.plan_contexts.append(dict(retrieval_context))
         return {
@@ -307,9 +325,41 @@ class NewFileIntentReasoner(ReplanningReasoner):
             ]
         }
 
+    async def create_tool_step(
+        self,
+        step_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        _ = (step_context, tool_definitions, on_thinking)
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
+        return {
+            "type": "emit_patch",
+            "thought": "scripted",
+            "patch_ops": [
+                {
+                    "op": "create_file",
+                    "file": "tests/test_task_events_api.py",
+                    "content": "def test_placeholder():\n    assert True\n",
+                    "reason": "add placeholder regression test",
+                }
+            ],
+        }
+
 
 @pytest.mark.asyncio
 async def test_orchestrator_replans_when_plan_targets_missing(tmp_path: Path) -> None:
+    # With the PlanningAgent architecture, grounding retry is replaced by the
+    # explore-then-commit loop. A plan targeting a non-existent file still fails
+    # at step execution (preflight scope/missing-target), not at plan generation.
     real_workspace = tmp_path / "real"
     (real_workspace / "src").mkdir(parents=True)
     (real_workspace / "src/example.py").write_text("class X:\n    pass\n", encoding="utf-8")
@@ -336,19 +386,17 @@ async def test_orchestrator_replans_when_plan_targets_missing(tmp_path: Path) ->
 
     result = await orchestrator.continue_task(task.task_id, feedback=None)
 
-    assert result.status == TaskStatus.READY_FOR_REVIEW
-    assert reasoner.markdown_plan_calls == 1
-    assert reasoner.plan_calls == 2
-    assert "plan_validation_feedback" in reasoner.plan_contexts[1]
-    feedback = reasoner.plan_contexts[1]["plan_validation_feedback"]
-    assert isinstance(feedback, dict)
-    missing_targets = feedback["missing_targets"]
-    assert isinstance(missing_targets, list)
-    assert missing_targets[0]["target"] == "agentd/api/tasks.py"
+    # Plan is generated once; execution fails because the tool step targets
+    # src/example.py but the plan's allowed_files is agentd/api/tasks.py.
+    assert result.status == TaskStatus.FAILED
+    assert reasoner.plan_calls == 1
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_fails_fast_when_replanned_targets_still_missing(tmp_path: Path) -> None:
+    # With the PlanningAgent architecture, create_plan() is called exactly once.
+    # A plan targeting a non-existent file without a valid intent causes step
+    # execution to fail (preflight rejects the tool step's scope violation).
     real_workspace = tmp_path / "real"
     (real_workspace / "src").mkdir(parents=True)
     (real_workspace / "src/example.py").write_text("class X:\n    pass\n", encoding="utf-8")
@@ -376,13 +424,14 @@ async def test_orchestrator_fails_fast_when_replanned_targets_still_missing(tmp_
     result = await orchestrator.continue_task(task.task_id, feedback=None)
 
     assert result.status == TaskStatus.FAILED
-    assert reasoner.plan_calls == 3  # loop is range(3): initial + 2 repair rounds
-    assert any(d.source == "plan_schema_validation" for d in result.diagnostics)
-    assert any("steps.0.targets.0.intent" in d.message for d in result.diagnostics)
+    assert reasoner.plan_calls == 1  # single call — grounding retry loop is removed
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_replans_when_json_plan_drifts_from_markdown_blueprint(tmp_path: Path) -> None:
+    # With the PlanningAgent architecture, there is no JSON-vs-markdown grounding
+    # critique loop. create_plan() is called once; if the step targets a file that
+    # conflicts with what the tool step actually patches, execution fails.
     real_workspace = tmp_path / "real"
     (real_workspace / "services/agentd-py/agentd/api").mkdir(parents=True)
     (real_workspace / "services/agentd-py/agentd/storage").mkdir(parents=True)
@@ -411,13 +460,10 @@ async def test_orchestrator_replans_when_json_plan_drifts_from_markdown_blueprin
 
     result = await orchestrator.continue_task(task.task_id, feedback=None)
 
-    assert result.status == TaskStatus.READY_FOR_REVIEW
-    assert reasoner.plan_calls == 2
-    feedback = reasoner.plan_contexts[1]["plan_validation_feedback"]
-    assert isinstance(feedback, dict)
-    grounding_issues = feedback["grounding_issues"]
-    assert isinstance(grounding_issues, list)
-    assert grounding_issues[0]["code"] == "path_prefix_mismatch"
+    # Plan is generated once; execution fails because MarkdownBlueprintReasoner's
+    # create_tool_step() patches routes.py but the drifted plan only allows storage/base.py.
+    assert result.status == TaskStatus.FAILED
+    assert reasoner.plan_calls == 1
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,11 @@ class RetrievalContext:
     related_files: list[str] = field(default_factory=list)
     related_symbols: list[str] = field(default_factory=list)
     graph_neighbors: list[str] = field(default_factory=list)
+    # Workspace-relative file paths reached from the matched seed by one Calls/Imports/References/Inherits
+    # hop, dedupe by file, seed-files removed, cap 20. The Rust indexer's edges encode actual structural
+    # connections (e.g. `engine.py:_run_task → state_machine.py:transition` via Calls + Imports), so this
+    # surfaces neighboring files the semantic top-K may not have matched on. Read but never wrote before.
+    graph_neighbor_files: list[str] = field(default_factory=list)
     file_outlines: dict[str, list[str]] = field(default_factory=dict)
     diagnostics_excerpt: list[str] = field(default_factory=list)
     snapshot_age_sec: float | None = None
@@ -55,6 +61,7 @@ class RetrievalContext:
             related_files=[],
             related_symbols=[],
             graph_neighbors=[],
+            graph_neighbor_files=[],
             file_outlines={},
             file_contents={},
             planner_evidence=PlanEvidencePack(),
@@ -95,6 +102,12 @@ class RetrievalContext:
             "planner_evidence": planner_evidence,
             "diagnostics_excerpt": error_diagnostics,
             "snapshot_stats": self.snapshot_stats,
+            # Cross-file neighbours of the seed symbols/files reached via one
+            # Calls/Imports/References/Inherits hop in the symbol graph. Use
+            # to extend exploration beyond the semantic top-K — files here are
+            # structurally connected to the goal's matched symbols even when
+            # their text doesn't surface in semantic search.
+            "graph_neighbor_files": self.graph_neighbor_files,
         }
 
 
@@ -131,6 +144,10 @@ class RetrievalArtifactClient:
         self._semantic_index = semantic_index  # None when semantic retrieval is disabled
         self._last_indexed_snapshot_ms: int = 0  # snapshot generation ms at last index build
         self._building: bool = False
+        # Serializes re-embeds: the watch loop can fire several /v1/index/build calls in quick
+        # succession (multiple FS events per edit). Coalesce them — skip if a build is already
+        # running; the in-flight build reads the snapshot fresh, and any newer change re-triggers.
+        self._build_lock = threading.Lock()
 
     @classmethod
     def from_env(
@@ -163,6 +180,10 @@ class RetrievalArtifactClient:
         snapshot_path = self._resolve_snapshot_path(workspace_path)
         if not snapshot_path.exists():
             return None
+        if not self._build_lock.acquire(blocking=False):
+            # A build is already running — coalesce. Skipping is safe: the in-flight build
+            # reads the snapshot fresh, and any change after it re-triggers a build.
+            return None
         try:
             self._building = True
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -177,6 +198,7 @@ class RetrievalArtifactClient:
             return None
         finally:
             self._building = False
+            self._build_lock.release()
 
     def index_status(self) -> dict[str, object]:
         return {
@@ -338,7 +360,17 @@ class RetrievalArtifactClient:
         if not auto_indexer:
             return None
 
+        # This is the LAST-RESORT fallback: agentd shells out synchronously
+        # (subprocess.run with a timeout) when a task needs context but no
+        # snapshot exists and the watcher hasn't produced one yet. Force LSP
+        # OFF here — an LSP warmup (rust-analyzer can take 40-120s) would blow
+        # the auto-index timeout and stall the task. The result is a fast,
+        # tree-sitter-only snapshot (unresolved Calls/Implements/Inherits);
+        # the self-updating watcher, which DOES run LSP, re-resolves it within
+        # ~a minute and overwrites this snapshot. So the unresolved graph is a
+        # brief bootstrap state, not the steady state.
         return (
+            "AI_EDITOR_LSP_ENABLED=0 "
             f"{shlex.quote(auto_indexer)} index "
             f"--workspace {shlex.quote(workspace)} "
             f"--snapshot-path {shlex.quote(str(snapshot_path))} "
@@ -565,6 +597,87 @@ class RetrievalArtifactClient:
         ]
         neighbors = filtered_neighbors[:50]
 
+        # Flatten neighbor node-ids to workspace-relative FILE paths the planner
+        # can actually read. We re-walk edge_items rather than reusing `neighbors`
+        # because that list mixes intra-file method nodes (engine.py's 79 symbols
+        # generate many intra-file edges) and cross-file structural edges in a
+        # single alphabetically-sorted 50-cap — intra-file ones squeeze out the
+        # cross-file targets we actually need. Here we drop neighbors whose host
+        # file is already a seed file, and rank by distinct edge count so the
+        # most-connected new files come first.
+        nodes_by_id = {
+            str(n.get("id")): n for n in nodes
+            if isinstance(n.get("id"), str)
+        }
+        # Seed files = files the planner is actually likely to see as evidence.
+        # Union three sources: matched_nodes (keyword + score), the semantic top-K
+        # chunk paths (planner_evidence.evidence_files draws from these — they
+        # are the files the planner sees most directly), and the resolved paths
+        # of any matched file-level node. Without the semantic union, files like
+        # engine.py — surfaced only by the embedding model — never become seeds,
+        # and their structural neighbours (state_machine.py via Imports, etc.)
+        # are missed.
+        seed_files: set[str] = {
+            str(n.get("path")) for n in matched_nodes
+            if isinstance(n.get("path"), str)
+        }
+        for sr in semantic_results:
+            sem_path = sr.chunk.path
+            if not sem_path:
+                continue
+            try:
+                abs_sem = (workspace_root / sem_path).resolve()
+            except (ValueError, OSError):
+                continue
+            seed_files.add(str(abs_sem))
+        ws_resolved = workspace_root.resolve()
+        neighbor_file_hits: dict[str, int] = {}
+        for edge in edge_items:
+            src = edge.get("from")
+            tgt = edge.get("to")
+            src_node = nodes_by_id.get(src) if isinstance(src, str) else None
+            tgt_node = nodes_by_id.get(tgt) if isinstance(tgt, str) else None
+            src_path = src_node.get("path") if isinstance(src_node, dict) else None
+            tgt_path = tgt_node.get("path") if isinstance(tgt_node, dict) else None
+            # A node is a "seed" if its id is in matched_ids (symbol-level match)
+            # OR its host file is a seed file (file-level reach). The file-level
+            # check is what unlocks Python file→file Imports edges, whose endpoints
+            # are file nodes — never themselves keyword/semantic-matched.
+            src_is_seed = (
+                (isinstance(src, str) and src in matched_ids)
+                or (isinstance(src_path, str) and src_path in seed_files)
+            )
+            tgt_is_seed = (
+                (isinstance(tgt, str) and tgt in matched_ids)
+                or (isinstance(tgt_path, str) and tgt_path in seed_files)
+            )
+            if src_is_seed == tgt_is_seed:
+                # Both seeds or neither seed → no new file to surface.
+                continue
+            neighbor_node = tgt_node if src_is_seed else src_node
+            if not isinstance(neighbor_node, dict):
+                continue
+            path_str = neighbor_node.get("path")
+            if not isinstance(path_str, str) or path_str in seed_files:
+                continue
+            if any(f"/{ig}/" in path_str for ig in self._IGNORED_CONTEXT_DIRS):
+                continue
+            try:
+                rel = Path(path_str).resolve().relative_to(ws_resolved)
+            except (ValueError, OSError):
+                continue
+            rel_str = str(rel)
+            neighbor_file_hits[rel_str] = neighbor_file_hits.get(rel_str, 0) + 1
+
+        # Sort by hit count (descending), then path (ascending) for deterministic
+        # ties; cap at 20.
+        graph_neighbor_files: list[str] = [
+            path for path, _ in sorted(
+                neighbor_file_hits.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:20]
+        ]
+
         # Extract structural outlines for top files.
         # When semantic search is active, only include files above threshold to suppress noise.
         # Without semantic, graph scores are much smaller (integer hits / 10), so no threshold.
@@ -752,6 +865,7 @@ class RetrievalArtifactClient:
             related_files=related_files,
             related_symbols=related_symbols,
             graph_neighbors=neighbors,
+            graph_neighbor_files=graph_neighbor_files,
             file_outlines=file_outlines,
             diagnostics_excerpt=diagnostics_excerpt,
             snapshot_age_sec=age_sec,

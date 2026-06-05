@@ -83,25 +83,3 @@ async def test_openai_reasoner_generates_schema_valid_plan_and_patch(tmp_path: P
     assert second_payload["retrieval_context"]["related_symbols"] == ["build"]
 
 
-@pytest.mark.asyncio
-async def test_openai_reasoner_generates_markdown_plan(tmp_path: Path) -> None:
-    fake_client = FakeResponsesClient(outputs=[{"unused": True}])
-    fake_client._outputs = []
-
-    async def create_with_text(**kwargs: Any) -> FakeResponse:
-        fake_client.calls.append(kwargs)
-        return FakeResponse(output_text="# Plan\n\n- Add route")
-
-    fake_client.create = create_with_text  # type: ignore[method-assign]
-
-    reasoner = OpenAIReasoningEngine(model="gpt-5", responses_client=fake_client)
-    task = TaskRecord(task_id="t2", goal="goal", workspace_path=str(tmp_path))
-
-    markdown = await reasoner.create_markdown_plan(
-        task,
-        str(tmp_path),
-        retrieval_context={"related_files": ["a.py"]},
-    )
-
-    assert markdown == "# Plan\n\n- Add route"
-    assert len(fake_client.calls) == 1

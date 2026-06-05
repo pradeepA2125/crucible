@@ -3,6 +3,7 @@ from .contracts import ModelJsonTransport
 from .gemini_transport import GeminiJsonTransport
 from .groq_transport import GroqJsonTransport
 from .huggingface_transport import HuggingFaceJsonTransport
+from .ollama_transport import OllamaJsonTransport
 from .openai_transport import OpenAIJsonTransport
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "GeminiJsonTransport",
     "GroqJsonTransport",
     "HuggingFaceJsonTransport",
+    "OllamaJsonTransport",
     "OpenAIReasoningEngine",
 ]
 

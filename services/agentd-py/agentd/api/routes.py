@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -14,6 +15,13 @@ from agentd.domain.models import (
     RejectPatchRequest,
     ResumeTaskRequest,
     ResumeTaskResponse,
+    ScopeDecisionRequest,
+    ScopeDecisionResponse,
+    CommandDecision,
+    CommandDecisionResponse,
+    ValidationDecisionRequest,
+    ValidationDecisionResponse,
+    StepDecisionRequest,
     StepProgress,
     TaskArtifactEntry,
     TaskArtifactsResponse,
@@ -158,6 +166,7 @@ def build_router(
     orchestrator: AgentOrchestrator,
     workspace_manager: ShadowWorkspaceManager,
     retrieval_client: RetrievalArtifactClient | None = None,
+    chat_agent: object | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
@@ -169,16 +178,71 @@ def build_router(
     # Guards against concurrent resume calls for the same PARENT task_id.
     _in_flight_resume: set[str] = set()
 
+    # Guards against concurrent scope-decision posts for the same task_id.
+    _in_flight_scope: set[str] = set()
+    _in_flight_validation: set[str] = set()
+    _in_flight_command: set[str] = set()
+
+    @router.get("/workspaces/env-profile")
+    async def get_env_profile(workspace: str) -> dict:
+        from agentd.env.profile_store import EnvProfileStore
+        ws = Path(workspace)
+        if not ws.is_dir():
+            raise HTTPException(
+                status_code=400, detail=f"workspace not a directory: {workspace}"
+            )
+        profile = EnvProfileStore().read(ws)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="env profile not built")
+        return json.loads(profile.model_dump_json())
+
+    @router.post("/workspaces/env-profile")
+    async def build_env_profile(workspace: str, channel_id: str | None = None) -> dict:
+        """Force a rebuild of the workspace env profile.
+
+        Uses the orchestrator's ensurer so SSE events (env_profile_building /
+        env_profile_built) fire just like a task-triggered build. When
+        channel_id is supplied, events route there; otherwise they land on the
+        workspace path (no UI subscriber by default).
+        """
+        from agentd.env.profile_store import EnvProfileStore
+        ws = Path(workspace)
+        if not ws.is_dir():
+            raise HTTPException(
+                status_code=400, detail=f"workspace not a directory: {workspace}"
+            )
+        # Wipe the existing profile so ensure()'s is_stale check doesn't short-circuit.
+        store = EnvProfileStore()
+        profile_path = store.path_for(ws)
+        if profile_path.is_file():
+            profile_path.unlink()
+        await orchestrator._env_ensurer.ensure(ws, channel_id=channel_id)
+        profile = store.read(ws)
+        if profile is None:
+            raise HTTPException(status_code=500, detail="env profile build failed")
+        return json.loads(profile.model_dump_json())
+
     @router.post("/tasks", response_model=TaskCreateResponse)
     async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
         import asyncio
         task_id = f"task-{uuid4()}"
+        # Per-task override > AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT env > default True.
+        _env_step_review_default = os.environ.get(
+            "AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT", "true",
+        ).strip().lower() not in ("0", "false", "no", "off")
+        step_review = (
+            request.step_review_auto_accept
+            if request.step_review_auto_accept is not None
+            else _env_step_review_default
+        )
         task = TaskRecord(
             task_id=task_id,
             goal=request.goal,
             workspace_path=request.workspace_path,
             mode=request.mode,
             budget=request.budget,
+            step_review_auto_accept=step_review,
+            shell_policy=request.shell_policy,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
@@ -270,6 +334,31 @@ def build_router(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @router.get("/channels/{channel_id}/stream")
+    async def stream_channel(channel_id: str) -> StreamingResponse:
+        """Permissive SSE: subscribe to any broadcaster channel without
+        requiring it to be a task_id. Used by env-profile route callers
+        and other admin/dev tooling that need to observe workspace-level
+        SSE events (env_profile_*) before any task exists."""
+
+        async def event_generator():
+            queue = orchestrator.broadcaster.subscribe(channel_id)
+            try:
+                while not queue.empty():
+                    event = queue.get_nowait()
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("type") == "done":
+                        return
+                while True:
+                    event = await queue.get()
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("type") == "done":
+                        return
+            finally:
+                orchestrator.broadcaster.unsubscribe(channel_id, queue)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
     @router.get("/tasks/{task_id}/stream-patch")
     async def stream_task_patches(task_id: str) -> StreamingResponse:
         try:
@@ -287,6 +376,8 @@ def build_router(
         }
 
         async def event_generator():
+            import asyncio
+
             queue = orchestrator.broadcaster.subscribe(task_id)
             try:
                 # Drain replay buffer first so late-connecting clients get history
@@ -307,7 +398,16 @@ def build_router(
                         return
 
                 while True:
-                    event = await queue.get()
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        # Keep-alive ping — prevents Node.js fetch (undici) from
+                        # dropping the connection during the silent gap while the
+                        # model generates a large plan (no task-channel events for
+                        # minutes), which would otherwise lose the
+                        # AWAITING_PLAN_APPROVAL/plan event on slow inference.
+                        yield ": ping\n\n"
+                        continue
                     yield f"data: {json.dumps(event)}\n\n"
                     if event.get("type") == "done":
                         break
@@ -402,6 +502,188 @@ def build_router(
 
         return _to_task_result(task)
 
+    @router.post("/tasks/{task_id}/scope-decision", response_model=ScopeDecisionResponse)
+    async def post_scope_decision(
+        task_id: str, request: ScopeDecisionRequest,
+    ) -> ScopeDecisionResponse:
+        from agentd.tools.loop import ScopeDecision
+
+        if task_id in _in_flight_scope:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Scope decision already in progress for task {task_id}",
+            )
+        _in_flight_scope.add(task_id)
+
+        try:
+            try:
+                task = await store.get(task_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            if task.status != TaskStatus.AWAITING_SCOPE_DECISION:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} is not awaiting scope decision "
+                        f"(status={task.status})"
+                    ),
+                )
+
+            future = orchestrator._pending_scope_decisions.get(task_id)
+            if future is None or future.done():
+                raise HTTPException(
+                    status_code=409, detail="No pending scope decision for this task",
+                )
+
+            pending = task.execution_state.pending_scope_request
+            if pending is None:
+                raise HTTPException(
+                    status_code=409, detail="Task has no pending scope request payload",
+                )
+
+            if request.decision == "approve":
+                approved_files = request.files or list(pending.files)
+                extra = set(approved_files) - set(pending.files)
+                if extra:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Cannot approve files that were not in the original request: "
+                            f"{sorted(extra)}"
+                        ),
+                    )
+                decision = ScopeDecision(
+                    approve=True,
+                    extended_files=approved_files,
+                    reason="user approved",
+                    remember=request.remember,
+                )
+            else:
+                decision = ScopeDecision(
+                    approve=False, extended_files=[], reason="user rejected",
+                )
+            future.set_result(decision)
+
+            return ScopeDecisionResponse(task_id=task_id, status=TaskStatus.EXECUTING)
+        finally:
+            _in_flight_scope.discard(task_id)
+
+    @router.post("/tasks/{task_id}/validation-decision", response_model=ValidationDecisionResponse)
+    async def post_validation_decision(
+        task_id: str, request: ValidationDecisionRequest,
+    ) -> ValidationDecisionResponse:
+        if task_id in _in_flight_validation:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Validation decision already in progress for task {task_id}",
+            )
+        _in_flight_validation.add(task_id)
+        try:
+            try:
+                task = await store.get(task_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            if task.status != TaskStatus.AWAITING_VALIDATION_DECISION:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} is not awaiting a validation decision "
+                        f"(status={task.status})"
+                    ),
+                )
+
+            future = orchestrator._pending_validation_decisions.get(task_id)
+            if future is None or future.done():
+                raise HTTPException(
+                    status_code=409, detail="No pending validation decision for this task",
+                )
+
+            future.set_result(request.decision == "accept")
+            # The orchestrator coroutine drives the resulting transition (VALIDATED→
+            # READY_FOR_REVIEW on accept, FAILED on reject); report the gate status here.
+            return ValidationDecisionResponse(
+                task_id=task_id, status=TaskStatus.AWAITING_VALIDATION_DECISION,
+            )
+        finally:
+            _in_flight_validation.discard(task_id)
+
+    @router.post("/tasks/{task_id}/command-decision", response_model=CommandDecisionResponse)
+    async def post_command_decision(
+        task_id: str, request: CommandDecision,
+    ) -> CommandDecisionResponse:
+        if task_id in _in_flight_command:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Command decision already in progress for task {task_id}",
+            )
+        _in_flight_command.add(task_id)
+        try:
+            try:
+                task = await store.get(task_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            if task.status != TaskStatus.AWAITING_COMMAND_DECISION:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} is not awaiting a command decision "
+                        f"(status={task.status})"
+                    ),
+                )
+
+            future = orchestrator._pending_command_decisions.get(task_id)
+            if future is None or future.done():
+                raise HTTPException(
+                    status_code=409,
+                    detail="No pending command decision for this task",
+                )
+
+            future.set_result(request)
+            # The orchestrator coroutine drives the resulting transition back
+            # to EXECUTING; report the post-decision status here.
+            return CommandDecisionResponse(task_id=task_id, status=TaskStatus.EXECUTING)
+        finally:
+            _in_flight_command.discard(task_id)
+
+    _in_flight_step_decision: set[str] = set()
+
+    @router.post("/tasks/{task_id}/step-decision")
+    async def post_step_decision(task_id: str, request: StepDecisionRequest) -> dict:
+        if task_id in _in_flight_step_decision:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Step decision already in progress for task {task_id}",
+            )
+        _in_flight_step_decision.add(task_id)
+        try:
+            try:
+                task = await store.get(task_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            if task.status != TaskStatus.AWAITING_STEP_REVIEW:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Task {task_id} is not awaiting step review "
+                        f"(status={task.status})"
+                    ),
+                )
+
+            future = orchestrator._pending_step_decisions.get(task_id)
+            if future is None or future.done():
+                raise HTTPException(
+                    status_code=409, detail="No pending step review for this task",
+                )
+
+            future.set_result(request.decision)
+            return {"ok": True}
+        finally:
+            _in_flight_step_decision.discard(task_id)
+
     @router.post("/tasks/{task_id}/resume", response_model=ResumeTaskResponse)
     async def resume_task_route(task_id: str, request: ResumeTaskRequest) -> ResumeTaskResponse:
         import asyncio
@@ -452,6 +734,27 @@ def build_router(
             # Allow resume even when all steps are done — re-runs full validation
             # on the existing shadow, which is useful when validation previously
             # failed for environmental reasons (quota, pre-existing test failures).
+
+        if request.stage == "validate":
+            if not parent.plan:
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(status_code=409, detail="No plan to revalidate")
+            if not parent.shadow_workspace_path or not Path(parent.shadow_workspace_path).exists():
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail="Parent shadow workspace no longer exists; cannot revalidate",
+                )
+            plan_step_ids = {step.id for step in parent.plan.steps}
+            if not plan_step_ids <= set(parent.completed_step_ids):
+                _in_flight_resume.discard(task_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Not all plan steps are complete;"
+                        " use stage=execute to finish them before revalidating"
+                    ),
+                )
 
         # Merge budget: parent values unless overridden
         override = request.budget_override
@@ -507,12 +810,13 @@ def build_router(
                 created_at=now,
                 updated_at=now,
             )
-        else:  # "execute"
+        else:  # "execute" / "validate"
             # Current task state IS the correct starting point:
             #   plan/plan_markdown unchanged throughout lifecycle
             #   completed_step_ids: exactly reflects what finished (failed step excluded)
             #   modified_files: restored to pre-failed-step state by checkpoint logic
             #   shadow: restored to pre-failed-step state by _run_step_with_retries
+            #   baseline_error_fingerprints: original pre-execution baseline, reused by validate
             child = TaskRecord(
                 task_id=child_id,
                 goal=parent.goal,
@@ -524,6 +828,7 @@ def build_router(
                 plan_markdown=parent.plan_markdown,
                 completed_step_ids=list(parent.completed_step_ids),
                 modified_files=list(parent.modified_files),
+                baseline_error_fingerprints=list(parent.baseline_error_fingerprints),
                 plan_approval_snapshot=parent.plan_approval_snapshot,
                 resume_of_task_id=parent.task_id,
                 created_at=now,
@@ -536,14 +841,20 @@ def build_router(
             try:
                 if request.stage == "plan":
                     await orchestrator.run_task(child_id)
-                elif request.stage == "execute":
+                elif request.stage in ("execute", "validate"):
                     shadow = await workspace_manager.clone(
-                        parent.task_id, child_id, parent.workspace_path
+                        parent.task_id,
+                        child_id,
+                        parent.workspace_path,
+                        src_override=Path(parent.shadow_workspace_path) if parent.shadow_workspace_path else None,
                     )
                     child_record = await store.get(child_id)
                     child_record.shadow_workspace_path = str(shadow.shadow_path)
                     await store.save(child_record)
-                    await orchestrator.resume_task(child_id)
+                    if request.stage == "execute":
+                        await orchestrator.resume_task(child_id)
+                    else:
+                        await orchestrator.revalidate_task(child_id)
                 # "feedback": no async work — user calls /plan/feedback on child_id
             finally:
                 _in_flight_resume.discard(task_id)
@@ -594,5 +905,95 @@ def build_router(
 
         _asyncio.create_task(_build())
         return {"status": "building", "workspace_path": workspace_path}
+
+    # --- Inline change routes ---
+
+    @router.post("/chat/inline-changes/{inline_task_id}/promote")
+    async def promote_inline_change(inline_task_id: str) -> dict:
+        try:
+            await orchestrator.promote_inline_change(inline_task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if chat_agent is not None:
+            chat_agent._store.resolve_diff_card(inline_task_id, "applied")  # type: ignore[union-attr]
+        return {"status": "promoted", "inline_task_id": inline_task_id}
+
+    @router.delete("/chat/inline-changes/{inline_task_id}")
+    async def discard_inline_change(inline_task_id: str) -> dict:
+        await orchestrator.discard_inline_change(inline_task_id)
+        if chat_agent is not None:
+            chat_agent._store.resolve_diff_card(inline_task_id, "discarded")  # type: ignore[union-attr]
+        return {"status": "discarded", "inline_task_id": inline_task_id}
+
+    # --- Chat routes ---
+
+    if chat_agent is not None:
+        from agentd.chat.agent import ChatAgent as _ChatAgent
+        _chat_agent: _ChatAgent = chat_agent  # type: ignore[assignment]
+
+        @router.get("/chat/threads")
+        async def list_chat_threads(workspace: str) -> dict:
+            threads = _chat_agent._store.list_threads(workspace)
+            return {"threads": [t.model_dump(exclude={"messages"}) for t in threads]}
+
+        @router.post("/chat/threads")
+        async def create_chat_thread(request: dict) -> dict:
+            workspace = request.get("workspace", "")
+            title = request.get("title", "New Chat")
+            thread = _chat_agent._store.create_thread(workspace, title=title)
+            return thread.model_dump(exclude={"messages"})
+
+        @router.get("/chat/threads/{thread_id}")
+        async def get_chat_thread(thread_id: str) -> dict:
+            thread = _chat_agent._store.get_thread(thread_id)
+            if thread is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            return thread.model_dump()
+
+        @router.post("/chat/threads/{thread_id}/message")
+        async def post_chat_message(thread_id: str, request: dict) -> StreamingResponse:
+            import asyncio as _asyncio_chat
+            import json as _json
+            message = request.get("content") or request.get("message", "")
+            channel_id = f"chat:{thread_id}"
+            # Clear stale replay events from the previous message so a new subscriber
+            # doesn't receive old events (including a stale chat_done).
+            _chat_agent._broadcaster.clear_replay(channel_id)
+            queue = _chat_agent._broadcaster.subscribe(channel_id)
+
+            async def _run_agent() -> None:
+                try:
+                    await _chat_agent.handle_message(thread_id, message, channel_id=channel_id)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).exception("ChatAgent.handle_message failed")
+                    _chat_agent._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+            async def event_stream():
+                # Start the agent task INSIDE the generator so it is scheduled
+                # after Starlette has begun consuming the stream. This guarantees
+                # the first `await queue.get()` suspends before the agent runs,
+                # which produces proper per-event streaming instead of a bulk
+                # dump when the model responds fast.
+                agent_task = _asyncio_chat.create_task(_run_agent())
+                try:
+                    while True:
+                        try:
+                            event = await _asyncio_chat.wait_for(
+                                queue.get(), timeout=15.0
+                            )
+                        except _asyncio_chat.TimeoutError:
+                            # Keep-alive ping — prevents Node.js fetch from
+                            # dropping the connection during slow LLM inference.
+                            yield ": ping\n\n"
+                            continue
+                        yield f"data: {_json.dumps(event)}\n\n"
+                        if event.get("type") in ("chat_done", "done"):
+                            break
+                finally:
+                    _chat_agent._broadcaster.unsubscribe(channel_id, queue)
+                    agent_task.cancel()
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return router

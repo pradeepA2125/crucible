@@ -14,13 +14,26 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
 class _DummyReasoningEngine:
-    async def create_plan(self, task, workspace_path, retrieval_context):  # type: ignore[no-untyped-def]
-        _ = (task, workspace_path, retrieval_context)
+    async def create_plan(self, task, workspace_path, retrieval_context, on_thinking=None):  # type: ignore[no-untyped-def]
+        _ = (task, workspace_path, retrieval_context, on_thinking)
         raise RuntimeError("not used in scoring tests")
 
     async def create_patch(self, task, workspace_path, diagnostics, retrieval_context, **kwargs):  # type: ignore[no-untyped-def]
         _ = (task, workspace_path, diagnostics, retrieval_context, kwargs)
         raise RuntimeError("not used in scoring tests")
+
+    async def create_tool_step(self, step_context, history, tool_definitions, on_thinking=None, state_description="", allowed_action_types=None):  # type: ignore[no-untyped-def]
+        raise RuntimeError("not used in scoring tests")
+
+    async def create_planning_step(self, plan_context, history, tool_definitions, on_thinking=None):  # type: ignore[no-untyped-def]
+        _ = (plan_context, history, tool_definitions)
+        return {
+            "type": "emit_plan",
+            "thought": "stub: planning agent bypassed",
+            "plan_markdown": "# Stub Plan\n\n- Review generated changes",
+            "files_examined": [],
+            "confidence": "high",
+        }
 
 
 class _DummyValidator:

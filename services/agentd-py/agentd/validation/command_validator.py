@@ -12,8 +12,19 @@ from pathlib import Path
 from typing import Literal
 
 from agentd.domain.models import Diagnostic, ValidationResult
+from agentd.tools._paths import prepend_pythonpath, shadow_pythonpath_extras
 
 ValidationStage = Literal["syntax", "type", "lint", "test"]
+
+# Directories that are not part of the project under test — build/dep caches plus
+# vendored reference material (e.g. aider-references is a read-only reference dump,
+# not project source). Excluded from compileall/mypy so a stray relative-import or
+# syntax error in reference material can't abort the whole baseline run. NOTE: we
+# exclude by path, NOT via --ignore-missing-imports — genuine missing imports in
+# real project code must still be caught.
+_NON_PROJECT_EXCLUDE_RE = (
+    r"(^|/)(\.venv|node_modules|\.git|target|dist|__pycache__|aider-references)(/|$)"
+)
 
 
 @dataclass(frozen=True)
@@ -314,9 +325,15 @@ class CommandValidator:
         )
 
     async def _run_command(self, command: ValidationCommand, workspace_path: Path) -> list[Diagnostic]:
+        # workspace_path is the shadow. Prepend the shadow's import root(s) so pytest/mypy
+        # import the edited package under test, not an installed copy — same redirect the
+        # agent's run_command applies (e.g. agentd run via --agentd-dir would otherwise
+        # import the dev worktree and miss freshly-added symbols).
+        env = prepend_pythonpath(os.environ.copy(), shadow_pythonpath_extras(workspace_path))
         process = await asyncio.create_subprocess_shell(
             command.command,
             cwd=str(workspace_path),
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -353,6 +370,16 @@ class CommandValidator:
             )
         ]
 
+    @staticmethod
+    def _resolve_bin(workspace_path: Path, name: str) -> str | None:
+        """Workspace-local bin first (.venv/bin, node_modules/.bin, target/...);
+        falls back to system PATH. Returns the absolute path string, or None."""
+        from agentd.tools._paths import resolve_workspace_bin
+        local = resolve_workspace_bin(workspace_path, name)
+        if local is not None:
+            return str(local)
+        return shutil.which(name)
+
     def _detect_default_commands(self, workspace_path: Path) -> list[ValidationCommand]:
         commands: list[ValidationCommand] = []
 
@@ -365,34 +392,37 @@ class CommandValidator:
                     name="python-compileall",
                     command=(
                         f"{python_exec} -m compileall -q "
-                        "-x '(^|/)(\\.venv|node_modules|\\.git|target|dist|__pycache__)(/|$)' ."
+                        f"-x '{_NON_PROJECT_EXCLUDE_RE}' ."
                     ),
                 )
             )
-            if shutil.which("mypy"):
+            mypy = self._resolve_bin(workspace_path, "mypy")
+            if mypy:
                 commands.append(
                     ValidationCommand(
                         stage="type",
                         name="mypy",
-                        command="mypy .",
+                        command=f"{shlex.quote(mypy)} --exclude {shlex.quote(_NON_PROJECT_EXCLUDE_RE)} .",
                         warning_only=True,
                     )
                 )
-            if shutil.which("ruff"):
+            ruff = self._resolve_bin(workspace_path, "ruff")
+            if ruff:
                 commands.append(
                     ValidationCommand(
                         stage="lint",
                         name="ruff",
-                        command="ruff check .",
+                        command=f"{shlex.quote(ruff)} check .",
                         warning_only=True,
                     )
                 )
-            if shutil.which("pytest"):
+            pytest_bin = self._resolve_bin(workspace_path, "pytest")
+            if pytest_bin:
                 commands.append(
                     ValidationCommand(
                         stage="test",
                         name="pytest",
-                        command="pytest",
+                        command=shlex.quote(pytest_bin),
                     )
                 )
 
@@ -429,6 +459,74 @@ class CommandValidator:
                             command="npm run -s test",
                         )
                     )
+
+            # Fallback: detect node_modules-installed test runners even when
+            # package.json declares no test/lint scripts. Many bare templates
+            # ship a binary under node_modules/.bin without scripts entries.
+            scripts_dict = scripts if isinstance(scripts, dict) else {}
+            if "test" not in scripts_dict:
+                vitest = self._resolve_bin(workspace_path, "vitest")
+                if vitest:
+                    commands.append(
+                        ValidationCommand(
+                            stage="test",
+                            name="vitest",
+                            command=f"{shlex.quote(vitest)} run",
+                            timeout_sec=300,
+                        )
+                    )
+                else:
+                    jest = self._resolve_bin(workspace_path, "jest")
+                    if jest:
+                        commands.append(
+                            ValidationCommand(
+                                stage="test",
+                                name="jest",
+                                command=shlex.quote(jest),
+                                timeout_sec=300,
+                            )
+                        )
+            if "typecheck" not in scripts_dict:
+                tsc = self._resolve_bin(workspace_path, "tsc")
+                if tsc:
+                    commands.append(
+                        ValidationCommand(
+                            stage="type",
+                            name="tsc",
+                            command=f"{shlex.quote(tsc)} --noEmit",
+                            warning_only=True,
+                        )
+                    )
+            if "lint" not in scripts_dict:
+                eslint = self._resolve_bin(workspace_path, "eslint")
+                if eslint:
+                    commands.append(
+                        ValidationCommand(
+                            stage="lint",
+                            name="eslint",
+                            command=f"{shlex.quote(eslint)} .",
+                            warning_only=True,
+                        )
+                    )
+
+        cargo_toml = workspace_path / "Cargo.toml"
+        if cargo_toml.exists() and shutil.which("cargo"):
+            commands.append(
+                ValidationCommand(
+                    stage="syntax",
+                    name="cargo-check",
+                    command="cargo check --all-targets 2>&1",
+                    timeout_sec=120,
+                )
+            )
+            commands.append(
+                ValidationCommand(
+                    stage="test",
+                    name="cargo-test",
+                    command="cargo test 2>&1",
+                    timeout_sec=300,
+                )
+            )
 
         return commands
 
