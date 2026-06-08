@@ -30,10 +30,29 @@ AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
         # emit_patch fields
         "patch_ops": {
             "type": "array",
-            "items": {"type": "object", "additionalProperties": True},
+            # op/file/reason are required on EVERY patch op (all PatchDocumentV2 op types
+            # share them). Constraining items here lets a strict json_schema grammar
+            # enforce them at the token level — otherwise the model can omit `reason` and
+            # the op only fails later at PatchDocumentV2 validation. Kept flat (no oneOf)
+            # so Gemini doesn't deadlock; op-specific fields stay optional via
+            # additionalProperties.
+            "items": {
+                "type": "object",
+                "properties": {
+                    "op": {
+                        "type": "string",
+                        "description": "search_replace | replace_range | apply_diff | create_file | delete_file | replace_node | insert_after_node",  # noqa: E501
+                    },
+                    "file": {"type": "string", "description": "Target file path"},
+                    "reason": {"type": "string", "description": "Why this edit is needed"},
+                },
+                "required": ["op", "file", "reason"],
+                "additionalProperties": True,
+            },
             "description": (
                 "Patch operations to apply (required for emit_patch):"
                 " search_replace, replace_range, apply_diff, create_file, delete_file."
+                " Every op MUST include op, file, and reason."
                 " MUST cover every file in the step's targets list — no partial patches."
             ),
         },
