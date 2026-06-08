@@ -289,26 +289,60 @@ async def test_think_tags_in_content_are_stripped_for_generate_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_body_has_stream_true_and_json_object_format() -> None:
-    """generate_json sends stream=True and response_format json_object to the server."""
+async def test_thinking_off_uses_strict_json_schema_grammar() -> None:
+    """With thinking off (DEVSTRAL), generate_json sends a strict json_schema grammar so
+    the model cannot emit prose/malformed JSON."""
     lines = _sse_stream(*_chunk_json({"ok": True}))
     client = _FakeStreamClient([_ok_stream(lines)])
     transport = TurboQuantTransport(profile=DEVSTRAL, http_client=client)
 
     await transport.generate_json(
         model="qwen3:8b",
-        schema_name="x",
+        schema_name="agent_step_response",
         schema={"type": "object"},
         system_instructions="sys",
         user_payload={"k": "v"},
     )
 
-    assert len(client.calls) == 1
     body = client.calls[0]["body"]
-    assert body["stream"] is True
-    assert body["response_format"] == {"type": "json_object"}
-    assert body["model"] == "qwen3:8b"
+    assert body["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "agent_step_response", "schema": {"type": "object"}, "strict": True},
+    }
     assert client.calls[0]["url"].endswith("/v1/chat/completions")
+
+
+@pytest.mark.asyncio
+async def test_strict_json_disabled_falls_back_to_json_object() -> None:
+    """TURBOQUANT_JSON_SCHEMA=0 (strict_json=False) → loose json_object escape hatch."""
+    lines = _sse_stream(*_chunk_json({"ok": True}))
+    client = _FakeStreamClient([_ok_stream(lines)])
+    transport = TurboQuantTransport(profile=DEVSTRAL, http_client=client, strict_json=False)
+
+    await transport.generate_json(
+        model="qwen3:8b", schema_name="x", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+    )
+
+    assert client.calls[0]["body"]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_thinking_on_falls_back_to_json_object() -> None:
+    """When thinking is enabled, llama.cpp disables grammar enforcement (#20345), so we
+    must NOT send json_schema — fall back to json_object."""
+    import dataclasses
+    thinking_profile = dataclasses.replace(DEVSTRAL, thinking_budget=512)
+    lines = _sse_stream(*_chunk_json({"ok": True}))
+    client = _FakeStreamClient([_ok_stream(lines)])
+    transport = TurboQuantTransport(profile=thinking_profile, http_client=client)
+
+    await transport.generate_json(
+        model="qwen3:8b", schema_name="x", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+    )
+
+    assert client.calls[0]["body"]["response_format"] == {"type": "json_object"}
 
 
 @pytest.mark.asyncio

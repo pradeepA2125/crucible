@@ -161,6 +161,7 @@ class TurboQuantTransport(ModelJsonTransport):
         max_retries: int = 4,
         max_tokens: int = _DEFAULT_MAX_TOKENS,
         http_client: httpx.AsyncClient | None = None,
+        strict_json: bool | None = None,
     ) -> None:
         self._profile = profile
         self._host = (host or os.getenv("TURBOQUANT_HOST") or _DEFAULT_HOST).rstrip("/")
@@ -169,6 +170,13 @@ class TurboQuantTransport(ModelJsonTransport):
         self._max_tokens = max_tokens
         self._owns_client = http_client is None
         self._client = http_client or httpx.AsyncClient(timeout=timeout_sec)
+        # Use llama.cpp's strict json_schema grammar (token-level constraint) instead of
+        # the loose json_object mode. Set TURBOQUANT_JSON_SCHEMA=0 to fall back if your
+        # llama-server build rejects the response_format shape.
+        if strict_json is None:
+            strict_json = os.environ.get("TURBOQUANT_JSON_SCHEMA", "true").strip().lower() \
+                not in ("0", "false", "no", "off")
+        self._strict_json = strict_json
 
     # ------------------------------------------------------------------
     # Factory classmethods
@@ -250,8 +258,10 @@ class TurboQuantTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
-        # Use json_object (not json_schema) so the grammar constraint does NOT prevent
-        # Qwen3 from closing its <think> block — json_schema strict mode traps the model.
+        # Constrained decoding: when thinking is OFF (our default) we send the schema as
+        # a strict llama.cpp json_schema grammar (see _build_body) so the model CANNOT
+        # emit prose or malformed JSON. We still also embed the schema in the user content
+        # below — the grammar enforces STRUCTURE, the prompt guides VALUES.
         #
         # KV-CACHE: the schema is per-turn-variable (the execution loop filters its
         # `type` enum per SM state). Keeping it in the system message — the prompt's
@@ -267,7 +277,7 @@ class TurboQuantTransport(ModelJsonTransport):
             f"{json.dumps(schema, indent=2)}"
         )
         body = self._build_body(model=model, system=system, user_content=contents,
-                                use_json_object=True)
+                                schema=schema, schema_name=schema_name)
         last_parse_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
@@ -322,7 +332,8 @@ class TurboQuantTransport(ModelJsonTransport):
         model: str,
         system: str,
         user_content: str,
-        use_json_object: bool = False,
+        schema: dict[str, object] | None = None,
+        schema_name: str = "",
     ) -> dict[str, object]:
         body: dict[str, object] = {
             "model": model,
@@ -339,8 +350,24 @@ class TurboQuantTransport(ModelJsonTransport):
             "stream": False,
         }
         self._profile.augment_body(body)
-        if use_json_object:
-            body["response_format"] = {"type": "json_object"}
+        if schema is not None:
+            # llama.cpp applies a JSON-schema GBNF grammar ONLY when thinking is OFF;
+            # with thinking enabled it silently disables grammar enforcement
+            # (ggml-org/llama.cpp#20345), so fall back to loose json_object there.
+            # With thinking off, the strict grammar makes malformed/prose output
+            # IMPOSSIBLE at the token level — and it hard-enforces the per-turn
+            # SM-filtered `type`/`tool` enums, not just as a prompt hint.
+            if self._strict_json and self._profile.thinking_budget == 0:
+                body["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name or "response",
+                        "schema": schema,
+                        "strict": True,
+                    },
+                }
+            else:
+                body["response_format"] = {"type": "json_object"}
         return body
 
     def _parse_output_object(self, output_text: str, schema_name: str) -> dict[str, object]:
