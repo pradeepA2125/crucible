@@ -208,6 +208,9 @@ class TaskExecutionState(BaseModel):
     pending_command_request: CommandApprovalRequest | None = None
     approved_commands: list[CommandRule] = Field(default_factory=list)
     pending_install_for_scope: str | None = None  # ecosystem scope_key needing setup_env before next run_command
+    # Validation gate payload (parity with the other pending_* gates) so the
+    # chat-thread live-state can surface it without a separate lookup.
+    pending_validation: dict[str, Any] | None = None
 
 
 class EnvEcosystemEntry(BaseModel):
