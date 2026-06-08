@@ -116,6 +116,20 @@ def test_validation_gate() -> None:
     assert ls.pending_gate.payload["summary"] == "1 failed"
 
 
+def test_gate_status_with_missing_payload_suppresses_card_and_warns(caplog) -> None:
+    # Persistence inconsistency: status says AWAITING_COMMAND_DECISION but the payload
+    # was clobbered to None. The resolver must NOT render a broken/empty card, and must
+    # log a tripwire warning so the clobber can be caught in the wild.
+    import logging
+    t = _task(TaskStatus.AWAITING_COMMAND_DECISION, es=TaskExecutionState())  # pending_* all None
+    with caplog.at_level(logging.WARNING):
+        ls = resolve_live_state("t1", _getter(t))
+    assert ls.status == "AWAITING_COMMAND_DECISION"
+    assert ls.pending_gate is None  # defended — no empty card
+    assert any("inconsistency" in r.message and "pending_command_request" in r.message
+               for r in caplog.records)
+
+
 def test_plan_surfaced_only_on_awaiting_plan_approval() -> None:
     approving = _task(TaskStatus.AWAITING_PLAN_APPROVAL, plan="# Plan\n- step")
     ls = resolve_live_state("t1", _getter(approving))

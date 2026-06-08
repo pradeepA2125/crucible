@@ -7,6 +7,7 @@ entirely from state (no in-memory session, no reliance on transient SSE).
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Literal
 
@@ -14,6 +15,8 @@ from pydantic import BaseModel
 
 from agentd.chat.models import PendingGate, ThreadLiveState
 from agentd.domain.models import TaskRecord
+
+logger = logging.getLogger(__name__)
 
 _GateKind = Literal["command", "step", "scope", "validation"]
 
@@ -55,7 +58,20 @@ def resolve_live_state(
     gate: PendingGate | None = None
     if status in _GATE_FIELD:
         kind, field = _GATE_FIELD[status]
-        gate = PendingGate(kind=kind, payload=_payload(getattr(task.execution_state, field, None)))
+        payload = _payload(getattr(task.execution_state, field, None))
+        if payload:
+            gate = PendingGate(kind=kind, payload=payload)
+        else:
+            # Tripwire + defense: status says we're at a gate but its payload is
+            # missing/empty — a persistence inconsistency (e.g. a stale save clobbered
+            # pending_X). Do NOT render a broken/empty card; surface no gate so the UI
+            # stays clean and the next poll reconciles once state is consistent.
+            # Logged so the clobber can be caught and root-caused in the wild.
+            logger.warning(
+                "live_state inconsistency: task=%s status=%s but %s payload is empty "
+                "— suppressing %s card",
+                task.task_id, status, field, kind,
+            )
 
     plan: dict | None = None
     if status == "AWAITING_PLAN_APPROVAL" and task.plan_markdown:
