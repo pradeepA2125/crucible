@@ -10,7 +10,9 @@ import {
   ChatThreadSummarySchema,
   ChatThreadSchema,
   ChatEventSchema,
+  ThreadLiveStateSchema,
   type BackendTaskClient,
+  type ThreadLiveState,
   type PatchStreamEvent,
   type TaskResult,
   type TaskSubmission,
@@ -317,6 +319,21 @@ export class HttpBackendClient implements BackendTaskClient {
           : {},
       })),
       touchedFiles: Array.isArray(raw["touched_files"]) ? raw["touched_files"] : [],
+    });
+  }
+
+  async getThreadLiveState(threadId: string): Promise<ThreadLiveState> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/live`
+    ) as Record<string, unknown>;
+    const gate = raw["pending_gate"] as Record<string, unknown> | null;
+    return ThreadLiveStateSchema.parse({
+      activeTaskId: raw["active_task_id"] ?? null,
+      status: raw["status"] ?? null,
+      pendingGate: gate
+        ? { kind: gate["kind"], payload: gate["payload"] ?? {} }
+        : null,
+      plan: raw["plan"] ?? null,
     });
   }
 

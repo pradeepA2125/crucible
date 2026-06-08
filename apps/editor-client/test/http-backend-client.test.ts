@@ -316,6 +316,52 @@ describe("HttpBackendClient", () => {
     expect(result.messages[0].content).toBe("hello");
   });
 
+  test("getThreadLiveState maps a gate payload to camelCase", async () => {
+    let capturedUrl = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (url) => {
+        capturedUrl = String(url);
+        return new Response(
+          JSON.stringify({
+            active_task_id: "task-1",
+            status: "AWAITING_COMMAND_DECISION",
+            pending_gate: { kind: "command", payload: { command: "pytest" } },
+            plan: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+    });
+    const live = await client.getThreadLiveState("chat-abc123");
+    expect(capturedUrl).toContain("/v1/chat/threads/chat-abc123/live");
+    expect(live.activeTaskId).toBe("task-1");
+    expect(live.status).toBe("AWAITING_COMMAND_DECISION");
+    expect(live.pendingGate?.kind).toBe("command");
+    expect(live.pendingGate?.payload.command).toBe("pytest");
+    expect(live.plan).toBeNull();
+  });
+
+  test("getThreadLiveState maps null gate/plan for an idle thread", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            active_task_id: null,
+            status: null,
+            pending_gate: null,
+            plan: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-idle");
+    expect(live.activeTaskId).toBeNull();
+    expect(live.pendingGate).toBeNull();
+    expect(live.plan).toBeNull();
+  });
+
   test("sendChatMessage streams SSE events", async () => {
     const sseBody =
       'data: {"type":"intent_classified","payload":{"intent":"qa"}}\n\n' +

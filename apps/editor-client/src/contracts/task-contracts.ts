@@ -198,6 +198,24 @@ export const ChatEventSchema = z.object({
 });
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
+// The single gate a thread's current task is waiting on (mirrors backend PendingGate).
+export const PendingGateSchema = z.object({
+  kind: z.enum(["command", "step", "scope", "validation"]),
+  payload: z.record(z.unknown()).default({}),
+});
+export type PendingGate = z.infer<typeof PendingGateSchema>;
+
+// A thread's current actionable state — what the UI polls and renders from.
+// Resolved server-side from the thread's active task (GET /chat/threads/{id}/live),
+// so reloads and resume task-id churn self-heal on the next poll.
+export const ThreadLiveStateSchema = z.object({
+  activeTaskId: z.string().nullable(),
+  status: z.string().nullable(),
+  pendingGate: PendingGateSchema.nullable(),
+  plan: z.record(z.unknown()).nullable(),
+});
+export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
+
 export interface BackendTaskClient {
   submitTask(input: TaskSubmission): Promise<{ taskId: string }>;
   getTask(taskId: string): Promise<TaskView>;
@@ -216,6 +234,7 @@ export interface BackendTaskClient {
   listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]>;
   createChatThread(workspacePath: string, title?: string): Promise<ChatThreadSummary>;
   getChatThread(threadId: string): Promise<ChatThread>;
+  getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
   sendChatMessage(threadId: string, message: string): AsyncIterable<StreamEvent>;
   applyInlineChange(inlineTaskId: string): Promise<void>;
   discardInlineChange(inlineTaskId: string): Promise<void>;
