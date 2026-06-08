@@ -27,6 +27,11 @@ class ChatThreadStore:
                 touched_files_json TEXT NOT NULL DEFAULT '[]'
             );
         """)
+        # active_task_id was added after the table shipped; ALTER existing DBs.
+        # IF NOT EXISTS on the table create above won't add a column to pre-existing rows.
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(chat_threads)")}
+        if "active_task_id" not in existing:
+            self._conn.execute("ALTER TABLE chat_threads ADD COLUMN active_task_id TEXT")
         self._conn.commit()
 
     def create_thread(self, workspace_path: str, title: str = "New Chat") -> ChatThread:
@@ -57,6 +62,7 @@ class ChatThreadStore:
                 created_at=datetime.fromisoformat(row["created_at"]),
                 messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
                 touched_files=json.loads(row["touched_files_json"]),
+                active_task_id=row["active_task_id"],
             )
             for row in rows
         ]
@@ -74,7 +80,17 @@ class ChatThreadStore:
             created_at=datetime.fromisoformat(row["created_at"]),
             messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
             touched_files=json.loads(row["touched_files_json"]),
+            active_task_id=row["active_task_id"],
         )
+
+    def set_active_task(self, thread_id: str, task_id: str) -> None:
+        """Point the thread at its current task. Resume churns the id (parent→child);
+        this is the durable link the UI follows so gate/plan views survive that churn."""
+        self._conn.execute(
+            "UPDATE chat_threads SET active_task_id = ? WHERE thread_id = ?",
+            (task_id, thread_id),
+        )
+        self._conn.commit()
 
     def append_message(self, thread_id: str, message: ChatMessage) -> None:
         row = self._conn.execute(

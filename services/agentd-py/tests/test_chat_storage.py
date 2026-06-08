@@ -55,3 +55,22 @@ def test_update_title(store: ChatThreadStore) -> None:
     store.update_title(thread.thread_id, "Add auth layer")
     reloaded = store.get_thread(thread.thread_id)
     assert reloaded.title == "Add auth layer"
+
+def test_active_task_id_defaults_to_none(store: ChatThreadStore) -> None:
+    thread = store.create_thread("/ws/project")
+    assert thread.active_task_id is None
+    assert store.get_thread(thread.thread_id).active_task_id is None
+
+def test_set_active_task_persists(store: ChatThreadStore) -> None:
+    thread = store.create_thread("/ws/project")
+    store.set_active_task(thread.thread_id, "task-abc")
+    assert store.get_thread(thread.thread_id).active_task_id == "task-abc"
+    # And it survives in the list view (used by the UI to follow task-id churn).
+    listed = store.list_threads("/ws/project")[0]
+    assert listed.active_task_id == "task-abc"
+
+def test_set_active_task_overwrites_on_resume(store: ChatThreadStore) -> None:
+    thread = store.create_thread("/ws/project")
+    store.set_active_task(thread.thread_id, "task-parent")
+    store.set_active_task(thread.thread_id, "task-child")  # resume churns the id
+    assert store.get_thread(thread.thread_id).active_task_id == "task-child"
