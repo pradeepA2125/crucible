@@ -665,6 +665,17 @@ class AgentOrchestrator:
         """
         persistent = list(persistent_diagnostics or [])
         task.diagnostics = [*persistent, *validation.diagnostics]
+        # Persist the gate payload (parity with the other pending_* gates) so the
+        # chat-thread /live view can surface this gate without re-deriving it; mirror
+        # the SSE payload below so the poll-driven UI and the stream agree.
+        task.execution_state.pending_validation = {
+            "task_id": task.task_id,
+            "summary": f"{len(validation.diagnostics)} validation error(s)",
+            "diagnostics": [
+                {**d.model_dump(mode="json"), "message": self._cap_diagnostic_message(d.message)}
+                for d in validation.diagnostics
+            ],
+        }
         future: asyncio.Future[bool] = asyncio.get_event_loop().create_future()
         self._pending_validation_decisions[task.task_id] = future
         task = transition(task, TaskStatus.AWAITING_VALIDATION_DECISION, "validation decision gate")
@@ -690,6 +701,7 @@ class AgentOrchestrator:
         finally:
             self._pending_validation_decisions.pop(task.task_id, None)
         task = await self._store.get(task.task_id)
+        task.execution_state.pending_validation = None  # gate resolved; clear the payload
         if accept:
             # TODO(pradeep): READY_FOR_REVIEW here is largely hollow — _partial_promote already
             # wrote each completed step's changes to the real workspace during execution, so the
@@ -753,6 +765,11 @@ class AgentOrchestrator:
             updated_at=now,
         )
         await self._store.create(child)
+        # Resume churns the task id (parent→child); repoint the chat thread at the
+        # child so the live-state view follows it without losing the gate/plan.
+        if chat_channel_id and self._chat_store is not None:
+            thread_id = chat_channel_id[len("chat:"):]
+            self._chat_store.set_active_task(thread_id, child_id)  # type: ignore[union-attr]
 
         async def _run() -> None:
             shadow = await self._workspace_manager.clone(
@@ -1131,6 +1148,10 @@ class AgentOrchestrator:
             step_review_auto_accept=_env_step_review_default,
         )
         await self._store.create(task)
+        # Anchor the thread to this task so the UI can render its gate/plan from
+        # /live and survive task-id churn on resume.
+        if self._chat_store is not None:
+            self._chat_store.set_active_task(thread_id, task.task_id)  # type: ignore[union-attr]
         asyncio.create_task(self.run_task(task.task_id))
         logger.info("[chat→task] task created and queued: task_id=%s", task.task_id)
         return task.task_id
