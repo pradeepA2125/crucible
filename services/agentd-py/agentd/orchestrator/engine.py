@@ -713,9 +713,13 @@ class AgentOrchestrator:
             await self._store.save(task)
             task = transition(task, TaskStatus.READY_FOR_REVIEW, "validation accepted; ready for review")
             await self._store.save(task)
+            self._write_chat_breadcrumb(
+                task, f"✓ Validation accepted — {len(validation.diagnostics)} error(s) kept as pre-existing.",
+            )
         else:
             task = transition(task, TaskStatus.FAILED, "validation errors rejected")
             await self._store.save(task)
+            self._write_chat_breadcrumb(task, "✗ Validation rejected — task marked failed.")
         return task
 
     async def get_task(self, task_id: str) -> TaskRecord:
@@ -1188,6 +1192,24 @@ class AgentOrchestrator:
                           task_id=task.task_id, metadata={"task_id": task.task_id})
         self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
 
+    def _write_chat_breadcrumb(self, task: "TaskRecord", text: str) -> None:
+        """Append a durable transcript breadcrumb recording a resolved gate/plan action.
+
+        The live actionable card (command/scope/validation/step gate, plan) is
+        ephemeral — rendered from /live and gone on reload. This breadcrumb is the
+        permanent record of what the user decided, so chat history reads as a clear
+        narrative of every action taken.
+        """
+        if not task.chat_channel_id or self._chat_store is None:
+            return
+        from agentd.chat.models import ChatMessage
+        thread_id = task.chat_channel_id[len("chat:"):]
+        msg = ChatMessage(
+            role="agent", content=text, type="text", task_id=task.task_id,
+            metadata={"task_id": task.task_id, "breadcrumb": True},
+        )
+        self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+
     async def await_plan_ready(self, task_id: str, timeout_sec: float = 3600.0) -> "TaskRecord | None":
         """Poll until task reaches AWAITING_PLAN_APPROVAL or a terminal state."""
         deadline = time.time() + timeout_sec
@@ -1586,6 +1608,11 @@ class AgentOrchestrator:
                         if path not in task.execution_state.auto_approved_scope_files:
                             task.execution_state.auto_approved_scope_files.append(path)
                 await self._store.save(task)
+                if decision.approve:
+                    _files = ", ".join(decision.extended_files) or "(none)"
+                    self._write_chat_breadcrumb(task, f"✓ Scope extension approved: {_files}")
+                else:
+                    self._write_chat_breadcrumb(task, f"✗ Scope extension rejected: {decision.reason}")
 
             return decision
 
@@ -1689,6 +1716,10 @@ class AgentOrchestrator:
                     task.execution_state.approved_commands.append(rule)
                     CommandRuleStore(task.workspace_path).add(rule)
                 await self._store.save(task)
+                if decision.approve:
+                    self._write_chat_breadcrumb(task, f"✓ Command approved: {command}")
+                else:
+                    self._write_chat_breadcrumb(task, f"✗ Command rejected: {command}")
 
             return decision
 
@@ -1736,6 +1767,10 @@ class AgentOrchestrator:
             if task.status == TaskStatus.AWAITING_STEP_REVIEW:
                 task = transition(task, TaskStatus.EXECUTING, "step decision received")
             await self._store.save(task)
+            if decision == "accept":
+                self._write_chat_breadcrumb(task, f"✓ Step changes accepted: {payload.step_title}")
+            else:
+                self._write_chat_breadcrumb(task, f"↩ Step changes discarded: {payload.step_title}")
 
         return decision
 
