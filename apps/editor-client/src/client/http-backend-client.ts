@@ -398,7 +398,13 @@ export class HttpBackendClient implements BackendTaskClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Backend request failed (${response.status} ${response.statusText}) for ${path}`);
+      const error = new Error(
+        `Backend request failed (${response.status} ${response.statusText}) for ${path}`
+      ) as Error & { status?: number };
+      // Surface the status so callers can treat a benign 409 (gate already moved on)
+      // differently from a real failure, without parsing the message string.
+      error.status = response.status;
+      throw error;
     }
 
     return response.json();

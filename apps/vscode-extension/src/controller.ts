@@ -10,6 +10,7 @@ import type {
   TaskStatus,
   TaskSubmission,
   TaskView,
+  ThreadLiveState,
 } from "@ai-editor/editor-client";
 
 import { buildReviewFileEntries } from "./review-files.js";
@@ -68,6 +69,23 @@ export interface ControllerUI {
   appendChatThinkingChunk(chunk: string): void;
   finalizeAgentMessage(): void;
   showStepReview(taskId: string, stepId: string, stepTitle: string, diffEntries: DiffEntry[]): void;
+  // Live, state-driven cards (Class A). One slot per kind, replace-not-append; written
+  // by both the SSE path (instant) and the /live poll (durable across reload/resume).
+  renderLiveGate(gate: LiveGateView): void;
+  clearLiveGate(): void;
+  renderLivePlan(plan: LivePlanView): void;
+  clearLivePlan(): void;
+}
+
+export interface LiveGateView {
+  kind: "command" | "step" | "scope" | "validation";
+  payload: Record<string, unknown>;
+  taskId: string;
+}
+
+export interface LivePlanView {
+  taskId: string;
+  planMarkdown: string;
 }
 
 export interface DiffService {
@@ -84,6 +102,11 @@ export class AiEditorController {
   private streamController: AbortController | null = null;
   private patchEvents: StreamEvent[] = [];
   private activeThreadId: string | null = null;
+  // /live poll: re-derives the active gate/plan from persisted task state so cards
+  // survive reload and resume task-id churn. Source of truth for action binding (Task 8).
+  private liveStateTimer: ReturnType<typeof setInterval> | null = null;
+  private latestLiveState: ThreadLiveState | null = null;
+  private lastLiveSignature: string | null = null;
 
   constructor(
     private readonly createClient: BackendClientFactory,
@@ -441,6 +464,10 @@ export class AiEditorController {
         // non-fatal — panel opens empty
       }
     }
+    // Re-derive any pending gate/plan from persisted state so cards survive the
+    // reload/reopen that just discarded the SSE-rendered ones.
+    this.lastLiveSignature = null;
+    this.startLiveStatePolling();
   }
 
   async newChatThread(): Promise<void> {
@@ -456,6 +483,9 @@ export class AiEditorController {
     this.activeThreadId = thread.threadId;
     this.ui.openChatPanel();
     this.ui.clearChatThread();
+    this.ui.clearLiveGate();
+    this.ui.clearLivePlan();
+    this.lastLiveSignature = null;
     let threads: ChatThreadSummary[];
     try {
       threads = await client.listChatThreads(workspacePath);
@@ -463,6 +493,7 @@ export class AiEditorController {
       threads = [thread];
     }
     this.ui.renderChatThreadList(threads, thread.threadId);
+    this.startLiveStatePolling();
   }
 
   async switchChatThread(threadId: string): Promise<void> {
@@ -470,9 +501,14 @@ export class AiEditorController {
     const client = this.createClient(this.settings.getBackendBaseUrl());
     const thread = await client.getChatThread(threadId);
     this.ui.clearChatThread();
+    // Drop the previous thread's live cards; the new thread's /live poll repopulates.
+    this.ui.clearLiveGate();
+    this.ui.clearLivePlan();
+    this.lastLiveSignature = null;
     for (const message of thread.messages) {
       this.ui.appendChatMessage(message);
     }
+    this.startLiveStatePolling();
   }
 
   async sendChatMessage(text: string): Promise<void> {
@@ -855,19 +891,21 @@ export class AiEditorController {
   }
 
   async acceptStep(taskId: string): Promise<void> {
-    const client = this.createClient(this.settings.getBackendBaseUrl());
+    const client = this.clientForChat();
     try {
-      await client.sendStepDecision(taskId, "accept");
+      await client.sendStepDecision(this.liveTaskIdOr(taskId), "accept");
     } catch (error) {
+      if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to accept step: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   async discardStep(taskId: string): Promise<void> {
-    const client = this.createClient(this.settings.getBackendBaseUrl());
+    const client = this.clientForChat();
     try {
-      await client.sendStepDecision(taskId, "discard");
+      await client.sendStepDecision(this.liveTaskIdOr(taskId), "discard");
     } catch (error) {
+      if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to discard step: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -896,6 +934,7 @@ export class AiEditorController {
   dispose(): void {
     this.stopPolling();
     this.stopStream();
+    this.stopLiveStatePolling();
   }
 
   private startStream(taskId: string): void {
@@ -958,8 +997,12 @@ export class AiEditorController {
     remember: boolean
   ): Promise<void> {
     try {
-      await this.clientForSession().sendScopeDecision(taskId, { decision, files: decision === "approve" ? files : [], remember });
+      await this.clientForChat().sendScopeDecision(
+        this.liveTaskIdOr(taskId),
+        { decision, files: decision === "approve" ? files : [], remember }
+      );
     } catch (err) {
+      if (this.isBenignConflict(err)) return;
       this.ui.showError(`Failed to send scope decision: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -969,8 +1012,9 @@ export class AiEditorController {
     decision: "accept" | "reject"
   ): Promise<void> {
     try {
-      await this.clientForSession().sendValidationDecision(taskId, decision);
+      await this.clientForChat().sendValidationDecision(this.liveTaskIdOr(taskId), decision);
     } catch (err) {
+      if (this.isBenignConflict(err)) return;
       this.ui.showError(`Failed to send validation decision: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -980,8 +1024,9 @@ export class AiEditorController {
     decision: CommandDecision
   ): Promise<void> {
     try {
-      await this.clientForSession().sendCommandDecision(taskId, decision);
+      await this.clientForChat().sendCommandDecision(this.liveTaskIdOr(taskId), decision);
     } catch (err) {
+      if (this.isBenignConflict(err)) return;
       this.ui.showError(`Failed to send command decision: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -997,14 +1042,15 @@ export class AiEditorController {
     });
     if (!result) return; // user dismissed — task stays paused until timeout
 
-    const client = this.clientForSession();
+    const client = this.clientForChat();
     try {
-      await client.sendScopeDecision(taskId, {
+      await client.sendScopeDecision(this.liveTaskIdOr(taskId), {
         decision: result.decision,
         files: result.decision === "approve" ? event.payload.files : [],
         remember: result.remember
       });
     } catch (err) {
+      if (this.isBenignConflict(err)) return;
       this.ui.showError(
         `Failed to send scope decision: ${err instanceof Error ? err.message : String(err)}`
       );
@@ -1115,6 +1161,101 @@ export class AiEditorController {
   private stopPolling(): void {
     this.poller?.stop();
     this.poller = null;
+  }
+
+  private clientForChat(): BackendTaskClient {
+    return this.createClient(this.settings.getBackendBaseUrl());
+  }
+
+  /**
+   * The task id an action should target right now. Resume churns the task id
+   * (parent→child); the card may have been rendered against an older id, so we
+   * prefer the live state's current active_task_id and fall back to the card's.
+   */
+  private liveTaskIdOr(fallback: string): string {
+    return this.latestLiveState?.activeTaskId ?? fallback;
+  }
+
+  /**
+   * A 409 from a decision POST means the gate already moved on (resolved by a newer
+   * poll, a timeout, or another client). It's benign — the next /live poll reconciles
+   * the card — so swallow it rather than alarming the user with an error toast.
+   */
+  private isBenignConflict(err: unknown): boolean {
+    return (
+      typeof err === "object" &&
+      err !== null &&
+      (err as { status?: number }).status === 409
+    );
+  }
+
+  /** Start polling the active thread's /live state. Idempotent. */
+  private startLiveStatePolling(): void {
+    if (this.liveStateTimer) {
+      return;
+    }
+    const intervalMs = Math.max(this.settings.getPollIntervalMs(), 500);
+    this.liveStateTimer = setInterval(() => {
+      void this.pollThreadLiveState();
+    }, intervalMs);
+    void this.pollThreadLiveState();
+  }
+
+  private stopLiveStatePolling(): void {
+    if (this.liveStateTimer) {
+      clearInterval(this.liveStateTimer);
+      this.liveStateTimer = null;
+    }
+  }
+
+  /**
+   * Reconcile the active thread's live cards from persisted backend state.
+   * Renders exactly one gate card (per kind) and one plan card, replace-not-append,
+   * removed when null. Signature-deduped so an unchanged poll causes no webview churn.
+   * This is what makes gate/plan cards reappear after a webview reload.
+   */
+  async pollThreadLiveState(): Promise<void> {
+    const threadId = this.activeThreadId;
+    if (!threadId) {
+      return;
+    }
+    let live: ThreadLiveState;
+    try {
+      live = await this.clientForChat().getThreadLiveState(threadId);
+    } catch {
+      // Transient backend/poll error — keep the last rendered cards; next tick retries.
+      return;
+    }
+    this.latestLiveState = live;
+
+    const signature = JSON.stringify({
+      taskId: live.activeTaskId,
+      gate: live.pendingGate,
+      plan: live.plan,
+    });
+    if (signature === this.lastLiveSignature) {
+      return; // dedup — nothing actionable changed
+    }
+    this.lastLiveSignature = signature;
+
+    if (live.pendingGate && live.activeTaskId) {
+      this.ui.renderLiveGate({
+        kind: live.pendingGate.kind,
+        payload: live.pendingGate.payload,
+        taskId: live.activeTaskId,
+      });
+    } else {
+      this.ui.clearLiveGate();
+    }
+
+    if (live.plan && live.activeTaskId) {
+      this.ui.renderLivePlan({
+        taskId: live.activeTaskId,
+        planMarkdown: String(live.plan["plan_markdown"] ?? ""),
+      });
+    } else {
+      this.ui.clearLivePlan();
+    }
   }
 
   private clientForSession(): BackendTaskClient {

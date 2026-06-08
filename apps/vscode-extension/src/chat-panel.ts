@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { ChatMessage, ChatThreadSummary, CommandDecision } from "@ai-editor/editor-client";
+import type { LiveGateView, LivePlanView } from "./controller.js";
 
 export type ChatMessageHandler = (message: string) => Promise<void>;
 export type PlanCardActionHandler = (
@@ -164,6 +165,24 @@ export class ChatPanel {
 
   finalizeAgentMessage(): void {
     this.panel?.webview.postMessage({ type: "finalizeAgentMessage" });
+  }
+
+  // Live, state-driven cards (Class A). The webview keeps a single slot per kind and
+  // replaces in place, so these are safe to call every poll tick.
+  renderLiveGate(gate: LiveGateView): void {
+    this.panel?.webview.postMessage({ type: "renderLiveGate", gate });
+  }
+
+  clearLiveGate(): void {
+    this.panel?.webview.postMessage({ type: "clearLiveGate" });
+  }
+
+  renderLivePlan(plan: LivePlanView): void {
+    this.panel?.webview.postMessage({ type: "renderLivePlan", plan });
+  }
+
+  clearLivePlan(): void {
+    this.panel?.webview.postMessage({ type: "clearLivePlan" });
   }
 
   private buildHtml(): string {

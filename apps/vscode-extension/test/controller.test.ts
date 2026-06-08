@@ -7,12 +7,15 @@ import type {
   TaskResult,
   TaskSubmission,
   TaskView,
+  ThreadLiveState,
 } from "@ai-editor/editor-client";
 import { describe, expect, test } from "vitest";
 
 import {
   AiEditorController,
   type ControllerUI,
+  type LiveGateView,
+  type LivePlanView,
   type SettingsProvider,
 } from "../src/controller.js";
 import type { SessionStore } from "../src/session-store.js";
@@ -41,7 +44,16 @@ interface StubBackendState {
   rejectCalls: Array<{ taskId: string; reason: string }>;
   getResultCalls: string[];
   planFeedbackCalls: Array<{ taskId: string; feedback: string | null }>;
+  liveResponse?: ThreadLiveState;
+  liveCalls?: string[];
 }
+
+const NULL_LIVE_STATE: ThreadLiveState = {
+  activeTaskId: null,
+  status: null,
+  pendingGate: null,
+  plan: null,
+};
 
 function createStubBackend(state: StubBackendState): BackendTaskClient {
   return {
@@ -146,6 +158,10 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
       messages: [],
       touchedFiles: [],
     }),
+    getThreadLiveState: async (threadId: string) => {
+      state.liveCalls?.push(threadId);
+      return state.liveResponse ?? NULL_LIVE_STATE;
+    },
     sendChatMessage: async function* (_threadId: string, _message: string) {
       yield { type: "chat_done" as const, payload: {} as Record<string, never> };
     },
@@ -183,6 +199,10 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     appendChatThinkingChunk: (_chunk: string) => {},
     finalizeAgentMessage: () => {},
     showStepReview: () => {},
+    renderLiveGate: () => {},
+    clearLiveGate: () => {},
+    renderLivePlan: () => {},
+    clearLivePlan: () => {},
     ...overrides,
   };
 }
@@ -504,5 +524,88 @@ describe("AiEditorController — command-decision", () => {
       taskId: "task-1",
       decision: { approve: true, remember: true, scope: "prefix", ruleValue: "python -c" },
     }]);
+  });
+
+  test("pollThreadLiveState renders one gate card, dedups, and removes on null", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: NULL_LIVE_STATE,
+    };
+    const backend = createStubBackend(state);
+
+    const gateRenders: LiveGateView[] = [];
+    const planRenders: LivePlanView[] = [];
+    let gateClears = 0;
+    let planClears = 0;
+    const ui = createUi({
+      renderLiveGate: (gate) => { gateRenders.push(gate); },
+      clearLiveGate: () => { gateClears += 1; },
+      renderLivePlan: (plan) => { planRenders.push(plan); },
+      clearLivePlan: () => { planClears += 1; },
+    });
+
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+
+    // Establish an active thread, then stop the auto-poll timer so we drive ticks by hand.
+    await controller.switchChatThread("chat-1");
+    await Promise.resolve();
+    controller.dispose();
+    gateRenders.length = 0; planRenders.length = 0; gateClears = 0; planClears = 0;
+
+    // Poll #1: a command gate appears → exactly one gate card rendered.
+    state.liveResponse = {
+      activeTaskId: "task-1",
+      status: "AWAITING_COMMAND_DECISION",
+      pendingGate: { kind: "command", payload: { command: "pytest" } },
+      plan: null,
+    };
+    await controller.pollThreadLiveState();
+    expect(gateRenders).toHaveLength(1);
+    expect(gateRenders[0].kind).toBe("command");
+    expect(gateRenders[0].taskId).toBe("task-1");
+    expect(gateRenders[0].payload.command).toBe("pytest");
+
+    // Poll #2: identical state → dedup, no second render (replace-not-append stays one card).
+    await controller.pollThreadLiveState();
+    expect(gateRenders).toHaveLength(1);
+
+    // Poll #3: gate resolved (null) → card removed.
+    state.liveResponse = NULL_LIVE_STATE;
+    await controller.pollThreadLiveState();
+    expect(gateClears).toBe(1);
+  });
+
+  test("pollThreadLiveState surfaces a plan card at AWAITING_PLAN_APPROVAL", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: {
+        activeTaskId: "task-9",
+        status: "AWAITING_PLAN_APPROVAL",
+        pendingGate: null,
+        plan: { task_id: "task-9", plan_markdown: "# Plan\n- step" },
+      },
+    };
+    const backend = createStubBackend(state);
+    const planRenders: LivePlanView[] = [];
+    const ui = createUi({ renderLivePlan: (plan) => { planRenders.push(plan); } });
+
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-1");
+    await controller.pollThreadLiveState();
+    controller.dispose();
+
+    expect(planRenders.length).toBeGreaterThanOrEqual(1);
+    expect(planRenders[planRenders.length - 1].taskId).toBe("task-9");
+    expect(planRenders[planRenders.length - 1].planMarkdown).toContain("# Plan");
   });
 });

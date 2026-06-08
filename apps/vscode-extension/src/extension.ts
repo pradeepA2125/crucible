@@ -164,6 +164,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     showStepReview: (taskId, stepId, stepTitle, diffEntries) => {
       panel.showStepReview(taskId, stepId, stepTitle, diffEntries);
     },
+    renderLiveGate: (gate) => {
+      chatPanel.renderLiveGate(gate);
+    },
+    clearLiveGate: () => {
+      chatPanel.clearLiveGate();
+    },
+    renderLivePlan: (plan) => {
+      chatPanel.renderLivePlan(plan);
+    },
+    clearLivePlan: () => {
+      chatPanel.clearLivePlan();
+    },
   };
 
   const clientFactory: BackendClientFactory = (baseUrl) => new HttpBackendClient({ baseUrl });
