@@ -262,6 +262,25 @@ The existing "AI Editor Review" webview panel (in `review-panel.ts`) is retired.
 
 ---
 
+## Wireframe Reference
+
+All wireframes live at `.superpowers/brainstorm/36442-1781025172/content/` (open in any browser). Files marked ✓ are the approved/final versions; earlier iterations are kept for context.
+
+| File | Status | What it shows |
+|---|---|---|
+| `full-wireframe-v2.html` | ✓ Final | Complete thread view — AI chip, thinking block, tool pills (collapsed + expanded with scrollable output), diff card with file tabs, plan card, gate cards, breadcrumbs, input area |
+| `full-wireframe.html` | Iteration | Earlier full wireframe before tool-pill expansion and diff card enhancements |
+| `missing-states.html` | ✓ Final | Four special states: streaming pills with spinner, error/resume card, empty state with suggestion chips, copy button on agent rows |
+| `plan-card-v2.html` | ✓ Final | Plan card with faded step preview in collapsed state (gradient overlay) and full expanded state |
+| `plan-card.html` | Iteration | Earlier plan card — collapsed/expanded without the faded preview |
+| `history-nav-v2.html` | ✓ Final | Four history navigation patterns including the right-drawer and full-view flip (option D, approved) |
+| `history-nav.html` | Iteration | Earlier two-pattern comparison of history nav |
+| `visual-style.html` | ✓ Final | Three visual style options A/B/C — option C (Modern/Linear with purple accent) was selected |
+| `scope.html` | ✓ Final | Two-panel vs unified single-panel comparison — option B (unified) selected |
+| `approach.html` | ✓ Final | Three build-approach options — option B (React + Tailwind direct, no Figma) selected |
+
+---
+
 ## Future Roadmap (out of scope for this implementation)
 
 - Token / cost tracking per turn (footer line in AgentRow)
