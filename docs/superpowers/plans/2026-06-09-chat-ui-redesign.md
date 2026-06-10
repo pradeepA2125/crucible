@@ -1,30 +1,291 @@
-# Chat UI Redesign Implementation Plan
+# Chat UI Redesign Implementation Plan — Rev 2.1
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace `media/chat.js` (vanilla JS) with a React 18 + TypeScript + Tailwind v4 webview delivering the Linear-inspired design from the spec.
+**Goal:** Replace `media/chat.js` (vanilla JS) with a React 18 + TypeScript + Tailwind v4 webview delivering the hi-fi design in `docs/superpowers/design/chat-ui-hifi.html`.
 
-**Architecture:** New standalone Vite app at `apps/vscode-extension/webview-ui/`. `chat-panel.ts` reads its compiled `dist/index.html` instead of inlining HTML. All `vscode.postMessage` ↔ `window.addEventListener('message')` types stay identical — no backend changes.
+**Architecture:** New standalone Vite app at `apps/vscode-extension/webview-ui/`. `chat-panel.ts` reads its compiled `dist/index.html` instead of inlining HTML. The extension keeps proxying ALL backend traffic (SSE, /live poll, decisions) — the webview talks only `postMessage`, exactly as today. Backend changes are **minimal and additive** — four SSE-emission changes, no API routes or state-machine changes — and each is scoped per feature in "Feature wire contracts" below; the frontend builds against *verified* payloads, never assumed ones.
 
 **Tech Stack:** React 18, TypeScript 5, Tailwind CSS v4 (`@tailwindcss/vite`), Vite 6, `react-markdown`, `@testing-library/react`, `vitest`
 
 **Spec:** `docs/superpowers/specs/2026-06-09-chat-ui-redesign-design.md`
+**Visual source of truth:** `docs/superpowers/design/chat-ui-hifi.html` (supersedes the wireframes and the spec's colour table)
+
+---
+
+## Rev 2 — what changed vs Rev 1 and why
+
+Rev 1 was written under compacted context and contained claims that do not survive contact with the code. Verified against `chat-panel.ts`, `chat.js`, `controller.ts`, `extension.ts`, `review-panel.ts`, `task-contracts.ts`, `chat/live_state.py`, `chat/storage.py`, and `orchestrator/engine.py`:
+
+1. **`unified_diff` does not exist.** No payload anywhere carries diff text. `DiffEntry` is `{path, additions, deletions, temp_path}` (snake_case on the wire — SSE/live payloads are NOT case-mapped by `HttpBackendClient`). `engine._compute_diff_entries` computes a unified diff only to count +/− and discards it. → DiffCard v1 renders file rows + stats + "open in VS Code diff" (`viewDiffFile`, same as today). Inline diff text is a v2 item requiring a small backend addition.
+2. **The tool-pill parser parsed a format that never occurs.** Thinking entries are flattened prose (`"read_file routes.py — thought…"`, `"planning: search_code — …"`); `isToolEntry`/`parseToolEntry("tool(args)\noutput")` would match almost nothing and tool output is never forwarded at all. → New structured `appendToolEvent`/`toolResult` extension→webview messages (Task 5). Extension-side only.
+3. **MessageRow dispatched on `"role" in msg` first — but every persisted `ChatMessage` has BOTH `role` and `type`** (Zod: role required, type defaults `"text"`). plan_card/diff_card/task_card messages would have rendered as plain text forever. → Dispatch on `type` first, like chat.js.
+4. **GateCard used hooks inside `if (kind === …)` branches** (Rules-of-Hooks violation) → split into four components.
+5. **Live-slot React instance reuse:** a second gate of the same kind (multiple command approvals per task is the NORM) would reuse the mounted component and its stale `resolved` state → buttons permanently gone. → Key live cards by content signature; same for the live plan (feedback regen must reset local state).
+6. **Deleting ReviewPanel removed the only accept/reject UI for large-change tasks.** `applyInlineChange` ≠ `acceptPatch`; `controller.acceptPatch()` only targets the legacy session task. → New **ReviewCard** in the live slot, driven by `live.status === "READY_FOR_REVIEW"`, with taskId-parameterized accept/reject (Task 11/13).
+7. **ErrorCard was never rendered anywhere and its actions posted fake `/resume` slash-commands into chat.** → Live-state-driven ErrorCard (status FAILED/ABORTED) wired to a real `resumeTask` message. Thread `active_task_id` repoints on resume (`storage.set_active_task`), so the /live poll follows the child task automatically.
+8. **`appendThinkingEntry` reducer overwrote the previous entry with the active chunk** (data loss). chat.js semantics: seal the streaming chunk as its own entry, then append the new one.
+9. Smaller fixes: `reattach()` must reset `webview.options` (it IS settable on restored panels); `(h>>>0).toString(36)` not `String(h>>>0).toString(36)`; command-gate "exact" rule must shlex-join (port `shlexJoin` from chat.js — backend rule matching depends on it); ThinkingBlock must collapse when streaming ends; HistoryView gets `createdAt` (already on `ChatThreadSummary` — just pass it through) for day grouping; webview-ui is not an npm workspace so root scripts must invoke it explicitly.
+10. **Visual layer upgraded** from the lo-fi wireframe styling (emoji, text arrows, flat borders, `#141414/#9d6ff0`) to the hi-fi token system, SVG icon sprite, and motion set.
+
+Verified-correct and kept from Rev 1: the full `ExtensionMessage`/`WebviewMessage` unions (match `chat-panel.ts` exactly), gate payload shapes (match backend `pending_*` models), plan-card dedup by task+content signature, the Vite/Tailwind scaffold, CSP/nonce/asset-rewrite approach, and Task 1 (commit prerequisite).
+
+**Rev 2.1** re-verified every feature against the actual backend broadcast sites (`tools/loop.py`, `planning/loop.py`, `chat/agent.py`, `orchestrator/engine.py`). Rev 2's claim that tool pills were "extension-side only" was wrong for two of the three tool sources. The section below is now the contract the frontend is built against.
+
+---
+
+## Feature wire contracts (verified against source — build against THIS, not assumptions)
+
+### Channel primer
+
+| Channel | Key | Carried by | What flows on it |
+|---|---|---|---|
+| **Task channel** | `task_id` | `GET /v1/tasks/{id}/stream-patch` SSE | engine lifecycle (`task_status_changed`, `done`), execution ToolLoop events (plan tasks), gate-request events, planning-loop mirror, `plan_card`/`chat_breadcrumb` mirror |
+| **Chat channel** | `chat_channel_id` (UUID) | `POST /v1/chat/threads/{id}/message` SSE (one turn) | ChatAgent explore/classify/QA events, inline-change ToolLoop (via `broadcast_key`), planning-loop mirror (`planning/loop.py:92-95`), `plan_card`/`chat_breadcrumb`, `chat_done` |
+| **/live poll** | thread id | `GET /v1/chat/threads/{id}/live` (extension polls 1s) | `{active_task_id, status, pending_gate, plan}` derived from persisted task state — durable across reload/resume |
+
+Extension consumption: `controller.sendChatMessage` reads the chat SSE during a turn; `controller.streamTaskIntoChatThread` reads the task SSE after plan approval; `pollThreadLiveState` reads /live. SSE payloads are **not case-mapped** by `HttpBackendClient` — snake_case fields arrive verbatim.
+
+### F1 — Tool pills with expandable Input/Output (hi-fi frame 2)
+
+Three distinct tool sources; each has a different wire reality:
+
+| Source | Call event (payload) | Result event (payload) | Gap |
+|---|---|---|---|
+| **Chat explore** | `explore_tool_call` `{tool, args, thought}` — `chat/agent.py:199` ✓ args | **none** — result goes only into internal `context` (`chat/agent.py:208`) | result event missing entirely |
+| **Planning loop** | `planning_tool_call` `{tool, thought, iteration}` — `planning/loop.py:410` — **NO args** | `planning_tool_result` `{tool, output[:500], is_error, iteration}` — `planning/loop.py:424` ✓ | args missing on call |
+| **Execution loop** | `tool_call` `{tool, thought[:300], iteration, phase, args}` — `tools/loop.py:906` ✓ args | `tool_result` `{tool, output[:500], is_error, iteration}` — `tools/loop.py:1011` ✓ | output cap 500 chars is tight for the Output panel |
+
+Correlation: there is no call id on the wire; calls and results are strictly sequential within a loop (one tool in flight), so the extension pairs each result with the latest open call **per source**.
+
+**Changes — Backend (Task 5a):**
+1. `planning/loop.py:410` — add `"args": args` to the `planning_tool_call` payload.
+2. `chat/agent.py` — broadcast `explore_tool_result` `{tool, output, is_error}` right after `self._registry.execute(...)` (both success and the `except` branch), output capped like the others.
+3. `tools/loop.py:1011` + `planning/loop.py:424` — raise the broadcast output cap 500 → 2000 with a `"\n… truncated"` suffix when cut (full output still lands in `tool-trace.json` artifacts; the panel links nothing, 2000 chars ≈ the hi-fi panel's scrollable view).
+
+**Changes — Contracts (Task 5b):** `task-contracts.ts` `StreamEvent`: add `args` to `planning_tool_call`, add `explore_tool_result`. Rebuild editor-client before extension typecheck (build-order rule).
+
+**Changes — Extension (Task 5c):** forward all three call sources as structured `appendToolEvent` (id assigned by extension, `source` field) and all three result types as `appendToolResult` paired sequentially per source. Drop the flattened-prose `appendChatThinkingEntry` for tool calls.
+
+**Webview:** `ToolPill` renders from `ToolEventView` (Task 6) — pill spinner until result arrives; Input section from `args`; Output section from `output`.
+
+### F2 — Thinking block (status line + streamed thoughts)
+
+Fully wired today; **no backend change**. `chat_agent_thinking {message}`, `chat_agent_thinking_chunk {chunk}`, `tool_thinking_chunk {chunk}` (execution, `tools/loop.py:346`), `planning_thinking_chunk {chunk, iteration}` (mirrored to chat channel). Extension already maps these to `appendThinkingEntry`/`appendThinkingChunk`. Webview: ThinkingBlock consumes entries/chunk as in Task 6.
+
+### F3 — Step progress / work bar ("Step 2 of 4 — title", hi-fi frame 2)
+
+**Nothing on the wire today.** No step-start broadcast exists; step index/total appear nowhere (`completed_step_ids` is persisted state, not an event; the only `total_steps` on the wire is the hardcoded `1` in inline-change `diff_ready`).
+
+**Changes — Backend (Task 5a):** in `_execute_plan`'s step loop (`orchestrator/engine.py`, right where each step's execution begins), broadcast on the task channel:
+```python
+self.broadcaster.broadcast(task.task_id, {
+    "type": "step_started",
+    "payload": {"step_id": step.id, "step_title": step.title,
+                "step_index": idx + 1, "total_steps": len(plan_steps)},
+})
+```
+(`idx`/`plan_steps` per the loop's existing variables; count only code steps it actually iterates.)
+
+**Contracts:** add `step_started` to `StreamEvent`.
+**Extension:** in `streamTaskIntoChatThread`, on `step_started` → `this.ui.updateWorkbar({stepIndex, totalSteps, stepTitle})` (new ChatPanel method → `ExtensionMessage` `updateWorkbar`); cleared on `done`/`chat_done`.
+**Webview:** ThreadView work bar renders `Step {n} of {m} — {title}` with shimmer hairline; falls back to latest `thinkingStatus` text when no step info (QA/inline turns).
+
+### F4 — Step results in the transcript
+
+What exists (no backend change needed):
+- `patch_applied {step_id, phase, touched_files}` (`tools/loop.py:770`) → extension already appends a thinking entry; keep.
+- `patch_failed {step_id, error}` (`tools/loop.py:567,606,659`) → currently DROPPED by the controller; forward as a thinking entry (error-tinted) — extension-only change.
+- Step accept/discard breadcrumbs: `chat_breadcrumb` events + persisted `agent/text` messages with `metadata.breadcrumb` (`engine.py:1827-1829`) → already rendered as breadcrumb lines. Note: with `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=true` (default) no step breadcrumb is written — **optional** backend nicety (deferred, listed in v2): a `✓ Step completed` breadcrumb on auto-accept.
+- Step review gate: `pending_step_review {step_id, step_title, diff_entries[{path,additions,deletions,temp_path}]}` via /live ✓ (StepGate, Task 10).
+
+### F5 — Plan card (live + transcript versions)
+
+Fully wired; no backend change. Live: `/live.plan {task_id, plan_markdown}` at `AWAITING_PLAN_APPROVAL`. Transcript: `plan_card` events (both channels) + persisted messages, deduped by task+content sig. Feedback regen: breadcrumb `↻` then new version (`engine.py:490-500`).
+
+**Structured steps caveat:** the mockup draws parsed steps (title / target file / description on a timeline). At approval time only `plan_markdown` exists — the markdown→JSON `PlanDocument` conversion runs AFTER approval (`engine.py:501-504`, "Generating execution plan…"). v1 renders styled markdown (timeline look applied to list items via prose CSS); exposing the structured plan at the approval gate would mean moving an LLM conversion call before approval — not worth it, Deferred note only.
+
+### F6 — Gates (command / scope / validation / step)
+
+Fully wired via /live (`live_state.py:_GATE_FIELD`); payload shapes verified (`CommandApprovalRequest`, `ScopeExtensionRequest`, `pending_validation` dict, `StepReviewPayload`). SSE `*_requested` events remain pure pokes. No backend change.
+
+### F7 — Diff display: small_change vs large_change are DIFFERENT mechanisms
+
+Both paths compute entries with the same helper (`_compute_diff_entries` — real workspace vs shadow, `{path, additions, deletions, temp_path}`, `temp_path` = absolute shadow-file path, so `viewDiffFile` → native VS Code diff works identically for both). Everything else differs:
+
+| | small_change (inline) | large_change (per step) |
+|---|---|---|
+| Wire | `diff_ready` event (chat channel, `engine.py:1033`) | `pending_step_review` via /live (+ `step_review_requested` SSE poke, `engine.py:1798`) |
+| Transcript record | **persisted `diff_card` message**, `resolve_diff_card` patches `metadata.resolved` | **none** — gate is live-slot only; afterwards only a `✓/↩` breadcrumb (file list is not persisted) |
+| When user decides | real workspace untouched until decision | gate shown only when `step_review_auto_accept=false`; decision is per step |
+| Accept does | `applyInlineChange` → promote inline shadow → real workspace | gate resolves, then **`_partial_promote` immediately copies the step's files into the REAL workspace** (`engine.py:1420-1426` — runs for every completed step, gated or not) |
+| Reject/Discard does | nothing applied; shadow discarded | `_unmerge_step_result` reverts the shadow; execution continues |
+
+UI mapping: inline → `DiffCard` (Task 9, persisted + resolvable); per-step → `StepGate` (Task 10, live slot, file rows + Accept/Discard). The wireframe's frame-3 "Changes ready" card with Accept all/Reject is the **inline** card; the step gate reuses its file-row body but is a different component with different actions — do not merge them.
+
+**No diff text on the wire for either path** (`_compute_diff_entries` discards the unified diff after counting, `engine.py:1067`) → v1 renders file rows + native VS Code diff; inline diff text stays a v2 backend item (one change covers both paths — same helper).
+
+### F8 — Final review card (READY_FOR_REVIEW) — semantics corrected
+
+Plumbing: no backend change — derived from `/live.status == "READY_FOR_REVIEW"` + `GET /tasks/{id}/result` (`modifiedFiles`, `shadowWorkspacePath`) — Task 13; actions via existing `POST /accept` / `POST /reject`.
+
+**BUT the semantics are NOT "accept the changes":** because `_partial_promote` already wrote every completed step's files to the real workspace during execution, by READY_FOR_REVIEW the changes are **already applied**. The backend acknowledges this — `engine.py:710` TODO: "READY_FOR_REVIEW here is largely hollow… the final PROMOTE just re-copies the same files." And `/reject` (`routes.py:487-503`) only cleans the shadow and marks ABORTED — **it does NOT revert the real workspace**.
+
+ReviewCard copy must be honest, and the card becomes a **run summary** — the recap of what the run actually did and whether it deviated from the approved plan:
+- Header: "Task complete — changes applied"
+- **Summary body (v1 sources, all available without backend changes):**
+  - Files changed: `result.modifiedFiles` rows with view-diff buttons (shadow still live at this point)
+  - Steps: `n of m steps completed` — m from `result.plan.steps`, n/titles from the extension's observed `step_started`/breadcrumbs
+  - Deviations, tracked extension-side during the run (reset per task): scope extensions approved (count + files), commands approved & remembered, delta replans fired (`revision_needed`/`planning_complete(patched)` events), steps discarded at review, validation accepted-with-errors (from its breadcrumb). Rendered as breadcrumb-style lines under a "During the run" divider; omitted when empty.
+  - Ephemeral caveat: after a webview reload only files/steps survive (derived from result); deviation lines need the run to have been observed. Durable run summary = v2 backend item (persist a `run_summary` on the task — execution_state already holds most of it server-side but none of it is exposed via TaskView/TaskResult).
+- Primary: **"Finish"** → `acceptTask` (re-promote no-op + SUCCEEDED + shadow cleanup)
+- Ghost: **"Close without finishing"** → `rejectTask` with subtitle "keeps the applied changes; marks the task aborted"
+- Do NOT label these Accept/Reject — that promises a revert that doesn't exist. True final revert (checkpoint-based workspace restore on reject, or collapsing the hollow READY_FOR_REVIEW → SUCCEEDED) is a backend redesign — Deferred, pointing at the `engine.py:710` TODO.
+
+### F9 — Error / resume card (FAILED / ABORTED)
+
+Card presence + actions: no backend change — derived from `/live.status`; Resume/Re-plan via existing `POST /resume`; thread `active_task_id` repoints server-side (`chat/storage.py:86`, `routes.py:965-975`) so the /live poll follows the child. "Discard" in the mockup = local dismiss (the task is already terminal).
+
+**Failure DETAIL ("step 3 of 4 — VerifyPhaseExhausted") has NO durable wire source** — `TaskRecord` has no `failure_reason`/`last_error` field; `TaskView.diagnostics` only carries validation diagnostics. Scope:
+- **v1 (ephemeral, extension-side):** the controller remembers the last `step_started` + last `patch_failed`/`done{status}` from the stream and passes them as `detail` in `renderLiveError`. Accurate while the session that watched the failure is open; after a reload the card renders the generic "Task failed — resume or re-plan" plus whatever `getTask().diagnostics` holds.
+- **v2 (durable, backend):** persist a `failure_summary {step_id, step_index, error_class, message}` on the task at the point of failure and expose it through `/live` — listed in Deferred.
+
+### F12 — Stop button (work bar)
+
+Two very different realities depending on what is running:
+
+- **Chat-channel turns (QA / explore / inline change):** supported TODAY. The message SSE handler cancels the agent coroutine when the client disconnects (`routes.py:1033` `agent_task.cancel()` in the stream's `finally`). Stop = the extension aborts the in-flight `sendChatMessage` iteration (`AbortController` on the fetch), then re-enables input. Extension + webview change only.
+- **Executing tasks (post-approval):** **NOT safely supported — do not wire Stop to `POST /cancel` here.** Verified: `/cancel` (`routes.py:432-444`) flips status to ABORTED and deletes the shadow workspace, but nothing inside `_execute_plan`/`ToolLoop` checks for abort — the engine coroutine keeps running against a freed shadow, and its stale in-memory task object will `transition()`+`save()` over ABORTED (same stale-object class of bug as the gate invariants in CLAUDE.md). Cooperative cancellation (an abort flag/event checked between tool-loop iterations and steps, with ABORTED-aware saves) is a real backend feature — Deferred to v2.
+- **v1 behavior:** show the Stop button only while a chat-channel turn is streaming; hide it during task execution (the work bar still shows progress).
+
+### F13 — Small client-derivable details (audited, no backend needed)
+
+- Work-bar elapsed timer (`01:42`) — client-side timer started when the turn/execution begins.
+- Plan card `v2` version badge — count of prior `plan_card` messages for the same task in the transcript + 1.
+- Tool panel `62 lines` badge — derived from the result output text.
+- Streaming text line with caret — the active thinking chunk (F2) rendered with the blink caret.
+- User-bubble inline `code` styling — client-side backtick rendering in UserMessage (display only, no markdown engine).
+- Command gate subtitle — payload has `step_id`; the mockup's "· verify phase" is NOT in the payload, show `step {step_id}` only.
+
+### F10 — History view metadata
+
+`ChatThreadSummary {threadId, workspacePath, title, createdAt}` — `createdAt` available today (day groups + relative time, zero backend change). Message counts and Running/Review/Done status chips: **not on the wire**, deferred to v2 (needs thread-summary query change; do not fake).
+
+### F11 — QA streaming text
+
+Fully wired: `chat_response {chunk}` → `appendChunk`; `chat_done` finalizes. No change.
+
+### F14 — Silent phases: the work bar must never be label-less while a task is alive
+
+Three real dead-air phases were identified (input disabled, nothing visibly moving): **JSON plan generation** after approval (`task_status_changed {PLANNED, "Generating execution plan…"}` fires once at `engine.py:501-504`, then `create_plan` runs — thinking chunks stream via `_on_plan_thinking` only for providers that stream thinking; constrained-JSON providers emit nothing), **the first `search_semantic`** (embedding weights load — the call event broadcasts BEFORE `registry.execute`, so the Task 5 spinner pill covers it; the synchronous auto-index fallback during `CONTEXT_READY` has no event at all), and **env profile / dependency installs** (`env_install_running` fires once, then minutes of silence during pip/npm).
+
+Fix is fully extension/webview-side — the work bar (which already has shimmer + spinner + elapsed timer) gets a **phase label with three precedence tiers**:
+
+1. `step_started` info — `Step n of m — title` (F3)
+2. Transient event overrides, cleared by their completion counterpart:
+   - `env_profile_building` → "Profiling workspace environment…" (until `env_profile_built`)
+   - `env_install_running` → "Syncing dependencies: {command}…" (until `env_install_done`)
+   - latest `planning_tool_call` → "Planning: {tool}…" (until its result)
+3. `/live.status` fallback map (durable across reloads, no backend change):
+   `QUEUED` → "Queued…" · `CONTEXT_READY` → "Planning — exploring the codebase…" · `PLANNED` → "Generating execution plan…" · `EXECUTING` (no step info) → "Executing…" · `VALIDATING` → "Running validation…" · `REPAIRING` → "Repairing validation errors…" · `PROMOTING` → "Applying changes…"
+
+The elapsed timer runs through all tiers, so even a provider that streams nothing shows a moving clock + shimmer + an accurate phase label. (A heartbeat event for genuinely hung backends is a separate concern — not in scope.)
+
+### Mockup element audit — every data-bearing element & action in `chat-ui-hifi.html`
+
+| # | Mockup element / action | Source | Status |
+|---|---|---|---|
+| 1 | History: thread titles, active row | `listChatThreads` + `activeThreadId` | ✅ wired |
+| 2 | History: day groups + relative time | `ChatThreadSummary.createdAt` (pass through, F10) | ✅ extension change |
+| 3 | History: "· N messages" count | nowhere on wire | ⛔ **v2 backend** (F10) |
+| 4 | History: Running/Review/Done chips | nowhere on wire (per-thread status) | ⛔ **v2 backend** (F10) |
+| 5 | History: search, + New Chat | client / `newChat` | ✅ |
+| 6 | User bubble (incl. inline code style) | `appendMessage` user / client styling | ✅ (F13) |
+| 7 | Thinking block: live label, entries, chunk | F2 events | ✅ wired today |
+| 8 | Tool pills: name + args Input panel | F1 — `tool_call` ✓ / `explore_tool_call` ✓ / `planning_tool_call` ⛔ no args | 🔧 **backend Task 5a** |
+| 9 | Tool pills: Output panel | F1 — `tool_result`/`planning_tool_result` ✓ (cap 500) / explore ⛔ no result event | 🔧 **backend Task 5a** |
+| 10 | Tool pill spinner (live) / ✓ / ✗ states | call/result pairing | ✅ after Task 5 |
+| 11 | Tool panel "62 lines" badge | derived from output | ✅ client (F13) |
+| 12 | Streaming text line + caret | active thinking chunk (F2) | ✅ presentation |
+| 13 | Breadcrumbs (✓/✗/↻/task queued) | `chat_breadcrumb` + `task_card` + persisted msgs | ✅ wired today |
+| 14 | Work bar "Step 2 of 4 — title" | nowhere on wire | 🔧 **backend Task 5a** (`step_started`, F3) |
+| 15 | Work bar elapsed `01:42` | client timer | ✅ client (F13) |
+| 16 | Work bar **Stop** — chat turns | SSE disconnect cancels agent (`routes.py:1033`) | ✅ extension change (F12) |
+| 17 | Work bar **Stop** — executing tasks | `/cancel` is NOT loop-aware (unsafe mid-execution) | ⛔ **v2 backend** (F12) — hide in v1 |
+| 18 | Plan card: markdown, Implement/Feedback, faded preview | F5 / `/live.plan` + decision routes | ✅ wired today |
+| 19 | Plan card: structured step timeline | markdown only at approval (F5 caveat) | ⚠ v1 = styled markdown |
+| 20 | Plan card: "v2" version badge | count prior plan_cards client-side | ✅ client (F13) |
+| 21 | Plan card: "4 steps · 2 files" subtitle | best-effort markdown heuristic | ⚠ client, display-only |
+| 22 | Command gate: command, radios, remember, actions | `pending_command_request` + decision route | ✅ wired today (F6) |
+| 23 | Command gate "· verify phase" subtitle | not in payload | ⚠ show step id only (F13) |
+| 24 | Scope / validation / step gates | `pending_*` + decision routes | ✅ wired today (F6) |
+| 25 | Diff card (inline path): header, +N −M, file count, Accept/Reject | `diff_ready` / `diff_card` + apply/discard routes — a REAL pre-apply decision | ✅ wired today (F7) |
+| 25b | Step diff (large path): per-step gate, Accept/Discard | `pending_step_review` via /live; accept ⇒ `_partial_promote` writes the REAL workspace immediately | ✅ wired today (F7) — different component, no transcript file-list record (breadcrumb only) |
+| 26 | Diff card: file tabs + inline diff lines + line numbers | no diff text on wire (either path) | ⛔ **v2 backend** (F7) — v1 file rows + native diff |
+| 27 | Error card presence + Resume / Re-plan / Discard | `/live.status` + `/resume` (active-task repoint ✓) | ✅ Task 13 (F9) |
+| 28 | Error card detail "step 3 of 4 — VerifyPhaseExhausted" | no persisted failure detail | ⚠ v1 ephemeral from stream; durable = **v2 backend** (F9) |
+| 29 | Empty state + suggestion chips (pre-fill input) | static / client | ✅ |
+| 30 | ReviewCard (unified-panel requirement) | `/live.status` + `getTaskResult` + accept/reject routes — but changes are ALREADY applied per step; reject does NOT revert | ⚠ Task 13 (F8) — honest "Finish / Close" copy; true final revert = **v2 backend** (`engine.py:710` TODO) |
+| 31 | Copy buttons, ⌘↵ hint, send button, focus states | client | ✅ |
+
+**Bottom line:** 3 audit rows need the v1 backend emissions already scoped in Task 5a (rows 8, 9, 14); 5 are honestly deferred to v2 backend work (rows 3, 4, 17, 26, durable-28); 3 degrade gracefully in v1 (rows 19, 21, ephemeral-28); everything else is wired today or pure client.
+
+---
+
+## UX interaction rules — input availability & one-shot actions
+
+The webview must make it impossible for the user to disrupt an in-flight flow. Rules are **derived from `/live` status wherever possible** (not just in-memory turn state) so they survive webview reloads — same Class-A philosophy as the gate cards. The controller forwards the live status via a new `liveStatus` message each poll (deduped in the existing signature).
+
+### Rule 1 — Input box availability (precedence top → bottom; first match wins)
+
+| State (local ∥ live.status) | Input | Placeholder | Extra |
+|---|---|---|---|
+| Local chat turn streaming | **disabled** | "Agent is working…" | Stop button visible (F12) |
+| `AWAITING_PLAN_APPROVAL` | **disabled** | "Review the plan — Implement or Give feedback" | only the live plan card is interactive |
+| `AWAITING_{COMMAND,SCOPE,STEP,VALIDATION}_DECISION` | **disabled** | "Waiting for your decision on the card above" | only the gate card is interactive |
+| `QUEUED / CONTEXT_READY / PLANNED / EXECUTING / VALIDATING / REPAIRING / PROMOTING` | **disabled** | "Task is running…" (+ step n/m when known) | work bar shows progress; no Stop in v1 |
+| `READY_FOR_REVIEW` | **enabled** | normal | ReviewCard pending is non-blocking — user may ask questions; Finish/Close stays in the live slot |
+| `FAILED / ABORTED / SUCCEEDED` / no active task | **enabled** | normal | ErrorCard actions remain available |
+
+The existing `setInputEnabled` round-trip remains the signal for local turn streaming; the live-status rows make the disabled state durable across reloads (today a reload mid-execution silently re-enables the input — a real current-flow bug this fixes).
+
+### Rule 2 — Every decision action is one-shot
+
+On first click, the **entire action row** of the card swaps to an optimistic resolved/busy label (`✓ Implementing…`, `✓ Allowed once`, `✓ Finishing…`) — no button in that row can fire twice. Component-local state covers the gap until the /live poll clears or remounts the card; a genuinely NEW decision of the same kind remounts via the LiveSlot content key (Task 11). Backend 409s from racing clicks stay swallowed as benign (`isBenignConflict`).
+
+Specifics:
+- Plan card: `Implement` and `Give feedback` are mutually exclusive — opening feedback hides Implement; `Send` resolves the row (`↻ Regenerating…`); `Cancel` restores both.
+- Gate cards: all 2–3 buttons disable together on any click.
+- Diff card (inline): `Accept all`/`Reject` resolve together; view-diff buttons stay active (read-only).
+- ReviewCard / ErrorCard: same row-level resolution; `Resume`/`Re-plan` also clear the local dismissed flag.
+- Send button + Enter are no-ops while input is disabled or text is empty (trim).
+
+### Rule 3 — Navigation cannot orphan a streaming turn
+
+While a **local SSE loop is appending to the panel** (chat turn OR `streamTaskIntoChatThread`), thread navigation is locked: `‹` back, history rows, and `+ New Chat` are disabled with a tooltip ("A turn is in progress"). Without this, the in-flight loop keeps appending into whichever thread is displayed — cross-thread transcript bleed (an existing chat.js bug this fixes). The /live-status disabled states (task executing, gates) do NOT lock navigation — other threads have their own live state and the poll re-derives everything on switch. v2 may relax Rule 3 by tagging streamed messages with their thread id.
+
+### Rule 4 — Read-only affordances are always safe
+
+Copy buttons, expand/collapse (cards, pills, thinking), diff viewing, and search work in every state — they never post decisions. View-diff on a stale card whose shadow was cleaned up shows the existing "Diff is unavailable" warning rather than erroring.
+
+### Step-review default is a UX decision (not an env knob)
+
+With `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=true` (current default) the only conscious approval on the large path is plan approval — every step lands silently and Finish is a formality (F8). Decision: **review-by-default**.
+- **v1:** `start-backend.sh` exports `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=false` (one line, parity with how scope `ask`+`any` is already forced there). Step gates surface in the live slot per F6.
+- **v2 (deferred):** a per-task "Review each step" toggle in the composer — requires plumbing the flag through `POST /threads/{id}/message` into `create_task_from_chat` (today the message body is just `{message}`; the extension cannot inject it).
 
 ---
 
 ## File Map
 
 **Create:**
-- `apps/vscode-extension/webview-ui/package.json`
-- `apps/vscode-extension/webview-ui/vite.config.ts`
-- `apps/vscode-extension/webview-ui/tsconfig.json`
-- `apps/vscode-extension/webview-ui/index.html`
-- `apps/vscode-extension/webview-ui/src/index.css`
+- `apps/vscode-extension/webview-ui/package.json`, `vite.config.ts`, `vitest.config.ts`, `tsconfig.json`, `index.html`
+- `apps/vscode-extension/webview-ui/src/index.css` — hi-fi tokens + keyframes
 - `apps/vscode-extension/webview-ui/src/vscodeApi.ts`
 - `apps/vscode-extension/webview-ui/src/types.ts`
-- `apps/vscode-extension/webview-ui/src/main.tsx`
-- `apps/vscode-extension/webview-ui/src/App.tsx`
+- `apps/vscode-extension/webview-ui/src/main.tsx`, `src/App.tsx`
 - `apps/vscode-extension/webview-ui/src/hooks/useAppState.ts`
+- `apps/vscode-extension/webview-ui/src/components/Icon.tsx` — SVG sprite (from hi-fi mockup)
 - `apps/vscode-extension/webview-ui/src/components/HistoryView.tsx`
 - `apps/vscode-extension/webview-ui/src/components/ThreadView.tsx`
 - `apps/vscode-extension/webview-ui/src/components/MessageRow.tsx`
@@ -36,21 +297,34 @@
 - `apps/vscode-extension/webview-ui/src/components/messages/QAMessage.tsx`
 - `apps/vscode-extension/webview-ui/src/components/messages/PlanCard.tsx`
 - `apps/vscode-extension/webview-ui/src/components/messages/DiffCard.tsx`
-- `apps/vscode-extension/webview-ui/src/components/messages/GateCard.tsx`
+- `apps/vscode-extension/webview-ui/src/components/messages/gates/CommandGate.tsx`
+- `apps/vscode-extension/webview-ui/src/components/messages/gates/ScopeGate.tsx`
+- `apps/vscode-extension/webview-ui/src/components/messages/gates/ValidationGate.tsx`
+- `apps/vscode-extension/webview-ui/src/components/messages/gates/StepGate.tsx`
+- `apps/vscode-extension/webview-ui/src/components/messages/ReviewCard.tsx` — **new** (final accept/reject)
 - `apps/vscode-extension/webview-ui/src/components/messages/ErrorCard.tsx`
 - `apps/vscode-extension/webview-ui/src/components/shared/ThinkingBlock.tsx`
 - `apps/vscode-extension/webview-ui/src/components/shared/ToolPill.tsx`
-- `apps/vscode-extension/webview-ui/src/test/setup.ts`
-- `apps/vscode-extension/webview-ui/src/test/GateCard.test.tsx`
-- `apps/vscode-extension/webview-ui/src/test/PlanCard.test.tsx`
-- `apps/vscode-extension/webview-ui/src/test/DiffCard.test.tsx`
-- `apps/vscode-extension/webview-ui/src/test/useAppState.test.ts`
+- `apps/vscode-extension/webview-ui/src/test/` — setup + component/hook tests
 
-**Modify:**
-- `apps/vscode-extension/src/chat-panel.ts` — `buildHtml()` reads `webview-ui/dist/index.html`, update `localResourceRoots`
-- `apps/vscode-extension/src/extension.ts` — remove `ReviewPanel`, remove `showStepReview`, remove `openReviewPanel` command
-- `apps/vscode-extension/src/controller.ts` — remove `showStepReview` + `updatePanel` from `ControllerUI`, remove call sites
-- `apps/vscode-extension/package.json` — add `webview:build` + `prebuild` scripts
+**Modify (backend — additive SSE emissions only, see Feature wire contracts):**
+- `services/agentd-py/agentd/planning/loop.py` — add `args` to `planning_tool_call`; raise result cap to 2000
+- `services/agentd-py/agentd/chat/agent.py` — new `explore_tool_result` broadcast after each explore tool execution
+- `services/agentd-py/agentd/tools/loop.py` — raise `tool_result` cap to 2000 (+ truncation suffix)
+- `services/agentd-py/agentd/orchestrator/engine.py` — new `step_started` broadcast at the top of each step in `_execute_plan`
+- `services/agentd-py/tests/` — extend the existing broadcast-assertion tests for the four emissions
+
+**Modify (contracts):**
+- `apps/editor-client/src/contracts/task-contracts.ts` — `StreamEvent`: `args` on `planning_tool_call`, new `explore_tool_result`, new `step_started` (rebuild editor-client before extension typecheck)
+
+**Modify (extension):**
+- `apps/vscode-extension/src/chat-panel.ts` — `buildHtml()` reads `webview-ui/dist`; `reattach()` resets `webview.options`; new methods `appendToolEvent`, `appendToolResult`, `updateWorkbar`, `renderLiveReview`, `clearLiveReview`, `renderLiveError`, `clearLiveError`; new inbound branches `acceptTask`, `rejectTask`, `resumeTask`
+- `apps/vscode-extension/src/controller.ts` — structured tool forwarding; live review/error derivation in `pollThreadLiveState`; `acceptTaskPatch(taskId)` / `rejectTaskPatch(taskId, reason)` / `resumeTaskById(taskId, stage)`; remove `updatePanel`/`showStepReview`/`buildViewModel`/`patchEvents`
+- `apps/vscode-extension/src/extension.ts` — remove `ReviewPanel`; wire new handlers
+- `apps/vscode-extension/src/types.ts` — drop `ReviewPanelViewModel` if now unused
+- `apps/vscode-extension/test/controller.test.ts` — stub `ControllerUI` updates (lines ~186, ~201)
+- `apps/vscode-extension/package.json` — `webview:build` + `prebuild` scripts; drop `marked`
+- root `package.json` — extend `build`/`test`/`typecheck` to invoke webview-ui via `--prefix`
 
 **Delete:**
 - `apps/vscode-extension/media/chat.js`
@@ -61,342 +335,169 @@
 
 ## Task 1: Commit current uncommitted changes (prerequisite)
 
-**Files:** all modified files on `main`
-
-- [ ] **Step 1: Check what's staged and unstaged**
-
-```bash
-git status
-git diff --stat
-```
-
-- [ ] **Step 2: Stage and commit by logical group**
-
-Group the staged/unstaged files visible in `git status` by their area of concern and commit each group separately. Example groupings: `fix(live-state)`, `feat(chat)`, `fix(tools)`. Use `git add <specific files>` — never `git add -A`. Commit each group:
-
-```bash
-git add <files for group 1>
-git commit -m "group description"
-# repeat per group
-```
-
-- [ ] **Step 3: Verify clean state**
-
-```bash
-git status
-```
-Expected: `nothing to commit, working tree clean` (or only untracked files that you intentionally skip)
+Unchanged from Rev 1. Group the dirty files in `git status` by concern (`fix(live-state)`, `feat(chat)`, docs, scripts…), commit each group with `git add <specific files>` (never `-A`), and finish with a clean tree (untracked scratch files may remain).
 
 ---
 
 ## Task 2: Scaffold webview-ui package
 
-**Files:** `webview-ui/package.json`, `vite.config.ts`, `tsconfig.json`, `index.html`
+Unchanged from Rev 1 (package.json / vite.config.ts / tsconfig.json / index.html / `npm install`). Keep `base: "./"`, fixed asset filenames, `dist/` output. Note: webview-ui is deliberately NOT added to root `workspaces` (`apps/*` doesn't match nested paths and we don't want hoisting under the extension); root scripts call it via `--prefix` (Task 15).
 
-- [ ] **Step 1: Create package.json**
-
-Create `apps/vscode-extension/webview-ui/package.json`:
-
-```json
-{
-  "name": "webview-ui",
-  "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "build": "vite build",
-    "dev": "vite",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-markdown": "^9.0.1"
-  },
-  "devDependencies": {
-    "@tailwindcss/vite": "^4.0.0",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/react": "^16.1.0",
-    "@testing-library/user-event": "^14.5.2",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "jsdom": "^25.0.1",
-    "tailwindcss": "^4.0.0",
-    "typescript": "^5.8.2",
-    "vite": "^6.0.5",
-    "vitest": "^3.0.8"
-  }
-}
-```
-
-- [ ] **Step 2: Create vite.config.ts**
-
-Create `apps/vscode-extension/webview-ui/vite.config.ts`:
-
-```typescript
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
-
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  base: "./",
-  build: {
-    outDir: "dist",
-    rollupOptions: {
-      output: {
-        entryFileNames: "assets/[name].js",
-        chunkFileNames: "assets/[name].js",
-        assetFileNames: "assets/[name].[ext]",
-      },
-    },
-  },
-});
-```
-
-`base: "./"` produces relative asset paths in `dist/index.html` so `chat-panel.ts` can rewrite them to webview URIs. Fixed output filenames (no content hash) keep `buildHtml()` simple.
-
-- [ ] **Step 3: Create tsconfig.json**
-
-Create `apps/vscode-extension/webview-ui/tsconfig.json`:
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true
-  },
-  "include": ["src"]
-}
-```
-
-- [ ] **Step 4: Create index.html**
-
-Create `apps/vscode-extension/webview-ui/index.html`:
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Editor Chat</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-```
-
-- [ ] **Step 5: Install dependencies**
-
-```bash
-cd apps/vscode-extension/webview-ui && npm install
-```
-
-Expected: `node_modules/` created, no errors.
-
-- [ ] **Step 6: Verify build compiles**
-
-```bash
-cd apps/vscode-extension/webview-ui && npm run build
-```
-
-Expected: `dist/index.html` + `dist/assets/index.js` + `dist/assets/index.css` created (even though `src/main.tsx` doesn't exist yet — this will fail; that's fine — come back to verify after Task 3).
-
-Actually, run build AFTER Task 3 step 3. Skip this step now and revisit after Task 3.
-
-- [ ] **Step 7: Commit scaffold**
-
-```bash
-git add apps/vscode-extension/webview-ui/package.json apps/vscode-extension/webview-ui/vite.config.ts apps/vscode-extension/webview-ui/tsconfig.json apps/vscode-extension/webview-ui/index.html apps/vscode-extension/webview-ui/package-lock.json
-git commit -m "chore(webview-ui): scaffold vite+react+tailwind package"
-```
+Skip the "verify build" step until `main.tsx` exists (Task 12).
 
 ---
 
-## Task 3: CSS tokens + vscodeApi + types
+## Task 3: CSS tokens (hi-fi), Icon sprite, vscodeApi, types
 
-**Files:** `src/index.css`, `src/vscodeApi.ts`, `src/types.ts`
+**Files:** `src/index.css`, `src/components/Icon.tsx`, `src/vscodeApi.ts`, `src/types.ts`
 
-- [ ] **Step 1: Create src/index.css**
+- [ ] **Step 1: Create src/index.css — hi-fi token system**
 
-Create `apps/vscode-extension/webview-ui/src/index.css`:
+Tokens come from `chat-ui-hifi.html`, not the spec's older table:
 
 ```css
 @import "tailwindcss";
 
 @theme {
-  --color-base: #141414;
-  --color-surface: #1a1a1a;
-  --color-surface-alt: #1f1f1f;
-  --color-border: #2a2a2a;
-  --color-text: #e0e0e0;
-  --color-text-muted: #888888;
-  --color-text-dim: #444444;
-  --color-accent: #9d6ff0;
-  --color-accent-bg: #2a1a3a;
-  --color-accent-border: #3a2a4a;
-  --color-success: #4ade80;
-  --color-error: #f87171;
-  --color-error-bg: #1a1010;
-  --color-error-border: #4a2a2a;
-  --color-code: #9cdcfe;
+  /* surfaces — layered elevation, violet-cool */
+  --color-panel: #131316;
+  --color-surface: #19191d;
+  --color-surface-2: #1f1f24;
+  --color-surface-3: #26262c;
+  /* borders */
+  --color-border: #26262c;
+  --color-border-strong: #32323a;
+  /* text ramp */
+  --color-text: #ececf1;
+  --color-text-2: #a0a0aa;
+  --color-text-3: #62626e;
+  --color-text-4: #41414b;
+  /* accent — violet ramp */
+  --color-accent: #a78bfa;
+  --color-accent-deep: #8b5cf6;
+  --color-accent-hot: #7c3aed;
+  --color-accent-ink: #c4b5fd;
+  /* semantic */
+  --color-green: #4ade80;
+  --color-red: #f87171;
+  --color-amber: #fbbf24;
+  --color-code: #7dd3fc;
 }
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  background: var(--color-base);
-  color: var(--color-text);
-  font-family: var(--vscode-font-family, system-ui, sans-serif);
-  font-size: var(--vscode-font-size, 13px);
-  line-height: 1.5;
-  height: 100vh;
-  overflow: hidden;
-}
-
-#root {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-code, pre, .mono {
-  font-family: var(--vscode-editor-font-family, "Courier New", monospace);
-}
-
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-text-dim); }
 ```
 
-- [ ] **Step 2: Create src/vscodeApi.ts**
+Plus plain CSS custom properties for the alpha variants (Tailwind arbitrary values reference them):
 
-Create `apps/vscode-extension/webview-ui/src/vscodeApi.ts`:
-
-```typescript
-interface VscodeApi {
-  postMessage(msg: unknown): void;
+```css
+:root {
+  --accent-bg: rgba(139,92,246,.10);
+  --accent-bg-2: rgba(139,92,246,.17);
+  --accent-brd: rgba(139,92,246,.32);
+  --accent-glow: rgba(139,92,246,.22);
+  --green-bg: rgba(74,222,128,.09);
+  --green-brd: rgba(74,222,128,.25);
+  --red-bg: rgba(248,113,113,.07);
+  --red-brd: rgba(248,113,113,.26);
+  --amber-bg: rgba(251,191,36,.09);
+  --hairline: rgba(255,255,255,.045);
 }
-
-declare function acquireVsCodeApi(): VscodeApi;
-
-// acquireVsCodeApi() may only be called once per webview lifetime.
-// In test environments window.acquireVsCodeApi is stubbed before this module loads.
-const _api: VscodeApi =
-  typeof acquireVsCodeApi === "function"
-    ? acquireVsCodeApi()
-    : { postMessage: () => {} };
-
-export const vscode: VscodeApi = _api;
 ```
 
-- [ ] **Step 3: Create src/types.ts**
+Body/base rules: `background: var(--color-panel)`, `font-family: var(--vscode-font-family, …)`, `font-size: var(--vscode-font-size, 13px)`, `#root { height: 100vh; display: flex; flex-direction: column; }`, code/mono on `var(--vscode-editor-font-family)`, thin scrollbars per the mockup.
 
-Create `apps/vscode-extension/webview-ui/src/types.ts`:
+**Theme decision (recorded):** v1 ships the fixed dark palette — the design is dark-by-identity; fonts/sizes still follow VS Code vars. Light-theme users get a dark panel (same as several popular dark-first webviews). Mapping surfaces to `--vscode-*` with the violet ramp kept as fixed brand is a v2 item (Deferred).
+
+Keyframes (copy from `chat-ui-hifi.html`): `spin`, `pulse`, `blink`, `shimmer`, `rise`, `breathe`. Utility classes `.anim-rise`, `.shimmer-bg` (the streaming-pill gradient), `.workbar-line` (the animated top hairline).
+
+- [ ] **Step 2: Create src/components/Icon.tsx**
+
+Port the 19-symbol SVG sprite from `chat-ui-hifi.html` (`i-spark`, `i-search`, `i-plus`, `i-clock`, `i-chev-r/l/d`, `i-check`, `i-x`, `i-copy`, `i-file`, `i-term`, `i-list`, `i-diff`, `i-warn`, `i-send`, `i-stop`, `i-retry`, `i-bolt`, `i-bug`) as a single `<Icon name size />` component rendering inline `<svg>` paths (no `<use>` — keeps it tree-shakeable and CSP-trivial). **No emoji anywhere in components.**
+
+- [ ] **Step 3: Create src/vscodeApi.ts** — unchanged from Rev 1 (`acquireVsCodeApi` guard + test stub).
+
+- [ ] **Step 4: Create src/types.ts — corrected to the real wire shapes**
 
 ```typescript
-// ── Shared sub-types ──────────────────────────────────────────────────────────
+// ── Wire shape of a persisted chat message (mirrors editor-client ChatMessageSchema).
+// EVERY message has role + type; cards are discriminated by `type`, not by `role`.
+export interface ChatMsg {
+  role: "user" | "agent";
+  content: string;
+  type: "text" | "plan_card" | "diff_card" | "diff_summary" | "task_card"
+      | "scope_card" | "validation_card" | "command_card";
+  taskId?: string | null;
+  timestamp: string;
+  metadata: Record<string, unknown>;
+}
 
+// Diff entries arrive snake_case (SSE + /live payloads are not case-mapped).
 export interface DiffEntry {
   path: string;
   additions: number;
   deletions: number;
   temp_path?: string;
-  /** Full unified diff string (added in step-review gate payload) */
-  unified_diff?: string;
 }
 
-export interface Diagnostic {
-  level: string;
-  message: string;
-}
+export interface Diagnostic { level: string; message: string; source?: string }
 
 export interface ThreadSummary {
   threadId: string;
   title: string;
+  createdAt: string;   // ChatThreadSummary already carries it; controller now passes it through
 }
 
-// ── Chat messages (appendMessage payload) ────────────────────────────────────
+// ── Structured tool events (NEW protocol, Task 5) ────────────────────────────
+export interface ToolEventView {
+  id: number;                 // monotonically increasing per turn (extension-assigned)
+  tool: string;
+  args: Record<string, unknown>;
+  thought?: string;
+  source: "explore" | "execution" | "planning";
+  output?: string;            // filled by the matching toolResult
+  isError?: boolean;
+  done: boolean;
+}
 
-export type ChatMsg =
-  | { type: "plan_card"; content: string; taskId?: string; metadata?: { taskId?: string } }
-  | { type: "scope_card"; metadata: { taskId: string; files: string[]; reason?: string; step_id?: string } }
-  | { type: "validation_card"; metadata: { taskId: string; diagnostics: Diagnostic[] } }
-  | { type: "command_card"; metadata: { taskId: string; command: string; args: string[] } }
-  | { type: "task_card"; taskId?: string; content?: string }
-  | {
-      type: "diff_card";
-      taskId?: string;
-      metadata?: {
-        taskId?: string;
-        diff_entries: DiffEntry[];
-        resolved?: "applied" | "discarded";
-        thinking_log?: string[];
-      };
-    }
-  | { role: "user"; content: string }
-  | {
-      role: "agent";
-      content: string;
-      metadata?: {
-        thinking_log?: string[];
-        breadcrumb?: boolean;
-        taskId?: string;
-      };
-    };
-
-// ── Live gate/plan (from /live poll via extension) ────────────────────────────
-
+// ── Live slot views ──────────────────────────────────────────────────────────
 export interface LiveGateView {
   kind: "command" | "scope" | "validation" | "step";
   taskId: string;
-  payload: {
-    // command
-    command?: string;
-    args?: string[];
-    // validation
-    summary?: string;
-    diagnostics?: Diagnostic[];
-    // scope
-    reason?: string;
-    files?: string[];
-    // step
-    step_title?: string;
-    diff_entries?: DiffEntry[];
-  };
+  payload: Record<string, unknown>;  // pending_* payload, snake_case (see gate components)
 }
 
-export interface LivePlanView {
+export interface LivePlanView { taskId: string; planMarkdown: string }
+
+export interface LiveReviewView {
   taskId: string;
-  planMarkdown: string;
+  modifiedFiles: string[];
+  shadowWorkspacePath: string | null;
+  // run summary (F8): derived from result.plan + extension-observed events
+  stepsCompleted: number | null;
+  stepsTotal: number | null;
+  deviations: string[];
 }
 
-// ── Messages Extension → Webview ──────────────────────────────────────────────
+export interface LiveErrorView {
+  taskId: string;
+  status: "FAILED" | "ABORTED";
+  detail?: string;
+}
 
+export interface WorkbarInfo {
+  stepIndex?: number;       // tier 1 (F3)
+  totalSteps?: number;
+  stepTitle?: string;
+  phaseLabel?: string;      // tier 2 — transient event override (F14)
+}
+
+// ── Extension → Webview ──────────────────────────────────────────────────────
 export type ExtensionMessage =
   | { type: "appendMessage"; message: ChatMsg }
   | { type: "appendChunk"; chunk: string }
   | { type: "appendThinkingEntry"; text: string }
   | { type: "appendThinkingChunk"; chunk: string }
+  | { type: "appendToolEvent"; event: Omit<ToolEventView, "output" | "isError" | "done"> }
+  | { type: "appendToolResult"; id: number; output: string; isError: boolean }
+  | { type: "updateWorkbar"; info: WorkbarInfo | null }
   | { type: "finalizeAgentMessage" }
   | { type: "showThinking"; message: string }
   | { type: "updateThinking"; message: string }
@@ -408,11 +509,15 @@ export type ExtensionMessage =
   | { type: "clearLiveGate" }
   | { type: "renderLivePlan"; plan: LivePlanView }
   | { type: "clearLivePlan" }
+  | { type: "renderLiveReview"; review: LiveReviewView }
+  | { type: "clearLiveReview" }
+  | { type: "renderLiveError"; error: LiveErrorView }
+  | { type: "clearLiveError" }
+  | { type: "liveStatus"; status: string | null }   // /live.status each poll — drives input availability (UX Rule 1)
   | { type: "resolveInlineChangeCard"; taskId: string; resolution: "applied" | "discarded" }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } };
 
-// ── Messages Webview → Extension ──────────────────────────────────────────────
-
+// ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
   | { type: "webviewReady" }
   | { type: "sendMessage"; text: string }
@@ -426,24 +531,18 @@ export type WebviewMessage =
   | { type: "scopeDecision"; taskId: string; files: string[]; decision: "approve" | "reject"; remember: boolean }
   | { type: "validationDecision"; taskId: string; decision: "accept" | "reject" }
   | { type: "commandDecision"; taskId: string; approve: boolean; remember?: boolean; scope?: string; ruleValue?: string }
-  | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" };
+  | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" }
+  | { type: "acceptTask"; taskId: string }                                   // NEW
+  | { type: "rejectTask"; taskId: string; reason: string }                   // NEW
+  | { type: "resumeTask"; taskId: string; stage: "plan" | "execute" }        // NEW
+  | { type: "stopTurn" };                                                    // NEW — abort the in-flight chat turn (F12)
 
 // ── App state ─────────────────────────────────────────────────────────────────
-
-/** A resolved diff_card message with patched-in resolution state. */
-export interface ResolvedDiffCard {
-  type: "diff_card";
-  taskId: string;
-  diffEntries: DiffEntry[];
-  resolution: "applied" | "discarded" | null;
-  thinkingLog: string[];
-}
-
-/** Streaming agent bubble built incrementally via appendChunk / appendThinkingEntry. */
 export interface StreamingBubble {
   text: string;
   thinkingEntries: string[];
   activeThinkingChunk: string;
+  toolEvents: ToolEventView[];
 }
 
 export interface AppState {
@@ -456,2259 +555,528 @@ export interface AppState {
   inputEnabled: boolean;
   liveGate: LiveGateView | null;
   livePlan: LivePlanView | null;
+  liveReview: LiveReviewView | null;
+  liveError: LiveErrorView | null;
+  workbar: WorkbarInfo | null;
+  liveStatus: string | null;   // input availability per UX Rule 1
 }
 ```
 
-- [ ] **Step 4: Commit**
-
-```bash
-git add apps/vscode-extension/webview-ui/src/
-git commit -m "feat(webview-ui): add CSS tokens, vscodeApi wrapper, and postMessage types"
-```
+- [ ] **Step 5: Commit** — `feat(webview-ui): hi-fi tokens, icon sprite, vscodeApi, corrected protocol types`
 
 ---
 
 ## Task 4: App state reducer + bridge hook
 
-**Files:** `src/hooks/useAppState.ts`
+**Files:** `src/hooks/useAppState.ts`, `src/test/useAppState.test.ts`, `src/test/setup.ts`, `vitest.config.ts`
 
-- [ ] **Step 1: Create useAppState.ts**
+Keep Rev 1's overall reducer structure with these corrections:
 
-Create `apps/vscode-extension/webview-ui/src/hooks/useAppState.ts`:
+- [ ] **Step 1: planSig fix**
 
 ```typescript
-import { useReducer, useEffect } from "react";
-import type { AppState, ExtensionMessage, ChatMsg, StreamingBubble } from "../types";
-import { vscode } from "../vscodeApi";
-
-const TOOL_NAMES = new Set([
-  "search_code", "read_file", "list_directory", "run_command",
-  "search_semantic", "query_graph", "emit_patch", "verify_done",
-]);
-
-function isToolEntry(text: string): boolean {
-  const name = text.split(/[(:]/)[0].trim();
-  return TOOL_NAMES.has(name);
-}
-
 function planSig(taskId: string, content: string): string {
   const s = `${taskId}::${content}`;
   let h = 5381;
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  }
-  return String(h >>> 0).toString(36);
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
 }
+```
 
-function hasPlanSig(messages: ChatMsg[], sig: string): boolean {
-  return messages.some(
-    (m) => m.type === "plan_card" && (m as { _sig?: string })._sig === sig,
-  );
+- [ ] **Step 2: appendThinkingEntry — seal, don't overwrite**
+
+```typescript
+case "appendThinkingEntry": {
+  const prev = ensureStreaming(state);
+  const entries = prev.activeThinkingChunk
+    ? [...prev.thinkingEntries, prev.activeThinkingChunk]   // seal the streamed chunk as its own entry
+    : [...prev.thinkingEntries];
+  return { ...state, streaming: { ...prev, thinkingEntries: [...entries, msg.text], activeThinkingChunk: "" } };
 }
+```
 
-const INITIAL: AppState = {
-  view: "history",
-  threads: [],
-  activeThreadId: "",
-  messages: [],
-  streaming: null,
-  thinkingStatus: null,
-  inputEnabled: true,
-  liveGate: null,
-  livePlan: null,
-};
+- [ ] **Step 3: structured tool events**
 
-type Action =
-  | { type: "EXT"; msg: ExtensionMessage }
-  | { type: "SET_VIEW"; view: "history" | "thread" };
-
-function sealStreaming(state: AppState): AppState {
-  if (!state.streaming) return state;
-  const bubble = state.streaming;
-  const msg: ChatMsg = {
-    role: "agent",
-    content: bubble.text,
-    metadata: {
-      thinking_log:
-        bubble.thinkingEntries.length > 0 ? bubble.thinkingEntries : undefined,
+```typescript
+case "appendToolEvent": {
+  const prev = ensureStreaming(state);
+  const ev: ToolEventView = { ...msg.event, done: false };
+  return { ...state, streaming: { ...prev, toolEvents: [...prev.toolEvents, ev] } };
+}
+case "appendToolResult": {
+  const prev = ensureStreaming(state);
+  return {
+    ...state,
+    streaming: {
+      ...prev,
+      toolEvents: prev.toolEvents.map((t) =>
+        t.id === msg.id ? { ...t, output: msg.output, isError: msg.isError, done: true } : t,
+      ),
     },
   };
-  return { ...state, streaming: null, thinkingStatus: null, messages: [...state.messages, msg] };
-}
-
-function ensureStreaming(state: AppState): StreamingBubble {
-  return state.streaming ?? { text: "", thinkingEntries: [], activeThinkingChunk: "" };
-}
-
-function reducer(state: AppState, action: Action): AppState {
-  if (action.type === "SET_VIEW") return { ...state, view: action.view };
-
-  const { msg } = action;
-
-  switch (msg.type) {
-    case "renderThreadList":
-      return { ...state, threads: msg.threads, activeThreadId: msg.activeThreadId };
-
-    case "clearThread":
-      return { ...state, messages: [], streaming: null, thinkingStatus: null };
-
-    case "setInputEnabled":
-      return { ...state, inputEnabled: msg.enabled };
-
-    case "showThinking":
-      return { ...state, thinkingStatus: msg.message };
-
-    case "updateThinking":
-      return { ...state, thinkingStatus: msg.message };
-
-    case "hideThinking":
-      return { ...state, thinkingStatus: null };
-
-    case "appendChunk": {
-      const prev = ensureStreaming(state);
-      // Seal thinking pane when text starts arriving
-      const sealed =
-        prev.thinkingEntries.length > 0 && prev.text === ""
-          ? { ...prev, activeThinkingChunk: "" }
-          : prev;
-      return {
-        ...state,
-        thinkingStatus: null,
-        streaming: { ...sealed, text: sealed.text + msg.chunk },
-      };
-    }
-
-    case "appendThinkingEntry": {
-      const prev = ensureStreaming(state);
-      const entries = [...prev.thinkingEntries];
-      if (prev.activeThinkingChunk) entries[entries.length - 1] = prev.activeThinkingChunk;
-      return {
-        ...state,
-        streaming: {
-          ...prev,
-          thinkingEntries: [...entries, msg.text],
-          activeThinkingChunk: "",
-        },
-      };
-    }
-
-    case "appendThinkingChunk": {
-      const prev = ensureStreaming(state);
-      return {
-        ...state,
-        streaming: {
-          ...prev,
-          activeThinkingChunk: prev.activeThinkingChunk + msg.chunk,
-        },
-      };
-    }
-
-    case "finalizeAgentMessage":
-      return sealStreaming(state);
-
-    case "appendMessage": {
-      const m = msg.message;
-      // Seal any open streaming bubble before appending a persisted message
-      const next = sealStreaming(state);
-
-      if (m.type === "plan_card") {
-        const taskId = m.metadata?.taskId ?? m.taskId ?? "";
-        const sig = planSig(taskId, m.content);
-        if (hasPlanSig(next.messages, sig)) return next; // dedup
-        const tagged = { ...m, _sig: sig } as ChatMsg;
-        return { ...next, messages: [...next.messages, tagged] };
-      }
-
-      if (m.type === "diff_card") {
-        const taskId = m.taskId ?? m.metadata?.taskId ?? "";
-        const tagged = { ...m, taskId } as ChatMsg;
-        return { ...next, messages: [...next.messages, tagged] };
-      }
-
-      return { ...next, messages: [...next.messages, m] };
-    }
-
-    case "resolveInlineChangeCard": {
-      const updated = state.messages.map((m) => {
-        if (
-          m.type === "diff_card" &&
-          (m.taskId === msg.taskId || m.metadata?.taskId === msg.taskId)
-        ) {
-          return {
-            ...m,
-            metadata: { ...m.metadata, resolved: msg.resolution },
-          } as ChatMsg;
-        }
-        return m;
-      });
-      return { ...state, messages: updated };
-    }
-
-    case "thread_title_updated": {
-      const updated = state.threads.map((t) =>
-        t.threadId === msg.payload.thread_id ? { ...t, title: msg.payload.title } : t,
-      );
-      return { ...state, threads: updated };
-    }
-
-    case "renderLiveGate":
-      return { ...state, liveGate: msg.gate };
-
-    case "clearLiveGate":
-      return { ...state, liveGate: null };
-
-    case "renderLivePlan":
-      return { ...state, livePlan: msg.plan };
-
-    case "clearLivePlan":
-      return { ...state, livePlan: null };
-
-    default:
-      return state;
-  }
-}
-
-export function useAppState() {
-  const [state, dispatch] = useReducer(reducer, INITIAL);
-
-  useEffect(() => {
-    const handler = (event: MessageEvent<ExtensionMessage>) => {
-      dispatch({ type: "EXT", msg: event.data });
-    };
-    window.addEventListener("message", handler);
-    vscode.postMessage({ type: "webviewReady" });
-    return () => window.removeEventListener("message", handler);
-  }, []);
-
-  const setView = (view: "history" | "thread") => dispatch({ type: "SET_VIEW", view });
-
-  return { state, setView };
-}
-
-export { isToolEntry };
-```
-
-- [ ] **Step 2: Write tests**
-
-Create `apps/vscode-extension/webview-ui/src/test/setup.ts`:
-
-```typescript
-import "@testing-library/jest-dom";
-import { vi } from "vitest";
-
-vi.stubGlobal("acquireVsCodeApi", () => ({
-  postMessage: vi.fn(),
-  getState: vi.fn(),
-  setState: vi.fn(),
-}));
-```
-
-Create `apps/vscode-extension/webview-ui/src/test/useAppState.test.ts`:
-
-```typescript
-import { describe, it, expect, vi } from "vitest";
-import { renderHook, act } from "@testing-library/react";
-import { useAppState } from "../hooks/useAppState";
-
-vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
-
-function fireMessage(data: unknown) {
-  window.dispatchEvent(new MessageEvent("message", { data }));
-}
-
-describe("useAppState", () => {
-  it("renders thread list on renderThreadList", () => {
-    const { result } = renderHook(() => useAppState());
-    act(() => {
-      fireMessage({ type: "renderThreadList", threads: [{ threadId: "t1", title: "Test" }], activeThreadId: "t1" });
-    });
-    expect(result.current.state.threads).toHaveLength(1);
-    expect(result.current.state.activeThreadId).toBe("t1");
-  });
-
-  it("deduplicates plan_card by task+content signature", () => {
-    const { result } = renderHook(() => useAppState());
-    const msg = { type: "appendMessage", message: { type: "plan_card", content: "## Plan\n- Step 1", taskId: "task-1" } };
-    act(() => { fireMessage(msg); });
-    act(() => { fireMessage(msg); });
-    expect(result.current.state.messages.filter((m) => m.type === "plan_card")).toHaveLength(1);
-  });
-
-  it("accumulates streaming chunks into a bubble", () => {
-    const { result } = renderHook(() => useAppState());
-    act(() => { fireMessage({ type: "appendChunk", chunk: "Hello" }); });
-    act(() => { fireMessage({ type: "appendChunk", chunk: " world" }); });
-    expect(result.current.state.streaming?.text).toBe("Hello world");
-  });
-
-  it("seals streaming bubble on finalizeAgentMessage", () => {
-    const { result } = renderHook(() => useAppState());
-    act(() => { fireMessage({ type: "appendChunk", chunk: "Done" }); });
-    act(() => { fireMessage({ type: "finalizeAgentMessage" }); });
-    expect(result.current.state.streaming).toBeNull();
-    expect(result.current.state.messages).toHaveLength(1);
-    expect((result.current.state.messages[0] as { content: string }).content).toBe("Done");
-  });
-
-  it("resolves diff_card resolution in place", () => {
-    const { result } = renderHook(() => useAppState());
-    act(() => {
-      fireMessage({
-        type: "appendMessage",
-        message: { type: "diff_card", taskId: "task-2", metadata: { diff_entries: [] } },
-      });
-    });
-    act(() => {
-      fireMessage({ type: "resolveInlineChangeCard", taskId: "task-2", resolution: "applied" });
-    });
-    const card = result.current.state.messages[0] as { type: string; metadata: { resolved: string } };
-    expect(card.metadata.resolved).toBe("applied");
-  });
-});
-```
-
-Create `apps/vscode-extension/webview-ui/vitest.config.ts`:
-
-```typescript
-import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
-
-export default defineConfig({
-  plugins: [react()],
-  test: {
-    environment: "jsdom",
-    setupFiles: ["./src/test/setup.ts"],
-  },
-});
-```
-
-- [ ] **Step 3: Run tests**
-
-```bash
-cd apps/vscode-extension/webview-ui && npm test
-```
-
-Expected: 5 tests pass.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add apps/vscode-extension/webview-ui/src/hooks/ apps/vscode-extension/webview-ui/src/test/ apps/vscode-extension/webview-ui/vitest.config.ts
-git commit -m "feat(webview-ui): app state reducer + postMessage bridge + tests"
-```
-
----
-
-## Task 5: Shared components (ThinkingBlock, ToolPill)
-
-**Files:** `src/components/shared/ThinkingBlock.tsx`, `src/components/shared/ToolPill.tsx`
-
-- [ ] **Step 1: Create ThinkingBlock.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/shared/ThinkingBlock.tsx`:
-
-```typescript
-import { useState } from "react";
-
-interface Props {
-  entries: string[];
-  activeChunk?: string;
-  streaming?: boolean;
-}
-
-export function ThinkingBlock({ entries, activeChunk, streaming }: Props) {
-  const [open, setOpen] = useState(streaming ?? false);
-  const count = entries.length + (activeChunk ? 1 : 0);
-  if (count === 0 && !streaming) return null;
-
-  return (
-    <div className="mb-1.5 rounded border border-accent-border bg-accent-bg text-xs">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
-      >
-        {streaming ? (
-          <>
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-            <span className="text-accent">Thinking…</span>
-          </>
-        ) : (
-          <span className="text-text-dim">
-            {open ? "▾" : "▶"} Thinking ({count} steps)
-          </span>
-        )}
-      </button>
-      {open && (
-        <ul className="mono max-h-48 overflow-y-auto border-t border-accent-border px-3 py-1.5 text-[11px] text-text-muted">
-          {entries.map((e, i) => (
-            <li key={i} className="py-0.5">
-              {e}
-            </li>
-          ))}
-          {activeChunk && <li className="py-0.5 text-text-dim">{activeChunk}</li>}
-        </ul>
-      )}
-    </div>
-  );
 }
 ```
 
-- [ ] **Step 2: Create ToolPill.tsx**
+`sealStreaming` stores `toolEvents` into the finalized agent message's `metadata.tool_events` (so they survive in the transcript for the rest of the session; persisted history reloads won't have them — acceptable, matches today where thinking_log is the persisted record).
 
-Create `apps/vscode-extension/webview-ui/src/components/shared/ToolPill.tsx`:
+- [ ] **Step 4: plan_card dedup** — keep Rev 1's `_sig` approach (it mirrors chat.js), with the fixed `planSig`. **Dispatch by `m.type === "plan_card"`** (not role).
 
-```typescript
-import { useState } from "react";
-import { isToolEntry } from "../../hooks/useAppState";
+- [ ] **Step 5: live slot actions** — add `renderLiveReview`/`clearLiveReview`/`renderLiveError`/`clearLiveError` cases mirroring gate/plan.
 
-interface Props {
-  text: string;
-  streaming?: boolean;
-}
-
-// Parse "tool_name(arg1=val, ...)\noutput..." from a thinking entry.
-function parseToolEntry(text: string): { name: string; input: string; output: string } {
-  const newline = text.indexOf("\n");
-  const header = newline === -1 ? text : text.slice(0, newline);
-  const output = newline === -1 ? "" : text.slice(newline + 1);
-  const paren = header.indexOf("(");
-  const name = paren === -1 ? header.trim() : header.slice(0, paren).trim();
-  const input = paren === -1 ? "" : header.slice(paren + 1).replace(/\)$/, "").trim();
-  return { name, input, output };
-}
-
-export function ToolPill({ text, streaming }: Props) {
-  const [open, setOpen] = useState(false);
-  if (!isToolEntry(text)) return null;
-
-  const { name, input, output } = parseToolEntry(text);
-
-  return (
-    <div className="mb-1">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={[
-          "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
-          open
-            ? "border-accent-border bg-accent-bg text-accent"
-            : "border-border bg-surface-alt text-text-muted hover:border-accent-border",
-          streaming ? "border-accent" : "",
-        ]
-          .filter(Boolean)
-          .join(" ")}
-      >
-        {streaming ? (
-          <span className="inline-block h-2 w-2 animate-spin rounded-full border border-accent-border border-t-accent" />
-        ) : (
-          <span className="text-[10px]">✓</span>
-        )}
-        <span>{name}</span>
-        {open && <span className="text-[10px]">▴</span>}
-      </button>
-
-      {open && (
-        <div className="mt-1 rounded border border-accent-border bg-surface text-[11px]">
-          <div className="flex items-center justify-between border-b border-accent-border px-2 py-1">
-            <span className="font-semibold text-accent">{name}</span>
-            <button onClick={() => setOpen(false)} className="text-text-dim hover:text-text-muted">
-              collapse ▴
-            </button>
-          </div>
-          {input && (
-            <div className="border-b border-border px-2 py-1.5">
-              <div className="mb-0.5 text-[10px] uppercase tracking-wide text-text-dim">Input</div>
-              <pre className="mono whitespace-pre-wrap break-all text-text-muted">{input}</pre>
-            </div>
-          )}
-          {output && (
-            <div className="px-2 py-1.5">
-              <div className="mb-0.5 text-[10px] uppercase tracking-wide text-text-dim">Output</div>
-              <pre className="mono max-h-28 overflow-y-auto whitespace-pre-wrap break-all text-text-muted">
-                {output.length > 3000 ? output.slice(0, 3000) + "\n… truncated" : output}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add apps/vscode-extension/webview-ui/src/components/
-git commit -m "feat(webview-ui): ThinkingBlock and ToolPill shared components"
-```
-
----
-
-## Task 6: Message components — UserMessage, QAMessage, AgentRow
-
-**Files:** `messages/UserMessage.tsx`, `messages/QAMessage.tsx`, `messages/AgentRow.tsx`
-
-- [ ] **Step 1: Create UserMessage.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/messages/UserMessage.tsx`:
-
-```typescript
-interface Props {
-  content: string;
-}
-
-export function UserMessage({ content }: Props) {
-  return (
-    <div className="flex justify-end">
-      <div
-        className="max-w-[85%] rounded-[10px_10px_2px_10px] border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-        style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-      >
-        {content}
-      </div>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 2: Create QAMessage.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/messages/QAMessage.tsx`:
-
-```typescript
-import { useState } from "react";
-import ReactMarkdown from "react-markdown";
-import { ThinkingBlock } from "../shared/ThinkingBlock";
-import { vscode } from "../../vscodeApi";
-
-interface Props {
-  content: string;
-  thinkingLog?: string[];
-}
-
-export function QAMessage({ content, thinkingLog }: Props) {
-  const [copied, setCopied] = useState(false);
-
-  function copy() {
-    void navigator.clipboard.writeText(content).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }
-
-  return (
-    <div className="group relative flex gap-2">
-      <div className="mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded border border-accent-border bg-accent-bg text-[7px] font-semibold text-accent">
-        AI
-      </div>
-      <div className="min-w-0 flex-1">
-        {thinkingLog && thinkingLog.length > 0 && (
-          <ThinkingBlock entries={thinkingLog} />
-        )}
-        <div className="prose-sm prose max-w-none text-sm text-text [&_code]:mono [&_code]:rounded [&_code]:bg-surface-alt [&_code]:px-1 [&_code]:text-code [&_pre]:mono [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-surface-alt [&_pre]:p-2">
-          <ReactMarkdown>{content}</ReactMarkdown>
-        </div>
-      </div>
-      <button
-        onClick={copy}
-        className="absolute right-0 top-0 rounded border border-border bg-surface-alt px-1.5 py-0.5 text-[10px] text-text-dim opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-muted"
-        title="Copy"
-      >
-        {copied ? "✓" : "⎘"}
-      </button>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 3: Create AgentRow.tsx**
-
-AgentRow renders tool pills (from thinking entries that look like tool calls), remaining thinking entries in a ThinkingBlock, breadcrumb text lines, and a copy button.
-
-Create `apps/vscode-extension/webview-ui/src/components/messages/AgentRow.tsx`:
-
-```typescript
-import { useState } from "react";
-import { ThinkingBlock } from "../shared/ThinkingBlock";
-import { ToolPill } from "../shared/ToolPill";
-import { isToolEntry } from "../../hooks/useAppState";
-
-interface Props {
-  content: string;
-  thinkingLog?: string[];
-  breadcrumb?: boolean;
-  streaming?: boolean;
-  streamingThinkingEntries?: string[];
-  streamingThinkingChunk?: string;
-}
-
-export function AgentRow({
-  content,
-  thinkingLog,
-  breadcrumb,
-  streaming,
-  streamingThinkingEntries,
-  streamingThinkingChunk,
-}: Props) {
-  const [copied, setCopied] = useState(false);
-
-  const entries = thinkingLog ?? streamingThinkingEntries ?? [];
-  const toolEntries = entries.filter(isToolEntry);
-  const thoughtEntries = entries.filter((e) => !isToolEntry(e));
-
-  function copy() {
-    const text = [
-      ...toolEntries.map((e) => e.split("(")[0].trim() + " ✓"),
-      content,
-    ].join("\n");
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }
-
-  return (
-    <div className="group relative flex gap-2">
-      <div className="mt-0.5 flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded border border-accent-border bg-accent-bg text-[7px] font-semibold text-accent">
-        AI
-      </div>
-      <div className="min-w-0 flex-1">
-        {thoughtEntries.length > 0 && (
-          <ThinkingBlock
-            entries={thoughtEntries}
-            activeChunk={streamingThinkingChunk}
-            streaming={streaming}
-          />
-        )}
-        {toolEntries.length > 0 && (
-          <div className="mb-1.5 flex flex-wrap gap-1">
-            {toolEntries.map((e, i) => (
-              <ToolPill
-                key={i}
-                text={e}
-                streaming={streaming && i === toolEntries.length - 1}
-              />
-            ))}
-          </div>
-        )}
-        {content && (
-          <div
-            className={[
-              "text-sm",
-              breadcrumb ? "text-success" : "text-text-muted",
-            ].join(" ")}
-            style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-          >
-            {content}
-          </div>
-        )}
-        {streaming && (
-          <span className="inline-block h-3 w-px animate-pulse bg-accent align-middle" />
-        )}
-      </div>
-      {!streaming && (
-        <button
-          onClick={copy}
-          className="absolute right-0 top-0 rounded border border-border bg-surface-alt px-1.5 py-0.5 text-[10px] text-text-dim opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-muted"
-          title="Copy"
-        >
-          {copied ? "✓" : "⎘"}
-        </button>
-      )}
-    </div>
-  );
-}
-```
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add apps/vscode-extension/webview-ui/src/components/messages/
-git commit -m "feat(webview-ui): UserMessage, QAMessage, AgentRow components"
-```
-
----
-
-## Task 7: PlanCard
-
-**Files:** `messages/PlanCard.tsx`, `test/PlanCard.test.tsx`
-
-- [ ] **Step 1: Create PlanCard.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/messages/PlanCard.tsx`:
-
-```typescript
-import { useState } from "react";
-import ReactMarkdown from "react-markdown";
-import { vscode } from "../../vscodeApi";
-
-interface Props {
-  content: string;
-  taskId: string;
-  readOnly?: boolean;
-}
-
-export function PlanCard({ content, taskId, readOnly }: Props) {
-  const [expanded, setExpanded] = useState(false);
-  const [resolved, setResolved] = useState<"implemented" | "feedback" | null>(null);
-  const [feedbackMode, setFeedbackMode] = useState(false);
-  const [feedbackText, setFeedbackText] = useState("");
-
-  function implement() {
-    setResolved("implemented");
-    vscode.postMessage({ type: "implementPlan", taskId });
-  }
-
-  function sendFeedback() {
-    if (!feedbackText.trim()) return;
-    setResolved("feedback");
-    vscode.postMessage({ type: "planFeedback", taskId, feedback: feedbackText.trim() });
-  }
-
-  return (
-    <div
-      className={[
-        "rounded-lg border text-sm",
-        expanded ? "border-accent-border" : "border-border",
-        "bg-surface overflow-hidden",
-      ].join(" ")}
-    >
-      {/* Header */}
-      <button
-        onClick={() => setExpanded((o) => !o)}
-        className={[
-          "flex w-full items-center gap-2 px-3 py-2 text-left",
-          expanded ? "bg-accent-bg" : "",
-        ].join(" ")}
-      >
-        <span className="font-semibold text-text">📋 Plan</span>
-        <span className="flex-1 text-xs text-text-dim" />
-        <span className="text-xs text-accent">{expanded ? "▴ collapse" : "▾ expand"}</span>
-      </button>
-
-      {/* Body */}
-      {!expanded ? (
-        /* Faded preview */
-        <div className="relative overflow-hidden border-t border-border" style={{ maxHeight: 72 }}>
-          <div className="px-3 py-2 text-xs text-text-muted">
-            <ReactMarkdown>{content}</ReactMarkdown>
-          </div>
-          <div
-            className="pointer-events-none absolute bottom-0 left-0 right-0"
-            style={{
-              height: 44,
-              background: "linear-gradient(to bottom, transparent, var(--color-surface))",
-            }}
-          />
-        </div>
-      ) : (
-        <div className="border-t border-border px-3 py-2 text-xs text-text-muted">
-          <ReactMarkdown>{content}</ReactMarkdown>
-        </div>
-      )}
-
-      {/* Actions */}
-      {!readOnly && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
-          {resolved === "implemented" ? (
-            <span className="text-xs text-success">✓ Plan approved — starting execution</span>
-          ) : resolved === "feedback" ? (
-            <span className="text-xs text-text-muted">↻ Feedback submitted — regenerating…</span>
-          ) : feedbackMode ? (
-            <>
-              <textarea
-                className="mono flex-1 rounded border border-border bg-surface-alt px-2 py-1 text-xs text-text placeholder-text-dim focus:border-accent-border focus:outline-none"
-                rows={2}
-                placeholder="Describe what to change…"
-                value={feedbackText}
-                onChange={(e) => setFeedbackText(e.target.value)}
-              />
-              <button
-                onClick={sendFeedback}
-                className="rounded border border-accent-border bg-accent-bg px-3 py-1 text-xs font-medium text-accent hover:bg-accent/10"
-              >
-                Send
-              </button>
-              <button
-                onClick={() => setFeedbackMode(false)}
-                className="rounded border border-border px-3 py-1 text-xs text-text-dim hover:text-text-muted"
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={implement}
-                className="flex-1 rounded border border-accent-border bg-accent-bg px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/10"
-              >
-                Implement
-              </button>
-              <button
-                onClick={() => setFeedbackMode(true)}
-                className="rounded border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text-muted"
-              >
-                Give feedback
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-- [ ] **Step 2: Write tests**
-
-Create `apps/vscode-extension/webview-ui/src/test/PlanCard.test.tsx`:
-
-```typescript
-import { describe, it, expect, vi, type Mock } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { PlanCard } from "../components/messages/PlanCard";
-import { vscode } from "../vscodeApi";
-
-vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
-
-describe("PlanCard", () => {
-  it("renders collapsed by default with faded preview", () => {
-    render(<PlanCard content="## Plan\n- Step 1" taskId="task-1" />);
-    expect(screen.getByText("▾ expand")).toBeInTheDocument();
-  });
-
-  it("expands on header click", () => {
-    render(<PlanCard content="## Plan\n- Step 1" taskId="task-1" />);
-    fireEvent.click(screen.getByText("📋 Plan", { exact: false }));
-    expect(screen.getByText("▴ collapse")).toBeInTheDocument();
-  });
-
-  it("posts implementPlan on Implement click", () => {
-    render(<PlanCard content="## Plan" taskId="task-1" />);
-    fireEvent.click(screen.getByText("Implement"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith({ type: "implementPlan", taskId: "task-1" });
-  });
-
-  it("shows feedback input on Give feedback click", () => {
-    render(<PlanCard content="## Plan" taskId="task-1" />);
-    fireEvent.click(screen.getByText("Give feedback"));
-    expect(screen.getByPlaceholderText("Describe what to change…")).toBeInTheDocument();
-  });
-
-  it("posts planFeedback on Send with non-empty text", () => {
-    render(<PlanCard content="## Plan" taskId="task-1" />);
-    fireEvent.click(screen.getByText("Give feedback"));
-    fireEvent.change(screen.getByPlaceholderText("Describe what to change…"), {
-      target: { value: "Add error handling" },
-    });
-    fireEvent.click(screen.getByText("Send"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith({
-      type: "planFeedback",
-      taskId: "task-1",
-      feedback: "Add error handling",
-    });
-  });
-
-  it("shows no action buttons when readOnly=true", () => {
-    render(<PlanCard content="## Plan" taskId="task-1" readOnly />);
-    expect(screen.queryByText("Implement")).not.toBeInTheDocument();
-  });
-});
-```
-
-- [ ] **Step 3: Run tests**
-
-```bash
-cd apps/vscode-extension/webview-ui && npm test -- --reporter=verbose
-```
-
-Expected: PlanCard 6 tests pass.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add apps/vscode-extension/webview-ui/src/components/messages/PlanCard.tsx apps/vscode-extension/webview-ui/src/test/PlanCard.test.tsx
-git commit -m "feat(webview-ui): PlanCard — faded preview, expand, implement, feedback"
-```
-
----
-
-## Task 8: DiffCard
-
-**Files:** `messages/DiffCard.tsx`, `test/DiffCard.test.tsx`
-
-- [ ] **Step 1: Create DiffCard.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/messages/DiffCard.tsx`:
-
-```typescript
-import { useState } from "react";
-import type { DiffEntry } from "../../types";
-import { vscode } from "../../vscodeApi";
-
-interface Props {
-  taskId: string;
-  diffEntries: DiffEntry[];
-  resolved?: "applied" | "discarded" | null;
-  thinkingLog?: string[];
-}
-
-function DiffLine({ line }: { line: string }) {
-  const isAdd = line.startsWith("+") && !line.startsWith("+++");
-  const isDel = line.startsWith("-") && !line.startsWith("---");
-  const isHunk = line.startsWith("@@");
-  return (
-    <div
-      className={[
-        "mono px-2 text-[11px] leading-relaxed whitespace-pre",
-        isAdd ? "bg-[#0d2010] text-success" : "",
-        isDel ? "bg-[#200808] text-error" : "",
-        isHunk ? "text-text-dim" : "",
-        !isAdd && !isDel && !isHunk ? "text-text-dim" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
-      {line}
-    </div>
-  );
-}
-
-export function DiffCard({ taskId, diffEntries, resolved, thinkingLog }: Props) {
-  const [expanded, setExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState(0);
-  const [localResolved, setLocalResolved] = useState<"applied" | "discarded" | null>(
-    resolved ?? null,
-  );
-
-  function apply() {
-    setLocalResolved("applied");
-    vscode.postMessage({ type: "applyInlineChange", taskId });
-  }
-
-  function discard() {
-    setLocalResolved("discarded");
-    vscode.postMessage({ type: "discardInlineChange", taskId });
-  }
-
-  function viewFile(entry: DiffEntry) {
-    vscode.postMessage({ type: "viewDiffFile", path: entry.path, shadowPath: entry.temp_path ?? "" });
-  }
-
-  const activeEntry = diffEntries[activeTab];
-
-  return (
-    <div
-      className={[
-        "rounded-lg border text-sm overflow-hidden",
-        localResolved === "applied"
-          ? "border-success/30"
-          : localResolved === "discarded"
-            ? "border-error/30"
-            : "border-border",
-        "bg-surface",
-      ].join(" ")}
-    >
-      {/* Header */}
-      <button
-        onClick={() => setExpanded((o) => !o)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-      >
-        <span className="font-semibold text-text">📁 Changes ready</span>
-        <span className="rounded-full border border-accent-border bg-accent-bg px-1.5 py-0.5 text-[10px] text-accent">
-          {diffEntries.length}
-        </span>
-        <span className="flex-1" />
-        <span className="text-xs text-text-dim">{expanded ? "▴" : "▾"}</span>
-      </button>
-
-      {/* Expanded diff */}
-      {expanded && (
-        <div className="border-t border-border">
-          {/* File tabs */}
-          <div className="flex overflow-x-auto border-b border-border">
-            {diffEntries.map((e, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveTab(i)}
-                className={[
-                  "mono flex-shrink-0 border-b-2 px-3 py-1.5 text-[11px] transition-colors",
-                  i === activeTab
-                    ? "border-accent text-accent"
-                    : "border-transparent text-text-dim hover:text-text-muted",
-                ].join(" ")}
-              >
-                {e.path.split("/").pop()}
-              </button>
-            ))}
-          </div>
-          {/* Diff content */}
-          {activeEntry && (
-            <div className="max-h-48 overflow-y-auto">
-              {activeEntry.unified_diff ? (
-                activeEntry.unified_diff
-                  .split("\n")
-                  .map((line, i) => <DiffLine key={i} line={line} />)
-              ) : (
-                <div className="px-3 py-2 text-xs text-text-dim">
-                  <span
-                    className="cursor-pointer text-accent underline"
-                    onClick={() => viewFile(activeEntry)}
-                  >
-                    View {activeEntry.path.split("/").pop()} in diff editor
-                  </span>
-                  <span className="ml-3 text-success">+{activeEntry.additions}</span>
-                  <span className="ml-1 text-error">-{activeEntry.deletions}</span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Actions */}
-      <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
-        {localResolved ? (
-          <span className={`text-xs ${localResolved === "applied" ? "text-success" : "text-error"}`}>
-            {localResolved === "applied" ? "✓ Applied" : "✗ Discarded"}
-          </span>
-        ) : (
-          <>
-            <button
-              onClick={apply}
-              className="flex-1 rounded border border-accent-border bg-accent-bg px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/10"
-            >
-              Accept all
-            </button>
-            <button
-              onClick={discard}
-              className="rounded border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text-muted"
-            >
-              Reject
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 2: Write tests**
-
-Create `apps/vscode-extension/webview-ui/src/test/DiffCard.test.tsx`:
-
-```typescript
-import { describe, it, expect, vi, type Mock } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { DiffCard } from "../components/messages/DiffCard";
-import { vscode } from "../vscodeApi";
-
-vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
-
-const entries = [
-  { path: "src/foo.ts", additions: 3, deletions: 1 },
-  { path: "src/bar.ts", additions: 1, deletions: 0 },
-];
-
-describe("DiffCard", () => {
-  it("renders file count badge", () => {
-    render(<DiffCard taskId="t1" diffEntries={entries} />);
-    expect(screen.getByText("2")).toBeInTheDocument();
-  });
-
-  it("expands to show file tabs", () => {
-    render(<DiffCard taskId="t1" diffEntries={entries} />);
-    fireEvent.click(screen.getByText("📁 Changes ready", { exact: false }));
-    expect(screen.getByText("foo.ts")).toBeInTheDocument();
-    expect(screen.getByText("bar.ts")).toBeInTheDocument();
-  });
-
-  it("posts applyInlineChange on Accept all", () => {
-    render(<DiffCard taskId="t1" diffEntries={entries} />);
-    fireEvent.click(screen.getByText("Accept all"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith({ type: "applyInlineChange", taskId: "t1" });
-  });
-
-  it("posts discardInlineChange on Reject", () => {
-    render(<DiffCard taskId="t1" diffEntries={entries} />);
-    fireEvent.click(screen.getByText("Reject"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith({ type: "discardInlineChange", taskId: "t1" });
-  });
-
-  it("shows resolved state when resolved='applied'", () => {
-    render(<DiffCard taskId="t1" diffEntries={entries} resolved="applied" />);
-    expect(screen.getByText("✓ Applied")).toBeInTheDocument();
-    expect(screen.queryByText("Accept all")).not.toBeInTheDocument();
-  });
-});
-```
-
-- [ ] **Step 3: Run tests**
-
-```bash
-cd apps/vscode-extension/webview-ui && npm test
-```
-
-Expected: all tests pass.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add apps/vscode-extension/webview-ui/src/components/messages/DiffCard.tsx apps/vscode-extension/webview-ui/src/test/DiffCard.test.tsx
-git commit -m "feat(webview-ui): DiffCard — file tabs, inline diff, accept/reject"
-```
-
----
-
-## Task 9: GateCard (4 variants)
-
-**Files:** `messages/GateCard.tsx`, `test/GateCard.test.tsx`
-
-- [ ] **Step 1: Create GateCard.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/messages/GateCard.tsx`:
-
-```typescript
-import { useState } from "react";
-import type { LiveGateView, DiffEntry, Diagnostic } from "../../types";
-import { vscode } from "../../vscodeApi";
-import { DiffCard } from "./DiffCard";
-
-type Props = LiveGateView & { isLive?: boolean };
-
-function Resolved({ label, ok }: { label: string; ok: boolean }) {
-  return (
-    <span className={`text-xs ${ok ? "text-success" : "text-error"}`}>{label}</span>
-  );
-}
-
-export function GateCard({ kind, taskId, payload, isLive }: Props) {
-  const [resolved, setResolved] = useState<string | null>(null);
-
-  // ── Command gate ────────────────────────────────────────────────────────────
-  if (kind === "command") {
-    const [scope, setScope] = useState<"exact" | "prefix" | "binary">("exact");
-    const [prefixCount, setPrefixCount] = useState(1);
-    const cmd = payload.command ?? "";
-    const args = payload.args ?? [];
-    const tokens = [cmd, ...args].filter(Boolean);
-    const binary = cmd.split("/").pop() ?? cmd;
-
-    function ruleValue() {
-      if (scope === "binary") return binary;
-      if (scope === "prefix") return tokens.slice(0, prefixCount).join(" ");
-      return tokens.join(" ");
-    }
-
-    function decide(approve: boolean, remember: boolean) {
-      setResolved(approve ? (remember ? "✓ Accepted & remembered" : "✓ Accepted once") : "✗ Rejected");
-      vscode.postMessage({
-        type: "commandDecision",
-        taskId,
-        approve,
-        remember,
-        scope: remember ? scope : "exact",
-        ruleValue: remember ? ruleValue() : undefined,
-      });
-    }
-
-    return (
-      <div className="rounded-lg border border-border bg-surface text-sm overflow-hidden">
-        <div className="border-b border-border px-3 py-2 font-semibold text-text">⚙ Run command?</div>
-        <div className="border-b border-border px-3 py-2">
-          <pre className="mono rounded bg-surface-alt px-2 py-1.5 text-xs text-text-muted">
-            {tokens.join(" ")}
-          </pre>
-        </div>
-        <div className="border-b border-border px-3 py-2 text-xs text-text-muted space-y-1">
-          {(["exact", "prefix", "binary"] as const).map((s) => (
-            <label key={s} className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name={`scope-${taskId}`}
-                value={s}
-                checked={scope === s}
-                onChange={() => setScope(s)}
-              />
-              {s === "exact" && "Exact — this command only"}
-              {s === "prefix" && (
-                <>
-                  Prefix — first{" "}
-                  <input
-                    type="number"
-                    min={1}
-                    max={tokens.length}
-                    value={prefixCount}
-                    onChange={(e) => setPrefixCount(Number(e.target.value))}
-                    className="w-10 rounded border border-border bg-surface-alt px-1 text-center text-text"
-                  />{" "}
-                  token(s)
-                </>
-              )}
-              {s === "binary" && `Any "${binary} …"`}
-            </label>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2 px-3 py-2">
-          {resolved ? (
-            <Resolved label={resolved} ok={resolved.startsWith("✓")} />
-          ) : (
-            <>
-              <button onClick={() => decide(false, false)} className="rounded border border-border px-3 py-1.5 text-xs text-text-dim hover:text-error">Reject</button>
-              <button onClick={() => decide(true, false)} className="rounded border border-border px-3 py-1.5 text-xs text-text-muted hover:text-text">Accept once</button>
-              <button onClick={() => decide(true, true)} className="flex-1 rounded border border-accent-border bg-accent-bg px-3 py-1.5 text-xs font-medium text-accent">Accept &amp; remember</button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Scope gate ──────────────────────────────────────────────────────────────
-  if (kind === "scope") {
-    const files = payload.files ?? [];
-    function decide(approve: boolean, remember: boolean) {
-      setResolved(approve ? "✓ Approved" : "✗ Rejected");
-      vscode.postMessage({ type: "scopeDecision", taskId, files, decision: approve ? "approve" : "reject", remember });
-    }
-    return (
-      <div className="rounded-lg border border-border bg-surface text-sm overflow-hidden">
-        <div className="border-b border-border px-3 py-2 font-semibold text-text">📁 Scope extension requested</div>
-        {payload.reason && (
-          <div className="border-b border-border px-3 py-2 text-xs text-text-muted">{payload.reason}</div>
-        )}
-        <ul className="mono border-b border-border px-3 py-2 text-xs text-code list-none m-0">
-          {files.map((f) => <li key={f}>{f}</li>)}
-        </ul>
-        <div className="flex flex-wrap gap-2 px-3 py-2">
-          {resolved ? (
-            <Resolved label={resolved} ok={resolved.startsWith("✓")} />
-          ) : (
-            <>
-              <button onClick={() => decide(true, false)} className="flex-1 rounded border border-accent-border bg-accent-bg px-3 py-1.5 text-xs font-medium text-accent">Approve</button>
-              <button onClick={() => decide(true, true)} className="rounded border border-border px-3 py-1.5 text-xs text-text-muted">Approve &amp; remember</button>
-              <button onClick={() => decide(false, false)} className="rounded border border-border px-3 py-1.5 text-xs text-text-dim hover:text-error">Reject</button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Validation gate ─────────────────────────────────────────────────────────
-  if (kind === "validation") {
-    const diags: Diagnostic[] = payload.diagnostics ?? [];
-    function decide(accept: boolean) {
-      setResolved(accept ? "✓ Accepted" : "✗ Rejected");
-      vscode.postMessage({ type: "validationDecision", taskId, decision: accept ? "accept" : "reject" });
-    }
-    return (
-      <div className="rounded-lg border border-border bg-surface text-sm overflow-hidden">
-        <div className="border-b border-border px-3 py-2 font-semibold text-text">⚠ Validation failed — review</div>
-        <div className="border-b border-border px-3 py-2 text-xs text-text-muted">
-          These errors remained after auto-repair. Accept to proceed to review, or reject to fail.
-        </div>
-        {diags.length > 0 && (
-          <div className="mono border-b border-border max-h-32 overflow-y-auto px-3 py-2 text-[11px] text-text-muted space-y-0.5">
-            {diags.map((d, i) => (
-              <div key={i}>
-                <span className={d.level === "error" ? "text-error" : "text-text-dim"}>[{d.level}]</span>{" "}
-                {d.message.slice(0, 400)}
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2 px-3 py-2">
-          {resolved ? (
-            <Resolved label={resolved} ok={resolved.startsWith("✓")} />
-          ) : (
-            <>
-              <button onClick={() => decide(true)} className="flex-1 rounded border border-accent-border bg-accent-bg px-3 py-1.5 text-xs font-medium text-accent">Accept</button>
-              <button onClick={() => decide(false)} className="rounded border border-border px-3 py-1.5 text-xs text-text-dim hover:text-error">Reject</button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Step review gate ────────────────────────────────────────────────────────
-  if (kind === "step") {
-    const entries: DiffEntry[] = payload.diff_entries ?? [];
-    function decide(accept: boolean) {
-      setResolved(accept ? "✓ Accepted" : "✗ Discarded");
-      vscode.postMessage({ type: "stepDecision", taskId, decision: accept ? "accept" : "discard" });
-    }
-    return (
-      <div className="rounded-lg border border-border bg-surface text-sm overflow-hidden">
-        <div className="border-b border-border px-3 py-2 font-semibold text-text">
-          📝 Review step — {payload.step_title ?? ""}
-        </div>
-        <div className="px-3 py-2">
-          <DiffCard taskId={taskId} diffEntries={entries} resolved={null} />
-        </div>
-        <div className="flex gap-2 border-t border-border px-3 py-2">
-          {resolved ? (
-            <Resolved label={resolved} ok={resolved.startsWith("✓")} />
-          ) : (
-            <>
-              <button onClick={() => decide(true)} className="flex-1 rounded border border-accent-border bg-accent-bg px-3 py-1.5 text-xs font-medium text-accent">Accept</button>
-              <button onClick={() => decide(false)} className="rounded border border-border px-3 py-1.5 text-xs text-text-dim hover:text-error">Discard</button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-}
-```
-
-- [ ] **Step 2: Write tests**
-
-Create `apps/vscode-extension/webview-ui/src/test/GateCard.test.tsx`:
-
-```typescript
-import { describe, it, expect, vi, type Mock } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { GateCard } from "../components/messages/GateCard";
-import { vscode } from "../vscodeApi";
-
-vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
-
-describe("GateCard — command", () => {
-  const base = { kind: "command" as const, taskId: "t1", payload: { command: "npm", args: ["test"] } };
-
-  it("renders command text", () => {
-    render(<GateCard {...base} />);
-    expect(screen.getByText("npm test")).toBeInTheDocument();
-  });
-
-  it("posts approve=false on Reject", () => {
-    render(<GateCard {...base} />);
-    fireEvent.click(screen.getByText("Reject"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "commandDecision", approve: false }),
-    );
-  });
-
-  it("posts approve=true remember=false on Accept once", () => {
-    render(<GateCard {...base} />);
-    fireEvent.click(screen.getByText("Accept once"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ approve: true, remember: false }),
-    );
-  });
-});
-
-describe("GateCard — scope", () => {
-  const base = { kind: "scope" as const, taskId: "t2", payload: { reason: "needs helper", files: ["src/helper.ts"] } };
-
-  it("renders file list", () => {
-    render(<GateCard {...base} />);
-    expect(screen.getByText("src/helper.ts")).toBeInTheDocument();
-  });
-
-  it("posts scopeDecision approve on Approve", () => {
-    render(<GateCard {...base} />);
-    fireEvent.click(screen.getByText("Approve"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "scopeDecision", decision: "approve", remember: false }),
-    );
-  });
-});
-
-describe("GateCard — validation", () => {
-  const base = {
-    kind: "validation" as const,
-    taskId: "t3",
-    payload: { diagnostics: [{ level: "error", message: "TS2322: type mismatch" }] },
-  };
-
-  it("renders diagnostic message", () => {
-    render(<GateCard {...base} />);
-    expect(screen.getByText(/TS2322/)).toBeInTheDocument();
-  });
-
-  it("posts accept=true on Accept", () => {
-    render(<GateCard {...base} />);
-    fireEvent.click(screen.getByText("Accept"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "validationDecision", decision: "accept" }),
-    );
-  });
-});
-
-describe("GateCard — step", () => {
-  const base = {
-    kind: "step" as const,
-    taskId: "t4",
-    payload: { step_title: "Add auth check", diff_entries: [{ path: "src/auth.ts", additions: 5, deletions: 2 }] },
-  };
-
-  it("renders step title", () => {
-    render(<GateCard {...base} />);
-    expect(screen.getByText(/Add auth check/)).toBeInTheDocument();
-  });
-
-  it("posts stepDecision accept on Accept", () => {
-    render(<GateCard {...base} />);
-    fireEvent.click(screen.getByText("Accept"));
-    expect(vscode.postMessage as Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "stepDecision", decision: "accept" }),
-    );
-  });
-});
-```
-
-- [ ] **Step 3: Run tests**
-
-```bash
-cd apps/vscode-extension/webview-ui && npm test
-```
-
-Expected: all tests pass.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add apps/vscode-extension/webview-ui/src/components/messages/GateCard.tsx apps/vscode-extension/webview-ui/src/test/GateCard.test.tsx
-git commit -m "feat(webview-ui): GateCard — command/scope/validation/step variants"
-```
-
----
-
-## Task 10: ErrorCard, LiveSlot, HistoryView, InputArea, EmptyState
-
-**Files:** 5 remaining components
-
-- [ ] **Step 1: Create ErrorCard.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/messages/ErrorCard.tsx`:
-
-```typescript
-import { useState } from "react";
-import { vscode } from "../../vscodeApi";
-
-interface Props {
-  taskId: string;
-  stepName?: string;
-  errorClass?: string;
-  errorMessage?: string;
-  resumeFromStep?: number;
-}
-
-export function ErrorCard({ taskId, stepName, errorClass, errorMessage, resumeFromStep }: Props) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="rounded-lg border border-error-border bg-error-bg text-sm overflow-hidden">
-      <div className="flex items-center gap-2 border-b border-error-border px-3 py-2">
-        <span>⚠️</span>
-        <span className="font-semibold text-error">Execution failed</span>
-      </div>
-      {(stepName || errorMessage) && (
-        <div className="border-b border-error-border px-3 py-2">
-          <button
-            onClick={() => setOpen((o) => !o)}
-            className="flex items-center gap-1 text-xs text-text-muted"
-          >
-            <span>{open ? "▾" : "▶"}</span>
-            <span>{stepName ?? "Unknown step"}{errorClass ? ` — ${errorClass}` : ""}</span>
-          </button>
-          {open && errorMessage && (
-            <pre className="mono mt-2 max-h-20 overflow-y-auto rounded bg-error-bg px-2 py-1.5 text-[11px] text-error">
-              {errorMessage}
-            </pre>
-          )}
-        </div>
-      )}
-      <div className="flex flex-wrap gap-2 px-3 py-2">
-        <button
-          onClick={() => vscode.postMessage({ type: "sendMessage", text: `/resume ${taskId}` })}
-          className="flex-1 rounded border border-accent-border bg-accent-bg px-3 py-1.5 text-xs font-medium text-accent"
-        >
-          ↻ Resume{resumeFromStep != null ? ` from step ${resumeFromStep}` : ""}
-        </button>
-        <button
-          onClick={() => vscode.postMessage({ type: "sendMessage", text: `/replan ${taskId}` })}
-          className="rounded border border-border px-3 py-1.5 text-xs text-text-dim hover:text-text-muted"
-        >
-          Re-plan
-        </button>
-        <button
-          onClick={() => vscode.postMessage({ type: "sendMessage", text: `/discard ${taskId}` })}
-          className="rounded border border-error-border px-3 py-1.5 text-xs text-error/70 hover:text-error"
-        >
-          Discard
-        </button>
-      </div>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 2: Create LiveSlot.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/LiveSlot.tsx`:
-
-```typescript
-import type { LiveGateView, LivePlanView } from "../types";
-import { GateCard } from "./messages/GateCard";
-import { PlanCard } from "./messages/PlanCard";
-
-interface Props {
-  liveGate: LiveGateView | null;
-  livePlan: LivePlanView | null;
-}
-
-export function LiveSlot({ liveGate, livePlan }: Props) {
-  if (!liveGate && !livePlan) return null;
-
-  return (
-    <div className="flex flex-col gap-2 px-3 py-2 flex-shrink-0">
-      {liveGate && <GateCard {...liveGate} isLive />}
-      {livePlan && <PlanCard content={livePlan.planMarkdown} taskId={livePlan.taskId} />}
-    </div>
-  );
-}
-```
-
-- [ ] **Step 3: Create HistoryView.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/HistoryView.tsx`:
-
-```typescript
-import { useState } from "react";
-import type { ThreadSummary } from "../types";
-import { vscode } from "../vscodeApi";
-
-interface Props {
-  threads: ThreadSummary[];
-  activeThreadId: string;
-  onSelect: (threadId: string) => void;
-  onNewChat: () => void;
-}
-
-export function HistoryView({ threads, activeThreadId, onSelect, onNewChat }: Props) {
-  const [query, setQuery] = useState("");
-
-  const filtered = query
-    ? threads.filter((t) => (t.title || "New Chat").toLowerCase().includes(query.toLowerCase()))
-    : threads;
-
-  return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-3 py-2 flex-shrink-0">
-        <span className="font-semibold text-text">AI Editor</span>
-        <button
-          onClick={onNewChat}
-          className="rounded border border-accent-border px-2 py-1 text-xs text-accent hover:bg-accent-bg"
-        >
-          + New Chat
-        </button>
-      </div>
-
-      {/* Search */}
-      <div className="border-b border-border px-3 py-2 flex-shrink-0">
-        <div className="flex items-center gap-2 rounded border border-border bg-surface-alt px-2 py-1.5">
-          <span className="text-text-dim text-xs">⌕</span>
-          <input
-            className="flex-1 bg-transparent text-xs text-text placeholder-text-dim outline-none"
-            placeholder="Search chats…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* Thread list */}
-      <div className="flex-1 overflow-y-auto">
-        {filtered.length === 0 ? (
-          <div className="px-3 py-6 text-center text-xs text-text-dim">
-            {query ? "No matching chats" : "No chats yet"}
-          </div>
-        ) : (
-          filtered.map((t) => (
-            <button
-              key={t.threadId}
-              onClick={() => onSelect(t.threadId)}
-              className={[
-                "flex w-full items-center gap-2 border-b border-border px-3 py-2.5 text-left hover:bg-surface",
-                t.threadId === activeThreadId
-                  ? "border-l-2 border-l-accent bg-surface"
-                  : "border-l-2 border-l-transparent",
-              ].join(" ")}
-            >
-              <span className="flex-1 text-sm text-text line-clamp-2">
-                {t.title || "New Chat"}
-              </span>
-              <span className="text-xs text-accent">›</span>
-            </button>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 4: Create InputArea.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/InputArea.tsx`:
-
-```typescript
-import { useRef, useEffect } from "react";
-import { vscode } from "../vscodeApi";
-
-interface Props {
-  enabled: boolean;
-}
-
-export function InputArea({ enabled }: Props) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (enabled && ref.current) ref.current.focus();
-  }, [enabled]);
-
-  function send() {
-    const el = ref.current;
-    if (!el) return;
-    const text = el.value.trim();
-    if (!text) return;
-    el.value = "";
-    el.style.height = "auto";
-    vscode.postMessage({ type: "sendMessage", text });
-  }
-
-  function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  }
-
-  function onInput(e: React.FormEvent<HTMLTextAreaElement>) {
-    const el = e.currentTarget;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 120) + "px";
-  }
-
-  return (
-    <div className="flex-shrink-0 border-t border-border px-3 py-2">
-      <div
-        className={[
-          "flex items-end gap-2 rounded-lg border px-3 py-2 transition-colors",
-          enabled ? "border-border bg-surface-alt" : "border-border/50 bg-surface opacity-50",
-        ].join(" ")}
-      >
-        <textarea
-          ref={ref}
-          rows={1}
-          disabled={!enabled}
-          placeholder={enabled ? "Ask anything or describe a change…" : "Agent is working…"}
-          onKeyDown={onKeyDown}
-          onInput={onInput}
-          className="mono flex-1 resize-none bg-transparent text-sm text-text placeholder-text-dim outline-none"
-          style={{ minHeight: 20, maxHeight: 120 }}
-        />
-        <span className="flex-shrink-0 text-[10px] text-text-dim">⌘↵</span>
-      </div>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 5: Create EmptyState.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/EmptyState.tsx`:
-
-```typescript
-import { vscode } from "../vscodeApi";
-
-const SUGGESTIONS = [
-  "💡 Add error handling to the API routes",
-  "🔍 Where is the planning loop defined?",
-  "🛠 Fix the TypeScript errors in editor-client",
-];
-
-export function EmptyState() {
-  function fillInput(text: string) {
-    // Post directly as a message so the controller receives it the same way
-    vscode.postMessage({ type: "sendMessage", text });
-  }
-
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8">
-      <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-accent-border bg-accent-bg text-xl">
-        ✦
-      </div>
-      <div className="text-center">
-        <div className="text-sm font-medium text-text-muted">What are we building?</div>
-        <div className="mt-1 text-xs text-text-dim">
-          Describe a change, ask a question, or explore the codebase.
-        </div>
-      </div>
-      <div className="flex w-full flex-col gap-1.5">
-        {SUGGESTIONS.map((s) => (
-          <button
-            key={s}
-            onClick={() => fillInput(s.replace(/^[^\s]+\s/, ""))}
-            className="rounded-md border border-border bg-surface-alt px-3 py-2 text-left text-xs text-text-dim hover:border-accent-border hover:text-text-muted"
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add apps/vscode-extension/webview-ui/src/components/
-git commit -m "feat(webview-ui): ErrorCard, LiveSlot, HistoryView, InputArea, EmptyState"
-```
-
----
-
-## Task 11: MessageRow, ThreadView, App, main
-
-**Files:** `MessageRow.tsx`, `ThreadView.tsx`, `App.tsx`, `main.tsx`
-
-- [ ] **Step 1: Create MessageRow.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/MessageRow.tsx`:
-
-```typescript
-import type { ChatMsg } from "../types";
-import { UserMessage } from "./messages/UserMessage";
-import { AgentRow } from "./messages/AgentRow";
-import { QAMessage } from "./messages/QAMessage";
-import { PlanCard } from "./messages/PlanCard";
-import { DiffCard } from "./messages/DiffCard";
-import { GateCard } from "./messages/GateCard";
-
-interface Props {
-  msg: ChatMsg;
-}
-
-export function MessageRow({ msg }: Props) {
-  if ("role" in msg) {
-    if (msg.role === "user") return <UserMessage content={msg.content} />;
-    // Agent messages: breadcrumbs are plain text, QA answers are markdown
-    const isBreadcrumb = msg.metadata?.breadcrumb === true;
-    const hasMarkdown = !isBreadcrumb && msg.content.length > 0;
-    if (hasMarkdown) {
-      return (
-        <QAMessage content={msg.content} thinkingLog={msg.metadata?.thinking_log} />
-      );
-    }
-    return (
-      <AgentRow
-        content={msg.content}
-        thinkingLog={msg.metadata?.thinking_log}
-        breadcrumb={isBreadcrumb}
-      />
-    );
-  }
-
-  if (msg.type === "plan_card") {
-    const taskId = msg.metadata?.taskId ?? msg.taskId ?? "";
-    return <PlanCard content={msg.content} taskId={taskId} readOnly />;
-  }
-
-  if (msg.type === "diff_card") {
-    const taskId = msg.taskId ?? msg.metadata?.taskId ?? "";
-    const entries = msg.metadata?.diff_entries ?? [];
-    return (
-      <DiffCard
-        taskId={taskId}
-        diffEntries={entries}
-        resolved={msg.metadata?.resolved ?? null}
-        thinkingLog={msg.metadata?.thinking_log}
-      />
-    );
-  }
-
-  if (msg.type === "scope_card") {
-    return (
-      <GateCard
-        kind="scope"
-        taskId={msg.metadata.taskId}
-        payload={{ files: msg.metadata.files, reason: msg.metadata.reason }}
-      />
-    );
-  }
-
-  if (msg.type === "validation_card") {
-    return (
-      <GateCard
-        kind="validation"
-        taskId={msg.metadata.taskId}
-        payload={{ diagnostics: msg.metadata.diagnostics }}
-      />
-    );
-  }
-
-  if (msg.type === "command_card") {
-    return (
-      <GateCard
-        kind="command"
-        taskId={msg.metadata.taskId}
-        payload={{ command: msg.metadata.command, args: msg.metadata.args }}
-      />
-    );
-  }
-
-  if (msg.type === "task_card") {
-    return (
-      <div className="rounded border border-border bg-surface px-3 py-2 text-xs text-text-muted">
-        <span className="font-medium text-text">Task created</span>
-        <span className="mono ml-2 text-code">{msg.taskId ?? msg.content}</span>
-      </div>
-    );
-  }
-
-  return null;
-}
-```
-
-- [ ] **Step 2: Create ThreadView.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/components/ThreadView.tsx`:
-
-```typescript
-import { useEffect, useRef } from "react";
-import type { AppState } from "../types";
-import { MessageRow } from "./MessageRow";
-import { AgentRow } from "./messages/AgentRow";
-import { LiveSlot } from "./LiveSlot";
-import { InputArea } from "./InputArea";
-import { EmptyState } from "./EmptyState";
-import { vscode } from "../vscodeApi";
-
-interface Props {
-  state: AppState;
-  onBack: () => void;
-}
-
-export function ThreadView({ state, onBack }: Props) {
-  const { messages, streaming, thinkingStatus, inputEnabled, liveGate, livePlan, threads, activeThreadId } = state;
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  const title = threads.find((t) => t.threadId === activeThreadId)?.title ?? "Chat";
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streaming?.text]);
-
-  function newChat() {
-    vscode.postMessage({ type: "newChat" });
-  }
-
-  const isEmpty = messages.length === 0 && !streaming && !thinkingStatus;
-
-  return (
-    <div className="flex h-full flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 flex-shrink-0">
-        <button
-          onClick={onBack}
-          className="text-accent text-sm hover:opacity-80"
-          title="Back to history"
-        >
-          ‹
-        </button>
-        <span className="flex-1 truncate text-sm font-medium text-text">{title}</span>
-        <button
-          onClick={newChat}
-          className="rounded border border-accent-border px-2 py-1 text-xs text-accent hover:bg-accent-bg"
-        >
-          + New
-        </button>
-      </div>
-
-      {/* Message list */}
-      <div className="flex-1 overflow-y-auto px-3 py-2">
-        {isEmpty ? (
-          <EmptyState />
-        ) : (
-          <div className="flex flex-col gap-3">
-            {messages.map((msg, i) => (
-              <MessageRow key={i} msg={msg} />
-            ))}
-
-            {/* Thinking status (before streaming starts) */}
-            {thinkingStatus && !streaming && (
-              <div className="flex items-center gap-2 text-xs text-text-dim">
-                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-                {thinkingStatus}
-              </div>
-            )}
-
-            {/* Streaming agent bubble */}
-            {streaming && (
-              <AgentRow
-                content={streaming.text}
-                streamingThinkingEntries={streaming.thinkingEntries}
-                streamingThinkingChunk={streaming.activeThinkingChunk}
-                streaming
-              />
-            )}
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Live gate/plan slot (pinned above input) */}
-      <LiveSlot liveGate={liveGate} livePlan={livePlan} />
-
-      {/* Input */}
-      <InputArea enabled={inputEnabled} />
-    </div>
-  );
-}
-```
-
-- [ ] **Step 3: Create App.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/App.tsx`:
-
-```typescript
-import { useAppState } from "./hooks/useAppState";
-import { HistoryView } from "./components/HistoryView";
-import { ThreadView } from "./components/ThreadView";
-import { vscode } from "./vscodeApi";
-
-export default function App() {
-  const { state, setView } = useAppState();
-
-  function handleSelectThread(threadId: string) {
-    vscode.postMessage({ type: "switchThread", threadId });
-    setView("thread");
-  }
-
-  function handleNewChat() {
-    vscode.postMessage({ type: "newChat" });
-    setView("thread");
-  }
-
-  function handleBack() {
-    setView("history");
-  }
-
-  // Auto-switch to thread view when a thread becomes active
-  // (e.g. on first load when extension sends renderThreadList with an activeThreadId)
-  const hasActiveThread = state.activeThreadId !== "";
-
-  if (state.view === "history" || !hasActiveThread) {
-    return (
-      <HistoryView
-        threads={state.threads}
-        activeThreadId={state.activeThreadId}
-        onSelect={handleSelectThread}
-        onNewChat={handleNewChat}
-      />
-    );
-  }
-
-  return <ThreadView state={state} onBack={handleBack} />;
-}
-```
-
-- [ ] **Step 4: Create main.tsx**
-
-Create `apps/vscode-extension/webview-ui/src/main.tsx`:
-
-```typescript
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-import "./index.css";
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
-```
-
-- [ ] **Step 5: Build to verify no compile errors**
-
-```bash
-cd apps/vscode-extension/webview-ui && npm run typecheck && npm run build
-```
-
-Expected: `dist/index.html` and `dist/assets/index.js` created. No TypeScript errors.
-
-- [ ] **Step 6: Run all tests**
-
-```bash
-cd apps/vscode-extension/webview-ui && npm test
-```
-
-Expected: all tests pass.
+- [ ] **Step 6: tests** — keep Rev 1's five tests; add: thinking-chunk-then-entry preserves both entries; appendToolEvent/appendToolResult pairing; plan_card arriving with `role:"agent"` AND `type:"plan_card"` (real wire shape) dedups and does NOT count as a text message.
 
 - [ ] **Step 7: Commit**
 
-```bash
-git add apps/vscode-extension/webview-ui/src/
-git commit -m "feat(webview-ui): MessageRow, ThreadView, App, main — full UI assembled"
-```
-
 ---
 
-## Task 12: Wire up chat-panel.ts
+## Task 5: Tool & progress event plumbing (backend → contracts → extension)
 
-**Files:** `src/chat-panel.ts`
+This implements wire contracts **F1, F3, F4** end-to-end. Three sub-stages, committed separately, each verifiable on its own.
 
-- [ ] **Step 1: Update buildHtml() to load from dist**
+### Task 5a — Backend emissions (additive, no API/state-machine changes)
 
-In `apps/vscode-extension/src/chat-panel.ts`, add `import * as fs from "fs"` at the top, then replace the entire `buildHtml()` method with:
+**Files:** `planning/loop.py`, `chat/agent.py`, `tools/loop.py`, `orchestrator/engine.py`, tests
 
-```typescript
-import * as fs from "fs";
+- [ ] **Step 1: `planning/loop.py:410`** — add `"args": args` to the `planning_tool_call` payload (args are already in scope; they're recorded into the tool trace two lines down).
+
+- [ ] **Step 2: `chat/agent.py` explore loop (~line 208)** — after `self._registry.execute(tool_name, args)` (and in the `except` branch), broadcast:
+
+```python
+self._broadcaster.broadcast(channel_id, {
+    "type": "explore_tool_result",
+    "payload": {"tool": tool_name, "output": _cap(tool_output.output), "is_error": tool_output.is_error},
+})
 ```
 
-(Add this import alongside the existing `import * as vscode from "vscode"` line.)
+(`_cap` = 2000 chars + `"\n… truncated"` suffix; error branch sends `str(exc)`, `is_error=True`.)
 
-Replace the `buildHtml()` method body:
+- [ ] **Step 3: result caps** — `tools/loop.py:1011` and `planning/loop.py:424`: replace `output[:500]` with the same `_cap(...)` helper (2000 + suffix). Full output still lands in `tool-trace.json` artifacts — the SSE cap only bounds the UI panel.
+
+- [ ] **Step 4: `orchestrator/engine.py` `_execute_plan` step loop** — at the top of each step's execution, broadcast `step_started` on the task channel:
+
+```python
+self.broadcaster.broadcast(task.task_id, {
+    "type": "step_started",
+    "payload": {"step_id": step.id, "step_title": step.title,
+                "step_index": idx + 1, "total_steps": len(steps)},
+})
+```
+
+Use the loop's actual index/collection variables; count the steps the loop iterates (after `completed_step_ids` filtering, index within the full plan for honest "N of M").
+
+- [ ] **Step 5: tests** — extend the existing scripted-engine broadcast assertions: `planning_tool_call` carries `args`; explore turn emits paired `explore_tool_call`/`explore_tool_result`; `step_started` fires once per executed step with correct index/total. Run `pytest tests/test_planning_agent.py tests/test_tools_registry.py` + the chat agent test file; then the full suite.
+
+- [ ] **Step 6: Commit** — `feat(events): args on planning_tool_call, explore_tool_result, step_started, 2k result caps`
+
+### Task 5b — Contracts
+
+- [ ] `task-contracts.ts` `StreamEvent`: add `args?: Record<string, unknown>` to `planning_tool_call`; add `| { type: "explore_tool_result"; payload: { tool: string; output: string; is_error: boolean } }`; add `| { type: "step_started"; payload: { step_id: string; step_title: string; step_index: number; total_steps: number } }`.
+- [ ] `npm run -w @ai-editor/editor-client build && npm run -w @ai-editor/editor-client test` (extension types off compiled dist — build BEFORE extension typecheck).
+- [ ] Commit — `feat(contracts): explore_tool_result, step_started, planning_tool_call args`
+
+### Task 5c — Extension forwarding
+
+**Files:** `src/chat-panel.ts`, `src/controller.ts`, `src/extension.ts`, `test/controller.test.ts`
+
+- [ ] **Step 1: chat-panel.ts — new methods**
 
 ```typescript
-private buildHtml(): string {
-  const distPath = vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist");
-  const htmlPath = vscode.Uri.joinPath(distPath, "index.html");
-  let html = fs.readFileSync(htmlPath.fsPath, "utf8");
-
-  const nonce = Array.from({ length: 16 }, () =>
-    Math.floor(Math.random() * 256).toString(16).padStart(2, "0"),
-  ).join("");
-  const cspSource = this.panel!.webview.cspSource;
-
-  // Rewrite relative asset paths to VS Code webview URIs.
-  // Vite outputs: src="./assets/index.js" href="./assets/index.css"
-  html = html.replace(
-    /(src|href)="\.\/(assets\/[^"]+)"/g,
-    (_match, attr: string, assetPath: string) => {
-      const uri = this.panel!.webview.asWebviewUri(
-        vscode.Uri.joinPath(distPath, assetPath),
-      );
-      return `${attr}="${uri}"`;
-    },
-  );
-
-  // Inject nonce into every <script> tag.
-  html = html.replace(/<script /g, `<script nonce="${nonce}" `);
-
-  // Inject CSP meta tag (must come before any other head content).
-  html = html.replace(
-    "<head>",
-    `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${cspSource}; script-src 'nonce-${nonce}' ${cspSource}; img-src ${cspSource} data:;">`,
-  );
-
-  return html;
+appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: string }): void {
+  this.panel?.webview.postMessage({ type: "appendToolEvent", event });
+}
+appendToolResult(id: number, output: string, isError: boolean): void {
+  this.panel?.webview.postMessage({ type: "appendToolResult", id, output, isError });
+}
+updateWorkbar(info: { stepIndex: number; totalSteps: number; stepTitle: string } | null): void {
+  this.panel?.webview.postMessage({ type: "updateWorkbar", info });
 }
 ```
 
-- [ ] **Step 2: Update show() to use webview-ui dist as resource root**
+Add matching members to `ControllerUI` and the `ui` object in `extension.ts`.
 
-In `chat-panel.ts`, find the `show()` method's `vscode.window.createWebviewPanel(...)` call and update `localResourceRoots`:
+- [ ] **Step 2: controller.ts — forward structured events**
+
+Per-turn counter `private toolEventSeq = 0` and per-source open-event ids `private openToolEvent: Partial<Record<"explore" | "planning" | "execution", number>> = {}`. In `sendChatMessage` and `streamTaskIntoChatThread`:
+
+- `explore_tool_call` (source `explore`) / `tool_call` (source `execution`) / `planning_tool_call` (source `planning`) → `appendToolEvent({ id: ++this.toolEventSeq, tool, args: args ?? {}, thought, source })`, record `openToolEvent[source] = id`. **Replaces** the flattened `appendChatThinkingEntry` strings for tool calls.
+- `explore_tool_result` / `tool_result` / `planning_tool_result` → `appendToolResult(openToolEvent[source], output, is_error)`, then clear that slot. Pairing is per-source sequential — each loop has one tool in flight (verified: calls/results interleave strictly in all three loops).
+- `step_started` → `updateWorkbar({ stepIndex, totalSteps, stepTitle })`; clear on `done` / `chat_done` / terminal statuses. Also remember it in `private lastStepStarted` (error-card detail, F9 v1).
+- **Phase labels (F14):** `env_profile_building`/`env_install_running` and the latest unresolved `planning_tool_call` also update the work bar via `updateWorkbar({ phaseLabel })` (tier-2 overrides), cleared by their completion events; the webview applies the tier-3 `/live.status` fallback map itself from `liveStatus` — so silent phases (JSON plan generation, embedding load, dep installs, auto-index) always show an accurate label + running timer.
+- `patch_failed` → `appendChatThinkingEntry("✗ patch failed: " + error)` (currently dropped) and remember in `private lastPatchError` — `pollThreadLiveState` passes `detail: "${lastStepStarted.title} (step ${i} of ${n}) — ${lastPatchError}"` to `renderLiveError` when available (cleared when a new task starts).
+- Non-tool entries (`patch applied`, env_profile lines, gate waits, `planning_complete`) stay as `appendChatThinkingEntry`.
+- **Stop (F12, chat turns only):** add optional `signal?: AbortSignal` to `HttpBackendClient.sendChatMessage` (editor-client, non-breaking — pass to `fetch`); controller creates an `AbortController` per turn; `stopTurn` from the webview aborts it (server cancels the agent coroutine on disconnect, `routes.py:1033`), then `finalizeAgentMessage` + re-enable input. The webview shows Stop only while a chat turn is streaming — never during task execution (see F12).
+
+- [ ] **Step 3: typecheck + extension tests; update the `ControllerUI` stub** in `test/controller.test.ts`.
+
+- [ ] **Step 4: Commit** — `feat(extension): structured tool events + work bar forwarding`
+
+---
+
+## Task 6: Shared components — ThinkingBlock, ToolPill
+
+**Visual reference:** frame 2 of `chat-ui-hifi.html` (`.think`, `.pill`, `.toolpanel`).
+
+- [ ] **Step 1: ThinkingBlock.tsx**
+
+Rev 1 structure with fixes:
+- Collapse when streaming ends: `useEffect(() => { if (!streaming) setOpen(false); }, [streaming])`.
+- Streaming header: pulse dot (`animate-pulse` violet, glow) + label in `accent-ink` on `--accent-bg` with `--accent-brd` border — `.think.live` in the mockup. Idle: surface bg, `text-3`, chevron rotates when open (`.tw`).
+- Expanded detail: left border rail (`border-l-2 border-border-strong`), numbered entries, max-h-40, `.anim-rise`.
+
+- [ ] **Step 2: ToolPill.tsx — driven by ToolEventView, no string parsing**
 
 ```typescript
-localResourceRoots: [
-  vscode.Uri.joinPath(this.extensionUri, "media"),
-  vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist"),
-],
+interface Props { event: ToolEventView }
 ```
 
-Apply the same change inside `reattach()` — it calls `this.buildHtml()` which now reads from `dist/`, but `localResourceRoots` is set at panel creation time. The panel passed to `reattach()` was created by VS Code with the serialized config, so update `show()` only. (The `reattach()` path inherits the original panel's resource roots; this is a minor limitation — the extension must be reloaded after a first run with the new build.)
+- Pill (collapsed): rounded-full, mono 10.5px, tool icon by name (`search_code`→i-search, `read_file`→i-file, `run_command`→i-term, `query_graph`→i-diff, default i-bolt), label = `event.tool`, then: spinner while `!event.done` (shimmer background, `--accent-brd` border — `.pill.live`), green check when done, red ✗ when `isError`.
+- Click toggles the inline panel (`.toolpanel`): header (icon + tool name in accent-ink, status badge, "collapse" hint), **Input** section (mono key:value rows from `event.args`), **Output** section (mono, `max-h-24 overflow-y-auto`, render `event.output ?? "…running"`). `.anim-rise` on open.
+- Multiple pills can be open at once (each owns its `open` state) — matches the spec.
 
-- [ ] **Step 3: Add webview:build script to extension package.json**
-
-In `apps/vscode-extension/package.json`, update the `scripts` field:
-
-```json
-"scripts": {
-  "webview:build": "npm --prefix webview-ui run build",
-  "prebuild": "npm --prefix webview-ui install && npm --prefix webview-ui run build",
-  "build": "tsc -p tsconfig.json",
-  "test": "vitest run",
-  "typecheck": "tsc -p tsconfig.json --noEmit"
-},
-```
-
-- [ ] **Step 4: Typecheck the extension**
-
-```bash
-npm run -w @ai-editor/vscode-extension typecheck
-```
-
-Expected: no errors.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/vscode-extension/src/chat-panel.ts apps/vscode-extension/package.json
-git commit -m "feat(chat-panel): load React webview from webview-ui/dist instead of inline HTML"
-```
+- [ ] **Step 3: Commit**
 
 ---
 
-## Task 13: Remove ReviewPanel + clean up controller and extension
+## Task 7: UserMessage, QAMessage, AgentRow
 
-**Files:** `src/extension.ts`, `src/controller.ts`
+**Visual reference:** frame 2 (`.ubub`, `.turn`, `.avatar`, `.crumb`, `.stream-line`).
 
-- [ ] **Step 1: Remove showStepReview + updatePanel from ControllerUI (controller.ts)**
+- [ ] **Step 1: UserMessage** — right-aligned bubble, `max-w-[86%]`, gradient surface (`linear-gradient(180deg, var(--color-surface-2), var(--color-surface))`), border-strong, radius `12px 12px 4px 12px`, inset hairline highlight.
 
-In `apps/vscode-extension/src/controller.ts`:
+- [ ] **Step 2: QAMessage** — gradient violet avatar tile (20px, `i-spark`, glow) replaces the "AI" text chip; `react-markdown` body with code styled `--color-code` on surface-2; hover copy button (`i-copy` + "Copied ✓" flash), absolute top-right, `opacity-0 group-hover:opacity-100`.
 
-1. Remove these two lines from the `ControllerUI` interface:
-   ```typescript
-   updatePanel(model: ReviewPanelViewModel): void;
-   showStepReview(taskId: string, stepId: string, stepTitle: string, diffEntries: DiffEntry[]): void;
-   ```
-
-2. Remove the `ReviewPanelViewModel` import from line 21.
-
-3. Find the `step_review_requested` event handler (around line 943) and remove the `this.ui.showStepReview(...)` call — the live gate mechanism handles it via the `/live` poll:
-   ```typescript
-   } else if (event.type === "step_review_requested") {
-     // step review surfaces via the live gate (/live poll → renderLiveGate kind:step)
-   }
-   ```
-
-4. Find `this.ui.updatePanel(this.buildViewModel())` (line 1236) and remove it. Also remove `openReviewPanel()` method body content — replace with a redirect to chat:
-   ```typescript
-   openReviewPanel(): void {
-     this.ui.openChatPanel();
-   }
-   ```
-
-5. Remove the `buildViewModel()` private method entirely (it exists only to feed `updatePanel`). If it's referenced elsewhere, replace those calls with no-ops. Search:
-   ```bash
-   grep -n "buildViewModel\|updatePanel" apps/vscode-extension/src/controller.ts
-   ```
-   Remove all found call sites.
-
-- [ ] **Step 2: Remove ReviewPanel from extension.ts**
-
-In `apps/vscode-extension/src/extension.ts`:
-
-1. Remove `import { ReviewPanel } from "./review-panel.js"` (line 12).
-2. Remove the `panel` variable declaration and `new ReviewPanel(...)` block (lines 38–61).
-3. Remove `showStepReview` and `updatePanel` from the `ui` object (lines 166–168 and 87–88).
-4. Remove the `aiEditor.openReviewPanel` command registration block (lines 195–199).
-5. Remove `panel.show()` from the `aiEditor.startTask` handler and `aiEditor.attachToTask` handler.
-6. Remove `panel.dispose()` from the dispose subscription.
-
-After changes, the `ui` object will no longer reference `panel` at all.
-
-- [ ] **Step 3: Typecheck**
-
-```bash
-npm run -w @ai-editor/vscode-extension typecheck
-```
-
-Fix any remaining type errors (typically: unused imports, missing interface members in the mock `ui` object in tests).
-
-- [ ] **Step 4: Run extension tests**
-
-```bash
-npm run -w @ai-editor/vscode-extension test
-```
-
-Expected: all tests pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/vscode-extension/src/extension.ts apps/vscode-extension/src/controller.ts
-git commit -m "feat(extension): retire ReviewPanel — step review now via live gate only"
-```
-
----
-
-## Task 14: Delete old files
-
-**Files:** `media/chat.js`, `media/marked.umd.js`, `src/review-panel.ts`
-
-- [ ] **Step 1: Delete the three files**
-
-```bash
-git rm apps/vscode-extension/media/chat.js
-git rm apps/vscode-extension/media/marked.umd.js
-git rm apps/vscode-extension/src/review-panel.ts
-```
-
-- [ ] **Step 2: Remove marked dependency from extension package.json**
-
-In `apps/vscode-extension/package.json`, remove `"marked": "^18.0.3"` from `dependencies`.
-
-Run `npm install` to update the lockfile:
-
-```bash
-npm install
-```
-
-- [ ] **Step 3: Typecheck + test**
-
-```bash
-npm run typecheck && npm run test
-```
-
-Expected: clean.
+- [ ] **Step 3: AgentRow** — avatar + column of: ThinkingBlock (thought entries), ToolPill row (`flex flex-wrap gap-1.5`, from `toolEvents` or `metadata.tool_events`), breadcrumb lines (green `i-check` + `text-2`, matching `.crumb` — breadcrumbs are `metadata.breadcrumb === true` text messages), streaming caret (1.5px violet bar, `animation: blink`). Copy button as in QAMessage. Props now take `toolEvents: ToolEventView[]` instead of parsing strings.
 
 - [ ] **Step 4: Commit**
 
-```bash
-git add apps/vscode-extension/package.json package-lock.json
-git commit -m "chore(extension): delete chat.js, marked.umd.js, review-panel.ts"
-```
+---
+
+## Task 8: PlanCard
+
+**Visual reference:** frame 3 (`.plan-card`, `.steps`, `.step-badge`, timeline connector) — note v1 renders the plan as markdown, not parsed steps; the timeline-step look applies to the markdown's list items via prose styles. Parsing plan markdown into step objects is OUT of scope (fragile).
+
+Keep Rev 1's component logic with these changes:
+- Header: `i-list` icon (accent), "Plan" semibold, optional step-count subtitle derived by counting `^#{2,3} |\n- ` matches (best-effort, display-only), chevron rotation on expand, accent border when open.
+- Collapsed: faded preview `max-h-[102px]` + gradient overlay that fades out on expand (`max-height` transition, `.steps-fade` pattern).
+- Actions: `Implement` = gradient violet primary (`from accent-deep to accent-hot`, glow shadow, `i-bolt`); `Give feedback` = ghost. Feedback mode reveals inline input row (`.fb-row` pattern, `.anim-rise`).
+- `readOnly` renders no action bar (transcript plan_card versions).
+- **The live-slot instance must reset its internal state when content changes** — handled by keying in LiveSlot (Task 11), not inside PlanCard.
+- Keep Rev 1's tests; they remain valid (update selectors for icon-based header: query by text "Plan").
 
 ---
 
-## Task 15: Integration smoke test
+## Task 9: DiffCard (inline changes) — no fabricated inline diff
 
-- [ ] **Step 1: Full monorepo build**
+**Visual reference:** frame 3 (`.diff-card` header with `.dstats`), but body = file rows, not diff panes.
 
-```bash
-npm run build
+- [ ] **Step 1: DiffCard.tsx**
+
+Props: `{ taskId, diffEntries: DiffEntry[], resolved?: "applied" | "discarded" | null, thinkingLog?: string[] }`.
+
+- Header: `i-diff` icon, "Changes ready", aggregate `+N −M` stats (mono, green/red), file-count badge (violet pill), chevron.
+- Body (expanded): one row per entry — file-type dot (ts=blue/py=amber by extension), mono basename, dimmed dir path, `+a −d` stats, and an `i-file` "view" button posting `viewDiffFile { path, shadowPath: entry.temp_path ?? "" }` (opens the native VS Code diff — same as today).
+- Actions: `Accept all` (primary, `i-check`) → `applyInlineChange`; `Reject` (ghost) → `discardInlineChange`. Resolved state replaces actions with `✓ Applied` / `✗ Discarded` breadcrumb and tints the card border green/red.
+- `resolved` prop comes from `metadata.resolved` (patched by `resolveInlineChangeCard`); also honor local optimistic state.
+
+**v2 (deferred, requires backend):** add `unified_diff` per entry to `diff_ready` + `pending_step_review` payloads, then render the hi-fi tabbed diff panes with line numbers. Do NOT build the diff renderer against a field that doesn't exist.
+
+- [ ] **Step 2: keep Rev 1's DiffCard tests**, adjusted: tabs test → file-row test.
+
+---
+
+## Task 10: Gate components (4 files) + ErrorCard + ReviewCard
+
+**Visual reference:** frame 3 (`.gate-card`, `.cmdblock`, `.radios`) and frame 4 (`.err-card`).
+
+- [ ] **Step 1: gates/CommandGate.tsx**
+
+Payload (backend `CommandApprovalRequest`, snake_case): `{ decision_id, command, args, cwd, step_id }`.
+
+Port chat.js's **full** command card semantics (chat.js lines 186–276), styled per the hi-fi mockup:
+- mono command block with violet `$` prompt (`.cmdblock`), horizontal scroll
+- custom radio group (`.radio`/`.rdot` styling): exact / prefix (with token-count number input) / binary
+- **`shlexJoin` ported verbatim from chat.js** — exact and prefix rule values must be shlex-joined for backend rule matching
+- live "auto-approves: …" preview line
+- Actions: `Allow once` (primary) / `Allow & remember` (ghost) / `Reject` (danger ghost) → `commandDecision` payloads identical to chat.js (`approve`, `remember`, `scope`, `ruleValue`)
+- subtitle in header: `step {step_id}`
+
+- [ ] **Step 2: gates/ScopeGate.tsx** — payload `{ decision_id, files, reason, step_id }`; reason text + mono file list; Approve / Approve & remember / Reject → `scopeDecision`.
+
+- [ ] **Step 3: gates/ValidationGate.tsx** — payload `{ task_id, summary, diagnostics: [{source, message, level}] }`; summary line + scrollable mono diagnostic list (level-colored); Accept / Reject → `validationDecision`.
+
+- [ ] **Step 4: gates/StepGate.tsx** — payload `{ step_id, step_title, diff_entries }`; reuse DiffCard's file-row body (read-only, with view-diff buttons via `temp_path`); Accept / Discard → `stepDecision`.
+
+All four: plain function components, hooks at top level only, local `resolved` state renders the `✓/✗` label in place of buttons (the /live poll clears the card moments later; the label covers the gap).
+
+- [ ] **Step 5: ErrorCard.tsx** — red-tinted card (`--red-bg` fill, `--red-brd` border), `i-warn` header "Execution failed" + status subtitle, collapsible detail (if `detail` provided), actions:
+  - `Resume` (primary, `i-retry`) → `resumeTask { taskId, stage: "execute" }`
+  - `Re-plan` (ghost) → `resumeTask { taskId, stage: "plan" }`
+  - `Dismiss` (danger ghost) → local-only hide (posts nothing; the card re-derives from /live until a new task starts, so also suppress re-render for the same taskId after dismiss via a `dismissedErrorTaskId` in App state)
+
+- [ ] **Step 6: ReviewCard.tsx — the ReviewPanel replacement (critical; semantics per F8)**
+
+Props = `LiveReviewView` (extended per F8: `modifiedFiles`, `shadowWorkspacePath`, `stepsCompleted`, `stepsTotal`, `deviations: string[]`). Card: `i-check` header **"Task complete — changes applied"** (NOT "ready for review" — `_partial_promote` already wrote each step's files to the real workspace, see F8), then the run summary:
+- mono file rows (each posting `viewDiffFile` with `shadowPath = join(shadowWorkspacePath, path)` — the extension computes the join; webview just echoes fields, see Task 13)
+- `n of m steps completed` line
+- "During the run" divider + deviation breadcrumb lines (scope extensions, remembered commands, delta replans, discarded steps, validation-accepted) when non-empty — extension-tracked per F8, ephemeral after reload
+
+Actions:
+- `Finish` (primary) → `acceptTask { taskId }` (final promote is a re-copy no-op → SUCCEEDED + shadow cleanup)
+- `Close without finishing` (ghost) → reveals inline reason input → `rejectTask { taskId, reason }` — subtitle: "keeps the applied changes" (reject does NOT revert the workspace, `routes.py:497-499`)
+
+After action, show optimistic `✓ Finishing…` — the /live poll clears the card when status leaves READY_FOR_REVIEW. One-shot per UX Rule 2.
+
+- [ ] **Step 7: keep/port Rev 1's GateCard tests** split across the four files; add ReviewCard + ErrorCard tests (postMessage payload assertions).
+
+---
+
+## Task 11: LiveSlot, HistoryView, InputArea, EmptyState
+
+- [ ] **Step 1: LiveSlot.tsx — content-keyed, all five live card kinds**
+
+```typescript
+export function LiveSlot({ liveGate, livePlan, liveReview, liveError }: Props) {
+  if (!liveGate && !livePlan && !liveReview && !liveError) return null;
+  return (
+    <div className="flex flex-col gap-2 px-3 py-2 flex-shrink-0">
+      {liveGate && (
+        <GateDispatch key={`${liveGate.taskId}:${liveGate.kind}:${sig(liveGate.payload)}`} {...liveGate} />
+      )}
+      {livePlan && (
+        <PlanCard key={`${livePlan.taskId}:${sig(livePlan.planMarkdown)}`} content={livePlan.planMarkdown} taskId={livePlan.taskId} />
+      )}
+      {liveReview && <ReviewCard key={liveReview.taskId} {...liveReview} />}
+      {liveError && <ErrorCard key={`${liveError.taskId}:${liveError.status}`} {...liveError} />}
+    </div>
+  );
+}
 ```
 
-Expected: `@ai-editor/editor-client` builds first, then `@ai-editor/vscode-extension` (which triggers `prebuild` → `webview-ui` builds). No errors.
+**The `key` is load-bearing**: a second command gate (or a feedback-regenerated plan) must remount and discard the previous card's local `resolved` state. `sig()` = the djb2 helper from useAppState. `GateDispatch` maps `kind` → the four gate components.
 
-- [ ] **Step 2: Full test suite**
+- [ ] **Step 2: HistoryView.tsx** — Rev 1 structure restyled per frame 1 (`.hrow`, `.hgroup`, `.search`):
+  - Day-group labels (Today / Yesterday / This week / older) computed from `createdAt`; relative timestamp line per row (`tabular-nums`).
+  - Active row: surface bg + inset 2px violet left bar (`shadow-[inset_2px_0_0_var(--color-accent)]`); hover lifts chevron color/translate.
+  - Header: gradient violet logo tile (`i-spark`) + "AI Editor" + `+ New Chat` violet-outline button.
+  - Search filters client-side (keep Rev 1 logic), `i-search` icon, focus ring accent.
+  - **Deferred to v2 (needs backend):** message counts and Running/Review/Done status chips shown in the mockup — `ChatThreadSummary` doesn't carry them and per-thread /live polling for the list is too chatty. Note it; don't fake it.
 
-```bash
-npm run test
+- [ ] **Step 3: InputArea.tsx** — Rev 1 logic plus: **send button** (24px gradient violet square, `i-send`, disabled-grey when input disabled — `.send`/`.send.off`), sans font (not mono), focus ring (`--accent-brd` + soft glow), Enter sends / Shift+Enter newline, auto-resize to 5 lines. Disabled state + placeholder come from a single `inputAvailability(state)` selector implementing **UX Rule 1's precedence table** (local streaming → gate → plan → executing statuses → enabled), fed by `state.liveStatus` + `state.inputEnabled`; send/Enter are no-ops while disabled or empty (Rule 2).
+
+- [ ] **Step 4: EmptyState.tsx** — frame 4 styling: breathing gradient spark tile (`.spark`, `breathe` animation), "What are we building?" heading, subtitle, three suggestion chips with icons (`i-bolt`, `i-search`, `i-bug`). **Chips pre-fill the input** (spec behavior) — lift input text state up to ThreadView (`draft` state passed to InputArea) instead of posting `sendMessage` directly.
+
+- [ ] **Step 5: Commit**
+
+---
+
+## Task 12: MessageRow, ThreadView, App, main
+
+- [ ] **Step 1: MessageRow.tsx — dispatch on `type` FIRST**
+
+```typescript
+export function MessageRow({ msg }: { msg: ChatMsg }) {
+  switch (msg.type) {
+    case "plan_card": {
+      const taskId = (msg.metadata?.taskId as string) ?? msg.taskId ?? "";
+      return <PlanCard content={msg.content} taskId={taskId} readOnly />;
+    }
+    case "diff_card": {
+      const taskId = (msg.taskId ?? (msg.metadata?.taskId as string)) || "";
+      return (
+        <DiffCard
+          taskId={taskId}
+          diffEntries={(msg.metadata?.diff_entries as DiffEntry[]) ?? []}
+          resolved={(msg.metadata?.resolved as "applied" | "discarded" | undefined) ?? null}
+          thinkingLog={msg.metadata?.thinking_log as string[] | undefined}
+        />
+      );
+    }
+    case "task_card":
+      return <TaskCreatedRow taskId={msg.taskId ?? msg.content} />;
+    case "scope_card":
+    case "validation_card":
+    case "command_card":
+      // Legacy persisted gate messages (pre-Class-A threads). Render READ-ONLY
+      // summaries — interactive gates live ONLY in the /live slot. Do not post
+      // decisions from transcript cards.
+      return <LegacyGateSummary msg={msg} />;
+    default:
+      break; // "text" / "diff_summary" fall through to role-based rendering
+  }
+  if (msg.role === "user") return <UserMessage content={msg.content} />;
+  const isBreadcrumb = msg.metadata?.breadcrumb === true;
+  if (!isBreadcrumb && msg.content) {
+    return <QAMessage content={msg.content} thinkingLog={msg.metadata?.thinking_log as string[] | undefined} />;
+  }
+  return <AgentRow content={msg.content} breadcrumb={isBreadcrumb}
+    thinkingLog={msg.metadata?.thinking_log as string[] | undefined}
+    toolEvents={(msg.metadata?.tool_events as ToolEventView[]) ?? []} />;
+}
 ```
 
-Expected: all workspace tests pass (editor-client + vscode-extension + webview-ui).
+`LegacyGateSummary` = small read-only card (icon + title + payload summary). This is a deliberate Class-A correction over chat.js, which still renders stale transcript gates with live buttons (decisions on them 409).
 
-- [ ] **Step 3: Open in extension dev host**
+- [ ] **Step 2: ThreadView.tsx** — Rev 1 structure plus:
+  - LiveSlot gets all four live props.
+  - **UX Rule 3:** `‹` back and `+ New` are disabled (tooltip "A turn is in progress") while a local stream is appending; same flag disables history-row clicks in App. Card one-shot behavior (Rule 2) lives in each card component.
+  - Auto-scroll effect also keyed on `streaming?.toolEvents.length` and `streaming?.thinkingEntries.length`.
+  - Header per mockup: violet back chevron button (`i-chev-l`, hover accent-bg), truncated title, `i-plus` icon button.
+  - **Work bar** (frame 2 `.workbar`): when `!inputEnabled`, render the slim status bar above the input — shimmer top hairline, spinner, client-side elapsed timer (F13), and the **Stop button only while a chat turn is streaming** (`stopTurn` message, F12). Label resolves by the **F14 three-tier precedence**: `Step {n} of {m} — {title}` (step info) → transient phase override (`phaseLabel`: env install, planning tool) → `/live.status` fallback map ("Generating execution plan…", "Planning — exploring the codebase…", …). QA/inline turns without any task fall back to the latest `thinkingStatus` text. The bar must never render without a label while work is in flight.
+  - `draft` state for EmptyState chip pre-fill, passed to InputArea.
+
+- [ ] **Step 3: App.tsx / main.tsx** — keep Rev 1.
+
+- [ ] **Step 4: Build + all webview tests green; commit.**
+
+---
+
+## Task 13: Wire up chat-panel.ts + controller live review/error
+
+- [ ] **Step 1: chat-panel.ts `buildHtml()`** — keep Rev 1's implementation (read `webview-ui/dist/index.html`, rewrite `./assets/*` to webview URIs, nonce all scripts, inject CSP). 
+
+- [ ] **Step 2: `reattach()` — reset options (Rev 1 waved this off; it's settable):**
+
+```typescript
+reattach(restoredPanel: vscode.WebviewPanel): void {
+  this.panel = restoredPanel;
+  this.panel.webview.options = {
+    enableScripts: true,
+    localResourceRoots: [
+      vscode.Uri.joinPath(this.extensionUri, "media"),
+      vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist"),
+    ],
+  };
+  this.panel.webview.html = this.buildHtml();
+  this.registerHandlers();
+}
+```
+
+Same `localResourceRoots` in `show()`.
+
+- [ ] **Step 3: new inbound branches in `registerHandlers()`:** `acceptTask` → `onAcceptTask(taskId)`, `rejectTask` → `onRejectTask(taskId, reason)`, `resumeTask` → `onResumeTask(taskId, stage)`, `stopTurn` → `onStopTurn()` (new constructor callbacks). New outbound methods `renderLiveReview/clearLiveReview/renderLiveError/clearLiveError/sendLiveStatus`.
+
+- [ ] **Step 4: controller.ts — live review/error derivation in `pollThreadLiveState()`**
+
+After the gate/plan blocks:
+
+```typescript
+if (live.status === "READY_FOR_REVIEW" && live.activeTaskId) {
+  try {
+    const result = await this.clientForChat().getTaskResult(live.activeTaskId);
+    this.ui.renderLiveReview({
+      taskId: live.activeTaskId,
+      modifiedFiles: result.modifiedFiles,
+      shadowWorkspacePath: result.shadowWorkspacePath ?? null,
+    });
+  } catch { /* result not ready yet — next poll retries */ }
+} else {
+  this.ui.clearLiveReview();
+}
+
+if ((live.status === "FAILED" || live.status === "ABORTED") && live.activeTaskId) {
+  this.ui.renderLiveError({ taskId: live.activeTaskId, status: live.status });
+} else {
+  this.ui.clearLiveError();
+}
+this.ui.sendLiveStatus(live.status ?? null);   // input availability — UX Rule 1
+```
+
+Include `status` in the poll's dedup `signature` (it already JSON-stringifies gate/plan/taskId — add `status: live.status`).
+
+The review payload carries the run summary (F8): `stepsTotal` from `result.plan?.steps?.length`, `stepsCompleted` from the extension's observed `step_started` count, and `deviations: string[]` accumulated per task in a `private runDeviations: string[]` — pushed from the stream handlers (`scope_extension_requested` resolution breadcrumbs, command approved-and-remembered, `revision_needed`, step-discarded and validation-accepted breadcrumbs via `chat_breadcrumb` matching `↩`/`✗ Validation`/`✓ Scope`/`✓ Command`), reset when a new `task_card`/`step_started` for a different taskId arrives.
+
+`viewDiffFile` from the ReviewCard sends `path` + empty shadowPath; extend `openInlineDiff` to fall back to `join(latestLiveReview.shadowWorkspacePath, relativePath)` when `shadowPath` is empty and a live review is active (store `latestLiveReview` next to `latestLiveState`).
+
+- [ ] **Step 5: controller.ts — taskId-parameterized actions**
+
+```typescript
+async acceptTaskPatch(taskId: string): Promise<void> {
+  try { await this.clientForChat().acceptPatch(taskId); this.ui.showInfo("Patch accepted — changes promoted to workspace."); }
+  catch (error) { if (this.isBenignConflict(error)) return; this.ui.showError(`Failed to accept patch: ${formatError(error)}`); }
+}
+async rejectTaskPatch(taskId: string, reason: string): Promise<void> { /* same shape, client.rejectPatch(taskId, reason || "Rejected from chat") */ }
+async resumeTaskById(taskId: string, stage: "plan" | "execute"): Promise<void> {
+  try {
+    const r = await this.clientForChat().resumeTask(taskId, { stage });
+    this.ui.showInfo(`Resumed as ${r.taskId}`);
+    this.lastLiveSignature = null;           // force next poll to re-render against the child task
+    void this.pollThreadLiveState();         // thread active_task_id repoints server-side
+  } catch (error) { this.ui.showError(`Failed to resume: ${formatError(error)}`); }
+}
+```
+
+- [ ] **Step 6: extension.ts** — wire the three new ChatPanel callbacks to these methods.
+
+- [ ] **Step 7: package.json scripts** (extension): keep Rev 1's `webview:build`/`prebuild`. Typecheck + tests + commit.
+
+---
+
+## Task 14: Remove ReviewPanel + delete old files
+
+- [ ] **Step 1: controller.ts removals** — `updatePanel` + `showStepReview` from `ControllerUI`; `pushPanel()`/`buildViewModel()`/`patchEvents` and **all nine `pushPanel()` call sites** (initialize, startTask, attachToTask, providePlanFeedback, resumeTask×1, pullLatestTask, startPolling.onUpdate, openReviewPanel); the `step_review_requested` branch in `startStream` (live gate covers it); keep `buildReviewFileEntries` (still used by `openDiffForFile`). `openReviewPanel()` → `this.ui.openChatPanel()`.
+
+- [ ] **Step 2: extension.ts removals** — `ReviewPanel` import + instantiation; `updatePanel`/`showStepReview` from the `ui` object; `panel.show()` in `startTask`/`attachToTask`/`openReviewPanel` command handlers (repoint `aiEditor.openReviewPanel` to open chat for muscle-memory compat, and remove it from `package.json` `contributes.commands` + `activationEvents` in a follow-up if desired); `panel.dispose()`.
+
+- [ ] **Step 3: test stubs** — `test/controller.test.ts` lines ~186/~201: remove `updatePanel`/`showStepReview`, add the new UI members (appendToolEvent, appendToolResult, renderLiveReview, clearLiveReview, renderLiveError, clearLiveError).
+
+- [ ] **Step 4: delete files** — `git rm apps/vscode-extension/media/chat.js apps/vscode-extension/media/marked.umd.js apps/vscode-extension/src/review-panel.ts`. Remove `"marked": "^18.0.3"` from extension deps (only referenced by chat-panel's old buildHtml + the media file; the React app uses react-markdown), `npm install` to refresh the lockfile. Drop `ReviewPanelViewModel` from `src/types.ts` if nothing references it.
+
+- [ ] **Step 5: full typecheck + tests + commit.**
+
+---
+
+## Task 15: Root scripts + integration smoke test
+
+- [ ] **Step 0: step-review default flip (UX decision)** — in `scripts/stress/start-backend.sh`, export `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=false` alongside the existing scope-policy exports, so chat-driven large tasks pause at every step gate by default (see "Step-review default is a UX decision").
+
+- [ ] **Step 1: root package.json** — webview-ui is not a workspace; extend explicitly:
+
+```json
+"test": "npm run -w @ai-editor/editor-client test && npm run -w @ai-editor/vscode-extension test && npm --prefix apps/vscode-extension/webview-ui test",
+"typecheck": "<existing> && npm --prefix apps/vscode-extension/webview-ui run typecheck"
+```
+
+(`build` already reaches webview-ui via the extension's `prebuild`.)
+
+- [ ] **Step 2:** `npm run build && npm run test` — all three packages green.
+
+- [ ] **Step 3: dev-host smoke test** (backend running via `start-backend.sh`):
 
 ```bash
 code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/shadow-forge-stress"
 ```
 
-Open the AI Editor Chat panel (`Cmd+Shift+P` → AI Editor: Open Chat). Verify:
-- History view appears with `+ New Chat`
-- Sending a message shows the user bubble right-aligned
-- Agent streaming shows the pulse dot + typing cursor
-- Tool pills appear for tool calls (if backend is running)
-- Plan card appears collapsed with faded preview
-- Gate cards render and post decisions correctly
+Walk the full matrix:
+- History view: day groups, search, new chat, thread switch
+- QA turn: thinking block streams → collapses; markdown answer; copy button
+- small_change: tool pills with expandable Input/Output; diff card; Accept all → resolved state
+- large_change: plan card in live slot → Implement → command gate (radio scopes + remember) → step gate → **ReviewCard accept at READY_FOR_REVIEW** (the path that used to require the Review panel)
+- Plan feedback: regenerated plan **remounts** the live card (key change) with fresh buttons
+- Kill the backend mid-execution → ErrorCard renders from /live; Resume creates child task and the live slot follows it
+- Reload the webview (Developer: Reload Window) mid-gate → gate card re-derives from /live
+- **UX rules:** input disabled with the correct placeholder at every Rule-1 state, including after a reload mid-execution; double-click Implement / Allow once / Finish → single POST (row resolves on first click); back/history/+New locked while a turn streams; step gates appear by default (auto-accept flipped off in Step 0)
+- **Silent phases (F14):** approve a plan and watch the JSON-generation window — work bar must show "Generating execution plan…" + running timer, never blank; trigger a dep install (touch a manifest) → "Syncing dependencies…" persists until `env_install_done`; first `search_semantic` shows a spinning pill while embeddings load
+- ReviewCard shows the run summary: files, `n of m steps`, and deviation lines after a run that included a scope extension or a discarded step
 
-- [ ] **Step 4: Final commit if any fixes were needed**
+- [ ] **Step 4: final fixes commit.**
 
-```bash
-git add -p   # stage only intentional fixes
-git commit -m "fix(webview-ui): integration fixes from dev host smoke test"
-```
+---
+
+## Deferred to v2 (each needs a backend addition — do NOT fake client-side)
+
+- **Cooperative task abort (F12):** an abort flag/event checked between ToolLoop iterations and plan steps, ABORTED-aware saves (no stale-object clobber), shadow cleanup only after the engine coroutine acknowledges — then the Stop button can appear during task execution. Today's `/cancel` is only safe for queued/stuck/terminal tasks.
+- **Durable failure detail (F9):** persist `failure_summary {step_id, step_index, error_class, message}` on the task at failure time and expose via `/live` — until then the error card's detail is ephemeral (extension memory of `step_started`/`patch_failed`).
+- **Final-review redesign (F8):** READY_FOR_REVIEW is hollow today (`engine.py:710` TODO) — changes are already partial-promoted per step, the final promote re-copies, and reject doesn't revert. Either collapse accept → SUCCEEDED directly, or implement a true final reject (checkpoint-based real-workspace restore). Until then the ReviewCard uses "Finish / Close without finishing" copy.
+- Inline diff text in DiffCard/StepGate (add `unified_diff` per entry to `diff_ready` + `pending_step_review` — `_compute_diff_entries` already computes it and throws it away, `engine.py:1067`; one change covers both paths)
+- Persisted transcript record of step-review diffs (today only a `✓/↩` breadcrumb survives — the reviewed file list is not stored as a chat message, unlike the inline `diff_card`)
+- History list message counts + Running/Review/Done status chips (extend thread summaries; see F10)
+- Structured plan steps at the approval gate (would require moving the markdown→JSON plan conversion before approval; F5 caveat)
+- `✓ Step completed` breadcrumb when `step_review_auto_accept` is on (today breadcrumbs only fire on explicit review decisions, `engine.py:1827`)
+- **Durable run summary (F8):** persist a `run_summary` on the task (steps completed, scope extensions, delta replans, discarded steps, validation outcome — `execution_state` holds most of it server-side but none is exposed via TaskView/TaskResult) so the ReviewCard summary survives reloads instead of relying on extension-observed events
+- **Per-task "Review each step" toggle in the composer:** needs the flag plumbed through `POST /threads/{id}/message` → `create_task_from_chat` (v1 flips the default via `start-backend.sh` env only)
+- Token/cost per turn, @mentions, model selector (spec roadmap)
+- Light-theme adaptation: map surface tokens to `--vscode-*` vars while keeping the violet ramp as fixed brand (v1 is dark-first by decision, Task 3)
+
+## Future note (NOT for this run — recorded only)
+
+The execution tool loop has no lightweight way to adjust the plan mid-step when it concludes the current approach needs updating: its only escape hatches are a scope-extension request (file-level only) or `revision_needed` → delta replan (full `PlanningAgent.revise()` exploration — costly, budgeted at `max_delta_replans=3`). A cheaper middle path (e.g. in-place step amendment without re-exploration) is a backend/agent design topic for a future brainstorm — explicitly out of scope for this UI rebuild.

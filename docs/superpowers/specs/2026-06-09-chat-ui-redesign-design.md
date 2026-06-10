@@ -264,6 +264,8 @@ The existing "AI Editor Review" webview panel (in `review-panel.ts`) is retired.
 
 ## Wireframe Reference
 
+**Visual source of truth: `docs/superpowers/design/chat-ui-hifi.html`** — interactive hi-fi mockup (open in any browser) that supersedes the wireframes below for all visual detail: refined token ramp (layered surfaces, violet accent ramp, hairline highlights), SVG iconography replacing emoji, elevation/shadow system, motion (shimmer streaming pills, work-status bar, pulse/spinner/caret), plan-step timeline connectors, diff line numbers + stats, history status chips, and hover/press states. The wireframes remain the record of the *decisions*; the hi-fi file is the record of the *look*.
+
 All wireframes live at `.superpowers/brainstorm/36442-1781025172/content/` (open in any browser). Files marked ✓ are the approved/final versions; earlier iterations are kept for context.
 
 | File | Status | What it shows |
