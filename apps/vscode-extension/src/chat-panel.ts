@@ -209,16 +209,22 @@ export class ChatPanel {
 <style>
   body { font-family: var(--vscode-font-family); margin: 0; display: flex;
          flex-direction: column; height: 100vh; background: var(--vscode-editor-background); }
-  #thread-list { border-bottom: 1px solid var(--vscode-panel-border); padding: 6px 10px;
-                 display: flex; gap: 6px; align-items: center; overflow-x: auto; flex-shrink: 0; }
-  .thread-tab { padding: 3px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap;
+  #thread-list { border-bottom: 1px solid var(--vscode-panel-border); padding: 6px;
+                 display: flex; flex-direction: column; gap: 4px; align-items: stretch;
+                 max-height: 30vh; overflow-y: auto; flex-shrink: 0; }
+  .thread-tab { padding: 5px 10px; border-radius: 4px; cursor: pointer;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                 border: 1px solid transparent; font-size: 0.85em; background: none;
-                color: var(--vscode-foreground); }
+                color: var(--vscode-foreground); text-align: left; }
+  .thread-tab:hover { background: var(--vscode-list-hoverBackground); }
   .thread-tab.active { border-color: var(--vscode-focusBorder);
                        background: var(--vscode-editor-inactiveSelectionBackground); }
-  #new-chat-btn { margin-left: auto; padding: 3px 10px; border: none; border-radius: 4px;
+  /* Pinned at the top of the scrollable list so it stays reachable. */
+  #new-chat-btn { order: -1; position: sticky; top: 0; z-index: 1;
+                  padding: 5px 10px; border: none; border-radius: 4px;
                   background: var(--vscode-button-secondaryBackground);
-                  color: var(--vscode-button-secondaryForeground); cursor: pointer; font-size: 0.85em; }
+                  color: var(--vscode-button-secondaryForeground); cursor: pointer;
+                  font-size: 0.85em; text-align: left; }
   #thread { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
   .msg { max-width: 85%; padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
   .user { align-self: flex-end; background: var(--vscode-button-background);

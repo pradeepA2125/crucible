@@ -630,6 +630,18 @@ export class AiEditorController {
               metadata: {},
             });
           }
+        } else if (event.type === "plan_card") {
+          // Read-only transcript record, delivered live (display-only — the backend
+          // already persisted the single copy). chat.js dedups by task id, and the
+          // interactive Implement/Feedback affordance is the pinned /live slot.
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: event.payload.plan_markdown,
+            type: "plan_card",
+            taskId: event.payload.task_id,
+            timestamp: this.now(),
+            metadata: { taskId: event.payload.task_id, plan_markdown: event.payload.plan_markdown },
+          });
         } else if (event.type === "scope_extension_requested") {
           // Class-A gate — render from /live (instant poke now, durable on reload).
           void this.pollThreadLiveState();
@@ -783,6 +795,28 @@ export class AiEditorController {
             type: "text",
             timestamp: this.now(),
             metadata: {},
+          });
+        } else if (event.type === "chat_breadcrumb") {
+          // Durable transcript record of a resolved gate/plan action, pushed live so it
+          // lands in history immediately instead of only on the next thread reload.
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: event.payload.text,
+            type: "text",
+            taskId: event.payload.task_id,
+            timestamp: this.now(),
+            metadata: { taskId: event.payload.task_id, breadcrumb: true },
+          });
+        } else if (event.type === "plan_card") {
+          // Read-only transcript record (e.g. a feedback-regenerated version picked up
+          // when execution starts). Display-only; chat.js dedups by task+content.
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: event.payload.plan_markdown,
+            type: "plan_card",
+            taskId: event.payload.task_id,
+            timestamp: this.now(),
+            metadata: { taskId: event.payload.task_id, plan_markdown: event.payload.plan_markdown },
           });
         } else if (event.type === "scope_extension_requested") {
           // Class-A gates render from /live in the pinned slot; poke for an instant update.

@@ -29,6 +29,15 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // Stable per-version signature for a plan card: same task + identical content
+  // collapses (no duplicate across live broadcast + reload, or double channels),
+  // while a new feedback-regenerated version gets a distinct signature and appends.
+  function planSig(taskId, content) {
+    var s = String(content || ''), h = 5381, i;
+    for (i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) | 0; }
+    return String(taskId || '') + '::' + (h >>> 0).toString(36);
+  }
+
   function showThinking(message) {
     if (thinkingEl) { thinkingEl.querySelector('span').textContent = message; return; }
     thinkingEl = document.createElement('div');
@@ -81,37 +90,25 @@
     currentAgentBubble = null;
     activeThinkingLi = null;
     if (msg.type === 'plan_card') {
-      var taskId = escHtml((msg.metadata && msg.metadata.taskId) ? msg.metadata.taskId : (msg.taskId || ''));
+      // Read-only transcript record of the plan. The interactive Implement/Feedback
+      // affordance lives ONLY in the pinned live-plan slot (renderLivePlan), which
+      // clears on approval — so this message never carries buttons. Dedup by task id:
+      // a live append and a reloaded copy must never render two cards for one plan.
+      var taskId = (msg.metadata && msg.metadata.taskId) ? msg.metadata.taskId : (msg.taskId || '');
       var mdHtml = (typeof marked !== 'undefined' && msg.content)
         ? marked.parse(msg.content)
         : '<pre>' + escHtml(msg.content) + '</pre>';
-      var div = document.createElement('div');
-      div.className = 'plan-card';
-      div.innerHTML =
-        '<strong>Plan</strong><div class="plan-md">' + mdHtml + '</div>' +
-        '<div class="plan-actions">' +
-        '<button class="btn-primary" data-taskid="' + taskId + '" data-action="implement">Implement Plan</button>' +
-        '<textarea id="fb-' + taskId + '" placeholder="Give feedback…" rows="2"></textarea>' +
-        '<button class="btn-secondary" data-taskid="' + taskId + '" data-action="feedback">Send Feedback</button>' +
-        '</div>';
-      div.querySelectorAll('button[data-action]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var tid = btn.getAttribute('data-taskid');
-          var action = btn.getAttribute('data-action');
-          var actionsEl = div.querySelector('.plan-actions');
-          if (action === 'implement') {
-            if (actionsEl) actionsEl.innerHTML = '<span class="inline-resolved">Implementing…</span>';
-            vscode.postMessage({ type: 'implementPlan', taskId: tid });
-          } else {
-            var fbEl = document.getElementById('fb-' + tid);
-            var fb = fbEl ? fbEl.value.trim() : '';
-            if (!fb) return;
-            if (actionsEl) actionsEl.innerHTML = '<span class="inline-resolved">Feedback submitted — new plan loading…</span>';
-            vscode.postMessage({ type: 'planFeedback', taskId: tid, feedback: fb });
-          }
-        });
-      });
-      threadEl.appendChild(div);
+      // Dedup by task+content version (not task alone): a feedback-regenerated plan
+      // is a new version and appends after the old; an identical re-delivery skips.
+      var sig = planSig(taskId, msg.content);
+      if (!threadEl.querySelector('.plan-card[data-plan-sig="' + sig + '"]')) {
+        var div = document.createElement('div');
+        div.className = 'plan-card plan-card-readonly';
+        if (taskId) div.setAttribute('data-plan-task', escHtml(taskId));
+        div.setAttribute('data-plan-sig', sig);
+        div.innerHTML = '<strong>📋 Plan</strong><div class="plan-md">' + mdHtml + '</div>';
+        threadEl.appendChild(div);
+      }
     } else if (msg.type === 'scope_card') {
       var taskId = escHtml((msg.metadata && msg.metadata.taskId) ? msg.metadata.taskId : '');
       var files = (msg.metadata && Array.isArray(msg.metadata.files)) ? msg.metadata.files : [];

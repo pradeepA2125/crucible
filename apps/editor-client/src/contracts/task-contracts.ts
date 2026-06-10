@@ -151,6 +151,7 @@ export type StreamEvent =
   | { type: "chat_response"; payload: { chunk: string } }
   | { type: "chat_done"; payload: Record<string, never> }
   | { type: "task_card"; payload: { task_id: string } }
+  | { type: "plan_card"; payload: { task_id: string; plan_markdown: string } }
   | { type: "task_status_changed"; payload: { task_id: string; status: string; plan_markdown?: string; message?: string } }
   | { type: "diff_ready"; payload: { task_id: string; diff_entries: DiffEntry[]; thinking_log: string[]; completed_steps: number; total_steps: number } }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } }
@@ -158,7 +159,8 @@ export type StreamEvent =
   | { type: "env_profile_building"; payload: { workspace_root: string } }
   | { type: "env_profile_built"; payload: { ecosystems_count: number; bootstrap_needed: boolean } }
   | { type: "env_install_running"; payload: { scope_key: string; command: string } }
-  | { type: "env_install_done"; payload: { scope_key: string; exit_ok: boolean; tail: string } };
+  | { type: "env_install_done"; payload: { scope_key: string; exit_ok: boolean; tail: string } }
+  | { type: "chat_breadcrumb"; payload: { text: string; task_id: string } };
 
 // Backward-compat alias
 export type PatchStreamEvent = StreamEvent;
