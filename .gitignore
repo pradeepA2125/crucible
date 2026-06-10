@@ -19,6 +19,10 @@ workspaces/
 apps/vscode-extension/tmp-review-files-*/
 generated.txt
 .worktrees/
-
+.ai-editor/
+aider-references/
 # Runtime SQLite databases
 **/agentd.db
+.superpowers/
+.playwright-mcp/
+.playwright-mcp/
