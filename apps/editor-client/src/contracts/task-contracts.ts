@@ -130,7 +130,8 @@ export interface DiffEntry {
 export type StreamEvent =
   | { type: "operation_success"; payload: { op_type: string; path: string } }
   | { type: "operation_error"; payload: { op_type: string; path: string; error: string } }
-  | { type: "done"; payload: Record<string, never> }
+  // done carries {status} when the engine reaches a terminal/pause state (engine.py:1550) and {} on bare pause paths
+  | { type: "done"; payload: { status?: string } }
   | { type: "tool_call"; payload: { tool: string; thought: string; iteration: number; phase: string; args?: Record<string, unknown> } }
   | { type: "tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
   | { type: "planning_tool_call"; payload: { tool: string; thought: string; iteration: number; args?: Record<string, unknown> } }

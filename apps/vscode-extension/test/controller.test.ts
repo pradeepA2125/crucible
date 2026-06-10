@@ -6,7 +6,6 @@ import type {
   Diagnostic,
   TaskResult,
   TaskSubmission,
-  TaskView,
   ThreadLiveState,
 } from "@ai-editor/editor-client";
 import { describe, expect, test } from "vitest";
@@ -517,10 +516,10 @@ describe("AiEditorController — tool-event pairing & orphan handling", () => {
         title: "New Chat", messages: [], touchedFiles: [],
       }),
       sendChatMessage: async function* (_threadId, _message, _signal) {
-        yield { type: "explore_tool_call" as const, payload: { tool: "search_code", args: {} } };
-        yield { type: "tool_call" as const, payload: { tool: "read_file", args: {} } };
-        yield { type: "explore_tool_result" as const, payload: { output: "explore-out", is_error: false } };
-        yield { type: "tool_result" as const, payload: { output: "exec-out", is_error: false } };
+        yield { type: "explore_tool_call" as const, payload: { tool: "search_code", args: {}, thought: "looking" } };
+        yield { type: "tool_call" as const, payload: { tool: "read_file", thought: "", iteration: 1, phase: "explore", args: {} } };
+        yield { type: "explore_tool_result" as const, payload: { tool: "search_code", output: "explore-out", is_error: false } };
+        yield { type: "tool_result" as const, payload: { tool: "read_file", output: "exec-out", is_error: false, iteration: 1 } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
       },
     };
@@ -550,7 +549,7 @@ describe("AiEditorController — tool-event pairing & orphan handling", () => {
       ...turn1Backend,
       sendChatMessage: async function* (_threadId, _message, _signal) {
         // No preceding tool_call — orphan result.
-        yield { type: "tool_result" as const, payload: { output: "stray", is_error: false } };
+        yield { type: "tool_result" as const, payload: { tool: "read_file", output: "stray", is_error: false, iteration: 1 } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
       },
     };
@@ -652,19 +651,13 @@ describe("AiEditorController — deviation capture", () => {
       streamPatchEvents: async function* (_taskId: string) {
         yield {
           type: "chat_breadcrumb" as const,
-          payload: {
-            text: "✓ Scope extension approved: x.py",
-            task_id: taskId,
-          } as Record<string, unknown>,
+          payload: { text: "✓ Scope extension approved: x.py", task_id: taskId },
         };
         yield {
           type: "chat_breadcrumb" as const,
-          payload: {
-            text: "✓ Step changes accepted: t",
-            task_id: taskId,
-          } as Record<string, unknown>,
+          payload: { text: "✓ Step changes accepted: t", task_id: taskId },
         };
-        yield { type: "done" as const, payload: { status: "SUCCEEDED" } as Record<string, unknown> };
+        yield { type: "done" as const, payload: { status: "SUCCEEDED" } };
       },
     };
 
