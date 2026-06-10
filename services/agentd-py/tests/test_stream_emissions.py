@@ -28,7 +28,6 @@ from agentd.retrieval.artifact_client import RetrievalContext
 from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
-
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
 # ---------------------------------------------------------------------------
@@ -310,14 +309,18 @@ class _TwoStepReasoningEngine:
             for msg in history
         )
         if in_verify:
-            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
+            return {
+                "type": "verify_done", "thought": "scripted", "verified": True, "test_output": "",
+            }
         # Which step? Infer from goal in step_context.
         goal = str(step_context.get("goal", ""))
         filename = "one.txt" if "one" in goal else "two.txt"
         return {
             "type": "emit_patch",
             "thought": "create file",
-            "patch_ops": [{"op": "create_file", "file": filename, "content": "ok\n", "reason": "scripted"}],
+            "patch_ops": [
+                {"op": "create_file", "file": filename, "content": "ok\n", "reason": "scripted"},
+            ],
         }
 
 
