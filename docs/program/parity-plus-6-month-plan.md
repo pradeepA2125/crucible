@@ -71,9 +71,10 @@ Exit gate:
 
 ### Phase 5 (Weeks 20-24): Differentiation
 Deliverables:
-- Deterministic multi-agent coordinator (Planner, Retriever, Patcher, Verifier).
-- Retrieval v2 ranking:
-  symbolic + semantic + freshness-aware blending.
+- Agentic planning + delta replan: `PlanningAgent` (explore-then-commit loop) replaces static critique loop; `ExecutionAgent` hands off to planner on `revision_needed` via typed `StepOutcome` return — no exceptions across agent boundaries. Shared-state coordination through `TaskRecord`; not spawned subagents.
+- Parallel step execution where dependency graph allows genuine concurrency (steps with no shared file targets).
+- Per-role model selection: cheap/fast model for retrieval and search, strong model for planning and patching.
+- Retrieval v2 ranking: symbolic + semantic + freshness-aware blending.
 - Long-running autonomous refactor mode with budget contracts and staged promotion.
 
 Exit gate:
