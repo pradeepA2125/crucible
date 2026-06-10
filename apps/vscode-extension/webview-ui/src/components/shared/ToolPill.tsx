@@ -148,7 +148,7 @@ export function ToolPill({ event }: Props) {
                 <div key={k}>
                   <span className="text-text-3">{k}:</span>{" "}
                   <span className="text-accent-ink">
-                    {typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v)}
+                    {typeof v === "string" ? v : JSON.stringify(v)}
                   </span>
                 </div>
               ))}

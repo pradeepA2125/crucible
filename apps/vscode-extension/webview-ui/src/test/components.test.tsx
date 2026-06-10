@@ -106,13 +106,11 @@ describe("ThinkingBlock", () => {
     const { rerender } = render(
       <ThinkingBlock entries={["loaded weights"]} streaming={true} />
     );
-    // Initially open because streaming=true.
-    const btn = screen.getByRole("button");
-    fireEvent.click(btn); // toggle open (it opens automatically from streaming)
-    // Now set streaming=false via rerender.
+    // Initially OPEN because streaming=true — detail visible without any click.
+    expect(screen.getByText(/loaded weights/)).toBeTruthy();
+    // Streaming ends → the effect auto-collapses the detail.
     rerender(<ThinkingBlock entries={["loaded weights"]} streaming={false} />);
-    // After streaming ends, collapses — detail should not be visible.
-    expect(screen.queryByText("loaded weights")).toBeNull();
+    expect(screen.queryByText(/loaded weights/)).toBeNull();
   });
 });
 
