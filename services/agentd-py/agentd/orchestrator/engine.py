@@ -487,8 +487,10 @@ class AgentOrchestrator:
                             "plan_markdown": task.plan_markdown,
                         },
                     })
-                self._write_chat_plan_card(task)
+                # Breadcrumb BEFORE the new plan card so the transcript reads
+                # chronologically: old plan → "↻ feedback" → regenerated plan.
                 self._write_chat_breadcrumb(task, "↻ Plan feedback submitted — regenerating the plan.")
+                self._write_chat_plan_card(task)
                 return task
 
             # Approved! Generate JSON plan from Markdown
@@ -760,6 +762,9 @@ class AgentOrchestrator:
             workspace_path=parent.workspace_path,
             mode=parent.mode,
             budget=TaskBudget(),  # fresh budget with current defaults
+            # Resumed steps must honor the parent's review preference, not the
+            # model default (True) — otherwise a resume silently auto-accepts.
+            step_review_auto_accept=parent.step_review_auto_accept,
             status=TaskStatus.PLANNED,
             plan=parent.plan,
             plan_markdown=parent.plan_markdown,
@@ -1163,19 +1168,31 @@ class AgentOrchestrator:
         return task.task_id
 
     def _write_chat_plan_card(self, task: "TaskRecord") -> None:
-        """Persist a revised plan card to the chat DB so it survives a reload."""
+        """Persist (idempotently) and live-deliver the read-only plan transcript card.
+
+        Single source of truth for the plan_card message — upsert keyed by task_id so
+        the chat-side and engine-side writers (and feedback re-presentation) collapse
+        to ONE card that survives reload without duplicating. The interactive
+        Implement/Feedback affordance is the /live pinned slot, never this message.
+        """
         if not task.chat_channel_id or self._chat_store is None or not task.plan_markdown:
             return
-        from agentd.chat.models import ChatMessage
         thread_id = task.chat_channel_id[len("chat:"):]
-        msg = ChatMessage(
-            role="agent",
-            content=task.plan_markdown,
-            type="plan_card",
-            task_id=task.task_id,
-            metadata={"taskId": task.task_id, "plan_markdown": task.plan_markdown},
+        appended = self._chat_store.append_plan_card(  # type: ignore[union-attr]
+            thread_id, task.task_id, task.plan_markdown
         )
-        self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+        # Broadcast the live transcript append once per new version. Send to BOTH the
+        # chat channel (the presentation turn listens here) and the task channel (the
+        # execution stream listens here, picking up a feedback-regenerated version on
+        # approval). The frontend dedups by task+content, so double-delivery across
+        # channels never renders twice; reload renders the same persisted version.
+        if appended:
+            event = {
+                "type": "plan_card",
+                "payload": {"task_id": task.task_id, "plan_markdown": task.plan_markdown},
+            }
+            self.broadcaster.broadcast(task.chat_channel_id, event)
+            self.broadcaster.broadcast(task.task_id, event)
 
     def _write_chat_completion(self, task: "TaskRecord") -> None:
         """Write a completion card to the chat DB for tasks originating from chat."""
@@ -1211,6 +1228,13 @@ class AgentOrchestrator:
             metadata={"task_id": task.task_id, "breadcrumb": True},
         )
         self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+        # Live delivery: push over the task channel so the open chat stream renders the
+        # breadcrumb immediately. Without this it only appears on the next thread reload
+        # (the /live poll carries the gate/plan slot, never the message transcript).
+        self.broadcaster.broadcast(task.task_id, {
+            "type": "chat_breadcrumb",
+            "payload": {"text": text, "task_id": task.task_id},
+        })
 
     async def await_plan_ready(self, task_id: str, timeout_sec: float = 3600.0) -> "TaskRecord | None":
         """Poll until task reaches AWAITING_PLAN_APPROVAL or a terminal state."""
@@ -1587,8 +1611,12 @@ class AgentOrchestrator:
             try:
                 task = transition(task, TaskStatus.AWAITING_SCOPE_DECISION, "scope gate")
             except ValueError:
-                # Already in AWAITING_SCOPE_DECISION (re-entrant edge); leave status alone.
-                pass
+                # Tolerate ONLY the re-entrant edge (already in this gate). An invalid
+                # source is real state corruption — re-raise so it fails loudly instead
+                # of stranding pending_scope_request behind a stale status that /live
+                # cannot render (the task would then block until timeout).
+                if task.status != TaskStatus.AWAITING_SCOPE_DECISION:
+                    raise
             await self._store.save(task)
             self.broadcaster.broadcast(task_id, {
                 "type": "scope_extension_requested",
@@ -1678,8 +1706,11 @@ class AgentOrchestrator:
             try:
                 task = transition(task, TaskStatus.AWAITING_COMMAND_DECISION, "command gate")
             except ValueError:
-                # Already in AWAITING_COMMAND_DECISION (re-entrant edge); leave status alone.
-                pass
+                # Tolerate ONLY the re-entrant edge (already in this gate); re-raise an
+                # invalid source rather than stranding pending_command_request behind a
+                # stale status.
+                if task.status != TaskStatus.AWAITING_COMMAND_DECISION:
+                    raise
             await self._store.save(task)
             self.broadcaster.broadcast(task_id, {
                 "type": "command_approval_requested",
@@ -1755,7 +1786,14 @@ class AgentOrchestrator:
             diff_entries=serialized,
         )
         task.execution_state.pending_step_review = payload
-        task = transition(task, TaskStatus.AWAITING_STEP_REVIEW, "step review gate")
+        try:
+            task = transition(task, TaskStatus.AWAITING_STEP_REVIEW, "step review gate")
+        except ValueError:
+            # Tolerate ONLY the re-entrant edge (already in this gate); re-raise an
+            # invalid source rather than stranding pending_step_review behind a stale
+            # status.
+            if task.status != TaskStatus.AWAITING_STEP_REVIEW:
+                raise
         await self._store.save(task)
         self.broadcaster.broadcast(task.task_id, {
             "type": "step_review_requested",
@@ -1773,7 +1811,14 @@ class AgentOrchestrator:
             decision = await future
         finally:
             self._pending_step_decisions.pop(task.task_id, None)
-            task = await self._store.get(task.task_id)
+            # Reset the gate IN PLACE on the caller's object. Re-fetching a fresh
+            # record here would advance a DIFFERENT object to EXECUTING while the
+            # caller (_execute_plan) keeps a stale reference mutated to
+            # AWAITING_STEP_REVIEW by the gate-raise above — which then re-saves the
+            # stale gate (card reappears, 409 on re-accept) and crashes at
+            # transition(task, VALIDATING). Nothing mutates this record during the
+            # await (the step-decision route only resolves the future), so the passed
+            # object is already current.
             task.execution_state.pending_step_review = None
             if task.status == TaskStatus.AWAITING_STEP_REVIEW:
                 task = transition(task, TaskStatus.EXECUTING, "step decision received")

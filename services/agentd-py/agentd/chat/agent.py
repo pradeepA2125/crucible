@@ -385,18 +385,11 @@ class ChatAgent:
                 # task_status_changed to this channel when AWAITING_PLAN_APPROVAL.
                 # We also write plan_card to DB so it survives a reload.
                 _broadcast_thinking("Planning… (this may take a minute)")
-                plan_task = await self._orchestrator.await_plan_ready(task_id)
-                if plan_task is not None and plan_task.plan_markdown and plan_task.status.value == "AWAITING_PLAN_APPROVAL":
-                    self._store.append_message(
-                        thread_id,
-                        ChatMessage(
-                            role="agent",
-                            content=plan_task.plan_markdown,
-                            type="plan_card",
-                            task_id=task_id,
-                            metadata={"taskId": task_id, "plan_markdown": plan_task.plan_markdown},
-                        ),
-                    )
+                # Wait for the plan to be ready. The orchestrator is the single source
+                # for the plan_card message (persist + live broadcast, idempotent by
+                # task_id — see _write_chat_plan_card); writing one here too would
+                # duplicate the card on reload, so we no longer do.
+                await self._orchestrator.await_plan_ready(task_id)
             else:
                 logger.warning("[chat] large_change: no orchestrator configured")
                 self._broadcaster.broadcast(channel_id, {

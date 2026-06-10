@@ -104,6 +104,41 @@ class ChatThreadStore:
         )
         self._conn.commit()
 
+    def append_plan_card(self, thread_id: str, task_id: str, plan_markdown: str) -> bool:
+        """Append a plan version to a task's transcript, building a version history.
+
+        Each feedback round produces a new plan; appending (rather than replacing)
+        preserves the evolution — old plan, then ``↻ feedback`` breadcrumb, then the
+        new plan. To honour "no duplicate", a write identical to the task's CURRENT
+        latest plan_card is skipped (collapses the double-writer / re-presentation).
+        Returns True only when a card was actually appended — lets the caller
+        broadcast the live append exactly once per version.
+        """
+        row = self._conn.execute(
+            "SELECT messages_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        messages: list[dict] = json.loads(row["messages_json"])
+        latest = None
+        for msg in messages:
+            if msg.get("type") == "plan_card" and msg.get("task_id") == task_id:
+                latest = msg
+        if latest is not None and latest.get("content") == plan_markdown:
+            return False  # identical to the current latest version — no duplicate
+        messages.append(
+            ChatMessage(
+                role="agent", content=plan_markdown, type="plan_card", task_id=task_id,
+                metadata={"taskId": task_id, "plan_markdown": plan_markdown},
+            ).model_dump(mode="json")
+        )
+        self._conn.execute(
+            "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
+            (json.dumps(messages), thread_id),
+        )
+        self._conn.commit()
+        return True
+
     def update_title(self, thread_id: str, title: str) -> None:
         self._conn.execute(
             "UPDATE chat_threads SET title = ? WHERE thread_id = ?", (title, thread_id)

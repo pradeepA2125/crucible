@@ -163,6 +163,30 @@ async def test_plan_approval_breadcrumb(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_breadcrumb_is_broadcast_live(tmp_path: Path) -> None:
+    """A breadcrumb must be pushed over the task channel, not only persisted.
+
+    The open chat stream (streamTaskIntoChatThread) subscribes to the task channel.
+    Without a live broadcast the breadcrumb is invisible until the thread is reloaded.
+    """
+    ws = tmp_path / "ws"; ws.mkdir()
+    orch, _chat_store, thread_id = _make(tmp_path)
+    task = await _seed_executing(orch, thread_id, ws)
+
+    orch._write_chat_breadcrumb(task, "✓ Step changes accepted: foo")
+
+    queue = orch.broadcaster.subscribe(task.task_id)
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    assert any(
+        e.get("type") == "chat_breadcrumb"
+        and "accepted" in e.get("payload", {}).get("text", "").lower()
+        for e in events
+    ), f"no live chat_breadcrumb broadcast; saw {[e.get('type') for e in events]}"
+
+
+@pytest.mark.asyncio
 async def test_step_gate_breadcrumb(tmp_path: Path) -> None:
     ws = tmp_path / "ws"; ws.mkdir()
     shadow = tmp_path / "shadow"; shadow.mkdir()
