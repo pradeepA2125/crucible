@@ -1,17 +1,38 @@
 # TurboQuant Plus — Qwen 3.6 Compatibility Notes
 
-**Model:** Qwen3.6 35B-A3B Q4_K_M (Ollama blob, sha256-f5ee307a...)  
-**Server:** TheTom/llama-cpp-turboquant, branch `feature/turboquant-kv-cache`, tag `feature-turboquant-kv-cache-b9082`  
-**Build:** macOS M3 Pro, Metal + CPU, built from source  
-**Result:** 34.2 t/s decode with turbo3 V-cache + q8_0 K-cache vs 22.0 t/s on Ollama (1.56×)
+**Model:** Qwen3.6 35B-A3B Q4_K_M (Ollama blob, `sha256-f5ee307a…`)
+**Server:** TheTom/llama-cpp-turboquant, branch `feature/turboquant-kv-cache`
+**Build:** macOS M3 Pro, Metal + CPU, built from source
+**Result:** loads and runs with turbo3 V-cache + q8_0 K-cache. ~34 t/s decode vs ~22 t/s on Ollama (1.56×).
+
+> **IMPORTANT — build location.** Do NOT keep the checkout/build under `/tmp` — macOS prunes it
+> and you lose the patched source *and* the compiled binary on reboot. Use a persistent path.
+> These notes use `~/tqp-src`. `scripts/start-tqp.sh` defaults `LLAMA_SERVER` to
+> `$HOME/tqp-src/build/bin/llama-server`.
 
 ---
 
-## Background
+## Two layers of setup
 
-The pre-built binary from atomicmilkshake/llama-cpp-turboquant is a different fork — CUDA-only, Windows/Linux. For macOS Metal you must build from TheTom's source at `feature/turboquant-kv-cache`.
+Getting Qwen3.6 working on TurboQuant requires changes in **two** places:
 
-The Ollama-distributed Qwen3.6 GGUF is a **combined text+vision model** (Qwen3.6-VL). It uses a newer GGUF format introduced after April 16 2026 with several breaking changes vs what the TheTom fork expected. Five separate bugs had to be fixed before the model loaded and ran correctly.
+1. **The llama-server fork** (`~/tqp-src`) — 5 C++ source patches so the `qwen35moe`
+   architecture (a hybrid SSM + full-attention MoE, shipped as a combined text+vision GGUF) loads.
+2. **agentd config** (`.env`) — select the **qwen3 transport profile**, or every call returns
+   empty content.
+
+Both are mandatory. The fork patches make the model *load*; the profile makes it *answer*.
+
+---
+
+## Source layout note (why old patch line numbers don't match)
+
+This fork is a **recent llama.cpp** that moved each architecture into its own file under
+`src/models/`. All QWEN35MOE model code — hparam load, tensor load, and graph builders — lives in
+**`src/models/qwen35moe.cpp`** (the `new llama_model_qwen35moe(params)` dispatch in
+`src/llama-model.cpp`). Earlier notes that referenced `src/llama-model.cpp:~2822/~7563` were
+against the old monolithic layout and no longer apply. Verify each site by content (grep), not by
+line number.
 
 ---
 
@@ -19,9 +40,9 @@ The Ollama-distributed Qwen3.6 GGUF is a **combined text+vision model** (Qwen3.6
 
 ```bash
 git clone --depth=1 --branch feature/turboquant-kv-cache \
-  https://github.com/TheTom/llama-cpp-turboquant /tmp/tqp-src
+  https://github.com/TheTom/llama-cpp-turboquant "$HOME/tqp-src"
 
-mkdir /tmp/tqp-src/build && cd /tmp/tqp-src/build
+mkdir -p "$HOME/tqp-src/build" && cd "$HOME/tqp-src/build"
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_METAL=ON \
@@ -32,223 +53,215 @@ cmake .. \
 cmake --build . --target llama-server -j$(sysctl -n hw.logicalcpu)
 ```
 
+After applying the patches below, rebuild with just the last line (incremental — only
+`qwen35moe.cpp` and the loader recompile).
+
 ---
 
-## Patch 1 — ROPE dimension sections array length
+## Fork patches — all in `src/models/qwen35moe.cpp` unless noted
 
-**File:** `src/llama-model.cpp`  
-**Error:**
-```
-key qwen35moe.rope.dimension_sections has wrong array length; expected 4, got 3
-```
+The model fails to load through five sequential errors. Apply all five, then rebuild once.
 
-**Root cause:** The Qwen3.6 GGUF stores `rope.dimension_sections` as a 3-element array `[11, 11, 10]` (sums to 32 = half the head dim of 64). The code was calling `get_key_or_arr(..., n=4, ...)` requiring exactly 4 elements.
+### Patch 1 — ROPE dimension sections array length
 
-**Fix:**
+**Error:** `key qwen35moe.rope.dimension_sections has wrong array length; expected 4, got 3`
+
+The Qwen3.6 GGUF stores `rope.dimension_sections` as a **3-element** array (imrope), but
+`load_arch_hparams` requested 4.
+
 ```cpp
-// src/llama-model.cpp  ~line 2822
+// src/models/qwen35moe.cpp — load_arch_hparams()
 // Before:
 ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS, hparams.rope_sections, 4, true);
 // After:
 ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS, hparams.rope_sections, 3, true);
 ```
 
----
+(`hparams.rope_sections` is a fixed 4-slot array zero-initialised elsewhere; loading 3 leaves the
+4th as 0, which the imrope copy at the graph sites expects.)
 
-## Patch 2 — ssm_dt tensor name (missing .bias suffix)
+### Patch 2 — ssm_dt tensor name (no `.bias` suffix)
 
-**File:** `src/llama-model.cpp`  
-**Error:**
-```
-missing tensor 'blk.0.ssm_dt.bias'
-```
+**Error:** `missing tensor 'blk.0.ssm_dt.bias'`
 
-**Root cause:** For the QWEN35MOE architecture (the recurrent/SSM layers), the GGUF has a tensor named `blk.{i}.ssm_dt` with no `.bias` suffix. The loader was calling `tn(LLM_TENSOR_SSM_DT, "bias", i)` which appended `.bias` to the name.
+For the recurrent (gated-delta-net) layers the GGUF names the tensor `blk.{i}.ssm_dt` with no
+`.bias`. The loader appended `.bias`.
 
-Note: `QWEN3NEXT` (line ~7501) and `QWEN35` (line ~7626) cases use the `.bias` form correctly for their own variants — only QWEN35MOE was wrong.
-
-**Fix:**
 ```cpp
-// src/llama-model.cpp  ~line 7563 (QWEN35MOE block only)
+// src/models/qwen35moe.cpp — load_arch_tensors(), recurrent branch
 // Before:
-layer.ssm_dt = create_tensor(tn(LLM_TENSOR_SSM_DT, "bias", i), { hparams.ssm_dt_rank }, 0);
+layer.ssm_dt = create_tensor(tn(LLM_TENSOR_SSM_DT, "bias", il), { hparams.ssm_dt_rank }, flags);
 // After:
-layer.ssm_dt = create_tensor(tn(LLM_TENSOR_SSM_DT, i), { hparams.ssm_dt_rank }, 0);
+layer.ssm_dt = create_tensor(tn(LLM_TENSOR_SSM_DT, il), { hparams.ssm_dt_rank }, flags);
 ```
 
----
+### Patch 3 — per-layer KV head count in the tensor loader
 
-## Patch 3 — Per-layer KV head count in tensor loader
+**Error:** `attn_k.weight shape mismatch: expected [2048, 0], got [2048, 512]`
 
-**File:** `src/llama-model.cpp`  
-**Error:**
-```
-attn_k.weight shape mismatch: expected [2048, 0], got [2048, 512]
-```
+Qwen3.6 is hybrid: recurrent layers have `n_head_kv = 0`, full-attention layers have `n_head_kv = 2`,
+stored as a per-layer array. The `LLAMA_LOAD_LOCALS` globals `n_embd_k_gqa`/`n_embd_v_gqa` resolve to
+layer 0 (recurrent → 0), so full-attention tensors were allocated with size 0. Use the **per-layer**
+accessors. There are two call sites — the trunk full-attention block and the MTP block:
 
-**Root cause:** Qwen3.6 is a hybrid model — recurrent (SSM) layers have `n_head_kv = 0` and full-attention layers have `n_head_kv = 2`. The GGUF stores this as a per-layer array `[0,0,0,2,0,0,0,2,...]`. The global `n_head_kv()` (no layer arg) returns the value for layer 0 = 0. The tensor creation code was using this global value for all layers, so full-attention layer tensors were being allocated with size 0 when they actually need size 512 (= 256 × 2).
-
-**Fix:**
 ```cpp
-// src/llama-model.cpp  ~lines 7549-7556 (QWEN35MOE full-attention block)
+// src/models/qwen35moe.cpp — both create_tensor_qkv(...) calls
 // Before:
-if (!hparams.is_recurrent(i)) {
-    create_tensor_qkv(layer, i, n_embd, n_embd_head_k * n_head * 2,
-                      n_embd_k_gqa, n_embd_v_gqa, 0);
-    ...
-}
+create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2, n_embd_k_gqa, n_embd_v_gqa, flags);
 // After:
-if (!hparams.is_recurrent(i)) {
-    const int64_t n_embd_k_gqa_i = hparams.n_embd_k_gqa(i);
-    const int64_t n_embd_v_gqa_i = hparams.n_embd_v_gqa(i);
-    create_tensor_qkv(layer, i, n_embd, n_embd_head_k * n_head * 2,
-                      n_embd_k_gqa_i, n_embd_v_gqa_i, 0);
-    ...
-}
+create_tensor_qkv(layer, il, n_embd, n_embd_head_k * n_head * 2,
+                  hparams.n_embd_k_gqa(il), hparams.n_embd_v_gqa(il), flags);
 ```
 
----
+(The MTP-block call uses `0` instead of `flags` as the last arg — apply the same `(il)` change there.)
 
-## Patch 4 — Vision encoder tensor count mismatch
+### Patch 4 — partial load for the vision-encoder tensors
 
-**File:** `src/llama-model-loader.cpp`  
-**Error:**
-```
-done_getting_tensors: wrong number of tensors; expected 1194, got 733
-```
+**Error:** `done_getting_tensors: wrong number of tensors; expected 1194, got 733`
 
-**Root cause:** The Ollama Qwen3.6 GGUF is a combined text+vision model containing 1194 tensors: ~733 text model tensors (`blk.*`) and ~461 vision encoder tensors (`v.blk.*`). The QWEN35MOE loading path only registers text tensors. The strict equality check `n_created != n_tensors` then fails because 733 ≠ 1194.
+The Ollama Qwen3.6 GGUF is a **combined text+vision** model: ~733 text tensors (`blk.*`) + ~461
+vision tensors (`v.blk.*`). The text loader only registers the text tensors.
 
-**Fix:** Change strict equality to allow the file to contain more tensors than registered (extra tensors are harmlessly skipped):
+This fork's loader **already supports** a partial mode —
+`llama_model_loader::done_getting_tensors(bool partial)` only throws on `n_created < n_tensors`
+when `partial == false`. The fix is to pass `partial = true` for this architecture at the call site:
 
 ```cpp
-// src/llama-model-loader.cpp  line 1319
+// src/llama-model.cpp — after the model's tensor-load loop (~line 1409)
 // Before:
-void llama_model_loader::done_getting_tensors() const {
-    if (n_created != n_tensors) {
-        throw std::runtime_error(format("...expected %d, got %d", n_tensors, n_created));
-    }
+ml.done_getting_tensors();
 // After:
-void llama_model_loader::done_getting_tensors() const {
-    if (n_created > n_tensors) {
-        throw std::runtime_error(format("...expected %d, got %d", n_tensors, n_created));
-    }
-    if (n_created < n_tensors) {
-        LLAMA_LOG_INFO("%s: %d tensors in file not registered (e.g. vision encoder in text-only mode)\n",
-                       __func__, n_tensors - n_created);
-    }
+ml.done_getting_tensors(arch == LLM_ARCH_QWEN35MOE);
 ```
 
----
+(Scoped to QWEN35MOE so strict tensor-count checking is preserved for every other architecture.)
 
-## Patch 5 — Per-layer KV head count in graph builder
+### Patch 5 — per-layer KV head count in the graph builders
 
-**File:** `src/models/qwen35moe.cpp`  
-**Error:**
-```
-/tmp/tqp-src/ggml/src/ggml.c:3675: GGML_ASSERT(ggml_nelements(a) == ne0*ne1*ne2) failed
-```
-Stack: `ggml_reshape_3d` ← `llm_build_qwen35moe::build_layer_attn`
+**Error:** `GGML_ASSERT(ggml_nelements(a) == ne0*ne1*ne2) failed` in `ggml_reshape_3d`,
+from the attention graph builder.
 
-**Root cause:** The graph context member `n_head_kv` is initialised from `hparams.n_head_kv(0)` (layer 0 default) which is 0 for this hybrid model. `build_layer_attn` is only called for full-attention layers (where the per-layer value is 2), but it used the stale global `n_head_kv = 0` when reshaping `Kcur` and `Vcur`:
+The graph-context global `n_head_kv` is `hparams.n_head_kv(0)` = 0 (layer 0 is recurrent). The K/V
+reshapes in the full-attention builders used that stale global. There are **two** builders
+(`build_layer_attn` for the trunk, and the MTP builder), each with a K reshape and a V reshape —
+four sites total:
 
 ```cpp
-Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);  // n_head_kv = 0 → assert fail
-```
-
-**Fix:**
-```cpp
-// src/models/qwen35moe.cpp  ~line 148
+// src/models/qwen35moe.cpp — all four ggml_reshape_3d K/V sites
 // Before:
 Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
-...
 Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
 // After:
-const int64_t n_head_kv_il = hparams.n_head_kv(il);
-Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv_il, n_tokens);
-...
-Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv_il, n_tokens);
+Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, hparams.n_head_kv(il), n_tokens);
+Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, hparams.n_head_kv(il), n_tokens);
 ```
+
+(`hparams` is a member of the graph context, so `hparams.n_head_kv(il)` is in scope.)
 
 ---
 
-## Starting the Server
+## Starting the server
 
-The server must be started with `-fit off` (disables the device-memory fitting probe, which internally calls `llama_init_from_model` and would hit the same `build_layer_attn` path before the graph is actually needed):
+Must be started with `-fit off` (the device-memory fitting probe internally builds the graph and
+would hit the per-layer KV path before the real graph is needed). `scripts/start-tqp.sh` encodes
+all flags. To serve Qwen3.6, point it at the Ollama GGUF blob:
 
 ```bash
-/tmp/tqp-src/build/bin/llama-server \
-  -m ~/.ollama/models/blobs/sha256-f5ee307a... \
-  --port 11435 \
-  --host 127.0.0.1 \
-  -c 65536 \
-  -np 1 \
-  --n-gpu-layers 99 \
-  --flash-attn on \
-  -ctk q8_0 \
-  --cache-type-v turbo3 \
-  --jinja \
-  -fit off
+GGUF="$HOME/.ollama/models/blobs/sha256-f5ee307a2982106a6eb82b62b2c00b575c9072145a759ae4660378acda8dcf2d" \
+  bash scripts/start-tqp.sh
 ```
 
-Use the `scripts/start-tqp.sh` convenience script which encodes these flags.
+Find the blob digest for any Ollama model from its tag manifest:
+`~/.ollama/models/manifests/registry.ollama.ai/library/<model>/<tag>` → the `model`-mediaType layer's
+`digest` → `~/.ollama/models/blobs/sha256-<digest>`.
 
-Key flags:
-- `-ctk q8_0` — K-cache in int8 (reduces KV memory, faster bandwidth)
-- `--cache-type-v turbo3` — V-cache in TurboQuant 3-bit format (~3× compression)
-- `-np 1` — single slot; maximises available context per conversation
-- `-c 65536` — 65k context window (462 MiB KV vs 58 MiB at 8k)
-- `-fit off` — skip device-memory probe that triggers an early graph build
+Key flags (in the script): `-c 65536`, `-np 1`, `--n-gpu-layers 99`, `--flash-attn on`,
+`-ctk q8_0`, `--cache-type-v turbo3`, `--jinja`, `-fit off`.
 
----
-
-## Transport — Structured Output Issue
-
-After the server was running, the agentd `TurboQuantTransport` hit a separate class of issue when making JSON structured-output calls.
-
-### Problem: `json_schema` traps thinking in an infinite loop
-
-The initial transport used `response_format: {type: "json_schema", json_schema: {...}, strict: true}`. Qwen3.6 is a thinking model — it emits `<think>...</think>` tokens before the answer. llama-server routes these to `reasoning_content` and routes the grammar-constrained output to `content`.
-
-With `json_schema` strict grammar active, the model cannot emit `</think>` because it is not valid JSON. The grammar blocks the close tag, so the model loops in thinking indefinitely. A single call generated 14,100 tokens with no end.
-
-**Fix:** Switch to `response_format: {type: "json_object"}`. With `json_object` there is no grammar constraint, so the model can freely emit and close `</think>`, then output the JSON object into `content`. Schema compliance is enforced via the system prompt instead.
-
-### Problem: `max_tokens: -1` ignored by llama-server
-
-`-1` is not a valid value in the OpenAI-compatible endpoint — llama-server silently falls back to its CLI `-n` default (was 1024). When the thinking phase exceeds the budget, `content` is empty and the call fails. Server now launched without `-n` (unlimited), and the transport omits `max_tokens` entirely so there is no cap.
-
-### Problem: `reasoning_content` fallback for `content`
-
-In some edge cases `content` can be empty even when the call succeeds (e.g. if the model finishes in thinking phase but the JSON is the last thing emitted). `_extract_text` now scans `reasoning_content` for a trailing JSON object as a last resort.
+Verify: `curl -s localhost:11435/v1/models` lists the served blob, and a non-empty completion comes
+back (use a generous `max_tokens` — see the profile note; a tiny cap traps the thinking phase).
 
 ---
 
-## Route Bug — `content` vs `message` key
+## agentd config — the transport profile (MANDATORY)
 
-The chat message route in `api/routes.py` was reading `request.get("message", "")` but every client sends `{"content": "..."}`. This silently stored empty strings for every user message, so the model always saw an empty conversation and replied "Please provide a query".
+The transport profile is selected by **`TURBOQUANT_MODEL_FAMILY`** (read by
+`TurboQuantTransport.from_env()` in `agentd/providers/turboquant_transport.py`), **not** by
+`AI_EDITOR_TURBOQUANT_MODEL` (which is only the request label and is ignored by a single-model
+llama-server).
 
-**Fix:**
-```python
-# api/routes.py
-# Before:
-message = request.get("message", "")
-# After:
-message = request.get("content") or request.get("message", "")
+`.env`:
+```bash
+AI_EDITOR_TURBOQUANT_MODEL="qwen3.6:35b-a3b-q4_K_M"   # label only (log clarity)
+TURBOQUANT_MODEL_FAMILY=qwen3                          # selects the PROFILE — required
+TURBOQUANT_THINKING_BUDGET=8192                        # >0 enables the <think> block
 ```
 
+If `TURBOQUANT_MODEL_FAMILY` is unset it defaults to **`devstral`**, which uses devstral sampling
+(temp 0.3, top_k 40) instead of Qwen's (temp 0.6, top_k 20) and has no thinking hook → Qwen3.6 thinks
+unbounded and `content` comes back empty. The `qwen3` profile (`Qwen3Profile`) is required.
+
+**Thinking control** — `TURBOQUANT_THINKING_BUDGET` (env override for the profile's `thinking_budget`):
+- `0` → `chat_template_kwargs.enable_thinking=False`; the model emits the JSON answer directly, no
+  `<think>` block. Fastest; lowest reasoning quality.
+- `>0` → `enable_thinking=True, preserve_thinking=True, thinking_budget_tokens=N`; the model reasons
+  in a `<think>` block then emits JSON. Reasoning streams via `reasoning_content`, separate from the
+  JSON in `content`.
+
+  ⚠ **This llama-server build does NOT honor `thinking_budget_tokens` as a cap.** Observed: with
+  N=8192 the model decoded 12k+ reasoning tokens and kept going toward the `TURBOQUANT_MAX_TOKENS`
+  ceiling (32768) — i.e. it only self-terminates, the budget is ignored. So `thinking_budget` is
+  effectively an **on/off switch**, not a cap. On a bandwidth-bound M3 Pro (~20 t/s at long context)
+  a single think can take 10-20 min, stalling the tool loop. **Recommended: keep thinking OFF
+  (`=0`) for the agent loop** until the build enforces the budget (or speculative decoding is added).
+  Enable only for one-shot, latency-tolerant calls.
+
+This works **only** with `response_format: {type: "json_object"}` (the transport's setting). A strict
+`json_schema` grammar blocks the model from emitting `</think>` and traps it in thinking — see the
+transport section below.
+
+Switch back to devstral by setting `MODEL_FAMILY=devstral` (the thinking budget is then ignored).
+
 ---
 
-## Benchmark Results
+## Transport — structured output (already implemented)
 
-Hardware: Apple M3 Pro, 36 GB unified memory  
-Model: Qwen3.6 35B-A3B Q4_K_M (same weights, same binary GGUF)  
-Method: 5 unique prompts after one warm-up round (warm-up discarded)
+These were resolved in `turboquant_transport.py` and are noted for completeness:
+
+- **`json_object`, not `json_schema`.** A strict `json_schema` grammar blocks the model from emitting
+  `</think>`, trapping it in thinking. The transport uses `response_format: {type: "json_object"}`
+  and enforces the schema via the system prompt. (`use_json_object=True`.)
+- **No tight `max_tokens`.** `-1` is silently ignored by llama-server (falls back to the CLI `-n`
+  default). The transport sends a large cap (`_DEFAULT_MAX_TOKENS=32768`, overridable via
+  `TURBOQUANT_MAX_TOKENS`) so the answer is never truncated. With the qwen3 profile disabling
+  thinking, headroom is ample regardless.
+- **`reasoning_content` separated from `content`.** The streaming handler routes
+  `delta.reasoning_content` to the thinking channel and `delta.content` to the answer, returning
+  `(thinking, content)`.
+
+---
+
+## Route note — `content` vs `message`
+
+The chat message route reads `request.get("content") or request.get("message", "")`. Clients send
+`{"content": "..."}`; reading only `message` silently stored empty user turns.
+
+---
+
+## Benchmark
+
+Hardware: Apple M3 Pro, 36 GB unified memory. Model: Qwen3.6 35B-A3B Q4_K_M (same GGUF, same binary).
+5 unique prompts after a discarded warm-up.
 
 | Backend | Avg decode | KV cache format |
-|---------|-----------|-----------------|
-| TurboQuant (turbo3+q8_0) | **34.2 t/s** | V: turbo3 (~3-bit), K: q8_0 |
-| Ollama (default) | 22.0 t/s | V: f16, K: f16 |
+|---|---|---|
+| TurboQuant (turbo3 + q8_0) | **~34 t/s** | V: turbo3 (~3-bit), K: q8_0 |
+| Ollama (default) | ~22 t/s | V: f16, K: f16 |
 | **Speedup** | **1.56×** | — |
 
-The gain is purely from reduced KV-cache memory bandwidth during decode. The V-cache is read on every token for every attention layer — compressing it 3× means proportionally less data moved per token.
+The gain is reduced KV-cache memory bandwidth during decode (the V-cache is read every token for
+every attention layer; ~3× compression → proportionally less data moved).
+
+Note: token *generation* is memory-bandwidth-bound on the M3 Pro (~150 GB/s); the GPU compute is
+underutilised during decode regardless of backend. Speculative decoding (a small draft model) is the
+lever to reclaim that idle compute — not currently configured.

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Start the TurboQuant llama-server (TheTom/llama-cpp-turboquant, feature/turboquant-kv-cache).
-# Model: Qwen3.6 35B-A3B Q4_K_M from Ollama blob store.
+# Model: Devstral Small 2 24B Q4_K_XL (unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF).
 # Context: 65536 tokens, single slot, turbo3 V-cache, q8_0 K-cache.
 set -euo pipefail
 
-LLAMA_SERVER="${LLAMA_SERVER:-/tmp/tqp-src/build/bin/llama-server}"
-GGUF="${GGUF:-$HOME/.ollama/models/blobs/sha256-f5ee307a2982106a6eb82b62b2c00b575c9072145a759ae4660378acda8dcf2d}"
+LLAMA_SERVER="${LLAMA_SERVER:-$HOME/tqp-src/build/bin/llama-server}"
+GGUF="${GGUF:-$HOME/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf}"
 PORT="${TURBOQUANT_PORT:-11435}"
 CTX="${TURBOQUANT_CTX:-65536}"
 LOG="${TURBOQUANT_LOG:-/tmp/tqp-server.log}"
 
 if [[ ! -x "$LLAMA_SERVER" ]]; then
   echo "llama-server not found at $LLAMA_SERVER" >&2
-  echo "Build it: cd /tmp/tqp-src/build && cmake --build . --target llama-server -j$(sysctl -n hw.logicalcpu)" >&2
+  echo "Build it: cd $HOME/tqp-src/build && cmake --build . --target llama-server -j$(sysctl -n hw.logicalcpu)" >&2
   exit 1
 fi
 
