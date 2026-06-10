@@ -181,6 +181,49 @@ async def test_planning_loop_bails_after_consecutive_malformed(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_planning_loop_recovers_from_empty_plan_markdown(tmp_path: Path):
+    """An emit_plan with empty plan_markdown (qwen3 thinking exhausts the token budget)
+    must be corrected and retried, NOT hard-fail the task."""
+    engine = ScriptedPlanningEngine([
+        {  # truncated: emit_plan but plan_markdown empty
+            "type": "emit_plan", "thought": "truncated",
+            "plan_markdown": "", "files_examined": [], "confidence": "medium",
+        },
+        {  # recovered
+            "type": "emit_plan", "thought": "ok",
+            "plan_markdown": "# Plan\n- step 1", "files_examined": [], "confidence": "medium",
+        },
+    ])
+    loop = PlanningLoop(
+        reasoning_engine=engine,
+        registry=_make_registry(tmp_path),
+        broadcaster=_make_broadcaster(),
+        task_id="t1",
+    )
+    result = await loop.run({"goal": "test", "workspace_path": str(tmp_path)}, TaskBudget())
+    assert isinstance(result, PlanningResult)
+    assert result.plan_markdown == "# Plan\n- step 1"
+
+
+@pytest.mark.asyncio
+async def test_planning_loop_bails_after_consecutive_empty_plan_markdown(tmp_path: Path):
+    """If plan_markdown is empty every time, fail gracefully after the cap — but only
+    after retrying, not on the first occurrence."""
+    engine = ScriptedPlanningEngine([
+        {"type": "emit_plan", "thought": "", "plan_markdown": "",
+         "files_examined": [], "confidence": "medium"},
+    ])  # always empty
+    loop = PlanningLoop(
+        reasoning_engine=engine,
+        registry=_make_registry(tmp_path),
+        broadcaster=_make_broadcaster(),
+        task_id="t1",
+    )
+    with pytest.raises(PlanningBudgetExceededError):
+        await loop.run({"goal": "test", "workspace_path": str(tmp_path)}, TaskBudget())
+
+
+@pytest.mark.asyncio
 async def test_planning_loop_emit_revision(tmp_path: Path):
     engine = ScriptedPlanningEngine([
         {

@@ -279,3 +279,82 @@ async def test_plan_patch_feedback_rounds_are_append_only(tmp_path: Path) -> Non
     h2 = engine.histories[2]
 
     assert h2[: len(h1)] == h1
+
+
+# --- emit_plan_patch trace recording (artifact visibility) ---
+def _read_feedback_trace(task: TaskRecord) -> dict[str, object]:
+    import json
+
+    from agentd.runtime.artifacts import task_artifacts_root
+
+    path = task_artifacts_root(task.task_id, task.workspace_path) / "planning-trace-feedback.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.asyncio
+async def test_successful_plan_patch_is_recorded_in_trace(tmp_path: Path) -> None:
+    """A successful emit_plan_patch must surface in planning-trace-feedback.json — it is
+    not a tool_call, so without explicit recording the artifact would be empty."""
+    engine = _PatchEmittingEngine()
+    orchestrator, _r, task = await _make_orchestrator(tmp_path, reasoner=engine)
+
+    await orchestrator.run_task(task.task_id)
+    await orchestrator.continue_task(task.task_id, feedback="tweak the helper")
+
+    trace = _read_feedback_trace(task)
+    calls = [c for c in trace["calls"] if c["tool_name"] == "emit_plan_patch"]
+    results = [r for r in trace["results"] if r["tool_name"] == "emit_plan_patch"]
+    assert len(calls) == 1
+    assert calls[0]["arguments"]["ops"][0]["op"] == "search_replace"
+    assert len(results) == 1
+    assert results[0]["is_error"] is False
+    assert "APPLIED" in results[0]["output"]
+
+
+class _FailingPatchEngine:
+    """emit_plan on round 1; a non-matching emit_plan_patch on feedback (preflight fails)."""
+
+    async def create_planning_step(
+        self,
+        plan_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        on_thinking: object = None,
+        state_description: str = "",
+        allowed_action_types: frozenset[str] | None = None,
+    ) -> dict[str, object]:
+        _ = (tool_definitions, on_thinking, state_description, allowed_action_types)
+        is_feedback = any("gave this feedback" in str(m.get("content", "")) for m in history)
+        already_failed = any("PLAN PATCH FAILED" in str(m.get("content", "")) for m in history)
+        if is_feedback and plan_context.get("allow_plan_patch") and not already_failed:
+            return {
+                "type": "emit_plan_patch",
+                "thought": "bad search",
+                "ops": [{"op": "search_replace", "search": "TEXT THAT DOES NOT EXIST",
+                         "replace": "x", "reason": "feedback"}],
+            }
+        return {
+            "type": "emit_plan", "thought": "stub",
+            "plan_markdown": "# Plan\n\n- Create helper",
+            "files_examined": [], "confidence": "high",
+        }
+
+
+@pytest.mark.asyncio
+async def test_failed_plan_patch_is_recorded_in_trace(tmp_path: Path) -> None:
+    """A rejected emit_plan_patch must surface as an is_error result in the trace, then
+    the loop falls back to emit_plan (graceful degradation)."""
+    engine = _FailingPatchEngine()
+    orchestrator, _r, task = await _make_orchestrator(tmp_path, reasoner=engine)
+
+    await orchestrator.run_task(task.task_id)
+    await orchestrator.continue_task(task.task_id, feedback="tweak the helper")
+
+    refreshed = await orchestrator._store.get(task.task_id)
+    assert refreshed.status == TaskStatus.AWAITING_PLAN_APPROVAL  # fell back, did not crash
+
+    trace = _read_feedback_trace(task)
+    failed = [r for r in trace["results"]
+              if r["tool_name"] == "emit_plan_patch" and r["is_error"]]
+    assert len(failed) == 1
+    assert "FAILED" in failed[0]["output"]

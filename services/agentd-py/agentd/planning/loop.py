@@ -205,10 +205,32 @@ class PlanningLoop:
             if action_type == "emit_plan":
                 plan_markdown = response.get("plan_markdown")
                 if not plan_markdown or not str(plan_markdown).strip():
-                    raise PlanningBudgetExceededError(
-                        f"emit_plan response missing or empty 'plan_markdown' at iteration {iteration}",
-                        partial_trace=trace,
+                    # An empty plan_markdown is usually a truncated response (the model's
+                    # reasoning exhausted the token budget), not a fatal error. Correct
+                    # and retry like a malformed response; only bail after repeated misses.
+                    _consecutive_malformed += 1
+                    if _consecutive_malformed > _MAX_MALFORMED:
+                        raise PlanningBudgetExceededError(
+                            f"emit_plan returned empty 'plan_markdown' {_consecutive_malformed} "
+                            f"times (last at iteration {iteration})",
+                            partial_trace=trace,
+                        )
+                    logger.warning(
+                        "[plan] iter=%d/%d  emit_plan EMPTY plan_markdown (%d/%d) — injecting correction",
+                        iteration + 1, max_calls, _consecutive_malformed, _MAX_MALFORMED,
                     )
+                    history.append(_assistant_turn(response))
+                    history.append({
+                        "role": "tool_result", "tool": "",
+                        "content": (
+                            "Your emit_plan had an empty 'plan_markdown' — the response was likely "
+                            "truncated (reasoning consumed the token budget). Re-emit "
+                            "type='emit_plan' with the FULL plan_markdown now, and keep it concise: "
+                            "describe each step in prose, avoid long verbatim code blocks."
+                        ),
+                    })
+                    continue
+                _consecutive_malformed = 0
                 files_examined = list(response.get("files_examined", []))
                 confidence = str(response.get("confidence", "medium"))
                 if confidence not in ("high", "medium", "low"):
@@ -265,6 +287,12 @@ class PlanningLoop:
                 scratch = plan_context.get("plan_patch_scratch_dir")
                 raw_ops = response.get("ops")
                 ops = raw_ops if isinstance(raw_ops, list) else []
+                # Record the patch attempt in the trace so the artifact reflects it —
+                # emit_plan_patch is not a tool_call, so without this it would be invisible.
+                patch_call_id = f"plan-{uuid4().hex[:8]}"
+                trace.calls.append(ToolCall(
+                    call_id=patch_call_id, tool_name="emit_plan_patch", arguments={"ops": ops},
+                ))
                 try:
                     new_plan = await apply_plan_patch(
                         current_plan, ops, scratch_dir=Path(str(scratch))
@@ -274,6 +302,10 @@ class PlanningLoop:
                     logger.warning(
                         "[plan] iter=%d/%d  PLAN PATCH FAILED: %s", iteration + 1, max_calls, exc
                     )
+                    trace.results.append(ToolResult(
+                        call_id=patch_call_id, tool_name="emit_plan_patch",
+                        output=f"PLAN PATCH FAILED: {exc}", is_error=True,
+                    ))
                     history.append(_assistant_turn(response))
                     history.append({
                         "role": "tool_result", "tool": "",
@@ -284,6 +316,11 @@ class PlanningLoop:
                         ),
                     })
                     continue
+                trace.results.append(ToolResult(
+                    call_id=patch_call_id, tool_name="emit_plan_patch",
+                    output=f"PLAN PATCH APPLIED: {len(ops)} op(s); new plan {len(new_plan)} chars",
+                    is_error=False,
+                ))
                 self._broadcast({
                     "type": "planning_complete",
                     "payload": {"files_examined": [], "confidence": "medium", "patched": True},
