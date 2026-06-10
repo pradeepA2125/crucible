@@ -366,7 +366,135 @@ async def test_step_started_fires_with_correct_index(tmp_path: Path) -> None:
     assert payloads[0]["step_id"] == "s1"
     assert payloads[0]["step_index"] == 1
     assert payloads[0]["total_steps"] == 2
+    # Test 3: step_title is the step's goal text (truncated to 120 chars)
+    assert payloads[0]["step_title"] == _TwoStepReasoningEngine.PLAN["steps"][0]["goal"][:120]
 
     assert payloads[1]["step_id"] == "s2"
     assert payloads[1]["step_index"] == 2
     assert payloads[1]["total_steps"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — explore_tool_result error branch: registry.execute raises
+# ---------------------------------------------------------------------------
+
+
+class _ErrorRaisingRegistry:
+    """A registry stub whose execute() raises for a chosen tool name."""
+
+    def __init__(self, raise_for: str, exc: Exception) -> None:
+        self._raise_for = raise_for
+        self._exc = exc
+
+    async def execute(self, name: str, args: dict) -> object:
+        if name == self._raise_for:
+            raise self._exc
+        # Should not be reached in this test — but fail loudly if it is.
+        raise AssertionError(f"Unexpected tool call: {name}")
+
+    def blast_radius(self, _paths: list) -> list:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_explore_tool_result_error_branch(tmp_path: Path) -> None:
+    """When registry.execute() raises, an explore_tool_result with is_error=True is broadcast."""
+    store = ChatThreadStore(tmp_path / "chat.db")
+    broadcaster = EventBroadcaster()
+    queue = broadcaster.subscribe("ch-err")
+
+    # Transport: one tool_call for list_directory, then done
+    agent = ChatAgent(
+        workspace_path=str(tmp_path),
+        transport=_OneToolExploreTransport(),
+        model="test-model",
+        thread_store=store,
+        orchestrator=None,
+        broadcaster=broadcaster,
+    )
+    exc_text = "simulated registry failure"
+    # Swap in the error-raising registry AFTER construction so the agent uses it
+    agent._registry = _ErrorRaisingRegistry(  # type: ignore[assignment]
+        raise_for="list_directory",
+        exc=RuntimeError(exc_text),
+    )
+
+    thread = store.create_thread(str(tmp_path))
+    await agent.handle_message(thread.thread_id, "What files are here?", channel_id="ch-err")
+
+    events = _drain(queue)
+    types = [e["type"] for e in events]
+
+    # explore_tool_call must still be emitted (it fires BEFORE execute())
+    assert "explore_tool_call" in types, f"explore_tool_call missing from {types}"
+
+    # explore_tool_result must be emitted with is_error=True
+    assert "explore_tool_result" in types, f"explore_tool_result missing from {types}"
+    result_evt = next(e for e in events if e["type"] == "explore_tool_result")
+    payload = result_evt["payload"]
+    assert payload["is_error"] is True, "is_error must be True on an error result"
+    assert exc_text in payload["output"], (
+        f"Exception text {exc_text!r} not found in output {payload['output']!r}"
+    )
+    assert payload["tool"] == "list_directory"
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — step_started resumed-skip: pre-completed s1 is skipped; first
+#          broadcast has step_index==2, total_steps==2
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_step_started_resumed_skip_indexing(tmp_path: Path) -> None:
+    """When s1 is pre-marked completed, only s2 fires step_started with step_index==2."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "README.md").write_text("hello\n")
+
+    store = InMemoryTaskStore()
+    task = TaskRecord(
+        task_id="task-resume-skip",
+        goal="Two step task resumed",
+        workspace_path=str(ws),
+    )
+    await store.create(task)
+
+    orchestrator = AgentOrchestrator(
+        store=store,
+        reasoning_engine=_TwoStepReasoningEngine(),
+        validator=_AlwaysPassValidator(),
+        patch_engine=PatchEngine(),
+        workspace_manager=ShadowWorkspaceManager(root_path=tmp_path / "shadows"),
+        retrieval_client=_NullRetrievalClient(),
+    )
+
+    queue = orchestrator.broadcaster.subscribe("task-resume-skip")
+
+    # Run planning phase
+    initialized = await orchestrator.run_task("task-resume-skip")
+    assert initialized.status == TaskStatus.AWAITING_PLAN_APPROVAL
+
+    # Pre-mark s1 as completed before approving — InMemoryTaskStore returns the
+    # same object reference, so mutating it here is immediately visible to the
+    # engine when continue_task fetches the task.
+    live_task = await store.get("task-resume-skip")
+    live_task.completed_step_ids = ["s1"]
+
+    result = await orchestrator.continue_task("task-resume-skip", feedback=None)
+    assert result.status == TaskStatus.READY_FOR_REVIEW
+
+    events = _drain(queue)
+    step_started_events = [e for e in events if e["type"] == "step_started"]
+
+    # Only s2 should fire — s1 was pre-completed and _next_incomplete_step skips it
+    assert len(step_started_events) == 1, (
+        f"Expected 1 step_started event (s1 skipped), got {len(step_started_events)}: "
+        f"{[e['payload'] for e in step_started_events]}"
+    )
+
+    payload = step_started_events[0]["payload"]
+    assert payload["step_id"] == "s2", f"Expected s2, got {payload['step_id']!r}"
+    # step_index is the 1-based position in the FULL plan (s2 is index 2 of 2)
+    assert payload["step_index"] == 2, f"Expected step_index==2, got {payload['step_index']}"
+    assert payload["total_steps"] == 2, f"Expected total_steps==2, got {payload['total_steps']}"
