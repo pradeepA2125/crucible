@@ -29,6 +29,29 @@ _DEFAULT_TIMEOUT_SEC = 60
 _PY_IMPORT_TOOLS = {"pytest", "mypy", "python", "python3"}
 
 
+def _split_command(
+    command: str, args: list[str], real_workspace: Path
+) -> tuple[str, list[str]]:
+    """Recover (executable, args) when the model packs a whole command line into
+    `command` (e.g. "uv run pytest tests/x.py -x").
+
+    run_command execs directly (no shell), so a space-containing `command` is
+    looked up as one binary and fails. We can't naively split because the workspace
+    path itself may contain a space (".../AI editor/..."): take the LONGEST leading
+    token-run that resolves to an existing file as the executable; otherwise fall
+    back to the first token (covers PATH binaries like "uv"). No-op when `command`
+    has no whitespace or is already a real path.
+    """
+    if not command or (" " not in command and "\t" not in command):
+        return command, args
+    tokens = command.split(" ")
+    for i in range(len(tokens), 0, -1):
+        candidate = " ".join(tokens[:i])
+        if Path(candidate).is_file() or (real_workspace / candidate).is_file():
+            return candidate, [*tokens[i:], *args]
+    return tokens[0], [*tokens[1:], *args]
+
+
 def _resolve_workspace_cwd(shadow_root: Path, cwd: str | None) -> Path:
     """Resolve an agent-supplied cwd to an absolute path INSIDE shadow_root.
 
@@ -57,6 +80,11 @@ async def run_command(
 ) -> ToolOutput:
     if not command:
         return ToolOutput(output="Error: command is required", is_error=True)
+
+    # Recover from the model packing the whole command line into `command`
+    # (e.g. "uv run pytest …"): exec does no word-splitting, so split it back into
+    # an executable + args before resolution. No-op for a clean single binary/path.
+    command, args = _split_command(command, args, real_workspace_path)
 
     # Gating happens upstream in ToolRegistry via the command_approval_callback
     # (or is bypassed in allow_all/test paths). shell.run_command no longer
@@ -92,6 +120,15 @@ async def run_command(
             include_editable=check_name in _PY_IMPORT_TOOLS,
         ),
     )
+
+    # Point uv/python at the venv setup_env populates (real_workspace/<cwd>/.venv),
+    # mirroring setup_env's install_root. CWD is the shadow, so without this `uv run`
+    # would default to a shadow-local .venv — create an empty one missing the dev
+    # extra and fail to spawn pytest. Also overrides any inherited VIRTUAL_ENV (the
+    # backend runs inside its own venv, which os.environ.copy() would otherwise leak).
+    _workspace_venv = real_workspace_path / (cwd or "") / ".venv"
+    env["UV_PROJECT_ENVIRONMENT"] = str(_workspace_venv)
+    env["VIRTUAL_ENV"] = str(_workspace_venv)
 
     resolved_cwd = _resolve_workspace_cwd(shadow_root, cwd)
     try:

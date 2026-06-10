@@ -78,6 +78,86 @@ async def test_run_command_prepends_shadow_import_root_for_pytest(tmp_path: Path
     assert str(shadow / "pkgs") in out.output
 
 
+def test_split_command_naked_uv_run_falls_back_to_first_token(tmp_path: Path) -> None:
+    """`command="uv run pytest"` (model packed the whole line in) must split to
+    executable 'uv' + the rest as args, not be looked up as one binary."""
+    from agentd.tools.shell import _split_command
+
+    cmd, args = _split_command("uv run pytest", ["tests/x.py", "-x"], tmp_path)
+    assert cmd == "uv"
+    assert args == ["run", "pytest", "tests/x.py", "-x"]
+
+
+def test_split_command_abs_path_with_space_plus_args(tmp_path: Path) -> None:
+    """The workspace path can contain a space ('AI editor'); the longest leading
+    run that resolves to a real file is the executable, the rest are args."""
+    from agentd.tools.shell import _split_command
+
+    binp = tmp_path / "AI editor" / "bin"
+    binp.mkdir(parents=True)
+    py = binp / "python"
+    py.write_text("#!/bin/sh\n")
+    py.chmod(0o755)
+
+    cmd, args = _split_command(f"{py} -m pytest tests/x.py -x", [], tmp_path)
+    assert cmd == str(py)
+    assert args == ["-m", "pytest", "tests/x.py", "-x"]
+
+
+def test_split_command_whole_path_is_file_unchanged(tmp_path: Path) -> None:
+    from agentd.tools.shell import _split_command
+
+    binp = tmp_path / "AI editor" / "bin"
+    binp.mkdir(parents=True)
+    py = binp / "python"
+    py.write_text("#!/bin/sh\n")
+    py.chmod(0o755)
+
+    cmd, args = _split_command(str(py), ["-m", "pytest"], tmp_path)
+    assert cmd == str(py)
+    assert args == ["-m", "pytest"]
+
+
+def test_split_command_no_whitespace_unchanged(tmp_path: Path) -> None:
+    from agentd.tools.shell import _split_command
+
+    cmd, args = _split_command("pytest", ["-x"], tmp_path)
+    assert cmd == "pytest"
+    assert args == ["-x"]
+
+
+def _fake_echo_uv_env(tmp_path: Path) -> Path:
+    script = tmp_path / "echo_uv_env"
+    script.write_text(
+        '#!/bin/sh\nprintf "UV=%s VENV=%s" "$UV_PROJECT_ENVIRONMENT" "$VIRTUAL_ENV"\n'
+    )
+    script.chmod(0o755)
+    return script
+
+
+@pytest.mark.asyncio
+async def test_run_command_points_uv_at_workspace_venv(tmp_path: Path) -> None:
+    """uv run / python must resolve the setup_env-populated WORKSPACE venv, not
+    create an empty one in the shadow cwd. run_command sets UV_PROJECT_ENVIRONMENT
+    and VIRTUAL_ENV to <real_workspace>/<cwd>/.venv (mirrors setup_env's install_root)."""
+    shadow = tmp_path / "shadow"
+    (shadow / "services/agentd-py").mkdir(parents=True)
+    real = tmp_path / "real"
+    (real / "services/agentd-py").mkdir(parents=True)
+    script = _fake_echo_uv_env(tmp_path)
+
+    out = await run_command(
+        command=str(script),
+        args=[],
+        shadow_root=shadow,
+        real_workspace_path=real,
+        cwd="services/agentd-py",
+    )
+    expected = str(real / "services/agentd-py" / ".venv")
+    assert f"UV={expected}" in out.output
+    assert f"VENV={expected}" in out.output
+
+
 @pytest.mark.asyncio
 async def test_run_command_skips_shadow_import_root_for_non_python_tool(tmp_path: Path, monkeypatch) -> None:
     shadow = tmp_path / "shadow"

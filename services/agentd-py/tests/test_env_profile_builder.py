@@ -38,6 +38,106 @@ async def test_build_skips_llm_when_python_lockfile_is_unambiguous(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_uv_install_command_includes_dev_extra(tmp_path: Path):
+    """When the pyproject declares a `dev` optional-extra (where pytest lives),
+    install_command must be `uv sync --extra dev` — plain `uv sync` would PRUNE
+    the dev tools each step, causing per-step verify thrash."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="x"\nversion="0"\n'
+        '[project.optional-dependencies]\ndev=["pytest>=8","pytest-asyncio>=0.25"]\n'
+    )
+    (tmp_path / "uv.lock").write_text("# locked\n")
+
+    class WouldRaise:
+        async def draft_conventions(self, *, probe):
+            raise AssertionError("fast-path must apply")
+
+    builder = EnvProfileBuilder(reasoner=WouldRaise())
+    profile = await builder.build(tmp_path)
+    assert profile.ecosystems[0].install_command == "uv sync --extra dev"
+
+
+@pytest.mark.asyncio
+async def test_uv_install_command_dev_extra_applied_on_llm_path(tmp_path: Path):
+    """When the LLM path runs (ambiguous probe) and the model emits a uv entry with
+    bare `uv sync`, the builder must still rewrite it to `uv sync --extra dev`."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="x"\nversion="0"\n'
+        '[project.optional-dependencies]\ndev=["pytest>=8"]\n'
+    )  # no uv.lock → synthesize defers to LLM
+
+    class _Reasoner:
+        async def draft_conventions(self, *, probe):
+            return {
+                "ecosystems": [{
+                    "ecosystem": "python", "subdir": "", "manifest_path": "pyproject.toml",
+                    "package_manager": "uv", "install_command": "uv sync",
+                    "interpreter_or_runner": None, "test_command": "pytest",
+                    "declared_dependencies_top": [], "notes": None,
+                }],
+                "conventions_notes": None,
+            }
+
+    builder = EnvProfileBuilder(reasoner=_Reasoner())
+    profile = await builder.build(tmp_path)
+    assert profile.ecosystems[0].install_command == "uv sync --extra dev"
+
+
+@pytest.mark.asyncio
+async def test_uv_install_command_plain_when_no_dev_extra(tmp_path: Path):
+    """No optional-extra → plain `uv sync` (nothing to prune)."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="x"\nversion="0"\ndependencies=["fastapi"]\n'
+    )
+    (tmp_path / "uv.lock").write_text("# locked\n")
+
+    class WouldRaise:
+        async def draft_conventions(self, *, probe):
+            raise AssertionError("fast-path must apply")
+
+    builder = EnvProfileBuilder(reasoner=WouldRaise())
+    profile = await builder.build(tmp_path)
+    assert profile.ecosystems[0].install_command == "uv sync"
+
+
+@pytest.mark.asyncio
+async def test_build_python_uv_entry_notes_include_uv_cheatsheet(tmp_path: Path):
+    """A uv-managed python entry carries uv usage guidance in `notes` so
+    read_env_profile teaches it BEFORE setup_env runs (pip unavailable in uv venvs)."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname=\"x\"\nversion=\"0\"\n")
+    (tmp_path / "uv.lock").write_text("# locked\n")
+
+    class WouldRaiseReasoner:
+        async def draft_conventions(self, *, probe):
+            raise AssertionError("fast-path must apply")
+
+    builder = EnvProfileBuilder(reasoner=WouldRaiseReasoner())
+    profile = await builder.build(tmp_path)
+
+    notes = profile.ecosystems[0].notes or ""
+    assert "uv pip install" in notes
+    assert "uv run" in notes
+    assert "do not work" in notes.lower()  # pip-unavailable warning
+
+
+@pytest.mark.asyncio
+async def test_build_pip_python_entry_has_no_uv_cheatsheet(tmp_path: Path):
+    """A pip-managed python entry must NOT get uv guidance — it would be wrong."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname=\"x\"\nversion=\"0\"\n")
+    (tmp_path / "requirements.txt").write_text("fastapi\n")
+
+    class WouldRaiseReasoner:
+        async def draft_conventions(self, *, probe):
+            raise AssertionError("fast-path must apply")
+
+    builder = EnvProfileBuilder(reasoner=WouldRaiseReasoner())
+    profile = await builder.build(tmp_path)
+
+    assert profile.ecosystems[0].package_manager == "pip"
+    assert "uv pip install" not in (profile.ecosystems[0].notes or "")
+
+
+@pytest.mark.asyncio
 async def test_build_sets_interpreter_when_venv_actually_exists(tmp_path: Path):
     """When the .venv/bin/python file exists on disk, interpreter_or_runner
     is populated. This is the design intent: the field promises a usable binary."""

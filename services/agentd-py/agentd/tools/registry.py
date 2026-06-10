@@ -50,6 +50,28 @@ class ToolRegistry:
         """Switch read_file, search_code, list_directory to read from the shadow workspace."""
         self._read_from_shadow = True
 
+    def _read_root_for(self, rel_path: str) -> Path:
+        """Root to read `rel_path` from.
+
+        Outside verify-phase shadow reads, always the real workspace. In verify
+        phase, prefer the shadow (edited source) but fall back to the real
+        workspace for paths absent in the shadow — env/build artifacts (.venv,
+        node_modules, target/) are materialised in the workspace and never copied
+        into the shadow. Shadow always wins when the path exists there, so edited
+        source is never masked by a stale workspace copy. Absolute or
+        parent-escaping paths get no fallback (the tool's own traversal guard
+        handles them).
+        """
+        if not self._read_from_shadow:
+            return self._real_workspace_path
+        if rel_path.startswith("/") or ".." in Path(rel_path).parts:
+            return self._shadow_root
+        if (self._shadow_root / rel_path).exists():
+            return self._shadow_root
+        if (self._real_workspace_path / rel_path).exists():
+            return self._real_workspace_path
+        return self._shadow_root
+
     def definitions(self, phase: str = "explore") -> list[ToolDefinition]:
         tools = [
             ToolDefinition(
@@ -308,10 +330,7 @@ class ToolRegistry:
                 path=str(args.get("path", "")),
                 start_line=int(start) if start is not None else None,  # type: ignore[call-overload]
                 end_line=int(end) if end is not None else None,  # type: ignore[call-overload]
-                shadow_root=(
-                    self._shadow_root if self._read_from_shadow
-                    else self._real_workspace_path
-                ),
+                shadow_root=self._read_root_for(str(args.get("path", ""))),
             )
             if result.is_error:
                 return result
@@ -334,10 +353,7 @@ class ToolRegistry:
             from agentd.tools.files import list_directory
             return await list_directory(
                 path=str(args.get("path", ".")),
-                root=(
-                    self._shadow_root if self._read_from_shadow
-                    else self._real_workspace_path
-                ),
+                root=self._read_root_for(str(args.get("path", "."))),
             )
 
         if name == "run_command":

@@ -29,13 +29,53 @@ def test_verify_phase_includes_env_tools(tmp_path: Path) -> None:
 
 def test_init_workspace_dispatch_creates_pyproject(tmp_path: Path) -> None:
     registry = ToolRegistry(shadow_root=tmp_path, real_workspace_path=tmp_path)
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         registry.execute(
             "init_workspace", {"ecosystem": "python", "dev_deps": ["pytest"]}
         )
     )
     assert not result.is_error, result.output
     assert (tmp_path / "pyproject.toml").exists()
+
+
+@pytest.mark.asyncio
+async def test_verify_reads_fall_back_to_workspace_for_missing_shadow_path(tmp_path: Path) -> None:
+    """In verify phase reads target the shadow, but env/build artifacts (.venv,
+    node_modules, target/) live only in the workspace. A path absent in the
+    shadow must read-through to the workspace instead of erroring."""
+    shadow = tmp_path / "shadow"
+    (shadow / "src").mkdir(parents=True)
+    real = tmp_path / "real"
+    venv_bin = real / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").write_text("#!/bin/sh\n")
+
+    registry = ToolRegistry(shadow_root=shadow, real_workspace_path=real)
+    registry.use_shadow_for_reads()
+
+    result = await registry.execute("list_directory", {"path": ".venv/bin"})
+    assert not result.is_error, result.output
+    assert "python" in result.output
+
+
+@pytest.mark.asyncio
+async def test_verify_reads_prefer_shadow_when_path_exists(tmp_path: Path) -> None:
+    """Read-through must NOT mask edited source: when a path exists in the shadow,
+    the shadow copy wins over a stale workspace copy."""
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    real = tmp_path / "real"
+    real.mkdir()
+    (shadow / "foo.py").write_text("SHADOW VERSION\n")
+    (real / "foo.py").write_text("WORKSPACE VERSION\n")
+
+    registry = ToolRegistry(shadow_root=shadow, real_workspace_path=real)
+    registry.use_shadow_for_reads()
+
+    result = await registry.execute("read_file", {"path": "foo.py"})
+    assert not result.is_error, result.output
+    assert "SHADOW VERSION" in result.output
+    assert "WORKSPACE VERSION" not in result.output
 
 
 def test_run_command_allows_full_path(tmp_path: Path) -> None:
@@ -45,7 +85,7 @@ def test_run_command_allows_full_path(tmp_path: Path) -> None:
     fake.write_text("#!/bin/sh\necho ok")
     fake.chmod(0o755)
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         registry.execute("run_command", {"command": str(fake), "args": ["--version"]})
     )
     assert "not in the shell allowlist" not in result.output
@@ -105,7 +145,7 @@ def test_run_command_resolves_relative_venv_path_from_real_workspace(tmp_path: P
     fake.chmod(0o755)
 
     registry = ToolRegistry(shadow_root=shadow, real_workspace_path=real)
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         registry.execute("run_command", {"command": ".venv/bin/pytest", "args": []})
     )
     assert "FROM_REAL_RELATIVE" in result.output, result.output
@@ -132,7 +172,7 @@ def test_run_command_resolves_pytest_from_real_workspace_not_shadow(tmp_path: Pa
     fake.chmod(0o755)
 
     registry = ToolRegistry(shadow_root=shadow, real_workspace_path=real)
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         registry.execute("run_command", {"command": "pytest", "args": []})
     )
     assert "FROM_REAL_VENV" in result.output, result.output

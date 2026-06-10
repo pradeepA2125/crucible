@@ -32,7 +32,63 @@ async def test_find_binary_emits_actionable_hint_for_known_pm_binary(tmp_path: P
     if "found:" not in result.output:
         # pytest may not be on PATH in the test env — that's the case we're testing.
         assert "AGENT SHOULD:" in result.output
-        assert 'setup_env "uv sync"' in result.output
+        assert "uv sync --extra dev" in result.output
+
+
+def test_remediation_for_missing_pytest_is_uv_aware() -> None:
+    """A missing Python dev tool must steer the agent to uv (dev extra + uv pip/run)
+    and warn that pip is unavailable in a uv venv — NOT the old 'emit_patch to
+    declare it' trap (pytest is already declared under the dev extra)."""
+    from agentd.tools.env import _remediation_for_missing_binary
+
+    text = _remediation_for_missing_binary("pytest")
+    assert "uv sync --extra dev" in text
+    assert "uv pip install" in text
+    assert "uv run" in text
+    assert "do not work" in text.lower()  # pip-unavailable warning
+    assert "emit_patch to declare" not in text
+
+
+class _FakeProc:
+    """Minimal asyncio subprocess stand-in for setup_env tests."""
+
+    def __init__(self, out: bytes = b"Resolved 1 package\nInstalled 1 package", rc: int = 0) -> None:
+        self._out = out
+        self.returncode = rc
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return (self._out, b"")
+
+
+@pytest.mark.asyncio
+async def test_setup_env_uv_appends_usage_cheatsheet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After `uv sync`, the feedback must teach future uv commands (install /
+    inspect / uninstall / run) so the agent doesn't reach for pip."""
+    from agentd.tools import env as env_module
+
+    async def fake_which(name: str) -> bool:
+        return True
+
+    async def fake_exec(*args: object, **kwargs: object) -> _FakeProc:
+        return _FakeProc()
+
+    monkeypatch.setattr(env_module, "_which", fake_which)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    real = tmp_path / "real"
+    real.mkdir()
+
+    result = await setup_env(command="uv sync", shadow_root=shadow, real_workspace=real)
+    out = result.output
+    assert "uv pip install" in out
+    assert "uv pip list" in out
+    assert "uv pip uninstall" in out
+    assert "uv run" in out
+    assert "do not work" in out.lower()  # pip-unavailable warning
 
 
 @pytest.mark.asyncio

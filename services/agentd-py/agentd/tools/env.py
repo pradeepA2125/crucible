@@ -12,19 +12,56 @@ from agentd.tools.shell import _resolve_workspace_cwd
 
 _MAX_OUTPUT_CHARS = 4000
 
-# Maps a missing binary to the setup_env command most likely to install it.
-# Used to make find_binary's "not found" output actionable.
-_PM_HINT_FOR_BINARY: dict[str, str] = {
-    "pytest": "uv sync",
-    "ruff": "uv sync",
-    "mypy": "uv sync",
-    "black": "uv sync",
-    "vitest": "npm install",
-    "jest": "npm install",
-    "tsc": "npm install",
-    "eslint": "npm install",
-    "prettier": "npm install",
-}
+# Dev tools that are normally declared under a project's dev dependency group
+# rather than installed ad-hoc. Drives find_binary's uv-vs-npm remediation text.
+_PYTHON_DEV_TOOLS: frozenset[str] = frozenset({"pytest", "ruff", "mypy", "black"})
+_NODE_DEV_TOOLS: frozenset[str] = frozenset({"vitest", "jest", "tsc", "eslint", "prettier"})
+
+
+def _uv_usage_cheatsheet() -> str:
+    """Future-command guidance for uv-managed Python projects.
+
+    uv venvs ship WITHOUT pip, and `uv` is a standalone binary (not `python -m uv`),
+    so the agent's pip-based reflexes fail silently ("No module named pip"/"No module
+    named uv"). Spell out the working command set so it doesn't have to guess.
+    """
+    return (
+        "UV USAGE (this project uses uv): pip and `python -m pip` do NOT work in a "
+        "uv venv (no pip module); `uv` is a standalone binary, not `python -m uv`.\n"
+        "  install dev/test deps:  uv sync --extra dev   (or --all-extras)\n"
+        "  add one package:        uv pip install <pkg>   (or: uv add <pkg>)\n"
+        "  inspect installed:      uv pip list   |   uv pip show <pkg>\n"
+        "  uninstall:              uv pip uninstall <pkg>\n"
+        "  run a tool / tests:     uv run pytest <path>   (auto-resolves the env)"
+    )
+
+
+def _remediation_for_missing_binary(name: str) -> str:
+    """Actionable next-step text for a binary find_binary couldn't locate.
+
+    Python dev tools are usually already declared under [project.optional-dependencies]
+    dev — steer to the uv dev-extra sync and the uv command set rather than the old
+    'emit_patch to declare it' path (which duplicates the dep and trips the verify SM).
+    """
+    if name in _PYTHON_DEV_TOOLS:
+        return (
+            f"\nAGENT SHOULD: '{name}' is a Python dev tool, usually already declared "
+            f"under [project.optional-dependencies] dev. If the project uses uv, install "
+            f'it with setup_env "uv sync --extra dev" (or --all-extras), then run via '
+            f"`uv run {name}`.\n" + _uv_usage_cheatsheet() + "\n"
+            f"If the project is pip-based instead, use `pip install {name}`."
+        )
+    if name in _NODE_DEV_TOOLS:
+        return (
+            f"\nAGENT SHOULD: '{name}' is a Node dev tool — install dev deps with "
+            f'setup_env "npm install" (or yarn/pnpm per the lockfile), then run via '
+            f"`npx {name}` or node_modules/.bin/{name}."
+        )
+    return (
+        "\nAGENT SHOULD: if this binary belongs to a project-local dev environment, "
+        "inspect the project manifest (pyproject.toml, package.json, Cargo.toml, "
+        "go.mod) for the package manager and call setup_env with its sync/install command."
+    )
 
 
 async def find_binary(*, name: str, real_workspace: Path) -> ToolOutput:
@@ -77,21 +114,7 @@ async def find_binary(*, name: str, real_workspace: Path) -> ToolOutput:
 
     if not found:
         miss = f"not found: no '{name}' binary on PATH or in {real_workspace}"
-        hint = _PM_HINT_FOR_BINARY.get(name)
-        if hint:
-            miss += (
-                f"\nAGENT SHOULD: emit_patch to declare '{name}' as a dependency, "
-                f'then setup_env "{hint}"'
-            )
-        else:
-            # Generic, tool-agnostic escalation hint — let the agent read the
-            # workspace's project manifest to pick the right package manager.
-            miss += (
-                "\nAGENT SHOULD: if this binary belongs to a project-local dev "
-                "environment, inspect the workspace's project manifest "
-                "(pyproject.toml, package.json, Cargo.toml, go.mod, ...) for the "
-                "package manager and call setup_env with its sync/install command."
-            )
+        miss += _remediation_for_missing_binary(name)
         return ToolOutput(output=miss, is_error=False)
 
     # Workspace-local hit (already first); rank remaining by depth (shallowest first).
@@ -517,6 +540,11 @@ async def setup_env(
     if len(full) > _MAX_OUTPUT_CHARS:
         keep = _MAX_OUTPUT_CHARS - len(header) - 80
         full = header + "...(truncated)...\n" + output[-keep:]
+    # Teach the uv command set whenever we just ran uv — appended after truncation
+    # so the guidance always survives. The agent's next move (install a missing dev
+    # tool, inspect packages) otherwise reaches for pip, which a uv venv lacks.
+    if binary == "uv":
+        full += "\n" + _uv_usage_cheatsheet()
     return ToolOutput(output=full, is_error=exit_code != 0)
 
 

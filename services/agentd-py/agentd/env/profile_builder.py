@@ -72,6 +72,61 @@ def _node_dep_strings_from_package_json(text: str) -> tuple[list[str], str | Non
     return deps, test_cmd
 
 
+def _uv_dev_extra(manifest_text: str) -> str | None:
+    """Name of the optional-dependencies group holding test/dev tooling, if any.
+
+    Prefers 'dev', then 'test'/'tests', then any group declaring a pytest/ruff/mypy
+    package. Returns None when there are no optional extras. Used to make
+    install_command `uv sync --extra <group>` so plain `uv sync` never prunes the
+    dev tools between verify steps.
+    """
+    try:
+        import tomllib
+        data = tomllib.loads(manifest_text)
+    except Exception:
+        return None
+    project = data.get("project", {}) if isinstance(data, dict) else {}
+    groups = project.get("optional-dependencies", {}) if isinstance(project, dict) else {}
+    if not isinstance(groups, dict) or not groups:
+        return None
+    for preferred in ("dev", "test", "tests"):
+        if preferred in groups:
+            return preferred
+    for name, deps in groups.items():
+        if isinstance(deps, list) and any(
+            isinstance(d, str) and d.lower().startswith(("pytest", "ruff", "mypy"))
+            for d in deps
+        ):
+            return name
+    return None
+
+
+def _manifest_text_for(probe: ProbeResult, manifest_path: str) -> str | None:
+    """Raw manifest text for the probe ecosystem at `manifest_path`, if present."""
+    for facts in probe.ecosystems:
+        if facts.manifest_path == manifest_path:
+            return facts.manifest_text
+    return None
+
+
+def _augment_uv_notes(package_manager: str, ecosystem: str, notes: str | None) -> str | None:
+    """Append the uv command cheat-sheet to a uv-managed python entry's notes.
+
+    Puts the uv-vs-pip guidance into the persisted profile so read_env_profile
+    teaches it BEFORE setup_env runs (uv venvs have no pip; `uv` is not `python -m
+    uv`). No-op for non-python or non-uv entries. Single source of truth for the
+    cheat-sheet text is tools.env (also appended to setup_env output).
+    """
+    if ecosystem != "python" or package_manager != "uv":
+        return notes
+    from agentd.tools.env import _uv_usage_cheatsheet
+
+    cheatsheet = _uv_usage_cheatsheet()
+    if notes and cheatsheet in notes:
+        return notes
+    return f"{notes}\n{cheatsheet}" if notes else cheatsheet
+
+
 def _verify_path(workspace_root: Path, rel_path: str | None) -> str | None:
     """Return rel_path only if <workspace_root>/<rel_path> actually exists.
 
@@ -102,7 +157,9 @@ def _synthesize_entry(facts: EcosystemFacts, workspace_root: Path) -> EnvEcosyst
     subdir = facts.subdir
     if facts.ecosystem == "python":
         if "uv.lock" in facts.lockfiles_present:
-            pm, install = "uv", "uv sync"
+            extra = _uv_dev_extra(facts.manifest_text)
+            pm = "uv"
+            install = f"uv sync --extra {extra}" if extra else "uv sync"
         elif "poetry.lock" in facts.lockfiles_present:
             pm, install = "poetry", "poetry install"
         elif any(lf.startswith("requirements") for lf in facts.lockfiles_present):
@@ -117,7 +174,7 @@ def _synthesize_entry(facts: EcosystemFacts, workspace_root: Path) -> EnvEcosyst
             interpreter_or_runner=_verify_path(workspace_root, candidate),
             test_command="pytest",
             declared_dependencies_top=_python_dep_strings_from_pyproject(facts.manifest_text),
-            notes=None,
+            notes=_augment_uv_notes(pm, "python", None),
         )
     if facts.ecosystem == "node":
         if "package-lock.json" in facts.lockfiles_present:
@@ -261,6 +318,21 @@ class EnvProfileBuilder:
             normalised["interpreter_or_runner"] = _verify_path(
                 workspace_root, normalised.get("interpreter_or_runner")
             )
+            normalised["notes"] = _augment_uv_notes(
+                str(normalised.get("package_manager", "")),
+                str(normalised.get("ecosystem", "")),
+                normalised.get("notes"),
+            )
+            # Ensure uv install_command syncs the dev extra — plain `uv sync` prunes
+            # the dev tools each verify step. The LLM often emits bare "uv sync".
+            if (
+                normalised.get("ecosystem") == "python"
+                and normalised.get("package_manager") == "uv"
+            ):
+                mtext = _manifest_text_for(probe, str(normalised.get("manifest_path", "")))
+                extra = _uv_dev_extra(mtext) if mtext else None
+                if extra:
+                    normalised["install_command"] = f"uv sync --extra {extra}"
             entries.append(EnvEcosystemEntry(**normalised))
         return EnvProfile(
             workspace_root=probe.workspace_root,
