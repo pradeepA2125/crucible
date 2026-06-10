@@ -493,6 +493,196 @@ describe("AiEditorController — chat", () => {
   });
 });
 
+describe("AiEditorController — tool-event pairing & orphan handling", () => {
+  test("results pair with their matching source; orphan result after finally-clear is dropped", async () => {
+    // IDs assigned by forwardToolCall, keyed by source, so we can verify cross-source pairing.
+    const toolEventIds: number[] = [];
+    const toolResultIds: number[] = [];
+
+    // Turn 1: explore call + result, execution call + result.
+    const turn1Backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+        rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+      }),
+      createChatThread: async (workspacePath) => ({
+        threadId: "chat-pair",
+        workspacePath,
+        title: "New Chat",
+        createdAt: "2026-06-10T00:00:00Z",
+      }),
+      listChatThreads: async () => [],
+      getChatThread: async (threadId) => ({
+        threadId, workspacePath: "/tmp/workspace",
+        title: "New Chat", messages: [], touchedFiles: [],
+      }),
+      sendChatMessage: async function* (_threadId, _message, _signal) {
+        yield { type: "explore_tool_call" as const, payload: { tool: "search_code", args: {} } };
+        yield { type: "tool_call" as const, payload: { tool: "read_file", args: {} } };
+        yield { type: "explore_tool_result" as const, payload: { output: "explore-out", is_error: false } };
+        yield { type: "tool_result" as const, payload: { output: "exec-out", is_error: false } };
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+      },
+    };
+
+    const store = new MemorySessionStore();
+    const controller = new AiEditorController(
+      () => turn1Backend, store, createSettings(),
+      createUi({
+        appendToolEvent: (e) => { toolEventIds.push(e.id); },
+        appendToolResult: (id) => { toolResultIds.push(id); },
+      }),
+      { openDiff: async () => {} },
+      () => "2026-06-10T00:00:00.000Z"
+    );
+
+    await controller.sendChatMessage("first turn");
+
+    // Both calls got events; both results paired to their call ids.
+    expect(toolEventIds).toHaveLength(2);
+    expect(toolResultIds).toHaveLength(2);
+    expect(toolResultIds).toEqual(expect.arrayContaining(toolEventIds)); // each result ids a call
+
+    // Turn 2: a stray tool_result arrives as the very first event — should be dropped
+    // because finally cleared openToolEvent at the end of turn 1.
+    const strayResultIds: number[] = [];
+    const turn2Backend: BackendTaskClient = {
+      ...turn1Backend,
+      sendChatMessage: async function* (_threadId, _message, _signal) {
+        // No preceding tool_call — orphan result.
+        yield { type: "tool_result" as const, payload: { output: "stray", is_error: false } };
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+      },
+    };
+    const controller2 = new AiEditorController(
+      () => turn2Backend, store, createSettings(),
+      createUi({
+        appendToolResult: (id) => { strayResultIds.push(id); },
+      }),
+      { openDiff: async () => {} },
+      () => "2026-06-10T00:00:00.000Z"
+    );
+    // Pre-populate activeThreadId so no createChatThread call is made.
+    await controller2.switchChatThread("chat-pair");
+    await controller2.sendChatMessage("second turn — stray result");
+
+    expect(strayResultIds).toHaveLength(0); // orphan dropped
+    controller.dispose();
+    controller2.dispose();
+  });
+});
+
+describe("AiEditorController — abort handling", () => {
+  test("AbortError is swallowed; non-abort error re-enables input and is surfaced via showError", async () => {
+    let inputEnabledFinalValue: boolean | undefined;
+    const errors: string[] = [];
+
+    const abortBackend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+        rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+      }),
+      createChatThread: async (workspacePath) => ({
+        threadId: "chat-abort", workspacePath,
+        title: "New Chat", createdAt: "2026-06-10T00:00:00Z",
+      }),
+      listChatThreads: async () => [],
+      getChatThread: async (threadId) => ({
+        threadId, workspacePath: "/tmp/workspace",
+        title: "New Chat", messages: [], touchedFiles: [],
+      }),
+      sendChatMessage: async function* (_threadId, _message, _signal) {
+        yield { type: "chat_agent_thinking" as const, payload: { message: "thinking…" } };
+        throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      },
+    };
+
+    const controller = new AiEditorController(
+      () => abortBackend, new MemorySessionStore(), createSettings(),
+      createUi({
+        showError: (msg) => errors.push(msg),
+        setChatInputEnabled: (enabled) => { inputEnabledFinalValue = enabled; },
+      }),
+      { openDiff: async () => {} },
+      () => "2026-06-10T00:00:00.000Z"
+    );
+
+    // AbortError must resolve cleanly (not throw) and must NOT call showError.
+    await expect(controller.sendChatMessage("stop me")).resolves.toBeUndefined();
+    expect(errors).toHaveLength(0);
+    // finally always re-enables input regardless of error type.
+    expect(inputEnabledFinalValue).toBe(true);
+    controller.dispose();
+
+    // Non-abort error IS surfaced: the catch/finally re-enables input; the error itself
+    // is rethrown and the caller (extension.ts command handler) surfaces it via showError.
+    // In the test harness the rethrow surfaces as a rejected promise.
+    const nonAbortBackend: BackendTaskClient = {
+      ...abortBackend,
+      sendChatMessage: async function* (_threadId, _message, _signal) {
+        yield { type: "chat_agent_thinking" as const, payload: { message: "thinking…" } };
+        throw new Error("backend exploded");
+      },
+    };
+    let finalEnabled2: boolean | undefined;
+    const controller2 = new AiEditorController(
+      () => nonAbortBackend, new MemorySessionStore(), createSettings(),
+      createUi({
+        setChatInputEnabled: (enabled) => { finalEnabled2 = enabled; },
+      }),
+      { openDiff: async () => {} },
+      () => "2026-06-10T00:00:00.000Z"
+    );
+    await controller2.switchChatThread("chat-abort");
+    await expect(controller2.sendChatMessage("boom")).rejects.toThrow("backend exploded");
+    expect(finalEnabled2).toBe(true); // finally still re-enables input
+    controller2.dispose();
+  });
+});
+
+describe("AiEditorController — deviation capture", () => {
+  test("scope breadcrumb is captured; accepted-step breadcrumb is not", async () => {
+    const taskId = "task-dev-1";
+
+    const breadcrumbBackend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+        rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+      }),
+      streamPatchEvents: async function* (_taskId: string) {
+        yield {
+          type: "chat_breadcrumb" as const,
+          payload: {
+            text: "✓ Scope extension approved: x.py",
+            task_id: taskId,
+          } as Record<string, unknown>,
+        };
+        yield {
+          type: "chat_breadcrumb" as const,
+          payload: {
+            text: "✓ Step changes accepted: t",
+            task_id: taskId,
+          } as Record<string, unknown>,
+        };
+        yield { type: "done" as const, payload: { status: "SUCCEEDED" } as Record<string, unknown> };
+      },
+    };
+
+    const controller = new AiEditorController(
+      () => breadcrumbBackend, new MemorySessionStore(), createSettings(),
+      createUi(),
+      { openDiff: async () => {} },
+      () => "2026-06-10T00:00:00.000Z"
+    );
+
+    await controller.streamTaskIntoChatThread(taskId);
+
+    expect(controller.observedDeviations).toContain("✓ Scope extension approved: x.py");
+    expect(controller.observedDeviations).not.toContain("✓ Step changes accepted: t");
+    controller.dispose();
+  });
+});
+
 describe("AiEditorController — command-decision", () => {
   test("handleCommandDecisionFromChat posts the decision to the backend", async () => {
     const sent: Array<{ taskId: string; decision: CommandDecision }> = [];

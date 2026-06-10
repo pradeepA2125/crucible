@@ -551,6 +551,7 @@ export class AiEditorController {
     this.turnAbort = new AbortController();
     let currentTaskId: string | undefined;
     try {
+      this.openToolEvent = {}; // defensive: clear any stale ids from a previous turn
       for await (const event of client.sendChatMessage(threadId, text, this.turnAbort.signal)) {
         if (event.type === "chat_agent_thinking") {
           const message = (event.payload["message"] as string) ?? "Thinking…";
@@ -610,6 +611,7 @@ export class AiEditorController {
         } else if (event.type === "planning_complete") {
           const confidence = (event.payload["confidence"] as string) ?? "";
           this.ui.appendChatThinkingEntry(`plan ready (${confidence} confidence)`);
+          this.ui.updateWorkbar(null);
         } else if (event.type === "task_status_changed") {
           const taskId = (event.payload["task_id"] as string) ?? "";
           const status = (event.payload["status"] as string) ?? "";
@@ -641,42 +643,22 @@ export class AiEditorController {
           });
         } else if (event.type === "scope_extension_requested") {
           // Class-A gate — render from /live (instant poke now, durable on reload).
-          void this.pollThreadLiveState();
-          this.ui.appendChatThinkingEntry("Waiting for scope approval…");
+          this.forwardGateWait("scope");
         } else if (event.type === "validation_decision_requested") {
-          void this.pollThreadLiveState();
-          this.ui.appendChatThinkingEntry("Waiting for validation decision…");
+          this.forwardGateWait("validation");
         } else if (event.type === "command_approval_requested") {
-          void this.pollThreadLiveState();
-          this.ui.appendChatThinkingEntry("Waiting for command approval…");
+          this.forwardGateWait("command");
         } else if (event.type === "thread_title_updated") {
           const threadId = (event.payload["thread_id"] as string) ?? "";
           const title = (event.payload["title"] as string) ?? "";
           this.ui.updateThreadTitle(threadId, title);
-        } else if (event.type === "env_profile_building") {
-          this.ui.appendChatThinkingEntry("Preparing workspace env profile…");
-          this.ui.updateWorkbar({ phaseLabel: "Profiling workspace environment…" });
-        } else if (event.type === "env_profile_built") {
-          const count = (event.payload["ecosystems_count"] as number) ?? 0;
-          const bootstrap = (event.payload["bootstrap_needed"] as boolean) ?? false;
-          this.ui.appendChatThinkingEntry(
-            bootstrap
-              ? "Env profile: workspace has no manifests yet (bootstrap_needed)"
-              : `Env profile ready (${count} ecosystem${count === 1 ? "" : "s"})`,
-          );
-          this.ui.updateWorkbar(null);
-        } else if (event.type === "env_install_running") {
-          const cmd = (event.payload["command"] as string) ?? "";
-          const scope = (event.payload["scope_key"] as string) ?? "";
-          this.ui.appendChatThinkingEntry(`Syncing deps: ${cmd} (${scope})`);
-          this.ui.updateWorkbar({ phaseLabel: `Syncing dependencies: ${cmd}…` });
-        } else if (event.type === "env_install_done") {
-          const ok = (event.payload["exit_ok"] as boolean) ?? false;
-          const scope = (event.payload["scope_key"] as string) ?? "";
-          this.ui.appendChatThinkingEntry(
-            ok ? `Deps synced for ${scope}` : `Deps sync FAILED for ${scope}`,
-          );
-          this.ui.updateWorkbar(null);
+        } else if (
+          event.type === "env_profile_building" ||
+          event.type === "env_profile_built" ||
+          event.type === "env_install_running" ||
+          event.type === "env_install_done"
+        ) {
+          this.forwardEnvEvent({ type: event.type, payload: event.payload as Record<string, unknown> });
         } else if (event.type === "chat_done") {
           this.ui.updateWorkbar(null);
           this.ui.finalizeAgentMessage();
@@ -691,6 +673,7 @@ export class AiEditorController {
         throw error;
       }
     } finally {
+      this.openToolEvent = {}; // clear cross-turn stale ids
       this.ui.updateWorkbar(null);
       this.turnAbort = null;
       this.ui.hideChatThinking();
@@ -802,6 +785,7 @@ export class AiEditorController {
           this.ui.appendChatThinkingEntry("revision needed — delta replanning…");
         } else if (event.type === "planning_complete") {
           this.ui.appendChatThinkingEntry(`delta replan complete (${event.payload.confidence} confidence)`);
+          this.ui.updateWorkbar(null);
         } else if (event.type === "operation_success") {
           this.ui.appendChatMessage({
             role: "agent",
@@ -829,7 +813,10 @@ export class AiEditorController {
             timestamp: this.now(),
             metadata: { taskId: event.payload.task_id, breadcrumb: true },
           });
-          // Capture deviation breadcrumbs for run context
+          // Capture deviation breadcrumbs for run context.
+          // COUPLING: prefixes mirror backend breadcrumb constants in
+          // services/agentd-py/agentd/orchestrator/engine.py (_write_chat_breadcrumb call
+          // sites). A reword there silently drops deviation capture — keep in sync.
           const breadcrumbText: string = event.payload.text ?? "";
           if (
             breadcrumbText.startsWith("✓ Scope extension approved") ||
@@ -852,36 +839,18 @@ export class AiEditorController {
           });
         } else if (event.type === "scope_extension_requested") {
           // Class-A gates render from /live in the pinned slot; poke for an instant update.
-          this.ui.appendChatThinkingEntry("Waiting for scope approval…");
-          void this.pollThreadLiveState();
+          this.forwardGateWait("scope");
         } else if (event.type === "validation_decision_requested") {
-          void this.pollThreadLiveState();
+          this.forwardGateWait("validation");
         } else if (event.type === "command_approval_requested") {
-          void this.pollThreadLiveState();
-        } else if (event.type === "env_profile_building") {
-          this.ui.appendChatThinkingEntry("Preparing workspace env profile…");
-          this.ui.updateWorkbar({ phaseLabel: "Profiling workspace environment…" });
-        } else if (event.type === "env_profile_built") {
-          const count = (event.payload["ecosystems_count"] as number) ?? 0;
-          const bootstrap = (event.payload["bootstrap_needed"] as boolean) ?? false;
-          this.ui.appendChatThinkingEntry(
-            bootstrap
-              ? "Env profile: workspace has no manifests yet (bootstrap_needed)"
-              : `Env profile ready (${count} ecosystem${count === 1 ? "" : "s"})`,
-          );
-          this.ui.updateWorkbar(null);
-        } else if (event.type === "env_install_running") {
-          const cmd = (event.payload["command"] as string) ?? "";
-          const scope = (event.payload["scope_key"] as string) ?? "";
-          this.ui.appendChatThinkingEntry(`Syncing deps: ${cmd} (${scope})`);
-          this.ui.updateWorkbar({ phaseLabel: `Syncing dependencies: ${cmd}…` });
-        } else if (event.type === "env_install_done") {
-          const ok = (event.payload["exit_ok"] as boolean) ?? false;
-          const scope = (event.payload["scope_key"] as string) ?? "";
-          this.ui.appendChatThinkingEntry(
-            ok ? `Deps synced for ${scope}` : `Deps sync FAILED for ${scope}`,
-          );
-          this.ui.updateWorkbar(null);
+          this.forwardGateWait("command");
+        } else if (
+          event.type === "env_profile_building" ||
+          event.type === "env_profile_built" ||
+          event.type === "env_install_running" ||
+          event.type === "env_install_done"
+        ) {
+          this.forwardEnvEvent({ type: event.type, payload: event.payload as Record<string, unknown> });
         } else if (event.type === "done") {
           const status = (event.payload["status"] as string | undefined) ?? "";
           this.ui.hideChatThinking();
@@ -909,6 +878,7 @@ export class AiEditorController {
     } catch (error) {
       this.ui.showError(`Stream error: ${formatError(error)}`);
     } finally {
+      this.openToolEvent = {}; // clear cross-turn stale ids
       this.ui.updateWorkbar(null);
       this.ui.hideChatThinking();
       this.ui.setChatInputEnabled(true);
@@ -986,9 +956,62 @@ export class AiEditorController {
     this.ui.appendToolResult(id, (payload["output"] as string) ?? "", payload["is_error"] === true);
   }
 
+  /** Test/diagnostic surface — exposes deviation breadcrumbs captured during the last stream. */
+  get observedDeviations(): readonly string[] {
+    return this.runDeviations;
+  }
+
   private noteDeviation(taskId: string, text: string): void {
     if (this.deviationsTaskId !== taskId) { this.deviationsTaskId = taskId; this.runDeviations = []; }
     this.runDeviations.push(text);
+  }
+
+  /**
+   * Forward one of the four env lifecycle events (env_profile_building / env_profile_built /
+   * env_install_running / env_install_done) as a thinking entry + workbar phase label/clear.
+   * Both SSE loops call this to keep behaviour in sync.
+   */
+  private forwardEnvEvent(event: { type: string; payload: Record<string, unknown> }): void {
+    if (event.type === "env_profile_building") {
+      this.ui.appendChatThinkingEntry("Preparing workspace env profile…");
+      this.ui.updateWorkbar({ phaseLabel: "Profiling workspace environment…" });
+    } else if (event.type === "env_profile_built") {
+      const count = (event.payload["ecosystems_count"] as number) ?? 0;
+      const bootstrap = (event.payload["bootstrap_needed"] as boolean) ?? false;
+      this.ui.appendChatThinkingEntry(
+        bootstrap
+          ? "Env profile: workspace has no manifests yet (bootstrap_needed)"
+          : `Env profile ready (${count} ecosystem${count === 1 ? "" : "s"})`,
+      );
+      this.ui.updateWorkbar(null);
+    } else if (event.type === "env_install_running") {
+      const cmd = (event.payload["command"] as string) ?? "";
+      const scope = (event.payload["scope_key"] as string) ?? "";
+      this.ui.appendChatThinkingEntry(`Syncing deps: ${cmd} (${scope})`);
+      this.ui.updateWorkbar({ phaseLabel: `Syncing dependencies: ${cmd}…` });
+    } else if (event.type === "env_install_done") {
+      const ok = (event.payload["exit_ok"] as boolean) ?? false;
+      const scope = (event.payload["scope_key"] as string) ?? "";
+      this.ui.appendChatThinkingEntry(
+        ok ? `Deps synced for ${scope}` : `Deps sync FAILED for ${scope}`,
+      );
+      this.ui.updateWorkbar(null);
+    }
+  }
+
+  /**
+   * Forward a gate-wait event: append the matching "Waiting for … approval/decision…"
+   * thinking entry AND poke a /live poll so the pinned gate card renders instantly.
+   * Both SSE loops call this — reconciles a pre-existing divergence where
+   * streamTaskIntoChatThread's validation/command cases were poke-only.
+   */
+  private forwardGateWait(kind: "scope" | "validation" | "command"): void {
+    const label =
+      kind === "scope" ? "Waiting for scope approval…"
+      : kind === "validation" ? "Waiting for validation decision…"
+      : "Waiting for command approval…";
+    this.ui.appendChatThinkingEntry(label);
+    void this.pollThreadLiveState();
   }
 
   private startStream(taskId: string): void {
