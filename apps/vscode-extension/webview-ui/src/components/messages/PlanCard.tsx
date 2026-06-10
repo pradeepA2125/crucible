@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { Icon } from "../Icon";
 import { vscode } from "../../vscodeApi";
+import { BtnPrimary, BtnGhost } from "../shared/buttons";
 
 interface Props {
   content: string;
@@ -156,27 +157,12 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
           {/* idle: Implement + Give feedback */}
           {mode === "idle" && (
             <div className="flex gap-1.5 px-2.5 py-2 border-t border-border">
-              <button
-                type="button"
-                onClick={handleImplement}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-[6px] rounded-md text-[11px] font-[550] text-white cursor-pointer border border-transparent"
-                style={{
-                  background:
-                    "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
-                  boxShadow:
-                    "0 1px 2px rgba(0,0,0,.4), 0 0 16px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,.18)",
-                }}
-              >
-                <Icon name="bolt" size={11} />
+              <BtnPrimary flex icon="bolt" onClick={handleImplement}>
                 Implement
-              </button>
-              <button
-                type="button"
-                onClick={handleGiveFeedback}
-                className="inline-flex items-center justify-center px-3 py-[6px] rounded-md text-[11px] font-[550] text-text-2 cursor-pointer bg-transparent border border-border-strong hover:bg-surface-2 hover:text-text transition-colors duration-150"
-              >
+              </BtnPrimary>
+              <BtnGhost onClick={handleGiveFeedback}>
                 Give feedback
-              </button>
+              </BtnGhost>
             </div>
           )}
 
@@ -194,32 +180,13 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
                 }}
                 placeholder="What should change in this plan?"
                 className="flex-1 min-w-0 bg-surface-2 border border-border-strong rounded-md px-2.5 py-[6px] text-[11px] text-text outline-none placeholder:text-text-4"
-                style={{
-                  // Focus ring via inline style to avoid Tailwind focus variant conflicts
-                  // handled by onFocus/onBlur approach below via a wrapper class
-                }}
               />
-              <button
-                type="button"
-                onClick={handleSendFeedback}
-                disabled={feedbackText.trim() === ""}
-                className="inline-flex items-center justify-center px-3 py-[6px] rounded-md text-[11px] font-[550] text-white cursor-pointer border border-transparent disabled:opacity-50 disabled:cursor-default"
-                style={{
-                  background:
-                    "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
-                  boxShadow:
-                    "0 1px 2px rgba(0,0,0,.4), 0 0 16px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,.18)",
-                }}
-              >
+              <BtnPrimary onClick={handleSendFeedback} disabled={feedbackText.trim() === ""}>
                 Send
-              </button>
-              <button
-                type="button"
-                onClick={handleCancelFeedback}
-                className="inline-flex items-center justify-center px-3 py-[6px] rounded-md text-[11px] font-[550] text-text-2 cursor-pointer bg-transparent border border-border-strong hover:bg-surface-2 hover:text-text transition-colors duration-150"
-              >
+              </BtnPrimary>
+              <BtnGhost onClick={handleCancelFeedback}>
                 Cancel
-              </button>
+              </BtnGhost>
             </div>
           )}
 

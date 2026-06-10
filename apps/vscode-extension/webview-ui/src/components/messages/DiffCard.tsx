@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Icon } from "../Icon";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { vscode } from "../../vscodeApi";
+import { BtnPrimary, BtnDanger } from "../shared/buttons";
+import { FileRow } from "../shared/FileRow";
 import type { DiffEntry } from "../../types";
 
 interface Props {
@@ -9,25 +11,6 @@ interface Props {
   diffEntries: DiffEntry[];
   resolved?: "applied" | "discarded" | null;
   thinkingLog?: string[];
-}
-
-/** Returns a color class/style for the file-type dot based on extension. */
-function fileDotStyle(path: string): React.CSSProperties {
-  if (path.endsWith(".ts") || path.endsWith(".tsx")) {
-    return { background: "#3b82f6" };
-  }
-  if (path.endsWith(".py")) {
-    return { background: "var(--color-amber)" };
-  }
-  return { background: "var(--color-text-4)" };
-}
-
-/** Split a path into basename + directory components for display. */
-function splitPath(path: string): { base: string; dir: string } {
-  const clean = path.endsWith("/") ? path.slice(0, -1) : path;
-  const slash = clean.lastIndexOf("/");
-  if (slash === -1) return { base: clean, dir: "" };
-  return { base: clean.slice(slash + 1), dir: clean.slice(0, slash) };
 }
 
 /**
@@ -128,55 +111,9 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog }: Props) 
       {/* ── Body (expanded file rows) ── */}
       {expanded && (
         <div className="anim-rise border-t border-border py-1">
-          {diffEntries.map((entry, idx) => {
-            const { base, dir } = splitPath(entry.path);
-            return (
-              <div
-                key={`${entry.path}-${idx}`}
-                className="flex items-center gap-2 px-3 py-1.5"
-              >
-                {/* File-type dot */}
-                <span
-                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={fileDotStyle(entry.path)}
-                />
-
-                {/* Filename + dir */}
-                <span className="flex-1 min-w-0 font-mono text-[11px] flex items-baseline gap-1 overflow-hidden">
-                  <span className="text-text-2 flex-shrink-0">{base}</span>
-                  {dir && (
-                    <span className="text-text-4 truncate">{dir}</span>
-                  )}
-                </span>
-
-                {/* Per-file stats */}
-                <span className="font-mono text-[10px] font-semibold flex items-center gap-1 flex-shrink-0">
-                  {entry.additions > 0 && (
-                    <span className="text-green">+{entry.additions}</span>
-                  )}
-                  {entry.deletions > 0 && (
-                    <span className="text-red">&minus;{entry.deletions}</span>
-                  )}
-                </span>
-
-                {/* View diff button — always active (read-only affordance even when resolved) */}
-                <button
-                  type="button"
-                  title="Open diff in editor"
-                  onClick={() =>
-                    vscode.postMessage({
-                      type: "viewDiffFile",
-                      path: entry.path,
-                      shadowPath: entry.temp_path ?? "",
-                    })
-                  }
-                  className="flex-shrink-0 w-[22px] h-[22px] rounded flex items-center justify-center text-text-3 bg-transparent border border-transparent cursor-pointer hover:border-border-strong hover:text-text-2 transition-colors duration-150"
-                >
-                  <Icon name="file" size={11} />
-                </button>
-              </div>
-            );
-          })}
+          {diffEntries.map((entry, idx) => (
+            <FileRow key={`${entry.path}-${idx}`} entry={entry} />
+          ))}
         </div>
       )}
 
@@ -184,39 +121,12 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog }: Props) 
       <div className="flex gap-1.5 px-2.5 py-2 border-t border-border">
         {effectiveResolved === null && (
           <>
-            <button
-              type="button"
-              onClick={handleAccept}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-[6px] rounded-md text-[11px] font-[550] text-white cursor-pointer border border-transparent"
-              style={{
-                background:
-                  "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
-                boxShadow:
-                  "0 1px 2px rgba(0,0,0,.4), 0 0 16px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,.18)",
-              }}
-            >
-              <Icon name="check" size={11} />
+            <BtnPrimary flex icon="check" onClick={handleAccept}>
               Accept all
-            </button>
-            <button
-              type="button"
-              onClick={handleReject}
-              className="inline-flex items-center justify-center px-3 py-[6px] rounded-md text-[11px] font-[550] cursor-pointer bg-transparent border transition-colors duration-150"
-              style={{
-                color: "var(--color-red)",
-                borderColor: "var(--red-brd)",
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "var(--red-bg)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-              }}
-            >
+            </BtnPrimary>
+            <BtnDanger onClick={handleReject}>
               Reject
-            </button>
+            </BtnDanger>
           </>
         )}
 
