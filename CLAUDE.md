@@ -127,7 +127,7 @@ Concurrency guards: `_in_flight_feedback` and `_in_flight_resume` are closure-sc
 - `validation/` — runs configurable validation commands (pytest, tsc, cargo test) on the shadow; returns `ValidationResult`
 - `orchestrator/broadcaster.py` — `EventBroadcaster` (renamed from `PatchEventBroadcaster`): keyed by `channel_id` (any string — task_id for task SSE, a UUID for chat SSE); single streaming mechanism for all SSE in the system
 - `chat/agent.py` — `ChatAgent`: explore → classify → respond coroutine; `_draft_plan_markdown()` for small_change path
-- `chat/storage.py` — `ChatThreadStore`: SQLite multi-thread storage; `resolve_diff_card(inline_task_id, resolution)` patches diff card resolved state
+- `chat/storage.py` — `ChatThreadStore`: SQLite multi-thread storage; `resolve_diff_card(inline_task_id, resolution)` patches diff card resolved state; `append_plan_card(thread_id, task_id, md)` appends a plan version (dedups vs the task's latest) — see "Live cards" below
 - `chat/classifier.py` — `IntentClassifier`: qa / small_change / large_change
 - `chat/models.py` — `ChatMessage`, `ChatThread` dataclasses
 - `chat/app_factory.py` — test-only `build_app()` — keeps provider transport init out of import path; uses `ScriptedReasoningEngine` and `_NullTransport`
@@ -161,6 +161,8 @@ SSE event types from the chat message endpoint:
 | `diff_ready` | Inline change ready; payload has `inline_task_id`, `diff_entries` |
 | `thread_title_updated` | Thread auto-named from first user message; payload: `{thread_id, title}` |
 | `chat_response` | QA answer chunk |
+| `chat_breadcrumb` | Durable record of a resolved gate/plan action (`{text, task_id}`), pushed live so it lands in history without a reload. Persisted as an `agent/text` message with `metadata.breadcrumb=true`. Broadcast to BOTH the chat channel and the task channel. |
+| `plan_card` | Read-only plan version (`{task_id, plan_markdown}`), pushed to the transcript live. Persisted via `append_plan_card`. |
 | `chat_done` | Turn complete |
 
 `ChatAgent` flow per message:
@@ -173,8 +175,19 @@ SSE event types from the chat message endpoint:
 - `diff_entries: list[DiffEntry]` — files changed in an inline change (on `diff_card` messages)
 - `resolved: "applied" | "discarded"` — patched in by `resolve_diff_card()` after promote/discard; controls rendered state of diff card buttons
 - `taskId: str` — inline task id on diff card messages
+- `breadcrumb: true` — marks a gate/plan-action transcript breadcrumb (rendered as a normal agent text line)
 
 `ChatThreadStore.resolve_diff_card(inline_task_id, resolution)` scans all threads for the matching `diff_card` message by `task_id` and patches `metadata.resolved` in-place — called from the promote and discard API routes.
+
+#### Live cards, gates & breadcrumbs (Class-A model)
+The chat UI separates **interactive** affordances from the **durable transcript** — conflating them caused a cluster of bugs (cards vanishing with no record, reappearing on reload, 409 on re-accept, a crash).
+- **Interactive gate/plan cards** render *only* in the pinned `/live` slot (`renderLiveGate` / `renderLivePlan` in `chat.js`), driven by `GET /v1/chat/threads/{id}/live`. `resolve_live_state` (`chat/live_state.py`) derives the one active gate from the task **status** via `_GATE_FIELD` (`AWAITING_{COMMAND,STEP,SCOPE,VALIDATION}_DECISION` → `pending_*` field) and the plan only at `AWAITING_PLAN_APPROVAL`. The slot auto-clears when status advances. The 1s `liveStateTimer` poll is the durable render path (survives reload + resume task-id churn); SSE events only *poke* a re-fetch. Step-review cards in chat have **no** SSE poke — they render purely from the poll.
+- **Durable records** are persisted chat messages, also broadcast live so the transcript fills in real time (`/live` carries gate+plan only, never the message list): a `✓/✗/↻` **breadcrumb** (`_write_chat_breadcrumb` → `chat_breadcrumb` event + `agent/text` message) for every resolved gate/plan action, and a read-only **`plan_card`** version.
+- **`plan_card` is a version history.** `ChatThreadStore.append_plan_card(thread_id, task_id, md)` appends a new version (feedback regenerates → old plan stays, new appends after the `↻ feedback` breadcrumb) but skips a write identical to the task's current latest (collapses the double-writer / re-presentation). `_write_chat_plan_card` is the **single** writer (the chat agent no longer writes one) and broadcasts to **both** the chat channel (presentation turn listens here) and the task channel (execution stream picks up a feedback-regenerated version on approval). Frontend dedups by task+content signature (`planSig` in `chat.js`), so versions coexist while a re-delivery (live + reload, or both channels) never duplicates. Interactive Implement/Feedback buttons live ONLY in the `/live` slot — persisted `plan_card` messages are **read-only**.
+
+**Gate invariants (each caused a real bug):**
+- **Gates clear in place.** `_pause_for_step_review` (and the scope/command callbacks) must reset `pending_*` + transition the **caller's** task object back to `EXECUTING` — NOT re-fetch a fresh record and reset that. `transition()` mutates in place and the caller (`_execute_plan`) holds the reference; re-fetching a divergent object leaves the caller stale at `AWAITING_STEP_REVIEW`, which re-saves the stale gate (card reappears on reload, 409 on re-accept) and crashes the next transition (`Invalid transition: AWAITING_STEP_REVIEW -> VALIDATING`). Safe because the decision routes (`/step-decision`, `/scope-decision`, …) only `future.set_result(...)` — they never mutate/persist the task, so nothing changes it during the `await`.
+- **Gate-raise `except ValueError` swallows ONLY true re-entrancy** (`task.status == target`); re-raise otherwise. An invalid-source transition (e.g. raising a scope gate while parked in `AWAITING_STEP_REVIEW`) silently swallowed strands `pending_*` behind a stale status, so `/live` renders the wrong gate (or none) and the task blocks until its decision timeout (scope default 600s).
 
 ### Retrieval pipeline
 - `indexer-rs` writes `index-snapshot.json` with `nodes`/`edges`/`diagnostics`/`stats`
@@ -209,6 +222,10 @@ SSE event types from the chat message endpoint:
 - `pytest-asyncio` with `@pytest.mark.asyncio` for all async tests
 - Integration-style tests (no mocks of the file system or HTTP) — real `tmp_path` shadows, real `PatchEngine`
 - TypeScript tests use vitest; VS Code extension tests use a stub `ControllerUI` implementation
+- **`InMemoryTaskStore.get()` returns the SAME object reference** (no copy), which MASKS stale-reference / object-divergence bugs. For a test that depends on production semantics — store returns a fresh copy, e.g. verifying a coroutine advanced the *caller's* task object — use `SQLiteTaskStore(tmp_path / "x.sqlite3")` instead.
+- **Never `asyncio.get_event_loop().run_until_complete(coro)` in tests.** On Python 3.13 it raises `RuntimeError: There is no current event loop` once a prior `@pytest.mark.asyncio` test closes the loop, so the test passes in isolation but fails order-dependently in the full suite. Use `asyncio.run(coro)` or `@pytest.mark.asyncio async def`.
+- **`pytest | tail` (or any pipe) masks pytest's exit code** with the pipe's last command's (always 0). Read the actual `FAILED`/summary lines, never trust the reported exit code of a piped run.
+- A shifting failure set across full-suite runs = order/state pollution or environment dependence (e.g. `test_graph_walker_reachability` is `@requires_live_snapshot` and reflects `index-snapshot.json` freshness). Reproduce a suspect failure **in isolation** before attributing it to your change.
 
 ## Key Configuration
 
