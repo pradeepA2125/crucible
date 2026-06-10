@@ -133,13 +133,15 @@ export type StreamEvent =
   | { type: "done"; payload: Record<string, never> }
   | { type: "tool_call"; payload: { tool: string; thought: string; iteration: number; phase: string; args?: Record<string, unknown> } }
   | { type: "tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
-  | { type: "planning_tool_call"; payload: { tool: string; thought: string; iteration: number } }
+  | { type: "planning_tool_call"; payload: { tool: string; thought: string; iteration: number; args?: Record<string, unknown> } }
   | { type: "planning_tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
+  | { type: "explore_tool_result"; payload: { tool: string; output: string; is_error: boolean } }
   | { type: "planning_thinking_chunk"; payload: { chunk: string; iteration: number } }
   | { type: "planning_complete"; payload: { files_examined: string[]; confidence: string } }
   | { type: "revision_needed"; payload: { step_id: string; reason: string; evidence: string } }
   | { type: "patch_applied"; payload: { step_id: string; phase: string; touched_files: string[] } }
   | { type: "patch_failed"; payload: { step_id: string; error: string } }
+  | { type: "step_started"; payload: { step_id: string; step_title: string; step_index: number; total_steps: number } }
   | { type: "scope_extension_requested"; payload: { decision_id: string; files: string[]; reason: string; step_id: string } }
   | { type: "validation_decision_requested"; payload: { task_id: string; diagnostics: Array<{ source: string; message: string; level: string }> } }
   | { type: "command_approval_requested"; payload: { decision_id: string; command: string; args: string[]; cwd: string; step_id: string } }
