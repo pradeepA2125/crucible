@@ -383,6 +383,64 @@ describe("AiEditorController", () => {
     expect(infos.some((message) => message.includes("Submitted plan feedback"))).toBe(true);
   });
 
+  test("handlePlanCardAction feedback forwards planning tool calls/results as structured events", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [],
+      getTaskCalls: [],
+      acceptCalls: [],
+      rejectCalls: [],
+      getResultCalls: [],
+      planFeedbackCalls: [],
+    };
+    const toolEvents: Array<{ id: number; tool: string; source: string }> = [];
+    const toolResults: Array<{ id: number; output: string; isError: boolean }> = [];
+
+    const backend: BackendTaskClient = {
+      ...createStubBackend(state),
+      streamPatch: async (_taskId, onEvent, _signal) => {
+        onEvent({
+          type: "planning_tool_call",
+          payload: { tool: "search_code", thought: "scan auth call sites", iteration: 1, args: { pattern: "auth" } },
+        });
+        onEvent({
+          type: "planning_tool_result",
+          payload: { tool: "search_code", output: "3 matches", is_error: false, iteration: 1 },
+        });
+        onEvent({
+          type: "planning_complete",
+          payload: { files_examined: ["src/auth.py"], confidence: "high" },
+        });
+      },
+    };
+
+    const store = new MemorySessionStore();
+    const controller = new AiEditorController(
+      () => backend,
+      store,
+      createSettings(),
+      createUi({
+        appendToolEvent: (e) => toolEvents.push({ id: e.id, tool: e.tool, source: e.source }),
+        appendToolResult: (id, output, isError) => toolResults.push({ id, output, isError }),
+      }),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-03-03T00:00:00.000Z"
+    );
+
+    await controller.handlePlanCardAction("task-plan", "feedback", "Scope it to the API layer");
+    controller.dispose();
+
+    expect(state.planFeedbackCalls).toEqual([
+      { taskId: "task-plan", feedback: "Scope it to the API layer" },
+    ]);
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].tool).toBe("search_code");
+    expect(toolEvents[0].source).toBe("planning");
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0].id).toBe(toolEvents[0].id);
+    expect(toolResults[0].output).toBe("3 matches");
+    expect(toolResults[0].isError).toBe(false);
+  });
+
 });
 
 describe("AiEditorController — chat", () => {

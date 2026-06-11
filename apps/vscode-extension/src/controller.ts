@@ -716,22 +716,22 @@ export class AiEditorController {
             const chunk = (event.payload["chunk"] as string) ?? "";
             if (chunk) this.ui.appendChatThinkingChunk(chunk);
           } else if (event.type === "planning_tool_call") {
-            const tool = (event.payload["tool"] as string) ?? "";
-            const thought = (event.payload["thought"] as string) ?? "";
-            const action = tool === "read_file" ? "read_file"
-              : tool === "list_directory" ? "list_directory"
-              : tool === "search_code" ? "search_code"
-              : tool === "search_semantic" ? "search_semantic"
-              : tool;
-            this.ui.appendChatThinkingEntry(thought ? `planning: ${action} — ${thought}` : `planning: ${action}`);
+            this.forwardToolCall("planning", event.payload as Record<string, unknown>);
+            this.ui.updateWorkbar({ phaseLabel: `Planning: ${(event.payload["tool"] as string) ?? ""}…` });
+          } else if (event.type === "planning_tool_result") {
+            this.forwardToolResult("planning", event.payload as Record<string, unknown>);
           } else if (event.type === "planning_complete") {
             const confidence = (event.payload["confidence"] as string) ?? "";
             this.ui.appendChatThinkingEntry(`plan ready (${confidence} confidence)`);
+            this.ui.updateWorkbar(null);
             abort.abort();
           }
         }, abort.signal);
       } catch {
         // AbortError when we cancel after planning_complete — expected
+      } finally {
+        this.openToolEvent = {}; // clear cross-turn stale ids
+        this.ui.updateWorkbar(null);
       }
       try {
         const task = await client.getTask(taskId);

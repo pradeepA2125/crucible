@@ -25,7 +25,7 @@
       },
       {
         "command": "aiEditor.openReviewPanel",
-        "title": "AI Editor: Open Review Panel"
+        "title": "AI Editor: Open Review (Chat)"
       },
       {
         "command": "aiEditor.acceptPatch",
