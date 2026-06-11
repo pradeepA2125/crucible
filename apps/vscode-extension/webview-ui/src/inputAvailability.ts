@@ -10,6 +10,9 @@ const GATE_STATUSES = new Set([
   "AWAITING_VALIDATION_DECISION",
 ]);
 
+// VALIDATED and READY_FOR_REVIEW are intentionally excluded: VALIDATED is a
+// sub-second transition, and at READY_FOR_REVIEW the user may type freely while
+// the ReviewCard sits in the live slot.
 const RUNNING_STATUSES = new Set([
   "QUEUED",
   "CONTEXT_READY",

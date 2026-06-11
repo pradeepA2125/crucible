@@ -60,7 +60,9 @@ export function LiveSlot({ liveGate, livePlan, liveReview, liveError, onDismissE
       {liveGate !== null && (
         // Key is content-addressed so that a new gate for the same task+kind
         // (e.g. a second command decision) remounts the card and discards the
-        // previous resolved state.
+        // previous resolved state. Key stability relies on consistent key insertion
+        // order: both SSE and /live payloads pass through JSON.parse, so V8 preserves
+        // the backend serializer's order deterministically.
         <GateDispatch
           key={`${liveGate.taskId}:${liveGate.kind}:${sig(JSON.stringify(liveGate.payload))}`}
           taskId={liveGate.taskId}
