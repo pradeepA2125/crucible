@@ -299,8 +299,15 @@ export function useAppState() {
   const [state, dispatch] = useReducer(reducer, INITIAL);
 
   useEffect(() => {
-    const handler = (event: MessageEvent<ExtensionMessage>) =>
-      dispatch({ type: "EXT", msg: event.data, at: new Date().toISOString() });
+    const handler = (event: MessageEvent<ExtensionMessage>) => {
+      // The window message bus is shared — guard against foreign/malformed
+      // posts (devtools, browser extensions) that would crash the reducer.
+      const data: unknown = event.data;
+      if (data === null || typeof data !== "object" || typeof (data as { type?: unknown }).type !== "string") {
+        return;
+      }
+      dispatch({ type: "EXT", msg: data as ExtensionMessage, at: new Date().toISOString() });
+    };
     window.addEventListener("message", handler);
     vscode.postMessage({ type: "webviewReady" });
     return () => window.removeEventListener("message", handler);

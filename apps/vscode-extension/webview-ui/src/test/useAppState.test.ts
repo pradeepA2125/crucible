@@ -218,4 +218,20 @@ describe("useAppState", () => {
     expect(msg.metadata.thinking_log).toEqual(["reasoning step"]);
     expect(msg.content).toBe("Answer");
   });
+
+  it("ignores malformed/foreign window messages without crashing", () => {
+    const { result } = renderHook(() => useAppState());
+    const fireRaw = (data: unknown) =>
+      window.dispatchEvent(new MessageEvent("message", { data }));
+    act(() => {
+      fireRaw(undefined);
+      fireRaw(null);
+      fireRaw("a string");
+      fireRaw({ noType: true });
+      fireRaw({ type: 42 });
+    });
+    // State untouched, no throw.
+    expect(result.current.state.messages).toHaveLength(0);
+    expect(result.current.state.threads).toHaveLength(0);
+  });
 });
