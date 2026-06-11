@@ -3,7 +3,6 @@ import type {
   ChatMessage,
   ChatThreadSummary,
   CommandDecision,
-  DiffEntry,
   StreamEvent,
   ResumeTaskResponse,
   TaskResult,

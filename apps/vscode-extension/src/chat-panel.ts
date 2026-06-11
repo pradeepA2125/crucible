@@ -53,7 +53,6 @@ export class ChatPanel {
     this.panel.webview.options = {
       enableScripts: true,
       localResourceRoots: [
-        vscode.Uri.joinPath(this.extensionUri, "media"),
         vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist"),
       ],
     };
@@ -73,8 +72,7 @@ export class ChatPanel {
       {
         enableScripts: true,
         localResourceRoots: [
-          vscode.Uri.joinPath(this.extensionUri, "media"),
-          vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist"),
+            vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist"),
         ],
       }
     );
