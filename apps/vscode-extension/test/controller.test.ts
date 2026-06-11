@@ -827,7 +827,15 @@ describe("AiEditorController — command-decision", () => {
         modifiedFiles: ["a.py"],
         diagnostics: [],
         shadowWorkspacePath: "/shadow",
-        plan: { analysis: "a", steps: [{}, {}], expected_files: [], stop_conditions: [] },
+        plan: {
+          analysis: "a",
+          steps: [
+            { id: "s1", goal: "g1", targets: [{ path: "a.py", intent: "existing" as const }], risk: "low" as const },
+            { id: "s2", goal: "g2", targets: [{ path: "a.py", intent: "existing" as const }], risk: "low" as const },
+          ],
+          expected_files: ["a.py"],
+          stop_conditions: ["done"],
+        },
         patch: { patch_ops: [] },
       } as TaskResult),
     };
