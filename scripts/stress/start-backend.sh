@@ -355,7 +355,9 @@ echo "uvicorn_log=$LOG_FILE"
   export AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH"
   export AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT"
   export AI_EDITOR_SHELL_POLICY="${AI_EDITOR_SHELL_POLICY:-ask}"
-  export AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT="${AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT:-true}"
+  # UX decision (chat UI redesign): the step gate is the conscious approval moment
+  # on the large path — review every step by default. Override via env to opt out.
+  export AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT="${AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT:-false}"
   if [[ "$VALIDATION_COMMANDS_JSON" == "__AUTO_DETECT__" ]]; then
     unset AI_EDITOR_VALIDATION_COMMANDS_JSON
   else
