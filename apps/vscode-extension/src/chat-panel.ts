@@ -255,7 +255,21 @@ export class ChatPanel {
 
   private buildHtml(): string {
     const distPath = vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist");
-    let html = fs.readFileSync(vscode.Uri.joinPath(distPath, "index.html").fsPath, "utf8");
+    let rawHtml: string;
+    try {
+      rawHtml = fs.readFileSync(vscode.Uri.joinPath(distPath, "index.html").fsPath, "utf8");
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Chat</title></head>
+<body style="background:#1e1e1e;color:#ccc;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;margin:0">
+  <p style="font-size:1.1em">Chat webview build is missing.</p>
+  <pre style="font-family:monospace;background:#2d2d2d;padding:0.5em 1em;border-radius:4px">Run: npm run -w @ai-editor/vscode-extension build</pre>
+  <p style="font-size:0.8em;color:#888">${errMsg}</p>
+</body>
+</html>`;
+    }
 
     const nonce = Array.from({ length: 16 }, () =>
       Math.floor(Math.random() * 256).toString(16).padStart(2, "0")
@@ -263,11 +277,13 @@ export class ChatPanel {
     const cspSource = this.panel!.webview.cspSource;
 
     // Vite emits relative refs (base "./"): src="./assets/index.js" href="./assets/index.css"
-    html = html.replace(/(src|href)="\.\/(assets\/[^"]+)"/g, (_m, attr: string, assetPath: string) => {
+    let html = rawHtml.replace(/(src|href)="\.\/(assets\/[^"]+)"/g, (_m, attr: string, assetPath: string) => {
       const uri = this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(distPath, assetPath));
       return `${attr}="${uri}"`;
     });
-    html = html.replace(/<script /g, `<script nonce="${nonce}" `);
+    // Lookahead ensures we only match <script> tags (not e.g. <script-runner>) and the
+    // space/> following the tag name is preserved by the lookahead (not consumed).
+    html = html.replace(/<script(?=[\s>])/g, `<script nonce="${nonce}"`);
     html = html.replace(
       "<head>",
       `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${cspSource}; script-src 'nonce-${nonce}' ${cspSource}; img-src ${cspSource} data:; font-src ${cspSource};">`

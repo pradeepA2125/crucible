@@ -961,6 +961,68 @@ describe("AiEditorController — command-decision", () => {
     controller2.dispose();
   });
 
+  test("pollThreadLiveState re-entrancy guard: concurrent calls issue only one backend request", async () => {
+    // A manual-release promise lets us hold the first in-flight call open while we
+    // fire the second, so both are logically concurrent.
+    let releaseFirstCall!: () => void;
+    const firstCallHeld = new Promise<void>((resolve) => { releaseFirstCall = resolve; });
+    let liveCallCount = 0;
+
+    const slowBackend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+        getResultCalls: [], planFeedbackCalls: [],
+      }),
+      getThreadLiveState: async (_threadId: string) => {
+        liveCallCount += 1;
+        await firstCallHeld; // block until released
+        return NULL_LIVE_STATE;
+      },
+    };
+
+    const controller = new AiEditorController(
+      () => slowBackend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-reentrant");
+    // Clear the call made by switchChatThread's immediate poke (it will also block).
+    // Release it first so state is clean, then reset counter.
+    releaseFirstCall();
+    await Promise.resolve();
+    liveCallCount = 0;
+
+    // Re-arm the hold for the actual test.
+    let release2!: () => void;
+    const held2 = new Promise<void>((res) => { release2 = res; });
+    let callCount2 = 0;
+    const slowBackend2: BackendTaskClient = {
+      ...slowBackend,
+      getThreadLiveState: async (_threadId: string) => {
+        callCount2 += 1;
+        await held2;
+        return NULL_LIVE_STATE;
+      },
+    };
+    const controller2 = new AiEditorController(
+      () => slowBackend2, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller2.switchChatThread("chat-reentrant-2");
+    // After switchChatThread's poke is in-flight, fire a second concurrent call.
+    // Neither has resolved yet.
+    const p1 = controller2.pollThreadLiveState();
+    const p2 = controller2.pollThreadLiveState();
+    // Release the held call so both can finish.
+    release2();
+    await Promise.all([p1, p2]);
+    // Only one backend call should have been issued despite two invocations.
+    expect(callCount2).toBe(1);
+    controller.dispose();
+    controller2.dispose();
+  });
+
   test("getTaskResult failure resets signature so next poll retries", async () => {
     let resultCallCount = 0;
 

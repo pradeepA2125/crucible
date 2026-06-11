@@ -125,6 +125,9 @@ export class AiEditorController {
   private turnAbort: AbortController | null = null;
   private seenStepIds = new Set<string>();
   private latestLiveReview: { taskId: string; shadowWorkspacePath: string | null } | null = null;
+  private livePollInFlight = false;
+  // Tracks which task id the seenStepIds set belongs to, independently of deviationsTaskId.
+  private stepTrackingTaskId: string | null = null;
 
   constructor(
     private readonly createClient: BackendClientFactory,
@@ -784,9 +787,9 @@ export class AiEditorController {
         } else if (event.type === "step_started") {
           const p = event.payload;
           this.lastStepStarted = { stepId: p.step_id, stepTitle: p.step_title, stepIndex: p.step_index, totalSteps: p.total_steps };
-          // Reset seenStepIds when a different task's stream begins (reuses deviationsTaskId
-          // as the cross-stream task identity anchor — see noteDeviation).
-          if (this.deviationsTaskId !== taskId) {
+          // Reset seenStepIds when a different task's stream begins.
+          if (this.stepTrackingTaskId !== taskId) {
+            this.stepTrackingTaskId = taskId;
             this.seenStepIds.clear();
           }
           this.seenStepIds.add(p.step_id);
@@ -948,6 +951,9 @@ export class AiEditorController {
     try {
       await this.clientForChat().acceptPatch(taskId);
       this.ui.showInfo("Task finished — changes are in your workspace.");
+      // poke so the review card clears sub-interval once status advances
+      this.lastLiveSignature = null;
+      void this.pollThreadLiveState();
     } catch (error) {
       if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to finish task: ${formatError(error)}`);
@@ -968,6 +974,13 @@ export class AiEditorController {
     try {
       const response = await this.clientForChat().resumeTask(taskId, { stage });
       this.ui.showInfo(`Resumed as ${response.taskId}`);
+      // the child task is a fresh run — never let the parent's step/error history describe it
+      this.seenStepIds.clear();
+      this.stepTrackingTaskId = null;
+      this.lastStepStarted = null;
+      this.lastPatchError = null;
+      this.runDeviations = [];
+      this.deviationsTaskId = null;
       // Force the next poll to re-render against the child task (signature reset).
       this.lastLiveSignature = null;
       void this.pollThreadLiveState();
@@ -1342,6 +1355,9 @@ export class AiEditorController {
    * This is what makes gate/plan cards reappear after a webview reload.
    */
   async pollThreadLiveState(): Promise<void> {
+    if (this.livePollInFlight) return;
+    this.livePollInFlight = true;
+    try {
     const threadId = this.activeThreadId;
     if (!threadId) {
       return;
@@ -1425,6 +1441,9 @@ export class AiEditorController {
     }
 
     this.ui.sendLiveStatus(live.status ?? null);
+    } finally {
+      this.livePollInFlight = false;
+    }
   }
 
   private clientForSession(): BackendTaskClient {
