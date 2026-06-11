@@ -8,7 +8,6 @@ import {
   type ControllerUI,
 } from "./controller.js";
 import { openReviewDiff } from "./review-diff.js";
-import { ReviewPanel } from "./review-panel.js";
 import { VscodeSessionStore } from "./vscode-session-store.js";
 import { checkBackendHealth, VscodeSettingsProvider } from "./settings.js";
 
@@ -39,31 +38,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => controller.openChat()
   );
 
-  const panel = new ReviewPanel({
-    onOpenDiff: (relativePath) => {
-      void controller.openDiffForFile(relativePath);
-    },
-    onRefresh: () => {
-      void controller.refreshTask();
-    },
-    onAccept: () => {
-      void controller.acceptPatch();
-    },
-    onReject: () => {
-      void controller.rejectPatch();
-    },
-    onProvidePlanFeedback: (feedback) => {
-      void controller.providePlanFeedback(feedback);
-    },
-    onStepDecision: (taskId, decision) => {
-      if (decision === "accept") {
-        void controller.acceptStep(taskId);
-      } else {
-        void controller.discardStep(taskId);
-      }
-    },
-  });
-
   const ui: ControllerUI = {
     getWorkspacePath: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
     promptForGoal: () =>
@@ -86,9 +60,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     showError: (message) => {
       void vscode.window.showErrorMessage(message);
-    },
-    updatePanel: (model) => {
-      panel.update(model);
     },
     promptForResumeStage: () =>
       vscode.window.showQuickPick(
@@ -167,9 +138,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     finalizeAgentMessage: () => {
       chatPanel.finalizeAgentMessage();
     },
-    showStepReview: (taskId, stepId, stepTitle, diffEntries) => {
-      panel.showStepReview(taskId, stepId, stepTitle, diffEntries);
-    },
     renderLiveGate: (gate) => {
       chatPanel.renderLiveGate(gate);
     },
@@ -217,12 +185,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.startTask", async () => {
       await controller.startTask();
-      panel.show();
     })
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.openReviewPanel", () => {
-      panel.show();
       controller.openReviewPanel();
     })
   );
@@ -238,7 +204,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.attachToTask", async () => {
       await controller.attachToTask();
-      panel.show();
     })
   );
   context.subscriptions.push(
@@ -261,7 +226,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push({
     dispose: () => {
       controller.dispose();
-      panel.dispose();
     },
   });
 

@@ -18,7 +18,7 @@ import {
   type SettingsProvider,
 } from "../src/controller.js";
 import type { SessionStore } from "../src/session-store.js";
-import type { ReviewFileEntry, ReviewPanelViewModel, TaskSessionState } from "../src/types.js";
+import type { ReviewFileEntry, TaskSessionState } from "../src/types.js";
 
 class MemorySessionStore implements SessionStore {
   value: TaskSessionState | null = null;
@@ -182,7 +182,6 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     showInfo: () => {},
     showWarning: () => {},
     showError: () => {},
-    updatePanel: (_model: ReviewPanelViewModel) => {},
     openChatPanel: () => {},
     appendChatMessage: (_msg: ChatMessage) => {},
     appendChatChunk: (_chunk: string) => {},
@@ -197,7 +196,6 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     appendChatThinkingEntry: (_text: string) => {},
     appendChatThinkingChunk: (_chunk: string) => {},
     finalizeAgentMessage: () => {},
-    showStepReview: () => {},
     renderLiveGate: () => {},
     clearLiveGate: () => {},
     renderLivePlan: () => {},

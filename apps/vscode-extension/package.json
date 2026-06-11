@@ -84,8 +84,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@ai-editor/editor-client": "0.2.0",
-    "marked": "^18.0.3"
+    "@ai-editor/editor-client": "0.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

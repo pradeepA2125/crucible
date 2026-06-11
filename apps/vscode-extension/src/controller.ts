@@ -18,7 +18,6 @@ import { SessionStore } from "./session-store.js";
 import { shouldStopPolling, TaskPoller } from "./task-poller.js";
 import type {
   ReviewFileEntry,
-  ReviewPanelViewModel,
   TaskMode,
   TaskSessionState,
 } from "./types.js";
@@ -53,7 +52,6 @@ export interface ControllerUI {
   showInfo(message: string): void;
   showWarning(message: string): void;
   showError(message: string): void;
-  updatePanel(model: ReviewPanelViewModel): void;
   openChatPanel(): void;
   appendChatMessage(message: ChatMessage): void;
   appendChatChunk(chunk: string): void;
@@ -68,7 +66,6 @@ export interface ControllerUI {
   appendChatThinkingEntry(text: string): void;
   appendChatThinkingChunk(chunk: string): void;
   finalizeAgentMessage(): void;
-  showStepReview(taskId: string, stepId: string, stepTitle: string, diffEntries: DiffEntry[]): void;
   // Live, state-driven cards (Class A). One slot per kind, replace-not-append; written
   // by both the SSE path (instant) and the /live poll (durable across reload/resume).
   renderLiveGate(gate: LiveGateView): void;
@@ -108,7 +105,6 @@ export class AiEditorController {
   private latestResult: TaskResult | null = null;
   private poller: TaskPoller | null = null;
   private streamController: AbortController | null = null;
-  private patchEvents: StreamEvent[] = [];
   private activeThreadId: string | null = null;
   // /live poll: re-derives the active gate/plan from persisted task state so cards
   // survive reload and resume task-id churn. Source of truth for action binding (Task 8).
@@ -141,12 +137,10 @@ export class AiEditorController {
   async initialize(): Promise<void> {
     const restored = await this.sessionStore.load();
     if (!restored) {
-      this.pushPanel();
       return;
     }
 
     this.session = restored;
-    this.pushPanel();
     if (!shouldStopPolling(restored.status)) {
       this.startPolling();
     }
@@ -197,17 +191,16 @@ export class AiEditorController {
     };
     this.latestResult = null;
     this.stopStream();
-    this.patchEvents = [];
 
     await this.sessionStore.save(this.session);
-    this.pushPanel();
     this.startPolling();
     this.startStream(submission.taskId);
     this.ui.showInfo(`Started AI Editor task ${submission.taskId}`);
   }
 
   openReviewPanel(): void {
-    this.pushPanel();
+    // The unified chat panel replaced the review panel.
+    this.ui.openChatPanel();
   }
 
   async attachToTask(): Promise<void> {
@@ -240,10 +233,8 @@ export class AiEditorController {
     this.latestTask = task;
     this.latestResult = null;
     this.stopStream();
-    this.patchEvents = [];
 
     await this.sessionStore.save(this.session);
-    this.pushPanel();
 
     if (!shouldStopPolling(task.status)) {
       this.startPolling();
@@ -336,10 +327,8 @@ export class AiEditorController {
       // continue_task runs in the background. Always start the stream here since
       // execution begins immediately after approval regardless of the returned status.
       this.stopStream();
-      this.patchEvents = [];
       this.startStream(task.taskId);
 
-      this.pushPanel();
       if (normalizedFeedback) {
         this.ui.showChatThinking("Regenerating plan with your feedback…");
         this.ui.setChatInputEnabled(false);
@@ -394,7 +383,6 @@ export class AiEditorController {
     this.latestTask = null;
     this.latestResult = null;
     await this.sessionStore.save(this.session);
-    this.pushPanel();
     this.startPolling();
     this.ui.showInfo(`Resumed as new task ${response.taskId}`);
   }
@@ -1084,8 +1072,6 @@ export class AiEditorController {
     const client = this.clientForSession();
     client
       .streamPatch(taskId, (event) => {
-        this.patchEvents = [...this.patchEvents, event];
-        this.pushPanel();
         if (event.type === "planning_tool_call") {
           const tool = (event.payload as Record<string, unknown>)["tool"] as string ?? "";
           const action = tool === "read_file" ? "Reading file"
@@ -1112,14 +1098,8 @@ export class AiEditorController {
         } else if (event.type === "scope_extension_requested") {
           // Fire and forget — prompt the user; on response, post the decision.
           void this.handleScopeExtensionRequest(taskId, event);
-        } else if (event.type === "step_review_requested") {
-          this.ui.showStepReview(
-            taskId,
-            event.payload.step_id,
-            event.payload.step_title,
-            event.payload.diff_entries,
-          );
         }
+        // step_review_requested: step review surfaces via the /live poll (renderLiveGate kind "step").
       }, signal)
       .catch((err: unknown) => {
         if (err instanceof Error && err.name === "AbortError") return;
@@ -1255,8 +1235,6 @@ export class AiEditorController {
     if (TERMINAL_STATUSES.has(task.status)) {
       this.ui.showInfo(`Task ${task.taskId} is ${task.status}.`);
     }
-
-    this.pushPanel();
   }
 
   private startPolling(): void {
@@ -1287,8 +1265,6 @@ export class AiEditorController {
             // keep latest known result when retrieval fails
           }
         }
-
-        this.pushPanel();
       },
       onError: (error) => {
         this.ui.showWarning(`Polling failed: ${formatError(error)}`);
@@ -1451,30 +1427,6 @@ export class AiEditorController {
       throw new Error("No active session");
     }
     return this.createClient(this.session.backendBaseUrl);
-  }
-
-  private pushPanel(): void {
-    this.ui.updatePanel(this.buildViewModel());
-  }
-
-  private buildViewModel(): ReviewPanelViewModel {
-    const shadowWorkspacePath = this.latestResult?.shadowWorkspacePath;
-    const reviewFiles =
-      this.session && shadowWorkspacePath
-        ? buildReviewFileEntries(
-            this.session.workspacePath,
-            shadowWorkspacePath,
-            this.latestResult?.modifiedFiles ?? []
-          )
-        : [];
-
-    return {
-      session: this.session,
-      task: this.latestTask,
-      result: this.latestResult,
-      reviewFiles,
-      patchEvents: this.patchEvents,
-    };
   }
 }
 
