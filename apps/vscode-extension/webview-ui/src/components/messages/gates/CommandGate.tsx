@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { Icon } from "../../Icon";
 import { vscode } from "../../../vscodeApi";
 import { CardShell } from "../../shared/CardShell";
@@ -120,7 +121,11 @@ export function CommandGate({ taskId, payload }: Props) {
       </div>
 
       {/* ── Radio group ── */}
-      <div className="flex flex-col gap-[6px] px-3 pb-2.5">
+      <div
+        role="radiogroup"
+        aria-label="Auto-approve scope"
+        className="flex flex-col gap-[6px] px-3 pb-2.5"
+      >
         {/* exact */}
         <RadioOption
           selected={scope === "exact"}
@@ -196,7 +201,7 @@ export function CommandGate({ taskId, payload }: Props) {
 interface RadioOptionProps {
   selected: boolean;
   onSelect: () => void;
-  label: React.ReactNode;
+  label: ReactNode;
 }
 
 function RadioOption({ selected, onSelect, label }: RadioOptionProps) {
@@ -204,7 +209,14 @@ function RadioOption({ selected, onSelect, label }: RadioOptionProps) {
     <div
       role="radio"
       aria-checked={selected}
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       className="flex items-center gap-2 text-[11px] cursor-pointer"
       style={{ color: selected ? "var(--color-text)" : "var(--color-text-2)" }}
     >

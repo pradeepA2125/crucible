@@ -77,7 +77,9 @@ export function ValidationGate({ taskId, payload }: Props) {
               >
                 [{d.level}]
               </span>
-              <span className="text-text-2">{d.message.slice(0, 400)}</span>
+              <span className="text-text-2">
+                {d.message.length > 400 ? d.message.slice(0, 400) + "…" : d.message}
+              </span>
             </div>
           ))}
         </div>

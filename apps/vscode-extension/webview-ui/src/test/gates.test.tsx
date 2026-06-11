@@ -93,15 +93,14 @@ describe("CommandGate — Allow & remember with binary scope", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /allow.*remember/i }));
 
-    expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "commandDecision",
-        approve: true,
-        remember: true,
-        scope: "binary",
-        ruleValue: "npm", // basename of "npm"
-      })
-    );
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "commandDecision",
+      taskId: "task-cmd",
+      approve: true,
+      remember: true,
+      scope: "binary",
+      ruleValue: "npm", // basename of "npm"
+    });
   });
 });
 
@@ -124,16 +123,15 @@ describe("CommandGate — Allow & remember with prefix scope", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /allow.*remember/i }));
 
-    expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "commandDecision",
-        approve: true,
-        remember: true,
-        scope: "prefix",
-        // shlexJoin(["npm","run"]) = "npm run"
-        ruleValue: "npm run",
-      })
-    );
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "commandDecision",
+      taskId: "task-cmd",
+      approve: true,
+      remember: true,
+      scope: "prefix",
+      // shlexJoin(["npm","run"]) = "npm run"
+      ruleValue: "npm run",
+    });
   });
 });
 
@@ -148,6 +146,35 @@ describe("CommandGate — Reject", () => {
       taskId: "task-cmd",
       approve: false,
     });
+  });
+});
+
+describe("CommandGate — keyboard-operable radios", () => {
+  it("pressing Space on a radio option selects it (aria-checked=true)", () => {
+    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+
+    // radios[0]=exact (selected by default), radios[2]=binary (not selected)
+    const radios = screen.getAllByRole("radio");
+    const binaryRadio = radios[2];
+
+    expect(binaryRadio.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.keyDown(binaryRadio, { key: " " });
+
+    expect(binaryRadio.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("pressing Enter on a radio option selects it (aria-checked=true)", () => {
+    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+
+    const radios = screen.getAllByRole("radio");
+    const prefixRadio = radios[1];
+
+    expect(prefixRadio.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.keyDown(prefixRadio, { key: "Enter" });
+
+    expect(prefixRadio.getAttribute("aria-checked")).toBe("true");
   });
 });
 

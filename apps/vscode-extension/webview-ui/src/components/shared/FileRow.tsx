@@ -1,9 +1,10 @@
+import type { CSSProperties } from "react";
 import { Icon } from "../Icon";
 import { vscode } from "../../vscodeApi";
 import type { DiffEntry } from "../../types";
 
 /** Returns an inline style for the file-type dot based on path extension. */
-function fileDotStyle(path: string): React.CSSProperties {
+function fileDotStyle(path: string): CSSProperties {
   if (path.endsWith(".ts") || path.endsWith(".tsx")) {
     return { background: "#3b82f6" };
   }
