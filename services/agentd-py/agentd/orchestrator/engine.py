@@ -1309,6 +1309,41 @@ class AgentOrchestrator:
         )
         self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
 
+    def _write_step_completed_breadcrumb(self, task: TaskRecord, step: PlanStep) -> None:
+        """Auto-accept leaves no review gate \u2014 record completion in the transcript."""
+        self.write_chat_breadcrumb(task, f"\u2713 Step completed: {step.goal[:120]}")
+
+    def _write_chat_step_diff_record(
+        self,
+        task: TaskRecord,
+        step_id: str,
+        step_title: str,
+        diff_entries: list[dict],
+        resolution: str,
+    ) -> None:
+        """Persist a reviewed step's diff as a read-only diff_card transcript message.
+
+        The live StepGate card is /live-slot only and vanishes once the decision
+        lands; this is the durable record (same Class-A model as breadcrumbs).
+        Not broadcast live \u2014 the gate card already showed the diff. resolved is
+        pre-set so the card renders inert (Applied/Discarded), never interactive.
+        """
+        if not task.chat_channel_id or self._chat_store is None or not diff_entries:
+            return
+        from agentd.chat.models import ChatMessage
+        thread_id = task.chat_channel_id[len("chat:"):]
+        msg = ChatMessage(
+            role="agent", content=task.task_id, type="diff_card", task_id=task.task_id,
+            metadata={
+                "task_id": task.task_id,
+                "step_id": step_id,
+                "step_title": step_title,
+                "diff_entries": diff_entries,
+                "resolved": "applied" if resolution == "accept" else "discarded",
+            },
+        )
+        self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+
     async def await_plan_ready(self, task_id: str, timeout_sec: float = 3600.0) -> "TaskRecord | None":
         """Poll until task reaches AWAITING_PLAN_APPROVAL or a terminal state."""
         deadline = time.time() + timeout_sec
@@ -1513,6 +1548,8 @@ class AgentOrchestrator:
                 # so a "completed" step (which resume skips) is guaranteed to be promoted.
                 self._mark_step_completed(task, step.id)
                 await self._store.save(task)
+                if task.step_review_auto_accept:
+                    self._write_step_completed_breadcrumb(task, step)
 
             task = transition(task, TaskStatus.VALIDATING, "full validation started")
             await self._store.save(task)
@@ -1911,6 +1948,9 @@ class AgentOrchestrator:
             if task.status == TaskStatus.AWAITING_STEP_REVIEW:
                 task = transition(task, TaskStatus.EXECUTING, "step decision received")
             await self._store.save(task)
+            self._write_chat_step_diff_record(
+                task, step.id, payload.step_title, serialized, decision,
+            )
             if decision == "accept":
                 self.write_chat_breadcrumb(task, f"✓ Step changes accepted: {payload.step_title}")
             else:
