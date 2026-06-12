@@ -729,7 +729,13 @@ class AgentOrchestrator:
             accept = False
         finally:
             self._pending_validation_decisions.pop(task.task_id, None)
-        task = await self._store.get(task.task_id)
+        # Clear the gate on the CALLER's object — never re-fetch. run_task's finally
+        # writes the chat completion line from its own `task` local, which `return await
+        # _pause_for_validation_decision(...)` never rebinds; a re-fetched copy (SQLite
+        # store returns fresh objects) leaves that local stale at
+        # AWAITING_VALIDATION_DECISION and the transcript gets "Execution failed: …"
+        # after an accept. Safe: the decision route only future.set_result(), it never
+        # mutates or persists the task. Same invariant as the step-review gate.
         task.execution_state.pending_validation = None  # gate resolved; clear the payload
         if accept:
             # TODO(pradeep): READY_FOR_REVIEW here is largely hollow — _partial_promote already
