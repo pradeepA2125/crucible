@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon } from "../Icon";
+import { DiffPanes } from "../shared/DiffPanes";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { ToolPill } from "../shared/ToolPill";
 import { vscode } from "../../vscodeApi";
@@ -119,12 +120,16 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
         </div>
       )}
 
-      {/* ── Body (expanded file rows) ── */}
+      {/* ── Body (expanded: tabbed diff panes when diff text is on the entries,
+            file rows always — they carry the open-in-editor affordance) ── */}
       {expanded && (
-        <div className="anim-rise border-t border-border py-1">
-          {diffEntries.map((entry, idx) => (
-            <FileRow key={`${entry.path}-${idx}`} entry={entry} />
-          ))}
+        <div className="anim-rise">
+          <DiffPanes entries={diffEntries} />
+          <div className="border-t border-border py-1">
+            {diffEntries.map((entry, idx) => (
+              <FileRow key={`${entry.path}-${idx}`} entry={entry} />
+            ))}
+          </div>
         </div>
       )}
 

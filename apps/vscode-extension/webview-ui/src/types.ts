@@ -18,6 +18,9 @@ export interface DiffEntry {
   additions: number;
   deletions: number;
   temp_path?: string;
+  // Capped unified diff text (snake_case — SSE/live payloads and persisted
+  // metadata are not case-mapped). Absent on pre-v2 messages → FileRow fallback.
+  unified_diff?: string;
 }
 
 export interface Diagnostic {

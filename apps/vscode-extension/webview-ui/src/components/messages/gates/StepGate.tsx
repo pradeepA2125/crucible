@@ -3,6 +3,7 @@ import { Icon } from "../../Icon";
 import { vscode } from "../../../vscodeApi";
 import { CardShell } from "../../shared/CardShell";
 import { BtnPrimary, BtnGhost } from "../../shared/buttons";
+import { DiffPanes } from "../../shared/DiffPanes";
 import { FileRow } from "../../shared/FileRow";
 import type { DiffEntry } from "../../../types";
 
@@ -19,6 +20,7 @@ function parseDiffEntries(payload: Record<string, unknown>): DiffEntry[] {
     additions: typeof e.additions === "number" ? e.additions : 0,
     deletions: typeof e.deletions === "number" ? e.deletions : 0,
     temp_path: e.temp_path ? String(e.temp_path) : undefined,
+    unified_diff: e.unified_diff ? String(e.unified_diff) : undefined,
   }));
 }
 
@@ -65,6 +67,9 @@ export function StepGate({ taskId, payload }: Props) {
           ))}
         </div>
       )}
+
+      {/* ── Tabbed diff panes (when entries carry unified_diff) ── */}
+      <DiffPanes entries={entries} />
 
       {/* ── Actions row ── */}
       <div className="flex gap-1.5 px-2.5 py-2 border-t border-border">
