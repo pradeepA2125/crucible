@@ -1,6 +1,6 @@
 import { useState } from "react";
-import ReactMarkdown from "react-markdown";
 import { Avatar } from "../shared/Avatar";
+import { MarkdownContent } from "../shared/MarkdownContent";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { Icon } from "../Icon";
 
@@ -36,23 +36,7 @@ export function QAMessage({ content, thinkingLog }: Props) {
           <ThinkingBlock entries={thinkingLog} />
         )}
 
-        {/* Markdown content with prose-ish styling */}
-        <div
-          className={[
-            "text-xs text-text-2 leading-relaxed",
-            // Inline code
-            "[&_code]:mono [&_code]:text-code [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:rounded",
-            // Pre blocks
-            "[&_pre]:mono [&_pre]:bg-surface-2 [&_pre]:rounded [&_pre]:p-2 [&_pre]:overflow-x-auto",
-            // Paragraphs
-            "[&_p]:mb-2 [&_p:last-child]:mb-0",
-            // Lists
-            "[&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-2",
-            "[&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-2",
-          ].join(" ")}
-        >
-          <ReactMarkdown>{content}</ReactMarkdown>
-        </div>
+        <MarkdownContent content={content} />
       </div>
 
       {/* Copy button — visible on group hover */}

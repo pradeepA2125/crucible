@@ -174,8 +174,12 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         </button>
       </div>
 
-      {/* ── Message list ── */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3">
+      {/* ── Message list ──
+          [&>*]:flex-shrink-0 is load-bearing: children with overflow-hidden
+          (diff/plan/review cards) have a flex automatic minimum size of ZERO,
+          so once the list overflows they silently collapse to a border line
+          while plain text rows keep their height. */}
+      <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3 [&>*]:flex-shrink-0">
         {isEmpty ? (
           <EmptyState onPick={setDraft} />
         ) : (

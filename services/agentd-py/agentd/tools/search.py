@@ -37,13 +37,22 @@ async def search_code(
     if fixed_strings:
         cmd.append("--fixed-strings")
     if path_filter:
+        glob = path_filter
+        # Models routinely pass the search root itself (absolute or ".") as the
+        # filter; as a glob it matches nothing and silently kills every search.
+        # Drop a root-equal filter, relativize an absolute path under the root.
+        root_str = str(shadow_root)
+        if glob.rstrip("/") in (root_str, ".", "./"):
+            glob = ""
+        elif glob.startswith(root_str + "/"):
+            glob = glob[len(root_str) + 1 :]
         # Ripgrep glob matching fails for exact relative paths (e.g. "a/b/c.py")
         # when an explicit absolute search root is passed — they must be anchored.
         # Prepend "**/" when the filter looks like an exact path (has "/" but no glob chars).
-        glob = path_filter
-        if "/" in glob and not any(c in glob for c in ("*", "?", "[", "{")):
+        if glob and "/" in glob and not any(c in glob for c in ("*", "?", "[", "{")):
             glob = "**/" + glob
-        cmd += ["-g", glob]
+        if glob:
+            cmd += ["-g", glob]
     cmd += [pattern, str(shadow_root)]
 
     try:

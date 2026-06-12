@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ToolEventView } from "../../types";
 import { Avatar } from "../shared/Avatar";
+import { MarkdownContent } from "../shared/MarkdownContent";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { ToolPill } from "../shared/ToolPill";
 import { Icon } from "../Icon";
@@ -72,20 +73,22 @@ export function AgentRow({
           </div>
         )}
 
-        {/* Content */}
+        {/* Content. Finished messages get the same markdown treatment as
+            QAMessage (a turn with pills must not lose answer formatting);
+            streaming stays plain text — markdown on partial chunks flickers. */}
         {breadcrumb ? (
           <BreadcrumbLine text={content} />
-        ) : (
+        ) : streaming ? (
           <div className="text-xs text-text-3 whitespace-pre-wrap">
             {content}
-            {streaming && (
-              <span
-                className="inline-block w-px h-3.5 bg-accent align-middle ml-px"
-                style={{ animation: "blink 1s steps(2) infinite" }}
-              />
-            )}
+            <span
+              className="inline-block w-px h-3.5 bg-accent align-middle ml-px"
+              style={{ animation: "blink 1s steps(2) infinite" }}
+            />
           </div>
-        )}
+        ) : content !== "" ? (
+          <MarkdownContent content={content} />
+        ) : null}
       </div>
 
       {/* Copy button on hover — hidden while streaming */}
