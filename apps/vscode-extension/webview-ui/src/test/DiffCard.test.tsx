@@ -186,3 +186,52 @@ describe("DiffCard — resolved prop", () => {
     expect(screen.getByText("Discarded")).toBeTruthy();
   });
 });
+
+// ── 6. Persisted tool pills ───────────────────────────────────────────────────
+
+describe("DiffCard — persisted tool pills", () => {
+  const TOOL_EVENTS = [
+    {
+      id: 0,
+      tool: "read_file",
+      args: { path: "a.py" },
+      source: "explore" as const,
+      output: "x = 1",
+      isError: false,
+      done: true,
+    },
+    {
+      id: 1,
+      tool: "run_command",
+      args: { command: "pytest -q" },
+      source: "execution" as const,
+      output: "3 passed",
+      isError: false,
+      done: true,
+    },
+  ];
+
+  it("renders a pill per persisted tool event", () => {
+    render(
+      <DiffCard taskId="t1" diffEntries={ENTRIES} toolEvents={TOOL_EVENTS} />
+    );
+
+    expect(screen.getByText("read_file")).toBeTruthy();
+    expect(screen.getByText("run_command")).toBeTruthy();
+  });
+
+  it("expands a done pill to show input args and output", () => {
+    render(
+      <DiffCard taskId="t1" diffEntries={ENTRIES} toolEvents={TOOL_EVENTS} />
+    );
+
+    fireEvent.click(screen.getByText("run_command"));
+    expect(screen.getByText("pytest -q")).toBeTruthy();
+    expect(screen.getByText("3 passed")).toBeTruthy();
+  });
+
+  it("renders no pill strip when toolEvents is absent", () => {
+    render(<DiffCard taskId="t1" diffEntries={ENTRIES} />);
+    expect(screen.queryByText("read_file")).toBeNull();
+  });
+});

@@ -1,23 +1,25 @@
 import { useState } from "react";
 import { Icon } from "../Icon";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
+import { ToolPill } from "../shared/ToolPill";
 import { vscode } from "../../vscodeApi";
 import { BtnPrimary, BtnDanger } from "../shared/buttons";
 import { FileRow } from "../shared/FileRow";
-import type { DiffEntry } from "../../types";
+import type { DiffEntry, ToolEventView } from "../../types";
 
 interface Props {
   taskId: string;
   diffEntries: DiffEntry[];
   resolved?: "applied" | "discarded" | null;
   thinkingLog?: string[];
+  toolEvents?: ToolEventView[];
 }
 
 /**
  * DiffCard — inline change result card with file-by-file rows and accept/reject actions.
  * Matches .card / .diff-card / .dstats / .fdot in the hi-fi mockup.
  */
-export function DiffCard({ taskId, diffEntries, resolved, thinkingLog }: Props) {
+export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvents }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [localResolved, setLocalResolved] = useState<"applied" | "discarded" | null>(null);
 
@@ -105,6 +107,15 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog }: Props) 
       {thinkingLog && thinkingLog.length > 0 && (
         <div className="px-3 pb-1">
           <ThinkingBlock entries={thinkingLog} />
+        </div>
+      )}
+
+      {/* ── Persisted tool pills (explore + execution trace of this change) ── */}
+      {toolEvents && toolEvents.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+          {toolEvents.map((event) => (
+            <ToolPill key={event.id} event={event} />
+          ))}
         </div>
       )}
 

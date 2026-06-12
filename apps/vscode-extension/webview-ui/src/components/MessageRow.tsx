@@ -123,6 +123,7 @@ export function MessageRow({ msg, planVersion }: Props) {
             null
           }
           thinkingLog={msg.metadata?.thinking_log as string[] | undefined}
+          toolEvents={msg.metadata?.tool_events as ToolEventView[] | undefined}
         />
       );
 

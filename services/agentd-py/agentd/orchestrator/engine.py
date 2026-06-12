@@ -19,6 +19,7 @@ from pydantic import ValidationError
 import dataclasses
 
 from agentd.domain.models import (
+    AgentToolTrace,
     CandidateScoreBreakdown,
     CheckpointManifest,
     DeltaReplanRequest,
@@ -52,6 +53,7 @@ from agentd.domain.models import (
     TaskUsage,
     ValidationResult,
 )
+from agentd.chat.tool_events import ToolEventSource, trace_to_tool_events
 from agentd.domain.state_machine import assert_budget, bump_usage, transition
 from agentd.env.ensure import EnvProfileEnsurer
 from agentd.orchestrator.broadcaster import PatchEventBroadcaster
@@ -312,6 +314,7 @@ class AgentOrchestrator:
                 planning_result.tool_trace.model_dump(mode="json"),
                 artifacts_root_path=task.artifacts_root_path,
             )
+            self._write_chat_tool_events(task, planning_result.tool_trace, "planning")
             print(
                 f"[PLAN] Plan created. Examined {len(planning_result.files_examined)} files. "
                 f"Confidence: {planning_result.confidence}"
@@ -487,9 +490,11 @@ class AgentOrchestrator:
                             "plan_markdown": task.plan_markdown,
                         },
                     })
-                # Breadcrumb BEFORE the new plan card so the transcript reads
-                # chronologically: old plan → "↻ feedback" → regenerated plan.
+                # Breadcrumb BEFORE the pills and the new plan card so the transcript
+                # reads chronologically: old plan → "↻ feedback" → regen exploration
+                # pills → regenerated plan.
                 self.write_chat_breadcrumb(task, "↻ Plan feedback submitted — regenerating the plan.")
+                self._write_chat_tool_events(task, planning_result.tool_trace, "planning")
                 self._write_chat_plan_card(task)
                 return task
 
@@ -819,6 +824,7 @@ class AgentOrchestrator:
         channel_id: str,
         store: object,
         thinking_log: list[str] | None = None,
+        explore_events: list[dict[str, object]] | None = None,
     ) -> None:
         """Run a small inline change within a chat thread.
 
@@ -1015,6 +1021,14 @@ class AgentOrchestrator:
             {"path": e.path, "additions": e.additions, "deletions": e.deletions, "temp_path": e.temp_path}
             for e in diff_entries
         ]
+        # Durable pills: chat-explore events (passed in) followed by this loop's
+        # execution trace, re-id'd so ids stay unique within the message.
+        tool_events = [
+            *(explore_events or []),
+            *trace_to_tool_events(outcome.tool_trace, "execution"),
+        ]
+        for index, event in enumerate(tool_events):
+            event["id"] = index
         store.append_message(  # type: ignore[union-attr]
             thread_id,
             _ChatMsg(
@@ -1025,6 +1039,7 @@ class AgentOrchestrator:
                 metadata={
                     "diff_entries": diff_entries_payload,
                     "thinking_log": thinking_log or [],
+                    "tool_events": tool_events,
                 },
             ),
         )
@@ -1236,6 +1251,41 @@ class AgentOrchestrator:
             "payload": {"text": text, "task_id": task.task_id},
         })
 
+    def _write_chat_tool_events(
+        self,
+        task: TaskRecord,
+        trace: AgentToolTrace,
+        source: ToolEventSource,
+        *,
+        step_id: str | None = None,
+        step_title: str | None = None,
+    ) -> None:
+        """Persist a phase/step's tool calls as a pills-only transcript message.
+
+        Live pills stream one-by-one over SSE into the webview bubble; this is the
+        grouped durable record so they survive thread reloads. Deliberately NOT
+        broadcast live (unlike plan cards): the raw tool_call/tool_result events
+        already delivered the live rendering, and there is no shared id to dedup
+        a re-delivery against the bubble's pills.
+        """
+        if not task.chat_channel_id or self._chat_store is None or not trace.calls:
+            return
+        from agentd.chat.models import ChatMessage
+        thread_id = task.chat_channel_id[len("chat:"):]
+        metadata: dict[str, object] = {
+            "task_id": task.task_id,
+            "tool_events": trace_to_tool_events(trace, source),
+        }
+        if step_id is not None:
+            metadata["step_id"] = step_id
+        if step_title is not None:
+            metadata["step_title"] = step_title
+        msg = ChatMessage(
+            role="agent", content="", type="text", task_id=task.task_id,
+            metadata=metadata,
+        )
+        self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+
     async def await_plan_ready(self, task_id: str, timeout_sec: float = 3600.0) -> "TaskRecord | None":
         """Poll until task reaches AWAITING_PLAN_APPROVAL or a terminal state."""
         deadline = time.time() + timeout_sec
@@ -1379,6 +1429,7 @@ class AgentOrchestrator:
                         },
                         artifacts_root_path=task.artifacts_root_path,
                     )
+                    self._write_chat_tool_events(task, revision.tool_trace, "planning")
 
                     self._apply_revision(task, shadow_path, revision)
 
@@ -2187,6 +2238,10 @@ class AgentOrchestrator:
                     )
 
                     if isinstance(step_outcome, PlanHandoff):
+                        self._write_chat_tool_events(
+                            task, step_outcome.tool_trace, "execution",
+                            step_id=step.id, step_title=step.goal[:120],
+                        )
                         self._restore_shadow_checkpoint(shadow_path, checkpoint.checkpoint_path)
                         task.modified_files = previous_modified_files
                         return step_outcome
@@ -2206,6 +2261,10 @@ class AgentOrchestrator:
                             step_outcome.tool_trace.model_dump(mode="json"),
                             step_id=step.id, attempt=effective_attempt,
                             artifacts_root_path=task.artifacts_root_path,
+                        )
+                        self._write_chat_tool_events(
+                            task, step_outcome.tool_trace, "execution",
+                            step_id=step.id, step_title=step.goal[:120],
                         )
                         trace_entries.append(StepExecutionTrace(
                             step_id=step.id, attempt=effective_attempt, status="validation_failed",
@@ -2227,6 +2286,10 @@ class AgentOrchestrator:
                         tool_trace.model_dump(mode="json"),
                         step_id=step.id, attempt=effective_attempt,
                         artifacts_root_path=task.artifacts_root_path,
+                    )
+                    self._write_chat_tool_events(
+                        task, tool_trace, "execution",
+                        step_id=step.id, step_title=step.goal[:120],
                     )
                     self._write_debug_artifact(
                         task.task_id, "patch",

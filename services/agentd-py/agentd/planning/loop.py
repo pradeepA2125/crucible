@@ -427,7 +427,10 @@ class PlanningLoop:
             })
 
             call_id = f"plan-{uuid4().hex[:8]}"
-            trace.calls.append(ToolCall(call_id=call_id, tool_name=tool_name, arguments=args))
+            trace.calls.append(ToolCall(
+                call_id=call_id, tool_name=tool_name, arguments=args,
+                thought=thought[:300] or None,
+            ))
             trace.results.append(ToolResult(
                 call_id=call_id,
                 tool_name=tool_name,

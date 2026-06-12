@@ -37,7 +37,8 @@ class _InlineOrchestrator:
 
     async def run_inline_change(self, *, thread_id, goal, workspace_path,
                                 plan_markdown, explore_context, channel_id, store,
-                                likely_targets=None, thinking_log=None):
+                                likely_targets=None, thinking_log=None,
+                                explore_events=None):
         self.inline_calls.append({
             "thread_id": thread_id, "goal": goal, "plan_markdown": plan_markdown,
             "channel_id": channel_id,

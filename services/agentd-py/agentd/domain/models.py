@@ -79,6 +79,9 @@ class ToolCall(BaseModel):
     call_id: str
     tool_name: str
     arguments: dict[str, Any]
+    # The model's free-text reasoning for this call — surfaced in the persisted
+    # chat tool pill; the live SSE event already carries it.
+    thought: str | None = None
 
 
 class ToolResult(BaseModel):

@@ -8,10 +8,36 @@ from typing import Any
 from agentd.chat.classifier import IntentClassifier
 from agentd.chat.models import ChatMessage, IntentType
 from agentd.chat.storage import ChatThreadStore
+from agentd.chat.tool_events import TOOL_EVENT_MAX_OUTPUT_CHARS
 from agentd.orchestrator.broadcaster import EventBroadcaster, cap_event_output
 from agentd.planning.registry import PlanningToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _explore_event(
+    event_id: int,
+    tool: str,
+    args: dict[str, Any],
+    thought: str,
+    output: str,
+    is_error: bool,
+) -> dict[str, Any]:
+    """One persisted explore-phase pill in the webview's ToolEventView shape."""
+    if len(output) > TOOL_EVENT_MAX_OUTPUT_CHARS:
+        output = output[:TOOL_EVENT_MAX_OUTPUT_CHARS] + "\n… truncated"
+    event: dict[str, Any] = {
+        "id": event_id,
+        "tool": tool,
+        "args": args,
+        "source": "explore",
+        "output": output,
+        "isError": is_error,
+        "done": True,
+    }
+    if thought:
+        event["thought"] = thought[:300]
+    return event
 
 _EXPLORE_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -151,6 +177,10 @@ class ChatAgent:
         context: list[dict[str, Any]] = []
         files_examined: list[str] = []
         thinking_log: list[str] = []
+        # Structured pill record of the explore phase — persisted on the turn's
+        # message (metadata.tool_events) so pills survive thread reloads. Kept
+        # separate from `context`, which feeds LLM payloads.
+        explore_events: list[dict[str, Any]] = []
 
         def _thinking_broadcast(chunk: str) -> None:
             self._broadcaster.broadcast(channel_id, {
@@ -207,6 +237,10 @@ class ChatAgent:
             try:
                 tool_output = await self._registry.execute(tool_name, args)
                 context.append({"tool": tool_name, "args": args, "result": tool_output.output, "is_error": tool_output.is_error})
+                explore_events.append(_explore_event(
+                    len(explore_events), tool_name, args, thought,
+                    tool_output.output, tool_output.is_error,
+                ))
                 logger.info(
                     "[chat] explore tool_result: %s is_error=%s output_chars=%d",
                     tool_name, tool_output.is_error, len(tool_output.output),
@@ -222,6 +256,9 @@ class ChatAgent:
             except Exception as exc:
                 logger.warning("[chat] explore tool error: %s — %s", tool_name, exc)
                 context.append({"tool": tool_name, "args": args, "result": str(exc), "is_error": True})
+                explore_events.append(_explore_event(
+                    len(explore_events), tool_name, args, thought, str(exc), True,
+                ))
                 self._broadcaster.broadcast(channel_id, {
                     "type": "explore_tool_result",
                     "payload": {
@@ -294,7 +331,11 @@ class ChatAgent:
                     response_text = "Sorry, I couldn't answer that. Please try again."
 
             self._store.append_message(
-                thread_id, ChatMessage(role="agent", content=response_text, metadata={"thinking_log": thinking_log})
+                thread_id,
+                ChatMessage(
+                    role="agent", content=response_text,
+                    metadata={"thinking_log": thinking_log, "tool_events": explore_events},
+                ),
             )
             self._broadcaster.broadcast(channel_id, {
                 "type": "chat_response",
@@ -320,6 +361,7 @@ class ChatAgent:
                     channel_id=channel_id,
                     store=self._store,
                     thinking_log=thinking_log,
+                    explore_events=explore_events,
                 )
                 logger.info("[chat] small_change: run_inline_change completed")
             else:
@@ -340,6 +382,7 @@ class ChatAgent:
                         chat_channel_id=channel_id,
                     )
                     logger.info("[chat] resume: child task created task_id=%s — streaming to %s", child_task_id, channel_id)
+                    self._append_explore_pills(thread_id, explore_events)
                     self._store.append_message(
                         thread_id,
                         ChatMessage(role="agent", content=child_task_id, type="task_card", task_id=child_task_id, metadata={}),
@@ -368,7 +411,10 @@ class ChatAgent:
             logger.info("[chat] clarify path: question=%s", question[:80])
             self._store.append_message(
                 thread_id,
-                ChatMessage(role="agent", content=question, metadata={"thinking_log": thinking_log}),
+                ChatMessage(
+                    role="agent", content=question,
+                    metadata={"thinking_log": thinking_log, "tool_events": explore_events},
+                ),
             )
             self._broadcaster.broadcast(channel_id, {
                 "type": "chat_response",
@@ -389,6 +435,7 @@ class ChatAgent:
                     store=self._store,
                 )
                 logger.info("[chat] large_change: task created task_id=%s — broadcasting task_card", task_id)
+                self._append_explore_pills(thread_id, explore_events)
                 self._store.append_message(
                     thread_id,
                     ChatMessage(role="agent", content=task_id, type="task_card", task_id=task_id, metadata={}),
@@ -413,6 +460,17 @@ class ChatAgent:
                     "payload": {"chunk": "[large_change: no orchestrator configured]"},
                 })
             self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+    def _append_explore_pills(self, thread_id: str, explore_events: list[dict[str, Any]]) -> None:
+        """Persist the explore phase as a pills-only message (paths that hand off to a
+        task card — the pills can't ride on the card itself, mirroring how the live
+        bubble seals before the card renders)."""
+        if not explore_events:
+            return
+        self._store.append_message(
+            thread_id,
+            ChatMessage(role="agent", content="", metadata={"tool_events": explore_events}),
+        )
 
     async def _find_recent_task(self, messages: list[ChatMessage]) -> dict[str, object] | None:
         """Return resumable task context if a recent failed task exists in the thread."""

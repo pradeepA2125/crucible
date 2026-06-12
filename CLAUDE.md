@@ -176,6 +176,7 @@ SSE event types from the chat message endpoint:
 - `resolved: "applied" | "discarded"` — patched in by `resolve_diff_card()` after promote/discard; controls rendered state of diff card buttons
 - `taskId: str` — inline task id on diff card messages
 - `breadcrumb: true` — marks a gate/plan-action transcript breadcrumb (rendered as a normal agent text line)
+- `tool_events: list[dict]` — durable tool pills in the webview's `ToolEventView` shape (`{id, tool, args, thought?, source, output?, isError?, done}` — frontend-camelCase keys). Live pills stream over SSE and die on reload; this is the persisted record (`chat/tool_events.py::trace_to_tool_events`, outputs capped at 4000 chars). Writers: engine `_write_chat_tool_events` (one pills-only `agent/text` message per step attempt with `step_id`/`step_title`, and per planning round — initial, feedback regen, delta replan), `ChatAgent` (explore pills on QA/clarify messages, pills-only message before task cards), and inline-change diff cards (explore + execution, re-id'd). Deliberately NOT broadcast live — the raw `tool_call`/`tool_result` events already render the live pills and there's no shared id to dedup against the bubble.
 
 `ChatThreadStore.resolve_diff_card(inline_task_id, resolution)` scans all threads for the matching `diff_card` message by `task_id` and patches `metadata.resolved` in-place — called from the promote and discard API routes.
 
