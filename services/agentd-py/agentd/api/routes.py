@@ -803,6 +803,7 @@ def build_router(
                 mode=parent.mode,
                 budget=merged_budget,
                 step_review_auto_accept=parent.step_review_auto_accept,
+                chat_channel_id=parent.chat_channel_id,
                 status=TaskStatus.QUEUED,
                 resume_of_task_id=parent.task_id,
                 created_at=now,
@@ -818,6 +819,7 @@ def build_router(
                 mode=snapshot_task.mode,
                 budget=merged_budget,
                 step_review_auto_accept=snapshot_task.step_review_auto_accept,
+                chat_channel_id=parent.chat_channel_id,
                 status=TaskStatus.AWAITING_PLAN_APPROVAL,
                 plan_markdown=snapshot_task.plan_markdown,
                 diagnostics=snapshot_task.diagnostics,
@@ -841,6 +843,7 @@ def build_router(
                 mode=parent.mode,
                 budget=merged_budget,
                 step_review_auto_accept=parent.step_review_auto_accept,
+                chat_channel_id=parent.chat_channel_id,
                 status=TaskStatus.PLANNED,
                 plan=parent.plan,
                 plan_markdown=parent.plan_markdown,
@@ -854,6 +857,16 @@ def build_router(
             )
 
         await store.create(child)
+
+        # Keep the chat thread attached to the lineage: without this the thread's
+        # /live keeps deriving from the FAILED parent, the child writes no
+        # breadcrumbs/records, and its gates park invisibly (timeout 0).
+        if parent.chat_channel_id and chat_agent is not None:
+            thread_id = parent.chat_channel_id[len("chat:"):]
+            chat_agent._store.set_active_task(thread_id, child_id)  # type: ignore[attr-defined]
+            orchestrator.write_chat_breadcrumb(
+                child, f"↻ Resumed as a new run (stage: {request.stage})"
+            )
 
         async def _run_and_release() -> None:
             try:
