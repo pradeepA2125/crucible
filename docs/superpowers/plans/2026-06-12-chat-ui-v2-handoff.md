@@ -1,4 +1,17 @@
-# Chat UI v2 — Handoff (2026-06-12, session budget cutoff)
+# Chat UI v2 — Handoff (updated 2026-06-13: TIER A COMPLETE)
+
+## 2026-06-13 session result — Tier A DONE, live-smoked, all green
+- Task 4 finished (`c620de8`), Task 5 done (`2a4132a` — toggle verified end-to-end: composer checkbox → `step_review` on POST → `step_review_auto_accept` frozen on TaskRecord), docs (`d848849`).
+- **Full live smoke executed and user-verified** (turboquant :8001, worktree dev-host, Playwright + manual): history chips/counts/updated-at; inline diff card tabbed panes (incl. multi-file tab switch + new-file `@@ -0,0` panes); step-gated run (3 gates with panes → accept) leaving resolved read-only `diff_card` records + `✓ Step changes accepted` breadcrumbs that survive reload; auto-accept run (toggle unchecked) → zero step gates, `✓ Step completed` breadcrumbs per step, persisted; command/scope/validation gates all exercised live.
+- **Two real bugs found by the smoke, fixed + regression-tested:**
+  - `e7b5f39` validation gate cleared on a re-fetched copy → stale `run_task` local wrote "Execution failed: <pytest dump>" to the transcript after an ACCEPT (`tests/test_validation_gate_stale_reference.py`, uses SQLiteTaskStore deliberately).
+  - `95d40ac` `POST /resume` dropped chat linkage → resumed child invisible to its thread, gates parked forever (`tests/test_resume_chat_linkage.py`; child now carries `chat_channel_id`, thread `active_task_id` repointed, `↻ Resumed` breadcrumb).
+- Verification state: targeted pytest suites green; webview 154, editor-client 23, extension 21 green; builds + typecheck OK; full pytest still has only the known pre-existing failures (gemini/groq transports + `@requires_live_snapshot` graph-walker).
+- **Next session: merge/PR decision for the whole branch (~40 commits from `3ee8040`, still unmerged) — use superpowers:finishing-a-development-branch. Then Tier B brainstorm (below).**
+
+---
+
+# (original handoff below, 2026-06-12)
 
 **Where:** git worktree `.claude/worktrees/chat-ui-redesign`, branch `chat-ui-redesign`.
 **Execution plan being followed:** `docs/superpowers/plans/2026-06-12-chat-ui-v2-tier-a.md` (committed `48c22b6`) — execute with superpowers:executing-plans, task-by-task, TDD. Every wire-format claim in it was verified against source on 2026-06-12; re-verify anchors if the tree has moved.
