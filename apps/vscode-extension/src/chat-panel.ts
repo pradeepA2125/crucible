@@ -86,6 +86,12 @@ export class ChatPanel {
       const m = msg as Record<string, unknown>;
       let p: Promise<void>;
       if (m["type"] === "webviewReady") {
+        // Webview state resets on reload; the workbar is SSE-fed (not in the
+        // /live poll), so replay the last posted value or step progress shows
+        // a bare "Executing…" until the next step_started event.
+        if (this.lastWorkbarInfo !== null) {
+          this.updateWorkbar(this.lastWorkbarInfo);
+        }
         p = this.onReady();
       } else if (m["type"] === "sendMessage") {
         p = this.onMessage(m["text"] as string);
@@ -247,7 +253,10 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "appendToolResult", id, output, isError });
   }
 
+  private lastWorkbarInfo: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null = null;
+
   updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void {
+    this.lastWorkbarInfo = info;
     this.panel?.webview.postMessage({ type: "updateWorkbar", info });
   }
 

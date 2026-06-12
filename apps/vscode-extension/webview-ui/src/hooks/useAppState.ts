@@ -1,5 +1,5 @@
 import { useReducer, useEffect, useCallback } from "react";
-import type { AppState, ExtensionMessage, ChatMsg, StreamingBubble } from "../types";
+import type { AppState, ExtensionMessage, ChatMsg, StreamingBubble, ToolEventView } from "../types";
 import { vscode } from "../vscodeApi";
 
 // ── Stable content signatures ────────────────────────────────────────────────
@@ -189,17 +189,44 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "appendToolResult": {
       const prev = ensureStreaming(state);
-      return {
-        ...state,
-        streaming: {
-          ...prev,
-          toolEvents: prev.toolEvents.map((t) =>
-            t.id === msg.id
-              ? { ...t, output: msg.output, isError: msg.isError, done: true }
-              : t,
-          ),
-        },
-      };
+      if (prev.toolEvents.some((t) => t.id === msg.id)) {
+        return {
+          ...state,
+          streaming: {
+            ...prev,
+            toolEvents: prev.toolEvents.map((t) =>
+              t.id === msg.id
+                ? { ...t, output: msg.output, isError: msg.isError, done: true }
+                : t,
+            ),
+          },
+        };
+      }
+      // The pill was sealed into a transcript message before its result arrived
+      // (a gate breadcrumb seals the bubble mid-command — run_command's result
+      // lands after approval). Patch the sealed copy or it spins forever.
+      // Extension ids are session-monotonic and persisted pills are always
+      // done:true, so matching id && !done cannot hit a reloaded pill.
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const events = state.messages[i].metadata?.tool_events as
+          | ToolEventView[]
+          | undefined;
+        if (!events?.some((t) => t.id === msg.id && !t.done)) continue;
+        const messages = [...state.messages];
+        messages[i] = {
+          ...messages[i],
+          metadata: {
+            ...messages[i].metadata,
+            tool_events: events.map((t) =>
+              t.id === msg.id
+                ? { ...t, output: msg.output, isError: msg.isError, done: true }
+                : t,
+            ),
+          },
+        };
+        return { ...state, messages };
+      }
+      return state;
     }
 
     case "finalizeAgentMessage":

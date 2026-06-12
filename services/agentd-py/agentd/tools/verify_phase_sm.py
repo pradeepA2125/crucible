@@ -107,10 +107,20 @@ _FAILED_PATCH_STATES = frozenset({_S.PATCH_FAILED_MUST_READ, _S.PATCH_FAILED_CAN
 
 
 class VerifyPhaseStateMachine:
-    """Tracks verify-phase state, enforces tool availability, and manages emit_patch dedup."""
+    """Tracks verify-phase state, enforces tool availability, and manages emit_patch dedup.
 
-    def __init__(self) -> None:
-        self.state: VerifyPhaseState = _S.EXPLORE
+    command_only: a step with no file targets (e.g. "run the full test suite")
+    starts directly in POSTPATCH_CLEAN ("workspace state is final, verify it")
+    instead of EXPLORE — whose only exits are patch events — and verify_done is
+    gated behind TEST_PASSED (no "nothing to run" skip; the commands ARE the
+    step). On failure the model may still patch: empty targets mean novel file
+    writes route through the scope-extension gate, and revision_needed remains
+    the escalation for fixes beyond this step.
+    """
+
+    def __init__(self, *, command_only: bool = False) -> None:
+        self.command_only = command_only
+        self.state: VerifyPhaseState = _S.POSTPATCH_CLEAN if command_only else _S.EXPLORE
         self._retry_count: int = 0
         self._seen_patch_calls: set[tuple] = set()
 
@@ -150,7 +160,16 @@ class VerifyPhaseStateMachine:
 
     def allowed_tools(self) -> frozenset[str]:
         """Tool names available in the current state. Used to filter the JSON schema."""
-        return _ALLOWED_TOOLS[self.state]
+        tools = _ALLOWED_TOOLS[self.state]
+        # Command-only: the commands ARE the step — verify_done only unlocks via
+        # TEST_PASSED, never as the "no tests required" skip from POSTPATCH_CLEAN.
+        # emit_patch stays available where the base table offers it (TEST_FAILED,
+        # POSTPATCH_BLOCKING, recovery states): with empty targets every novel file
+        # write routes through the scope-extension gate, so in-step fixes are
+        # user-approved rather than forbidden.
+        if self.command_only and self.state == _S.POSTPATCH_CLEAN:
+            tools = tools - {"verify_done"}
+        return tools
 
     def allowed_action_types(self) -> frozenset[str]:
         """Top-level response 'type' values allowed in the current state.
@@ -164,7 +183,7 @@ class VerifyPhaseStateMachine:
         Used to filter AGENT_STEP_RESPONSE_SCHEMA.type.enum per turn so a model
         cannot bypass state gating by crafting an off-schema action type.
         """
-        allowed = _ALLOWED_TOOLS[self.state]
+        allowed = self.allowed_tools()
         types: set[str] = {"tool_call", "revision_needed"}
         if "emit_patch" in allowed:
             types.add("emit_patch")
@@ -273,6 +292,19 @@ class VerifyPhaseStateMachine:
                 "query_graph, emit_patch"
             )
 
+        if s == _S.POSTPATCH_CLEAN and self.command_only:
+            return (
+                f"CURRENT STATE: VERIFY (command-only step){iter_note}\n"
+                "This step has NO files to patch — its goal is to RUN the verification\n"
+                "commands described by the step goal / testing strategy and report the result.\n"
+                "Use run_command to execute the build/test commands (read_env_profile,\n"
+                "find_binary, setup_env are available if the environment needs bootstrapping).\n"
+                "When the commands PASS, verify_done unlocks. If they fail you will be able\n"
+                "to diagnose, patch (with user scope approval), or escalate from there.\n"
+                "Available tools: run_command, read_file, search_code, list_directory, "
+                "read_env_profile, find_binary, setup_env"
+            )
+
         if s == _S.POSTPATCH_CLEAN:
             return (
                 f"CURRENT STATE: POSTPATCH — CLEAN{iter_note}\n"
@@ -285,6 +317,22 @@ class VerifyPhaseStateMachine:
                 "at this step (e.g. the test file is created by a LATER step, or no test exists "
                 "yet) — and never try to run a test file that does not exist.\n"
                 "Available tools: read_file, search_code, list_directory, run_command, verify_done"
+            )
+
+        if s == _S.TEST_FAILED and self.command_only:
+            summary = f"\n{failure_summary}\n" if failure_summary else ""
+            return (
+                f"CURRENT STATE: TEST_FAILED (command-only step){iter_note}{summary}\n"
+                "The command failed. Choose based on the failure:\n"
+                "  (A) WRONG COMMAND / ENVIRONMENT — fix with setup_env/find_binary or\n"
+                "      re-run a corrected command.\n"
+                "  (B) SMALL CODE FIX — read the failing code, then emit_patch. This step\n"
+                "      has no file targets, so the write will ask the user for scope\n"
+                "      approval — that is expected, proceed. Re-run the tests after.\n"
+                "  (C) BEYOND THIS STEP — emit revision_needed with the failing output as\n"
+                "      evidence so the plan gets a proper code step.\n"
+                "Available tools: read_file, search_code, list_directory, run_command, "
+                "emit_patch, find_binary, setup_env"
             )
 
         if s == _S.TEST_FAILED:

@@ -98,6 +98,24 @@ def _anchor_failure_hint(error_msg: str) -> str:
     return ""
 
 
+def _is_command_only_step(step: PlanStep, shadow_path: Path | None) -> bool:
+    """A step with nothing to patch — its goal is running commands (build/test).
+
+    Planners mark these with empty targets, but weak models sometimes name a
+    directory instead (e.g. ``tests/``) — treat folder-only targets the same.
+    A target that names a (planned or existing) FILE makes the step a code step.
+    """
+    if not step.targets:
+        return True
+    for target in step.targets:
+        if target.path.endswith("/"):
+            continue
+        if shadow_path is not None and (shadow_path / target.path).is_dir():
+            continue
+        return False
+    return True
+
+
 def _refocus_note(step: PlanStep) -> str:
     """Appended to patch-failure feedback: pull the model back to the step goal and
     push it to reuse the conversation history instead of re-reading the same content."""
@@ -219,7 +237,19 @@ class ToolLoop:
     ) -> StepOutcome:
         trace = AgentToolTrace(step_id=step.id)
         history: list[dict[str, object]] = list(initial_history) if initial_history else []
-        sm = VerifyPhaseStateMachine()
+        sm = VerifyPhaseStateMachine(
+            command_only=_is_command_only_step(step, self._shadow_path),
+        )
+        if sm.command_only:
+            # Nothing to patch — the step verifies the workspace as-is. Read the
+            # shadow (it holds the prior steps' changes) and start at
+            # POSTPATCH_CLEAN where run_command/verify_done are legal; EXPLORE
+            # has no exit without a patch event.
+            self._registry.use_shadow_for_reads()
+            logger.info(
+                "[loop] command-only step: task=%s step=%s targets=%s — starting in %s",
+                self._task_id, step.id, step.target_paths(), sm.state.value,
+            )
         explore_calls = 0
         verify_calls = 0
         last_patch_document: dict[str, object] = {}
@@ -330,8 +360,9 @@ class ToolLoop:
                 _prev_sm_state = sm.state
             # Fix 2: budget phase is driven by whether a patch has landed, NOT by the
             # SM state. PATCH_FAILED_* recovery before the first successful patch stays
-            # on the explore budget.
-            budget_phase = "verify" if _patch_succeeded_once else "explore"
+            # on the explore budget. Command-only steps never patch — their whole run
+            # is verification, so they draw from the verify budget.
+            budget_phase = "verify" if (_patch_succeeded_once or sm.command_only) else "explore"
             _all_defs = self._registry.definitions(phase=phase)
             _allowed = sm.allowed_tools()
             tool_defs = [t.model_dump() for t in _all_defs if t.name in _allowed]
@@ -447,10 +478,15 @@ class ToolLoop:
                 )
                 # State machine owns when verify_done is valid; it's only present in the
                 # schema for POSTPATCH_CLEAN and TEST_PASSED. This guard catches crafted
-                # calls from other states (model bypassing the schema).
-                if sm.state not in (
-                    VerifyPhaseState.POSTPATCH_CLEAN, VerifyPhaseState.TEST_PASSED,
-                ):
+                # calls from other states (model bypassing the schema). Command-only
+                # steps additionally require TEST_PASSED — the commands ARE the step,
+                # so verify_done without a passing run is a skip.
+                _valid_verify_states = (
+                    (VerifyPhaseState.TEST_PASSED,)
+                    if sm.command_only
+                    else (VerifyPhaseState.POSTPATCH_CLEAN, VerifyPhaseState.TEST_PASSED)
+                )
+                if sm.state not in _valid_verify_states:
                     logger.warning(
                         "verify_done called from invalid state %s (step %s)",
                         sm.state.value, step.id, extra={"task_id": self._task_id},
