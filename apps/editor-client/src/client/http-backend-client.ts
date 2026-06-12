@@ -340,13 +340,16 @@ export class HttpBackendClient implements BackendTaskClient {
     });
   }
 
-  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal): AsyncIterable<StreamEvent> {
+  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content: message }),
+        body: JSON.stringify({
+          content: message,
+          ...(options?.stepReview !== undefined ? { step_review: options.stepReview } : {}),
+        }),
         signal: signal ?? null,
       }
     );

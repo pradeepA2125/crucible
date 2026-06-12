@@ -277,8 +277,29 @@ describe("InputArea — Enter sends text and clears draft", () => {
     const textarea = screen.getByRole("textbox");
     fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
 
-    expect(postMessage).toHaveBeenCalledWith({ type: "sendMessage", text: "hello world" });
+    expect(postMessage).toHaveBeenCalledWith({ type: "sendMessage", text: "hello world", stepReview: true });
     expect(onDraftChange).toHaveBeenCalledWith("");
+  });
+
+  it("sends stepReview flag with the message; toggle flips it", () => {
+    render(
+      <InputArea
+        availability={makeAvailability()}
+        draft="do it"
+        onDraftChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: false });
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "sendMessage", text: "do it", stepReview: true }),
+    );
+
+    fireEvent.click(screen.getByLabelText(/review each step/i));
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: false });
+    expect(postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "do it", stepReview: false }),
+    );
   });
 
   it("trims whitespace before sending", () => {
@@ -293,7 +314,7 @@ describe("InputArea — Enter sends text and clears draft", () => {
 
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: false });
 
-    expect(postMessage).toHaveBeenCalledWith({ type: "sendMessage", text: "trimmed" });
+    expect(postMessage).toHaveBeenCalledWith({ type: "sendMessage", text: "trimmed", stepReview: true });
   });
 
   it("does not send on empty draft", () => {

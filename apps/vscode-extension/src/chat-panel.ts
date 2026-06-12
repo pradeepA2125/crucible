@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import type { ChatMessage, ChatThreadSummary, CommandDecision } from "@ai-editor/editor-client";
 import type { LiveGateView, LivePlanView } from "./controller.js";
 
-export type ChatMessageHandler = (message: string) => Promise<void>;
+export type ChatMessageHandler = (message: string, stepReview?: boolean) => Promise<void>;
 export type PlanCardActionHandler = (
   taskId: string,
   action: "implement" | "feedback",
@@ -94,7 +94,7 @@ export class ChatPanel {
         }
         p = this.onReady();
       } else if (m["type"] === "sendMessage") {
-        p = this.onMessage(m["text"] as string);
+        p = this.onMessage(m["text"] as string, m["stepReview"] === true);
       } else if (m["type"] === "implementPlan") {
         p = this.onPlanAction(m["taskId"] as string, "implement");
       } else if (m["type"] === "planFeedback") {

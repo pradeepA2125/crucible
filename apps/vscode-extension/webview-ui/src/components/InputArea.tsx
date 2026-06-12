@@ -22,6 +22,9 @@ const MAX_TEXTAREA_HEIGHT = 96;
 export function InputArea({ availability, draft, onDraftChange }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [stopping, setStopping] = useState(false);
+  // Per-task "Review each step" toggle — always sent; the backend applies it
+  // only when the turn creates a task (large_change). Default on.
+  const [stepReview, setStepReview] = useState(true);
 
   // Focus on mount and whenever disabled flips to false.
   useEffect(() => {
@@ -53,7 +56,7 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
     if (availability.disabled) return;
     const trimmed = draft.trim();
     if (!trimmed) return;
-    vscode.postMessage({ type: "sendMessage", text: trimmed });
+    vscode.postMessage({ type: "sendMessage", text: trimmed, stepReview });
     onDraftChange("");
     // Reset height after clearing.
     const el = textareaRef.current;
@@ -153,6 +156,17 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
 
         {/* Spacer */}
         <span className="flex-1" />
+
+        {/* Review-each-step toggle */}
+        <label className="flex items-center gap-1.5 text-[10px] text-text-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={stepReview}
+            onChange={(e) => setStepReview(e.target.checked)}
+            className="accent-[var(--color-accent)] w-3 h-3"
+          />
+          Review each step
+        </label>
 
         {/* ⌘↵ hint */}
         <span

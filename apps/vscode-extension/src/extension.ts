@@ -19,7 +19,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const chatPanel = new ChatPanel(
     context.extensionUri,
-    (message) => controller.sendChatMessage(message),
+    (message, stepReview) => controller.sendChatMessage(message, stepReview),
     (taskId, action, feedback) => controller.handlePlanCardAction(taskId, action, feedback),
     () => controller.newChatThread(),
     (threadId) => controller.switchChatThread(threadId),

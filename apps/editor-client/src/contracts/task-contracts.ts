@@ -245,7 +245,7 @@ export interface BackendTaskClient {
   createChatThread(workspacePath: string, title?: string): Promise<ChatThreadSummary>;
   getChatThread(threadId: string): Promise<ChatThread>;
   getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
-  sendChatMessage(threadId: string, message: string, signal?: AbortSignal): AsyncIterable<StreamEvent>;
+  sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent>;
   applyInlineChange(inlineTaskId: string): Promise<void>;
   discardInlineChange(inlineTaskId: string): Promise<void>;
 }

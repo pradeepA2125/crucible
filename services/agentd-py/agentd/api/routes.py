@@ -1028,6 +1028,8 @@ def build_router(
             import asyncio as _asyncio_chat
             import json as _json
             message = request.get("content") or request.get("message", "")
+            _raw_step_review = request.get("step_review")
+            step_review = _raw_step_review if isinstance(_raw_step_review, bool) else None
             channel_id = f"chat:{thread_id}"
             # Clear stale replay events from the previous message so a new subscriber
             # doesn't receive old events (including a stale chat_done).
@@ -1036,7 +1038,9 @@ def build_router(
 
             async def _run_agent() -> None:
                 try:
-                    await _chat_agent.handle_message(thread_id, message, channel_id=channel_id)
+                    await _chat_agent.handle_message(
+                        thread_id, message, channel_id=channel_id, step_review=step_review,
+                    )
                 except Exception:
                     import logging as _logging
                     _logging.getLogger(__name__).exception("ChatAgent.handle_message failed")

@@ -1165,6 +1165,7 @@ class AgentOrchestrator:
         workspace_path: str,
         explore_context: list[dict[str, object]],
         store: object,
+        step_review_auto_accept: bool | None = None,
     ) -> str:
         """Create a full planning task pre-seeded with chat explore context."""
         from agentd.domain.models import TaskCreateRequest
@@ -1186,6 +1187,9 @@ class AgentOrchestrator:
         _env_step_review_default = os.environ.get(
             "AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT", "true",
         ).strip().lower() not in ("0", "false", "no", "off")
+        # Per-message composer toggle overrides the env default when provided.
+        if step_review_auto_accept is not None:
+            _env_step_review_default = step_review_auto_accept
         task = TaskRecord(
             task_id=f"task-{uuid4().hex[:12]}",
             goal=request.goal,

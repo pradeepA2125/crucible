@@ -144,7 +144,10 @@ class ChatAgent:
             logger.debug("[chat] blast_radius computation failed", exc_info=True)
             return []
 
-    async def handle_message(self, thread_id: str, message: str, channel_id: str) -> None:
+    async def handle_message(
+        self, thread_id: str, message: str, channel_id: str,
+        step_review: bool | None = None,
+    ) -> None:
         """Process a chat message and broadcast all events to channel_id.
 
         Replaces the old async-generator form. The route background-tasks this
@@ -433,6 +436,7 @@ class ChatAgent:
                     workspace_path=self._workspace_path,
                     explore_context=context,
                     store=self._store,
+                    step_review_auto_accept=(not step_review) if step_review is not None else None,
                 )
                 logger.info("[chat] large_change: task created task_id=%s — broadcasting task_card", task_id)
                 self._append_explore_pills(thread_id, explore_events)

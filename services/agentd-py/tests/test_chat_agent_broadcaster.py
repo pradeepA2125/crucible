@@ -45,7 +45,8 @@ class _InlineOrchestrator:
         })
 
     async def create_task_from_chat(self, *, thread_id, goal, workspace_path,
-                                    explore_context, store) -> str:
+                                    explore_context, store,
+                                    step_review_auto_accept=None) -> str:
         self.task_calls.append({"thread_id": thread_id, "goal": goal})
         return "task-from-chat-1"
 

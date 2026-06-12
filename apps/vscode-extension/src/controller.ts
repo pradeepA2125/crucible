@@ -524,7 +524,7 @@ export class AiEditorController {
     this.startLiveStatePolling();
   }
 
-  async sendChatMessage(text: string): Promise<void> {
+  async sendChatMessage(text: string, stepReview?: boolean): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
 
@@ -554,7 +554,10 @@ export class AiEditorController {
     let currentTaskId: string | undefined;
     try {
       this.openToolEvent = {}; // defensive: clear any stale ids from a previous turn
-      for await (const event of client.sendChatMessage(threadId, text, this.turnAbort.signal)) {
+      for await (const event of client.sendChatMessage(
+        threadId, text, this.turnAbort.signal,
+        stepReview !== undefined ? { stepReview } : undefined,
+      )) {
         if (event.type === "chat_agent_thinking") {
           const message = (event.payload["message"] as string) ?? "Thinking…";
           this.ui.appendChatThinkingEntry(message);
