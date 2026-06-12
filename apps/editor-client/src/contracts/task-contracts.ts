@@ -185,6 +185,11 @@ export const ChatThreadSummarySchema = z.object({
   workspacePath: z.string(),
   title: z.string(),
   createdAt: z.string(),
+  // Enriched list fields (chat UI v2 Tier A) -- optional so a bare summary
+  // (e.g. POST /chat/threads response) still parses.
+  updatedAt: z.string().optional(),
+  messageCount: z.number().optional(),
+  status: z.enum(["running", "review", "done", "failed"]).nullable().optional(),
 });
 export type ChatThreadSummary = z.infer<typeof ChatThreadSummarySchema>;
 

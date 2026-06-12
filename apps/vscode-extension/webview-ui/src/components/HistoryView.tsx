@@ -80,7 +80,7 @@ export function HistoryView({ threads, activeThreadId, navLocked, onSelect, onNe
   const grouped = new Map<DayGroup, ThreadSummary[]>();
   for (const group of GROUP_ORDER) grouped.set(group, []);
   for (const thread of filtered) {
-    const group = getDayGroup(thread.createdAt, now);
+    const group = getDayGroup(thread.updatedAt ?? thread.createdAt, now);
     grouped.get(group)!.push(thread);
   }
 
@@ -222,8 +222,37 @@ interface ThreadRowProps {
   onClick: () => void;
 }
 
+// Mockup frame 1 `.chip-status` — Running (accent, pulse dot), Review (amber),
+// Done (green); Failed (red) is ours, the mockup omits it.
+const CHIP_CONFIG = {
+  running: { label: "Running", color: "var(--color-accent-ink)", bg: "var(--accent-bg)", brd: "var(--accent-brd)" },
+  review:  { label: "Review",  color: "var(--color-amber)", bg: "var(--amber-bg)", brd: "rgba(251,191,36,.25)" },
+  done:    { label: "Done",    color: "var(--color-green)", bg: "var(--green-bg)", brd: "var(--green-brd)" },
+  failed:  { label: "Failed",  color: "var(--color-red)", bg: "var(--red-bg)", brd: "var(--red-brd)" },
+} as const;
+
+function StatusChip({ status }: { status?: ThreadSummary["status"] }) {
+  if (!status) return null;
+  const cfg = CHIP_CONFIG[status];
+  return (
+    <span
+      className="inline-flex items-center gap-1 font-semibold px-[7px] py-px rounded-full flex-shrink-0"
+      style={{ fontSize: "9.5px", color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.brd}` }}
+    >
+      {status === "running" && (
+        <span
+          className="w-[5px] h-[5px] rounded-full flex-shrink-0"
+          style={{ background: "var(--color-accent)", animation: "pulse 1.5s ease-in-out infinite" }}
+          aria-hidden="true"
+        />
+      )}
+      {cfg.label}
+    </span>
+  );
+}
+
 function ThreadRow({ thread, isActive, navLocked, now, onClick }: ThreadRowProps) {
-  const relTime = relativeTime(thread.createdAt, now);
+  const relTime = relativeTime(thread.updatedAt ?? thread.createdAt, now);
 
   return (
     <div
@@ -271,8 +300,13 @@ function ThreadRow({ thread, isActive, navLocked, now, onClick }: ThreadRowProps
           style={{ fontSize: "10.5px" }}
         >
           {relTime}
+          {typeof thread.messageCount === "number" && thread.messageCount > 0 && (
+            <> · {thread.messageCount} {thread.messageCount === 1 ? "message" : "messages"}</>
+          )}
         </span>
       </div>
+
+      <StatusChip status={thread.status} />
 
       {/* Chevron */}
       <span

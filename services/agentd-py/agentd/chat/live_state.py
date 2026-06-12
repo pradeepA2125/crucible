@@ -38,6 +38,33 @@ def _payload(raw: object) -> dict:
     return {}
 
 
+# Task-status -> history-list chip. Mirrors the mockup's Running/Review/Done
+# chips (chat-ui-hifi.html frame 1); failed/aborted get a "failed" chip the
+# mockup omits.
+_CHIP_RUNNING = frozenset({
+    "QUEUED", "CONTEXT_READY", "PLANNED", "EXECUTING",
+    "VALIDATING", "REPAIRING", "VALIDATED", "PROMOTING",
+})
+_CHIP_REVIEW = frozenset({
+    "AWAITING_PLAN_APPROVAL", "AWAITING_STEP_REVIEW",
+    "AWAITING_COMMAND_DECISION", "AWAITING_SCOPE_DECISION",
+    "AWAITING_VALIDATION_DECISION", "READY_FOR_REVIEW",
+})
+
+
+def thread_status_chip(status: str | None) -> str | None:
+    """Map a task status to the history-list chip, or None for no chip."""
+    if status in _CHIP_RUNNING:
+        return "running"
+    if status in _CHIP_REVIEW:
+        return "review"
+    if status == "SUCCEEDED":
+        return "done"
+    if status in ("FAILED", "ABORTED"):
+        return "failed"
+    return None
+
+
 def resolve_live_state(
     active_task_id: str | None,
     get_task: Callable[[str], TaskRecord],

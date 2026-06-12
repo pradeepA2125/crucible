@@ -951,8 +951,28 @@ def build_router(
 
         @router.get("/chat/threads")
         async def list_chat_threads(workspace: str) -> dict:
+            from agentd.chat.live_state import thread_status_chip
+
             threads = _chat_agent._store.list_threads(workspace)
-            return {"threads": [t.model_dump(exclude={"messages"}) for t in threads]}
+            summaries: list[dict] = []
+            for t in threads:
+                status: str | None = None
+                if t.active_task_id:
+                    try:
+                        task = await store.get(t.active_task_id)
+                        status = str(task.status)
+                    except KeyError:
+                        status = None  # task pruned — no chip
+                last_ts = t.messages[-1].timestamp if t.messages else t.created_at
+                summary = t.model_dump(exclude={"messages"})
+                summary["message_count"] = len(t.messages)
+                # Keep the datetime object — FastAPI's encoder then renders it in
+                # the same format as created_at (pydantic UTC "Z"), so clients can
+                # compare the two strings.
+                summary["updated_at"] = last_ts
+                summary["status"] = thread_status_chip(status)
+                summaries.append(summary)
+            return {"threads": summaries}
 
         @router.post("/chat/threads")
         async def create_chat_thread(request: dict) -> dict:

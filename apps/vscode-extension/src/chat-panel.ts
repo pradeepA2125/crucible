@@ -177,7 +177,7 @@ export class ChatPanel {
   }
 
   renderThreadList(
-    threads: Array<Pick<ChatThreadSummary, "threadId" | "title">>,
+    threads: ChatThreadSummary[],
     activeThreadId: string
   ): void {
     this.panel?.webview.postMessage({ type: "renderThreadList", threads, activeThreadId });

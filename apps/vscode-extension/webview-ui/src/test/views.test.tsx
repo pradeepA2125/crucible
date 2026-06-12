@@ -650,3 +650,47 @@ describe("relativeTime", () => {
     expect(result).toMatch(/3/);
   });
 });
+
+// ── 6. HistoryView — enriched summaries (chips, counts) ──────────────────────
+
+describe("HistoryView — enriched summaries", () => {
+  function renderHistory(threads: ThreadSummary[]) {
+    return render(
+      <HistoryView
+        threads={threads}
+        activeThreadId=""
+        navLocked={false}
+        onSelect={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+  }
+
+  it("renders message count and a Review chip", () => {
+    renderHistory([
+      {
+        threadId: "t1", title: "Fix planner", createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(), messageCount: 7, status: "review",
+      },
+    ]);
+    expect(screen.getByText(/7 messages/)).toBeTruthy();
+    expect(screen.getByText("Review")).toBeTruthy();
+  });
+
+  it("renders Running and Done chips", () => {
+    renderHistory([
+      { threadId: "t1", title: "A", createdAt: new Date().toISOString(), status: "running" },
+      { threadId: "t2", title: "B", createdAt: new Date().toISOString(), status: "done" },
+    ]);
+    expect(screen.getByText("Running")).toBeTruthy();
+    expect(screen.getByText("Done")).toBeTruthy();
+  });
+
+  it("renders no chip and no count for a bare summary", () => {
+    renderHistory([
+      { threadId: "t2", title: "Old thread", createdAt: new Date().toISOString() },
+    ]);
+    expect(screen.queryByText(/messages/)).toBeNull();
+    expect(screen.queryByText("Review")).toBeNull();
+  });
+});

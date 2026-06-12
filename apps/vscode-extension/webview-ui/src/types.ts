@@ -31,6 +31,9 @@ export interface ThreadSummary {
   threadId: string;
   title: string;
   createdAt: string;
+  updatedAt?: string;
+  messageCount?: number;
+  status?: "running" | "review" | "done" | "failed" | null;
 }
 
 // ── Structured tool events ────────────────────────────────────────────────────

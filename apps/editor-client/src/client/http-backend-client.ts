@@ -280,6 +280,9 @@ export class HttpBackendClient implements BackendTaskClient {
         workspacePath: t["workspace_path"],
         title: t["title"],
         createdAt: t["created_at"],
+        updatedAt: t["updated_at"] ?? undefined,
+        messageCount: t["message_count"] ?? undefined,
+        status: t["status"] ?? null,
       })
     );
   }
