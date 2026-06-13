@@ -1366,6 +1366,19 @@ class AgentOrchestrator:
         )
         self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
 
+    def _write_chat_narrative(self, task: TaskRecord) -> None:
+        """Persist the task narrative as a durable agent/text transcript message so the next
+        chat turn inherits it via history. No-op if not chat-linked or no narrative."""
+        if not task.chat_channel_id or self._chat_store is None or task.task_narrative is None:
+            return
+        from agentd.chat.models import ChatMessage
+        thread_id = task.chat_channel_id[len("chat:"):]
+        n = task.task_narrative
+        body = n.headline + ("\n" + "\n".join(f"- {p}" for p in n.points) if n.points else "")
+        msg = ChatMessage(role="agent", content=body, type="text", task_id=task.task_id,
+                          metadata={"task_id": task.task_id, "task_narrative": True})
+        self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+
     def _write_step_completed_breadcrumb(self, task: TaskRecord, step: PlanStep) -> None:
         """Auto-accept leaves no review gate \u2014 record completion in the transcript."""
         self.write_chat_breadcrumb(task, f"\u2713 Step completed: {step.goal[:120]}")
@@ -1816,6 +1829,7 @@ class AgentOrchestrator:
                 # Narrative authored HERE (pre-accept) so the ReviewCard shows it before the
                 # Finish/Discard gate. Outcome "succeeded" = execution+validation passed.
                 await self._finalize_task_narrative(task, "succeeded")
+                self._write_chat_narrative(task)
                 await self._store.save(task)
             if task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED}:
                 # Durable telemetry: finalize run_summary on every engine terminal, and
@@ -1828,6 +1842,7 @@ class AgentOrchestrator:
                 _outcome = "aborted" if task.status == TaskStatus.ABORTED else (
                     "succeeded" if task.status == TaskStatus.SUCCEEDED else "failed")
                 await self._finalize_task_narrative(task, _outcome)
+                self._write_chat_narrative(task)
                 # Drop the pinned baseline (prune_checkpoints never scans _baselines, so it
                 # would otherwise leak). Any rollback/abort-revert that needs it has already
                 # run in the except handlers, which execute before this finally.

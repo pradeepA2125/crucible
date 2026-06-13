@@ -487,12 +487,15 @@ class ChatAgent:
                 try:
                     task = await self._orchestrator.get_task(msg.task_id)
                     if task.status.value in _RESUMABLE_STATUSES and task.plan:
-                        return {
+                        recent: dict[str, object] = {
                             "task_id": msg.task_id,
                             "status": task.status.value,
                             "goal": task.goal,
                             "messages_since": offset,
                         }
+                        if task.task_narrative is not None:
+                            recent["task_narrative"] = task.task_narrative.model_dump(mode="json")
+                        return recent
                 except Exception:
                     return None
         return None
