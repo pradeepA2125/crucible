@@ -502,17 +502,20 @@ def build_router(
             msg = f"Task {task_id} is not in READY_FOR_REVIEW state"
             raise HTTPException(status_code=409, detail=msg)
 
+        # Discard all changes = TRUE revert to the pre-execution state (restore modified
+        # files, delete task-created ones), THEN drop the shadow. Rollback must run before
+        # cleanup nulls/removes the shadow it reads from.
+        await orchestrator._rollback_to_pre_execution(task)
+        orchestrator._clear_pre_execution_checkpoint(task)
         await workspace_manager.cleanup(task)
         task.shadow_workspace_path = None
-        task = transition(task, TaskStatus.ABORTED, f"patch rejected: {request.reason}")
+        task = transition(task, TaskStatus.ABORTED, f"changes discarded: {request.reason}")
         await store.save(task)
         await workspace_manager.prune_checkpoints()
 
-        # Reject does NOT revert the workspace (partial promotes already landed);
-        # record that honestly in the transcript.
         orchestrator.write_chat_breadcrumb(
             task,
-            "✗ Task closed without finishing — applied changes kept; task marked aborted.",
+            "✗ All changes discarded — workspace rolled back to its pre-task state.",
         )
 
         return _to_task_result(task)

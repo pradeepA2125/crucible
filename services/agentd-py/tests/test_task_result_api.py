@@ -34,6 +34,14 @@ class DummyOrchestrator:
         _ = task
         self.breadcrumbs.append(text)
 
+    async def _rollback_to_pre_execution(self, task: TaskRecord) -> None:
+        # No baseline pinned in this API-shape test, so reject's true revert is a no-op
+        # here; the revert mechanics are covered by test_reject_reverts.py.
+        _ = task
+
+    def _clear_pre_execution_checkpoint(self, task: TaskRecord) -> None:
+        _ = task
+
 
 def _build_app(
     store: InMemoryTaskStore,
@@ -224,7 +232,7 @@ async def test_reject_returns_task_result_and_aborts(tmp_path: Path) -> None:
 
     assert not shadow.shadow_path.exists()
     assert orch.breadcrumbs == [
-        "✗ Task closed without finishing — applied changes kept; task marked aborted."
+        "✗ All changes discarded — workspace rolled back to its pre-task state."
     ]
 
 
