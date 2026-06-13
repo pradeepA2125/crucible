@@ -25,7 +25,9 @@ from agentd.domain.models import (
     DeltaReplanRequest,
     DiffEntry,
     Diagnostic,
+    FailureSummary,
     InlineChangeResult,
+    RunSummary,
     PatchCandidateV2,
     PatchDocumentV2,
     PatchFailureCode,
@@ -1740,6 +1742,9 @@ class AgentOrchestrator:
             task.diagnostics.append(
                 Diagnostic(source="orchestrator", message=str(exc), level="error")
             )
+            self._write_failure_summary(
+                task, error_class=type(exc).__name__, message=str(exc),
+            )
             task = transition(task, TaskStatus.FAILED, "execution failed")
             await self._store.save(task)
             return task
@@ -1750,10 +1755,18 @@ class AgentOrchestrator:
             if task.chat_channel_id and self._chat_store is not None:
                 self._write_chat_completion(task)
             if task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED}:
+                # Durable telemetry: finalize run_summary on every engine terminal, and
+                # guarantee a failure_summary on FAILED (the except-handler sites set a rich
+                # one; this fallback covers the transition-only FAILED paths).
+                self._finalize_run_summary(task)
+                if task.status == TaskStatus.FAILED and task.failure_summary is None:
+                    last = task.diagnostics[-1].message if task.diagnostics else "Execution failed"
+                    self._write_failure_summary(task, error_class="ExecutionFailed", message=last)
                 # Drop the pinned baseline (prune_checkpoints never scans _baselines, so it
                 # would otherwise leak). Any rollback/abort-revert that needs it has already
                 # run in the except handlers, which execute before this finally.
                 self._clear_pre_execution_checkpoint(task)
+                await self._store.save(task)
                 try:
                     await self._workspace_manager.prune_checkpoints()
                 except Exception:
@@ -3624,6 +3637,40 @@ class AgentOrchestrator:
         baseline_root = Path(checkpoint).parent  # _baselines/<task_id>/shadow -> _baselines/<task_id>
         shutil.rmtree(baseline_root, ignore_errors=True)
         task.execution_state.pre_execution_checkpoint = None
+
+    def _finalize_run_summary(self, task: TaskRecord) -> None:
+        """Accumulate the run-so-far context (Tier B durable telemetry). Called at every
+        terminal transition so the Review/Error card can show "got through 2 of 4, one
+        scope extension" without relying on extension-observed ephemeral state."""
+        total = len(task.plan.steps) if task.plan else 0
+        deviations: list[str] = []
+        es = task.execution_state
+        if es.delta_replans_used:
+            deviations.append(f"{es.delta_replans_used} delta replan(s)")
+        if es.auto_approved_scope_files:
+            deviations.append(f"{len(es.auto_approved_scope_files)} scope extension(s)")
+        if es.approved_commands:
+            deviations.append(f"{len(es.approved_commands)} command(s) approved")
+        task.run_summary = RunSummary(
+            steps_completed=len(task.completed_step_ids),
+            steps_total=total,
+            deviations=deviations,
+        )
+
+    def _write_failure_summary(
+        self,
+        task: TaskRecord,
+        *,
+        error_class: str,
+        message: str,
+        step_id: str | None = None,
+        step_index: int | None = None,
+    ) -> None:
+        """Capture the failing step + error class durably so the ErrorCard survives reload."""
+        task.failure_summary = FailureSummary(
+            step_id=step_id, step_index=step_index,
+            error_class=error_class, message=message[:2000],
+        )
 
     def _create_shadow_checkpoint(
         self,

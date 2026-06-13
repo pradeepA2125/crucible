@@ -451,6 +451,7 @@ def build_router(
 
         if task.status not in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED}:
             task = transition(task, TaskStatus.ABORTED, "cancelled by user")
+            orchestrator._finalize_run_summary(task)
         await workspace_manager.cleanup(task)
         task.shadow_workspace_path = None
         await store.save(task)
@@ -507,6 +508,7 @@ def build_router(
 
         task.shadow_workspace_path = None
         task.promoted_at = datetime.now(UTC)
+        orchestrator._finalize_run_summary(task)
         task = transition(task, TaskStatus.SUCCEEDED, "promotion completed")
         await store.save(task)
         await workspace_manager.prune_checkpoints()
@@ -539,6 +541,7 @@ def build_router(
         orchestrator._clear_pre_execution_checkpoint(task)
         await workspace_manager.cleanup(task)
         task.shadow_workspace_path = None
+        orchestrator._finalize_run_summary(task)
         task = transition(task, TaskStatus.ABORTED, f"changes discarded: {request.reason}")
         await store.save(task)
         await workspace_manager.prune_checkpoints()

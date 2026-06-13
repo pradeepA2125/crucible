@@ -42,6 +42,9 @@ class DummyOrchestrator:
     def _clear_pre_execution_checkpoint(self, task: TaskRecord) -> None:
         _ = task
 
+    def _finalize_run_summary(self, task: TaskRecord) -> None:
+        _ = task
+
 
 def _build_app(
     store: InMemoryTaskStore,
