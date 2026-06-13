@@ -960,14 +960,51 @@ export class AiEditorController {
   async rejectTaskPatch(taskId: string, reason: string): Promise<void> {
     try {
       await this.clientForChat().rejectPatch(taskId, reason.trim() || "closed from chat");
-      this.ui.showInfo("Task closed — applied changes were kept.");
+      // Tier B: reject is now a TRUE revert (the backend restores the pre-execution state
+      // and deletes task-created files), not "keep changes". Message + breadcrumb mirror that.
+      this.ui.showInfo("All changes discarded — workspace rolled back to its pre-task state.");
       this.appendBreadcrumbMessage(
         taskId,
-        "✗ Task closed without finishing — applied changes kept; task marked aborted.",
+        "✗ All changes discarded — workspace rolled back to its pre-task state.",
       );
+      this.lastLiveSignature = null;
+      void this.pollThreadLiveState();
     } catch (error) {
       if (this.isBenignConflict(error)) return;
-      this.ui.showError(`Failed to close task: ${formatError(error)}`);
+      this.ui.showError(`Failed to discard changes: ${formatError(error)}`);
+    }
+  }
+
+  /** Cooperative Stop for the running task (work-bar). revert rolls the workspace back to
+   * its pre-execution state; otherwise the changes applied so far are kept (Tier B). */
+  async abortActiveTask(revert: boolean): Promise<void> {
+    const taskId = this.latestLiveState?.activeTaskId;
+    if (!taskId) return;
+    try {
+      await this.clientForChat().abortTask(taskId, { revert });
+      this.ui.showInfo(
+        revert ? "Stopping task and reverting changes…" : "Stopping task; changes so far are kept…",
+      );
+      this.lastLiveSignature = null;
+      void this.pollThreadLiveState();
+    } catch (error) {
+      if (this.isBenignConflict(error)) return;
+      this.ui.showError(`Failed to stop task: ${formatError(error)}`);
+    }
+  }
+
+  /** Live-mutable "Review each step" preference for the running task (Tier B). A 409 (no
+   * task running) is benign — the toggle only governs creation-time default in that case. */
+  async setReviewPref(autoAccept: boolean): Promise<void> {
+    const taskId = this.latestLiveState?.activeTaskId;
+    if (!taskId) return;
+    try {
+      await this.clientForChat().setReviewPref(taskId, { autoAccept });
+      this.lastLiveSignature = null;
+      void this.pollThreadLiveState();
+    } catch (error) {
+      if (this.isBenignConflict(error)) return;
+      this.ui.showError(`Failed to update review preference: ${formatError(error)}`);
     }
   }
 
@@ -1431,15 +1468,22 @@ export class AiEditorController {
     if (live.status === "READY_FOR_REVIEW" && live.activeTaskId) {
       try {
         const result = await this.clientForChat().getTaskResult(live.activeTaskId);
+        // Tier B: prefer the durable run_summary (survives reload) over extension-observed
+        // ephemeral counts; fall back to the ephemeral values for live-feel before it lands.
+        const rs = live.runSummary;
         const review = {
           taskId: live.activeTaskId,
           modifiedFiles: result.modifiedFiles,
           shadowWorkspacePath: result.shadowWorkspacePath ?? null,
-          stepsCompleted: this.seenStepIds.size > 0 ? this.seenStepIds.size : null,
-          stepsTotal: result.plan && Array.isArray((result.plan as { steps?: unknown[] }).steps)
-            ? ((result.plan as { steps: unknown[] }).steps.length)
-            : null,
-          deviations: this.deviationsTaskId === live.activeTaskId ? [...this.runDeviations] : [],
+          stepsCompleted: rs ? rs.stepsCompleted : (this.seenStepIds.size > 0 ? this.seenStepIds.size : null),
+          stepsTotal: rs
+            ? rs.stepsTotal
+            : (result.plan && Array.isArray((result.plan as { steps?: unknown[] }).steps)
+              ? ((result.plan as { steps: unknown[] }).steps.length)
+              : null),
+          deviations: rs
+            ? rs.deviations
+            : (this.deviationsTaskId === live.activeTaskId ? [...this.runDeviations] : []),
         };
         this.latestLiveReview = { taskId: review.taskId, shadowWorkspacePath: review.shadowWorkspacePath };
         this.ui.renderLiveReview(review);
@@ -1453,11 +1497,19 @@ export class AiEditorController {
     }
 
     if ((live.status === "FAILED" || live.status === "ABORTED") && live.activeTaskId) {
+      // Tier B: prefer the durable failure_summary (survives reload); fall back to the
+      // extension-observed ephemeral step/patch detail for live-feel before it lands.
+      const fs = live.failureSummary;
       const detailParts: string[] = [];
-      if (this.lastStepStarted) {
-        detailParts.push(`${this.lastStepStarted.stepTitle} (step ${this.lastStepStarted.stepIndex} of ${this.lastStepStarted.totalSteps})`);
+      if (fs) {
+        if (fs.stepIndex != null) detailParts.push(`step ${fs.stepIndex}`);
+        detailParts.push(`${fs.errorClass}: ${fs.message}`);
+      } else {
+        if (this.lastStepStarted) {
+          detailParts.push(`${this.lastStepStarted.stepTitle} (step ${this.lastStepStarted.stepIndex} of ${this.lastStepStarted.totalSteps})`);
+        }
+        if (this.lastPatchError) detailParts.push(this.lastPatchError);
       }
-      if (this.lastPatchError) detailParts.push(this.lastPatchError);
       this.ui.renderLiveError({
         taskId: live.activeTaskId,
         status: live.status,

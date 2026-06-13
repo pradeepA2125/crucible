@@ -45,6 +45,8 @@ interface StubBackendState {
   planFeedbackCalls: Array<{ taskId: string; feedback: string | null }>;
   liveResponse?: ThreadLiveState;
   liveCalls?: string[];
+  abortCalls?: Array<{ taskId: string; revert: boolean }>;
+  reviewPrefCalls?: Array<{ taskId: string; autoAccept: boolean }>;
 }
 
 const NULL_LIVE_STATE: ThreadLiveState = {
@@ -104,6 +106,14 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
       } as TaskResult;
     },
     cancelTask: async (taskId) => ({ taskId, status: "ABORTED" }),
+    abortTask: async (taskId, options) => {
+      state.abortCalls?.push({ taskId, revert: options.revert });
+      return { taskId, goal: "goal", status: "ABORTED", modifiedFiles: [], diagnostics: [] as Diagnostic[] };
+    },
+    setReviewPref: async (taskId, options) => {
+      state.reviewPrefCalls?.push({ taskId, autoAccept: options.autoAccept });
+      return { taskId, goal: "goal", status: "EXECUTING", modifiedFiles: [], diagnostics: [] as Diagnostic[] };
+    },
     acceptPatch: async (taskId) => {
       state.acceptCalls.push(taskId);
       return {
@@ -1080,6 +1090,131 @@ describe("AiEditorController — command-decision", () => {
     expect(errors).toHaveLength(0); // swallowed
     controller.dispose();
     controller2.dispose();
+  });
+
+  // ── Tier B: lifecycle control + durable telemetry ─────────────────────────
+
+  test("abortActiveTask posts {revert} for the live active task", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [], abortCalls: [],
+      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, plan: null },
+    };
+    const backend = createStubBackend(state);
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-abort");
+    await controller.pollThreadLiveState();      // sets latestLiveState.activeTaskId
+    await controller.abortActiveTask(true);
+    controller.dispose();
+    expect(state.abortCalls).toEqual([{ taskId: "task-run", revert: true }]);
+  });
+
+  test("setReviewPref posts {autoAccept} for the live active task", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [], reviewPrefCalls: [],
+      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, plan: null },
+    };
+    const backend = createStubBackend(state);
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-pref");
+    await controller.pollThreadLiveState();
+    await controller.setReviewPref(false);
+    controller.dispose();
+    expect(state.reviewPrefCalls).toEqual([{ taskId: "task-run", autoAccept: false }]);
+  });
+
+  test("durable run_summary supersedes ephemeral counts in renderLiveReview", async () => {
+    let reviewRendered: Parameters<ControllerUI["renderLiveReview"]>[0] | null = null;
+    const backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+        getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      }),
+      getThreadLiveState: async () => ({
+        activeTaskId: "t9",
+        status: "READY_FOR_REVIEW",
+        pendingGate: null,
+        plan: null,
+        runSummary: { stepsCompleted: 3, stepsTotal: 4, deviations: ["1 delta replan(s)"] },
+      }),
+      getTaskResult: async () => ({
+        taskId: "t9", status: "READY_FOR_REVIEW", modifiedFiles: ["a.py"], diagnostics: [],
+        shadowWorkspacePath: "/shadow",
+        plan: { analysis: "a", steps: [], expected_files: [], stop_conditions: [] },
+        patch: { patch_ops: [] },
+      } as TaskResult),
+    };
+    const ui = createUi({ renderLiveReview: (r) => { reviewRendered = r; } });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-rs");
+    await controller.pollThreadLiveState();
+    controller.dispose();
+    // run_summary wins even though the plan has 0 steps and no steps were observed.
+    expect(reviewRendered!.stepsCompleted).toBe(3);
+    expect(reviewRendered!.stepsTotal).toBe(4);
+    expect(reviewRendered!.deviations).toEqual(["1 delta replan(s)"]);
+  });
+
+  test("durable failure_summary drives renderLiveError detail", async () => {
+    let errorRendered: Parameters<ControllerUI["renderLiveError"]>[0] | null = null;
+    const backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+        getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      }),
+      getThreadLiveState: async () => ({
+        activeTaskId: "task-fail",
+        status: "FAILED",
+        pendingGate: null,
+        plan: null,
+        failureSummary: { stepId: "s3", stepIndex: 3, errorClass: "VerifyPhaseExhausted", message: "boom" },
+      }),
+    };
+    const ui = createUi({ renderLiveError: (e) => { errorRendered = e; } });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-fs");
+    await controller.pollThreadLiveState();
+    controller.dispose();
+    expect(errorRendered!.detail).toContain("VerifyPhaseExhausted");
+    expect(errorRendered!.detail).toContain("boom");
+    expect(errorRendered!.detail).toContain("step 3");
+  });
+
+  test("rejectTaskPatch reports a true revert (not 'changes kept')", async () => {
+    const infos: string[] = [];
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+    };
+    const backend = createStubBackend(state);
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(),
+      createUi({ showInfo: (m) => { infos.push(m); } }),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.rejectTaskPatch("task-x", "no thanks");
+    controller.dispose();
+    expect(state.rejectCalls).toEqual([{ taskId: "task-x", reason: "no thanks" }]);
+    expect(infos.some((m) => m.toLowerCase().includes("discarded") || m.toLowerCase().includes("rolled back"))).toBe(true);
+    expect(infos.some((m) => m.toLowerCase().includes("kept"))).toBe(false);
   });
 
   test("pollThreadLiveState re-entrancy guard: concurrent calls issue only one backend request", async () => {
