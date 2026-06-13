@@ -844,6 +844,11 @@ class AbortRequest(BaseModel):
     revert: bool = False
 
 
+class ReviewPrefRequest(BaseModel):
+    # Live-mutable "Review each step" preference for a running task (Tier B).
+    auto_accept: bool
+
+
 class TaskMilestoneSnapshot(BaseModel):
     """Full task state captured at a key lifecycle milestone for exact rollback."""
     captured_at: datetime

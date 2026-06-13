@@ -297,6 +297,17 @@ class AgentOrchestrator:
     def _release_task_control(self, task_id: str) -> None:
         self._task_controls.pop(task_id, None)
 
+    def resolve_pending_step_review(self, task_id: str, *, accept: bool) -> bool:
+        """Fire the pending step-review decision future — the SAME path /step-decision uses
+        (the route only set_result()s the future; it never mutates/persists the task, so this
+        is race-safe). Used by /review-pref to auto-accept a currently-paused step when the
+        user flips the preference to auto-accept. Returns True if a gate was resolved."""
+        future = self._pending_step_decisions.get(task_id)
+        if future is None or future.done():
+            return False
+        future.set_result("accept" if accept else "discard")
+        return True
+
     async def run_task(self, task_id: str) -> TaskRecord:
         task = await self._store.get(task_id)
         await self._env_ensurer.ensure(Path(task.workspace_path), channel_id=task.task_id)
@@ -1586,7 +1597,15 @@ class AgentOrchestrator:
                     return task
 
                 # Per-step review gate: pause and show diff to user before continuing.
-                if not task.step_review_auto_accept:
+                # The preference is live-mutable via /review-pref (Tier B): read the control
+                # channel, falling back to the creation-time record value. Resolved once per
+                # step so a mid-step flip applies from the NEXT step.
+                _ctrl = self._task_controls.get(task.task_id)
+                _auto = (
+                    _ctrl.step_review_auto_accept if _ctrl is not None
+                    else task.step_review_auto_accept
+                )
+                if not _auto:
                     decision = await self._pause_for_step_review(
                         task, step, step_result, shadow_path, real_path,
                     )
@@ -1604,7 +1623,7 @@ class AgentOrchestrator:
                 # so a "completed" step (which resume skips) is guaranteed to be promoted.
                 self._mark_step_completed(task, step.id)
                 await self._store.save(task)
-                if task.step_review_auto_accept:
+                if _auto:
                     self._write_step_completed_breadcrumb(task, step)
 
             task = transition(task, TaskStatus.VALIDATING, "full validation started")

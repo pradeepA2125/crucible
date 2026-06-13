@@ -14,6 +14,7 @@ from agentd.domain.models import (
     Diagnostic,
     PlanFeedbackRequest,
     RejectPatchRequest,
+    ReviewPrefRequest,
     ResumeTaskRequest,
     ResumeTaskResponse,
     ScopeDecisionRequest,
@@ -484,6 +485,24 @@ def build_router(
             raise HTTPException(status_code=409, detail="Task is not running")
         control.abort_revert = bool(request.revert)
         control.abort.set()
+        return _to_task_view(task)
+
+    @router.post("/tasks/{task_id}/review-pref", response_model=TaskView)
+    async def set_review_pref(task_id: str, request: ReviewPrefRequest) -> TaskView:
+        """Live-mutable "Review each step" preference for a RUNNING task (Tier B). Updates
+        the in-memory control; the engine re-reads it before each step's gate decision."""
+        try:
+            task = await store.get(task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        control = orchestrator.get_task_control(task_id)
+        if control is None:
+            raise HTTPException(status_code=409, detail="Task is not running")
+        control.step_review_auto_accept = bool(request.auto_accept)
+        # If auto_accept turned ON while a step gate is currently pending, resolve it as
+        # accept too (consistent intent). Flipping the other way only affects future steps.
+        if request.auto_accept and task.execution_state.pending_step_review is not None:
+            orchestrator.resolve_pending_step_review(task_id, accept=True)
         return _to_task_view(task)
 
     @router.post("/tasks/{task_id}/accept", response_model=TaskResult)
