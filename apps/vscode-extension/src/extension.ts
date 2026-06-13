@@ -35,6 +35,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (taskId, reason) => controller.rejectTaskPatch(taskId, reason),
     (taskId, stage) => controller.resumeTaskById(taskId, stage),
     () => controller.stopActiveTurn(),
+    (revert) => controller.abortActiveTask(revert),
+    (autoAccept) => controller.setReviewPref(autoAccept),
     () => controller.openChat()
   );
 

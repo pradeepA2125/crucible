@@ -21,6 +21,10 @@ export type AcceptTaskHandler = (taskId: string) => Promise<void>;
 export type RejectTaskHandler = (taskId: string, reason: string) => Promise<void>;
 export type ResumeTaskHandler = (taskId: string, stage: "plan" | "execute") => Promise<void>;
 export type StopTurnHandler = () => void;
+// Tier B: Stop the running task (work-bar). revert rolls the workspace back vs keeps changes.
+export type AbortTaskHandler = (revert: boolean) => Promise<void>;
+// Tier B: live-mutable "Review each step" preference for the running task.
+export type SetReviewPrefHandler = (autoAccept: boolean) => Promise<void>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -42,6 +46,8 @@ export class ChatPanel {
     private readonly onRejectTask: RejectTaskHandler,
     private readonly onResumeTask: ResumeTaskHandler,
     private readonly onStopTurn: StopTurnHandler,
+    private readonly onAbortTask: AbortTaskHandler,
+    private readonly onSetReviewPref: SetReviewPrefHandler,
     private readonly onReady: () => Promise<void> = async () => {}
   ) {}
 
@@ -138,6 +144,10 @@ export class ChatPanel {
       } else if (m["type"] === "stopTurn") {
         this.onStopTurn();
         return;
+      } else if (m["type"] === "abortTask") {
+        p = this.onAbortTask(m["revert"] === true);
+      } else if (m["type"] === "setReviewPref") {
+        p = this.onSetReviewPref(m["autoAccept"] === true);
       } else {
         return;
       }
