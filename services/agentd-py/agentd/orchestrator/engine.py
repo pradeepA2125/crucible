@@ -57,6 +57,7 @@ from agentd.chat.tool_events import ToolEventSource, trace_to_tool_events
 from agentd.domain.state_machine import assert_budget, bump_usage, transition
 from agentd.env.ensure import EnvProfileEnsurer
 from agentd.orchestrator.broadcaster import PatchEventBroadcaster
+from agentd.orchestrator.task_control import TaskAborted, TaskControl
 from agentd.patch.engine import PatchEngine
 from agentd.planning.agent import PlanningAgent
 from agentd.planning.registry import PlanningToolRegistry
@@ -265,6 +266,9 @@ class AgentOrchestrator:
         self._scope_timeout_sec = max(0.0, scope_timeout_sec)
         self._pending_scope_decisions: dict[str, asyncio.Future[ScopeDecision]] = {}
         self._pending_step_decisions: dict[str, asyncio.Future[str]] = {}
+        # task_id → in-memory control channel for a running task (cooperative abort +
+        # live-mutable step-review pref). Lives only while the task executes.
+        self._task_controls: dict[str, TaskControl] = {}
         # task_id → future resolved by POST /tasks/{id}/validation-decision (True=accept)
         self._pending_validation_decisions: dict[str, asyncio.Future[bool]] = {}
         self._shell_policy = shell_policy
@@ -279,6 +283,17 @@ class AgentOrchestrator:
         self._validation_decision_timeout_sec = float(
             os.environ.get("AI_EDITOR_VALIDATION_DECISION_TIMEOUT_SEC", "0") or 0
         )
+
+    def _register_task_control(self, task_id: str, *, step_review_auto_accept: bool) -> TaskControl:
+        control = TaskControl(step_review_auto_accept=step_review_auto_accept)
+        self._task_controls[task_id] = control
+        return control
+
+    def get_task_control(self, task_id: str) -> TaskControl | None:
+        return self._task_controls.get(task_id)
+
+    def _release_task_control(self, task_id: str) -> None:
+        self._task_controls.pop(task_id, None)
 
     async def run_task(self, task_id: str) -> TaskRecord:
         task = await self._store.get(task_id)
@@ -569,6 +584,12 @@ class AgentOrchestrator:
                 artifacts_root_path=task.artifacts_root_path,
             )
 
+            # Open the control channel for the run (cooperative abort + live review pref);
+            # _execute_plan's finally releases it. Seeded from the task's creation-time
+            # preference, then diverges live via /review-pref.
+            self._register_task_control(
+                task.task_id, step_review_auto_accept=task.step_review_auto_accept,
+            )
             return await self._execute_plan(
                 task,
                 shadow_workspace,
@@ -612,6 +633,12 @@ class AgentOrchestrator:
                 task_id=task.task_id,
                 real_path=Path(task.workspace_path).resolve(),
                 shadow_path=Path(task.shadow_workspace_path),  # type: ignore[arg-type]
+            )
+            # Open the control channel for the resumed run; _execute_plan's finally releases
+            # it. A resumed child captures its own pre-execution baseline, so abort-revert
+            # undoes only this run's steps (not the parent's promoted changes).
+            self._register_task_control(
+                task.task_id, step_review_auto_accept=task.step_review_auto_accept,
             )
             return await self._execute_plan(
                 task, shadow_workspace, retrieval_context, retrieval_warnings, started_at_ms,
@@ -1252,6 +1279,11 @@ class AgentOrchestrator:
             content = "Execution complete — review the diff in the Tasks panel."
         elif task.status == TaskStatus.SUCCEEDED:
             content = "Task completed successfully."
+        elif task.status == TaskStatus.ABORTED:
+            # A user-driven abort already wrote a ✗ breadcrumb that owns the narrative
+            # (stopped vs reverted). Writing "Execution failed: <diag>" here would
+            # contradict it (the e7b5f39-class stale-completion bug), so stay silent.
+            return
         else:
             diag = task.diagnostics[-1].message if task.diagnostics else "Unknown error"
             content = f"Execution failed: {diag}"
@@ -1420,6 +1452,12 @@ class AgentOrchestrator:
             completed_ops_by_file: dict[str, list[dict[str, object]]] = {}
 
             while (step := self._next_incomplete_step(task)) is not None:
+                # Cooperative abort: checked between steps. _partial_promote runs AFTER a
+                # step returns, so raising here leaves nothing of the in-flight step
+                # half-promoted; already-completed steps stay unless the user chose revert.
+                control = self._task_controls.get(task.task_id)
+                if control is not None and control.abort.is_set():
+                    raise TaskAborted()
                 plan_steps = task.plan.steps if task.plan else []
                 step_index = next(
                     (i + 1 for i, s in enumerate(plan_steps) if s.id == step.id),
@@ -1678,6 +1716,25 @@ class AgentOrchestrator:
             task = transition(task, TaskStatus.READY_FOR_REVIEW, "repair successful; ready for review")
             await self._store.save(task)
             return task
+        except TaskAborted:
+            # Cooperative abort acknowledged by the loop. We own the shadow + status here
+            # (the /abort route only set the event); clean up in-place on the CALLER's task
+            # object so the finally's chat-completion sees ABORTED, not a stale status
+            # (CLAUDE.md gate lesson). Rollback (if revert) runs BEFORE the ABORTED transition.
+            control = self._task_controls.get(task.task_id)
+            revert = bool(control and control.abort_revert)
+            if revert:
+                await self._rollback_to_pre_execution(task)
+            await self._workspace_manager.cleanup(task)
+            task.shadow_workspace_path = None
+            task = transition(task, TaskStatus.ABORTED, "aborted by user")
+            await self._store.save(task)
+            self.write_chat_breadcrumb(
+                task,
+                "✗ Run reverted — workspace rolled back to its pre-task state."
+                if revert else "✗ Run stopped — changes applied so far were kept.",
+            )
+            return task
         except Exception as exc:
             logger.error(f"Task {task.task_id} failed during execution", exc_info=True)
             task.diagnostics.append(
@@ -1688,6 +1745,7 @@ class AgentOrchestrator:
             return task
         finally:
             self._running_tasks.discard(task.task_id)
+            self._release_task_control(task.task_id)
             self.broadcaster.broadcast(task.task_id, {"type": "done", "payload": {"status": task.status.value}})
             if task.chat_channel_id and self._chat_store is not None:
                 self._write_chat_completion(task)
