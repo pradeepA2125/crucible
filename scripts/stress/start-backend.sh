@@ -252,6 +252,11 @@ if [[ -z "$ARTIFACTS_ROOT" ]]; then
 fi
 
 mkdir -p "$OUT_DIR" "$LOG_DIR" "$WORKSPACE/.agentd" "$ARTIFACTS_ROOT"
+# NOTE: do NOT place --workspace under a dir named like an indexer IGNORED_DIR
+# (.tmp, target, dist, .git, node_modules, .venv, …). is_ignored_path in
+# indexer-rs/src/service.rs matches those names anywhere in the ABSOLUTE path, so
+# an ignored ANCESTOR silently filters every file: the watcher runs but the graph
+# snapshot stays at 0 nodes (vector retrieval still works). Use workspaces/… etc.
 SNAPSHOT_PATH="$WORKSPACE/.ai-editor/index-snapshot.json"
 LOG_FILE="$LOG_DIR/agentd.log"             # uvicorn stdout (tee'd)
 BACKEND_LOG_FILE="$WORKSPACE/.agentd/agentd.log"   # structured backend log
