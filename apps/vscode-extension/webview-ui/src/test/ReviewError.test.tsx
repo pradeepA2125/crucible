@@ -113,6 +113,28 @@ const REVIEW_PROPS = {
   deviations: ["Revised step 2 due to compile error"],
 };
 
+describe("Task narrative renders on the cards", () => {
+  it("ReviewCard renders the narrative headline + points", () => {
+    render(<ReviewCard {...REVIEW_PROPS} narrative={{ headline: "Added refresh tokens", points: ["edited auth.py", "added a test"] }} />);
+    expect(screen.getByText("Added refresh tokens")).toBeTruthy();
+    expect(screen.getByText("edited auth.py")).toBeTruthy();
+    expect(screen.getByText("added a test")).toBeTruthy();
+  });
+
+  it("ErrorCard renders the narrative headline + points", () => {
+    render(
+      <ErrorCard
+        taskId="task-fail"
+        status="FAILED"
+        narrative={{ headline: "Stopped at step 2", points: ["import broke"] }}
+        onDismiss={() => {}}
+      />
+    );
+    expect(screen.getByText("Stopped at step 2")).toBeTruthy();
+    expect(screen.getByText("import broke")).toBeTruthy();
+  });
+});
+
 describe("ReviewCard — renders", () => {
   it("renders steps line", () => {
     render(<ReviewCard {...REVIEW_PROPS} />);

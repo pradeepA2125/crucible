@@ -25,6 +25,7 @@ export function ReviewCard({
   stepsCompleted,
   stepsTotal,
   deviations,
+  narrative,
 }: LiveReviewView) {
   type ActionMode = "idle" | "closing" | "resolved";
 
@@ -79,6 +80,20 @@ export function ReviewCard({
       title="Task complete — changes applied"
       subtitle={taskId}
     >
+      {/* ── Narrative (LLM-authored: what the task did) ── */}
+      {narrative && (
+        <div className="border-t border-border px-3 pt-2 pb-1.5">
+          <p className="text-text font-medium text-[11px] mb-1">{narrative.headline}</p>
+          {narrative.points.length > 0 && (
+            <ul className="list-disc pl-4">
+              {narrative.points.map((p, i) => (
+                <li key={i} className="text-text-2 text-[11px]">{p}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* ── File rows ── */}
       {fileEntries.length > 0 && (
         <div className="border-t border-border py-1">

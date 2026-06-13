@@ -16,7 +16,7 @@ interface Props extends LiveErrorView {
  * - ABORTED → "Task aborted"
  * Collapsible detail / trace section. One-shot actions: Resume, Re-plan, Dismiss.
  */
-export function ErrorCard({ taskId, status, detail, onDismiss }: Props) {
+export function ErrorCard({ taskId, status, detail, narrative, onDismiss }: Props) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [resolved, setResolved] = useState<string | null>(null);
 
@@ -58,6 +58,20 @@ export function ErrorCard({ taskId, status, detail, onDismiss }: Props) {
         {/* taskId subtitle */}
         <span className="font-mono text-[10px] text-text-3 flex-1 min-w-0 truncate">{taskId}</span>
       </div>
+
+      {/* ── Narrative (LLM-authored: what was attempted / where it stopped) ── */}
+      {narrative && (
+        <div className="px-3 pb-2" style={{ borderTop: "1px solid var(--red-brd)", paddingTop: "0.5rem" }}>
+          <p className="text-text font-medium text-[11px] mb-1">{narrative.headline}</p>
+          {narrative.points.length > 0 && (
+            <ul className="list-disc pl-4">
+              {narrative.points.map((p, i) => (
+                <li key={i} className="text-text-2 text-[11px]">{p}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* ── Collapsible detail / trace ── */}
       {detail && (
