@@ -74,9 +74,9 @@ export interface ControllerUI {
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void;
   appendToolResult(id: number, output: string, isError: boolean): void;
   updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void;
-  renderLiveReview(review: { taskId: string; modifiedFiles: string[]; shadowWorkspacePath: string | null; stepsCompleted: number | null; stepsTotal: number | null; deviations: string[] }): void;
+  renderLiveReview(review: { taskId: string; modifiedFiles: string[]; shadowWorkspacePath: string | null; stepsCompleted: number | null; stepsTotal: number | null; deviations: string[]; narrative?: { headline: string; points: string[] } }): void;
   clearLiveReview(): void;
-  renderLiveError(error: { taskId: string; status: "FAILED" | "ABORTED"; detail?: string }): void;
+  renderLiveError(error: { taskId: string; status: "FAILED" | "ABORTED"; detail?: string; narrative?: { headline: string; points: string[] } }): void;
   clearLiveError(): void;
   sendLiveStatus(status: string | null): void;
 }
@@ -1484,6 +1484,9 @@ export class AiEditorController {
           deviations: rs
             ? rs.deviations
             : (this.deviationsTaskId === live.activeTaskId ? [...this.runDeviations] : []),
+          ...(live.taskNarrative
+            ? { narrative: { headline: live.taskNarrative.headline, points: live.taskNarrative.points } }
+            : {}),
         };
         this.latestLiveReview = { taskId: review.taskId, shadowWorkspacePath: review.shadowWorkspacePath };
         this.ui.renderLiveReview(review);
@@ -1514,6 +1517,9 @@ export class AiEditorController {
         taskId: live.activeTaskId,
         status: live.status,
         ...(detailParts.length ? { detail: detailParts.join(" — ") } : {}),
+        ...(live.taskNarrative
+          ? { narrative: { headline: live.taskNarrative.headline, points: live.taskNarrative.points } }
+          : {}),
       });
     } else {
       this.ui.clearLiveError();

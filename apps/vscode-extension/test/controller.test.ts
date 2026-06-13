@@ -1168,6 +1168,61 @@ describe("AiEditorController — command-decision", () => {
     expect(reviewRendered!.deviations).toEqual(["1 delta replan(s)"]);
   });
 
+  test("task_narrative forwarded into renderLiveReview", async () => {
+    let reviewRendered: Parameters<ControllerUI["renderLiveReview"]>[0] | null = null;
+    const backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+        getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      }),
+      getThreadLiveState: async () => ({
+        activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, plan: null,
+        taskNarrative: { outcome: "succeeded", headline: "Added refresh tokens", points: ["edited auth.py"] },
+      }),
+      getTaskResult: async () => ({
+        taskId: "t9", status: "READY_FOR_REVIEW", modifiedFiles: ["auth.py"], diagnostics: [],
+        shadowWorkspacePath: "/shadow",
+        plan: { analysis: "a", steps: [], expected_files: [], stop_conditions: [] },
+        patch: { patch_ops: [] },
+      } as TaskResult),
+    };
+    const ui = createUi({ renderLiveReview: (r) => { reviewRendered = r; } });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-narr");
+    await controller.pollThreadLiveState();
+    controller.dispose();
+    expect(reviewRendered!.narrative?.headline).toBe("Added refresh tokens");
+    expect(reviewRendered!.narrative?.points).toEqual(["edited auth.py"]);
+  });
+
+  test("task_narrative forwarded into renderLiveError", async () => {
+    let errorRendered: Parameters<ControllerUI["renderLiveError"]>[0] | null = null;
+    const backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+        getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      }),
+      getThreadLiveState: async () => ({
+        activeTaskId: "tf", status: "FAILED", pendingGate: null, plan: null,
+        taskNarrative: { outcome: "failed", headline: "Stopped at step 2", points: ["import broke"] },
+      }),
+    };
+    const ui = createUi({ renderLiveError: (e) => { errorRendered = e; } });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-narr-fail");
+    await controller.pollThreadLiveState();
+    controller.dispose();
+    expect(errorRendered!.narrative?.headline).toBe("Stopped at step 2");
+  });
+
   test("durable failure_summary drives renderLiveError detail", async () => {
     let errorRendered: Parameters<ControllerUI["renderLiveError"]>[0] | null = null;
     const backend: BackendTaskClient = {

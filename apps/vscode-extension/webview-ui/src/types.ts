@@ -60,6 +60,12 @@ export interface LiveGateView {
 
 export interface LivePlanView { taskId: string; planMarkdown: string }
 
+// LLM-authored run narrative (headline + points), shown on the Review/Error cards.
+export interface TaskNarrativeView {
+  headline: string;
+  points: string[];
+}
+
 export interface LiveReviewView {
   taskId: string;
   modifiedFiles: string[];
@@ -68,12 +74,14 @@ export interface LiveReviewView {
   stepsCompleted: number | null;
   stepsTotal: number | null;
   deviations: string[];
+  narrative?: TaskNarrativeView;
 }
 
 export interface LiveErrorView {
   taskId: string;
   status: "FAILED" | "ABORTED";
   detail?: string;
+  narrative?: TaskNarrativeView;
 }
 
 export interface WorkbarInfo {
