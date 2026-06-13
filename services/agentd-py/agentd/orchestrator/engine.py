@@ -27,7 +27,9 @@ from agentd.domain.models import (
     Diagnostic,
     FailureSummary,
     InlineChangeResult,
+    RunEvent,
     RunSummary,
+    TaskNarrative,
     PatchCandidateV2,
     PatchDocumentV2,
     PatchFailureCode,
@@ -1556,6 +1558,14 @@ class AgentOrchestrator:
                     )
                     self._write_chat_tool_events(task, revision.tool_trace, "planning")
 
+                    # Record the course-correction BEFORE _apply_revision mutates the plan,
+                    # so even if application throws the narrative still captures the replan.
+                    self._append_run_event(task, RunEvent(
+                        kind="replan", reason=step_result.reason,
+                        reverted_step_ids=list(revision.reverted_step_ids),
+                        revised_step_ids=[r.step_id for r in revision.revised_steps],
+                    ))
+
                     self._apply_revision(task, shadow_path, revision)
 
                     reverted = revision.reverted_step_ids
@@ -1592,6 +1602,10 @@ class AgentOrchestrator:
                     completed_ops_by_file.setdefault(_fpath, []).extend(_ops)
                 await self._store.save(task)
                 if step_result.outcome != "step_completed":
+                    self._append_run_event(task, RunEvent(
+                        kind="step_failed", step_id=step.id, goal=step.goal,
+                        note="step did not complete after retries",
+                    ))
                     task = transition(task, TaskStatus.FAILED, "step execution exhausted")
                     await self._store.save(task)
                     return task
@@ -1622,6 +1636,14 @@ class AgentOrchestrator:
                 # Mark completed ONLY now — after the changes are in the real workspace —
                 # so a "completed" step (which resume skips) is guaranteed to be promoted.
                 self._mark_step_completed(task, step.id)
+                # Append-only narrative event (after promote + mark-complete, so a step
+                # discarded at the review gate above — which `continue`s earlier — records
+                # nothing here and re-runs).
+                _note = (step_result.step_summary
+                         or f"edited {', '.join(step_result.touched_files) or step.goal[:80]}")
+                self._append_run_event(task, RunEvent(
+                    kind="step_done", step_id=step.id, goal=step.goal, note=_note,
+                ))
                 await self._store.save(task)
                 if _auto:
                     self._write_step_completed_breadcrumb(task, step)
@@ -1708,8 +1730,20 @@ class AgentOrchestrator:
                 # the final PROMOTING. Marking completed here is safe because this path
                 # ends at READY_FOR_REVIEW, not a resumable FAILED state.
                 self._mark_step_completed(task, repair_result.step_id)
+                # Narrative event for the repair step (else its work is silent in the story).
+                _rnote = (repair_result.step_summary
+                          or f"repaired {', '.join(repair_result.touched_files) or 'validation errors'}")
+                self._append_run_event(task, RunEvent(
+                    kind="step_done", step_id=repair_result.step_id,
+                    goal="Repair files failing full validation", note=_rnote,
+                ))
             await self._store.save(task)
             if repair_result.outcome != "step_completed":
+                self._append_run_event(task, RunEvent(
+                    kind="step_failed", step_id=repair_result.step_id,
+                    goal="Repair files failing full validation",
+                    note="repair did not clear validation",
+                ))
                 task = transition(task, TaskStatus.FAILED, "repair budget exhausted")
                 await self._store.save(task)
                 return task
@@ -3664,6 +3698,10 @@ class AgentOrchestrator:
         baseline_root = Path(checkpoint).parent  # _baselines/<task_id>/shadow -> _baselines/<task_id>
         shutil.rmtree(baseline_root, ignore_errors=True)
         task.execution_state.pre_execution_checkpoint = None
+
+    def _append_run_event(self, task: TaskRecord, event: RunEvent) -> None:
+        """Append to the append-only run-event log backing the task narrative (never pruned)."""
+        task.execution_state.run_events.append(event)
 
     def _finalize_run_summary(self, task: TaskRecord) -> None:
         """Accumulate the run-so-far context (Tier B durable telemetry). Called at every
