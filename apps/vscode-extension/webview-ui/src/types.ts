@@ -129,7 +129,11 @@ export type WebviewMessage =
   | { type: "acceptTask"; taskId: string }
   | { type: "rejectTask"; taskId: string; reason: string }
   | { type: "resumeTask"; taskId: string; stage: "plan" | "execute" }
-  | { type: "stopTurn" };
+  | { type: "stopTurn" }
+  // Tier B: cooperative Stop for a running task (revert rolls back vs keeps changes)
+  | { type: "abortTask"; revert: boolean }
+  // Tier B: live-mutable "Review each step" preference for the running task
+  | { type: "setReviewPref"; autoAccept: boolean };
 
 // ── App state ─────────────────────────────────────────────────────────────────
 export interface StreamingBubble {

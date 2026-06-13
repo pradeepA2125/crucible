@@ -35,13 +35,23 @@ const TASK_ACTIVE_STATUSES = new Set([
 export interface InputAvailability {
   disabled: boolean;
   placeholder: string;
+  // A local streaming chat turn can be stopped (posts stopTurn / SSE disconnect).
   showStop: boolean;
+  // Tier B: a running task can be cooperatively aborted (posts abortTask {revert}). Distinct
+  // from showStop — stopping a chat turn only disconnects the view; aborting halts the run.
+  taskStop: boolean;
 }
+
+// Tier B: phases where a cooperative task abort is meaningful — the engine holds a live
+// control channel through _execute_plan (EXECUTING/VALIDATING/REPAIRING) and checks it
+// between steps and ToolLoop iterations. (Planning/PROMOTING have no control → /abort 409s.)
+const ABORTABLE_STATUSES = new Set(["EXECUTING", "VALIDATING", "REPAIRING"]);
 
 export function inputAvailability(
   state: Pick<AppState, "inputEnabled" | "liveStatus" | "workbar">,
 ): InputAvailability {
   const { inputEnabled, liveStatus, workbar } = state;
+  const taskStop = liveStatus !== null && ABORTABLE_STATUSES.has(liveStatus);
 
   // Precedence 1: a local chat turn is streaming.
   if (!inputEnabled) {
@@ -53,6 +63,7 @@ export function inputAvailability(
       disabled: true,
       placeholder: "Agent is working…",
       showStop,
+      taskStop,
     };
   }
 
@@ -62,6 +73,7 @@ export function inputAvailability(
       disabled: true,
       placeholder: "Review the plan — Implement or Give feedback",
       showStop: false,
+      taskStop,
     };
   }
 
@@ -71,6 +83,7 @@ export function inputAvailability(
       disabled: true,
       placeholder: "Waiting for your decision on the card above",
       showStop: false,
+      taskStop,
     };
   }
 
@@ -88,6 +101,7 @@ export function inputAvailability(
       disabled: true,
       placeholder,
       showStop: false,
+      taskStop,
     };
   }
 
@@ -96,5 +110,6 @@ export function inputAvailability(
     disabled: false,
     placeholder: "Ask anything or describe a change…",
     showStop: false,
+    taskStop,
   };
 }

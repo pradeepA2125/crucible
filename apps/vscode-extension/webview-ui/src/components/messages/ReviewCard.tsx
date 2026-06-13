@@ -8,9 +8,10 @@ import type { LiveReviewView, DiffEntry } from "../../types";
 
 // ── ReviewCard ────────────────────────────────────────────────────────────────
 //
-// Semantics: changes are ALREADY applied per step (partial promote). "Finish"
-// completes the task record; "Close without finishing" calls rejectTask which
-// does NOT revert the applied changes — it only closes the task record.
+// Semantics (Tier B): changes are applied per step (partial promote). "Finish"
+// keeps them and completes the task (→ SUCCEEDED). "Discard all changes" calls
+// rejectTask which now performs a TRUE revert — the workspace is rolled back to
+// its pre-task state (modified files restored, task-created files deleted).
 
 /**
  * ReviewCard — task-complete summary card with finish / close actions.
@@ -61,7 +62,7 @@ export function ReviewCard({
     if (mode !== "closing") return; // one-shot guard
     const reason = closeReason.trim() || "closed from chat";
     setMode("resolved");
-    setResolvedLabel("Closed");
+    setResolvedLabel("Discarded");
     vscode.postMessage({ type: "rejectTask", taskId, reason });
   }
 
@@ -123,7 +124,7 @@ export function ReviewCard({
               Finish
             </BtnPrimary>
             <BtnGhost onClick={handleCloseWithoutFinishing}>
-              Close without finishing
+              Discard all changes
             </BtnGhost>
           </div>
         )}
@@ -131,7 +132,7 @@ export function ReviewCard({
         {/* closing: reason input row */}
         {mode === "closing" && (
           <div className="flex flex-col gap-1.5 px-2.5 py-2 anim-rise">
-            <p className="text-text-4 text-[10px]">keeps the applied changes</p>
+            <p className="text-text-4 text-[10px]">rolls the workspace back to its pre-task state</p>
             <div className="flex gap-1.5">
               <input
                 ref={inputRef}
@@ -146,7 +147,7 @@ export function ReviewCard({
                 className="flex-1 min-w-0 bg-surface-2 border border-border-strong rounded-md px-2.5 py-[6px] text-[11px] text-text outline-none placeholder:text-text-4"
               />
               <BtnDanger onClick={handleConfirmClose}>
-                Close
+                Discard
               </BtnDanger>
               <BtnGhost onClick={handleCancelClose}>
                 Cancel

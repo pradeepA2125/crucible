@@ -22,6 +22,8 @@ const MAX_TEXTAREA_HEIGHT = 96;
 export function InputArea({ availability, draft, onDraftChange }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [stopping, setStopping] = useState(false);
+  // One-shot guard for the Tier B task-abort buttons (keep / revert).
+  const [aborting, setAborting] = useState(false);
   // Per-task "Review each step" toggle — always sent; the backend applies it
   // only when the turn creates a task (large_change). Default on.
   const [stepReview, setStepReview] = useState(true);
@@ -39,6 +41,13 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
       setStopping(false);
     }
   }, [availability.showStop]);
+
+  // Reset abort guard when the task leaves an abortable phase.
+  useEffect(() => {
+    if (!availability.taskStop) {
+      setAborting(false);
+    }
+  }, [availability.taskStop]);
 
   function autoGrow() {
     const el = textareaRef.current;
@@ -75,6 +84,12 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
     if (stopping) return; // one-shot guard
     setStopping(true);
     vscode.postMessage({ type: "stopTurn" });
+  }
+
+  function handleAbort(revert: boolean) {
+    if (aborting) return; // one-shot guard
+    setAborting(true);
+    vscode.postMessage({ type: "abortTask", revert });
   }
 
   const canSend = !availability.disabled && draft.trim().length > 0;
@@ -119,6 +134,45 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
 
       {/* Footer row */}
       <div className="flex items-center gap-1.5 pt-1">
+        {/* Tier B: task-abort buttons — shown while a task is in an abortable phase.
+            "Stop & keep" leaves applied changes; "Stop & revert" rolls the workspace back. */}
+        {availability.taskStop && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => handleAbort(false)}
+              disabled={aborting}
+              aria-label="Stop and keep changes"
+              title="Stop the task; keep the changes applied so far"
+              className="flex items-center gap-1 h-6 px-2 rounded-[6px] border text-[10px] disabled:opacity-50 disabled:cursor-default"
+              style={{
+                background: "var(--color-surface-2)",
+                borderColor: "var(--color-border-strong)",
+                color: "var(--color-text-2)",
+              }}
+            >
+              <Icon name="stop" size={9} />
+              Stop &amp; keep
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAbort(true)}
+              disabled={aborting}
+              aria-label="Stop and revert changes"
+              title="Stop the task and roll the workspace back to its pre-task state"
+              className="flex items-center gap-1 h-6 px-2 rounded-[6px] border text-[10px] disabled:opacity-50 disabled:cursor-default"
+              style={{
+                background: "var(--color-surface-2)",
+                borderColor: "var(--red-brd)",
+                color: "var(--color-red)",
+              }}
+            >
+              <Icon name="stop" size={9} />
+              Stop &amp; revert
+            </button>
+          </div>
+        )}
+
         {/* Stop button — only shown when a streaming chat turn is active */}
         {availability.showStop && (
           <button
@@ -162,7 +216,14 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
           <input
             type="checkbox"
             checked={stepReview}
-            onChange={(e) => setStepReview(e.target.checked)}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setStepReview(checked);
+              // Live-mutable: a running task re-reads this before each step gate. Checked =
+              // "review each step" = auto_accept false. A 409 (no task running) is benign on
+              // the extension side — the value still governs the next task's creation default.
+              vscode.postMessage({ type: "setReviewPref", autoAccept: !checked });
+            }}
             className="accent-[var(--color-accent)] w-3 h-3"
           />
           Review each step

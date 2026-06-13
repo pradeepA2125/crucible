@@ -135,7 +135,6 @@ describe("ReviewCard — Finish", () => {
   it("posts acceptTask and shows resolved row", () => {
     render(<ReviewCard {...REVIEW_PROPS} />);
 
-    // Use exact match to avoid matching "Close without finishing"
     fireEvent.click(screen.getByRole("button", { name: /^finish$/i }));
 
     expect(postMessage).toHaveBeenCalledWith({
@@ -147,7 +146,7 @@ describe("ReviewCard — Finish", () => {
     expect(screen.getByText("Finishing…")).toBeTruthy();
     // Buttons gone
     expect(screen.queryByRole("button", { name: /^finish$/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /close without finishing/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /discard all changes/i })).toBeNull();
   });
 });
 
@@ -155,7 +154,7 @@ describe("ReviewCard — Close flow posts rejectTask with typed reason", () => {
   it("Close without finishing reveals reason input; Close posts rejectTask", () => {
     render(<ReviewCard {...REVIEW_PROPS} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /close without finishing/i }));
+    fireEvent.click(screen.getByRole("button", { name: /discard all changes/i }));
 
     // Reason input appears
     const input = screen.getByPlaceholderText(/reason/i);
@@ -165,7 +164,7 @@ describe("ReviewCard — Close flow posts rejectTask with typed reason", () => {
     fireEvent.change(input, { target: { value: "not needed" } });
 
     // Click Close (the danger button in the close row)
-    fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^discard$/i }));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "rejectTask",
@@ -174,15 +173,15 @@ describe("ReviewCard — Close flow posts rejectTask with typed reason", () => {
     });
 
     // Resolved row shown
-    expect(screen.getByText("Closed")).toBeTruthy();
+    expect(screen.getByText("Discarded")).toBeTruthy();
   });
 
   it("empty reason sends 'closed from chat' default", () => {
     render(<ReviewCard {...REVIEW_PROPS} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /close without finishing/i }));
+    fireEvent.click(screen.getByRole("button", { name: /discard all changes/i }));
     // Do not type anything — leave reason empty
-    fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^discard$/i }));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "rejectTask",
@@ -194,14 +193,14 @@ describe("ReviewCard — Close flow posts rejectTask with typed reason", () => {
   it("Cancel returns to idle", () => {
     render(<ReviewCard {...REVIEW_PROPS} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /close without finishing/i }));
+    fireEvent.click(screen.getByRole("button", { name: /discard all changes/i }));
 
     // Cancel the close
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
     // Back to idle: Finish and Close without finishing visible again
     expect(screen.getByRole("button", { name: /^finish$/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /close without finishing/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /discard all changes/i })).toBeTruthy();
 
     // Nothing was posted
     expect(postMessage).not.toHaveBeenCalled();

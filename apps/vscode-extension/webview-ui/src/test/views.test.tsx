@@ -25,6 +25,7 @@ function makeAvailability(overrides: Partial<InputAvailability> = {}): InputAvai
     disabled: false,
     placeholder: "Ask anything or describe a change…",
     showStop: false,
+    taskStop: false,
     ...overrides,
   };
 }
@@ -259,6 +260,19 @@ describe("inputAvailability", () => {
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
+
+  // Tier B: taskStop is true exactly in the abortable execution phases.
+  it("taskStop=true for EXECUTING/VALIDATING/REPAIRING", () => {
+    for (const status of ["EXECUTING", "VALIDATING", "REPAIRING"]) {
+      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null }).taskStop).toBe(true);
+    }
+  });
+
+  it("taskStop=false for non-abortable states (null, plan approval, PROMOTING, gates)", () => {
+    for (const status of [null, "AWAITING_PLAN_APPROVAL", "PROMOTING", "AWAITING_COMMAND_DECISION", "PLANNED"]) {
+      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null }).taskStop).toBe(false);
+    }
+  });
 });
 
 // ── 4. InputArea ──────────────────────────────────────────────────────────────
@@ -404,6 +418,64 @@ describe("InputArea — Stop button", () => {
 
     expect(postMessage).toHaveBeenCalledTimes(1);
     expect(postMessage).toHaveBeenCalledWith({ type: "stopTurn" });
+  });
+});
+
+describe("InputArea — Tier B task abort + dynamic review pref", () => {
+  it("taskStop shows Stop & keep / Stop & revert posting abortTask with the right revert flag", () => {
+    render(
+      <InputArea
+        availability={makeAvailability({ disabled: true, showStop: false, taskStop: true })}
+        draft=""
+        onDraftChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /stop and keep/i }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "abortTask", revert: false });
+    // separate render to avoid the one-shot guard on the same instance
+  });
+
+  it("Stop & revert posts abortTask {revert:true}, one-shot", () => {
+    render(
+      <InputArea
+        availability={makeAvailability({ disabled: true, showStop: false, taskStop: true })}
+        draft=""
+        onDraftChange={vi.fn()}
+      />,
+    );
+    const revertBtn = screen.getByRole("button", { name: /stop and revert/i });
+    fireEvent.click(revertBtn);
+    fireEvent.click(revertBtn);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "abortTask", revert: true });
+  });
+
+  it("task-abort buttons absent when taskStop=false", () => {
+    render(
+      <InputArea
+        availability={makeAvailability({ taskStop: false })}
+        draft=""
+        onDraftChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /stop and keep/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /stop and revert/i })).toBeNull();
+  });
+
+  it("toggling 'Review each step' posts setReviewPref with the inverted auto-accept", () => {
+    render(
+      <InputArea
+        availability={makeAvailability({ disabled: true, taskStop: true })}
+        draft=""
+        onDraftChange={vi.fn()}
+      />,
+    );
+    // Default checked (review on); first click → unchecked → auto_accept true.
+    fireEvent.click(screen.getByLabelText(/review each step/i));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "setReviewPref", autoAccept: true });
+    // Click again → checked → auto_accept false.
+    fireEvent.click(screen.getByLabelText(/review each step/i));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "setReviewPref", autoAccept: false });
   });
 });
 
