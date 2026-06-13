@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from agentd.domain.models import (
+    AbortRequest,
     Diagnostic,
     PlanFeedbackRequest,
     RejectPatchRequest,
@@ -99,6 +100,18 @@ def _to_task_result(task: TaskRecord) -> TaskResult:
         step_progress=step_progress,
         execution_trace=task.execution_trace[-50:],
         artifacts_root_path=task.artifacts_root_path,
+        plan_markdown=task.plan_markdown,
+        resume_of_task_id=task.resume_of_task_id,
+    )
+
+
+def _to_task_view(task: TaskRecord) -> TaskView:
+    return TaskView(
+        task_id=task.task_id,
+        goal=task.goal,
+        status=task.status,
+        modified_files=task.modified_files,
+        diagnostics=task.diagnostics,
         plan_markdown=task.plan_markdown,
         resume_of_task_id=task.resume_of_task_id,
     )
@@ -450,6 +463,23 @@ def build_router(
             modified_files=task.modified_files,
             diagnostics=task.diagnostics,
         )
+
+    @router.post("/tasks/{task_id}/abort", response_model=TaskView)
+    async def abort_task(task_id: str, request: AbortRequest) -> TaskView:
+        """Cooperatively stop a RUNNING task. Sets the in-memory control's abort event (and
+        the revert flag); the execution coroutine acknowledges it, owns the shadow/status,
+        and transitions to ABORTED. Unlike /cancel this never touches the shadow from the
+        route, closing the race where the route frees a shadow a live coroutine still uses."""
+        try:
+            task = await store.get(task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        control = orchestrator.get_task_control(task_id)
+        if control is None:
+            raise HTTPException(status_code=409, detail="Task is not running")
+        control.abort_revert = bool(request.revert)
+        control.abort.set()
+        return _to_task_view(task)
 
     @router.post("/tasks/{task_id}/accept", response_model=TaskResult)
     async def accept_patch(task_id: str) -> TaskResult:

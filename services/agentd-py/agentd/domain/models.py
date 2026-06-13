@@ -812,6 +812,12 @@ class RejectPatchRequest(BaseModel):
     reason: str
 
 
+class AbortRequest(BaseModel):
+    # revert=True rolls the real workspace back to its pre-execution state; revert=False
+    # stops the run and keeps the changes applied so far.
+    revert: bool = False
+
+
 class TaskMilestoneSnapshot(BaseModel):
     """Full task state captured at a key lifecycle milestone for exact rollback."""
     captured_at: datetime

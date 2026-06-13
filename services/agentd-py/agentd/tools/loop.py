@@ -1,6 +1,7 @@
 """ReAct tool-use loop — two-phase explore+verify execution per plan step."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from agentd.domain.models import (
     ToolResult,
 )
 from agentd.orchestrator.broadcaster import PatchEventBroadcaster, cap_event_output
+from agentd.orchestrator.task_control import TaskAborted
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.tools.post_patch import AnalyzerBuilder
 from agentd.tools.registry import ToolRegistry
@@ -212,6 +214,7 @@ class ToolLoop:
         skip_verify: bool = False,
         thinking_log: list[str] | None = None,
         static_baseline: frozenset[str] | None = None,
+        abort: "asyncio.Event | None" = None,
     ) -> None:
         self._reasoning = reasoning_engine
         self._registry = registry
@@ -226,6 +229,7 @@ class ToolLoop:
         self._scope_cb: ScopeExtensionCallback = (
             scope_extension_callback or _default_reject_callback
         )
+        self._abort = abort
 
     async def run(
         self,
@@ -352,6 +356,11 @@ class ToolLoop:
         max_verify = budget.max_verify_calls_per_step
         total_budget = max_explore + max_verify + 10  # generous outer cap
         for iteration in range(total_budget):
+            # Cooperative abort: checked between ReAct iterations so a Stop during a step's
+            # tool loop unwinds promptly. _partial_promote runs only after run() returns, so
+            # raising here leaves nothing of this step half-promoted.
+            if self._abort is not None and self._abort.is_set():
+                raise TaskAborted()
             phase = "explore" if sm.state == VerifyPhaseState.EXPLORE else "verify"
             # Fix 1: a state change means the workspace/context moved on — clear the
             # consecutive-repeat cache so a fresh read of the same target is allowed.

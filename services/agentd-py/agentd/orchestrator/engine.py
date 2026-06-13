@@ -2370,6 +2370,11 @@ class AgentOrchestrator:
                             task.task_id, step.id, step,
                         ),
                         static_baseline=static_baseline,
+                        abort=(
+                            _c.abort
+                            if (_c := self._task_controls.get(task.task_id)) is not None
+                            else None
+                        ),
                     )
                     step_outcome = await tool_loop.run(
                         step,
