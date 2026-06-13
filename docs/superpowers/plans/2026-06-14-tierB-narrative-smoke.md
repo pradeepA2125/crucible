@@ -87,4 +87,22 @@
 ---
 
 ## Results log
-_(fill as executed: date, backend commit `git rev-parse --short HEAD`, provider, per-run PASS/FAIL + observation; record any smoke-found bugs with a fix commit, mirroring the Tier A smoke entries in `2026-06-12-chat-ui-v2-handoff.md`.)_
+
+### 2026-06-14 — env set up + Run A executed (worktree build, turboquant/qwen3.6, :8001, shadow-forge-stress)
+Driving via Playwright **CDP frame-eval** (`page.frames()` → `fake.html` webview frame) — the a11y snapshot can't pierce the sandboxed webview; this matches the repo's `drive-chat.js`.
+
+**Verified live (worktree extension + worktree backend):**
+- Env: worktree `EXT_PATH` dev-host on :9335 + worktree agentd-py backend on :8001 (Tier B routes present), real indexed `shadow-forge-stress`.
+- Tier A history enrichment chips (Review/Running/Failed) + counts + dates render.
+- Composer **"Review each step"** toggle present and **stays enabled during EXECUTING** (Tier B dynamic checkbox).
+- Full `large_change` pipeline: explore → classify → **plan card (Implement/Give feedback)** → approve → execution **work-bar timer** + `✓ Plan approved` breadcrumb → **step gates (Accept)** + **command gates (Allow once, shell-policy=ask)** + step diff records ("Changes ready / Applied") → READY_FOR_REVIEW.
+- **T-B Stop & keep / Stop & revert** buttons render on the work-bar during EXECUTING (cooperative-abort affordance).
+- **T-B4 + T-B3** ReviewCard shows **Finish** + **Discard all changes** (relabeled).
+- **T-B5** ReviewCard "3 of 3 steps completed".
+- **T-N1** ReviewCard renders the **task narrative** (headline + 4 distilled points naming pricing.py/`__init__.py`/13 pytest cases/ruff) — screenshot `smoke-runA-reviewcard-narrative.jpeg`.
+- **T-N6** per-step notes are detailed; narrative points are distilled from them (rich-capture → summarize design confirmed).
+- **T-N5 substrate** narrative also persisted as a standalone `agent/text` transcript message (feeds next-turn history).
+
+**🐞 Smoke-found bug (FIXED):** the **live** Review/Error card missed the durable `run_summary`+`task_narrative` on first render (it used ephemeral fallbacks; narrative absent). Root cause confirmed via `/live` (both present there): the engine saves `status=READY_FOR_REVIEW` **before** the `finally` synthesizes the narrative (an LLM call, seconds later), so it arrives on a poll with unchanged status; `pollThreadLiveState`'s dedup signature `{taskId,status,gate,plan}` locked and never re-rendered. **Fix `7013044`:** include `runSummary`/`task_narrative`/`failure_summary` in the signature (+ regression test `late-arriving task_narrative re-renders…`). Verified: after fix + reload, the narrative renders on the ReviewCard. *(unit tests exposed the data but missed the live timing/dedup interaction — classic smoke catch, like Tier A's `e7b5f39`.)*
+
+**Not yet exercised (need more full task runs / timing):** T-B1 (Stop&keep terminal), T-B2 (Stop&revert rollback), T-B3 (Discard *executed* revert), T-B6 + T-N2 (failure → ErrorCard durable + narrative), T-B7 (toggle *flipped* mid-run both ways), T-N3 (narrative aborted), T-N4 (delta replan), T-B8 (no-clobber). Buttons/affordances for these are all rendering; the terminal behaviors remain to drive.
