@@ -708,6 +708,23 @@ class ValidationResult(BaseModel):
     duration_ms: int
 
 
+class FailureSummary(BaseModel):
+    """Durable detail of why a task FAILED, so the ErrorCard survives a reload without
+    relying on extension-observed ephemeral state."""
+    step_id: str | None = None
+    step_index: int | None = None     # "step 3 of 4"
+    error_class: str                  # e.g. "VerifyPhaseExhausted"
+    message: str                      # capped
+
+
+class RunSummary(BaseModel):
+    """Durable run-so-far context finalized on every terminal transition, so the
+    ReviewCard/ErrorCard can show "got through 2 of 4, one scope extension" after reload."""
+    steps_completed: int
+    steps_total: int
+    deviations: list[str] = Field(default_factory=list)  # scope extensions, delta replans, etc.
+
+
 class TaskRecord(BaseModel):
     task_id: str
     goal: str
@@ -739,6 +756,11 @@ class TaskRecord(BaseModel):
     artifacts_root_path: str | None = None
     is_inline_change: bool = False
     step_review_auto_accept: bool = True
+    # Durable lifecycle telemetry (Tier B): run_summary finalized on every terminal
+    # transition; failure_summary additionally written on FAILED. Survive reloads so the
+    # Error/Review cards render from state, not extension-observed ephemera.
+    failure_summary: FailureSummary | None = None
+    run_summary: RunSummary | None = None
     chat_channel_id: str | None = None
     initial_explore_context: list[dict[str, object]] | None = None
     # The planner's own exploration is kept as the verbatim conversation it produced
