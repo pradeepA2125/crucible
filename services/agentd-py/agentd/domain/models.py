@@ -207,6 +207,9 @@ class TaskExecutionState(BaseModel):
     # workspace back to its pre-execution state on Discard/abort-revert. Lives under a
     # separate _baselines root so prune_checkpoints never reaps it; cleared at terminal.
     pre_execution_checkpoint: str | None = None
+    # Append-only event log backing the Task Narrative. Never pruned (a delta replan that
+    # reverts steps leaves their step_done events in place — the journey is the story).
+    run_events: list[RunEvent] = Field(default_factory=list)
     delta_replan_requests: list[DeltaReplanRequest] = Field(default_factory=list)
     delta_replans_used: int = 0
     auto_approved_scope_files: list[str] = Field(default_factory=list)
@@ -725,6 +728,26 @@ class RunSummary(BaseModel):
     deviations: list[str] = Field(default_factory=list)  # scope extensions, delta replans, etc.
 
 
+class RunEvent(BaseModel):
+    """One append-only entry in the run's event log (Task Narrative). step_done/step_failed
+    carry a per-step note; replan records a course-correction. Never pruned — the log keeps
+    the dead-ends so the synthesized narrative can tell the whole story."""
+    kind: Literal["step_done", "step_failed", "replan"]
+    step_id: str | None = None
+    goal: str | None = None
+    note: str | None = None
+    reason: str | None = None
+    reverted_step_ids: list[str] = Field(default_factory=list)
+    revised_step_ids: list[str] = Field(default_factory=list)
+
+
+class TaskNarrative(BaseModel):
+    """LLM-authored story of the run (distinct from the deterministic RunSummary counts)."""
+    outcome: Literal["succeeded", "failed", "aborted"]
+    headline: str
+    points: list[str] = Field(default_factory=list)
+
+
 class TaskRecord(BaseModel):
     task_id: str
     goal: str
@@ -761,6 +784,7 @@ class TaskRecord(BaseModel):
     # Error/Review cards render from state, not extension-observed ephemera.
     failure_summary: FailureSummary | None = None
     run_summary: RunSummary | None = None
+    task_narrative: TaskNarrative | None = None
     chat_channel_id: str | None = None
     initial_explore_context: list[dict[str, object]] | None = None
     # The planner's own exploration is kept as the verbatim conversation it produced
