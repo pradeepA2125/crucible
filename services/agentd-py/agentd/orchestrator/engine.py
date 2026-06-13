@@ -3519,6 +3519,39 @@ class AgentOrchestrator:
             logger.debug("failed to write debug artifact", exc_info=True)
             return None
 
+    def _create_pre_execution_checkpoint(self, task: TaskRecord, shadow_path: Path) -> None:
+        """Snapshot the pristine shadow (pre-step-1) under a _baselines root that
+        prune_checkpoints never scans, so it survives until the task terminates. Idempotent:
+        a second call (e.g. a resumed run) overwrites with the current pre-execution state."""
+        baseline_root = shadow_path.parent / "_baselines" / task.task_id
+        snapshot_path = baseline_root / "shadow"
+        if baseline_root.exists():
+            shutil.rmtree(baseline_root)
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(shadow_path, snapshot_path)
+        task.execution_state.pre_execution_checkpoint = str(snapshot_path)
+
+    async def _rollback_to_pre_execution(self, task: TaskRecord) -> None:
+        """Roll the REAL workspace back to its pre-execution state. Restores the shadow to the
+        pinned baseline, then promote() restores modified files to originals and deletes the
+        task-created files (those absent from the pristine shadow). No-op if no baseline."""
+        checkpoint = task.execution_state.pre_execution_checkpoint
+        if not checkpoint or task.shadow_workspace_path is None:
+            return
+        shadow_path = Path(task.shadow_workspace_path)
+        self._restore_shadow_checkpoint(shadow_path, checkpoint)
+        await self._workspace_manager.promote(task)
+
+    def _clear_pre_execution_checkpoint(self, task: TaskRecord) -> None:
+        """Remove the pinned baseline snapshot at terminal. prune_checkpoints never scans the
+        _baselines root, so without this the pristine copy would leak on disk for every task."""
+        checkpoint = task.execution_state.pre_execution_checkpoint
+        if not checkpoint:
+            return
+        baseline_root = Path(checkpoint).parent  # _baselines/<task_id>/shadow -> _baselines/<task_id>
+        shutil.rmtree(baseline_root, ignore_errors=True)
+        task.execution_state.pre_execution_checkpoint = None
+
     def _create_shadow_checkpoint(
         self,
         task: TaskRecord,
