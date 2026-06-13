@@ -203,6 +203,10 @@ class StepDecisionRequest(BaseModel):
 class TaskExecutionState(BaseModel):
     current_step_id: str | None = None
     step_checkpoints: dict[str, str] = Field(default_factory=dict)
+    # Pinned pristine shadow snapshot captured before step 1, used to roll the real
+    # workspace back to its pre-execution state on Discard/abort-revert. Lives under a
+    # separate _baselines root so prune_checkpoints never reaps it; cleared at terminal.
+    pre_execution_checkpoint: str | None = None
     delta_replan_requests: list[DeltaReplanRequest] = Field(default_factory=list)
     delta_replans_used: int = 0
     auto_approved_scope_files: list[str] = Field(default_factory=list)
