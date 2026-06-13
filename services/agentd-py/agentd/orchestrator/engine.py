@@ -1655,7 +1655,7 @@ class AgentOrchestrator:
                 _note = (step_result.step_summary
                          or f"edited {', '.join(step_result.touched_files) or step.goal[:80]}")
                 self._append_run_event(task, RunEvent(
-                    kind="step_done", step_id=step.id, goal=step.goal, note=_note,
+                    kind="step_done", step_id=step.id, goal=step.goal, note=_note[:1500],
                 ))
                 await self._store.save(task)
                 if _auto:
@@ -1748,7 +1748,7 @@ class AgentOrchestrator:
                           or f"repaired {', '.join(repair_result.touched_files) or 'validation errors'}")
                 self._append_run_event(task, RunEvent(
                     kind="step_done", step_id=repair_result.step_id,
-                    goal="Repair files failing full validation", note=_rnote,
+                    goal="Repair files failing full validation", note=_rnote[:1500],
                 ))
             await self._store.save(task)
             if repair_result.outcome != "step_completed":

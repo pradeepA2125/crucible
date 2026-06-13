@@ -15,9 +15,13 @@ TASK_NARRATIVE_RESPONSE_SCHEMA: dict[str, object] = {
 
 _SYSTEM = (
     "You write a short, factual narrative of an automated coding task's run for a human "
-    "reviewer and for re-use as context in the next chat turn. Be concrete and specific; "
-    "name files and what changed. If the run failed or was aborted, say what was attempted "
-    "and where it stopped. If there were replans, mention the course-correction briefly."
+    "reviewer and for re-use as context in the next chat turn. You are given the goal, the "
+    "ordered run events (each step's own detailed account, plus any replans), the outcome, "
+    "and the files changed. DISTILL them: a one-line headline that captures the whole task, "
+    "then 3-6 concise points. Be concrete and specific; name files and what changed. Drop "
+    "work that was later reverted (a step redone after a replan — keep only the final "
+    "version). If the run failed or was aborted, say what was attempted and where it stopped. "
+    "If there were replans, mention the course-correction briefly."
 )
 
 

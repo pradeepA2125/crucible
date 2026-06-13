@@ -68,8 +68,10 @@ AGENT_STEP_RESPONSE_SCHEMA: dict[str, object] = {
         "step_summary": {
             "type": "string",
             "description": (
-                "One concise sentence summarizing what THIS step changed, for the task "
-                "narrative (optional, set it on verify_done)."
+                "A few sentences describing what THIS step actually did — the concrete "
+                "changes, why, and any notable decisions, gotchas, or dead-ends. This is raw "
+                "material for the end-of-task narrative; the summarizer condenses it, so be "
+                "informative rather than terse (optional, set it on verify_done)."
             ),
         },
         # revision_needed fields

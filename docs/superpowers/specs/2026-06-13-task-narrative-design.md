@@ -18,7 +18,7 @@ This is distinct from the existing **`run_summary`** (deterministic counts: `ste
 
 **Accumulate an append-only event log of the run, then synthesize a narrative from it with one LLM call per terminal.**
 
-- Per-step prose is captured **for free** by adding a `step_summary` field to the `verify_done` action the execution agent already emits — no extra per-step LLM call.
+- Per-step prose is captured **for free** by adding a `step_summary` field to the `verify_done` action the execution agent already emits — no extra per-step LLM call. The per-step note is **rich/detailed** (a few sentences: what changed, why, notable decisions/dead-ends), NOT a finished one-liner — it is raw material that the end synthesis distills. This is the division of labor that keeps both layers non-redundant: rich capture per step, real summarization at the end.
 - The accumulator is an **append-only `run_events` log**, never pruned. A delta replan reverting/replacing steps does NOT rewrite history — the dead-ends and the course-correction stay in the log, because they are the most informative part of the story (for both the reviewer and the next turn).
 - One `summarize_run` LLM call at each terminal (SUCCEEDED / FAILED / ABORTED) turns the ordered log into `{headline, points}`, reusing the exact terminal chokepoints built for `run_summary`.
 
