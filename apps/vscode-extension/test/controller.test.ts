@@ -737,6 +737,71 @@ describe("AiEditorController — deviation capture", () => {
   });
 });
 
+describe("AiEditorController — resume streaming", () => {
+  const resumeBackend = (
+    onStream: (taskId: string) => void,
+    events: Array<{ type: string; payload: Record<string, unknown> }>,
+  ): BackendTaskClient => ({
+    ...createStubBackend({
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+      rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+    }),
+    resumeTask: async (parentId) => ({ taskId: "task-child", resumeOfTaskId: parentId }),
+    streamPatchEvents: async function* (taskId: string) {
+      onStream(taskId);
+      for (const e of events) yield e as never;
+    },
+  });
+
+  test("execute-stage resume streams the child channel and anchors a task_card", async () => {
+    const streamed: string[] = [];
+    const toolEvents: Array<{ source: string }> = [];
+    const workbars: Array<{ stepIndex?: number } | null> = [];
+    const messages: ChatMessage[] = [];
+
+    const backend = resumeBackend((id) => streamed.push(id), [
+      { type: "tool_call", payload: { tool: "read_file", thought: "", iteration: 1, phase: "explore", args: { path: "x.py" } } },
+      { type: "step_started", payload: { step_id: "s1", step_title: "Do s1", step_index: 1, total_steps: 3 } },
+      { type: "done", payload: { status: "SUCCEEDED" } },
+    ]);
+    const ui = createUi({
+      appendToolEvent: (e) => toolEvents.push({ source: e.source }),
+      updateWorkbar: (info) => workbars.push(info as { stepIndex?: number } | null),
+      appendChatMessage: (m) => messages.push(m),
+    });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async () => {} },
+      () => "2026-06-13T00:00:00.000Z"
+    );
+
+    await controller.resumeTaskById("task-parent", "execute");
+
+    expect(streamed).toContain("task-child");
+    expect(toolEvents.some((e) => e.source === "execution")).toBe(true);
+    expect(workbars.some((w) => w?.stepIndex === 1)).toBe(true);
+    expect(messages.some((m) => m.type === "task_card" && m.taskId === "task-child")).toBe(true);
+    controller.dispose();
+  });
+
+  test("plan-stage resume does NOT stream the child channel (driven by /live)", async () => {
+    const streamed: string[] = [];
+    const backend = resumeBackend((id) => streamed.push(id), [
+      { type: "done", payload: {} },
+    ]);
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async () => {} },
+      () => "2026-06-13T00:00:00.000Z"
+    );
+
+    await controller.resumeTaskById("task-parent", "plan");
+
+    expect(streamed).not.toContain("task-child");
+    controller.dispose();
+  });
+});
+
 describe("AiEditorController — command-decision", () => {
   test("handleCommandDecisionFromChat posts the decision to the backend", async () => {
     const sent: Array<{ taskId: string; decision: CommandDecision }> = [];

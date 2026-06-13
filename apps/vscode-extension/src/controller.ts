@@ -750,10 +750,10 @@ export class AiEditorController {
     }
   }
 
-  async streamTaskIntoChatThread(taskId: string): Promise<void> {
+  async streamTaskIntoChatThread(taskId: string, openingEntry = "Generating execution plan…"): Promise<void> {
     const client = this.createClient(this.settings.getBackendBaseUrl());
     this.ui.setChatInputEnabled(false);
-    this.ui.appendChatThinkingEntry("Generating execution plan…");
+    this.ui.appendChatThinkingEntry(openingEntry);
     try {
       for await (const event of client.streamPatchEvents(taskId)) {
         if (event.type === "planning_thinking_chunk") {
@@ -986,21 +986,45 @@ export class AiEditorController {
   }
 
   async resumeTaskById(taskId: string, stage: "plan" | "execute"): Promise<void> {
+    let childId: string;
     try {
       const response = await this.clientForChat().resumeTask(taskId, { stage });
-      this.ui.showInfo(`Resumed as ${response.taskId}`);
-      // the child task is a fresh run — never let the parent's step/error history describe it
-      this.seenStepIds.clear();
-      this.stepTrackingTaskId = null;
-      this.lastStepStarted = null;
-      this.lastPatchError = null;
-      this.runDeviations = [];
-      this.deviationsTaskId = null;
-      // Force the next poll to re-render against the child task (signature reset).
-      this.lastLiveSignature = null;
-      void this.pollThreadLiveState();
+      childId = response.taskId;
+      this.ui.showInfo(`Resumed as ${childId}`);
     } catch (error) {
       this.ui.showError(`Failed to resume: ${formatError(error)}`);
+      return;
+    }
+    // the child task is a fresh run — never let the parent's step/error history describe it
+    this.seenStepIds.clear();
+    this.stepTrackingTaskId = null;
+    this.lastStepStarted = null;
+    this.lastPatchError = null;
+    this.runDeviations = [];
+    this.deviationsTaskId = null;
+    // Optimistic task_card anchor for the child, mirroring the backend record the
+    // resume route now persists (the persisted copy replaces this on the next reload —
+    // same optimistic pattern as appendBreadcrumbMessage). Gives the resumed run a
+    // transcript row instead of appearing only as live pills.
+    this.ui.appendChatMessage({
+      role: "agent",
+      content: childId,
+      type: "task_card",
+      taskId: childId,
+      timestamp: this.now(),
+      metadata: {},
+    });
+    // Force the next poll to re-render against the child task (signature reset).
+    this.lastLiveSignature = null;
+    void this.pollThreadLiveState();
+    // An execute-stage resume runs execution immediately on the child's task channel.
+    // Nobody else subscribes to a resumed child's stream, so without this the run is
+    // mute — no tool pills, no work bar, no step progress — until a reload. Attach to
+    // it through the same render path as a post-approval implement. A plan-stage resume
+    // re-plans and pauses at AWAITING_PLAN_APPROVAL (no terminal event to end the
+    // stream); it is driven by /live + the live plan card's Implement path instead.
+    if (stage === "execute") {
+      await this.streamTaskIntoChatThread(childId, "Resuming execution…");
     }
   }
 

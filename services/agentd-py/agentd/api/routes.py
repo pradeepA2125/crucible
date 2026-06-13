@@ -862,11 +862,24 @@ def build_router(
         # /live keeps deriving from the FAILED parent, the child writes no
         # breadcrumbs/records, and its gates park invisibly (timeout 0).
         if parent.chat_channel_id and chat_agent is not None:
+            from agentd.chat.models import ChatMessage
+
             thread_id = parent.chat_channel_id[len("chat:"):]
             chat_agent._store.set_active_task(thread_id, child_id)  # type: ignore[attr-defined]
             orchestrator.write_chat_breadcrumb(
                 child, f"↻ Resumed as a new run (stage: {request.stage})"
             )
+            # Durable task_card anchor for the child — mirrors create_task_from_chat.
+            # Without it the resumed run has no transcript row of its own and a later
+            # _find_recent_task would re-discover the FAILED parent, not this child.
+            chat_agent._store.append_message(  # type: ignore[attr-defined]
+                thread_id,
+                ChatMessage(role="agent", content=child_id, type="task_card", task_id=child_id, metadata={}),
+            )
+            orchestrator.broadcaster.broadcast(parent.chat_channel_id, {
+                "type": "task_card",
+                "payload": {"task_id": child_id},
+            })
 
         async def _run_and_release() -> None:
             try:

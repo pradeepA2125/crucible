@@ -102,6 +102,35 @@ async def test_resume_carries_chat_channel_and_repoints_thread(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_resume_persists_task_card_for_child(tmp_path: Path) -> None:
+    """The resumed child needs a task_card anchor in the transcript: it gives the run
+    a durable transcript row (the chat-created path writes one; resume did not), and it
+    lets a later _find_recent_task discover the CHILD for a resume-of-resume instead of
+    the FAILED parent."""
+    app, store, chat_store = _build(tmp_path)
+    thread = chat_store.create_thread(str(tmp_path))
+    parent = TaskRecord(
+        task_id="parent-3", goal="g", workspace_path=str(tmp_path),
+        status=TaskStatus.FAILED,
+        chat_channel_id=f"chat:{thread.thread_id}",
+    )
+    await store.create(parent)
+    chat_store.set_active_task(thread.thread_id, parent.task_id)
+
+    async with _client(app) as client:
+        resp = await client.post("/v1/tasks/parent-3/resume", json={"stage": "plan"})
+
+    assert resp.status_code == 200
+    child_id = resp.json()["task_id"]
+
+    refreshed = chat_store.get_thread(thread.thread_id)
+    task_cards = [m for m in refreshed.messages if m.type == "task_card"]
+    assert any(m.task_id == child_id for m in task_cards), [
+        (m.type, m.task_id) for m in refreshed.messages
+    ]
+
+
+@pytest.mark.asyncio
 async def test_resume_without_chat_linkage_stays_detached(tmp_path: Path) -> None:
     app, store, _chat_store = _build(tmp_path)
     parent = TaskRecord(
