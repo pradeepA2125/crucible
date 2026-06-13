@@ -1,4 +1,24 @@
-# Chat UI v2 — Handoff (updated 2026-06-13: TIER A COMPLETE)
+# Chat UI v2 — Handoff (updated 2026-06-13 sess.2: TIER B IMPLEMENTED + Task-Narrative spec/plan written)
+
+## 2026-06-13 session 2 — Tier B IMPLEMENTED (all green, not yet smoked); Task Narrative spec+plan written
+
+**Tier B (lifecycle control & durable telemetry) — DONE in code.** Spec `docs/superpowers/specs/2026-06-13-tier-b-lifecycle-control-telemetry-design.md`, plan `...-telemetry.md`. All 14 plan tasks + a backend fix executed inline (TDD), **18 commits this session, branch now 72 ahead of `main`**.
+- One shared mechanism: in-memory `TaskControl` (`orchestrator/task_control.py`) = abort event + abort_revert + live step_review_auto_accept; registered in `continue_task`/`resume_task`, released in `_execute_plan` finally; `_execute_plan` only READS it.
+- **Cooperative abort** `POST /abort {revert}` — checked between steps + ToolLoop iterations → `TaskAborted`; in-place ABORTED unwind (keep/revert breadcrumb). `/cancel` unchanged for queued/terminal.
+- **True revert** at reject/abort via pinned **pre-execution checkpoint** under `_baselines/` (rollback = `_restore_shadow_checkpoint` + `promote`). `/reject` = true revert now; ReviewCard "Discard all changes".
+- **Durable telemetry** `FailureSummary`/`RunSummary` on TaskRecord, finalized at every terminal **AND at READY_FOR_REVIEW** (so ReviewCard "N of M" survives reload); via `/live` + `TaskResult`/`TaskView`.
+- **Dynamic `/review-pref`** — engine re-reads pref per step; flip-to-auto resolves a pending step gate.
+- Webview: Stop & keep/revert (inputAvailability.taskStop = EXECUTING/VALIDATING/REPAIRING), ReviewCard Discard=true-revert, dynamic checkbox. `_write_chat_completion` now ABORTED-aware (no "Execution failed" over the abort breadcrumb — e7b5f39-class).
+- **Verification:** editor-client 27, extension 28, webview 160 green; typecheck+builds clean; pytest = only the 11 known pre-existing (gemini/groq + `@requires_live_snapshot`). CLAUDE.md "Tier B" subsection added.
+- **7 plan-gap fixes** caught by up-front context-gathering (user asked to verify anchors first): biggest = the `_write_chat_completion` ABORTED-clobber; control-owner is continue/resume NOT run_task; `resolve_live_state(id, getter)` not `(task)`; plan test snippets had wrong imports (`sqlite_store`, `RetrievalContext` from `artifact_client`, `PlanDocument(analysis=…)` not `summary=`).
+- **finishing-a-development-branch → user chose "Keep as-is (smoke first)".** Nothing merged/pushed.
+
+**NEXT (Tier B):** **(1) dev-host smoke** (NOT yet run — interactive): large_change → Stop & revert mid-exec rolls back; another → READY_FOR_REVIEW → Discard = true revert; another → Finish kept (SUCCEEDED); kill backend mid-exec → reload → ErrorCard durable failure/run summary; toggle Review-each-step mid-run both ways. **(2) merge/PR decision** (72 commits unmerged) — finishing-a-development-branch.
+
+**Task Narrative (next feature) — brainstormed + spec + plan written, NOT implemented.** Spec `docs/superpowers/specs/2026-06-13-task-narrative-design.md`, plan `docs/superpowers/plans/2026-06-13-task-narrative.md` (10 tasks, TDD, anchored). Idea (user-driven): LLM-authored run narrative (headline + points) for the Review/Error cards AND as next-chat-turn context. Mechanism: **append-only `run_events` log** (per-step prose captured FREE via a new `step_summary` field on the `verify_done` action; deterministic step_failed/replan events) → one `summarize_run` LLM call per outcome (READY_FOR_REVIEW success + FAILED/ABORTED), reusing the Tier B finally chokepoints. Consumed next turn via existing transcript-history + `_find_recent_task` plumbing.
+- **DEFERRED — DO BEFORE narrative-plan Task 3 (delta-replan event):** re-trace the delta-replan path end-to-end (`_apply_revision` `engine.py:2171` + the PlanHandoff site `~1500`). Confirm `reverted_step_ids` vs `revised_steps` semantics, the exact `replan`-event append ordering (must be BEFORE `_apply_revision`), and that no non-verify_done/non-exhaustion step terminal slips through without an event. Note: delta replan CAN grow OR shrink `n` (drops reverted-without-replacement steps; appends brand-new ones) and moves `x` back — the append-only log is immune, but verify the event capture.
+
+---
 
 ## 2026-06-13 session result — Tier A DONE, live-smoked, all green
 - Task 4 finished (`c620de8`), Task 5 done (`2a4132a` — toggle verified end-to-end: composer checkbox → `step_review` on POST → `step_review_auto_accept` frozen on TaskRecord), docs (`d848849`).
