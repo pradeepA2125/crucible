@@ -1391,6 +1391,12 @@ class AgentOrchestrator:
                 "payload": {"task_id": task.task_id, "status": "EXECUTING", "message": "Executing plan…"},
             })
 
+            # Pin the pristine pre-step-1 shadow so Discard/abort-revert can roll the real
+            # workspace back (Tier B). Captured once per run; a resumed child captures its own
+            # resume-start state (rollback then undoes only this run's steps, not the parent's).
+            self._create_pre_execution_checkpoint(task, shadow_path)
+            await self._store.save(task)
+
             baseline_errors = await self._collect_baseline_errors(
                 shadow_path,
                 task_id=task.task_id,
@@ -1686,6 +1692,10 @@ class AgentOrchestrator:
             if task.chat_channel_id and self._chat_store is not None:
                 self._write_chat_completion(task)
             if task.status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED}:
+                # Drop the pinned baseline (prune_checkpoints never scans _baselines, so it
+                # would otherwise leak). Any rollback/abort-revert that needs it has already
+                # run in the except handlers, which execute before this finally.
+                self._clear_pre_execution_checkpoint(task)
                 try:
                     await self._workspace_manager.prune_checkpoints()
                 except Exception:

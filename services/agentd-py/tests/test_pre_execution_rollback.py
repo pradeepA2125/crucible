@@ -59,3 +59,40 @@ async def test_rollback_restores_modified_and_deletes_created(tmp_path: Path):
 
     assert (real / "src" / "keep.py").read_text() == "original\n"   # restored
     assert not (real / "src" / "new.py").exists()                    # created file deleted
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_captures_baseline_before_first_step(tmp_path: Path, monkeypatch):
+    """After EXECUTING, the pre-execution checkpoint is pinned before any step runs."""
+    from agentd.domain.models import PlanDocument, PlanStep
+    from agentd.retrieval.artifact_client import RetrievalContext
+
+    real = tmp_path / "ws"
+    real.mkdir()
+    (real / "a.py").write_text("x = 1\n")
+    orch = _orch(tmp_path)
+    shadow = await orch._workspace_manager.prepare("task-2", str(real))
+    task = TaskRecord(
+        task_id="task-2", goal="g", workspace_path=str(real),
+        shadow_workspace_path=str(shadow.shadow_path), budget=TaskBudget(),
+        status=TaskStatus.PLANNED,
+        plan=PlanDocument(
+            analysis="s",
+            steps=[PlanStep(id="s1", goal="noop", targets=[], risk="low")],
+            expected_files=[], stop_conditions=[],
+        ),
+    )
+    await orch._store.create(task)
+    captured: dict[str, object] = {}
+
+    # Stop after the first step begins: assert the baseline was already captured.
+    # _execute_plan swallows the raise (except Exception -> FAILED), so we don't
+    # expect it to propagate — we read the captured value + the FAILED outcome.
+    async def _fake_run_step(*a, **k):
+        captured["baseline"] = task.execution_state.pre_execution_checkpoint
+        raise RuntimeError("stop-after-capture")
+
+    monkeypatch.setattr(orch, "_run_step_with_retries", _fake_run_step)
+    out = await orch._execute_plan(task, shadow, RetrievalContext.empty(), [], 0)
+    assert captured["baseline"] is not None
+    assert out.status == TaskStatus.FAILED
