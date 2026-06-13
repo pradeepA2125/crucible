@@ -1168,6 +1168,45 @@ describe("AiEditorController — command-decision", () => {
     expect(reviewRendered!.deviations).toEqual(["1 delta replan(s)"]);
   });
 
+  test("late-arriving task_narrative re-renders the ReviewCard (dedup must not lock it out)", async () => {
+    // Smoke-found: the engine saves status=READY_FOR_REVIEW first, then synthesizes the
+    // narrative (an LLM call) and saves it a moment later — so it arrives on a poll where
+    // status is unchanged. The dedup signature must include it or the card never shows it.
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: { activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, plan: null },
+    };
+    const backend: BackendTaskClient = {
+      ...createStubBackend(state),
+      getThreadLiveState: async () => state.liveResponse!,
+      getTaskResult: async () => ({
+        taskId: "t9", status: "READY_FOR_REVIEW", modifiedFiles: ["a.py"], diagnostics: [],
+        shadowWorkspacePath: "/s", plan: { analysis: "a", steps: [], expected_files: [], stop_conditions: [] },
+        patch: { patch_ops: [] },
+      } as TaskResult),
+    };
+    const reviews: Array<Parameters<ControllerUI["renderLiveReview"]>[0]> = [];
+    const ui = createUi({ renderLiveReview: (r) => { reviews.push(r); } });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-late");
+    await controller.pollThreadLiveState();   // poll 1: no narrative yet
+    // narrative lands (status unchanged)
+    state.liveResponse = {
+      activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, plan: null,
+      taskNarrative: { outcome: "succeeded", headline: "Did X", points: ["a"] },
+    };
+    await controller.pollThreadLiveState();   // poll 2: must re-render with the narrative
+    controller.dispose();
+    expect(reviews.length).toBe(2);
+    expect(reviews[0].narrative).toBeUndefined();
+    expect(reviews[1].narrative?.headline).toBe("Did X");
+  });
+
   test("task_narrative forwarded into renderLiveReview", async () => {
     let reviewRendered: Parameters<ControllerUI["renderLiveReview"]>[0] | null = null;
     const backend: BackendTaskClient = {

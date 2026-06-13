@@ -1440,6 +1440,13 @@ export class AiEditorController {
       status: live.status,
       gate: live.pendingGate,
       plan: live.plan,
+      // Durable telemetry is finalized server-side AFTER the READY_FOR_REVIEW/terminal
+      // status save (the narrative is a later LLM call), so it arrives on a poll where
+      // status is unchanged. Without these, the dedup locks on the first render and the
+      // Review/Error card never picks up the run_summary/narrative until a reload.
+      runSummary: live.runSummary,
+      narrative: live.taskNarrative,
+      failure: live.failureSummary,
     });
     if (signature === this.lastLiveSignature) {
       return; // dedup — nothing actionable changed
