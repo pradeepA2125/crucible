@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from agentd.domain.models import FailureSummary, RunSummary
+
 
 class IntentType(StrEnum):
     QA = "qa"
@@ -69,3 +71,7 @@ class ThreadLiveState(BaseModel):
     status: str | None = None
     pending_gate: PendingGate | None = None
     plan: dict[str, Any] | None = None
+    # Durable lifecycle telemetry (Tier B): failure_summary only at FAILED/ABORTED,
+    # run_summary whenever present. Lets the Error/Review cards render from state on reload.
+    failure_summary: FailureSummary | None = None
+    run_summary: RunSummary | None = None

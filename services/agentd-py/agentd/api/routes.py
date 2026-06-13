@@ -102,6 +102,8 @@ def _to_task_result(task: TaskRecord) -> TaskResult:
         artifacts_root_path=task.artifacts_root_path,
         plan_markdown=task.plan_markdown,
         resume_of_task_id=task.resume_of_task_id,
+        failure_summary=task.failure_summary,
+        run_summary=task.run_summary,
     )
 
 
@@ -114,6 +116,8 @@ def _to_task_view(task: TaskRecord) -> TaskView:
         diagnostics=task.diagnostics,
         plan_markdown=task.plan_markdown,
         resume_of_task_id=task.resume_of_task_id,
+        failure_summary=task.failure_summary,
+        run_summary=task.run_summary,
     )
 
 

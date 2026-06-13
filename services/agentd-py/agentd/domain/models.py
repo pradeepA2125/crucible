@@ -805,6 +805,8 @@ class TaskView(BaseModel):
     diagnostics: list[Diagnostic]
     plan_markdown: str | None = None
     resume_of_task_id: str | None = None
+    failure_summary: FailureSummary | None = None
+    run_summary: RunSummary | None = None
 
 
 class PlanFeedbackRequest(BaseModel):
@@ -828,6 +830,8 @@ class TaskResult(BaseModel):
     artifacts_root_path: str | None = None
     plan_markdown: str | None = None
     resume_of_task_id: str | None = None
+    failure_summary: FailureSummary | None = None
+    run_summary: RunSummary | None = None
 
 
 class RejectPatchRequest(BaseModel):

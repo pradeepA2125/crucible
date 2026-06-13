@@ -109,4 +109,8 @@ def resolve_live_state(
         status=status,
         pending_gate=gate,
         plan=plan,
+        # failure_summary only makes sense once the task has failed/aborted; run_summary
+        # surfaces whenever the engine has finalized it (terminal states).
+        failure_summary=task.failure_summary if status in ("FAILED", "ABORTED") else None,
+        run_summary=task.run_summary,
     )
