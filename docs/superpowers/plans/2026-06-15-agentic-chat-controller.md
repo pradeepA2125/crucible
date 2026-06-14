@@ -1784,8 +1784,8 @@ git commit -m "chore(chat): lint/type clean for controller"
 > **Verified:** chat gates render via the `/live` poll → `LiveSlot.GateDispatch` by `kind` (NOT via SSE / `MessageRow`). So there is **no** `mode_choice` `StreamEvent`. The frontend change is to extend `LiveGateView.kind` (`types.ts:56`) to match the backend `PendingGate.kind` (F0), and add decision client methods. Per-edit gate reuses the same gate path with `kind="edit"`.
 
 **Files:**
-- Modify: `apps/vscode-extension/webview-ui/src/types.ts` (`LiveGateView.kind`).
-- Modify: `apps/editor-client/src/contracts/task-contracts.ts` (`BackendTaskClient`) + `apps/editor-client/src/client/http-backend-client.ts` (impl).
+- Modify: `apps/vscode-extension/webview-ui/src/types.ts` (`LiveGateView.kind`:56) **AND** `apps/vscode-extension/src/controller.ts` (`LiveGateView.kind`:85) — **`LiveGateView` is declared in BOTH** (extension builds it from `/live`, webview renders it); extend the union in both or the build/render won't type-check.
+- Modify: `apps/editor-client/src/contracts/task-contracts.ts` (`BackendTaskClient`) + `apps/editor-client/src/client/http-backend-client.ts` (impl, ctor `{ baseUrl, fetchFn? }`).
 - Test: `apps/editor-client/test/decision-clients.test.ts`
 
 - [ ] **Step 1: Write the failing test**
@@ -1796,9 +1796,10 @@ import { describe, it, expect, vi } from "vitest";
 import { HttpBackendClient } from "../src/client/http-backend-client";
 
 describe("mode/edit decision clients", () => {
-  it("posts mode-decision to the right endpoint", async () => {
+  it("posts edit-decision to the right endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
-    const c = new HttpBackendClient("http://x", fetchMock as unknown as typeof fetch);
+    // ctor takes an options object: { baseUrl, fetchFn? }
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
     await c.postEditDecision("th1", "reject", "wrong var");
     expect(fetchMock).toHaveBeenCalledWith("http://x/v1/chat/threads/th1/edit-decision",
       expect.objectContaining({ method: "POST" }));
@@ -1809,9 +1810,10 @@ describe("mode/edit decision clients", () => {
 - [ ] **Step 2: Run** `npm run -w @ai-editor/editor-client test decision-clients` → FAIL (method missing).
 
 - [ ] **Step 3: Implement**
-- `types.ts`: `kind: "command" | "scope" | "validation" | "step" | "mode" | "edit";`
+- `types.ts:56` AND `controller.ts:85`: `kind: "command" | "scope" | "validation" | "step" | "mode" | "edit";` (both `LiveGateView` declarations).
 - `task-contracts.ts` (`BackendTaskClient`): `postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;` (the mode decision is a *streamed* POST consumed like `sendChatMessage`; if you prefer a typed method add `postModeDecision(threadId, mode): AsyncIterable<StreamEvent>`).
-- `http-backend-client.ts`: implement `postEditDecision` (plain `POST /v1/chat/threads/{id}/edit-decision` body `{decision, reason}`) and, if added, `postModeDecision` (SSE, mirror `sendChatMessage` against `/mode-decision` body `{mode}`).
+- `http-backend-client.ts`: implement `postEditDecision` (plain `POST /v1/chat/threads/{id}/edit-decision` body `{decision, reason}`, mirror the existing `fetchJson(path, {method:"POST", ...})` POST methods) and, if added, `postModeDecision` (SSE, mirror `sendChatMessage` against `/mode-decision` body `{mode}`).
+- **Controller `/live`→`LiveGateView` build:** where `controller.ts` maps the `/live` `pending_gate` to a `LiveGateView`, set `taskId = threadId` for controller gates (`kind` ∈ `mode`/`edit`) so `ModeGate`/`EditGate` post the thread id (the `/live` `active_task_id` is null on a controller turn).
 
 - [ ] **Step 4: Run** → PASS; `npm run -w @ai-editor/editor-client build`.
 
