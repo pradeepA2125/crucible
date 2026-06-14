@@ -275,6 +275,7 @@ CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
         "answer": {"type": "string"},
         "question": {"type": "string"},
         # propose_mode
+        "plan_sketch": {"type": "string"},   # lightweight "here's my approach" preview (NOT the concrete plan)
         "recommended": {"type": "string"},
         "reason": {"type": "string"},
         "options": {"type": "array", "items": {"type": "object"}},
@@ -905,9 +906,11 @@ async def test_clarify_terminal(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_propose_mode_terminal_carries_payload(tmp_path: Path):
     out = await _loop(tmp_path, [{"type": "propose_mode", "thought": "t", "recommended": "create_task",
+                                  "plan_sketch": "add a decorator and apply to 3 routes",
                                   "reason": "big", "options": [{"mode": "create_task"}]}]).run(
         {"goal": "g", "workspace_path": str(tmp_path)}, max_iters=4)
     assert out.kind == "propose_mode" and out.payload["recommended"] == "create_task"
+    assert out.payload["plan_sketch"] == "add a decorator and apply to 3 routes"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -924,6 +927,7 @@ Expected: FAIL — `NotImplementedError`.
             if atype == "propose_mode":
                 history.append(assistant_turn(resp))
                 return ControllerOutcome(kind="propose_mode", payload={
+                    "plan_sketch": resp.get("plan_sketch", ""),
                     "recommended": resp.get("recommended"),
                     "reason": resp.get("reason", ""),
                     "options": resp.get("options", []),
@@ -1138,11 +1142,15 @@ git commit -m "feat(chat): ChatController handle_message (QA + clarify)"
 - Modify: `agentd/chat/controller.py`, `agentd/api/routes.py`
 - Test: `tests/test_mode_decision.py`
 
-- [ ] **Step 1: Write the failing test** — assert that on a `propose_mode` outcome the controller broadcasts a mode-choice payload and **pauses** on a pending future; that `POST /v1/chat/threads/{id}/mode-decision {mode}` resolves it; that `mode="create_task"` calls `orchestrator.create_task_from_chat`; that `mode="edit"` resumes the loop in EDIT phase. (Mirror the step/command gate test shape: a pending-decision dict + future keyed by a decision id; the route sets the result.)
+- [ ] **Step 1: Write the failing test** — assert that on a `propose_mode` outcome the controller broadcasts a `mode_choice` payload **including `plan_sketch`** and **pauses** on a pending future; that `POST /v1/chat/threads/{id}/mode-decision {mode}` resolves it; that `mode="create_task"` calls `orchestrator.create_task_from_chat`; that `mode="edit"` resumes the loop in EDIT phase. Also assert the **discuss path**: if instead of a `/mode-decision` the user posts a normal chat message while the gate is pending, the loop resumes with `seed_history = outcome.history + [user turn]` (the agent re-proposes). (Mirror the step/command gate test shape AND the plan-approval approve-vs-feedback shape.)
 
 - [ ] **Step 2: Run test to verify it fails** — `pytest tests/test_mode_decision.py -v` → FAIL (route/gate missing).
 
-- [ ] **Step 3: Write minimal implementation** — add a `pending_mode_decision` future map keyed by thread/turn id in the controller (mirror `_pending_step_decisions`); on `propose_mode` broadcast `mode_choice` event + persist a durable record, then `await future`. Add `/mode-decision` route that `future.set_result(mode)`. On resolution: `edit`→`phase_sm.enter_edit_mode()` + resume `ControllerLoop.run(seed_history=outcome.history)`; `create_task`/`resume`→ existing orchestrator handoffs (copy from `ChatAgent`); `explain`→ resume loop expecting an `answer`.
+- [ ] **Step 3: Write minimal implementation** — add a `pending_mode_decision` future map keyed by thread/turn id in the controller (mirror `_pending_step_decisions`); on `propose_mode` broadcast a `mode_choice` event (carrying `plan_sketch` + recommended + options) + persist a durable record, then `await` EITHER the future OR the next user message (soft-terminal gate, exactly like `AWAITING_PLAN_APPROVAL` awaits approve-or-feedback). Add `/mode-decision` route that `future.set_result(mode)`. Resolution:
+  - `edit` → `phase_sm.enter_edit_mode()` + resume `ControllerLoop.run(seed_history=outcome.history)`.
+  - `create_task`/`resume` → existing orchestrator handoffs (copy from `ChatAgent`).
+  - `explain` → resume loop expecting an `answer`.
+  - **discuss (a new user message instead of a pick)** → resume `ControllerLoop.run(seed_history=outcome.history + [user turn])` (same mechanism as clarify/feedback, Task F4); the agent may emit a refined `propose_mode`, an `answer`, or a `clarify`.
 
 - [ ] **Step 4: Run test to verify it passes** — PASS.
 
@@ -1282,7 +1290,7 @@ git commit -m "chore(chat): lint/type clean for controller"
 - Modify: `apps/editor-client/src/contracts/task-contracts.ts`
 - Test: `apps/editor-client/test/...`
 
-- [ ] **Step 1: Write the failing vitest** asserting the `StreamEvent` union parses a `mode_choice` event (`{type:"mode_choice", payload:{recommended, reason, options}}`) and an `edit_decision`-resolved diff card.
+- [ ] **Step 1: Write the failing vitest** asserting the `StreamEvent` union parses a `mode_choice` event (`{type:"mode_choice", payload:{plan_sketch, recommended, reason, options}}`) and an `edit_decision`-resolved diff card.
 - [ ] **Step 2: Run** `npm run -w @ai-editor/editor-client test` → FAIL.
 - [ ] **Step 3: Add** the Zod members + types.
 - [ ] **Step 4: Run** → PASS; then `npm run -w @ai-editor/editor-client build` (extension types off its dist).
@@ -1294,7 +1302,7 @@ git commit -m "chore(chat): lint/type clean for controller"
 - Modify: webview chat components + `vscode-extension/src/controller.ts`
 - Test: webview vitest
 
-- [ ] **Step 1: Write failing vitest** — mode-choice card renders recommended + options and posts `/mode-decision` on click; per-edit card posts `/edit-decision` accept/reject(+reason).
+- [ ] **Step 1: Write failing vitest** — mode-choice card renders the `plan_sketch` + recommended + options and posts `/mode-decision` on click; renders a **"Discuss / refine"** affordance (or relies on the composer) so a follow-up message resumes the turn; per-edit card posts `/edit-decision` accept/reject(+reason).
 - [ ] **Step 2: Run** webview tests → FAIL.
 - [ ] **Step 3: Implement** card components + controller methods (mirror existing StepGate/DiffCard).
 - [ ] **Step 4: Run** webview tests + `npm run build` → PASS.
@@ -1307,9 +1315,10 @@ git commit -m "chore(chat): lint/type clean for controller"
 > Drive the real dev-host per `docs/superpowers/plans/2026-06-14-tierB-narrative-smoke.md` env recipe (backend :8001, worktree extension, Playwright CDP frame-eval). Set `AI_EDITOR_CHAT_CONTROLLER=1`.
 
 - [ ] **J1** QA turn: ask a question → agent explores → `answer` renders; no mode card.
-- [ ] **J2** Edit turn: "add X to file Y" → agent emits `propose_mode` → pick **Edit inline** → per-edit diff card → Accept → file changed on real ws; subsequent read in same turn sees the edit.
+- [ ] **J2** Edit turn: "add X to file Y" → agent emits `propose_mode` showing a **`plan_sketch`** ("here's my approach") + options → pick **Edit inline** → per-edit diff card → Accept → file changed on real ws; subsequent read in same turn sees the edit.
+- [ ] **J2b** Discuss path: on a `propose_mode` card, **don't pick** — type a follow-up ("actually, also handle the error case") → the turn resumes and the agent re-proposes a refined sketch (mirrors plan-approval feedback).
 - [ ] **J3** Reject path: trigger an `edit` → Reject with reason → real ws unchanged; agent revises and re-proposes.
-- [ ] **J4** create_task path: "big multi-file change" → `propose_mode` recommends **Plan as task** → pick it → existing plan-approval flow runs unchanged.
+- [ ] **J4** create_task path: "big multi-file change" → `propose_mode` recommends **Plan as task** (with a sketch) → pick it → existing plan-approval flow runs unchanged (the concrete plan still goes through its own approval gate).
 - [ ] **J5** Clarify: ambiguous request → `clarify` question → answer it → loop resumes with prior context.
 - [ ] **J6** Cache check: tail `agentd.log`; confirm steady-state per-turn payload does not re-send file bodies in `retrieval_*` (bodies only in tool results). Record observation in the smoke doc.
 - [ ] **J7** Flip default: once J1–J6 pass, set `AI_EDITOR_CHAT_CONTROLLER` default to `1`; record in the smoke results log.

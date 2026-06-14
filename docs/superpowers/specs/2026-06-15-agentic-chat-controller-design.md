@@ -49,7 +49,7 @@ handle_message(thread, msg, channel):
        tool_call      → registry.execute(...); append result; continue
        answer         → stream text; persist; chat_done; RETURN          (non-mutating)
        clarify        → ask; persist; chat_done; RETURN                  (non-mutating)
-       propose_mode   → render mode-choice card; PAUSE for user pick (§4)
+       propose_mode   → show plan_sketch + mode-choice card; PAUSE for a pick OR discussion (§4)
                           ├ create_task → create_task_from_chat → task_card → await_plan_ready → RETURN
                           ├ resume      → resume_from_execute → task_card → RETURN
                           ├ explain     → resume loop (agent emits answer)
@@ -72,17 +72,22 @@ handle_message(thread, msg, channel):
 | `tool_call` | `thought, tool, args` | no | `registry.execute`; append; continue. `tool` is a free string ∩ `registry.definitions()`. |
 | `answer` | `thought, answer` | no | stream; persist; done. |
 | `clarify` | `thought, question` | no | ask; done (awaits next user msg). |
-| `propose_mode` | `thought, recommended, reason, options[]` | — | gate: mode-choice card; PAUSE for user pick. |
+| `propose_mode` | `thought, plan_sketch, recommended, reason, options[]` | — | gate: shows the approach **sketch** + mode choice; PAUSE for a mode pick **OR** further discussion. |
 | `edit` | `thought, patch_ops[]` | yes | §5 transaction; continue. |
 | `submit_changes` | `thought, summary` | — | EDIT-phase terminal; discard shadow; done. |
 
 **Mode enum** (`propose_mode.recommended` + each `options[]` + gate resolution): `edit | create_task | resume | explain`. `resume` is offered only when a resumable `recent_task` exists; `explain` maps to a follow-up `answer`.
 
-**Never auto-enter a mutating mode.** The agent does not silently `edit` or `create_task`; it emits `propose_mode` recommending one mode (with reasoning + a user-facing description of what it does) and listing alternatives. The user picks via a new **`/mode-decision`** route (reusing pending-decision + future). Only `edit`/`explain` re-enter the loop; `create_task`/`resume` are handoffs.
+**`propose_mode` carries an approach sketch — the controller's analog of the plan-approval gate.** Before any mutating mode, the agent shows the user *what it intends to do* as a **lightweight `plan_sketch`** (a short natural-language "here's my approach": the areas/files it would touch and the intended changes at a high level) — **NOT** the concrete, step-by-step plan that `create_task` later produces at its own approval gate. The user then either **picks a mode** (≈ approve) or **keeps chatting to refine** (≈ feedback). This is the direct mirror of planning's `AWAITING_PLAN_APPROVAL`: approve → execute; feedback → regenerate.
+
+**Never auto-enter a mutating mode.** The agent does not silently `edit` or `create_task`; it emits `propose_mode` with a `plan_sketch`, a recommended mode (+ reasoning), and alternatives. Resolution:
+- **Pick a mode** via the new **`/mode-decision`** route (reusing pending-decision + future): `edit`/`explain` re-enter the loop; `create_task`/`resume` are handoffs.
+- **Discuss further** — the user simply sends a chat message instead of picking. That message resumes the loop with `seed_history = prior history + the user's turn` (the **same mechanism as clarify/feedback**, §12); the agent reconsiders and may emit a refined `propose_mode`, an `answer`, or a `clarify`. So the gate is *soft-terminal*: it waits for a mode pick **or** a follow-up message, exactly like the plan-approval gate waits for approve-or-feedback.
 
 `propose_mode` card payload:
 ```json
-{ "recommended": "create_task",
+{ "plan_sketch": "I'd add a `rate_limit` decorator in `api/deps.py` and apply it to the three public routes in `api/routes.py`; no schema change. Tests would cover the 429 path.",
+  "recommended": "create_task",
   "reason": "Touches 4 files across api/ and domain/ with a schema change.",
   "options": [
     {"mode": "create_task", "label": "Plan it as a task",
@@ -93,6 +98,7 @@ handle_message(thread, msg, channel):
      "description": "No changes — I describe what would need to happen."}
   ] }
 ```
+The card also surfaces a **"Discuss / refine"** affordance (or the user just types) for the discuss path.
 
 ## 5. Phase state machine & ACID edit mechanics
 
@@ -236,6 +242,8 @@ The controller is built to **mirror the planning path** (`PlanningAgent` → `Pl
 - Same: append the user's text as the final history turn, replay via `seed_history`, re-persist the grown conversation. (Planning: `_format_feedback_turn` + `task.planning_conversation_history`; controller: the persisted chat thread history.)
 - Diff 1: **agent-initiated** — the agent emits `clarify` (a question) and the user's answer becomes the appended turn — vs planning's **user-initiated open feedback** on a plan card.
 - Diff 2: the controller appends **retrieval deltas** into history after edits; planning never does (read-only ⇒ pinned-static retrieval).
+
+**`propose_mode` ≈ the plan-approval gate.** Its two resolutions mirror `AWAITING_PLAN_APPROVAL` exactly: **pick a mode** ≈ approve (feedback=null → proceed); **discuss/refine** ≈ feedback (string → re-explore). The discuss path reuses the *same* clarify/feedback resume (append the user's turn to `seed_history`, re-run the loop). The `plan_sketch` it shows is the lightweight intent preview — distinct from the concrete `create_task` plan, which still goes through its own full approval gate downstream if that mode is chosen.
 
 **Schema (Gemini-compat):** flat `type` enum + optional sibling fields, **not** `oneOf`/`anyOf`; per-phase gating by deep-copy + enum-trim (mirrors `planning_response_schema`).
 
