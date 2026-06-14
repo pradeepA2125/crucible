@@ -62,6 +62,10 @@ from agentd.domain.state_machine import assert_budget, bump_usage, transition
 from agentd.env.ensure import EnvProfileEnsurer
 from agentd.orchestrator.broadcaster import PatchEventBroadcaster
 from agentd.orchestrator.task_control import TaskAborted, TaskControl
+from agentd.patch.diffing import (
+    cap_unified_diff as _cap_unified_diff,  # noqa: F401 back-compat re-export
+    compute_diff_entries as _compute_diff_entries_free,
+)
 from agentd.patch.engine import PatchEngine
 from agentd.planning.agent import PlanningAgent
 from agentd.planning.registry import PlanningToolRegistry
@@ -72,29 +76,13 @@ from agentd.runtime.adapters import GenericPlanningAdapter, PlanningAdapter
 from agentd.runtime.artifacts import task_artifacts_root
 from agentd.storage.base import TaskStore
 from agentd.tools.loop import PlanHandoff, ScopeDecision, ScopeExtensionCallback
+from agentd.workspace.promote import promote_files as _promote_files_free
 from agentd.workspace.shadow import ShadowWorkspace, ShadowWorkspaceManager
 
 logger = logging.getLogger(__name__)
 
-_DIFF_MAX_LINES = 400
-_DIFF_MAX_CHARS = 24_000
-_DIFF_TRUNCATION_MARKER = "\u2026 diff truncated \u2014 open in editor for the full diff"
-
-
-def _cap_unified_diff(diff_text: str) -> str:
-    """Bound per-file diff text for chat payload/persistence."""
-    lines = diff_text.splitlines()
-    truncated = False
-    if len(lines) > _DIFF_MAX_LINES:
-        lines = lines[:_DIFF_MAX_LINES]
-        truncated = True
-    text = "\n".join(lines)
-    if len(text) > _DIFF_MAX_CHARS:
-        text = text[:_DIFF_MAX_CHARS]
-        truncated = True
-    if truncated:
-        text += "\n" + _DIFF_TRUNCATION_MARKER
-    return text
+# Diff capping + per-file DiffEntry computation now live in patch/diffing.py (DRY) \u2014
+# see the _compute_diff_entries method below, which delegates to compute_diff_entries.
 
 
 
@@ -1151,25 +1139,8 @@ class AgentOrchestrator:
         touched_files: list[str],
         inline_task_id: str,
     ) -> list[DiffEntry]:
-        entries: list[DiffEntry] = []
-        for rel in touched_files:
-            shadow_file = shadow_path / rel
-            real_file = real_path / rel
-            if not shadow_file.exists():
-                continue
-            shadow_lines = shadow_file.read_text(errors="replace").splitlines(keepends=True)
-            real_lines = real_file.read_text(errors="replace").splitlines(keepends=True) if real_file.exists() else []
-            diff = list(difflib.unified_diff(real_lines, shadow_lines, lineterm=""))
-            additions = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
-            deletions = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
-            entries.append(DiffEntry(
-                path=rel,
-                additions=additions,
-                deletions=deletions,
-                temp_path=str(shadow_file),
-                unified_diff=_cap_unified_diff("\n".join(diff)),
-            ))
-        return entries
+        # Delegates to the shared free function (patch/diffing.py) — single diff impl.
+        return _compute_diff_entries_free(real_path, shadow_path, touched_files, inline_task_id)
 
     def _load_inline_meta_from_disk(self, inline_task_id: str) -> dict | None:
         """Reconstruct inline shadow metadata from the on-disk manifest (survives reload)."""
@@ -2157,12 +2128,8 @@ class AgentOrchestrator:
         touched_files: list[str],
     ) -> None:
         """Copy accepted step's files from shadow → real workspace so subsequent steps read them."""
-        for rel in touched_files:
-            src = shadow_path / rel
-            dst = real_path / rel
-            if src.exists():
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
+        # Delegates to the shared free function (workspace/promote.py) — single promote impl.
+        _promote_files_free(shadow_path, real_path, touched_files)
 
     async def _unmerge_step_result(
         self,
