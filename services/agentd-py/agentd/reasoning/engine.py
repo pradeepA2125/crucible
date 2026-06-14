@@ -220,6 +220,35 @@ class DefaultReasoningEngine(ReasoningEngine):
         )
         return result if isinstance(result, dict) else {}
 
+    async def create_controller_step(
+        self,
+        plan_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        *,
+        phase: str,
+        on_thinking: Callable[[str], None] | None = None,
+    ) -> dict[str, object]:
+        from agentd.chat.controller_prompts import (
+            build_controller_step_payload,
+            controller_response_schema,
+            format_controller_system_prompt,
+        )
+
+        system_instructions = format_controller_system_prompt(tool_definitions)
+        user_payload = build_controller_step_payload(
+            plan_context, history, tool_definitions, phase=phase
+        )
+        result = await self._transport.generate_json(
+            model=self._model,
+            schema_name="controller_step_response",
+            schema=controller_response_schema(phase=phase),
+            system_instructions=system_instructions,
+            user_payload=user_payload,
+            on_thinking=on_thinking,
+        )
+        return result if isinstance(result, dict) else {}
+
     async def summarize_run(
         self, *, goal: str, outcome: str, run_events: list[dict[str, object]],
         deviations: list[str], modified_files: list[str],
