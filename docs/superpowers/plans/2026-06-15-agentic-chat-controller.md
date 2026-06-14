@@ -1813,7 +1813,17 @@ describe("mode/edit decision clients", () => {
 - `types.ts:56` AND `controller.ts:85`: `kind: "command" | "scope" | "validation" | "step" | "mode" | "edit";` (both `LiveGateView` declarations).
 - `task-contracts.ts` (`BackendTaskClient`): `postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;` (the mode decision is a *streamed* POST consumed like `sendChatMessage`; if you prefer a typed method add `postModeDecision(threadId, mode): AsyncIterable<StreamEvent>`).
 - `http-backend-client.ts`: implement `postEditDecision` (plain `POST /v1/chat/threads/{id}/edit-decision` body `{decision, reason}`, mirror the existing `fetchJson(path, {method:"POST", ...})` POST methods) and, if added, `postModeDecision` (SSE, mirror `sendChatMessage` against `/mode-decision` body `{mode}`).
-- **Controller `/live`→`LiveGateView` build:** where `controller.ts` maps the `/live` `pending_gate` to a `LiveGateView`, set `taskId = threadId` for controller gates (`kind` ∈ `mode`/`edit`) so `ModeGate`/`EditGate` post the thread id (the `/live` `active_task_id` is null on a controller turn).
+- **Controller `/live`→`LiveGateView` build (verified bug at `controller.ts:1456`):** the current code is `if (live.pendingGate && live.activeTaskId) { renderLiveGate({kind, payload, taskId: live.activeTaskId}) }`. A controller turn has **no `activeTaskId`**, so the mode/edit gate would never render. Fix it to:
+  ```typescript
+  if (live.pendingGate) {
+    this.ui.renderLiveGate({
+      kind: live.pendingGate.kind,
+      payload: live.pendingGate.payload,
+      taskId: live.activeTaskId ?? threadId,   // controller gates have no task → use the thread id
+    });
+  }
+  ```
+  (`threadId` is already in scope — the poll calls `getThreadLiveState(threadId)` at :1431.) Add a guard test that a `pendingGate` with null `activeTaskId` still renders.
 
 - [ ] **Step 4: Run** → PASS; `npm run -w @ai-editor/editor-client build`.
 
