@@ -2819,6 +2819,12 @@ class AgentOrchestrator:
                 self._restore_shadow_checkpoint(shadow_path, checkpoint.checkpoint_path)
                 task.modified_files = previous_modified_files
                 checkpoints.append(checkpoint)
+            except TaskAborted:
+                # Cooperative abort fired inside the step's ToolLoop iteration. It MUST unwind
+                # to _execute_plan's `except TaskAborted` (rollback + ABORTED), not be caught
+                # here as a patch/validation failure and retried until the step exhausts
+                # (which would mis-report a user Stop as a task FAILURE and skip the revert).
+                raise
             except Exception as exc:
                 logger.exception(
                     "Iteration failed while applying/validating patch",

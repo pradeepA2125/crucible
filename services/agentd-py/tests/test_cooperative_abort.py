@@ -76,6 +76,50 @@ async def test_abort_between_steps_marks_aborted(tmp_path: Path):
     assert orch.get_task_control(task.task_id) is None
 
 
+class _AbortMidStep:
+    """Reasoning stub whose first tool-step call raises TaskAborted — simulating the
+    cooperative abort firing inside a step's ToolLoop iteration."""
+    async def create_plan(self, *a, **k): raise NotImplementedError
+    async def create_patch(self, *a, **k): raise NotImplementedError
+    async def create_planning_step(self, *a, **k): raise NotImplementedError
+    async def summarize_run(self, **k): return {"headline": "x", "points": []}
+    async def create_tool_step(self, *a, **k):
+        from agentd.orchestrator.task_control import TaskAborted
+        raise TaskAborted()
+
+
+@pytest.mark.asyncio
+async def test_abort_inside_step_toolloop_reaches_aborted_not_failed(tmp_path: Path):
+    """Regression (smoke-found): TaskAborted raised inside a step's ToolLoop must unwind to
+    ABORTED, not be caught by the per-attempt `except Exception` and retried until the step
+    exhausts (which mis-reported a user Stop as a FAILED task and skipped the revert)."""
+    from agentd.domain.models import PlanTarget, PlanTargetIntent
+    real = tmp_path / "ws"; real.mkdir(); (real / "a.py").write_text("x=1\n")
+    store = SQLiteTaskStore(tmp_path / "db.sqlite3")
+    wm = ShadowWorkspaceManager(root_path=tmp_path / "shadows")
+    orch = AgentOrchestrator(store=store, reasoning_engine=_AbortMidStep(),
+                             validator=_OkValidator(), patch_engine=PatchEngine(),
+                             workspace_manager=wm)
+    shadow = await wm.prepare("task-1", str(real))
+    task = TaskRecord(
+        task_id="task-1", goal="g", workspace_path=str(real),
+        shadow_workspace_path=str(shadow.shadow_path), budget=TaskBudget(),
+        status=TaskStatus.PLANNED,
+        plan=PlanDocument(analysis="s", expected_files=[], stop_conditions=[],
+                          steps=[PlanStep(id="s1", goal="edit",
+                                          targets=[PlanTarget(path="a.py", intent=PlanTargetIntent.EXISTING)],
+                                          risk="low")]),
+    )
+    await store.create(task)
+    # control present (so the loop wires abort into the ToolLoop) but not pre-set, so the
+    # between-steps top check doesn't fire first — the abort surfaces from inside the step.
+    orch._register_task_control("task-1", step_review_auto_accept=True)
+    import time
+    out = await orch._execute_plan(task, shadow, RetrievalContext.empty(), [],
+                                   int(time.time() * 1000))
+    assert out.status == TaskStatus.ABORTED
+
+
 @pytest.mark.asyncio
 async def test_abort_route_sets_live_control(tmp_path: Path):
     real = tmp_path / "ws"
