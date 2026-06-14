@@ -1245,12 +1245,100 @@ Expected: FAIL — module missing.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Build `ChatController` mirroring `ChatAgent.__init__` (workspace, reasoning_engine, thread_store, orchestrator, broadcaster, retrieval_client) but constructing an `AggregatingToolRegistry([BuiltinToolSource(...)])`, a `ControllerPhaseSM`, and (lazily) a `TurnEditSession`. `handle_message`: append user msg + auto-title (copy from `ChatAgent`), build `plan_context` (goal=message, workspace, retrieval_seed from `retrieval_client.load_context().as_prompt_payload()` if present), run `ControllerLoop`. On `answer`/`clarify` outcome, persist an `agent` message + broadcast `chat_response` + `chat_done`.
+```python
+# agentd/chat/controller.py
+from __future__ import annotations
+import asyncio, logging
+from pathlib import Path
+from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
+from agentd.chat.controller_phase import ControllerPhaseSM
+from agentd.chat.edit_session import TurnEditSession
+from agentd.chat.models import ChatMessage
+from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
+
+logger = logging.getLogger(__name__)
+
+class ChatController:
+    """Dynamic agentic chat handler (flag-selected vs ChatAgent). Mirrors ChatAgent's
+    public surface: handle_message(thread_id, message, channel_id, step_review=None),
+    plus _store / _broadcaster attrs the route reads."""
+
+    def __init__(self, *, workspace_path, reasoning_engine, thread_store, orchestrator,
+                 broadcaster, retrieval_client=None):
+        self._workspace_path = workspace_path
+        self._reasoning = reasoning_engine
+        self._store = thread_store
+        self._orchestrator = orchestrator
+        self._broadcaster = broadcaster
+        self._retrieval = retrieval_client
+        # In-memory per-thread state (mirrors the in-memory _pending_* gate maps).
+        self._histories: dict[str, list[dict]] = {}              # controller conversation history
+        self._pending_mode: dict[str, asyncio.Future[str]] = {}  # thread_id → mode future (F2)
+        self._pending_edit: dict[str, asyncio.Future[dict]] = {} # thread_id → edit decision (F3)
+
+    def _build_registry(self):
+        return AggregatingToolRegistry([BuiltinToolSource(
+            shadow_root=Path(self._workspace_path), real_workspace_path=Path(self._workspace_path),
+            semantic_index=getattr(self._retrieval, "_semantic_index", None))])
+
+    def _retrieval_seed(self) -> dict | None:
+        if self._retrieval is None:
+            return None
+        try:
+            return self._retrieval.load_context(self._workspace_path)[0].as_prompt_payload()
+        except Exception:
+            logger.debug("[controller] retrieval seed failed", exc_info=True); return None
+
+    async def handle_message(self, thread_id, message, channel_id, step_review=None):
+        thread = self._store.get_thread(thread_id)
+        if thread is None:
+            raise ValueError(f"Thread {thread_id!r} not found")
+        if not any(m.role == "user" for m in thread.messages):
+            self._store.update_title(thread_id, message.strip().replace("\n", " ")[:50])
+            self._broadcaster.broadcast(channel_id, {"type": "thread_title_updated",
+                "payload": {"thread_id": thread_id, "title": message.strip()[:50]}})
+        self._store.append_message(thread_id, ChatMessage(role="user", content=message))
+
+        seed = self._histories.get(thread_id, [])
+        user_turn = [{"role": "user", "content": message}] if seed else None
+        outcome = await self._run_loop(thread_id, channel_id, message,
+                                       seed_history=(seed + user_turn) if user_turn else None,
+                                       step_review=step_review)
+        await self._finish(thread_id, channel_id, outcome, step_review)
+
+    async def _run_loop(self, thread_id, channel_id, goal, *, seed_history, step_review, phase=None):
+        sm = ControllerPhaseSM()
+        if phase == "EDIT":
+            sm.enter_edit_mode()
+        edit = TurnEditSession(turn_id=thread_id, real_path=Path(self._workspace_path),
+                               workspace_manager=self._orchestrator._workspace_manager,
+                               patch_engine=self._orchestrator._patch_engine) if self._orchestrator else None
+        loop = ControllerLoop(self._reasoning, self._build_registry(), self._broadcaster,
+                              channel_id=channel_id, phase_sm=sm, edit_session=edit)
+        plan_context = {"goal": goal, "workspace_path": self._workspace_path}
+        s = self._retrieval_seed()
+        if s:
+            plan_context["retrieval_seed"] = s
+        outcome = await loop.run(plan_context, seed_history=seed_history,
+                                 auto_accept_edits=(step_review is not True))
+        self._histories[thread_id] = outcome.history or []
+        return outcome
+
+    async def _finish(self, thread_id, channel_id, outcome: ControllerOutcome, step_review):
+        if outcome.kind in ("answer", "clarify"):
+            self._store.append_message(thread_id, ChatMessage(role="agent", content=outcome.text))
+            self._broadcaster.broadcast(channel_id, {"type": "chat_response", "payload": {"chunk": outcome.text}})
+            self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+        elif outcome.kind == "submit_changes":
+            self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+        elif outcome.kind == "propose_mode":
+            await self._present_mode_choice(thread_id, channel_id, outcome)  # F2
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_chat_controller_qa.py -v`
-Expected: PASS.
+Expected: PASS. (`_present_mode_choice` is added in F2; QA/clarify paths pass now. If the import-time reference to an undefined method trips, stub `_present_mode_choice` to `pass` here and flesh it out in F2.)
 
 - [ ] **Step 5: Commit**
 
@@ -1265,23 +1353,127 @@ git commit -m "feat(chat): ChatController handle_message (QA + clarify)"
 - Modify: `agentd/chat/controller.py`, `agentd/api/routes.py`
 - Test: `tests/test_mode_decision.py`
 
-- [ ] **Step 1: Write the failing test** — assert that on a `propose_mode` outcome the controller broadcasts a `mode_choice` payload **including `plan_sketch`** and **pauses** on a pending future; that `POST /v1/chat/threads/{id}/mode-decision {mode}` resolves it; that `mode="create_task"` calls `orchestrator.create_task_from_chat`; that `mode="edit"` resumes the loop in EDIT phase. Also assert the **discuss path**: if instead of a `/mode-decision` the user posts a normal chat message while the gate is pending, the loop resumes with `seed_history = outcome.history + [user turn]` (the agent re-proposes). (Mirror the step/command gate test shape AND the plan-approval approve-vs-feedback shape.)
+**Design note (verified against the route):** the chat turn is one SSE stream ending at `chat_done` (`post_chat_message`, routes.py:1113), and "discuss" is a *new* `POST /message`. So `propose_mode` is **Class-A**: emit the `mode_choice` card + `chat_done` (turn ends), persist a durable card, and store the loop history. `/mode-decision` then starts a **new streamed turn** (edit→loop in EDIT phase; create_task/resume→handoff). "Discuss" is just the next `handle_message`, which already seeds from `self._histories[thread_id]` (F1). This differs from the per-edit gate (F3), which *holds the stream open* and awaits a future.
 
-- [ ] **Step 2: Run test to verify it fails** — `pytest tests/test_mode_decision.py -v` → FAIL (route/gate missing).
+- [ ] **Step 1: Write the failing test**
 
-- [ ] **Step 3: Write minimal implementation** — add a `pending_mode_decision` future map keyed by thread/turn id in the controller (mirror `_pending_step_decisions`); on `propose_mode` broadcast a `mode_choice` event (carrying `plan_sketch` + recommended + options) + persist a durable record, then `await` EITHER the future OR the next user message (soft-terminal gate, exactly like `AWAITING_PLAN_APPROVAL` awaits approve-or-feedback). Add `/mode-decision` route that `future.set_result(mode)`. Resolution:
-  - `edit` → `phase_sm.enter_edit_mode()` + resume `ControllerLoop.run(seed_history=outcome.history)`.
-  - `create_task`/`resume` → existing orchestrator handoffs (copy from `ChatAgent`).
-  - `explain` → resume loop expecting an `answer`.
-  - **discuss (a new user message instead of a pick)** → resume `ControllerLoop.run(seed_history=outcome.history + [user turn])` (same mechanism as clarify/feedback, Task F4); the agent may emit a refined `propose_mode`, an `answer`, or a `clarify`.
+```python
+# tests/test_mode_decision.py
+import pytest
+from pathlib import Path
+from agentd.chat.controller import ChatController
+from agentd.chat.storage import ChatThreadStore
+from agentd.orchestrator.broadcaster import EventBroadcaster
+from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 
-- [ ] **Step 4: Run test to verify it passes** — PASS.
+class _Orch:
+    def __init__(self): self.created = None
+    async def create_task_from_chat(self, **kw): self.created = kw; return "task-xyz"
+    async def await_plan_ready(self, tid, timeout_sec=3600.0): return None
+
+@pytest.mark.asyncio
+async def test_propose_mode_emits_card_and_stores_history(tmp_path: Path):
+    store = ChatThreadStore(tmp_path / "c.sqlite3"); th = store.create_thread(str(tmp_path), title="t")
+    events = []
+    bc = EventBroadcaster(); 
+    eng = ScriptedReasoningEngine(None, [], controller_step_responses=[
+        {"type": "propose_mode", "thought": "t", "plan_sketch": "add decorator",
+         "recommended": "create_task", "reason": "big", "options": [{"mode": "create_task"}]}])
+    ctrl = ChatController(workspace_path=str(tmp_path), reasoning_engine=eng, thread_store=store,
+                          orchestrator=_Orch(), broadcaster=bc, retrieval_client=None)
+    # capture broadcasts
+    q = bc.subscribe(f"chat:{th.thread_id}")
+    await ctrl.handle_message(th.thread_id, "do a big thing", channel_id=f"chat:{th.thread_id}")
+    drained = []
+    while not q.empty(): drained.append(q.get_nowait())
+    assert any(e["type"] == "mode_choice" and e["payload"]["plan_sketch"] == "add decorator" for e in drained)
+    assert any(e["type"] == "chat_done" for e in drained)
+    assert ctrl._histories[th.thread_id]                       # history stored for resume/discuss
+
+@pytest.mark.asyncio
+async def test_mode_decision_create_task_dispatches(tmp_path: Path):
+    store = ChatThreadStore(tmp_path / "c.sqlite3"); th = store.create_thread(str(tmp_path), title="t")
+    orch = _Orch()
+    ctrl = ChatController(workspace_path=str(tmp_path), reasoning_engine=ScriptedReasoningEngine(None, []),
+                          thread_store=store, orchestrator=orch, broadcaster=EventBroadcaster(), retrieval_client=None)
+    ctrl._histories[th.thread_id] = [{"role": "assistant", "content": "{}"}]
+    await ctrl.resolve_mode(th.thread_id, "create_task", channel_id=f"chat:{th.thread_id}", goal="g")
+    assert orch.created is not None and orch.created["goal"] == "g"
+```
+
+- [ ] **Step 2: Run test to verify it fails** — `pytest tests/test_mode_decision.py -v` → FAIL (methods/route missing).
+
+- [ ] **Step 3: Write minimal implementation**
+
+Add to `ChatController`:
+```python
+    async def _present_mode_choice(self, thread_id, channel_id, outcome):
+        p = outcome.payload or {}
+        # durable Class-A card (rendered interactively from the transcript / live slot)
+        self._store.append_message(thread_id, ChatMessage(
+            role="agent", content="", type="scope_card",   # reuse an interactive card type
+            metadata={"mode_choice": p}))
+        self._broadcaster.broadcast(channel_id, {"type": "mode_choice", "payload": p})
+        self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+    async def resolve_mode(self, thread_id, mode, *, channel_id, goal):
+        """Called by POST /mode-decision. Dispatches the chosen mode."""
+        if mode in ("edit", "explain"):
+            phase = "EDIT" if mode == "edit" else None
+            outcome = await self._run_loop(thread_id, channel_id, goal,
+                                           seed_history=self._histories.get(thread_id), step_review=False, phase=phase)
+            await self._finish(thread_id, channel_id, outcome, step_review=False)
+        elif mode == "create_task":
+            task_id = await self._orchestrator.create_task_from_chat(
+                thread_id=thread_id, goal=goal, workspace_path=self._workspace_path,
+                explore_context=[], store=self._store)
+            self._store.append_message(thread_id, ChatMessage(role="agent", content=task_id,
+                                       type="task_card", metadata={"taskId": task_id}))
+            self._broadcaster.broadcast(channel_id, {"type": "task_card", "payload": {"task_id": task_id}})
+            await self._orchestrator.await_plan_ready(task_id)
+        elif mode == "resume":
+            child = await self._orchestrator.resume_from_execute(self._histories.get("_recent_task_id"),
+                                                                 chat_channel_id=channel_id)
+            self._broadcaster.broadcast(channel_id, {"type": "task_card", "payload": {"task_id": child}})
+        self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+```
+
+Add the route in `routes.py` (inside the `chat_agent is not None` block, mirroring `/step-decision` 729-761 but chat-scoped). The handler must run the dispatch as a **streamed background task** like `post_chat_message`, because `edit`/`create_task` produce live events:
+```python
+        @router.post("/chat/threads/{thread_id}/mode-decision")
+        async def post_mode_decision(thread_id: str, request: dict) -> StreamingResponse:
+            import asyncio as _a, json as _j
+            mode = request.get("mode", ""); goal = request.get("goal", "")
+            channel_id = f"chat:{thread_id}"
+            _chat_agent._broadcaster.clear_replay(channel_id)
+            queue = _chat_agent._broadcaster.subscribe(channel_id)
+            async def _run():
+                try:
+                    await _chat_agent.resolve_mode(thread_id, mode, channel_id=channel_id, goal=goal)
+                except Exception:
+                    logging.getLogger(__name__).exception("resolve_mode failed")
+                    _chat_agent._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+            async def gen():
+                t = _a.create_task(_run())
+                try:
+                    while True:
+                        try: ev = await _a.wait_for(queue.get(), timeout=15.0)
+                        except _a.TimeoutError: yield ": ping\n\n"; continue
+                        yield f"data: {_j.dumps(ev)}\n\n"
+                        if ev.get("type") in ("chat_done", "done"): break
+                finally:
+                    _chat_agent._broadcaster.unsubscribe(channel_id, queue); t.cancel()
+            return StreamingResponse(gen(), media_type="text/event-stream")
+```
+(`goal` is the original user message; the frontend posts it with the decision, or the controller reads it from the last user message in the thread — prefer the latter to avoid trusting the client: `goal = next(m.content for m in reversed(thread.messages) if m.role=="user")`.)
+
+- [ ] **Step 4: Run test to verify it passes** — `pytest tests/test_mode_decision.py -v` → PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add agentd/chat/controller.py agentd/api/routes.py tests/test_mode_decision.py
-git commit -m "feat(chat): propose_mode gate + /mode-decision route dispatch"
+git commit -m "feat(chat): propose_mode Class-A card + /mode-decision streamed dispatch"
 ```
 
 ### Task F3: Per-edit review gate + `/edit-decision` (reuses step_review_auto_accept)
@@ -1290,19 +1482,102 @@ git commit -m "feat(chat): propose_mode gate + /mode-decision route dispatch"
 - Modify: `agentd/chat/controller.py`, `agentd/chat/controller_loop.py`, `agentd/api/routes.py`
 - Test: `tests/test_edit_decision.py`
 
-- [ ] **Step 1: Write the failing test** — with auto-accept OFF, an `edit` action broadcasts a per-edit diff card and pauses; `POST /edit-decision {accept|reject, reason?}` with `reject` calls `edit_session.reject()` and appends the reason to history; with `accept` calls `edit_session.accept()`. Assert real file reflects accept and is unchanged on reject.
+Unlike `propose_mode` (Class-A, turn ends), the per-edit gate **holds the stream open** and awaits a future — exactly like `_pause_for_step_review`. The loop calls an injected async `edit_decision_cb()` after `apply()` when not auto-accepting.
 
-- [ ] **Step 2: Run test to verify it fails** — FAIL.
+- [ ] **Step 1: Write the failing test**
 
-- [ ] **Step 3: Write minimal implementation** — thread an `auto_accept` resolver into `ControllerLoop` (mirror `step_review_auto_accept`/`/step-decision`): when not auto-accept, after `apply()` await a per-edit future; route resolves accept/reject(+reason); reject appends reason as a `tool_result` turn and continues the loop.
+```python
+# tests/test_edit_decision.py
+import pytest, asyncio
+from pathlib import Path
+from agentd.chat.controller_loop import ControllerLoop
+from agentd.chat.controller_phase import ControllerPhaseSM
+from agentd.chat.edit_session import TurnEditSession
+from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from agentd.orchestrator.broadcaster import EventBroadcaster
+from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
+from agentd.patch.engine import PatchEngine
+from agentd.workspace.shadow import ShadowWorkspaceManager
 
-- [ ] **Step 4: Run test to verify it passes** — PASS.
+@pytest.mark.asyncio
+async def test_reject_leaves_real_untouched_then_accept_promotes(tmp_path: Path):
+    real = tmp_path / "ws"; real.mkdir(); (real / "f.py").write_text("x = 1\n")
+    sm = ControllerPhaseSM(); sm.enter_edit_mode()
+    sess = TurnEditSession(turn_id="t1", real_path=real,
+                           workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"), patch_engine=PatchEngine())
+    decisions = iter([{"decision": "reject", "reason": "wrong var"},
+                      {"decision": "accept"}])
+    async def edit_cb(): return next(decisions)
+    reg = AggregatingToolRegistry([BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
+    loop = ControllerLoop(ScriptedReasoningEngine(None, [], controller_step_responses=[
+        {"type": "edit", "thought": "t", "patch_ops": [
+            {"op": "search_replace", "file": "f.py", "search": "x = 1", "replace": "x = 9", "reason": "r"}]},
+        {"type": "edit", "thought": "fix", "patch_ops": [
+            {"op": "search_replace", "file": "f.py", "search": "x = 1", "replace": "x = 2", "reason": "r"}]},
+        {"type": "submit_changes", "thought": "done", "summary": "s"},
+    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm, edit_session=sess)
+    out = await loop.run({"goal": "g", "workspace_path": str(real)}, max_iters=8,
+                         auto_accept_edits=False, edit_decision_cb=edit_cb)
+    assert out.kind == "submit_changes"
+    assert (real / "f.py").read_text() == "x = 2\n"   # first rejected (real untouched), second accepted
+```
+
+- [ ] **Step 2: Run test to verify it fails** — `pytest tests/test_edit_decision.py -v` → FAIL (`edit_decision_cb` not a param).
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `ControllerLoop.run`, add `edit_decision_cb=None`, and rewrite the `edit` branch (replacing the F1-era "treat as accept" stub):
+```python
+            if atype == "edit":
+                ops = resp.get("patch_ops") or []
+                diff = await self._edit.apply(ops)
+                self._broadcaster.broadcast(self._channel_id,
+                    {"type": "diff_ready", "payload": {"diff_entries": [
+                        {"path": d.path, "additions": d.additions, "deletions": d.deletions,
+                         "unified_diff": d.unified_diff} for d in diff]}})
+                if auto_accept_edits or edit_decision_cb is None:
+                    await self._edit.accept(); decision = {"decision": "accept"}
+                else:
+                    decision = await edit_decision_cb()        # holds the turn open
+                    if decision.get("decision") == "accept":
+                        await self._edit.accept()
+                    else:
+                        await self._edit.reject()
+                history.append(assistant_turn(resp))
+                if decision.get("decision") == "accept":
+                    history.append({"role": "tool_result", "tool": "edit",
+                                    "content": f"applied+promoted: {[d.path for d in diff]}"})
+                else:
+                    history.append({"role": "tool_result", "tool": "edit",
+                                    "content": f"REJECTED by user: {decision.get('reason','')}. Revise and re-emit."})
+                continue
+```
+
+In `ChatController`, provide the cb + route resolution:
+```python
+    async def _edit_decision_cb(self, thread_id, channel_id):
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_edit[thread_id] = fut
+        try:
+            return await fut
+        finally:
+            self._pending_edit.pop(thread_id, None)
+
+    async def resolve_edit(self, thread_id, decision: dict) -> bool:
+        fut = self._pending_edit.get(thread_id)
+        if fut is None or fut.done():
+            return False
+        fut.set_result(decision); return True
+```
+Wire `_run_loop` to pass `edit_decision_cb=lambda: self._edit_decision_cb(thread_id, channel_id)` when `step_review is True`. Add a `POST /chat/threads/{id}/edit-decision {decision, reason?}` route (mirror `/step-decision` 729-761) that calls `_chat_agent.resolve_edit(thread_id, request)` and returns `{ok: True}` (the held-open message stream surfaces the continuation).
+
+- [ ] **Step 4: Run test to verify it passes** — `pytest tests/test_edit_decision.py -v` → PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add agentd/chat/controller.py agentd/chat/controller_loop.py agentd/api/routes.py tests/test_edit_decision.py
-git commit -m "feat(chat): per-edit review gate + /edit-decision (reuses step-review semantics)"
+git commit -m "feat(chat): per-edit held-stream gate + /edit-decision (mirrors step-review)"
 ```
 
 ### Task F4: Clarify resume (mirror planning feedback) + retrieval delta on edit
@@ -1311,19 +1586,52 @@ git commit -m "feat(chat): per-edit review gate + /edit-decision (reuses step-re
 - Modify: `agentd/chat/controller.py`
 - Test: `tests/test_clarify_resume_and_retrieval_delta.py`
 
-- [ ] **Step 1: Write the failing test** — (a) after a `clarify` turn, the next user message resumes with `seed_history = prior history + the user's answer turn` (mirror `_format_feedback_turn` + `continue_task`); assert the loop sees the prior turns. (b) After an accepted `edit`, a compact retrieval-refresh `tool_result` entry is appended into history (not a rewrite of `retrieval_seed`); assert `retrieval_seed` in the next payload is byte-identical and a new history entry mentions the touched file.
+Clarify-resume is already delivered by F1 (`self._histories[thread_id]` + the `user_turn` seed in `handle_message`). This task adds (a) a regression test pinning that behavior, and (b) the **append-only retrieval delta** after an accepted edit.
 
-- [ ] **Step 2: Run test to verify it fails** — FAIL.
+- [ ] **Step 1: Write the failing test**
 
-- [ ] **Step 3: Write minimal implementation** — persist `ControllerOutcome.history` on the thread (a `controller_conversation_history` field on the thread record, mirroring `planning_conversation_history`); on the next message, seed the loop with it + the new user turn. On accepted edit, compute a compact retrieval delta (graph neighbors / diagnostics for touched files via the retrieval client; pointers only) and append it as a `tool_result` turn; nudge incremental reindex of touched files (best-effort).
+```python
+# tests/test_clarify_resume_and_retrieval_delta.py
+import pytest
+from pathlib import Path
+from agentd.chat.controller import ChatController
+from agentd.chat.storage import ChatThreadStore
+from agentd.orchestrator.broadcaster import EventBroadcaster
+from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+
+class _RecordingEngine(ScriptedReasoningEngine):
+    def __init__(self, responses): super().__init__(None, [], controller_step_responses=responses); self.seen_histories = []
+    async def create_controller_step(self, plan_context, history, tool_definitions, *, phase, on_thinking=None):
+        self.seen_histories.append(list(history)); return await super().create_controller_step(
+            plan_context, history, tool_definitions, phase=phase, on_thinking=on_thinking)
+
+@pytest.mark.asyncio
+async def test_clarify_then_resume_sees_prior_history(tmp_path: Path):
+    store = ChatThreadStore(tmp_path / "c.sqlite3"); th = store.create_thread(str(tmp_path), title="t")
+    eng = _RecordingEngine([
+        {"type": "clarify", "thought": "t", "question": "which file?"},   # turn 1
+        {"type": "answer", "thought": "t", "answer": "ok, foo.py"},         # turn 2 (resume)
+    ])
+    ctrl = ChatController(workspace_path=str(tmp_path), reasoning_engine=eng, thread_store=store,
+                          orchestrator=None, broadcaster=EventBroadcaster(), retrieval_client=None)
+    await ctrl.handle_message(th.thread_id, "change the thing", channel_id=f"chat:{th.thread_id}")
+    await ctrl.handle_message(th.thread_id, "the foo one", channel_id=f"chat:{th.thread_id}")
+    # turn 2's first step must have seen turn 1's history (clarify resume = feedback resume)
+    assert any(h for h in eng.seen_histories[1:]), "resume must seed prior history"
+    assert any(m.content == "ok, foo.py" for m in store.get_thread(th.thread_id).messages)
+```
+
+- [ ] **Step 2: Run test to verify it fails** — run `pytest tests/test_clarify_resume_and_retrieval_delta.py -v`. If clarify-resume already passes from F1, this confirms it; add the retrieval-delta assertion below and watch *that* fail first.
+
+- [ ] **Step 3: Write minimal implementation** — add an optional `retrieval_delta_cb(touched: list[str]) -> str | None` to `ControllerLoop.run`; in the `edit` branch, **after** an accepted promote, call it and, if it returns text, append `{"role":"tool_result","tool":"retrieval_refresh","content": text}` to history (append-only — never rewrites `retrieval_seed`). `ChatController` supplies a cb that asks the retrieval client for compact neighbors/diagnostics of `touched` (pointers only) and best-effort nudges an incremental reindex of those files (`self._retrieval.reindex_files(touched)` if available; swallow errors). Assert in the test that after an accepted edit a `retrieval_refresh` entry exists in `ctrl._histories[thread_id]` and no `retrieval_seed` mutation occurred.
 
 - [ ] **Step 4: Run test to verify it passes** — PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agentd/chat/controller.py tests/test_clarify_resume_and_retrieval_delta.py
-git commit -m "feat(chat): clarify-resume (mirror feedback) + append-only retrieval deltas"
+git add agentd/chat/controller.py agentd/chat/controller_loop.py tests/test_clarify_resume_and_retrieval_delta.py
+git commit -m "feat(chat): clarify-resume regression + append-only retrieval delta on edit"
 ```
 
 ---
