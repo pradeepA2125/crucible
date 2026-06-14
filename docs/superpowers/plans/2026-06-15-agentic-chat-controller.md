@@ -1211,6 +1211,60 @@ git commit -m "feat(chat): ControllerLoop malformed-correction + exhaustion guar
 
 ## Phase F — `ChatController` orchestration, gates & routes
 
+> **Verified architecture (2026-06-15):** interactive gates are **Class-A**: a durable `PendingGate` exposed via `/live` (polled), rendered by `LiveSlot.GateDispatch` by `kind`; resolution leaves a breadcrumb. Task gates pair `execution_state.pending_*` (for `/live`) with an in-memory future (to resume). The controller has **no task**, so its gates live at the **thread** level: `ChatThread.pending_controller_gate` (durable, for `/live`) + an in-memory future for the held-open edit gate. F0 builds that plumbing; F2/F3 use it. Webview decision posts are handled in `chat-panel.ts:134` (where `stepDecision` is handled).
+
+### Task F0: Thread-level controller gates via `/live`
+
+**Files:**
+- Modify: `agentd/chat/models.py` — `PendingGate.kind` += `"mode"`,`"edit"`; `ChatThread` += `pending_controller_gate: PendingGate | None = None`.
+- Modify: `agentd/chat/storage.py` — persist/restore `pending_controller_gate`; add `set_controller_gate(thread_id, gate|None)`.
+- Modify: `agentd/api/routes.py` — `get_thread_live` overlays the thread gate.
+- Test: `tests/test_controller_live_gate.py`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_controller_live_gate.py
+import pytest
+from pathlib import Path
+from agentd.chat.storage import ChatThreadStore
+from agentd.chat.models import PendingGate
+from agentd.chat.live_state import resolve_thread_live   # new wrapper (Step 3)
+
+def test_controller_gate_overlays_live(tmp_path: Path):
+    store = ChatThreadStore(tmp_path / "c.sqlite3"); th = store.create_thread(str(tmp_path), title="t")
+    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={"plan_sketch": "x"}))
+    th2 = store.get_thread(th.thread_id)
+    live = resolve_thread_live(th2, active_task_id=None, get_task=lambda _id: (_ for _ in ()).throw(KeyError()))
+    assert live.pending_gate is not None and live.pending_gate.kind == "mode"
+    store.set_controller_gate(th.thread_id, None)
+    assert store.get_thread(th.thread_id).pending_controller_gate is None
+```
+
+- [ ] **Step 2: Run** `pytest tests/test_controller_live_gate.py -v` → FAIL (`kind` enum rejects "mode"; `pending_controller_gate`/`set_controller_gate`/`resolve_thread_live` missing).
+
+- [ ] **Step 3: Write minimal implementation**
+- `models.py`: `kind: Literal["command","step","scope","validation","mode","edit"]`; add `pending_controller_gate: PendingGate | None = None` to `ChatThread`.
+- `storage.py`: include the field in the row (de)serialization; `set_controller_gate(thread_id, gate)` updates it in place (mirrors `set_active_task`).
+- `live_state.py`: add a thin wrapper that prefers the thread gate:
+```python
+def resolve_thread_live(thread, active_task_id, get_task):
+    if thread is not None and thread.pending_controller_gate is not None:
+        return ThreadLiveState(active_task_id=active_task_id,
+                               pending_gate=thread.pending_controller_gate)
+    return resolve_live_state(active_task_id, get_task)
+```
+- `routes.py::get_thread_live`: call `resolve_thread_live(thread, active_id if task else None, _get)` instead of `resolve_live_state(...)`.
+
+- [ ] **Step 4: Run** → PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add agentd/chat/models.py agentd/chat/storage.py agentd/chat/live_state.py agentd/api/routes.py tests/test_controller_live_gate.py
+git commit -m "feat(chat): thread-level controller gates (mode/edit) exposed via /live"
+```
+
 ### Task F1: `ChatController.handle_message` — QA + clarify happy paths
 
 **Files:**
@@ -1385,13 +1439,10 @@ async def test_propose_mode_emits_card_and_stores_history(tmp_path: Path):
          "recommended": "create_task", "reason": "big", "options": [{"mode": "create_task"}]}])
     ctrl = ChatController(workspace_path=str(tmp_path), reasoning_engine=eng, thread_store=store,
                           orchestrator=_Orch(), broadcaster=bc, retrieval_client=None)
-    # capture broadcasts
-    q = bc.subscribe(f"chat:{th.thread_id}")
     await ctrl.handle_message(th.thread_id, "do a big thing", channel_id=f"chat:{th.thread_id}")
-    drained = []
-    while not q.empty(): drained.append(q.get_nowait())
-    assert any(e["type"] == "mode_choice" and e["payload"]["plan_sketch"] == "add decorator" for e in drained)
-    assert any(e["type"] == "chat_done" for e in drained)
+    # Class-A: a durable thread gate is set (rendered by /live), NOT an SSE mode event.
+    gate = store.get_thread(th.thread_id).pending_controller_gate
+    assert gate is not None and gate.kind == "mode" and gate.payload["plan_sketch"] == "add decorator"
     assert ctrl._histories[th.thread_id]                       # history stored for resume/discuss
 
 @pytest.mark.asyncio
@@ -1412,16 +1463,17 @@ async def test_mode_decision_create_task_dispatches(tmp_path: Path):
 Add to `ChatController`:
 ```python
     async def _present_mode_choice(self, thread_id, channel_id, outcome):
-        p = outcome.payload or {}
-        # durable Class-A card (rendered interactively from the transcript / live slot)
-        self._store.append_message(thread_id, ChatMessage(
-            role="agent", content="", type="scope_card",   # reuse an interactive card type
-            metadata={"mode_choice": p}))
-        self._broadcaster.broadcast(channel_id, {"type": "mode_choice", "payload": p})
-        self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+        from agentd.chat.models import PendingGate
+        # Durable Class-A gate → /live renders it via LiveSlot (survives reload). No SSE
+        # mode event: chat-side gates render purely from the /live poll (CLAUDE.md).
+        self._store.set_controller_gate(thread_id, PendingGate(kind="mode", payload=outcome.payload or {}))
+        self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})  # end the message stream
 
     async def resolve_mode(self, thread_id, mode, *, channel_id, goal):
-        """Called by POST /mode-decision. Dispatches the chosen mode."""
+        """Called by POST /mode-decision. Clears the live gate, then dispatches."""
+        self._store.set_controller_gate(thread_id, None)
+        self._broadcaster.broadcast(channel_id, {"type": "chat_breadcrumb",
+            "payload": {"text": f"▸ Proceeding: {mode}", "task_id": ""}})
         if mode in ("edit", "explain"):
             phase = "EDIT" if mode == "edit" else None
             outcome = await self._run_loop(thread_id, channel_id, goal,
@@ -1542,7 +1594,7 @@ In `ControllerLoop.run`, add `edit_decision_cb=None`, and rewrite the `edit` bra
                 if auto_accept_edits or edit_decision_cb is None:
                     await self._edit.accept(); decision = {"decision": "accept"}
                 else:
-                    decision = await edit_decision_cb()        # holds the turn open
+                    decision = await edit_decision_cb(diff)     # holds the turn open; renders via /live
                     if decision.get("decision") == "accept":
                         await self._edit.accept()
                     else:
@@ -1559,13 +1611,18 @@ In `ControllerLoop.run`, add `edit_decision_cb=None`, and rewrite the `edit` bra
 
 In `ChatController`, provide the cb + route resolution:
 ```python
-    async def _edit_decision_cb(self, thread_id, channel_id):
+    async def _edit_decision_cb(self, thread_id, channel_id, diff):
+        from agentd.chat.models import PendingGate
+        self._store.set_controller_gate(thread_id, PendingGate(kind="edit", payload={
+            "diff_entries": [{"path": d.path, "additions": d.additions, "deletions": d.deletions,
+                              "unified_diff": d.unified_diff} for d in diff]}))   # /live renders it
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_edit[thread_id] = fut
         try:
             return await fut
         finally:
             self._pending_edit.pop(thread_id, None)
+            self._store.set_controller_gate(thread_id, None)
 
     async def resolve_edit(self, thread_id, decision: dict) -> bool:
         fut = self._pending_edit.get(thread_id)
@@ -1573,7 +1630,7 @@ In `ChatController`, provide the cb + route resolution:
             return False
         fut.set_result(decision); return True
 ```
-Wire `_run_loop` to pass `edit_decision_cb=lambda: self._edit_decision_cb(thread_id, channel_id)` when `step_review is True`. Add a `POST /chat/threads/{id}/edit-decision {decision, reason?}` route (mirror `/step-decision` 729-761) that calls `_chat_agent.resolve_edit(thread_id, request)` and returns `{ok: True}` (the held-open message stream surfaces the continuation).
+Wire `_run_loop` to pass `edit_decision_cb=lambda diff: self._edit_decision_cb(thread_id, channel_id, diff)` when `step_review is True`. Add a `POST /chat/threads/{id}/edit-decision {decision, reason?}` route (mirror `/step-decision` 729-761) that calls `_chat_agent.resolve_edit(thread_id, request)` and returns `{ok: True}` (the held-open message stream surfaces the continuation).
 
 **Hardening (client-disconnect):** if the SSE client drops while `_edit_decision_cb` awaits, the future never resolves and the turn hangs. Wrap the await with `AI_EDITOR_CHAT_EDIT_DECISION_TIMEOUT_SEC` (default `0` = wait forever, matching `AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC`); on timeout return `{"decision": "reject", "reason": "decision timed out"}` so the loop unwinds cleanly. Add a test that a timeout rejects the edit.
 
@@ -1722,151 +1779,144 @@ git commit -m "chore(chat): lint/type clean for controller"
 
 > Mirror the existing chat SSE/card plumbing. Each task is TDD with vitest.
 
-### Task I1: Contracts — add `mode_choice` to the `StreamEvent` union
+### Task I1: Extend `LiveGateView.kind` + decision client methods
 
-> **Verified:** `StreamEvent` is a **plain TS discriminated union** (not Zod) at `task-contracts.ts:161-197`. The new chat handler reuses `diff_ready` for per-edit diffs; only `mode_choice` is new. `mode-decision`/`edit-decision` are *outbound* POSTs (handled by the extension controller), not `StreamEvent` members.
+> **Verified:** chat gates render via the `/live` poll → `LiveSlot.GateDispatch` by `kind` (NOT via SSE / `MessageRow`). So there is **no** `mode_choice` `StreamEvent`. The frontend change is to extend `LiveGateView.kind` (`types.ts:56`) to match the backend `PendingGate.kind` (F0), and add decision client methods. Per-edit gate reuses the same gate path with `kind="edit"`.
 
 **Files:**
-- Modify: `apps/editor-client/src/contracts/task-contracts.ts` (+ `BackendTaskClient` if a typed method is added)
-- Test: `apps/editor-client/test/stream-events.test.ts`
+- Modify: `apps/vscode-extension/webview-ui/src/types.ts` (`LiveGateView.kind`).
+- Modify: `apps/editor-client/src/contracts/task-contracts.ts` (`BackendTaskClient`) + `apps/editor-client/src/client/http-backend-client.ts` (impl).
+- Test: `apps/editor-client/test/decision-clients.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
-// apps/editor-client/test/stream-events.test.ts
-import { describe, it, expect } from "vitest";
-import type { StreamEvent } from "../src/contracts/task-contracts";
+// apps/editor-client/test/decision-clients.test.ts
+import { describe, it, expect, vi } from "vitest";
+import { HttpBackendClient } from "../src/client/http-backend-client";
 
-describe("mode_choice StreamEvent", () => {
-  it("type-checks the new member", () => {
-    const ev: StreamEvent = { type: "mode_choice", payload: {
-      plan_sketch: "add a decorator", recommended: "create_task", reason: "big",
-      options: [{ mode: "create_task", label: "Plan it", description: "..." }],
-    }};
-    expect(ev.type).toBe("mode_choice");
-    if (ev.type === "mode_choice") expect(ev.payload.options[0].mode).toBe("create_task");
+describe("mode/edit decision clients", () => {
+  it("posts mode-decision to the right endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    const c = new HttpBackendClient("http://x", fetchMock as unknown as typeof fetch);
+    await c.postEditDecision("th1", "reject", "wrong var");
+    expect(fetchMock).toHaveBeenCalledWith("http://x/v1/chat/threads/th1/edit-decision",
+      expect.objectContaining({ method: "POST" }));
   });
 });
 ```
 
-- [ ] **Step 2: Run** `npm run -w @ai-editor/editor-client test stream-events` → FAIL (member not in union / tsc error).
+- [ ] **Step 2: Run** `npm run -w @ai-editor/editor-client test decision-clients` → FAIL (method missing).
 
-- [ ] **Step 3: Add the union member** (before the trailing `chat_breadcrumb` line at `task-contracts.ts:197`):
+- [ ] **Step 3: Implement**
+- `types.ts`: `kind: "command" | "scope" | "validation" | "step" | "mode" | "edit";`
+- `task-contracts.ts` (`BackendTaskClient`): `postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;` (the mode decision is a *streamed* POST consumed like `sendChatMessage`; if you prefer a typed method add `postModeDecision(threadId, mode): AsyncIterable<StreamEvent>`).
+- `http-backend-client.ts`: implement `postEditDecision` (plain `POST /v1/chat/threads/{id}/edit-decision` body `{decision, reason}`) and, if added, `postModeDecision` (SSE, mirror `sendChatMessage` against `/mode-decision` body `{mode}`).
 
-```typescript
-  | { type: "mode_choice"; payload: { plan_sketch: string; recommended: string; reason: string; options: Array<{ mode: string; label?: string; description?: string }> } }
-```
-
-Optionally add typed client methods to `BackendTaskClient`:
-```typescript
-  postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent>;  // streamed (edit/create_task emit live)
-  postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;
-```
-and implement them in `HttpBackendClient` (snake_case body `{mode}` / `{decision, reason}`) mirroring `sendChatMessage` (SSE) and a plain POST respectively.
-
-- [ ] **Step 4: Run** `npm run -w @ai-editor/editor-client test stream-events` → PASS; then `npm run -w @ai-editor/editor-client build` (the extension types off its compiled `dist`).
+- [ ] **Step 4: Run** → PASS; `npm run -w @ai-editor/editor-client build`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/editor-client/src/contracts/task-contracts.ts apps/editor-client/src/client/http-backend-client.ts apps/editor-client/test/stream-events.test.ts
-git commit -m "feat(contracts): mode_choice StreamEvent + mode/edit decision client methods"
+git add apps/vscode-extension/webview-ui/src/types.ts apps/editor-client/src/contracts/task-contracts.ts apps/editor-client/src/client/http-backend-client.ts apps/editor-client/test/decision-clients.test.ts
+git commit -m "feat(contracts): LiveGateView mode/edit kinds + decision clients"
 ```
 
-### Task I2: Webview — `ModeChoiceCard` + per-edit gate + decision posts
+### Task I2: `ModeGate` + `EditGate` in `LiveSlot`; wire decisions in `chat-panel.ts`
+
+> **Verified:** gates are dispatched in `LiveSlot.tsx::GateDispatch` by `kind`; webview→extension messages are handled in `chat-panel.ts::registerHandlers` (the `m["type"]` if-else at :91, where `stepDecision`/`scopeDecision`/… live); the backend already emits the resolution breadcrumb (F2/F3). Valid `Icon` names exclude `"lightbulb"` — use `"bolt"`. The controller gate's `LiveGateView.taskId` is set to the **thread id** by `chat-panel` when it builds the gate from `/live`.
 
 **Files:**
-- Create: `apps/vscode-extension/webview-ui/src/components/messages/gates/ModeChoiceCard.tsx`
-- Modify: the message renderer (where `step_review_requested`→`StepGate` is dispatched) to route `mode_choice`→`ModeChoiceCard`; `vscode-extension/src/controller.ts` (+ `extension.ts` message handler) to post mode/edit decisions.
-- Test: `apps/vscode-extension/webview-ui/src/test/ModeChoiceCard.test.tsx`
+- Create: `apps/vscode-extension/webview-ui/src/components/messages/gates/ModeGate.tsx`, `gates/EditGate.tsx`.
+- Modify: `LiveSlot.tsx` (`GateDispatch` cases), `chat-panel.ts` (`registerHandlers` + `onModeDecision`/`onEditDecision`).
+- Test: `apps/vscode-extension/webview-ui/src/test/ModeGate.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
-// apps/vscode-extension/webview-ui/src/test/ModeChoiceCard.test.tsx
+// apps/vscode-extension/webview-ui/src/test/ModeGate.test.tsx
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { ModeChoiceCard } from "../components/messages/gates/ModeChoiceCard";
+import { ModeGate } from "../components/messages/gates/ModeGate";
 import { vscode } from "../vscodeApi";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 beforeEach(() => vi.clearAllMocks());
 
-describe("ModeChoiceCard", () => {
-  const payload = { plan_sketch: "add a decorator and apply to 3 routes",
-    recommended: "create_task", reason: "big",
-    options: [{ mode: "create_task", label: "Plan it", description: "d1" },
-              { mode: "edit", label: "Edit inline", description: "d2" }] };
-
-  it("renders the sketch + options and posts modeDecision on click", () => {
-    render(<ModeChoiceCard threadId="th1" payload={payload} />);
-    expect(screen.getByText(/add a decorator/)).toBeTruthy();
-    fireEvent.click(screen.getByText("Edit inline"));
-    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "modeDecision", threadId: "th1", mode: "edit" });
-  });
+it("renders sketch + options and posts modeDecision (taskId carries the threadId)", () => {
+  render(<ModeGate taskId="th1" payload={{ plan_sketch: "add a decorator",
+    recommended: "create_task",
+    options: [{ mode: "create_task", label: "Plan it" }, { mode: "edit", label: "Edit inline" }] }} />);
+  expect(screen.getByText(/add a decorator/)).toBeTruthy();
+  fireEvent.click(screen.getByText("Edit inline"));
+  expect(vscode.postMessage).toHaveBeenCalledWith({ type: "modeDecision", threadId: "th1", mode: "edit" });
 });
 ```
 
-- [ ] **Step 2: Run** `npm run -w @ai-editor/vscode-extension test ModeChoiceCard` → FAIL (component missing).
+- [ ] **Step 2: Run** `npm run -w @ai-editor/vscode-extension test ModeGate` → FAIL (component missing).
 
-- [ ] **Step 3: Write the component** (mirrors `StepGate.tsx`):
+- [ ] **Step 3: Write `ModeGate.tsx`** (signature matches the other gates: `{ taskId, payload }`; `taskId` carries the thread id):
 
 ```tsx
-// apps/vscode-extension/webview-ui/src/components/messages/gates/ModeChoiceCard.tsx
+// apps/vscode-extension/webview-ui/src/components/messages/gates/ModeGate.tsx
 import { useState } from "react";
 import { vscode } from "../../../vscodeApi";
 import { CardShell } from "../../shared/CardShell";
 import { BtnPrimary, BtnGhost } from "../../shared/buttons";
 
 interface Option { mode: string; label?: string; description?: string }
-interface Props { threadId: string; payload: Record<string, unknown> }
+interface Props { taskId: string; payload: Record<string, unknown> }  // taskId == threadId for controller gates
 
-export function ModeChoiceCard({ threadId, payload }: Props) {
+export function ModeGate({ taskId, payload }: Props) {
   const sketch = String(payload.plan_sketch ?? "");
   const recommended = String(payload.recommended ?? "");
   const options = (Array.isArray(payload.options) ? payload.options : []) as Option[];
   const [picked, setPicked] = useState<string | null>(null);
-
   function pick(mode: string) {
-    if (picked !== null) return;          // one-shot
+    if (picked !== null) return;
     setPicked(mode);
-    vscode.postMessage({ type: "modeDecision", threadId, mode });
+    vscode.postMessage({ type: "modeDecision", threadId: taskId, mode });
   }
-
   return (
-    <CardShell icon="lightbulb" title="How should I proceed?" subtitle={recommended ? `recommended: ${recommended}` : undefined}
+    <CardShell icon="bolt" title="How should I proceed?"
+               subtitle={recommended ? `recommended: ${recommended}` : undefined}
                borderColor="var(--accent-brd)" headerTint="linear-gradient(180deg, var(--accent-bg), transparent)">
       {sketch && <div className="px-2.5 py-2 text-[12px] text-text-1 whitespace-pre-wrap border-t border-border">{sketch}</div>}
       <div className="flex flex-col gap-1.5 px-2.5 py-2 border-t border-border">
         {picked === null ? options.map((o) => {
           const Btn = o.mode === recommended ? BtnPrimary : BtnGhost;
-          return (
-            <Btn key={o.mode} onClick={() => pick(o.mode)}>
-              <span className="font-medium">{o.label ?? o.mode}</span>
-              {o.description && <span className="ml-1 text-[11px] text-text-2">— {o.description}</span>}
-            </Btn>
-          );
-        }) : (
-          <span className="text-[11px] text-text-2">Chose: {picked} — or type a message to discuss further.</span>
-        )}
+          return (<Btn key={o.mode} onClick={() => pick(o.mode)}>
+            <span className="font-medium">{o.label ?? o.mode}</span>
+            {o.description && <span className="ml-1 text-[11px] text-text-2">— {o.description}</span>}
+          </Btn>);
+        }) : <span className="text-[11px] text-text-2">Chose: {picked} — or type a message to discuss further.</span>}
       </div>
     </CardShell>
   );
 }
 ```
 
-- [ ] **Step 4: Wire it up**
-  - In the message renderer, add `case "mode_choice": return <ModeChoiceCard threadId={threadId} payload={ev.payload} />` (next to the `step_review_requested`/`StepGate` case). For the per-edit gate, reuse the existing `diff_ready`/`StepGate`-style card but have its Accept/Discard post `editDecision` (`vscode.postMessage({type:"editDecision", threadId, decision, reason})`).
-  - In `vscode-extension/src/extension.ts` message handler, map `modeDecision`→`controller.postModeDecision(threadId, mode)` (consumes the streamed SSE into the thread) and `editDecision`→`controller.postEditDecision(threadId, decision, reason)`.
-  - In `controller.ts`, add `postModeDecision`/`postEditDecision` calling the `BackendTaskClient` methods from I1; `postModeDecision` streams events into the same thread-render path as `sendChatMessage`.
-  - Per the "discuss" path: no special UI needed — typing a normal message already calls `sendChatMessage`, which resumes (F1/F4). The card's post-pick hint just tells the user that.
+`EditGate.tsx` is `StepGate.tsx` with the action handlers posting `{ type: "editDecision", threadId: taskId, decision: "accept"|"reject", reason }` instead of `stepDecision` (a reject prompts for a reason via a small textarea, or sends empty). Copy `StepGate.tsx` and swap the two `vscode.postMessage` calls.
+
+- [ ] **Step 4: Wire dispatch + decisions**
+  - `LiveSlot.tsx::GateDispatch`: add `case "mode": return <ModeGate taskId={taskId} payload={payload} />;` and `case "edit": return <EditGate taskId={taskId} payload={payload} />;`.
+  - `chat-panel.ts::registerHandlers` (next to `stepDecision` at :134):
+    ```typescript
+    } else if (m["type"] === "modeDecision") {
+      p = this.onModeDecision(m["threadId"] as string, m["mode"] as string);
+    } else if (m["type"] === "editDecision") {
+      const decision = m["decision"] === "accept" ? "accept" : "reject";
+      p = this.onEditDecision(m["threadId"] as string, decision, (m["reason"] as string) ?? "");
+    ```
+  - `chat-panel.ts`: add `onModeDecision(threadId, mode)` → consume `client.postModeDecision(threadId, mode)` (SSE) into the thread-render path like `onMessage`; `onEditDecision(threadId, decision, reason)` → `await client.postEditDecision(threadId, decision, reason)` (the held-open message stream surfaces the loop continuation). The resolution breadcrumb already arrives via the backend (F2/F3).
+  - The "discuss" path needs no UI: typing a normal message calls the existing `sendMessage` flow, which resumes from `_histories` (F1/F4).
 
 - [ ] **Step 5: Run + commit**
 
 ```bash
-npm run -w @ai-editor/vscode-extension test ModeChoiceCard && npm run build
-git add apps/vscode-extension/webview-ui/src apps/vscode-extension/src/controller.ts apps/vscode-extension/src/extension.ts
-git commit -m "feat(webview): ModeChoiceCard + per-edit gate decision posts"
+npm run -w @ai-editor/vscode-extension test ModeGate && npm run build
+git add apps/vscode-extension/webview-ui/src apps/vscode-extension/src/chat-panel.ts
+git commit -m "feat(webview): ModeGate + EditGate in LiveSlot; mode/edit decision wiring"
 ```
 
 ---
@@ -1902,6 +1952,8 @@ git commit -m "feat(webview): ModeChoiceCard + per-edit gate decision posts"
 **Spec coverage:** §3 architecture → Phases E/F; §4 action union → B1/E1–E3; §5 phase SM + ACID edit → C1/D0/D1/E3; §6 cache payload → B2 + H1; §7 ToolSource seam → A1/A2; §8 migration → G1/K1; §9 invariants → H1; §12 mirror/DRY/patterns → B3 (shared primitives), C1 (State), A2 (Composite), D0 (extracted patch/promote/diff), E1 (mirror loop). Deferred subsystems (#2–#6) intentionally absent.
 
 **Placeholder scan:** Phases A–I now carry **full literal code** (constructor, gate plumbing, routes, components) verified against source — no "mirror the pattern" stubs remain except where a step legitimately says "copy the exact shape from `_pending_step_decisions`/`/step-decision`" for the route boilerplate (which is shown). Phases J (live smoke) and K (deletion) are checklists by nature, not code.
+
+**Frontend re-trace correction (2026-06-15):** an initial shallow frontend pass was wrong on every structural point and was redone against source. Confirmed: interactive gates are **`/live`-polled `LiveSlot.GateDispatch` cards keyed by `kind`** (not SSE `MessageRow` cases); the controller turn has **no task**, so its gates need a **thread-level** `ChatThread.pending_controller_gate` exposed via `/live` (new **Task F0**), paired with the in-memory future for the held-open edit gate (mirrors task gates' `pending_step_review` + `_pending_step_decisions`); decision posts wire through **`chat-panel.ts::registerHandlers`** (not `controller.ts`); `Icon` has no `"lightbulb"` (use `"bolt"`). F2/F3 set/clear `pending_controller_gate`; I1 extends `LiveGateView.kind`; I2 adds `ModeGate`/`EditGate` to `GateDispatch`. Resolution leaves a breadcrumb (no new `MessageRow` type).
 
 **Anchor verification (2026-06-15):** all assumed APIs traced to source and corrected — `apply_patch_candidate`/`PatchDocumentV2` (not `PatchEngine.apply`), `_partial_promote`→`promote_files` (no `promote_files` on the manager), `ChatThread.thread_id`/role `"agent"`, `ScriptedReasoningEngine(plan, patches, *_responses)`, `create_task_from_chat(*, …)` keyword-only, `post_chat_message` SSE shape. D0 extracts `apply_ops`/`compute_diff_entries`/`promote_files` as the single shared implementation.
 
