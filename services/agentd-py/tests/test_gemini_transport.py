@@ -149,7 +149,8 @@ async def test_gemini_transport_rejects_empty_text_output() -> None:
 @pytest.mark.asyncio
 async def test_gemini_transport_rejects_invalid_json() -> None:
     fake_client = FakeModelsClient(outputs=["not-json"])
-    transport = GeminiJsonTransport(models_client=fake_client)
+    # max_retries=0: this asserts the terminal rejection, not the malformed-JSON retry loop.
+    transport = GeminiJsonTransport(models_client=fake_client, max_retries=0)
 
     with pytest.raises(RuntimeError, match="not valid JSON"):
         await transport.generate_json(
@@ -164,7 +165,8 @@ async def test_gemini_transport_rejects_invalid_json() -> None:
 @pytest.mark.asyncio
 async def test_gemini_transport_rejects_non_object_json() -> None:
     fake_client = FakeModelsClient(outputs=[json.dumps(["x"])])
-    transport = GeminiJsonTransport(models_client=fake_client)
+    # max_retries=0: this asserts the terminal rejection, not the malformed-JSON retry loop.
+    transport = GeminiJsonTransport(models_client=fake_client, max_retries=0)
 
     with pytest.raises(RuntimeError, match="must be a JSON object"):
         await transport.generate_json(

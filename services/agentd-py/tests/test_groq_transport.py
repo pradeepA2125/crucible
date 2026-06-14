@@ -62,7 +62,8 @@ async def test_groq_transport_sends_expected_request_shape() -> None:
     assert call["model"] == "llama-3.3-70b-versatile"
     assert call["max_completion_tokens"] == 111
     assert call["temperature"] == 0
-    assert call["include_reasoning"] is False
+    # include_reasoning is only sent for gpt-oss reasoning models; llama-3.3 omits it.
+    assert "include_reasoning" not in call
     assert call["messages"][0]["role"] == "system"
     assert call["messages"][0]["content"] == "plan"
     assert call["messages"][1]["role"] == "user"
@@ -128,7 +129,8 @@ async def test_groq_transport_rejects_invalid_json() -> None:
     client = FakeCompletionsClient(
         responses=[FakeResponse(choices=[FakeChoice(message=FakeMessage(content="not-json"))])]
     )
-    transport = GroqJsonTransport(api_key="test-key", completions_client=client)
+    # max_retries=0: this asserts the terminal rejection, not the malformed-JSON retry loop.
+    transport = GroqJsonTransport(api_key="test-key", completions_client=client, max_retries=0)
 
     with pytest.raises(RuntimeError, match="not valid JSON"):
         await transport.generate_json(
@@ -145,7 +147,8 @@ async def test_groq_transport_rejects_non_object_json() -> None:
     client = FakeCompletionsClient(
         responses=[FakeResponse(choices=[FakeChoice(message=FakeMessage(content=json.dumps(["x"])))])]
     )
-    transport = GroqJsonTransport(api_key="test-key", completions_client=client)
+    # max_retries=0: this asserts the terminal rejection, not the malformed-JSON retry loop.
+    transport = GroqJsonTransport(api_key="test-key", completions_client=client, max_retries=0)
 
     with pytest.raises(RuntimeError, match="must be a JSON object"):
         await transport.generate_json(
