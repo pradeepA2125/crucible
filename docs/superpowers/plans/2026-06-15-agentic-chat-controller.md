@@ -494,7 +494,7 @@ from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 
 @pytest.mark.asyncio
 async def test_scripted_controller_step_returns_scripted_action():
-    eng = ScriptedReasoningEngine(controller_steps=[{"type": "answer", "thought": "t", "answer": "hi"}])
+    eng = ScriptedReasoningEngine(None, [], controller_step_responses=[{"type": "answer", "thought": "t", "answer": "hi"}])
     out = await eng.create_controller_step(
         plan_context={"goal": "g", "workspace_path": "/w"},
         history=[], tool_definitions=[], phase="DECIDE",
@@ -634,6 +634,126 @@ git commit -m "feat(chat): ControllerPhaseSM (DECIDE→EDIT, State pattern)"
 
 ## Phase D — ACID turn edit session
 
+> **Verified against source (2026-06-15):** `PatchEngine` has **no** `apply()` — patches go `_wrap_as_patch_document(ops)` → `PatchDocumentV2.model_validate(dict)` → `apply_patch_candidate(base_dir, candidate, allowed_files=) -> PatchResult(.touched_files)` (see `tools/loop.py::_apply_patch_inline` 1141-1175, `patch/engine.py::apply_patch_document` 313). There is **no** `ShadowWorkspaceManager.promote_files`; the scoped shadow→real copy is `AgentOrchestrator._partial_promote(shadow, real, touched)` (engine.py 2153). Diff is `AgentOrchestrator._compute_diff_entries(real, shadow, touched, task_id) -> list[DiffEntry]` (engine.py 1147). D0 extracts these into free functions so ToolLoop, `_partial_promote`, and `TurnEditSession` share one implementation (DRY).
+
+### Task D0: Extract shared patch/promote/diff primitives (DRY)
+
+**Files:**
+- Create: `agentd/patch/inline_apply.py` — `apply_ops(patch_engine, base_dir, patch_ops, allowed_files) -> list[str]` (touched files).
+- Create: `agentd/patch/diffing.py` — `compute_diff_entries(real_path, shadow_path, touched, key) -> list[DiffEntry]`.
+- Create: `agentd/workspace/promote.py` — `promote_files(shadow_path, real_path, touched) -> None`.
+- Modify: `agentd/tools/loop.py` (`_apply_patch_inline` delegates to `apply_ops`), `agentd/orchestrator/engine.py` (`_compute_diff_entries`/`_partial_promote` delegate to the new free functions).
+- Test: `tests/test_inline_apply_primitives.py`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_inline_apply_primitives.py
+import pytest
+from pathlib import Path
+from agentd.patch.engine import PatchEngine
+from agentd.patch.inline_apply import apply_ops
+from agentd.patch.diffing import compute_diff_entries
+from agentd.workspace.promote import promote_files
+
+@pytest.mark.asyncio
+async def test_apply_ops_diff_and_promote(tmp_path: Path):
+    real = tmp_path / "ws"; real.mkdir(); (real / "f.py").write_text("x = 1\n")
+    shadow = tmp_path / "sh"; shadow.mkdir(); (shadow / "f.py").write_text("x = 1\n")
+    touched = await apply_ops(
+        PatchEngine(), shadow,
+        [{"op": "search_replace", "file": "f.py", "search": "x = 1", "replace": "x = 2", "reason": "r"}],
+        allowed_files={"f.py"},
+    )
+    assert touched == ["f.py"]
+    entries = compute_diff_entries(real, shadow, touched, "k1")
+    assert entries[0].path == "f.py" and entries[0].additions >= 1
+    promote_files(shadow, real, touched)
+    assert (real / "f.py").read_text() == "x = 2\n"
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_inline_apply_primitives.py -v`
+Expected: FAIL — modules missing.
+
+- [ ] **Step 3: Write minimal implementation**
+
+```python
+# agentd/patch/inline_apply.py
+from __future__ import annotations
+from pathlib import Path
+from agentd.domain.models import PatchDocumentV2
+from agentd.patch.engine import PatchEngine
+
+async def apply_ops(patch_engine: PatchEngine, base_dir: Path,
+                    patch_ops: list[dict], allowed_files: set[str]) -> list[str]:
+    """Apply raw patch_ops to base_dir via the candidate path. Returns touched rel paths.
+    Single source of truth shared by ToolLoop and TurnEditSession."""
+    doc = PatchDocumentV2.model_validate(
+        {"candidates": [{"candidate_id": "inline-c1", "patch_ops": patch_ops}]}
+    )
+    candidate = doc.candidates[0]
+    result = await patch_engine.apply_patch_candidate(base_dir, candidate, allowed_files=allowed_files)
+    return list(result.touched_files)
+```
+
+```python
+# agentd/patch/diffing.py
+from __future__ import annotations
+import difflib
+from pathlib import Path
+from agentd.domain.models import DiffEntry
+from agentd.orchestrator.engine import _cap_unified_diff  # already module-level (engine.py:84)
+
+def compute_diff_entries(real_path: Path, shadow_path: Path, touched: list[str], key: str) -> list[DiffEntry]:
+    """Free-function form of AgentOrchestrator._compute_diff_entries (engine.py:1147)."""
+    entries: list[DiffEntry] = []
+    for rel in touched:
+        shadow_file = shadow_path / rel
+        real_file = real_path / rel
+        if not shadow_file.exists():
+            continue
+        shadow_lines = shadow_file.read_text(errors="replace").splitlines(keepends=True)
+        real_lines = real_file.read_text(errors="replace").splitlines(keepends=True) if real_file.exists() else []
+        diff = list(difflib.unified_diff(real_lines, shadow_lines, lineterm=""))
+        additions = sum(1 for ln in diff if ln.startswith("+") and not ln.startswith("+++"))
+        deletions = sum(1 for ln in diff if ln.startswith("-") and not ln.startswith("---"))
+        entries.append(DiffEntry(path=rel, additions=additions, deletions=deletions,
+                                 temp_path=str(shadow_file), unified_diff=_cap_unified_diff("\n".join(diff))))
+    return entries
+```
+
+```python
+# agentd/workspace/promote.py
+from __future__ import annotations
+import shutil
+from pathlib import Path
+
+def promote_files(shadow_path: Path, real_path: Path, touched: list[str]) -> None:
+    """Scoped shadow→real copy. Free-function form of _partial_promote (engine.py:2153)."""
+    for rel in touched:
+        src = shadow_path / rel
+        dst = real_path / rel
+        if src.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+```
+
+Then make the existing code delegate (DRY): in `tools/loop.py::_apply_patch_inline`, replace the inline body with `touched = await apply_ops(self._patch_engine, self._shadow_path, patch_ops, {t.path for t in step.targets})` (keep the scope-error handling around it); in `engine.py`, `_compute_diff_entries` and `_partial_promote` call the new free functions. Run the existing patch/inline tests to confirm no regression.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_inline_apply_primitives.py tests/test_inline_change.py -v` (the second guards no regression in the existing inline path)
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add agentd/patch/inline_apply.py agentd/patch/diffing.py agentd/workspace/promote.py agentd/tools/loop.py agentd/orchestrator/engine.py tests/test_inline_apply_primitives.py
+git commit -m "refactor(patch): extract apply_ops/compute_diff_entries/promote_files (DRY)"
+```
+
 ### Task D1: `TurnEditSession` apply + instant promote + reject-restore
 
 **Files:**
@@ -657,17 +777,16 @@ async def test_accept_promotes_to_real_and_reject_restores(tmp_path: Path):
     sess = TurnEditSession(turn_id="t1", real_path=real,
                            workspace_manager=ShadowWorkspaceManager(tmp_path / "shadows"),
                            patch_engine=PatchEngine())
-    # accept path
     diff = await sess.apply([{"op": "search_replace", "file": "f.py",
                               "search": "x = 1", "replace": "x = 2", "reason": "r"}])
     assert any(e.path == "f.py" for e in diff)
     await sess.accept()
-    assert (real / "f.py").read_text() == "x = 2\n"   # promoted to real
-    # reject path: apply then reject restores shadow==real (real unchanged on reject)
+    assert (real / "f.py").read_text() == "x = 2\n"   # instant-promoted to real
+    # reject leaves real untouched (patch was applied to shadow only, not yet promoted)
     await sess.apply([{"op": "search_replace", "file": "f.py",
                        "search": "x = 2", "replace": "x = 999", "reason": "r"}])
     await sess.reject()
-    assert (real / "f.py").read_text() == "x = 2\n"   # reject left real untouched
+    assert (real / "f.py").read_text() == "x = 2\n"
     await sess.close()
 ```
 
@@ -681,69 +800,73 @@ Expected: FAIL — module missing.
 ```python
 # agentd/chat/edit_session.py
 from __future__ import annotations
+import shutil
 from pathlib import Path
-from agentd.orchestrator.engine import AgentOrchestrator  # for _compute_diff_entries reuse pattern
-# NOTE: extract _compute_diff_entries into a free function `compute_diff_entries`
-# in a small module (agentd/chat/diffing.py) during this task and import it here.
-from agentd.chat.diffing import compute_diff_entries
+from agentd.domain.models import DiffEntry
+from agentd.patch.engine import PatchEngine
+from agentd.patch.inline_apply import apply_ops
+from agentd.patch.diffing import compute_diff_entries
+from agentd.workspace.promote import promote_files
+from agentd.workspace.shadow import ShadowWorkspaceManager
 
 class TurnEditSession:
-    """One ACID shadow per turn. Each apply() patches the shadow; accept() promotes to
-    real (instant); reject() restores the shadow's touched files from real so shadow==real."""
+    """One ACID shadow per turn. apply() patches the shadow (real is the clean before, since
+    every prior patch was promoted-or-reverted); accept() promotes touched files to real
+    instantly; reject() restores the shadow's touched files from real so shadow==real holds."""
 
-    def __init__(self, *, turn_id, real_path: Path, workspace_manager, patch_engine):
+    def __init__(self, *, turn_id: str, real_path: Path,
+                 workspace_manager: ShadowWorkspaceManager, patch_engine: PatchEngine):
         self._turn_id = turn_id
         self._real = real_path
         self._wm = workspace_manager
         self._patch = patch_engine
         self._shadow: Path | None = None
+        self._touched_ever: set[str] = set()      # all files the shadow has ever held this turn
         self._pending_touched: list[str] = []
 
     async def _ensure_shadow(self, touched: list[str]) -> Path:
         if self._shadow is None:
-            sw = await self._wm.prepare_lightweight(f"chatturn-{self._turn_id}", str(self._real), touched)
+            sw = await self._wm.prepare_lightweight(
+                f"chatturn-{self._turn_id}", str(self._real), touched)
             self._shadow = Path(sw.shadow_path)
+        else:
+            # seed any newly-touched file into the lightweight shadow from real
+            for rel in touched:
+                if rel not in self._touched_ever and (self._real / rel).exists():
+                    dst = self._shadow / rel
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(self._real / rel, dst)
+        self._touched_ever.update(touched)
         return self._shadow
 
-    async def apply(self, patch_ops: list[dict]):
+    async def apply(self, patch_ops: list[dict]) -> list[DiffEntry]:
         touched = [str(op["file"]) for op in patch_ops if "file" in op]
         shadow = await self._ensure_shadow(touched)
-        await self._patch.apply(shadow, patch_ops)            # invariant: shadow==real before apply
-        self._pending_touched = touched
-        return compute_diff_entries(self._real, shadow, touched, self._turn_id)
+        applied = await apply_ops(self._patch, shadow, patch_ops, allowed_files=set(touched))
+        self._pending_touched = applied
+        return compute_diff_entries(self._real, shadow, applied, self._turn_id)
 
     async def accept(self) -> None:
         assert self._shadow is not None
-        await self._wm.promote_files(str(self._real), str(self._shadow), self._pending_touched)
+        promote_files(self._shadow, self._real, self._pending_touched)
         self._pending_touched = []
 
     async def reject(self) -> None:
-        # restore shadow touched files from real (real is the clean before-state)
         assert self._shadow is not None
         for rel in self._pending_touched:
-            self._restore_one(rel)
+            real_f, shadow_f = self._real / rel, self._shadow / rel
+            if real_f.exists():
+                shadow_f.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(real_f, shadow_f)     # modified/deleted → restore from real
+            elif shadow_f.exists():
+                shadow_f.unlink()                  # created → drop
         self._pending_touched = []
-
-    def _restore_one(self, rel: str) -> None:
-        import shutil
-        real_f = self._real / rel
-        shadow_f = self._shadow / rel  # type: ignore[operator]
-        if real_f.exists():
-            shadow_f.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(real_f, shadow_f)      # modified/deleted → restore from real
-        elif shadow_f.exists():
-            shadow_f.unlink()                   # created → drop
 
     async def close(self) -> None:
         if self._shadow is not None:
-            import shutil
             shutil.rmtree(self._shadow, ignore_errors=True)
             self._shadow = None
 ```
-
-Sub-steps required to make this real (do them in this task, each with its own test if non-trivial):
-- Extract `_compute_diff_entries` (engine.py:1147) into `agentd/chat/diffing.py::compute_diff_entries(real_path, shadow_path, touched, turn_id)` as a free function; have `AgentOrchestrator` import it (DRY — one diff implementation).
-- Add `promote_files(real, shadow, files)` to `ShadowWorkspaceManager` if not present: copies the given files shadow→real, creating dirs (reuse `promote`'s file-copy logic, scoped to `files`).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -753,7 +876,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agentd/chat/edit_session.py agentd/chat/diffing.py agentd/workspace/shadow.py agentd/orchestrator/engine.py tests/test_turn_edit_session.py
+git add agentd/chat/edit_session.py tests/test_turn_edit_session.py
 git commit -m "feat(chat): TurnEditSession (ACID shadow, instant promote, reject-restore)"
 ```
 
@@ -782,7 +905,7 @@ from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 @pytest.mark.asyncio
 async def test_loop_explores_then_answers(tmp_path: Path):
     (tmp_path / "f.py").write_text("def foo():\n    return 1\n")
-    eng = ScriptedReasoningEngine(controller_steps=[
+    eng = ScriptedReasoningEngine(None, [], controller_step_responses=[
         {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f.py"}},
         {"type": "answer", "thought": "done", "answer": "foo returns 1"},
     ])
@@ -894,7 +1017,7 @@ from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
 def _loop(tmp_path, steps):
     reg = AggregatingToolRegistry([BuiltinToolSource(shadow_root=tmp_path, real_workspace_path=tmp_path)])
-    return ControllerLoop(ScriptedReasoningEngine(controller_steps=steps), reg,
+    return ControllerLoop(ScriptedReasoningEngine(None, [], controller_step_responses=steps), reg,
                           EventBroadcaster(), channel_id="c", phase_sm=ControllerPhaseSM())
 
 @pytest.mark.asyncio
@@ -976,7 +1099,7 @@ async def test_edit_phase_promotes_then_submits(tmp_path: Path):
                            workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
                            patch_engine=PatchEngine())
     reg = AggregatingToolRegistry([BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
-    loop = ControllerLoop(ScriptedReasoningEngine(controller_steps=[
+    loop = ControllerLoop(ScriptedReasoningEngine(None, [], controller_step_responses=[
         {"type": "edit", "thought": "t", "patch_ops": [
             {"op": "search_replace", "file": "f.py", "search": "x = 1", "replace": "x = 2", "reason": "r"}]},
         {"type": "submit_changes", "thought": "done", "summary": "bumped x"},
@@ -1051,7 +1174,7 @@ from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 @pytest.mark.asyncio
 async def test_malformed_then_recovers(tmp_path: Path):
     reg = AggregatingToolRegistry([BuiltinToolSource(shadow_root=tmp_path, real_workspace_path=tmp_path)])
-    loop = ControllerLoop(ScriptedReasoningEngine(controller_steps=[
+    loop = ControllerLoop(ScriptedReasoningEngine(None, [], controller_step_responses=[
         {"thought": "oops"},                                   # no type → malformed
         {"type": "answer", "thought": "ok", "answer": "recovered"},
     ]), reg, EventBroadcaster(), channel_id="c", phase_sm=ControllerPhaseSM())
@@ -1104,15 +1227,15 @@ from agentd.orchestrator.broadcaster import EventBroadcaster
 @pytest.mark.asyncio
 async def test_qa_turn_persists_answer(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
-    thread = store.create_thread(workspace=str(tmp_path), title="t")
+    thread = store.create_thread(str(tmp_path), title="t")   # create_thread(workspace_path, title)
     ctrl = ChatController(workspace_path=str(tmp_path),
-                          reasoning_engine=ScriptedReasoningEngine(controller_steps=[
+                          reasoning_engine=ScriptedReasoningEngine(None, [], controller_step_responses=[
                               {"type": "answer", "thought": "t", "answer": "hello"}]),
                           thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
                           retrieval_client=None)
-    await ctrl.handle_message(thread.id, "hi", channel_id="c1")
-    msgs = store.get_thread(thread.id).messages
-    assert any(m.role == "agent" and "hello" in m.content for m in msgs)
+    await ctrl.handle_message(thread.thread_id, "hi", channel_id="c1")   # ChatThread.thread_id
+    msgs = store.get_thread(thread.thread_id).messages
+    assert any(m.role == "agent" and "hello" in m.content for m in msgs)   # role ∈ {"user","agent"}
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
