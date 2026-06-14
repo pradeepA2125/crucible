@@ -298,6 +298,17 @@ The chat UI separates **interactive** affordances from the **durable transcript*
 
 ## Debugging Methodology
 
+### Trace the full call path before asserting how code works
+
+Do not describe (or design against) a code path from a single function. **Trace it end to end first** — caller → callee → the actual strings/values sent to the boundary. A recurring failure mode: reading one builder (e.g. `build_planning_step_payload`) and assuming the rest, when the system prompt is built by a *separate* function (`format_planning_system_prompt`) and the two are passed independently to `generate_json(system_instructions=…, user_payload=…)`.
+
+Worked example — where does the planner's `initial_context` (retrieval) actually live?
+- `orchestrator/engine.py`: `retrieval_context.as_prompt_payload()` → `initial_context=` in `plan_context` (pinned to round-1 on feedback via `task.planning_initial_context`).
+- `reasoning/engine.py::create_planning_step`: calls `format_planning_system_prompt(...)` (system string = prompt text + `tools_json` + `max_calls`, **no retrieval**) AND `build_planning_step_payload(...)` (user payload — retrieval lands here, early, with `instruction`/`budget_status` LAST for KV-cache stability).
+- Both strings go to `generate_json` as separate args.
+
+The lesson: the system prompt and the user payload are built by different functions and carry different things; verify which builder owns a field before reasoning about prompt structure, caching, or staleness. Use `_debug_dump` artifacts (`plan-turn-NN`) to see the exact bytes sent.
+
 ### Starting the backend for local testing
 
 Always use `start-backend.sh` rather than running uvicorn directly — it sets all env vars correctly:
