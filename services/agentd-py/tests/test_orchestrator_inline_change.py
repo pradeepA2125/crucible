@@ -40,6 +40,31 @@ class _EmitPatchEngine:
         return {}
 
 
+class _CreateFileEngine:
+    """Scripted reasoning engine: emits a create_file patch for a brand-new file."""
+    def __init__(self, file: str, content: str) -> None:
+        self._file = file
+        self._content = content
+
+    async def create_tool_step(self, step_context, history, tool_definitions, on_thinking=None, state_description="", allowed_action_types=None):
+        in_verify = any(
+            isinstance(msg.get("content"), str) and "Patch applied successfully" in msg["content"]
+            for msg in history
+        )
+        if in_verify:
+            return {"type": "verify_done", "thought": "done", "verified": True, "test_output": ""}
+        return {
+            "type": "emit_patch",
+            "thought": "creating the new file",
+            "patch_ops": [{"op": "create_file", "file": self._file,
+                           "content": self._content, "reason": "r"}],
+        }
+
+    async def create_patch(self, *a, **kw): return {}
+    async def create_planning_step(self, *a, **kw): return {}
+    async def create_plan(self, *a, **kw): return {}
+
+
 class _AlwaysPassValidator:
     async def run(self, workspace_path): ...
     async def run_touched(self, workspace_path, touched_files): ...
@@ -97,6 +122,42 @@ async def test_run_inline_change_broadcasts_diff_ready(tmp_path: Path) -> None:
     assert len(diff_entries) == 1
     assert diff_entries[0]["path"] == "a.py"
     assert diff_entries[0]["additions"] > 0 or diff_entries[0]["deletions"] > 0
+
+
+@pytest.mark.asyncio
+async def test_run_inline_change_creates_brand_new_file(tmp_path: Path) -> None:
+    """Smoke-found: an inline change whose targets are all NEW files resolved to empty
+    targets → command-only heuristic → POSTPATCH_CLEAN forbids emit_patch → 0-entry diff.
+    The classifier's likely_targets that don't exist yet must seed NEW targets so the file
+    can actually be created."""
+    ws = tmp_path / "ws"
+    ws.mkdir()  # target file does NOT exist
+
+    engine = _CreateFileEngine("new_mod.py", "VALUE = 1\n")
+    orch = _make_orchestrator(tmp_path, engine)
+    queue = orch.broadcaster.subscribe("chat:tn")
+
+    await orch.run_inline_change(
+        thread_id="tn",
+        goal="create new_mod.py with VALUE",
+        workspace_path=str(ws),
+        plan_markdown="- create new_mod.py",
+        explore_context=[],
+        likely_targets=["new_mod.py"],
+        channel_id="chat:tn",
+        store=_NullStore(),
+    )
+
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+
+    diff_event = next((e for e in events if e["type"] == "diff_ready"), None)
+    assert diff_event is not None, f"no diff_ready in {[e['type'] for e in events]}"
+    diff_entries = diff_event["payload"]["diff_entries"]
+    assert len(diff_entries) == 1, f"expected 1 new-file diff, got {diff_entries}"
+    assert diff_entries[0]["path"] == "new_mod.py"
+    assert diff_entries[0]["additions"] > 0
 
 
 @pytest.mark.asyncio

@@ -87,6 +87,24 @@ describe("ErrorCard — Dismiss", () => {
   });
 });
 
+describe("ErrorCard — ABORTED does not offer Resume", () => {
+  it("hides Resume for ABORTED (shadow is cleaned at abort; resume would error), keeps Re-plan + Dismiss", () => {
+    render(
+      <ErrorCard taskId="task-ab" status="ABORTED" onDismiss={() => {}} />
+    );
+    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /re-plan/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /dismiss/i })).toBeTruthy();
+  });
+
+  it("still offers Resume for FAILED", () => {
+    render(
+      <ErrorCard taskId="task-fail" status="FAILED" onDismiss={() => {}} />
+    );
+    expect(screen.getByRole("button", { name: /resume/i })).toBeTruthy();
+  });
+});
+
 describe("ErrorCard — one-shot after Resume", () => {
   it("action buttons gone after Resume; resolved row shown", () => {
     render(

@@ -972,6 +972,16 @@ class AgentOrchestrator:
             PlanTarget(path=f, intent=PlanTargetIntent.EXISTING)
             for f in target_files
         ]
+        # Seed NEW-intent targets for classifier targets that don't exist yet. Without this an
+        # all-new-file goal resolves to empty targets, trips the command-only-step heuristic,
+        # and POSTPATCH_CLEAN forbids emit_patch — so the file can never be created (smoke-found
+        # 0-entry diff). A named-but-nonexistent target makes this a real (creation) code step.
+        for t in (likely_targets or []):
+            rel = t.lstrip("/")
+            if rel in target_files:
+                continue
+            if not (real_path / rel).exists():
+                plan_targets.append(PlanTarget(path=rel, intent=PlanTargetIntent.NEW))
         step = PlanStep(
             id="s1",
             goal=goal,
@@ -1619,6 +1629,16 @@ class AgentOrchestrator:
                         kind="step_failed", step_id=step.id, goal=step.goal,
                         note="step did not complete after retries",
                     ))
+                    # Capture the failing step + its last error durably (else the ErrorCard
+                    # "Error detail" is blank — the generic finally fallback has no step_id and
+                    # an empty message). Smoke-found on a step-exhaustion FAILED.
+                    self._write_failure_summary(
+                        task,
+                        error_class="StepExecutionExhausted",
+                        message=self._failure_message_from_step(step_result),
+                        step_id=step.id,
+                        step_index=step_index,
+                    )
                     task = transition(task, TaskStatus.FAILED, "step execution exhausted")
                     await self._store.save(task)
                     return task
@@ -3735,6 +3755,16 @@ class AgentOrchestrator:
         synthesis failure (or an engine that lacks summarize_run) must never fail the task."""
         try:
             es = task.execution_state
+            # Empty event log = aborted before any step completed/failed. The LLM, given no
+            # events, hallucinates "aborted during initial planning phase" (smoke-found). Use a
+            # deterministic narrative instead of consulting the summarizer.
+            if outcome == "aborted" and not es.run_events:
+                task.task_narrative = TaskNarrative(
+                    outcome=outcome,
+                    headline="Run stopped before any step completed.",
+                    points=[],
+                )
+                return
             dev = task.run_summary.deviations if task.run_summary else []
             raw = await self._reasoning_engine.summarize_run(
                 goal=task.goal, outcome=outcome,
@@ -3767,6 +3797,21 @@ class AgentOrchestrator:
             steps_total=total,
             deviations=deviations,
         )
+
+    @staticmethod
+    def _failure_message_from_step(step_result: "StepRunResult") -> str:
+        """Best available human-readable reason a step exhausted its retries, for the durable
+        failure_summary.message: prefer the last patch/validation failure excerpt, then the
+        last non-empty step diagnostic, then a generic attempts-count fallback."""
+        lf = step_result.last_failure or {}
+        excerpt = str(lf.get("excerpt") or "").strip()
+        code = str(lf.get("failure_code") or "").strip()
+        if excerpt:
+            return f"{code}: {excerpt}" if code else excerpt
+        for diag in reversed(step_result.diagnostics):
+            if diag.message.strip():
+                return diag.message
+        return f"Step did not complete after {step_result.attempts_used} attempt(s)."
 
     def _write_failure_summary(
         self,

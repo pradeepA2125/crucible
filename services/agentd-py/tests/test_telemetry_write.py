@@ -87,3 +87,41 @@ async def test_failed_run_populates_both_summaries(tmp_path: Path, monkeypatch):
     # persisted, not just in-memory
     stored = await orch._store.get("task-1")
     assert stored.failure_summary is not None and stored.run_summary is not None
+
+
+@pytest.mark.asyncio
+async def test_step_exhaustion_failure_summary_carries_step_and_message(tmp_path: Path):
+    """Smoke-found: a step that exhausts its retries (no exception raised) FAILED with an
+    EMPTY failure_summary.message and no step_id — the ErrorCard 'Error detail' was blank.
+    The failing step's id + last error must be captured durably."""
+    from agentd.domain.models import StepRunResult
+
+    real = tmp_path / "ws"
+    real.mkdir()
+    (real / "a.py").write_text("x=1\n")
+    orch = _orch(tmp_path)
+    shadow = await orch._workspace_manager.prepare("task-1", str(real))
+    task = TaskRecord(task_id="task-1", goal="g", workspace_path=str(real),
+                      shadow_workspace_path=str(shadow.shadow_path), budget=TaskBudget(),
+                      status=TaskStatus.PLANNED, plan=_plan(2))
+    await orch._store.create(task)
+
+    async def _exhausted(task_, step, *a, **k):
+        return StepRunResult(
+            step_id=step.id, outcome="attempts_exhausted",
+            validation_result="validation_failed", attempts_used=5,
+            last_failure={
+                "failure_code": "apply_error", "file": None, "op_id": None,
+                "excerpt": "create_file op missing required 'content' field",
+            },
+        )
+
+    orch._run_step_with_retries = _exhausted  # type: ignore[method-assign]
+    out = await orch._execute_plan(task, shadow, RetrievalContext.empty(), [], 0)
+
+    assert out.status == TaskStatus.FAILED
+    assert out.failure_summary is not None
+    assert out.failure_summary.step_id == "s1"
+    assert out.failure_summary.step_index == 1
+    assert "content" in out.failure_summary.message
+    assert out.failure_summary.message != ""

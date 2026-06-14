@@ -277,6 +277,34 @@ describe("inputAvailability", () => {
 
 // ── 4. InputArea ──────────────────────────────────────────────────────────────
 
+describe("InputArea — Send toggles to Stop while a chat turn streams", () => {
+  it("showStop: the right-hand action is Stop (posts stopTurn) and there is NO Send button", () => {
+    render(
+      <InputArea
+        availability={makeAvailability({ showStop: true, disabled: true })}
+        draft=""
+        onDraftChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^send$/i })).toBeNull();
+    const stop = screen.getByRole("button", { name: /^stop$/i });
+    fireEvent.click(stop);
+    expect(postMessage).toHaveBeenCalledWith({ type: "stopTurn" });
+  });
+
+  it("not streaming: Send is shown and there is no chat Stop button", () => {
+    render(
+      <InputArea
+        availability={makeAvailability({ showStop: false })}
+        draft="hi"
+        onDraftChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^stop$/i })).toBeNull();
+  });
+});
+
 describe("InputArea — Enter sends text and clears draft", () => {
   it("Enter on non-empty draft posts sendMessage and calls onDraftChange('')", () => {
     const onDraftChange = vi.fn();

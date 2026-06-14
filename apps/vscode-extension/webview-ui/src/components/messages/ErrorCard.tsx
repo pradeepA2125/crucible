@@ -119,10 +119,14 @@ export function ErrorCard({ taskId, status, detail, narrative, onDismiss }: Prop
       >
         {resolved === null ? (
           <>
-            <BtnPrimary flex icon="retry" onClick={handleResume}>
-              Resume
-            </BtnPrimary>
-            <BtnGhost onClick={handleReplan}>
+            {/* Resume only makes sense for FAILED — an ABORTED task has had its shadow
+                cleaned, so resume (stage:execute) would error ("parent shadow gone"). */}
+            {status === "FAILED" && (
+              <BtnPrimary flex icon="retry" onClick={handleResume}>
+                Resume
+              </BtnPrimary>
+            )}
+            <BtnGhost className={status !== "FAILED" ? "flex-1" : ""} onClick={handleReplan}>
               Re-plan
             </BtnGhost>
             <BtnDanger onClick={handleDismiss}>
