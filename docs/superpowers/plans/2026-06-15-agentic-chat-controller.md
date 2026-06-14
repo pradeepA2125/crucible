@@ -19,8 +19,9 @@
 - ✅ **B** `chat/controller_prompts.py` (flat schema + phase gating + builders), `reasoning/react_common.py`, `create_controller_step` (Protocol+impl+scripted)
 - ✅ **C** `chat/controller_phase.py` (`ControllerPhaseSM` DECIDE→EDIT)
 - ✅ **D0** `patch/diffing.py`+`patch/inline_apply.py`+`workspace/promote.py` (engine `_compute_diff_entries`/`_partial_promote` delegate; `_cap_unified_diff` re-exported) · ✅ **D1** `chat/edit_session.py` (`TurnEditSession`) — **code-reviewed clean**
+- ✅ **E1** `chat/controller_loop.py` (`ControllerLoop` + `ControllerOutcome`) — explore (tool_call) + answer terminal + dedup/malformed-correction (mirrors PlanningLoop). Green, ruff-clean.
 
-**NEXT:** **Phase E** (`chat/controller_loop.py` `ControllerLoop`, E1–E4, mirrors `PlanningLoop`) → **F** (F0 thread-gate `/live` plumbing + ChatController + gates/routes; **review**) → **G/H** (flag + invariants + full suite; **review at H2**) → **I** (frontend; **needs `npm install` at repo root first**) → **J** (live smoke — interactive dev-host, needs the human) → **K** (delete legacy explore→classify→route).
+**NEXT:** **E2** (clarify + propose_mode terminals — replace the `raise NotImplementedError(atype)` in `controller_loop.py`) → E3 (edit + submit_changes; `run()` gains `auto_accept_edits`/`edit_decision_cb`) → E4 (exhaustion guard) → **F** (F0 thread-gate `/live` plumbing + ChatController + gates/routes; **review**) → **G/H** (flag + invariants + full suite; **review at H2**) → **I** (frontend; **needs `npm install` at repo root first**) → **J** (live smoke — interactive dev-host, needs the human) → **K** (delete legacy explore→classify→route).
 
 **Run/resume commands:** `cd services/agentd-py && source .venv/bin/activate` (venv already built with `pip install -e .[dev]`). Test: `python -m pytest tests/<file> -q`. Full suite at H2.
 
