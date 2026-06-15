@@ -177,6 +177,14 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
     applyInlineChange: async (_inlineTaskId: string) => {},
     discardInlineChange: async (_inlineTaskId: string) => {},
     sendStepDecision: async (_taskId: string, _decision: "accept" | "discard") => {},
+    postModeDecision: async function* (_threadId: string, _mode: string) {
+      yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+    },
+    postEditDecision: async (
+      _threadId: string,
+      _decision: "accept" | "reject",
+      _reason?: string,
+    ) => {},
   };
 }
 
@@ -560,6 +568,37 @@ describe("AiEditorController — chat", () => {
     expect(toolEvents[0].tool).toBe("search_code");
     expect(toolEvents[0].source).toBe("explore");
     expect(hideCalled).toBe(true);
+  });
+
+  test("handleEditDecisionFromChat posts the edit decision (plain POST, no stream consume)", async () => {
+    const editCalls: Array<{ threadId: string; decision: string; reason: string }> = [];
+
+    const editBackend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+        rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+      }),
+      postEditDecision: async (threadId, decision, reason) => {
+        editCalls.push({ threadId, decision, reason: reason ?? "" });
+      },
+    };
+
+    const store = new MemorySessionStore();
+    const controller = new AiEditorController(
+      () => editBackend,
+      store,
+      createSettings(),
+      createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+
+    await controller.handleEditDecisionFromChat("thread-1", "accept", "looks good");
+    controller.dispose();
+
+    expect(editCalls).toEqual([
+      { threadId: "thread-1", decision: "accept", reason: "looks good" },
+    ]);
   });
 });
 

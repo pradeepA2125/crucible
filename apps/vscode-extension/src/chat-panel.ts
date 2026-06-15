@@ -45,6 +45,8 @@ export class ChatPanel {
     private readonly onValidationDecision: ValidationDecisionHandler,
     private readonly onCommandDecision: CommandDecisionHandler,
     private readonly onStepDecision: StepDecisionHandler,
+    private readonly onModeDecision: ModeDecisionHandler,
+    private readonly onEditDecision: EditDecisionHandler,
     private readonly onAcceptTask: AcceptTaskHandler,
     private readonly onRejectTask: RejectTaskHandler,
     private readonly onResumeTask: ResumeTaskHandler,
@@ -137,6 +139,11 @@ export class ChatPanel {
       } else if (m["type"] === "stepDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "discard";
         p = this.onStepDecision(m["taskId"] as string, decision);
+      } else if (m["type"] === "modeDecision") {
+        p = this.onModeDecision(m["threadId"] as string, m["mode"] as string);
+      } else if (m["type"] === "editDecision") {
+        const decision = m["decision"] === "accept" ? "accept" : "reject";
+        p = this.onEditDecision(m["threadId"] as string, decision, (m["reason"] as string) ?? "");
       } else if (m["type"] === "acceptTask") {
         p = this.onAcceptTask(m["taskId"] as string);
       } else if (m["type"] === "rejectTask") {

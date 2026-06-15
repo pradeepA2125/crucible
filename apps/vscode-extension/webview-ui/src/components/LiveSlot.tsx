@@ -4,6 +4,8 @@ import { CommandGate } from "./messages/gates/CommandGate";
 import { ScopeGate } from "./messages/gates/ScopeGate";
 import { ValidationGate } from "./messages/gates/ValidationGate";
 import { StepGate } from "./messages/gates/StepGate";
+import { ModeGate } from "./messages/gates/ModeGate";
+import { EditGate } from "./messages/gates/EditGate";
 import { PlanCard } from "./messages/PlanCard";
 import { ReviewCard } from "./messages/ReviewCard";
 import { ErrorCard } from "./messages/ErrorCard";
@@ -27,6 +29,10 @@ function GateDispatch({ taskId, kind, payload }: GateDispatchProps) {
       return <ValidationGate taskId={taskId} payload={payload} />;
     case "step":
       return <StepGate taskId={taskId} payload={payload} />;
+    case "mode":
+      return <ModeGate taskId={taskId} payload={payload} />;
+    case "edit":
+      return <EditGate taskId={taskId} payload={payload} />;
   }
 }
 

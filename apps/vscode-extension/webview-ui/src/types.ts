@@ -134,6 +134,9 @@ export type WebviewMessage =
   | { type: "validationDecision"; taskId: string; decision: "accept" | "reject" }
   | { type: "commandDecision"; taskId: string; approve: boolean; remember?: boolean; scope?: string; ruleValue?: string }
   | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" }
+  // Agentic chat controller: mode-recommendation gate pick + per-edit review decision
+  | { type: "modeDecision"; threadId: string; mode: string }
+  | { type: "editDecision"; threadId: string; decision: "accept" | "reject"; reason: string }
   | { type: "acceptTask"; taskId: string }
   | { type: "rejectTask"; taskId: string; reason: string }
   | { type: "resumeTask"; taskId: string; stage: "plan" | "execute" }
