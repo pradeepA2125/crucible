@@ -232,6 +232,7 @@ async def test_resolve_mode_create_task_uses_plan_sketch_not_last_message(tmp_pa
         ):
             captured["goal"] = goal
             captured["step_review_auto_accept"] = step_review_auto_accept
+            captured["explore_context"] = explore_context
             return "task-xyz"
 
         async def await_plan_ready(self, task_id):
@@ -243,6 +244,9 @@ async def test_resolve_mode_create_task_uses_plan_sketch_not_last_message(tmp_pa
         "plan_sketch": "Create src/pricing/ package with discount.py and tax.py + tests",
         "options": [{"mode": "create_task", "label": "Plan it as a task"}]}))
     ctrl._step_review_by_thread[th.thread_id] = True
+    ctrl._explore_by_thread[th.thread_id] = [
+        {"tool": "read_file", "args": {"path": "src/pricing.py"},
+         "result": "def price(): ...", "is_error": False}]
 
     await ctrl.resolve_mode(
         th.thread_id, "create_task", channel_id=f"chat:{th.thread_id}", goal="keep it minimal")
@@ -250,3 +254,5 @@ async def test_resolve_mode_create_task_uses_plan_sketch_not_last_message(tmp_pa
     # The task goal is the conversation-aware sketch, NOT the bare last message.
     assert captured["goal"] == "Create src/pricing/ package with discount.py and tax.py + tests"
     assert captured["step_review_auto_accept"] is False  # review=True → gate each step
+    # The controller's exploration is forwarded (not an empty list → planner re-explores).
+    assert captured["explore_context"] == ctrl._explore_by_thread[th.thread_id]

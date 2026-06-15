@@ -68,6 +68,13 @@ class ChatController:
         # gate — read back in resolve_mode so the edit re-entry honors it (the
         # /mode-decision POST carries no step_review; smoke-found gap #4).
         self._step_review_by_thread: dict[str, bool | None] = {}
+        # Per-thread accumulated tool-exploration (ToolEventView → {tool,args,result,
+        # is_error}) so a create_task handoff forwards the controller's findings as the
+        # planner's pre_explored_context (parity with the old ChatAgent large_change
+        # path) instead of making it re-explore cold.
+        # TODO(controller): unbounded per-thread growth — same eviction story as
+        # _histories (deferred to the agent-memory module).
+        self._explore_by_thread: dict[str, list[dict[str, object]]] = {}
 
     def _build_registry(self) -> AggregatingToolRegistry:
         return AggregatingToolRegistry([BuiltinToolSource(
@@ -155,6 +162,14 @@ class ChatController:
             auto_accept_edits=(not is_review), edit_decision_cb=edit_cb,
             edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb)
         self._histories[thread_id] = outcome.history or []
+        # Accumulate this turn's tool results for a possible create_task handoff
+        # (map the ToolEventView pills to the planner's pre_explored_context shape).
+        if outcome.tool_events:
+            acc = self._explore_by_thread.setdefault(thread_id, [])
+            acc.extend(
+                {"tool": e.get("tool"), "args": e.get("args", {}),
+                 "result": e.get("output", ""), "is_error": e.get("isError", False)}
+                for e in outcome.tool_events)
         return outcome
 
     async def _retrieval_delta_cb(self, touched: list[str]) -> str | None:
@@ -357,10 +372,12 @@ class ChatController:
                 raise RuntimeError("create_task mode requires an orchestrator")
             # Thread the "Review each step" toggle through to the task (matches the
             # edit path + the old ChatAgent large_change handoff): True → gate each
-            # step, None → env default. (explore_context stays [] in v1 — the
-            # PlanningAgent re-explores; forwarding the controller's findings is a
-            # follow-up.)
+            # step, None → env default.
             review = self._step_review_by_thread.get(thread_id)
+            # Forward the controller's accumulated exploration as the planner's
+            # pre_explored_context (parity with ChatAgent large_change) so it doesn't
+            # re-explore cold.
+            explore_context = self._explore_by_thread.get(thread_id, [])
             # Use the agent's plan_sketch as the task goal, NOT the bare last message.
             # The sketch is an LLM synthesis of the WHOLE conversation (explored +
             # seed_history), so it survives clarify/refine turns where the last message
@@ -370,7 +387,7 @@ class ChatController:
             task_goal = sketch or goal
             task_id = await self._orchestrator.create_task_from_chat(
                 thread_id=thread_id, goal=task_goal, workspace_path=self._workspace_path,
-                explore_context=[], store=self._store,
+                explore_context=explore_context, store=self._store,
                 step_review_auto_accept=(not review) if review is not None else None)
             self._store.append_message(thread_id, ChatMessage(
                 role="agent", content=task_id, type="task_card", task_id=task_id,

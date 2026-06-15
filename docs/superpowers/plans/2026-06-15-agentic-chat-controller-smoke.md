@@ -143,4 +143,6 @@ Secondary (best-effort): J2, J6, J8, J10.
 - **Multi-edit / multiple review screens** ✓: a 4-file docstring task with explicit "separate edit per file" → 5 EditGates (sq/discount/taxutil✗/taxutil✓/mathutil), traced in `[controller]` logs (`action=edit` per file + `submit_changes`). Batched task (no instruction) → 1 multi-file gate (model choice).
 - Malformed `files=[None]` edit ops (qwen3.6) → caught by `except → PATCH FAILED → retry`, persisted nothing (DB diff_card count correct).
 
-**Still open:** ModeGate visual pass (#7); `explore_context=[]` not forwarded to create_task (planner re-explores; v1 limitation); J7 end-to-end, J2/J8/J10 not driven.
+**create_task handoff completed** (post-session): goal = the agent's `plan_sketch` (conversation-aware synthesis, not the bare last message); `step_review` threaded through; `explore_context` now forwards the controller's accumulated tool results (ToolEventView → `{tool,args,result,is_error}`) as the planner's `pre_explored_context` — parity with the old ChatAgent large_change path.
+
+**Still open:** ModeGate visual pass (#7); J7 end-to-end, J2/J8/J10 not driven.
