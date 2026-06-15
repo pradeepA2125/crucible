@@ -5,7 +5,8 @@ from agentd.chat.controller_prompts import (
 
 
 def test_system_prompt_carries_tools_not_retrieval():
-    sp = format_controller_system_prompt([{"name": "read_file", "description": "d", "parameters": {}}])
+    sp = format_controller_system_prompt(
+        [{"name": "read_file", "description": "d", "parameters": {}}])
     assert "read_file" in sp
     assert "retrieval_seed" not in sp  # retrieval never in the system string
 

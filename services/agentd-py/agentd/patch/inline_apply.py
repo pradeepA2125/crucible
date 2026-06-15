@@ -14,7 +14,7 @@ from agentd.patch.engine import PatchEngine
 async def apply_ops(
     patch_engine: PatchEngine,
     base_dir: Path,
-    patch_ops: list[dict],
+    patch_ops: list[dict[str, object]],
     allowed_files: set[str],
 ) -> list[str]:
     """Apply patch_ops to base_dir; return the touched relative paths."""

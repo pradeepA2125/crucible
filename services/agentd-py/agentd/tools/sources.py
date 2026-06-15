@@ -19,7 +19,7 @@ class ToolSource(Protocol):
 
     def definitions(self) -> list[ToolDefinition]: ...
     def owns(self, tool: str) -> bool: ...
-    async def execute(self, tool: str, args: dict) -> ToolOutput: ...
+    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput: ...
 
 
 class BuiltinToolSource:
@@ -52,7 +52,7 @@ class BuiltinToolSource:
     def owns(self, tool: str) -> bool:
         return any(d.name == tool for d in self.definitions())
 
-    async def execute(self, tool: str, args: dict) -> ToolOutput:
+    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
         return await self._inner.execute(tool, args)
 
 
@@ -75,7 +75,7 @@ class AggregatingToolRegistry:
     def definitions(self) -> list[ToolDefinition]:
         return [d for s in self._sources for d in s.definitions()]
 
-    async def execute(self, tool: str, args: dict) -> ToolOutput:
+    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
         for s in self._sources:
             if s.owns(tool):
                 return await s.execute(tool, args)
@@ -83,5 +83,6 @@ class AggregatingToolRegistry:
 
     def use_shadow_for_reads(self) -> None:
         for s in self._sources:
-            if hasattr(s, "use_shadow_for_reads"):
-                s.use_shadow_for_reads()  # type: ignore[attr-defined]
+            flip = getattr(s, "use_shadow_for_reads", None)
+            if callable(flip):
+                flip()

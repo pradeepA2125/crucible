@@ -4,7 +4,8 @@ from agentd.reasoning.react_common import assistant_turn, dedup_key
 
 
 def test_assistant_turn_strips_thought():
-    entry = assistant_turn({"type": "tool_call", "thought": "secret", "tool": "read_file", "args": {}})
+    entry = assistant_turn(
+        {"type": "tool_call", "thought": "secret", "tool": "read_file", "args": {}})
     assert entry["role"] == "assistant"
     body = json.loads(entry["content"])
     assert "thought" not in body and body["type"] == "tool_call"

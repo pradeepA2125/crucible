@@ -94,7 +94,8 @@ def build_controller_step_payload(
     seed = plan_context.get("retrieval_seed")
     if seed:
         payload["retrieval_seed"] = seed  # FROZEN; never mutated in place
-    max_iters = int(plan_context.get("max_iters", _DEFAULT_MAX_ITERS))  # type: ignore[arg-type]
+    raw_max = plan_context.get("max_iters", _DEFAULT_MAX_ITERS)
+    max_iters = raw_max if isinstance(raw_max, int) else _DEFAULT_MAX_ITERS
     iteration = len(history) // 2
     if history:
         payload["conversation_history"] = history

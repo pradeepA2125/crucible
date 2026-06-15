@@ -53,7 +53,7 @@ class TurnEditSession:
         self._touched_ever.update(touched)
         return self._shadow
 
-    async def apply(self, patch_ops: list[dict]) -> list[DiffEntry]:
+    async def apply(self, patch_ops: list[dict[str, object]]) -> list[DiffEntry]:
         touched = [str(op["file"]) for op in patch_ops if "file" in op]
         shadow = await self._ensure_shadow(touched)
         applied = await apply_ops(self._patch, shadow, patch_ops, allowed_files=set(touched))
