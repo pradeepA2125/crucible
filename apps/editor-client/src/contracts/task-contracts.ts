@@ -286,6 +286,11 @@ export interface BackendTaskClient {
   getChatThread(threadId: string): Promise<ChatThread>;
   getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
   sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent>;
+  // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
+  // produce live events); the per-edit gate is a plain JSON ack (its continuation rides
+  // the already-open message stream).
+  postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent>;
+  postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;
   applyInlineChange(inlineTaskId: string): Promise<void>;
   discardInlineChange(inlineTaskId: string): Promise<void>;
 }

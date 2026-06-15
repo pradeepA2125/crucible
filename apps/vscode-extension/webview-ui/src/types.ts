@@ -53,7 +53,7 @@ export interface ToolEventView {
 
 // ── Live slot views ──────────────────────────────────────────────────────────
 export interface LiveGateView {
-  kind: "command" | "scope" | "validation" | "step";
+  kind: "command" | "scope" | "validation" | "step" | "mode" | "edit";
   taskId: string;
   payload: Record<string, unknown>;  // pending_* payload, snake_case
 }

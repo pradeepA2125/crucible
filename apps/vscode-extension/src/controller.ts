@@ -82,7 +82,7 @@ export interface ControllerUI {
 }
 
 export interface LiveGateView {
-  kind: "command" | "step" | "scope" | "validation";
+  kind: "command" | "step" | "scope" | "validation" | "mode" | "edit";
   payload: Record<string, unknown>;
   taskId: string;
 }
@@ -1453,11 +1453,13 @@ export class AiEditorController {
     }
     this.lastLiveSignature = signature;
 
-    if (live.pendingGate && live.activeTaskId) {
+    if (live.pendingGate) {
       this.ui.renderLiveGate({
         kind: live.pendingGate.kind,
         payload: live.pendingGate.payload,
-        taskId: live.activeTaskId,
+        // Controller gates (mode/edit) have NO task — fall back to the thread id so
+        // the gate still renders (the render guard previously required activeTaskId).
+        taskId: live.activeTaskId ?? threadId,
       });
     } else {
       this.ui.clearLiveGate();

@@ -195,6 +195,58 @@ export class HttpBackendClient implements BackendTaskClient {
     );
   }
 
+  // Controller per-edit review gate (Phase F3): a plain JSON ack — the loop's
+  // continuation rides the already-open message SSE stream.
+  async postEditDecision(
+    threadId: string,
+    decision: "accept" | "reject",
+    reason?: string
+  ): Promise<void> {
+    await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/edit-decision`,
+      { method: "POST", body: JSON.stringify({ decision, reason: reason ?? "" }) }
+    );
+  }
+
+  // Controller mode gate (Phase F2): a STREAMED dispatch (edit/create_task produce
+  // live events), consumed like sendChatMessage.
+  async *postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent> {
+    const response = await this.fetchFn(
+      `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/mode-decision`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Mode decision failed (${response.status}) for thread ${threadId}`);
+    }
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
+          } catch {
+            // skip malformed SSE line
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  }
+
   async resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse> {
     const body: Record<string, unknown> = { stage: options?.stage ?? "execute" };
     if (options?.budgetOverride) {
