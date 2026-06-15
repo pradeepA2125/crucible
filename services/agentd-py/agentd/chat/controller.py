@@ -232,6 +232,15 @@ class ChatController:
         fut.set_result(decision)
         return True
 
+    def _write_breadcrumb(self, thread_id: str, channel_id: str, text: str) -> None:
+        """Persist a durable transcript breadcrumb AND broadcast it live (mirror
+        engine.write_chat_breadcrumb). The live mode/edit gate is ephemeral; this is
+        the permanent record of the user's decision so history reads as a narrative."""
+        self._store.append_message(thread_id, ChatMessage(
+            role="agent", content=text, type="text", metadata={"breadcrumb": True}))
+        self._broadcaster.broadcast(channel_id, {
+            "type": "chat_breadcrumb", "payload": {"text": text, "task_id": ""}})
+
     async def resolve_mode(
         self, thread_id: str, mode: str, *, channel_id: str, goal: str,
     ) -> None:
@@ -248,10 +257,17 @@ class ChatController:
             logger.info("[controller] resolve_mode no-op: no pending mode gate (thread=%s)",
                         thread_id)
             return
+        # Friendly record of the choice — read the option label from the gate BEFORE
+        # clearing it so the breadcrumb reads "▸ You chose: Edit inline now" not a raw mode.
+        label = mode
+        for opt in (gate.payload.get("options") or []):
+            if isinstance(opt, dict) and opt.get("mode") == mode:
+                label = str(opt.get("label") or mode)
+                break
         self._store.set_controller_gate(thread_id, None)
-        self._broadcaster.broadcast(channel_id, {
-            "type": "chat_breadcrumb",
-            "payload": {"text": f"▸ Proceeding: {mode}", "task_id": ""}})
+        # PERSIST + broadcast (mirror engine.write_chat_breadcrumb): a bare broadcast
+        # dies on reload, leaving no record of what the user chose.
+        self._write_breadcrumb(thread_id, channel_id, f"▸ You chose: {label}")
 
         if mode in ("edit", "explain"):
             if mode == "edit" and self._orchestrator is None:

@@ -59,6 +59,23 @@ async def test_mode_decision_create_task_dispatches(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_mode_decision_persists_choice_breadcrumb(tmp_path: Path):
+    """The chosen mode must persist as a durable breadcrumb (not just a live
+    broadcast) so a reload shows what the user picked."""
+    store = ChatThreadStore(tmp_path / "c.sqlite3")
+    th = store.create_thread(str(tmp_path), title="t")
+    ctrl = _controller(tmp_path, store, ScriptedReasoningEngine(None, []), _Orch())
+    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
+        "options": [{"mode": "create_task", "label": "Plan it as a task"}]}))
+    await ctrl.resolve_mode(
+        th.thread_id, "create_task", channel_id=f"chat:{th.thread_id}", goal="g")
+    msgs = store.get_thread(th.thread_id).messages
+    crumb = [m for m in msgs if (m.metadata or {}).get("breadcrumb")]
+    assert crumb, "no persisted breadcrumb for the mode choice"
+    assert "Plan it as a task" in crumb[0].content  # friendly label, not raw mode
+
+
+@pytest.mark.asyncio
 async def test_mode_decision_double_dispatch_guarded(tmp_path: Path):
     """A second /mode-decision after the gate is resolved must NOT re-dispatch
     (no double task creation)."""
