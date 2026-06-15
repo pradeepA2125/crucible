@@ -216,3 +216,37 @@ async def test_resolve_mode_edit_honors_remembered_step_review(tmp_path: Path):
 
     assert captured["step_review"] is True  # NOT the old hardcoded False
     assert captured["phase"] == "EDIT"
+
+
+@pytest.mark.asyncio
+async def test_resolve_mode_create_task_uses_plan_sketch_not_last_message(tmp_path: Path):
+    store = ChatThreadStore(tmp_path / "c.sqlite3")
+    th = store.create_thread(str(tmp_path), title="t")
+
+    captured: dict[str, object] = {}
+
+    class _Orch:
+        async def create_task_from_chat(
+            self, *, thread_id, goal, workspace_path, explore_context, store,
+            step_review_auto_accept=None,
+        ):
+            captured["goal"] = goal
+            captured["step_review_auto_accept"] = step_review_auto_accept
+            return "task-xyz"
+
+        async def await_plan_ready(self, task_id):
+            return None
+
+    ctrl = _controller(tmp_path, store, orchestrator=_Orch())
+    # A vague last message + a concrete plan_sketch from the agent's propose_mode.
+    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
+        "plan_sketch": "Create src/pricing/ package with discount.py and tax.py + tests",
+        "options": [{"mode": "create_task", "label": "Plan it as a task"}]}))
+    ctrl._step_review_by_thread[th.thread_id] = True
+
+    await ctrl.resolve_mode(
+        th.thread_id, "create_task", channel_id=f"chat:{th.thread_id}", goal="keep it minimal")
+
+    # The task goal is the conversation-aware sketch, NOT the bare last message.
+    assert captured["goal"] == "Create src/pricing/ package with discount.py and tax.py + tests"
+    assert captured["step_review_auto_accept"] is False  # review=True → gate each step

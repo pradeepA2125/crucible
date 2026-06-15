@@ -361,8 +361,15 @@ class ChatController:
             # PlanningAgent re-explores; forwarding the controller's findings is a
             # follow-up.)
             review = self._step_review_by_thread.get(thread_id)
+            # Use the agent's plan_sketch as the task goal, NOT the bare last message.
+            # The sketch is an LLM synthesis of the WHOLE conversation (explored +
+            # seed_history), so it survives clarify/refine turns where the last message
+            # ("keep it minimal") is meaningless standalone. Fall back to the raw goal
+            # if the model omitted a sketch.
+            sketch = str(gate.payload.get("plan_sketch") or "").strip()
+            task_goal = sketch or goal
             task_id = await self._orchestrator.create_task_from_chat(
-                thread_id=thread_id, goal=goal, workspace_path=self._workspace_path,
+                thread_id=thread_id, goal=task_goal, workspace_path=self._workspace_path,
                 explore_context=[], store=self._store,
                 step_review_auto_accept=(not review) if review is not None else None)
             self._store.append_message(thread_id, ChatMessage(
