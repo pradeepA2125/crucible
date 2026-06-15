@@ -311,7 +311,7 @@ def _scope_remember_env() -> ScopeRemember:
         return ScopeRemember.TASK
 
 
-from agentd.chat.agent import ChatAgent
+from agentd.chat.controller_factory import select_chat_handler
 from agentd.chat.storage import ChatThreadStore
 
 _chat_db_path = Path(os.getenv("AI_EDITOR_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
@@ -355,8 +355,9 @@ _chat_model = os.getenv(
     _BACKEND_MODEL_ENVVAR.get(reasoning_backend, "AI_EDITOR_OPENAI_MODEL"), "gpt-4o"
 )
 
-# scripted backend has no provider transport — ChatAgent requires a real one
-_chat_agent = ChatAgent(
+# scripted backend has no provider transport — both chat handlers require a real one.
+# AI_EDITOR_CHAT_CONTROLLER flag-selects the new ChatController vs the legacy ChatAgent.
+_chat_agent = select_chat_handler(
     workspace_path=_chat_workspace_path,
     transport=transport,  # type: ignore[possibly-unbound]  # defined for all real backends
     model=_chat_model,
