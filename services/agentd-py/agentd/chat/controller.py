@@ -139,9 +139,25 @@ class ChatController:
             if step_review is True else None
         outcome = await loop.run(
             plan_context, seed_history=seed_history,
-            auto_accept_edits=(step_review is not True), edit_decision_cb=edit_cb)
+            auto_accept_edits=(step_review is not True), edit_decision_cb=edit_cb,
+            retrieval_delta_cb=self._retrieval_delta_cb)
         self._histories[thread_id] = outcome.history or []
         return outcome
+
+    async def _retrieval_delta_cb(self, touched: list[str]) -> str | None:
+        """Append-only retrieval delta after an accepted edit (spec §6).
+
+        v1 returns a compact pointer note rather than recomputed neighbors: the
+        edits are instant-promoted to real, so the live tools (read_file/search_code/
+        query_graph) are the always-current source; a real neighbor recompute would
+        need a fresh snapshot, which the self-updating watcher rebuilds async. The
+        note never touches `retrieval_seed` (cache-prefix immutability)."""
+        if not touched:
+            return None
+        return (
+            f"Workspace changed: edited {touched}. These edits are live on the real "
+            "workspace — use read_file/search_code for current contents and query_graph "
+            "for updated neighbors. (The retrieval seed is from session start.)")
 
     async def _finish(
         self, thread_id: str, channel_id: str, outcome: ControllerOutcome,

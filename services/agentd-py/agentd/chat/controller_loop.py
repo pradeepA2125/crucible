@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from agentd.tools.sources import AggregatingToolRegistry
 
     EditDecisionCb = Callable[[list[DiffEntry]], Awaitable[dict[str, object]]]
+    # Given the files an accepted edit touched, return a compact retrieval-refresh
+    # note (pointers only, no bodies) to append to history — or None.
+    RetrievalDeltaCb = Callable[[list[str]], Awaitable[str | None]]
 
 
 class ControllerLoopExhausted(Exception):
@@ -65,6 +68,7 @@ class ControllerLoop:
         seed_history: list[dict[str, object]] | None = None,
         auto_accept_edits: bool = False,
         edit_decision_cb: EditDecisionCb | None = None,
+        retrieval_delta_cb: RetrievalDeltaCb | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -155,9 +159,18 @@ class ControllerLoop:
                         await self._edit.reject()  # restore shadow from real (shadow==real)
                 history.append(assistant_turn(resp))
                 if accepted:
+                    touched = [d.path for d in diff]
                     history.append({
                         "role": "tool_result", "tool": "edit",
-                        "content": f"applied+promoted: {[d.path for d in diff]}"})
+                        "content": f"applied+promoted: {touched}"})
+                    # Append-only retrieval delta (spec §6): never rewrites the seed,
+                    # only adds a compact refresh note to the cached tail.
+                    if retrieval_delta_cb is not None:
+                        delta = await retrieval_delta_cb(touched)
+                        if delta:
+                            history.append({
+                                "role": "tool_result", "tool": "retrieval_refresh",
+                                "content": delta})
                 else:
                     history.append({
                         "role": "tool_result", "tool": "edit",
