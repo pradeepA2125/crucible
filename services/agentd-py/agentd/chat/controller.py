@@ -103,14 +103,17 @@ class ChatController:
         phase: str | None = None,
     ) -> ControllerOutcome:
         sm = ControllerPhaseSM()
+        # Edits only happen in EDIT phase (entered via /mode-decision). A DECIDE turn
+        # never reaches the edit branch, so the session — which needs the orchestrator's
+        # workspace_manager/patch_engine — is built lazily only when editing.
+        edit = None
         if phase == "EDIT":
             sm.enter_edit_mode()
-        edit = None
-        if self._orchestrator is not None:
-            edit = TurnEditSession(
-                turn_id=thread_id, real_path=Path(self._workspace_path),
-                workspace_manager=self._orchestrator._workspace_manager,
-                patch_engine=self._orchestrator._patch_engine)
+            if self._orchestrator is not None:
+                edit = TurnEditSession(
+                    turn_id=thread_id, real_path=Path(self._workspace_path),
+                    workspace_manager=self._orchestrator._workspace_manager,
+                    patch_engine=self._orchestrator._patch_engine)
         loop = ControllerLoop(
             self._reasoning, self._build_registry(), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session=edit)
@@ -148,4 +151,44 @@ class ChatController:
         render purely from the /live poll (CLAUDE.md). Resolved by /mode-decision (F2)."""
         self._store.set_controller_gate(
             thread_id, PendingGate(kind="mode", payload=outcome.payload or {}))
+        self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+    async def resolve_mode(
+        self, thread_id: str, mode: str, *, channel_id: str, goal: str,
+    ) -> None:
+        """Resolve the mode gate (POST /mode-decision). Clears the gate in place
+        (Class-A), writes a breadcrumb, then dispatches: edit/explain re-enter the
+        loop (a new streamed turn), create_task/resume hand off to the orchestrator."""
+        self._store.set_controller_gate(thread_id, None)
+        self._broadcaster.broadcast(channel_id, {
+            "type": "chat_breadcrumb",
+            "payload": {"text": f"▸ Proceeding: {mode}", "task_id": ""}})
+
+        if mode in ("edit", "explain"):
+            phase = "EDIT" if mode == "edit" else None
+            outcome = await self._run_loop(
+                thread_id, channel_id, goal,
+                seed_history=self._histories.get(thread_id), step_review=False, phase=phase)
+            await self._finish(thread_id, channel_id, outcome, step_review=False)
+            return
+
+        if mode == "create_task":
+            if self._orchestrator is None:
+                raise RuntimeError("create_task mode requires an orchestrator")
+            task_id = await self._orchestrator.create_task_from_chat(
+                thread_id=thread_id, goal=goal, workspace_path=self._workspace_path,
+                explore_context=[], store=self._store)
+            self._store.append_message(thread_id, ChatMessage(
+                role="agent", content=task_id, type="task_card", task_id=task_id,
+                metadata={"taskId": task_id}))
+            self._broadcaster.broadcast(
+                channel_id, {"type": "task_card", "payload": {"task_id": task_id}})
+            await self._orchestrator.await_plan_ready(task_id)
+        else:
+            # resume is offered only when a resumable recent task exists; that
+            # plumbing isn't wired in v1, so degrade gracefully rather than guess.
+            logger.warning("[controller] unhandled mode %r — no dispatch", mode)
+            self._broadcaster.broadcast(channel_id, {
+                "type": "chat_breadcrumb",
+                "payload": {"text": f"Mode {mode!r} is not available yet.", "task_id": ""}})
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})

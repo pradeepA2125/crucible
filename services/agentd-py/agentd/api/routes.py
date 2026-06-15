@@ -1162,4 +1162,47 @@ def build_router(
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+        @router.post("/chat/threads/{thread_id}/mode-decision")
+        async def post_mode_decision(thread_id: str, request: dict) -> StreamingResponse:
+            import asyncio as _asyncio_mode
+            import json as _json_mode
+            mode = request.get("mode", "")
+            channel_id = f"chat:{thread_id}"
+            # Read the goal from the thread's last user message — don't trust the client.
+            thread = _chat_agent._store.get_thread(thread_id)
+            goal = ""
+            if thread is not None:
+                goal = next(
+                    (m.content for m in reversed(thread.messages) if m.role == "user"), "")
+            _chat_agent._broadcaster.clear_replay(channel_id)
+            queue = _chat_agent._broadcaster.subscribe(channel_id)
+
+            async def _run_dispatch() -> None:
+                try:
+                    await _chat_agent.resolve_mode(  # type: ignore[attr-defined]
+                        thread_id, mode, channel_id=channel_id, goal=goal)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).exception("resolve_mode failed")
+                    _chat_agent._broadcaster.broadcast(
+                        channel_id, {"type": "chat_done", "payload": {}})
+
+            async def event_stream():
+                dispatch_task = _asyncio_mode.create_task(_run_dispatch())
+                try:
+                    while True:
+                        try:
+                            event = await _asyncio_mode.wait_for(queue.get(), timeout=15.0)
+                        except TimeoutError:
+                            yield ": ping\n\n"
+                            continue
+                        yield f"data: {_json_mode.dumps(event)}\n\n"
+                        if event.get("type") in ("chat_done", "done"):
+                            break
+                finally:
+                    _chat_agent._broadcaster.unsubscribe(channel_id, queue)
+                    dispatch_task.cancel()
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
+
     return router
