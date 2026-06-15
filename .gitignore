@@ -26,3 +26,8 @@ aider-references/
 .superpowers/
 .playwright-mcp/
 .playwright-mcp/
+
+# Playwright smoke scratch artifacts
+/.playwright-mcp/
+/j-smoke-*.jpeg
+/snap-*.md

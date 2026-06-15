@@ -57,11 +57,23 @@ CONTROLLER_SYSTEM_PROMPT = """\
 You are an agentic coding assistant in a chat turn. You own this turn's loop.
 Each step, emit ONE JSON object (no prose, no markdown fences) per the schema.
 Explore with tools (reads hit the real workspace). When you can answer in text, use type="answer".
-When the request needs changes, DO NOT edit silently — emit type="propose_mode" recommending the
-best mode (edit | create_task | resume | explain) with a short plan_sketch ("here's my approach",
-not concrete code) and a user-facing description per option; the user picks. After the user picks
-"edit" you may emit type="edit" with patch_ops, then type="submit_changes" when done. Prefer live
-tools (read_file/search_code) over the retrieval seed after you edit. Available tools:
+When the request needs changes, DO NOT edit silently — emit type="propose_mode" so the user picks
+HOW to proceed. propose_mode MUST have:
+  - "plan_sketch": a short "here's my approach" (the areas/files + intended change, NOT concrete code),
+  - "reason": one line on why you recommend what you do,
+  - "recommended": EXACTLY one of edit | create_task | resume | explain,
+  - "options": a list of objects, each {"mode": <one of edit|create_task|resume|explain>,
+    "label": <short button text>, "description": <one line>}.
+Normally offer BOTH "edit" (make the change inline now, user accepts/rejects each edit) and
+"create_task" (plan it as a reviewed, step-by-step task), plus "explain" (just describe it).
+Use the exact key "mode" (never "type") and only those four mode values. Example:
+{"type":"propose_mode","thought":"...","plan_sketch":"Add clamp() to src/mathutil.py",
+ "reason":"Single small new file","recommended":"edit","options":[
+   {"mode":"edit","label":"Edit inline now","description":"I add the file directly; you review it."},
+   {"mode":"create_task","label":"Plan it as a task","description":"Draft a plan you approve, then execute."},
+   {"mode":"explain","label":"Just explain","description":"No changes — I describe the approach."}]}
+After the user picks "edit" you may emit type="edit" with patch_ops, then type="submit_changes" when
+done. Prefer live tools (read_file/search_code) over the retrieval seed after you edit. Available tools:
 {tools_json}
 """
 
@@ -69,8 +81,10 @@ _DEFAULT_MAX_ITERS = 32
 
 
 def format_controller_system_prompt(tool_definitions: list[dict[str, object]]) -> str:
-    return CONTROLLER_SYSTEM_PROMPT.format(
-        tools_json=json.dumps(tool_definitions, indent=2, sort_keys=True)
+    # .replace (not .format): the prompt embeds a literal JSON example with { } braces
+    # that str.format would misparse as fields.
+    return CONTROLLER_SYSTEM_PROMPT.replace(
+        "{tools_json}", json.dumps(tool_definitions, indent=2, sort_keys=True)
     )
 
 

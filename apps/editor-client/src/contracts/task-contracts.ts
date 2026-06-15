@@ -240,8 +240,11 @@ export const ChatEventSchema = z.object({
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
 // The single gate a thread's current task is waiting on (mirrors backend PendingGate).
+// "mode"/"edit" are the agentic chat-controller gates (no task) — the Zod enum is the
+// RUNTIME gate: a kind missing here makes ThreadLiveStateSchema.parse() throw, which
+// pollThreadLiveState swallows, so the gate silently never renders.
 export const PendingGateSchema = z.object({
-  kind: z.enum(["command", "step", "scope", "validation"]),
+  kind: z.enum(["command", "step", "scope", "validation", "mode", "edit"]),
   payload: z.record(z.unknown()).default({}),
 });
 export type PendingGate = z.infer<typeof PendingGateSchema>;

@@ -166,8 +166,11 @@ class ChatController:
         step_review: bool | None,
     ) -> None:
         if outcome.kind in ("answer", "clarify"):
+            # Persist the turn's tool pills onto the message so they survive a reload
+            # (live SSE pills die) — mirrors ChatAgent's metadata.tool_events.
+            metadata = {"tool_events": outcome.tool_events} if outcome.tool_events else {}
             self._store.append_message(
-                thread_id, ChatMessage(role="agent", content=outcome.text))
+                thread_id, ChatMessage(role="agent", content=outcome.text, metadata=metadata))
             self._broadcaster.broadcast(
                 channel_id, {"type": "chat_response", "payload": {"chunk": outcome.text}})
             self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
@@ -182,6 +185,12 @@ class ChatController:
         """Class-A gate: set a durable thread gate (/live renders it via LiveSlot,
         survives reload) and END the message stream. No SSE mode event — chat gates
         render purely from the /live poll (CLAUDE.md). Resolved by /mode-decision (F2)."""
+        # Persist the exploration pills as a durable record (mirrors ChatAgent writing
+        # a pills-only message before task cards) so they survive a reload; the gate
+        # itself is durable via pending_controller_gate.
+        if outcome.tool_events:
+            self._store.append_message(thread_id, ChatMessage(
+                role="agent", content="", metadata={"tool_events": outcome.tool_events}))
         self._store.set_controller_gate(
             thread_id, PendingGate(kind="mode", payload=outcome.payload or {}))
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
