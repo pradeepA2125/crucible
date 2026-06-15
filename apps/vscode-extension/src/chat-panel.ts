@@ -17,6 +17,9 @@ export type ScopeDecisionHandler = (taskId: string, files: string[], decision: "
 export type ValidationDecisionHandler = (taskId: string, decision: "accept" | "reject") => Promise<void>;
 export type CommandDecisionHandler = (taskId: string, decision: CommandDecision) => Promise<void>;
 export type StepDecisionHandler = (taskId: string, decision: "accept" | "discard") => Promise<void>;
+// Controller gates (Phase F): mode is a streamed dispatch, edit a plain ack.
+export type ModeDecisionHandler = (threadId: string, mode: string) => Promise<void>;
+export type EditDecisionHandler = (threadId: string, decision: "accept" | "reject", reason: string) => Promise<void>;
 export type AcceptTaskHandler = (taskId: string) => Promise<void>;
 export type RejectTaskHandler = (taskId: string, reason: string) => Promise<void>;
 export type ResumeTaskHandler = (taskId: string, stage: "plan" | "execute") => Promise<void>;

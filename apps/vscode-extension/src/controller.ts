@@ -551,13 +551,26 @@ export class AiEditorController {
 
     this.ui.setChatInputEnabled(false);
     this.turnAbort = new AbortController();
+    await this.streamTurn(
+      client.sendChatMessage(
+        threadId,
+        text,
+        this.turnAbort.signal,
+        stepReview !== undefined ? { stepReview } : undefined,
+      ),
+    );
+  }
+
+  /**
+   * Consume a chat-turn SSE stream and render its events. Shared by sendChatMessage
+   * and the controller mode-decision dispatch — both stream the same chat events.
+   * The caller disables input + sets `turnAbort`; this owns the loop and teardown.
+   */
+  private async streamTurn(stream: AsyncIterable<StreamEvent>): Promise<void> {
     let currentTaskId: string | undefined;
     try {
       this.openToolEvent = {}; // defensive: clear any stale ids from a previous turn
-      for await (const event of client.sendChatMessage(
-        threadId, text, this.turnAbort.signal,
-        stepReview !== undefined ? { stepReview } : undefined,
-      )) {
+      for await (const event of stream) {
         if (event.type === "chat_agent_thinking") {
           const message = (event.payload["message"] as string) ?? "Thinking…";
           this.ui.appendChatThinkingEntry(message);
@@ -913,6 +926,39 @@ export class AiEditorController {
     } catch (error) {
       if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to discard step: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Resolve the controller mode gate (Phase F2). A STREAMED dispatch: edit/explain
+   * re-enter the loop and create_task hands off, all producing live chat events —
+   * so consume it through streamTurn exactly like a normal message turn.
+   */
+  async handleModeDecisionFromChat(threadId: string, mode: string): Promise<void> {
+    const client = this.clientForChat();
+    this.ui.setChatInputEnabled(false);
+    this.turnAbort = new AbortController();
+    await this.streamTurn(client.postModeDecision(threadId, mode));
+  }
+
+  /**
+   * Resolve the controller per-edit review gate (Phase F3). A plain POST — the
+   * loop continuation rides the already-open message SSE stream (still consumed by
+   * the in-flight streamTurn), so there is nothing to consume here.
+   */
+  async handleEditDecisionFromChat(
+    threadId: string,
+    decision: "accept" | "reject",
+    reason: string,
+  ): Promise<void> {
+    const client = this.clientForChat();
+    try {
+      await client.postEditDecision(threadId, decision, reason);
+    } catch (error) {
+      if (this.isBenignConflict(error)) return;
+      this.ui.showError(
+        `Failed to send edit decision: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
