@@ -19,6 +19,13 @@ if TYPE_CHECKING:
     from agentd.tools.sources import AggregatingToolRegistry
 
 
+class ControllerLoopExhausted(Exception):
+    """Raised when the controller emits too many consecutive malformed responses.
+
+    Mirrors PlanningLoop's PlanningBudgetExceededError malformed cap.
+    """
+
+
 @dataclass
 class ControllerOutcome:
     kind: str  # "answer" | "clarify" | "propose_mode" | "submit_changes"
@@ -56,6 +63,9 @@ class ControllerLoop:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
         seen: dict[str, int] = {}
+        # Bail only after this many CONSECUTIVE malformed responses (mirror PlanningLoop).
+        _MAX_MALFORMED = 3
+        consecutive_malformed = 0
         plan_context = {**plan_context, "max_iters": max_iters}
         for iteration in range(max_iters + 1):
             resp = await self._reasoning.create_controller_step(
@@ -68,9 +78,15 @@ class ControllerLoop:
                 return ControllerOutcome(
                     kind="answer", text=str(resp.get("answer", "")), history=history)
             if atype not in self._sm.allowed_types():
+                consecutive_malformed += 1
+                if consecutive_malformed > _MAX_MALFORMED:
+                    raise ControllerLoopExhausted(
+                        f"Controller returned {consecutive_malformed} consecutive malformed "
+                        f"responses (last type={atype!r})")
                 history.append(assistant_turn(resp))
                 history.append({"role": "tool_result", "tool": "", "content": MALFORMED_CORRECTION})
                 continue
+            consecutive_malformed = 0
             if atype == "tool_call":
                 if iteration >= max_iters:
                     return ControllerOutcome(
