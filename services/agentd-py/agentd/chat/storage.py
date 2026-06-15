@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agentd.chat.models import ChatMessage, ChatThread
+from agentd.chat.models import ChatMessage, ChatThread, PendingGate
 
 
 class ChatThreadStore:
@@ -32,7 +32,15 @@ class ChatThreadStore:
         existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(chat_threads)")}
         if "active_task_id" not in existing:
             self._conn.execute("ALTER TABLE chat_threads ADD COLUMN active_task_id TEXT")
+        # Controller-turn gate (mode/edit), added after the table shipped.
+        if "controller_gate_json" not in existing:
+            self._conn.execute("ALTER TABLE chat_threads ADD COLUMN controller_gate_json TEXT")
         self._conn.commit()
+
+    @staticmethod
+    def _gate_from_row(row: sqlite3.Row) -> PendingGate | None:
+        raw = row["controller_gate_json"]
+        return PendingGate.model_validate_json(raw) if raw else None
 
     def create_thread(self, workspace_path: str, title: str = "New Chat") -> ChatThread:
         thread_id = f"chat-{uuid.uuid4().hex[:12]}"
@@ -63,6 +71,7 @@ class ChatThreadStore:
                 messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
                 touched_files=json.loads(row["touched_files_json"]),
                 active_task_id=row["active_task_id"],
+                pending_controller_gate=self._gate_from_row(row),
             )
             for row in rows
         ]
@@ -81,7 +90,18 @@ class ChatThreadStore:
             messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
             touched_files=json.loads(row["touched_files_json"]),
             active_task_id=row["active_task_id"],
+            pending_controller_gate=self._gate_from_row(row),
         )
+
+    def set_controller_gate(self, thread_id: str, gate: PendingGate | None) -> None:
+        """Set (or clear, with None) the thread's controller-turn gate. Mirrors
+        set_active_task: an in-place durable update the /live poll renders from."""
+        raw = gate.model_dump_json() if gate is not None else None
+        self._conn.execute(
+            "UPDATE chat_threads SET controller_gate_json = ? WHERE thread_id = ?",
+            (raw, thread_id),
+        )
+        self._conn.commit()
 
     def set_active_task(self, thread_id: str, task_id: str) -> None:
         """Point the thread at its current task. Resume churns the id (parent→child);

@@ -35,6 +35,17 @@ class ChatMessage(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class PendingGate(BaseModel):
+    """The one gate a thread is waiting on, if any.
+
+    command/step/scope/validation are derived from the active *task* status
+    (see live_state._GATE_FIELD). mode/edit are *controller* gates — the
+    controller has no task, so they live on the thread (pending_controller_gate).
+    """
+    kind: Literal["command", "step", "scope", "validation", "mode", "edit"]
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatThread(BaseModel):
     thread_id: str
     workspace_path: str
@@ -46,16 +57,13 @@ class ChatThread(BaseModel):
     # thread; resume updates it to the child id. The durable thread->task link
     # that lets the UI follow task-id churn without losing the gate/plan view.
     active_task_id: str | None = None
+    # Controller-turn gate (mode/edit). The controller has no task, so its gate
+    # lives here (durable, surfaced by /live via resolve_thread_live).
+    pending_controller_gate: PendingGate | None = None
 
 
 class ChatEvent(BaseModel):
     type: str
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class PendingGate(BaseModel):
-    """The one gate a thread's current task is waiting on, if any."""
-    kind: Literal["command", "step", "scope", "validation"]
     payload: dict[str, Any] = Field(default_factory=dict)
 
 

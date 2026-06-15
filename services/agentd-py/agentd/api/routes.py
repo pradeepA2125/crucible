@@ -1088,7 +1088,7 @@ def build_router(
             list-tasks API. Such a thread resolves to nulls until its next task is
             created, which repoints active_task_id.
             """
-            from agentd.chat.live_state import resolve_live_state
+            from agentd.chat.live_state import resolve_thread_live
 
             thread = _chat_agent._store.get_thread(thread_id)
             if thread is None:
@@ -1107,7 +1107,9 @@ def build_router(
                     raise KeyError(_task_id)
                 return task
 
-            live = resolve_live_state(active_id if task is not None else None, _get)
+            # Thread-aware overlay: a controller gate (mode/edit) on the thread takes
+            # precedence over the task-derived state (the controller has no task).
+            live = resolve_thread_live(thread, active_id if task is not None else None, _get)
             return live.model_dump()
 
         @router.post("/chat/threads/{thread_id}/message")
