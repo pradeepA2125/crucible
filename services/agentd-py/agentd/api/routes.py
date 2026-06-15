@@ -1205,4 +1205,12 @@ def build_router(
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+        @router.post("/chat/threads/{thread_id}/edit-decision")
+        async def post_edit_decision(thread_id: str, request: dict) -> dict:
+            # Resolves the held-open per-edit gate. The continuation surfaces on the
+            # ALREADY-open message SSE stream (the loop resumes), so this is a plain
+            # JSON ack — not a new stream. Mirrors /step-decision (future.set_result).
+            ok = await _chat_agent.resolve_edit(thread_id, request)  # type: ignore[attr-defined]
+            return {"ok": ok}
+
     return router

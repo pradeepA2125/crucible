@@ -7,7 +7,10 @@ explore→classify→route pipeline. F1 implements QA + clarify; propose_mode ga
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,12 +22,18 @@ from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
 if TYPE_CHECKING:
     from agentd.chat.storage import ChatThreadStore
+    from agentd.domain.models import DiffEntry
     from agentd.orchestrator.broadcaster import EventBroadcaster
     from agentd.orchestrator.engine import AgentOrchestrator
     from agentd.reasoning.contracts import ReasoningEngine
     from agentd.retrieval.artifact_client import RetrievalArtifactClient
 
 logger = logging.getLogger(__name__)
+
+# Seconds to hold a per-edit review gate open before auto-rejecting (0 = forever).
+# Mirrors AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC; guards against a dropped SSE client
+# leaving the turn hung on a future that never resolves.
+_EDIT_DECISION_TIMEOUT_ENV = "AI_EDITOR_CHAT_EDIT_DECISION_TIMEOUT_SEC"
 
 
 class ChatController:
@@ -50,6 +59,9 @@ class ChatController:
         # Per-thread retrieval seed — computed once, never rewritten (spec §6 cache
         # discipline: a frozen pointer-set placed before history).
         self._seeds: dict[str, dict[str, object] | None] = {}
+        # Per-thread per-edit review future (held-open gate; mirrors the engine's
+        # _pending_step_decisions). resolve_edit fires it.
+        self._pending_edit: dict[str, asyncio.Future[dict[str, object]]] = {}
 
     def _build_registry(self) -> AggregatingToolRegistry:
         return AggregatingToolRegistry([BuiltinToolSource(
@@ -122,9 +134,12 @@ class ChatController:
         seed = self._retrieval_seed(thread_id, goal)
         if seed:
             plan_context["retrieval_seed"] = seed
+        # "Review each edit" on → hold each patch for a decision; off → instant promote.
+        edit_cb = partial(self._edit_decision_cb, thread_id, channel_id) \
+            if step_review is True else None
         outcome = await loop.run(
             plan_context, seed_history=seed_history,
-            auto_accept_edits=(step_review is not True))
+            auto_accept_edits=(step_review is not True), edit_decision_cb=edit_cb)
         self._histories[thread_id] = outcome.history or []
         return outcome
 
@@ -152,6 +167,43 @@ class ChatController:
         self._store.set_controller_gate(
             thread_id, PendingGate(kind="mode", payload=outcome.payload or {}))
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+    async def _edit_decision_cb(
+        self, thread_id: str, channel_id: str, diff: list[DiffEntry],
+    ) -> dict[str, object]:
+        """Hold the SSE stream open while a per-edit review gate is pending.
+
+        Sets the durable `edit` thread gate (/live renders the diff), creates the
+        decision future, and awaits it — mirroring _pause_for_step_review. On a
+        dropped client (no decision) it auto-rejects after the timeout so the loop
+        unwinds cleanly. The gate clears in place in the finally (Class-A)."""
+        self._store.set_controller_gate(thread_id, PendingGate(kind="edit", payload={
+            "diff_entries": [
+                {"path": d.path, "additions": d.additions,
+                 "deletions": d.deletions, "unified_diff": d.unified_diff}
+                for d in diff]}))
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future[dict[str, object]] = loop.create_future()
+        self._pending_edit[thread_id] = fut
+        timeout = float(os.environ.get(_EDIT_DECISION_TIMEOUT_ENV, "0") or "0")
+        try:
+            if timeout > 0:
+                return await asyncio.wait_for(fut, timeout=timeout)
+            return await fut
+        except TimeoutError:
+            return {"decision": "reject", "reason": "decision timed out"}
+        finally:
+            self._pending_edit.pop(thread_id, None)
+            self._store.set_controller_gate(thread_id, None)
+
+    async def resolve_edit(self, thread_id: str, decision: dict[str, object]) -> bool:
+        """Resolve the per-edit gate (POST /edit-decision). Only fires the future —
+        never mutates/persists state during the await (Class-A safety)."""
+        fut = self._pending_edit.get(thread_id)
+        if fut is None or fut.done():
+            return False
+        fut.set_result(decision)
+        return True
 
     async def resolve_mode(
         self, thread_id: str, mode: str, *, channel_id: str, goal: str,

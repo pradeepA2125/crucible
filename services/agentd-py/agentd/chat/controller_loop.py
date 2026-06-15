@@ -12,11 +12,16 @@ from typing import TYPE_CHECKING
 from agentd.reasoning.react_common import MALFORMED_CORRECTION, assistant_turn, dedup_key
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from agentd.chat.controller_phase import ControllerPhaseSM
     from agentd.chat.edit_session import TurnEditSession
+    from agentd.domain.models import DiffEntry
     from agentd.orchestrator.broadcaster import EventBroadcaster
     from agentd.reasoning.contracts import ReasoningEngine
     from agentd.tools.sources import AggregatingToolRegistry
+
+    EditDecisionCb = Callable[[list[DiffEntry]], Awaitable[dict[str, object]]]
 
 
 class ControllerLoopExhausted(Exception):
@@ -59,6 +64,7 @@ class ControllerLoop:
         max_iters: int = 32,
         seed_history: list[dict[str, object]] | None = None,
         auto_accept_edits: bool = False,
+        edit_decision_cb: EditDecisionCb | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -127,16 +133,35 @@ class ControllerLoop:
                 diff = await self._edit.apply(ops)
                 self._broadcaster.broadcast(self._channel_id, {
                     "type": "diff_ready",
-                    "payload": {"diff_entries": [d.path for d in diff]},
+                    "payload": {"diff_entries": [
+                        {"path": d.path, "additions": d.additions,
+                         "deletions": d.deletions, "unified_diff": d.unified_diff}
+                        for d in diff]},
                 })
-                # Per-edit review gate wired in Phase F; for now always accept
-                # (auto_accept_edits selects the policy there). Instant-promote.
-                await self._edit.accept()
+                # Auto-accept (instant promote) OR hold for a per-edit review decision.
+                # The cb holds the SSE stream open + renders the diff via /live
+                # (Strategy: pluggable accept policy, reuses step_review semantics).
+                if auto_accept_edits or edit_decision_cb is None:
+                    await self._edit.accept()
+                    accepted = True
+                    reason = ""
+                else:
+                    decision = await edit_decision_cb(diff)
+                    accepted = decision.get("decision") == "accept"
+                    reason = str(decision.get("reason", ""))
+                    if accepted:
+                        await self._edit.accept()
+                    else:
+                        await self._edit.reject()  # restore shadow from real (shadow==real)
                 history.append(assistant_turn(resp))
-                history.append({
-                    "role": "tool_result", "tool": "edit",
-                    "content": f"applied+promoted: {[d.path for d in diff]}",
-                })
+                if accepted:
+                    history.append({
+                        "role": "tool_result", "tool": "edit",
+                        "content": f"applied+promoted: {[d.path for d in diff]}"})
+                else:
+                    history.append({
+                        "role": "tool_result", "tool": "edit",
+                        "content": f"REJECTED by user: {reason}. Revise and re-emit."})
                 continue
             if atype == "submit_changes":
                 assert self._edit is not None
