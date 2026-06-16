@@ -123,11 +123,15 @@ def build_controller_step_payload(
     """Build the user payload for one controller turn.
 
     KV-cache discipline (mirrors build_planning_step_payload): stable head
-    (goal/workspace/retrieval_seed) -> append-only conversation_history ->
-    per-turn-varying fields (instruction, budget_status) LAST.
+    (workspace/retrieval_seed) -> append-only conversation_history ->
+    per-turn-varying fields LAST. NOTE: `goal` is the CURRENT turn's user message
+    — it changes every turn, so it must live in the TAIL, not the head. Putting it
+    first (the original bug) broke the cached prefix from the start of the user
+    content every turn → measured cache_n=0 / full ~13k-token re-prefill per turn
+    on TQP (smoke finding #13). The byte-identity unit test missed it because it
+    compares the SAME turn across a restart, never consecutive turns.
     """
     payload: dict[str, object] = {
-        "goal": plan_context.get("goal", ""),
         "workspace_path": plan_context.get("workspace_path", ""),
     }
     seed = plan_context.get("retrieval_seed")
@@ -138,6 +142,9 @@ def build_controller_step_payload(
     iteration = len(history) // 2
     if history:
         payload["conversation_history"] = history
+    # TAIL (per-turn-varying): the current request + instruction + budget. Placed
+    # AFTER the append-only history so the multi-k-token prefix stays cache-stable.
+    payload["goal"] = plan_context.get("goal", "")
     _phase_hint = (
         "You are in EDIT mode: emit type='edit' (patch_ops) to make changes, then "
         "type='submit_changes' when done. Do NOT propose_mode again."

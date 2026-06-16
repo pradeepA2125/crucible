@@ -418,6 +418,17 @@ class TurboQuantTransport(ModelJsonTransport):
                             chunk = json.loads(data)
                         except json.JSONDecodeError:
                             continue
+                        # llama.cpp's final stream chunk carries prefix-cache telemetry
+                        # (choices empty here): prompt_n = tokens actually evaluated this
+                        # turn, cache_n = tokens reused from the KV prefix cache. Logging
+                        # this makes KV-cache reuse measurable instead of assumed.
+                        if tm := chunk.get("timings"):
+                            logger.info(
+                                "turboquant timings: schema=%s prompt_n=%s cache_n=%s "
+                                "prompt_ms=%.0f predicted_n=%s",
+                                schema_name, tm.get("prompt_n"), tm.get("cache_n"),
+                                tm.get("prompt_ms", 0.0), tm.get("predicted_n"),
+                            )
                         choices = chunk.get("choices")
                         if not choices:
                             continue

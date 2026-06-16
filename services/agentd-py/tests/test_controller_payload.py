@@ -1,3 +1,5 @@
+import json
+
 from agentd.chat.controller_prompts import (
     build_controller_step_payload,
     format_controller_system_prompt,
@@ -23,6 +25,39 @@ def test_payload_key_order_is_cache_stable():
     assert keys[-1] == "budget_status"
     assert keys.index("instruction") < keys.index("budget_status")
     assert keys.index("conversation_history") < keys.index("instruction")
+    # `goal` is the CURRENT turn's user message — it VARIES per turn, so it must sit
+    # in the per-turn tail (after the append-only history), NOT the head (smoke #13).
+    assert keys.index("conversation_history") < keys.index("goal")
+    assert keys.index("goal") < keys.index("instruction")
+
+
+def test_goal_change_preserves_cacheable_prefix():
+    """Regression for smoke #13: changing only `goal` (the per-turn message) must NOT
+    disturb any byte up through conversation_history, so TQP reuses the cached prefix.
+    The byte-identity unit test compares the SAME turn across a restart; THIS guards
+    the turn-over-turn axis it never exercised."""
+    hist = [
+        {"role": "assistant", "content": "{}"},
+        {"role": "tool_result", "tool": "read_file", "content": "x"},
+    ]
+    ctx = {"workspace_path": "/w", "retrieval_seed": {"neighbors": ["a", "b"]}}
+    sa = json.dumps(build_controller_step_payload(
+        {**ctx, "goal": "short alpha"}, hist, [], phase="DECIDE"))
+    sb = json.dumps(build_controller_step_payload(
+        {**ctx, "goal": "a COMPLETELY different and longer second-turn message"},
+        hist, [], phase="DECIDE"))
+    # common prefix
+    n = 0
+    while n < min(len(sa), len(sb)) and sa[n] == sb[n]:
+        n += 1
+    shared = sa[:n]
+    # the entire conversation_history must be inside the shared prefix; the only
+    # divergence is the tail (goal/instruction/budget).
+    assert "conversation_history" in shared
+    assert json.dumps(hist) in shared
+    # the bytes diverge only at/after the goal field (the tail) — never inside the head
+    assert n >= sa.index('"goal"')
+    assert sa.index('"goal"') > sa.index("conversation_history")
 
 
 def test_edit_phase_instruction_hint():
