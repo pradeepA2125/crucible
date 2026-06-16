@@ -9,7 +9,7 @@ and discarded at turn end.
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from agentd.domain.models import DiffEntry
 from agentd.patch.diffing import compute_diff_entries
@@ -17,6 +17,38 @@ from agentd.patch.engine import PatchEngine
 from agentd.patch.inline_apply import apply_ops
 from agentd.workspace.promote import promote_files
 from agentd.workspace.shadow import ShadowWorkspaceManager
+
+
+def _validate_patch_ops(patch_ops: list[dict[str, object]]) -> None:
+    """Reject structurally malformed ops BEFORE any file is touched.
+
+    Weak models (qwen3-class) frequently swap the 'file' and 'content' fields —
+    putting the file body in 'file'. POSIX allows newlines in filenames, so an
+    unvalidated op would create a garbage-named file and (auto-accept) promote it
+    to the real workspace under a false "success". Raising here routes the failure
+    back through the loop's PATCH FAILED branch with actionable guidance instead.
+    """
+    if not patch_ops:
+        raise ValueError("no patch_ops were emitted — emit at least one op or submit_changes.")
+    for op in patch_ops:
+        if not isinstance(op, dict):
+            raise ValueError(f"each patch op must be a JSON object, got {type(op).__name__}.")
+        file = op.get("file")
+        if not isinstance(file, str) or not file.strip():
+            raise ValueError(
+                "each patch op needs a 'file': a workspace-relative path string. "
+                "The code/text belongs in 'content' (or 'search'/'replace'), NOT in 'file'."
+            )
+        if any(c in file for c in ("\n", "\r", "\x00")) or len(file) > 255:
+            raise ValueError(
+                "'file' must be a single-line workspace-relative PATH, not code — you put the "
+                "file body in 'file'. Put the path in 'file' and the code in 'content'."
+            )
+        path = PurePosixPath(file)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(
+                f"'file' must be a workspace-relative path inside the workspace (got {file!r})."
+            )
 
 
 class TurnEditSession:
@@ -54,6 +86,7 @@ class TurnEditSession:
         return self._shadow
 
     async def apply(self, patch_ops: list[dict[str, object]]) -> list[DiffEntry]:
+        _validate_patch_ops(patch_ops)
         touched = [str(op["file"]) for op in patch_ops if "file" in op]
         shadow = await self._ensure_shadow(touched)
         applied = await apply_ops(self._patch, shadow, patch_ops, allowed_files=set(touched))

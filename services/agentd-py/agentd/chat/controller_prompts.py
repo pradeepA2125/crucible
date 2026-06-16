@@ -31,8 +31,22 @@ CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
         "recommended": {"type": "string"},
         "reason": {"type": "string"},
         "options": {"type": "array", "items": {"type": "object"}},
-        # edit
-        "patch_ops": {"type": "array", "items": {"type": "object"}},
+        # edit — each op: 'file' is a workspace-relative PATH (one line); code goes in
+        # 'content' (create_file) or 'search'/'replace' (search_replace). See prompt example.
+        "patch_ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["create_file", "search_replace"]},
+                    "file": {"type": "string"},
+                    "content": {"type": "string"},
+                    "search": {"type": "string"},
+                    "replace": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
         # submit_changes
         "summary": {"type": "string"},
     },
@@ -77,7 +91,14 @@ Use the exact key "mode" (never "type") and only those four mode values. Example
    {"mode":"create_task","label":"Plan it as a task","description":"Draft a plan you approve, then execute."},
    {"mode":"explain","label":"Just explain","description":"No changes — I describe the approach."}]}
 After the user picks "edit" you may emit type="edit" with patch_ops, then type="submit_changes" when
-done. Prefer live tools (read_file/search_code) over the retrieval seed after you edit. Available tools:
+done. Each patch op is an object where "file" is a WORKSPACE-RELATIVE PATH (a single line like
+"src/tax.py") — NEVER put code in "file". The code/text goes in "content" (for create_file) or in
+"search"/"replace" (for search_replace). EVERY op also needs a one-line "reason". Examples:
+{"type":"edit","thought":"...","patch_ops":[
+  {"op":"create_file","file":"src/tax.py","content":"def with_tax(price, rate):\\n    return price * (1 + rate)\\n","reason":"add tax helper"}]}
+{"type":"edit","thought":"...","patch_ops":[
+  {"op":"search_replace","file":"src/pricing.py","search":"return total","replace":"return round(total, 2)","reason":"round price"}]}
+Prefer live tools (read_file/search_code) over the retrieval seed after you edit. Available tools:
 {tools_json}
 """
 

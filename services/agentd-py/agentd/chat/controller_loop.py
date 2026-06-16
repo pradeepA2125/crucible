@@ -305,15 +305,18 @@ class ControllerLoop:
                 try:
                     diff = await self._edit.apply(ops)
                 except Exception as exc:
-                    # A bad search string / policy violation / ambiguous selector raises
-                    # (PatchEngine.apply_patch_candidate). Feed it back so the agent can
-                    # read the file and re-emit — mirrors ToolLoop._apply_patch_inline —
-                    # instead of crashing the whole turn.
-                    history.append(assistant_turn(resp))
+                    # A malformed op (code-in-'file'), bad search string, policy violation, or
+                    # ambiguous selector raises. Feed it back so the agent re-emits instead of
+                    # crashing the turn — mirrors ToolLoop._apply_patch_inline. CRUCIAL: do NOT
+                    # echo the malformed patch_ops into history; a weak model copies its own bad
+                    # op into a repetition attractor (see planning/loop.py thought-strip). Persist
+                    # only the failed *intent*, and let the exception message carry the fix.
+                    intent = {k: v for k, v in resp.items() if k != "patch_ops"}
+                    history.append(assistant_turn(intent))
                     history.append({
                         "role": "tool_result", "tool": "edit",
-                        "content": f"PATCH FAILED: {exc}. Read the file and re-emit a "
-                                   "corrected patch (check the exact search text)."})
+                        "content": f"PATCH FAILED: {exc} Re-emit ONE corrected edit op — "
+                                   "'file' is a workspace-relative path, code goes in 'content'."})
                     continue
                 # Auto-accept (instant promote) OR hold for a per-edit review decision.
                 # The decision cb holds the SSE stream open + renders the live diff via

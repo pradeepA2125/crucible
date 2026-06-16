@@ -36,6 +36,57 @@ async def test_accept_promotes_to_real_and_reject_restores(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_code_in_file_field_is_rejected_not_promoted(tmp_path: Path):
+    """A weak model may put the file *body* in the 'file' (path) field. POSIX allows
+    newlines in filenames, so without validation this creates a garbage-named file and
+    promotes it to real disk under a false success. apply() must reject it instead."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    sess = TurnEditSession(
+        turn_id="bad1",
+        real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine(),
+    )
+    code = '"""Tax helper."""\n\n\ndef with_tax(price, rate):\n    return price * (1 + rate)\n'
+    with pytest.raises(ValueError, match="content"):
+        await sess.apply([{"op": "create_file", "file": code, "content": "src/tax.py"}])
+    # nothing landed anywhere — no garbage-named file in real or shadow
+    assert list(real.iterdir()) == []
+    await sess.close()
+
+
+@pytest.mark.asyncio
+async def test_op_missing_file_is_rejected(tmp_path: Path):
+    real = tmp_path / "ws"
+    real.mkdir()
+    sess = TurnEditSession(
+        turn_id="bad2",
+        real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine(),
+    )
+    with pytest.raises(ValueError, match="file"):
+        await sess.apply([{"op": "create_file", "content": "x = 1\n"}])
+    await sess.close()
+
+
+@pytest.mark.asyncio
+async def test_op_absolute_or_traversal_path_rejected(tmp_path: Path):
+    real = tmp_path / "ws"
+    real.mkdir()
+    sess = TurnEditSession(
+        turn_id="bad3",
+        real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine(),
+    )
+    with pytest.raises(ValueError, match="workspace-relative"):
+        await sess.apply([{"op": "create_file", "file": "../escape.py", "content": "x = 1\n"}])
+    await sess.close()
+
+
+@pytest.mark.asyncio
 async def test_reject_then_edit_different_file_keeps_invariant(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
