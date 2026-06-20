@@ -103,3 +103,22 @@ async def test_mode_decision_registers_detached_turn(_app):
         assert thread.thread_id in handler._active_turns
         gate.set()
         await bg
+
+
+@pytest.mark.asyncio
+async def test_live_reports_turn_active(_app):
+    app, chat_store, gate, handler = _app
+    thread = chat_store.create_thread("/ws")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        # No turn yet → turn_active False.
+        live0 = await client.get(f"/v1/chat/threads/{thread.thread_id}/live")
+        assert live0.json()["turn_active"] is False
+
+        url = f"/v1/chat/threads/{thread.thread_id}/message"
+        bg = asyncio.create_task(_consume_stream(client, url, {"content": "hi"}))
+        await asyncio.sleep(0.05)
+        live1 = await client.get(f"/v1/chat/threads/{thread.thread_id}/live")
+        assert live1.json()["turn_active"] is True
+        gate.set()
+        await bg

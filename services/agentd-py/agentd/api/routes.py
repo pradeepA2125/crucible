@@ -1117,6 +1117,10 @@ def build_router(
             # Thread-aware overlay: a controller gate (mode/edit) on the thread takes
             # precedence over the task-derived state (the controller has no task).
             live = resolve_thread_live(thread, active_id if task is not None else None, _get)
+            # Flag-tolerant durable input signal: a detached controller turn (or a held-
+            # open controller gate parked on a future) keeps input disabled across reload.
+            # The legacy ChatAgent has no _active_turns → resolves to False (no regression).
+            live.turn_active = thread_id in getattr(_chat_agent, "_active_turns", {})
             return live.model_dump()
 
         @router.post("/chat/threads/{thread_id}/message")
