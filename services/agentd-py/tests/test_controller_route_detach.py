@@ -82,3 +82,24 @@ async def test_second_message_while_active_returns_409(_app):
         assert resp2.status_code == 409
         gate.set()  # release so the first stream completes cleanly
         await bg
+
+
+@pytest.mark.asyncio
+async def test_mode_decision_registers_detached_turn(_app):
+    app, chat_store, gate, handler = _app
+    thread = chat_store.create_thread("/ws")
+
+    # Override resolve_mode to block on the same gate so we can observe registration.
+    async def _slow_resolve(thread_id, mode, *, channel_id, goal):
+        await handler._gate.wait()
+        handler._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+    handler.resolve_mode = _slow_resolve  # type: ignore[assignment]
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        url = f"/v1/chat/threads/{thread.thread_id}/mode-decision"
+        bg = asyncio.create_task(_consume_stream(client, url, {"mode": "explain"}))
+        await asyncio.sleep(0.05)
+        assert thread.thread_id in handler._active_turns
+        gate.set()
+        await bg

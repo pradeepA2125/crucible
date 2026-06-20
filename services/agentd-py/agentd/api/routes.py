@@ -1226,6 +1226,42 @@ def build_router(
             if thread is not None:
                 goal = next(
                     (m.content for m in reversed(thread.messages) if m.role == "user"), "")
+
+            _active = getattr(_chat_agent, "_active_turns", None)
+
+            if _active is not None:
+                if thread_id in _active:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Thread {thread_id} already has a turn in progress")
+                _chat_agent._broadcaster.clear_replay(channel_id)
+                _chat_agent.launch_turn(  # type: ignore[attr-defined]
+                    thread_id,
+                    _chat_agent.resolve_mode(  # type: ignore[attr-defined]
+                        thread_id, mode, channel_id=channel_id, goal=goal),
+                    channel_id=channel_id,
+                )
+                queue = _chat_agent._broadcaster.subscribe(channel_id)
+
+                async def detached_mode_stream():
+                    try:
+                        while True:
+                            try:
+                                event = await _asyncio_mode.wait_for(
+                                    queue.get(), timeout=15.0)
+                            except _asyncio_mode.TimeoutError:
+                                yield ": ping\n\n"
+                                continue
+                            yield f"data: {_json_mode.dumps(event)}\n\n"
+                            if event.get("type") in ("chat_done", "done"):
+                                break
+                    finally:
+                        _chat_agent._broadcaster.unsubscribe(channel_id, queue)
+
+                return StreamingResponse(
+                    detached_mode_stream(), media_type="text/event-stream")
+
+            # --- legacy ChatAgent path (request-bound) ---
             _chat_agent._broadcaster.clear_replay(channel_id)
             queue = _chat_agent._broadcaster.subscribe(channel_id)
 
