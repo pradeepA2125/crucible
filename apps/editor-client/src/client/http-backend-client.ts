@@ -247,6 +247,52 @@ export class HttpBackendClient implements BackendTaskClient {
     }
   }
 
+  async stopChatTurn(threadId: string): Promise<{ ok: boolean }> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/stop`,
+      { method: "POST", body: "{}" }
+    ) as Record<string, unknown>;
+    return { ok: Boolean(raw["ok"]) };
+  }
+
+  // Subscribe-only SSE relay (no turn launch). Reuses the SSE line-parsing already
+  // behind postModeDecision/streamPatch. Closes on `done`/`chat_done`.
+  async *streamChannel(channelId: string): AsyncIterable<StreamEvent> {
+    const response = await this.fetchFn(
+      `${this.options.baseUrl}/v1/channels/${encodeURIComponent(channelId)}/stream`,
+      { headers: { accept: "text/event-stream" } }
+    );
+    if (!response.ok) {
+      throw new Error(`Channel stream failed (${response.status}) for ${channelId}`);
+    }
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const event = ChatEventSchema.parse(
+              JSON.parse(line.slice(5).trim())) as StreamEvent;
+            yield event;
+            if (event.type === "chat_done" || event.type === "done") return;
+          } catch {
+            // skip malformed SSE line
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  }
+
   async resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse> {
     const body: Record<string, unknown> = { stage: options?.stage ?? "execute" };
     if (options?.budgetOverride) {

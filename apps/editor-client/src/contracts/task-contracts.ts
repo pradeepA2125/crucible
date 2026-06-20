@@ -297,6 +297,11 @@ export interface BackendTaskClient {
   // the already-open message stream).
   postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent>;
   postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;
+  // Stop a detached controller turn (POST /chat/threads/{id}/stop). ok=false is benign.
+  stopChatTurn(threadId: string): Promise<{ ok: boolean }>;
+  // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used
+  // to resume the live overlay for a controller turn after a webview reload (chat:{id}).
+  streamChannel(channelId: string): AsyncIterable<StreamEvent>;
   applyInlineChange(inlineTaskId: string): Promise<void>;
   discardInlineChange(inlineTaskId: string): Promise<void>;
 }

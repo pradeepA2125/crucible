@@ -499,6 +499,23 @@ describe("HttpBackendClient", () => {
     expect(live.turnActive).toBe(false);
   });
 
+  test("stopChatTurn posts to /stop and returns ok", async () => {
+    let url = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (input) => {
+        url = String(input);
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    const result = await client.stopChatTurn("chat-1");
+    expect(url).toContain("/v1/chat/threads/chat-1/stop");
+    expect(result.ok).toBe(true);
+  });
+
   test("getTaskResult leaves summaries undefined when the wire omits them", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",
