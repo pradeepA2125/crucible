@@ -8,6 +8,7 @@ explore→classify→route pipeline. F1 implements QA + clarify; propose_mode ga
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from functools import partial
@@ -34,6 +35,46 @@ logger = logging.getLogger(__name__)
 # Mirrors AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC; guards against a dropped SSE client
 # leaving the turn hung on a future that never resolves.
 _EDIT_DECISION_TIMEOUT_ENV = "AI_EDITOR_CHAT_EDIT_DECISION_TIMEOUT_SEC"
+
+
+def _explore_context_from_history(
+    history: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Derive the planner's pre_explored_context from the controller's turn history.
+
+    Walks the verbatim conversation and emits one entry per *tool call* — pairing
+    each ``tool_call`` assistant turn with its following ``tool_result`` turn. Edits,
+    terminals (answer/clarify/propose_mode/submit_changes), correction/dedup ``{}``
+    turns and retrieval-refresh notes have no ``type=="tool_call"`` assistant and are
+    naturally excluded. The result is the tool_result's full content — uncapped, since
+    the history holds the verbatim output (unlike the 4000-capped tool_events pills).
+    ``is_error`` is not carried in the history shape, so it defaults to False; the
+    error text, when any, is already in the result content.
+    """
+    out: list[dict[str, object]] = []
+    for index, entry in enumerate(history):
+        if entry.get("role") != "assistant":
+            continue
+        raw = entry.get("content")
+        if not isinstance(raw, str):
+            continue
+        try:
+            action = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(action, dict) or action.get("type") != "tool_call":
+            continue
+        nxt = history[index + 1] if index + 1 < len(history) else None
+        result = ""
+        if isinstance(nxt, dict) and nxt.get("role") == "tool_result":
+            result = str(nxt.get("content", ""))
+        out.append({
+            "tool": action.get("tool", ""),
+            "args": action.get("args", {}),
+            "result": result,
+            "is_error": False,
+        })
+    return out
 
 
 class ChatController:
@@ -68,13 +109,39 @@ class ChatController:
         # gate — read back in resolve_mode so the edit re-entry honors it (the
         # /mode-decision POST carries no step_review; smoke-found gap #4).
         self._step_review_by_thread: dict[str, bool | None] = {}
-        # Per-thread accumulated tool-exploration (ToolEventView → {tool,args,result,
-        # is_error}) so a create_task handoff forwards the controller's findings as the
-        # planner's pre_explored_context (parity with the old ChatAgent large_change
-        # path) instead of making it re-explore cold.
-        # TODO(controller): unbounded per-thread growth — same eviction story as
-        # _histories (deferred to the agent-memory module).
-        self._explore_by_thread: dict[str, list[dict[str, object]]] = {}
+        # Threads whose last turn ended on an EDIT-phase clarify: the next user message
+        # is the answer and must RESUME the loop in EDIT (not restart at DECIDE, which
+        # would force re-picking the mode). In-memory like _step_review_by_thread — a
+        # backend restart between the question and the reply degrades gracefully to a
+        # DECIDE turn (the agent re-proposes the mode from rehydrated history).
+        self._edit_clarify_pending: set[str] = set()
+        # In-memory registry of the one detached turn per thread (mirrors the
+        # orchestrator's _running_tasks). Earns its keep three ways: the in-flight
+        # 409 guard (routes), the durable `turn_active` input signal (/live), and the
+        # task handle stop_turn cancels. A backend restart clears it — the orphaned
+        # turn is dead anyway (the transcript + pending_controller_gate survive in sqlite).
+        self._active_turns: dict[str, asyncio.Task] = {}
+
+    def launch_turn(self, thread_id: str, coro) -> asyncio.Task:
+        """Detach a turn: create the task, register it, return the handle.
+
+        create_task + the dict assignment have no `await` between them, so the
+        in-flight guard (routes: `thread_id in _active_turns`) is race-safe in
+        asyncio — same posture as the task routes' `_in_flight_*` guards."""
+        task = asyncio.create_task(self._run_turn(thread_id, coro))
+        self._active_turns[thread_id] = task
+        return task
+
+    async def _run_turn(self, thread_id: str, coro) -> None:
+        """Run a turn coroutine and unconditionally clear its registry entry.
+
+        The `finally` fires on normal completion, on error, AND on cancellation
+        (stop_turn) — the single owner releasing its own slot so the thread never
+        stays falsely `turn_active`."""
+        try:
+            await coro
+        finally:
+            self._active_turns.pop(thread_id, None)
 
     def _build_registry(self) -> AggregatingToolRegistry:
         return AggregatingToolRegistry([BuiltinToolSource(
@@ -83,11 +150,35 @@ class ChatController:
             semantic_index=getattr(self._retrieval, "_semantic_index", None),
         )])
 
+    def _seed_for(self, thread_id: str) -> list[dict[str, object]]:
+        """The thread's prior controller turn history to replay as seed_history.
+
+        In-memory cache first; on a miss (e.g. a backend restart cleared it) rehydrate
+        from the durable store and re-cache — so the conversation the transcript still
+        shows is not lost from the model's context (mirrors the planner replaying
+        TaskRecord.planning_conversation_history on a feedback round)."""
+        cached = self._histories.get(thread_id)
+        if cached is not None:
+            return cached
+        thread = self._store.get_thread(thread_id)
+        history = (thread.controller_conversation_history if thread else None) or []
+        self._histories[thread_id] = history
+        return history
+
     def _retrieval_seed(self, thread_id: str, goal: str) -> dict[str, object] | None:
         """Compute the thread's retrieval seed once, then reuse it byte-for-byte so
-        the cached payload prefix stays stable across turns (spec §6)."""
+        the cached payload prefix stays stable across turns (spec §6) AND across a
+        backend restart: the seed is pinned durably and replayed verbatim, mirroring
+        the planner's planning_initial_context. Retrieval changes ride the history
+        tail as delta notes, so the seed itself is frozen for the thread's life — a
+        re-indexed snapshot must NOT recompute it (that would break the KV prefix)."""
         if thread_id in self._seeds:
             return self._seeds[thread_id]
+        # Rehydrate a pinned seed from the store (the restart path) before recomputing.
+        thread = self._store.get_thread(thread_id)
+        if thread is not None and thread.controller_retrieval_seed is not None:
+            self._seeds[thread_id] = thread.controller_retrieval_seed
+            return thread.controller_retrieval_seed
         seed: dict[str, object] | None = None
         if self._retrieval is not None:
             try:
@@ -96,6 +187,8 @@ class ChatController:
             except Exception:
                 logger.debug("[controller] retrieval seed failed", exc_info=True)
         self._seeds[thread_id] = seed
+        # Pin on first compute so a later restart replays these exact bytes.
+        self._store.set_controller_seed(thread_id, seed)
         return seed
 
     async def handle_message(
@@ -104,6 +197,11 @@ class ChatController:
         thread = self._store.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"Thread {thread_id!r} not found")
+        # A new turn can never leave a stale gate rendered: clear it at the start so a
+        # late decision on a superseded card hits `gate is None` and no-ops (resolve_mode/
+        # resolve_edit already guard on this). A clarify sets no gate, so this is a no-op
+        # on the clarify/EDIT-clarify resume path — no conflict.
+        self._store.set_controller_gate(thread_id, None)
         # Auto-name the thread from its first user message (mirrors ChatAgent).
         if not any(m.role == "user" for m in thread.messages):
             title = message.strip().replace("\n", " ")[:50]
@@ -117,12 +215,23 @@ class ChatController:
         # (resolved via /mode-decision, which carries no step_review) honors it.
         self._step_review_by_thread[thread_id] = step_review
 
-        seed = self._histories.get(thread_id, [])
+        seed = self._seed_for(thread_id)
         # On a continued turn (clarify/discuss), append the user's reply to the
         # prior history and replay it as the cache prefix (spec §12 clarify resume).
         seed_history = (seed + [{"role": "user", "content": message}]) if seed else None
+        # If the prior turn ended on an EDIT-phase clarify, this reply is the answer:
+        # resume in EDIT so the agent keeps editing rather than re-proposing the mode.
+        # Requires the orchestrator (the edit session needs it); without one we can't
+        # rebuild EDIT, so fall back to DECIDE.
+        resume_phase = (
+            "EDIT"
+            if thread_id in self._edit_clarify_pending and self._orchestrator is not None
+            else None
+        )
+        self._edit_clarify_pending.discard(thread_id)
         outcome = await self._run_loop(
-            thread_id, channel_id, message, seed_history=seed_history, step_review=step_review)
+            thread_id, channel_id, message, seed_history=seed_history,
+            step_review=step_review, phase=resume_phase)
         await self._finish(thread_id, channel_id, outcome, step_review)
 
     async def _run_loop(
@@ -162,14 +271,18 @@ class ChatController:
             auto_accept_edits=(not is_review), edit_decision_cb=edit_cb,
             edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb)
         self._histories[thread_id] = outcome.history or []
-        # Accumulate this turn's tool results for a possible create_task handoff
-        # (map the ToolEventView pills to the planner's pre_explored_context shape).
-        if outcome.tool_events:
-            acc = self._explore_by_thread.setdefault(thread_id, [])
-            acc.extend(
-                {"tool": e.get("tool"), "args": e.get("args", {}),
-                 "result": e.get("output", ""), "is_error": e.get("isError", False)}
-                for e in outcome.tool_events)
+        # Durably persist the verbatim turn history so a backend restart rehydrates
+        # seed_history instead of re-exploring cold (mirrors the planner persisting
+        # planning_conversation_history on the TaskRecord).
+        self._store.set_controller_history(thread_id, outcome.history or [])
+        # Mark/clear EDIT-clarify resume: a clarify emitted while in EDIT must resume
+        # in EDIT on the user's reply. Any other terminal (submit/edit-then-submit,
+        # answer) clears it. sm.phase reflects the phase the loop ran in (EDIT is
+        # one-way, never transitions back).
+        if outcome.kind == "clarify" and sm.phase == "EDIT":
+            self._edit_clarify_pending.add(thread_id)
+        else:
+            self._edit_clarify_pending.discard(thread_id)
         return outcome
 
     async def _retrieval_delta_cb(self, touched: list[str]) -> str | None:
@@ -363,7 +476,7 @@ class ChatController:
             review = self._step_review_by_thread.get(thread_id)
             outcome = await self._run_loop(
                 thread_id, channel_id, goal,
-                seed_history=self._histories.get(thread_id), step_review=review, phase=phase)
+                seed_history=self._seed_for(thread_id), step_review=review, phase=phase)
             await self._finish(thread_id, channel_id, outcome, step_review=review)
             return
 
@@ -374,10 +487,11 @@ class ChatController:
             # edit path + the old ChatAgent large_change handoff): True → gate each
             # step, None → env default.
             review = self._step_review_by_thread.get(thread_id)
-            # Forward the controller's accumulated exploration as the planner's
+            # Forward every tool call in the thread's history as the planner's
             # pre_explored_context (parity with ChatAgent large_change) so it doesn't
-            # re-explore cold.
-            explore_context = self._explore_by_thread.get(thread_id, [])
+            # re-explore cold. Derived from the verbatim (uncapped) conversation —
+            # restart-durable via _seed_for, one source of truth with seed_history.
+            explore_context = _explore_context_from_history(self._seed_for(thread_id))
             # Use the agent's plan_sketch as the task goal, NOT the bare last message.
             # The sketch is an LLM synthesis of the WHOLE conversation (explored +
             # seed_history), so it survives clarify/refine turns where the last message
