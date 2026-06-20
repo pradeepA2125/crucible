@@ -52,9 +52,9 @@ async def test_launch_turn_clears_on_exception(tmp_path):
     async def _body():
         raise RuntimeError("boom")
 
-    task = ctrl.launch_turn(thread.thread_id, _body())
-    with pytest.raises(RuntimeError):
-        await task
+    task = ctrl.launch_turn(
+        thread.thread_id, _body(), channel_id=f"chat:{thread.thread_id}")
+    await task  # swallowed + logged, task completes
     assert thread.thread_id not in ctrl._active_turns
 
 

@@ -42,6 +42,11 @@ from agentd.retrieval.artifact_client import RetrievalArtifactClient
 from agentd.storage.base import TaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
+# Backend-internal ChatThread fields kept off the wire: seed substrate for the
+# controller's KV-cache prefix, large and with no UI consumer (and a strict-Zod
+# client would reject the unexpected keys).
+_THREAD_INTERNAL_FIELDS = {"controller_conversation_history", "controller_retrieval_seed"}
+
 
 def _to_task_result(task: TaskRecord) -> TaskResult:
     selected_patch = None
@@ -1051,7 +1056,7 @@ def build_router(
                     except KeyError:
                         status = None  # task pruned — no chip
                 last_ts = t.messages[-1].timestamp if t.messages else t.created_at
-                summary = t.model_dump(exclude={"messages"})
+                summary = t.model_dump(exclude={"messages", *_THREAD_INTERNAL_FIELDS})
                 summary["message_count"] = len(t.messages)
                 # Keep the datetime object — FastAPI's encoder then renders it in
                 # the same format as created_at (pydantic UTC "Z"), so clients can
@@ -1066,14 +1071,16 @@ def build_router(
             workspace = request.get("workspace", "")
             title = request.get("title", "New Chat")
             thread = _chat_agent._store.create_thread(workspace, title=title)
-            return thread.model_dump(exclude={"messages"})
+            return thread.model_dump(exclude={"messages", *_THREAD_INTERNAL_FIELDS})
 
         @router.get("/chat/threads/{thread_id}")
         async def get_chat_thread(thread_id: str) -> dict:
             thread = _chat_agent._store.get_thread(thread_id)
             if thread is None:
                 raise HTTPException(status_code=404, detail="Thread not found")
-            return thread.model_dump()
+            # controller_conversation_history is backend-internal seed substrate
+            # (large, no UI consumer) — keep it off the wire.
+            return thread.model_dump(exclude=_THREAD_INTERNAL_FIELDS)
 
         @router.get("/chat/threads/{thread_id}/live")
         async def get_thread_live(thread_id: str) -> dict:
@@ -1120,6 +1127,51 @@ def build_router(
             _raw_step_review = request.get("step_review")
             step_review = _raw_step_review if isinstance(_raw_step_review, bool) else None
             channel_id = f"chat:{thread_id}"
+
+            # Flag-tolerant: only the ChatController detaches turns. The legacy
+            # ChatAgent (no _active_turns) keeps the request-bound path below.
+            _active = getattr(_chat_agent, "_active_turns", None)
+
+            if _active is not None:
+                # In-flight guard: a concurrent turn on this thread is a 409 (benign —
+                # the FE already blocks it via disabled input; isBenignConflict swallows
+                # it). Check+launch have no await between → race-safe in asyncio.
+                if thread_id in _active:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Thread {thread_id} already has a turn in progress")
+                _chat_agent._broadcaster.clear_replay(channel_id)
+                _chat_agent.launch_turn(  # type: ignore[attr-defined]
+                    thread_id,
+                    _chat_agent.handle_message(
+                        thread_id, message, channel_id=channel_id,
+                        step_review=step_review),
+                    channel_id=channel_id,
+                )
+                queue = _chat_agent._broadcaster.subscribe(channel_id)
+
+                async def detached_stream():
+                    # Subscribe-relay only: a client disconnect unsubscribes but does
+                    # NOT cancel the detached turn (mirrors /stream-patch). The turn
+                    # keeps running, parked on any gate, durable across the reload.
+                    try:
+                        while True:
+                            try:
+                                event = await _asyncio_chat.wait_for(
+                                    queue.get(), timeout=15.0)
+                            except _asyncio_chat.TimeoutError:
+                                yield ": ping\n\n"
+                                continue
+                            yield f"data: {_json.dumps(event)}\n\n"
+                            if event.get("type") in ("chat_done", "done"):
+                                break
+                    finally:
+                        _chat_agent._broadcaster.unsubscribe(channel_id, queue)
+
+                return StreamingResponse(
+                    detached_stream(), media_type="text/event-stream")
+
+            # --- legacy ChatAgent path (request-bound, cancel-on-disconnect) ---
             # Clear stale replay events from the previous message so a new subscriber
             # doesn't receive old events (including a stale chat_done).
             _chat_agent._broadcaster.clear_replay(channel_id)

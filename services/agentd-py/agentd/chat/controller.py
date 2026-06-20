@@ -122,24 +122,37 @@ class ChatController:
         # turn is dead anyway (the transcript + pending_controller_gate survive in sqlite).
         self._active_turns: dict[str, asyncio.Task] = {}
 
-    def launch_turn(self, thread_id: str, coro) -> asyncio.Task:
+    def launch_turn(
+        self, thread_id: str, coro, *, channel_id: str | None = None,
+    ) -> asyncio.Task:
         """Detach a turn: create the task, register it, return the handle.
 
         create_task + the dict assignment have no `await` between them, so the
         in-flight guard (routes: `thread_id in _active_turns`) is race-safe in
         asyncio — same posture as the task routes' `_in_flight_*` guards."""
-        task = asyncio.create_task(self._run_turn(thread_id, coro))
+        task = asyncio.create_task(self._run_turn(thread_id, coro, channel_id))
         self._active_turns[thread_id] = task
         return task
 
-    async def _run_turn(self, thread_id: str, coro) -> None:
+    async def _run_turn(
+        self, thread_id: str, coro, channel_id: str | None = None,
+    ) -> None:
         """Run a turn coroutine and unconditionally clear its registry entry.
 
         The `finally` fires on normal completion, on error, AND on cancellation
         (stop_turn) — the single owner releasing its own slot so the thread never
-        stays falsely `turn_active`."""
+        stays falsely `turn_active`. An unexpected exception is swallowed + logged
+        and a failsafe chat_done is broadcast so the detached relay never hangs
+        (a crashed turn that emitted no chat_done)."""
         try:
             await coro
+        except asyncio.CancelledError:
+            raise  # stop_turn / shutdown — re-raise so the task is marked cancelled
+        except Exception:
+            logger.exception("[controller] turn failed (thread=%s)", thread_id)
+            if channel_id is not None:
+                self._broadcaster.broadcast(
+                    channel_id, {"type": "chat_done", "payload": {}})
         finally:
             self._active_turns.pop(thread_id, None)
 
