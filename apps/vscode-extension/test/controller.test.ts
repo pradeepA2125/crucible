@@ -54,6 +54,7 @@ const NULL_LIVE_STATE: ThreadLiveState = {
   status: null,
   pendingGate: null,
   plan: null,
+  turnActive: false,
 };
 
 function createStubBackend(state: StubBackendState): BackendTaskClient {
@@ -185,6 +186,10 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
       _decision: "accept" | "reject",
       _reason?: string,
     ) => {},
+    stopChatTurn: async (_threadId: string) => ({ ok: true }),
+    streamChannel: async function* (_channelId: string) {
+      yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+    },
   };
 }
 
@@ -930,6 +935,7 @@ describe("AiEditorController — command-decision", () => {
       status: "AWAITING_COMMAND_DECISION",
       pendingGate: { kind: "command", payload: { command: "pytest" } },
       plan: null,
+      turnActive: false,
     };
     await controller.pollThreadLiveState();
     expect(gateRenders).toHaveLength(1);
@@ -947,6 +953,86 @@ describe("AiEditorController — command-decision", () => {
     expect(gateClears).toBe(1);
   });
 
+  test("live-resume: re-subscribes once on a fresh reload (turn_active, no local stream)", async () => {
+    // A fresh webview after a reload has no local stream (turnAbort === null) but /live
+    // reports turn_active=true for the detached turn → resume re-subscribes exactly once;
+    // _liveResumeThreadId keeps later polls idempotent.
+    let streamChannelCalls = 0;
+    let release!: () => void;
+    const blocker = new Promise<void>((r) => { release = r; });
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: {
+        activeTaskId: null, status: null, pendingGate: null, plan: null, turnActive: true,
+      },
+    };
+    const backend: BackendTaskClient = {
+      ...createStubBackend(state),
+      streamChannel: async function* (_channelId: string) {
+        streamChannelCalls++;
+        await blocker; // keep the resume stream open so turnAbort stays set
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+      },
+    };
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-resume"); // first poll fires the resume
+    await controller.pollThreadLiveState();           // _liveResumeThreadId set → no re-fire
+    await new Promise((r) => setTimeout(r, 0));        // flush the resume's first .next()
+    expect(streamChannelCalls).toBe(1);
+    release();
+    controller.dispose();
+  });
+
+  test("live-resume: does NOT re-subscribe while a local turn stream is active (turnAbort guard)", async () => {
+    // The real double-render bug: during a normal sendChatMessage turn, turnAbort is set
+    // and /live reports turn_active=true while _liveResumeThreadId is still null. Without
+    // the `turnAbort === null` guard the 1s poll opens a SECOND streamTurn on the same
+    // channel (broadcaster replays to every subscriber) → every event renders twice.
+    let streamChannelCalls = 0;
+    let releaseSend!: () => void;
+    const sendBlock = new Promise<void>((r) => { releaseSend = r; });
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: {
+        activeTaskId: null, status: null, pendingGate: null, plan: null, turnActive: false,
+      },
+    };
+    const backend: BackendTaskClient = {
+      ...createStubBackend(state),
+      sendChatMessage: async function* () {
+        await sendBlock; // hold the local turn open so turnAbort stays set
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+      },
+      streamChannel: async function* (_channelId: string) {
+        streamChannelCalls++;
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+      },
+    };
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-active"); // poll sees turn_active=false → no resume
+    const sendPromise = controller.sendChatMessage("hi"); // sets turnAbort, blocks on the stub
+    await new Promise((r) => setTimeout(r, 0));            // let sendChatMessage set turnAbort
+    state.liveResponse = {
+      activeTaskId: null, status: null, pendingGate: null, plan: null, turnActive: true,
+    };
+    await controller.pollThreadLiveState();               // turnAbort set → resume must NOT fire
+    await new Promise((r) => setTimeout(r, 0));
+    expect(streamChannelCalls).toBe(0);
+    releaseSend();
+    await sendPromise;
+    controller.dispose();
+  });
+
   test("pollThreadLiveState surfaces a plan card at AWAITING_PLAN_APPROVAL", async () => {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
@@ -956,6 +1042,7 @@ describe("AiEditorController — command-decision", () => {
         status: "AWAITING_PLAN_APPROVAL",
         pendingGate: null,
         plan: { task_id: "task-9", plan_markdown: "# Plan\n- step" },
+        turnActive: false,
       },
     };
     const backend = createStubBackend(state);
@@ -990,6 +1077,7 @@ describe("AiEditorController — command-decision", () => {
         status: "READY_FOR_REVIEW",
         pendingGate: null,
         plan: null,
+        turnActive: false,
       }),
       getTaskResult: async (_taskId) => ({
         taskId: "t9",
@@ -1045,6 +1133,7 @@ describe("AiEditorController — command-decision", () => {
         status: "FAILED",
         pendingGate: null,
         plan: null,
+        turnActive: false,
       }),
     };
 
@@ -1072,7 +1161,7 @@ describe("AiEditorController — command-decision", () => {
     let errorClears2 = 0;
     const okBackend: BackendTaskClient = {
       ...failedBackend,
-      getThreadLiveState: async () => ({ activeTaskId: null, status: null, pendingGate: null, plan: null }),
+      getThreadLiveState: async () => ({ activeTaskId: null, status: null, pendingGate: null, plan: null, turnActive: false }),
     };
     const controller2 = new AiEditorController(
       () => okBackend, new MemorySessionStore(), createSettings(),
@@ -1137,7 +1226,7 @@ describe("AiEditorController — command-decision", () => {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [], abortCalls: [],
-      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, plan: null },
+      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, plan: null, turnActive: false },
     };
     const backend = createStubBackend(state);
     const controller = new AiEditorController(
@@ -1156,7 +1245,7 @@ describe("AiEditorController — command-decision", () => {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [], reviewPrefCalls: [],
-      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, plan: null },
+      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, plan: null, turnActive: false },
     };
     const backend = createStubBackend(state);
     const controller = new AiEditorController(
@@ -1183,6 +1272,7 @@ describe("AiEditorController — command-decision", () => {
         status: "READY_FOR_REVIEW",
         pendingGate: null,
         plan: null,
+        turnActive: false,
         runSummary: { stepsCompleted: 3, stepsTotal: 4, deviations: ["1 delta replan(s)"] },
       }),
       getTaskResult: async () => ({
@@ -1214,7 +1304,7 @@ describe("AiEditorController — command-decision", () => {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
-      liveResponse: { activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, plan: null },
+      liveResponse: { activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, plan: null, turnActive: false },
     };
     const backend: BackendTaskClient = {
       ...createStubBackend(state),
@@ -1237,6 +1327,7 @@ describe("AiEditorController — command-decision", () => {
     // narrative lands (status unchanged)
     state.liveResponse = {
       activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, plan: null,
+      turnActive: false,
       taskNarrative: { outcome: "succeeded", headline: "Did X", points: ["a"] },
     };
     await controller.pollThreadLiveState();   // poll 2: must re-render with the narrative
@@ -1255,6 +1346,7 @@ describe("AiEditorController — command-decision", () => {
       }),
       getThreadLiveState: async () => ({
         activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, plan: null,
+        turnActive: false,
         taskNarrative: { outcome: "succeeded", headline: "Added refresh tokens", points: ["edited auth.py"] },
       }),
       getTaskResult: async () => ({
@@ -1286,6 +1378,7 @@ describe("AiEditorController — command-decision", () => {
       }),
       getThreadLiveState: async () => ({
         activeTaskId: "tf", status: "FAILED", pendingGate: null, plan: null,
+        turnActive: false,
         taskNarrative: { outcome: "failed", headline: "Stopped at step 2", points: ["import broke"] },
       }),
     };
@@ -1313,6 +1406,7 @@ describe("AiEditorController — command-decision", () => {
         status: "FAILED",
         pendingGate: null,
         plan: null,
+        turnActive: false,
         failureSummary: { stepId: "s3", stepIndex: 3, errorClass: "VerifyPhaseExhausted", message: "boom" },
       }),
     };
@@ -1425,6 +1519,7 @@ describe("AiEditorController — command-decision", () => {
         status: "READY_FOR_REVIEW",
         pendingGate: null,
         plan: null,
+        turnActive: false,
       }),
       getTaskResult: async () => {
         resultCallCount += 1;

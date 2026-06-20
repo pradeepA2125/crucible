@@ -1547,9 +1547,17 @@ export class AiEditorController {
     // SSE. When /live reports an in-flight turn or a controller gate, re-subscribe to the
     // chat channel (subscribe-only — does NOT relaunch the turn) to resume the overlay
     // from the broadcaster's replay buffer onward. Idempotent via _liveResumeThreadId.
+    //
+    // CRITICAL: only resume when NO local turn stream is active (`turnAbort === null`).
+    // During a normal sendChatMessage/mode-decision turn, turnAbort is set and /live also
+    // reports turn_active=true — without this guard the 1s poll would open a SECOND
+    // streamTurn on the same channel (the broadcaster replays its buffer to every new
+    // subscriber), double-rendering every event and clobbering the live turnAbort. A
+    // fresh webview after a reload has turnAbort === null, which is exactly when resume
+    // is needed (the original stream died with the old SSE; the detached turn lives on).
     const channelActive = live.turnActive || live.pendingGate?.kind === "mode"
       || live.pendingGate?.kind === "edit";
-    if (channelActive && this._liveResumeThreadId !== threadId) {
+    if (channelActive && this.turnAbort === null && this._liveResumeThreadId !== threadId) {
       this._liveResumeThreadId = threadId;
       void this.resumeLiveOverlay(threadId);
     } else if (!channelActive && this._liveResumeThreadId === threadId) {
