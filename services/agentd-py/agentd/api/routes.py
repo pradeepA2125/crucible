@@ -1163,7 +1163,7 @@ def build_router(
                             try:
                                 event = await _asyncio_chat.wait_for(
                                     queue.get(), timeout=15.0)
-                            except _asyncio_chat.TimeoutError:
+                            except TimeoutError:
                                 yield ": ping\n\n"
                                 continue
                             yield f"data: {_json.dumps(event)}\n\n"
@@ -1253,7 +1253,7 @@ def build_router(
                             try:
                                 event = await _asyncio_mode.wait_for(
                                     queue.get(), timeout=15.0)
-                            except _asyncio_mode.TimeoutError:
+                            except TimeoutError:
                                 yield ": ping\n\n"
                                 continue
                             yield f"data: {_json_mode.dumps(event)}\n\n"
