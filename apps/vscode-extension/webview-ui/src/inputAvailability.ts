@@ -48,10 +48,41 @@ export interface InputAvailability {
 const ABORTABLE_STATUSES = new Set(["EXECUTING", "VALIDATING", "REPAIRING"]);
 
 export function inputAvailability(
-  state: Pick<AppState, "inputEnabled" | "liveStatus" | "workbar">,
+  state: Pick<AppState, "inputEnabled" | "liveStatus" | "workbar" | "liveGate" | "turnActive">,
 ): InputAvailability {
-  const { inputEnabled, liveStatus, workbar } = state;
+  const { inputEnabled, liveStatus, workbar, liveGate, turnActive } = state;
   const taskStop = liveStatus !== null && ABORTABLE_STATUSES.has(liveStatus);
+
+  // ── Controller precedence (spec §5), first match wins, ahead of task rows ──
+  // Row 1: per-edit gate — only the EditGate card is interactive.
+  if (liveGate?.kind === "edit") {
+    return {
+      disabled: true,
+      placeholder: "Waiting for your decision on the card above",
+      showStop: false,
+      taskStop,
+    };
+  }
+  // Row 2: mode gate — only the ModeGate (incl. its in-card field) is interactive.
+  if (liveGate?.kind === "mode") {
+    return {
+      disabled: true,
+      placeholder: "Choose how to proceed — or chat about it on the card",
+      showStop: false,
+      taskStop,
+    };
+  }
+  // Row 3: a controller turn is running (no gate). The durable reload-window guard:
+  // a fresh webview mounts inputEnabled=true while the detached turn still runs.
+  // Stop is shown — a controller turn can be stopped (no task is active here).
+  if (turnActive && (liveStatus === null || !TASK_ACTIVE_STATUSES.has(liveStatus))) {
+    return {
+      disabled: true,
+      placeholder: "Agent is working…",
+      showStop: true,
+      taskStop,
+    };
+  }
 
   // Precedence 1: a local chat turn is streaming.
   if (!inputEnabled) {

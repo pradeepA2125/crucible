@@ -168,4 +168,8 @@ export interface AppState {
   liveError: LiveErrorView | null;
   workbar: WorkbarInfo | null;
   liveStatus: string | null;
+  // True while a controller turn / held-open controller gate is in flight (durable
+  // input-disable signal from /live; survives reload). Distinct from inputEnabled,
+  // which is the ephemeral per-turn flag a fresh webview mounts as `true`.
+  turnActive: boolean;
 }

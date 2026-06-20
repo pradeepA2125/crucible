@@ -33,6 +33,7 @@ const INITIAL: AppState = {
   liveError: null,
   workbar: null,
   liveStatus: null,
+  turnActive: false,
 };
 
 // ── Action types ─────────────────────────────────────────────────────────────

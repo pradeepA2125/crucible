@@ -32,6 +32,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     liveError: null,
     workbar: null,
     liveStatus: null,
+    turnActive: false,
     ...overrides,
   };
 }
