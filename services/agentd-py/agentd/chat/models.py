@@ -60,6 +60,17 @@ class ChatThread(BaseModel):
     # Controller-turn gate (mode/edit). The controller has no task, so its gate
     # lives here (durable, surfaced by /live via resolve_thread_live).
     pending_controller_gate: PendingGate | None = None
+    # The controller loop's verbatim turn history (assistant action + tool_result
+    # pairs), replayed as seed_history on the next turn. Durable so a backend
+    # restart doesn't drop the conversation the transcript still shows — mirrors
+    # TaskRecord.planning_conversation_history. None until the first turn writes it.
+    controller_conversation_history: list[dict[str, Any]] | None = None
+    # The thread's frozen retrieval seed (the cache-prefix head placed BEFORE history).
+    # Pinned on first compute and replayed byte-for-byte so the KV prefix stays stable
+    # across a backend restart even if the snapshot was re-indexed meanwhile — retrieval
+    # changes ride the history tail as delta notes, never the seed. Mirrors the planner's
+    # TaskRecord.planning_initial_context. None until the first turn computes it.
+    controller_retrieval_seed: dict[str, Any] | None = None
 
 
 class ChatEvent(BaseModel):
@@ -76,6 +87,10 @@ class ThreadLiveState(BaseModel):
     self-heal on the next poll.
     """
     active_task_id: str | None = None
+    # True while a controller turn (or a held-open controller gate) is in flight. The
+    # /live route sets it from ChatController._active_turns so the FE can keep input
+    # disabled across a webview reload (the ephemeral inputEnabled flag resets on mount).
+    turn_active: bool = False
     status: str | None = None
     pending_gate: PendingGate | None = None
     plan: dict[str, Any] | None = None
