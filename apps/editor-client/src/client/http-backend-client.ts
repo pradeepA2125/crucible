@@ -408,6 +408,7 @@ export class HttpBackendClient implements BackendTaskClient {
         ? { kind: gate["kind"], payload: gate["payload"] ?? {} }
         : null,
       plan: raw["plan"] ?? null,
+      turnActive: raw["turn_active"] ?? false,
       failureSummary: this.toFailureSummary(raw),
       runSummary: this.toRunSummary(raw),
       taskNarrative: this.toTaskNarrative(raw),

@@ -467,6 +467,38 @@ describe("HttpBackendClient", () => {
     expect(live.taskNarrative?.points).toEqual(["edited auth.py", "added test"]);
   });
 
+  test("getThreadLiveState maps turn_active to turnActive on /live", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            active_task_id: null,
+            status: null,
+            pending_gate: null,
+            plan: null,
+            turn_active: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-1");
+    expect(live.turnActive).toBe(true);
+  });
+
+  test("getThreadLiveState defaults turnActive to false when absent", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({ active_task_id: null, status: null, pending_gate: null, plan: null }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-1");
+    expect(live.turnActive).toBe(false);
+  });
+
   test("getTaskResult leaves summaries undefined when the wire omits them", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",

@@ -257,6 +257,9 @@ export const ThreadLiveStateSchema = z.object({
   status: z.string().nullable(),
   pendingGate: PendingGateSchema.nullable(),
   plan: z.record(z.unknown()).nullable(),
+  // True while a controller turn / held-open controller gate is in flight (durable
+  // input-disable signal that survives a webview reload). Absent on legacy payloads → false.
+  turnActive: z.boolean().default(false),
   // Durable lifecycle telemetry (Tier B): drives the Error/Review cards from poll state.
   failureSummary: FailureSummarySchema.nullable().optional(),
   runSummary: RunSummarySchema.nullable().optional(),
