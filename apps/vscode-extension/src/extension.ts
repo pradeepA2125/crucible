@@ -175,8 +175,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     clearLiveError: () => {
       chatPanel.clearLiveError();
     },
-    sendLiveStatus: (status) => {
-      chatPanel.sendLiveStatus(status);
+    sendLiveStatus: (status, turnActive) => {
+      chatPanel.sendLiveStatus(status, turnActive);
     },
   };
 

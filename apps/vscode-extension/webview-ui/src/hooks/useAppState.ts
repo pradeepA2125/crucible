@@ -314,7 +314,7 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, workbar: msg.info };
 
     case "liveStatus":
-      return { ...state, liveStatus: msg.status };
+      return { ...state, liveStatus: msg.status, turnActive: msg.turnActive ?? false };
 
     default:
       return state;

@@ -115,7 +115,7 @@ export type ExtensionMessage =
   | { type: "clearLiveReview" }
   | { type: "renderLiveError"; error: LiveErrorView }
   | { type: "clearLiveError" }
-  | { type: "liveStatus"; status: string | null }
+  | { type: "liveStatus"; status: string | null; turnActive?: boolean }
   | { type: "resolveInlineChangeCard"; taskId: string; resolution: "applied" | "discarded" }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } };
 

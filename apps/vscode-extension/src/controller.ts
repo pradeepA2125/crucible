@@ -78,7 +78,7 @@ export interface ControllerUI {
   clearLiveReview(): void;
   renderLiveError(error: { taskId: string; status: "FAILED" | "ABORTED"; detail?: string; narrative?: { headline: string; points: string[] } }): void;
   clearLiveError(): void;
-  sendLiveStatus(status: string | null): void;
+  sendLiveStatus(status: string | null, turnActive: boolean): void;
 }
 
 export interface LiveGateView {
@@ -1600,7 +1600,7 @@ export class AiEditorController {
       this.ui.clearLiveError();
     }
 
-    this.ui.sendLiveStatus(live.status ?? null);
+    this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false);
     } finally {
       this.livePollInFlight = false;
     }

@@ -261,8 +261,8 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "clearLiveError" });
   }
 
-  sendLiveStatus(status: string | null): void {
-    this.panel?.webview.postMessage({ type: "liveStatus", status });
+  sendLiveStatus(status: string | null, turnActive: boolean): void {
+    this.panel?.webview.postMessage({ type: "liveStatus", status, turnActive });
   }
 
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void {
