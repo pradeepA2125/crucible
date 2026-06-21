@@ -163,8 +163,8 @@ export type StreamEvent =
   | { type: "operation_error"; payload: { op_type: string; path: string; error: string } }
   // done carries {status} when the engine reaches a terminal/pause state (engine.py:1550) and {} on bare pause paths
   | { type: "done"; payload: { status?: string } }
-  | { type: "tool_call"; payload: { tool: string; thought: string; iteration: number; phase: string; args?: Record<string, unknown> } }
-  | { type: "tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
+  | { type: "tool_call"; payload: { tool: string; thought: string; iteration?: number; phase?: string; args?: Record<string, unknown>; call_index?: number } }
+  | { type: "tool_result"; payload: { tool?: string; output: string; is_error: boolean; iteration?: number; call_index?: number } }
   | { type: "planning_tool_call"; payload: { tool: string; thought: string; iteration: number; args?: Record<string, unknown> } }
   | { type: "planning_tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
   | { type: "explore_tool_result"; payload: { tool: string; output: string; is_error: boolean } }
@@ -297,6 +297,8 @@ export interface BackendTaskClient {
   // the already-open message stream).
   postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent>;
   postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;
+  // Controller run_command gate: a plain JSON ack (continuation rides the open message stream).
+  postChatCommandDecision(threadId: string, decision: CommandDecision): Promise<void>;
   // Stop a detached controller turn (POST /chat/threads/{id}/stop). ok=false is benign.
   stopChatTurn(threadId: string): Promise<{ ok: boolean }>;
   // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used

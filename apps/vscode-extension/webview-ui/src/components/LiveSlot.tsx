@@ -70,7 +70,7 @@ export function LiveSlot({ liveGate, livePlan, liveReview, liveError, onDismissE
         // order: both SSE and /live payloads pass through JSON.parse, so V8 preserves
         // the backend serializer's order deterministically.
         <GateDispatch
-          key={`${liveGate.taskId}:${liveGate.kind}:${sig(JSON.stringify(liveGate.payload))}`}
+          key={(() => { const p = JSON.stringify(liveGate.payload); return `${liveGate.taskId}:${liveGate.kind}:${p.length.toString(36)}.${sig(p)}`; })()}
           taskId={liveGate.taskId}
           kind={liveGate.kind}
           payload={liveGate.payload}

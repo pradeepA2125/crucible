@@ -186,6 +186,10 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
       _decision: "accept" | "reject",
       _reason?: string,
     ) => {},
+    postChatCommandDecision: async (
+      _threadId: string,
+      _decision: CommandDecision,
+    ) => {},
     stopChatTurn: async (_threadId: string) => ({ ok: true }),
     streamChannel: async function* (_channelId: string) {
       yield { type: "chat_done" as const, payload: {} as Record<string, never> };
@@ -898,6 +902,112 @@ describe("AiEditorController — command-decision", () => {
     }]);
   });
 
+  test("handleCommandDecisionFromChat routes a controller gate (no task) to the chat endpoint", async () => {
+    // A controller EDIT-turn command gate has NO task: /live.activeTaskId is null and the
+    // gate id is the thread id. The decision must go to the CHAT command-decision route,
+    // never the task route (which would 404 on the thread id).
+    const chatSent: Array<{ threadId: string; decision: CommandDecision }> = [];
+    const taskSent: Array<{ taskId: string; decision: CommandDecision }> = [];
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: NULL_LIVE_STATE,
+    };
+    const backend: BackendTaskClient = {
+      ...createStubBackend(state),
+      sendCommandDecision: async (taskId, decision) => {
+        taskSent.push({ taskId, decision });
+        return { taskId, status: "EXECUTING" as const };
+      },
+      postChatCommandDecision: async (threadId, decision) => {
+        chatSent.push({ threadId, decision });
+      },
+    };
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("thread-9");
+    await Promise.resolve();
+    controller.dispose();
+    // A controller command gate: no task, gate id is the thread.
+    state.liveResponse = {
+      activeTaskId: null, status: null, plan: null, turnActive: true,
+      pendingGate: { kind: "command", payload: { command: "rm", args: ["-rf", "x"] } },
+    };
+    await controller.pollThreadLiveState();  // sets latestLiveState (activeTaskId null)
+
+    await controller.handleCommandDecisionFromChat("thread-9", {
+      approve: true, remember: false, scope: "exact",
+    });
+
+    expect(chatSent).toEqual([{
+      threadId: "thread-9",
+      decision: { approve: true, remember: false, scope: "exact" },
+    }]);
+    expect(taskSent).toEqual([]);  // NOT the task route
+  });
+
+  test("stopActiveTurn optimistically appends a ✗ Stopped breadcrumb (live broadcast is missed)", async () => {
+    // Stop aborts the FE SSE reader before POST /stop, so the backend's live
+    // chat_breadcrumb never reaches the open webview (finding 7). Append it optimistically
+    // — same pattern as the accept/discard breadcrumbs. Gated on ok (a real stop).
+    const messages: ChatMessage[] = [];
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: NULL_LIVE_STATE,
+    };
+    const backend: BackendTaskClient = {
+      ...createStubBackend(state),
+      stopChatTurn: async () => ({ ok: true }),
+    };
+    const ui = createUi({ appendChatMessage: (m) => messages.push(m) });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("thread-1");
+    await Promise.resolve();
+    controller.dispose();
+    messages.length = 0;  // ignore the thread's loaded messages
+
+    await controller.stopActiveTurn();
+
+    const crumb = messages.find(
+      (m) => m.content === "✗ Stopped" && m.metadata?.breadcrumb === true);
+    expect(crumb).toBeDefined();
+  });
+
+  test("stopActiveTurn does NOT append a breadcrumb when stop is a no-op (ok:false)", async () => {
+    const messages: ChatMessage[] = [];
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: NULL_LIVE_STATE,
+    };
+    const backend: BackendTaskClient = {
+      ...createStubBackend(state),
+      stopChatTurn: async () => ({ ok: false }),
+    };
+    const ui = createUi({ appendChatMessage: (m) => messages.push(m) });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("thread-1");
+    await Promise.resolve();
+    controller.dispose();
+    messages.length = 0;
+
+    await controller.stopActiveTurn();
+
+    expect(messages.some((m) => m.content === "✗ Stopped")).toBe(false);
+  });
+
   test("pollThreadLiveState renders one gate card, dedups, and removes on null", async () => {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
@@ -951,6 +1061,48 @@ describe("AiEditorController — command-decision", () => {
     state.liveResponse = NULL_LIVE_STATE;
     await controller.pollThreadLiveState();
     expect(gateClears).toBe(1);
+  });
+
+  test("pollThreadLiveState pushes turnActive false→true→false even when card signature is unchanged", async () => {
+    // A controller chat turn has NO task: status/gate/plan/runSummary are all null and
+    // never change across the turn, so the card-dedup signature is constant. If turnActive
+    // is omitted from that signature, the turn-end transition (true→false) is deduped away
+    // and sendLiveStatus(..., false) is never delivered → the composer stays wedged on
+    // "Agent is working…" forever. turnActive MUST be part of the signature.
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: NULL_LIVE_STATE,
+    };
+    const backend = createStubBackend(state);
+
+    const turnActives: boolean[] = [];
+    const ui = createUi({
+      sendLiveStatus: (_status, turnActive) => { turnActives.push(turnActive); },
+    });
+    const controller = new AiEditorController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-1");
+    await Promise.resolve();
+    controller.dispose();
+    turnActives.length = 0;
+
+    // Poll #1: controller turn running (no task, no gate) → turnActive=true delivered.
+    state.liveResponse = {
+      activeTaskId: null, status: null, pendingGate: null, plan: null, turnActive: true,
+    };
+    await controller.pollThreadLiveState();
+
+    // Poll #2: turn ended — ONLY turnActive changed (signature otherwise identical).
+    state.liveResponse = {
+      activeTaskId: null, status: null, pendingGate: null, plan: null, turnActive: false,
+    };
+    await controller.pollThreadLiveState();
+
+    expect(turnActives).toEqual([true, false]);
   });
 
   test("live-resume: re-subscribes once on a fresh reload (turn_active, no local stream)", async () => {

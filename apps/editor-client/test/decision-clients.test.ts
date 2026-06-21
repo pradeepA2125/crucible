@@ -36,4 +36,20 @@ describe("mode/edit decision clients", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body).toEqual({ mode: "edit" });
   });
+
+  it("posts chat command-decision to the chat endpoint with snake_case body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
+    await c.postChatCommandDecision("th1", {
+      approve: true, remember: true, scope: "binary", ruleValue: "pytest",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://x/v1/chat/threads/th1/command-decision",
+      expect.objectContaining({ method: "POST" })
+    );
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toEqual({ approve: true, remember: true, scope: "binary", rule_value: "pytest" });
+  });
 });

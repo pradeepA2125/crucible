@@ -208,6 +208,25 @@ export class HttpBackendClient implements BackendTaskClient {
     );
   }
 
+  // Controller run_command gate (Phase F): a plain JSON ack — the loop's continuation
+  // rides the already-open message SSE stream. Mirrors postEditDecision but carries a
+  // CommandDecision (camelCase ruleValue → snake_case rule_value, like sendCommandDecision).
+  async postChatCommandDecision(
+    threadId: string,
+    decision: CommandDecision
+  ): Promise<void> {
+    const body: Record<string, unknown> = {
+      approve: decision.approve,
+      remember: decision.remember,
+      scope: decision.scope,
+    };
+    if (decision.ruleValue !== undefined) body.rule_value = decision.ruleValue;
+    await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/command-decision`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  }
+
   // Controller mode gate (Phase F2): a STREAMED dispatch (edit/create_task produce
   // live events), consumed like sendChatMessage.
   async *postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent> {

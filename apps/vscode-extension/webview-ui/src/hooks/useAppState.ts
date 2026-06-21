@@ -12,9 +12,11 @@ export function sig(s: string): string {
 }
 
 /** Plan-card version signature: same task + identical content collapses; a new
- *  feedback-regenerated version gets a distinct signature and appends. Mirrors chat.js. */
+ *  feedback-regenerated version gets a distinct signature and appends. Mirrors chat.js.
+ *  The content length is prefixed so a bare 32-bit djb2 collision can't silently DROP a
+ *  genuinely-new plan version — both the length AND the hash must collide. */
 export function planSig(taskId: string, content: string): string {
-  return sig(`${taskId}::${content}`);
+  return `${content.length.toString(36)}.${sig(`${taskId}::${content}`)}`;
 }
 
 // ── Initial state ────────────────────────────────────────────────────────────
@@ -178,6 +180,19 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case "appendToolEvent": {
+      // Dedup against a loaded in-flight pills message (switch-back to an active turn):
+      // the resumed live stream replays already-persisted pills, which share the same
+      // call_index id. Skipping them prevents a transient tail-duplication; genuinely new
+      // pills (ids beyond the persisted set) still render. Scoped to inflight-marked
+      // messages so a prior turn's sealed pills (same per-turn ids) never false-match.
+      const alreadyPersisted = state.messages.some(
+        (m) =>
+          (m.metadata?.inflight_turn_id as string | undefined) !== undefined &&
+          ((m.metadata?.tool_events as ToolEventView[] | undefined) ?? []).some(
+            (t) => t.id === msg.event.id,
+          ),
+      );
+      if (alreadyPersisted) return state;
       const prev = ensureStreaming(state);
       return {
         ...state,
@@ -313,8 +328,28 @@ function reducer(state: AppState, action: Action): AppState {
     case "updateWorkbar":
       return { ...state, workbar: msg.info };
 
-    case "liveStatus":
-      return { ...state, liveStatus: msg.status, turnActive: msg.turnActive ?? false };
+    case "liveStatus": {
+      const turnActive = msg.turnActive ?? false;
+      // Durable reconciliation (spec §10): /live is the source of truth for turn
+      // liveness. On the live-resume path, a webview reopened mid-turn can MISS the
+      // chat_done SSE (it fired during the reload window — before the channel
+      // re-subscribe and outside the 50-event replay buffer), leaving the streaming
+      // bubble + inputEnabled=false wedged so the composer is stuck on "Agent is
+      // working…" forever. When /live reports a CONTROLLER turn has ended (status===null
+      // → no task), re-enable input and seal any lingering bubble (sealStreaming
+      // preserves text/thinking/pills — no data loss). Re-enable even with NO bubble:
+      // a turn that errored before any broadcast leaves inputEnabled=false with nothing
+      // to seal, and that case must unwedge too. Gated to status===null so this never
+      // touches input during TASK execution — a task keeps turnActive=false throughout
+      // and its composer disable is governed by liveStatus precedence, not here.
+      const controllerTurnEnded =
+        !turnActive && msg.status == null && (state.streaming != null || !state.inputEnabled);
+      if (controllerTurnEnded) {
+        const sealed = state.streaming ? sealStreaming(state, at) : state;
+        return { ...sealed, liveStatus: msg.status, turnActive, inputEnabled: true };
+      }
+      return { ...state, liveStatus: msg.status, turnActive };
+    }
 
     default:
       return state;

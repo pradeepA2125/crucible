@@ -1171,7 +1171,12 @@ export class AiEditorController {
     const threadId = this.activeThreadId;
     if (!threadId) return;
     try {
-      await this.clientForChat().stopChatTurn(threadId);
+      const result = await this.clientForChat().stopChatTurn(threadId);
+      // We aborted our SSE reader above, so the backend's live "✗ Stopped" breadcrumb
+      // broadcast never reaches the open webview (finding 7) — only its durable copy
+      // survives (shows on reopen). Render it optimistically, like accept/discard; a
+      // reopen replaces it with the durable copy (no dup). Gated on ok = a real stop.
+      if (result.ok) this.appendBreadcrumbMessage("", "✗ Stopped");
     } catch (error) {
       if (this.isBenignConflict(error)) return;
       // A failed stop is non-fatal — the turn finishes on its own; log only.
@@ -1183,7 +1188,13 @@ export class AiEditorController {
   }
 
   private forwardToolCall(source: "explore" | "execution" | "planning", payload: Record<string, unknown>): void {
-    const id = ++this.toolEventSeq;
+    // Prefer the backend's call_index as the pill id (controller execution pills): it
+    // equals the persisted pill id, so a switch-back resume dedups replayed pills against
+    // the loaded in-flight message (useAppState appendToolEvent). Other sources keep the
+    // session-monotonic seq.
+    const id = typeof payload["call_index"] === "number"
+      ? (payload["call_index"] as number)
+      : ++this.toolEventSeq;
     this.openToolEvent[source] = id;
     const thought = (payload["thought"] as string) || undefined;
     this.ui.appendToolEvent({
@@ -1339,6 +1350,15 @@ export class AiEditorController {
     decision: CommandDecision
   ): Promise<void> {
     try {
+      // A controller (chat EDIT) command gate has no task — /live reports activeTaskId
+      // null and the gate id is the thread id (LiveSlot renders activeTaskId ?? threadId).
+      // Route it to the chat endpoint; otherwise it's a task gate → the task route. Mirrors
+      // handleEditDecisionFromChat. The undefined-latestLiveState case (no poll yet) stays
+      // on the task route — backward-compatible with the direct task-gate path.
+      if (this.latestLiveState != null && this.latestLiveState.activeTaskId == null) {
+        await this.clientForChat().postChatCommandDecision(taskId, decision);
+        return;
+      }
       await this.clientForChat().sendCommandDecision(this.liveTaskIdOr(taskId), decision);
     } catch (err) {
       if (this.isBenignConflict(err)) return;
@@ -1567,6 +1587,13 @@ export class AiEditorController {
     const signature = JSON.stringify({
       taskId: live.activeTaskId,
       status: live.status,
+      // turnActive drives composer enable/disable and is independent of the cards: a
+      // controller chat turn has no task, so status/gate/plan stay null for the whole
+      // turn. Omitting turnActive here lets the turn-end transition (true→false) get
+      // deduped away, so sendLiveStatus(..., false) is never delivered and the composer
+      // stays wedged on "Agent is working…". Same dedup-lock bug class as runSummary/
+      // narrative/failure below.
+      turnActive: live.turnActive,
       gate: live.pendingGate,
       plan: live.plan,
       // Durable telemetry is finalized server-side AFTER the READY_FOR_REVIEW/terminal
@@ -1605,6 +1632,12 @@ export class AiEditorController {
 
     if (live.status === "READY_FOR_REVIEW" && live.activeTaskId) {
       try {
+        // Signature invariant: this block reads getTaskResult fields (modifiedFiles,
+        // shadowWorkspacePath, plan) that are NOT in the dedup signature. That is safe
+        // ONLY because they are immutable once status===READY_FOR_REVIEW — the result is
+        // frozen at that terminal-ish state, so a same-status re-poll can't carry a newer
+        // result. If a future change lets the result mutate at unchanged status, add a
+        // result fingerprint to the signature (same class as the turnActive fix above).
         const result = await this.clientForChat().getTaskResult(live.activeTaskId);
         // Tier B: prefer the durable run_summary (survives reload) over extension-observed
         // ephemeral counts; fall back to the ephemeral values for live-feel before it lands.
