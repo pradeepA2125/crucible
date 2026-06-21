@@ -36,8 +36,10 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // UX Rule 3: navLocked while input is disabled (local SSE loop appending).
-  const navLocked = !state.inputEnabled;
+  // UX Rule 3: navLocked while input is disabled (local SSE loop appending) OR while a
+  // detached controller turn is in flight — turnActive is durable across a webview reload,
+  // so the lock survives where the ephemeral inputEnabled flag would reset to true.
+  const navLocked = !state.inputEnabled || state.turnActive;
 
   const availability = inputAvailability(state);
 

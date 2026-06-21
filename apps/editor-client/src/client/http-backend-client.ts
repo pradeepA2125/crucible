@@ -195,6 +195,123 @@ export class HttpBackendClient implements BackendTaskClient {
     );
   }
 
+  // Controller per-edit review gate (Phase F3): a plain JSON ack — the loop's
+  // continuation rides the already-open message SSE stream.
+  async postEditDecision(
+    threadId: string,
+    decision: "accept" | "reject",
+    reason?: string
+  ): Promise<void> {
+    await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/edit-decision`,
+      { method: "POST", body: JSON.stringify({ decision, reason: reason ?? "" }) }
+    );
+  }
+
+  // Controller run_command gate (Phase F): a plain JSON ack — the loop's continuation
+  // rides the already-open message SSE stream. Mirrors postEditDecision but carries a
+  // CommandDecision (camelCase ruleValue → snake_case rule_value, like sendCommandDecision).
+  async postChatCommandDecision(
+    threadId: string,
+    decision: CommandDecision
+  ): Promise<void> {
+    const body: Record<string, unknown> = {
+      approve: decision.approve,
+      remember: decision.remember,
+      scope: decision.scope,
+    };
+    if (decision.ruleValue !== undefined) body.rule_value = decision.ruleValue;
+    await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/command-decision`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  }
+
+  // Controller mode gate (Phase F2): a STREAMED dispatch (edit/create_task produce
+  // live events), consumed like sendChatMessage.
+  async *postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent> {
+    const response = await this.fetchFn(
+      `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/mode-decision`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Mode decision failed (${response.status}) for thread ${threadId}`);
+    }
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
+          } catch {
+            // skip malformed SSE line
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  }
+
+  async stopChatTurn(threadId: string): Promise<{ ok: boolean }> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/stop`,
+      { method: "POST", body: "{}" }
+    ) as Record<string, unknown>;
+    return { ok: Boolean(raw["ok"]) };
+  }
+
+  // Subscribe-only SSE relay (no turn launch). Reuses the SSE line-parsing already
+  // behind postModeDecision/streamPatch. Closes on `done`/`chat_done`.
+  async *streamChannel(channelId: string): AsyncIterable<StreamEvent> {
+    const response = await this.fetchFn(
+      `${this.options.baseUrl}/v1/channels/${encodeURIComponent(channelId)}/stream`,
+      { headers: { accept: "text/event-stream" } }
+    );
+    if (!response.ok) {
+      throw new Error(`Channel stream failed (${response.status}) for ${channelId}`);
+    }
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const event = ChatEventSchema.parse(
+              JSON.parse(line.slice(5).trim())) as StreamEvent;
+            yield event;
+            if (event.type === "chat_done" || event.type === "done") return;
+          } catch {
+            // skip malformed SSE line
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  }
+
   async resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse> {
     const body: Record<string, unknown> = { stage: options?.stage ?? "execute" };
     if (options?.budgetOverride) {
@@ -356,6 +473,7 @@ export class HttpBackendClient implements BackendTaskClient {
         ? { kind: gate["kind"], payload: gate["payload"] ?? {} }
         : null,
       plan: raw["plan"] ?? null,
+      turnActive: raw["turn_active"] ?? false,
       failureSummary: this.toFailureSummary(raw),
       runSummary: this.toRunSummary(raw),
       taskNarrative: this.toTaskNarrative(raw),

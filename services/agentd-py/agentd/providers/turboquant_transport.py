@@ -177,6 +177,15 @@ class TurboQuantTransport(ModelJsonTransport):
             strict_json = os.environ.get("TURBOQUANT_JSON_SCHEMA", "true").strip().lower() \
                 not in ("0", "false", "no", "off")
         self._strict_json = strict_json
+        # True iff this transport enforces a JSON-schema `oneOf` at the token level, so
+        # the controller may use the tight discriminated-union schema. Measured
+        # (2026-06-21): llama.cpp's GBNF converter enforces `oneOf` cleanly (no deadlock,
+        # zero cross-variant bleed) — UNLIKE Gemini. But enforcement only holds when the
+        # strict json_schema grammar is actually applied: thinking ON makes llama.cpp
+        # silently fall back to loose json_object (grammar dropped). MUST mirror the gate
+        # in `_build_body` (strict + thinking_budget == 0). Fixed at construction, like
+        # `_strict_json`.
+        self.supports_oneof_grammar: bool = strict_json and profile.thinking_budget == 0
 
     # ------------------------------------------------------------------
     # Factory classmethods
@@ -418,6 +427,17 @@ class TurboQuantTransport(ModelJsonTransport):
                             chunk = json.loads(data)
                         except json.JSONDecodeError:
                             continue
+                        # llama.cpp's final stream chunk carries prefix-cache telemetry
+                        # (choices empty here): prompt_n = tokens actually evaluated this
+                        # turn, cache_n = tokens reused from the KV prefix cache. Logging
+                        # this makes KV-cache reuse measurable instead of assumed.
+                        if tm := chunk.get("timings"):
+                            logger.info(
+                                "turboquant timings: schema=%s prompt_n=%s cache_n=%s "
+                                "prompt_ms=%.0f predicted_n=%s",
+                                schema_name, tm.get("prompt_n"), tm.get("cache_n"),
+                                tm.get("prompt_ms", 0.0), tm.get("predicted_n"),
+                            )
                         choices = chunk.get("choices")
                         if not choices:
                             continue

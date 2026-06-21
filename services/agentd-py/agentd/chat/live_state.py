@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from agentd.chat.models import PendingGate, ThreadLiveState
+from agentd.chat.models import ChatThread, PendingGate, ThreadLiveState
 from agentd.domain.models import TaskRecord
 
 logger = logging.getLogger(__name__)
@@ -115,3 +115,25 @@ def resolve_live_state(
         run_summary=task.run_summary,
         task_narrative=task.task_narrative,
     )
+
+
+def resolve_thread_live(
+    thread: ChatThread | None,
+    active_task_id: str | None,
+    get_task: Callable[[str], TaskRecord],
+) -> ThreadLiveState:
+    """Thread-aware overlay over resolve_live_state.
+
+    A controller turn has no task, so its gate (mode/edit) lives on the thread.
+    When set, it takes precedence — the controller owns the live slot. Otherwise
+    we fall back to the task-derived state (command/step/scope/validation gate,
+    plan, telemetry). The controller gate clears in place via set_controller_gate
+    (Class-A: gates clear in place, see CLAUDE.md), so the slot self-heals on the
+    next poll once the decision route clears it.
+    """
+    if thread is not None and thread.pending_controller_gate is not None:
+        return ThreadLiveState(
+            active_task_id=active_task_id,
+            pending_gate=thread.pending_controller_gate,
+        )
+    return resolve_live_state(active_task_id, get_task)

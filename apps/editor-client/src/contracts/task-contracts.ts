@@ -163,8 +163,8 @@ export type StreamEvent =
   | { type: "operation_error"; payload: { op_type: string; path: string; error: string } }
   // done carries {status} when the engine reaches a terminal/pause state (engine.py:1550) and {} on bare pause paths
   | { type: "done"; payload: { status?: string } }
-  | { type: "tool_call"; payload: { tool: string; thought: string; iteration: number; phase: string; args?: Record<string, unknown> } }
-  | { type: "tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
+  | { type: "tool_call"; payload: { tool: string; thought: string; iteration?: number; phase?: string; args?: Record<string, unknown>; call_index?: number } }
+  | { type: "tool_result"; payload: { tool?: string; output: string; is_error: boolean; iteration?: number; call_index?: number } }
   | { type: "planning_tool_call"; payload: { tool: string; thought: string; iteration: number; args?: Record<string, unknown> } }
   | { type: "planning_tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
   | { type: "explore_tool_result"; payload: { tool: string; output: string; is_error: boolean } }
@@ -187,7 +187,7 @@ export type StreamEvent =
   | { type: "task_card"; payload: { task_id: string } }
   | { type: "plan_card"; payload: { task_id: string; plan_markdown: string } }
   | { type: "task_status_changed"; payload: { task_id: string; status: string; plan_markdown?: string; message?: string } }
-  | { type: "diff_ready"; payload: { task_id: string; diff_entries: DiffEntry[]; thinking_log: string[]; completed_steps: number; total_steps: number } }
+  | { type: "diff_ready"; payload: { task_id: string; diff_entries: DiffEntry[]; thinking_log: string[]; completed_steps: number; total_steps: number; resolved?: "applied" | "discarded" } }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } }
   | { type: "step_review_requested"; payload: { step_id: string; step_title: string; diff_entries: DiffEntry[] } }
   | { type: "env_profile_building"; payload: { workspace_root: string } }
@@ -240,8 +240,11 @@ export const ChatEventSchema = z.object({
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
 // The single gate a thread's current task is waiting on (mirrors backend PendingGate).
+// "mode"/"edit" are the agentic chat-controller gates (no task) — the Zod enum is the
+// RUNTIME gate: a kind missing here makes ThreadLiveStateSchema.parse() throw, which
+// pollThreadLiveState swallows, so the gate silently never renders.
 export const PendingGateSchema = z.object({
-  kind: z.enum(["command", "step", "scope", "validation"]),
+  kind: z.enum(["command", "step", "scope", "validation", "mode", "edit"]),
   payload: z.record(z.unknown()).default({}),
 });
 export type PendingGate = z.infer<typeof PendingGateSchema>;
@@ -254,6 +257,9 @@ export const ThreadLiveStateSchema = z.object({
   status: z.string().nullable(),
   pendingGate: PendingGateSchema.nullable(),
   plan: z.record(z.unknown()).nullable(),
+  // True while a controller turn / held-open controller gate is in flight (durable
+  // input-disable signal that survives a webview reload). Absent on legacy payloads → false.
+  turnActive: z.boolean().default(false),
   // Durable lifecycle telemetry (Tier B): drives the Error/Review cards from poll state.
   failureSummary: FailureSummarySchema.nullable().optional(),
   runSummary: RunSummarySchema.nullable().optional(),
@@ -286,6 +292,18 @@ export interface BackendTaskClient {
   getChatThread(threadId: string): Promise<ChatThread>;
   getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
   sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent>;
+  // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
+  // produce live events); the per-edit gate is a plain JSON ack (its continuation rides
+  // the already-open message stream).
+  postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent>;
+  postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;
+  // Controller run_command gate: a plain JSON ack (continuation rides the open message stream).
+  postChatCommandDecision(threadId: string, decision: CommandDecision): Promise<void>;
+  // Stop a detached controller turn (POST /chat/threads/{id}/stop). ok=false is benign.
+  stopChatTurn(threadId: string): Promise<{ ok: boolean }>;
+  // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used
+  // to resume the live overlay for a controller turn after a webview reload (chat:{id}).
+  streamChannel(channelId: string): AsyncIterable<StreamEvent>;
   applyInlineChange(inlineTaskId: string): Promise<void>;
   discardInlineChange(inlineTaskId: string): Promise<void>;
 }

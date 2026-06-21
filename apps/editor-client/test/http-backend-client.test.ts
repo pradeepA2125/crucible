@@ -467,6 +467,55 @@ describe("HttpBackendClient", () => {
     expect(live.taskNarrative?.points).toEqual(["edited auth.py", "added test"]);
   });
 
+  test("getThreadLiveState maps turn_active to turnActive on /live", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            active_task_id: null,
+            status: null,
+            pending_gate: null,
+            plan: null,
+            turn_active: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-1");
+    expect(live.turnActive).toBe(true);
+  });
+
+  test("getThreadLiveState defaults turnActive to false when absent", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({ active_task_id: null, status: null, pending_gate: null, plan: null }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-1");
+    expect(live.turnActive).toBe(false);
+  });
+
+  test("stopChatTurn posts to /stop and returns ok", async () => {
+    let url = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (input) => {
+        url = String(input);
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    const result = await client.stopChatTurn("chat-1");
+    expect(url).toContain("/v1/chat/threads/chat-1/stop");
+    expect(result.ok).toBe(true);
+  });
+
   test("getTaskResult leaves summaries undefined when the wire omits them", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",

@@ -31,6 +31,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (taskId, decision) => controller.handleCommandDecisionFromChat(taskId, decision),
     (taskId, decision) =>
       decision === "accept" ? controller.acceptStep(taskId) : controller.discardStep(taskId),
+    (threadId, mode) => controller.handleModeDecisionFromChat(threadId, mode),
+    (threadId, decision, reason) => controller.handleEditDecisionFromChat(threadId, decision, reason),
     (taskId) => controller.acceptTaskPatch(taskId),
     (taskId, reason) => controller.rejectTaskPatch(taskId, reason),
     (taskId, stage) => controller.resumeTaskById(taskId, stage),
@@ -173,8 +175,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     clearLiveError: () => {
       chatPanel.clearLiveError();
     },
-    sendLiveStatus: (status) => {
-      chatPanel.sendLiveStatus(status);
+    sendLiveStatus: (status, turnActive) => {
+      chatPanel.sendLiveStatus(status, turnActive);
     },
   };
 

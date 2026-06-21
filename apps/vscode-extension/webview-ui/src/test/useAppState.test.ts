@@ -206,6 +206,50 @@ describe("useAppState", () => {
     expect(result.current.state.liveStatus).toBe("EXECUTING");
   });
 
+  // 9b. liveStatus reconciliation: a controller turn that ended (turnActive=false, no task)
+  // re-enables the composer even when NO streaming bubble lingered — the missed-chat_done
+  // wedge where inputEnabled is stuck false and there's nothing to seal.
+  it("liveStatus(turnActive=false, status=null) re-enables input with no streaming bubble", () => {
+    const { result } = renderHook(() => useAppState());
+
+    // Turn start: input disabled, no bubble yet (e.g. error before any broadcast).
+    act(() => { fireMessage({ type: "setInputEnabled", enabled: false }); });
+    expect(result.current.state.inputEnabled).toBe(false);
+    expect(result.current.state.streaming).toBeNull();
+
+    // /live reports the controller turn ended.
+    act(() => { fireMessage({ type: "liveStatus", status: null, turnActive: false }); });
+    expect(result.current.state.inputEnabled).toBe(true);
+    expect(result.current.state.turnActive).toBe(false);
+  });
+
+  // 9c. liveStatus reconciliation: a lingering streaming bubble is SEALED (no data loss)
+  // and input re-enabled when the turn ends.
+  it("liveStatus(turnActive=false, status=null) seals a lingering bubble and re-enables", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => { fireMessage({ type: "setInputEnabled", enabled: false }); });
+    act(() => { fireMessage({ type: "appendChunk", chunk: "partial answer" }); });
+    expect(result.current.state.streaming).not.toBeNull();
+
+    act(() => { fireMessage({ type: "liveStatus", status: null, turnActive: false }); });
+    // Bubble sealed into a persisted message (text preserved), input re-enabled.
+    expect(result.current.state.streaming).toBeNull();
+    expect(result.current.state.inputEnabled).toBe(true);
+    expect(result.current.state.messages.at(-1)?.content).toBe("partial answer");
+  });
+
+  // 9d. Guard: during TASK execution (status is a task status, turnActive=false), this
+  // branch must NOT force input — task input is governed by liveStatus precedence, not here.
+  it("liveStatus with a task status does not force-enable input", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => { fireMessage({ type: "setInputEnabled", enabled: false }); });
+    act(() => { fireMessage({ type: "liveStatus", status: "EXECUTING", turnActive: false }); });
+    expect(result.current.state.inputEnabled).toBe(false); // unchanged — task governs it
+    expect(result.current.state.liveStatus).toBe("EXECUTING");
+  });
+
   // 10. finalizeAgentMessage with open activeThinkingChunk seals it as a thinking_log entry
   it("finalize with open activeThinkingChunk seals it as a final thinking_log entry in metadata", () => {
     const { result } = renderHook(() => useAppState());
@@ -233,5 +277,40 @@ describe("useAppState", () => {
     // State untouched, no throw.
     expect(result.current.state.messages).toHaveLength(0);
     expect(result.current.state.threads).toHaveLength(0);
+  });
+
+  // appendToolEvent dedups against a loaded in-flight message (switch-back-to-active-turn):
+  // the resumed live stream replays already-persisted pills (same call_index id) — those
+  // must be skipped, while genuinely new pills still render in the streaming bubble.
+  it("appendToolEvent skips a pill already in a loaded in-flight message; adds a new one", () => {
+    const { result } = renderHook(() => useAppState());
+    act(() => {
+      fireMessage({
+        type: "appendMessage",
+        message: {
+          role: "agent", content: "", type: "text", timestamp: "t",
+          metadata: {
+            inflight_turn_id: "turn-1",
+            tool_events: [{ id: 5, tool: "read_file", args: {}, source: "execution", done: true }],
+          },
+        },
+      });
+    });
+    // Replayed pill (same id 5) → deduped, no streaming pill.
+    act(() => {
+      fireMessage({
+        type: "appendToolEvent",
+        event: { id: 5, tool: "read_file", args: {}, source: "execution" },
+      });
+    });
+    expect(result.current.state.streaming?.toolEvents ?? []).toHaveLength(0);
+    // New pill (id 99) → renders in the bubble.
+    act(() => {
+      fireMessage({
+        type: "appendToolEvent",
+        event: { id: 99, tool: "search_code", args: {}, source: "execution" },
+      });
+    });
+    expect((result.current.state.streaming?.toolEvents ?? []).map((t) => t.id)).toEqual([99]);
   });
 });

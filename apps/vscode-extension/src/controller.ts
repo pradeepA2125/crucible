@@ -78,11 +78,11 @@ export interface ControllerUI {
   clearLiveReview(): void;
   renderLiveError(error: { taskId: string; status: "FAILED" | "ABORTED"; detail?: string; narrative?: { headline: string; points: string[] } }): void;
   clearLiveError(): void;
-  sendLiveStatus(status: string | null): void;
+  sendLiveStatus(status: string | null, turnActive: boolean): void;
 }
 
 export interface LiveGateView {
-  kind: "command" | "step" | "scope" | "validation";
+  kind: "command" | "step" | "scope" | "validation" | "mode" | "edit";
   payload: Record<string, unknown>;
   taskId: string;
 }
@@ -499,6 +499,7 @@ export class AiEditorController {
     this.ui.clearLiveGate();
     this.ui.clearLivePlan();
     this.lastLiveSignature = null;
+    this._liveResumeThreadId = null;
     let threads: ChatThreadSummary[];
     try {
       threads = await client.listChatThreads(workspacePath);
@@ -518,6 +519,7 @@ export class AiEditorController {
     this.ui.clearLiveGate();
     this.ui.clearLivePlan();
     this.lastLiveSignature = null;
+    this._liveResumeThreadId = null;
     for (const message of thread.messages) {
       this.ui.appendChatMessage(message);
     }
@@ -551,13 +553,50 @@ export class AiEditorController {
 
     this.ui.setChatInputEnabled(false);
     this.turnAbort = new AbortController();
+    await this.streamTurn(
+      client.sendChatMessage(
+        threadId,
+        text,
+        this.turnAbort.signal,
+        stepReview !== undefined ? { stepReview } : undefined,
+      ),
+    );
+  }
+
+  // Thread currently being live-resumed (channel re-subscribe) — idempotency guard.
+  private _liveResumeThreadId: string | null = null;
+
+  /**
+   * Resume the live overlay for an in-flight controller turn after a webview reload.
+   * Subscribe-only relay (no turn launch) over GET /v1/channels/{id}/stream; reuses
+   * streamTurn's event rendering. Best-effort: events older than the 50-event replay
+   * buffer (and everything after a backend restart) come from the reconstructed
+   * transcript, not here.
+   */
+  private async resumeLiveOverlay(threadId: string): Promise<void> {
+    try {
+      this.turnAbort = new AbortController();
+      await this.streamTurn(this.clientForChat().streamChannel(`chat:${threadId}`));
+    } catch (error) {
+      // A closed/empty channel is expected (turn already done) — clear the guard so a
+      // later turn can resume, and let the /live poll keep driving durable state.
+      this._liveResumeThreadId = null;
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        // non-fatal
+      }
+    }
+  }
+
+  /**
+   * Consume a chat-turn SSE stream and render its events. Shared by sendChatMessage
+   * and the controller mode-decision dispatch — both stream the same chat events.
+   * The caller disables input + sets `turnAbort`; this owns the loop and teardown.
+   */
+  private async streamTurn(stream: AsyncIterable<StreamEvent>): Promise<void> {
     let currentTaskId: string | undefined;
     try {
       this.openToolEvent = {}; // defensive: clear any stale ids from a previous turn
-      for await (const event of client.sendChatMessage(
-        threadId, text, this.turnAbort.signal,
-        stepReview !== undefined ? { stepReview } : undefined,
-      )) {
+      for await (const event of stream) {
         if (event.type === "chat_agent_thinking") {
           const message = (event.payload["message"] as string) ?? "Thinking…";
           this.ui.appendChatThinkingEntry(message);
@@ -582,8 +621,27 @@ export class AiEditorController {
         } else if (event.type === "chat_response") {
           const chunk = (event.payload["chunk"] as string) ?? "";
           this.ui.appendChatChunk(chunk);
+        } else if (event.type === "chat_breadcrumb") {
+          // Controller decisions (mode choice, edit accept/reject) broadcast their
+          // breadcrumbs on THIS turn stream. streamTurn previously had no branch for
+          // them, so they only appeared on reload (persisted) — render live too.
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: (event.payload["text"] as string) ?? "",
+            type: "text",
+            taskId: (event.payload["task_id"] as string) ?? "",
+            timestamp: this.now(),
+            metadata: { breadcrumb: true },
+          });
         } else if (event.type === "diff_ready") {
           const taskId = (event.payload["task_id"] as string) ?? "";
+          // `resolved` is set by the chat controller's auto-accept edit path (the
+          // change is already promoted) → the card renders inert. The legacy inline
+          // path omits it → interactive Accept/Reject, as before.
+          const resolved = event.payload["resolved"] as
+            | "applied"
+            | "discarded"
+            | undefined;
           this.ui.appendChatMessage({
             role: "agent",
             content: taskId,
@@ -593,6 +651,7 @@ export class AiEditorController {
             metadata: {
               diff_entries: event.payload["diff_entries"],
               thinking_log: event.payload["thinking_log"] ?? [],
+              ...(resolved ? { resolved } : {}),
             },
           });
         } else if (event.type === "task_card") {
@@ -916,6 +975,39 @@ export class AiEditorController {
     }
   }
 
+  /**
+   * Resolve the controller mode gate (Phase F2). A STREAMED dispatch: edit/explain
+   * re-enter the loop and create_task hands off, all producing live chat events —
+   * so consume it through streamTurn exactly like a normal message turn.
+   */
+  async handleModeDecisionFromChat(threadId: string, mode: string): Promise<void> {
+    const client = this.clientForChat();
+    this.ui.setChatInputEnabled(false);
+    this.turnAbort = new AbortController();
+    await this.streamTurn(client.postModeDecision(threadId, mode));
+  }
+
+  /**
+   * Resolve the controller per-edit review gate (Phase F3). A plain POST — the
+   * loop continuation rides the already-open message SSE stream (still consumed by
+   * the in-flight streamTurn), so there is nothing to consume here.
+   */
+  async handleEditDecisionFromChat(
+    threadId: string,
+    decision: "accept" | "reject",
+    reason: string,
+  ): Promise<void> {
+    const client = this.clientForChat();
+    try {
+      await client.postEditDecision(threadId, decision, reason);
+    } catch (error) {
+      if (this.isBenignConflict(error)) return;
+      this.ui.showError(
+        `Failed to send edit decision: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   async applyInlineChange(inlineTaskId: string): Promise<void> {
     const client = this.createClient(this.settings.getBackendBaseUrl());
     try {
@@ -1071,12 +1163,38 @@ export class AiEditorController {
     this.stopLiveStatePolling();
   }
 
-  stopActiveTurn(): void {
+  async stopActiveTurn(): Promise<void> {
+    // Detached turns are not cancelled by disconnecting the SSE anymore — Stop is an
+    // explicit POST /stop (a slimmer cousin of task /abort). Still abort the local SSE
+    // reader so the relay loop unwinds promptly; the server-side cancel is the real stop.
     this.turnAbort?.abort();
+    const threadId = this.activeThreadId;
+    if (!threadId) return;
+    try {
+      const result = await this.clientForChat().stopChatTurn(threadId);
+      // We aborted our SSE reader above, so the backend's live "✗ Stopped" breadcrumb
+      // broadcast never reaches the open webview (finding 7) — only its durable copy
+      // survives (shows on reopen). Render it optimistically, like accept/discard; a
+      // reopen replaces it with the durable copy (no dup). Gated on ok = a real stop.
+      if (result.ok) this.appendBreadcrumbMessage("", "✗ Stopped");
+    } catch (error) {
+      if (this.isBenignConflict(error)) return;
+      // A failed stop is non-fatal — the turn finishes on its own; log only.
+      this.ui.showWarning(`Stop failed: ${formatError(error)}`);
+    } finally {
+      this.lastLiveSignature = null;
+      void this.pollThreadLiveState();
+    }
   }
 
   private forwardToolCall(source: "explore" | "execution" | "planning", payload: Record<string, unknown>): void {
-    const id = ++this.toolEventSeq;
+    // Prefer the backend's call_index as the pill id (controller execution pills): it
+    // equals the persisted pill id, so a switch-back resume dedups replayed pills against
+    // the loaded in-flight message (useAppState appendToolEvent). Other sources keep the
+    // session-monotonic seq.
+    const id = typeof payload["call_index"] === "number"
+      ? (payload["call_index"] as number)
+      : ++this.toolEventSeq;
     this.openToolEvent[source] = id;
     const thought = (payload["thought"] as string) || undefined;
     this.ui.appendToolEvent({
@@ -1232,6 +1350,15 @@ export class AiEditorController {
     decision: CommandDecision
   ): Promise<void> {
     try {
+      // A controller (chat EDIT) command gate has no task — /live reports activeTaskId
+      // null and the gate id is the thread id (LiveSlot renders activeTaskId ?? threadId).
+      // Route it to the chat endpoint; otherwise it's a task gate → the task route. Mirrors
+      // handleEditDecisionFromChat. The undefined-latestLiveState case (no poll yet) stays
+      // on the task route — backward-compatible with the direct task-gate path.
+      if (this.latestLiveState != null && this.latestLiveState.activeTaskId == null) {
+        await this.clientForChat().postChatCommandDecision(taskId, decision);
+        return;
+      }
       await this.clientForChat().sendCommandDecision(this.liveTaskIdOr(taskId), decision);
     } catch (err) {
       if (this.isBenignConflict(err)) return;
@@ -1435,9 +1562,38 @@ export class AiEditorController {
     }
     this.latestLiveState = live;
 
+    // Live-resume: a fresh webview (reload mid-turn) reconstructs the transcript from
+    // the thread fetch, but the live overlay (streaming pills/chunks) died with the old
+    // SSE. When /live reports an in-flight turn or a controller gate, re-subscribe to the
+    // chat channel (subscribe-only — does NOT relaunch the turn) to resume the overlay
+    // from the broadcaster's replay buffer onward. Idempotent via _liveResumeThreadId.
+    //
+    // CRITICAL: only resume when NO local turn stream is active (`turnAbort === null`).
+    // During a normal sendChatMessage/mode-decision turn, turnAbort is set and /live also
+    // reports turn_active=true — without this guard the 1s poll would open a SECOND
+    // streamTurn on the same channel (the broadcaster replays its buffer to every new
+    // subscriber), double-rendering every event and clobbering the live turnAbort. A
+    // fresh webview after a reload has turnAbort === null, which is exactly when resume
+    // is needed (the original stream died with the old SSE; the detached turn lives on).
+    const channelActive = live.turnActive || live.pendingGate?.kind === "mode"
+      || live.pendingGate?.kind === "edit";
+    if (channelActive && this.turnAbort === null && this._liveResumeThreadId !== threadId) {
+      this._liveResumeThreadId = threadId;
+      void this.resumeLiveOverlay(threadId);
+    } else if (!channelActive && this._liveResumeThreadId === threadId) {
+      this._liveResumeThreadId = null; // turn ended — allow a future resume
+    }
+
     const signature = JSON.stringify({
       taskId: live.activeTaskId,
       status: live.status,
+      // turnActive drives composer enable/disable and is independent of the cards: a
+      // controller chat turn has no task, so status/gate/plan stay null for the whole
+      // turn. Omitting turnActive here lets the turn-end transition (true→false) get
+      // deduped away, so sendLiveStatus(..., false) is never delivered and the composer
+      // stays wedged on "Agent is working…". Same dedup-lock bug class as runSummary/
+      // narrative/failure below.
+      turnActive: live.turnActive,
       gate: live.pendingGate,
       plan: live.plan,
       // Durable telemetry is finalized server-side AFTER the READY_FOR_REVIEW/terminal
@@ -1453,11 +1609,13 @@ export class AiEditorController {
     }
     this.lastLiveSignature = signature;
 
-    if (live.pendingGate && live.activeTaskId) {
+    if (live.pendingGate) {
       this.ui.renderLiveGate({
         kind: live.pendingGate.kind,
         payload: live.pendingGate.payload,
-        taskId: live.activeTaskId,
+        // Controller gates (mode/edit) have NO task — fall back to the thread id so
+        // the gate still renders (the render guard previously required activeTaskId).
+        taskId: live.activeTaskId ?? threadId,
       });
     } else {
       this.ui.clearLiveGate();
@@ -1474,6 +1632,12 @@ export class AiEditorController {
 
     if (live.status === "READY_FOR_REVIEW" && live.activeTaskId) {
       try {
+        // Signature invariant: this block reads getTaskResult fields (modifiedFiles,
+        // shadowWorkspacePath, plan) that are NOT in the dedup signature. That is safe
+        // ONLY because they are immutable once status===READY_FOR_REVIEW — the result is
+        // frozen at that terminal-ish state, so a same-status re-poll can't carry a newer
+        // result. If a future change lets the result mutate at unchanged status, add a
+        // result fingerprint to the signature (same class as the turnActive fix above).
         const result = await this.clientForChat().getTaskResult(live.activeTaskId);
         // Tier B: prefer the durable run_summary (survives reload) over extension-observed
         // ephemeral counts; fall back to the ephemeral values for live-feel before it lands.
@@ -1532,7 +1696,7 @@ export class AiEditorController {
       this.ui.clearLiveError();
     }
 
-    this.ui.sendLiveStatus(live.status ?? null);
+    this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false);
     } finally {
       this.livePollInFlight = false;
     }

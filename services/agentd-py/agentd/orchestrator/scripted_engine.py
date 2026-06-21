@@ -21,12 +21,15 @@ class ScriptedReasoningEngine:
         tool_step_responses: list[dict[str, object]] | None = None,
         draft_conventions_responses: list[dict[str, object]] | None = None,
         run_narrative: dict[str, object] | None = None,
+        controller_step_responses: list[dict[str, object]] | None = None,
     ) -> None:
         self._plan = plan
         self._patches = patches
         self._patch_index = 0
         self._tool_step_responses: list[dict[str, object]] = tool_step_responses or []
         self._tool_step_index = 0
+        self._controller_step_responses: list[dict[str, object]] = controller_step_responses or []
+        self._controller_step_index = 0
         self._draft_conventions_responses: list[dict[str, object]] = list(
             draft_conventions_responses or []
         )
@@ -116,6 +119,22 @@ class ScriptedReasoningEngine:
                     if isinstance(ops, list):
                         patch_ops = ops
         return {"type": "emit_patch", "thought": "scripted engine bypasses tool loop", "patch_ops": patch_ops}
+
+    async def create_controller_step(
+        self,
+        plan_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        *,
+        phase: str,
+        on_thinking: object = None,
+    ) -> dict[str, object]:
+        _ = (plan_context, history, tool_definitions, phase, on_thinking)
+        if not self._controller_step_responses:
+            raise RuntimeError("no controller_step_responses configured on ScriptedReasoningEngine")
+        index = min(self._controller_step_index, len(self._controller_step_responses) - 1)
+        self._controller_step_index += 1
+        return self._controller_step_responses[index]
 
     async def create_planning_step(
         self,

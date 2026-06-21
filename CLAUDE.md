@@ -210,6 +210,8 @@ The chat UI separates **interactive** affordances from the **durable transcript*
 - **Gates clear in place.** `_pause_for_step_review`, `_pause_for_validation_decision`, (and the scope/command callbacks) must reset `pending_*` + transition the **caller's** task object — NOT re-fetch a fresh record and reset that. The validation gate variant: `run_task`'s `finally` writes the chat completion line from its own local, which `return await _pause_for_validation_decision(...)` never rebinds — a re-fetched copy left it stale at `AWAITING_VALIDATION_DECISION` and the transcript got "Execution failed: <diagnostics>" after an accept. `transition()` mutates in place and the caller (`_execute_plan`) holds the reference; re-fetching a divergent object leaves the caller stale at `AWAITING_STEP_REVIEW`, which re-saves the stale gate (card reappears on reload, 409 on re-accept) and crashes the next transition (`Invalid transition: AWAITING_STEP_REVIEW -> VALIDATING`). Safe because the decision routes (`/step-decision`, `/scope-decision`, …) only `future.set_result(...)` — they never mutate/persist the task, so nothing changes it during the `await`.
 - **Gate-raise `except ValueError` swallows ONLY true re-entrancy** (`task.status == target`); re-raise otherwise. An invalid-source transition (e.g. raising a scope gate while parked in `AWAITING_STEP_REVIEW`) silently swallowed strands `pending_*` behind a stale status, so `/live` renders the wrong gate (or none) and the task blocks until its decision timeout (scope default 600s).
 
+**`/live` poll dedup-signature invariant (controller.ts `pollThreadLiveState`):** the 1s poll is the durable backstop for any *missed SSE terminal* (`chat_done`, gate-clear). It dedups on a `lastLiveSignature` (JSON of `{taskId, status, turnActive, gate, plan, runSummary, narrative, failure}`) to avoid webview churn, then `return`s early when unchanged. **INVARIANT: every durable signal consumed after the dedup gate MUST be in the signature** — else its transition is swallowed and the webview never learns. This bit three times: `runSummary`/`narrative`/`failure` (Review/Error card never updated) and **`turnActive`** (a controller chat turn has no task, so `status`/`gate`/`plan` stay null the whole turn → the `true→false` end transition was deduped away → `sendLiveStatus(...,false)` never sent → composer wedged on "Agent is working…" forever). The one **documented exception** is the READY_FOR_REVIEW `getTaskResult` fields (modifiedFiles/shadowPath/plan), safe only because they're immutable at that terminal status. Reconciliation has a second half in the webview reducer (`useAppState.ts` `liveStatus` case): on `turnActive=false` **with `status===null`** (controller turn ended) it seals any lingering streaming bubble (no data loss) AND re-enables input *even with no bubble* (an error-before-broadcast turn has none); gated to `status===null` so it never touches input during task execution.
+
 ### Retrieval pipeline
 - `indexer-rs` writes `index-snapshot.json` with `nodes`/`edges`/`diagnostics`/`stats`
 - `agentd-py` reads the snapshot per task via `retrieval/` module; if missing, auto-triggers one index run
@@ -297,6 +299,17 @@ The chat UI separates **interactive** affordances from the **durable transcript*
 ---
 
 ## Debugging Methodology
+
+### Trace the full call path before asserting how code works
+
+Do not describe (or design against) a code path from a single function. **Trace it end to end first** — caller → callee → the actual strings/values sent to the boundary. A recurring failure mode: reading one builder (e.g. `build_planning_step_payload`) and assuming the rest, when the system prompt is built by a *separate* function (`format_planning_system_prompt`) and the two are passed independently to `generate_json(system_instructions=…, user_payload=…)`.
+
+Worked example — where does the planner's `initial_context` (retrieval) actually live?
+- `orchestrator/engine.py`: `retrieval_context.as_prompt_payload()` → `initial_context=` in `plan_context` (pinned to round-1 on feedback via `task.planning_initial_context`).
+- `reasoning/engine.py::create_planning_step`: calls `format_planning_system_prompt(...)` (system string = prompt text + `tools_json` + `max_calls`, **no retrieval**) AND `build_planning_step_payload(...)` (user payload — retrieval lands here, early, with `instruction`/`budget_status` LAST for KV-cache stability).
+- Both strings go to `generate_json` as separate args.
+
+The lesson: the system prompt and the user payload are built by different functions and carry different things; verify which builder owns a field before reasoning about prompt structure, caching, or staleness. Use `_debug_dump` artifacts (`plan-turn-NN`) to see the exact bytes sent.
 
 ### Starting the backend for local testing
 

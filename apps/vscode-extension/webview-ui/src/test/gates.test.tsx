@@ -4,6 +4,8 @@ import { shlexJoin, CommandGate } from "../components/messages/gates/CommandGate
 import { ScopeGate } from "../components/messages/gates/ScopeGate";
 import { ValidationGate } from "../components/messages/gates/ValidationGate";
 import { StepGate } from "../components/messages/gates/StepGate";
+import { ModeGate } from "../components/messages/gates/ModeGate";
+import { EditGate } from "../components/messages/gates/EditGate";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
@@ -366,6 +368,102 @@ describe("StepGate — view diff button", () => {
       type: "viewDiffFile",
       path: "services/agentd-py/agentd/api/routes.py",
       shadowPath: "/tmp/shadow/routes.py",
+    });
+  });
+});
+
+// ── 6. ModeGate ───────────────────────────────────────────────────────────────
+
+const MODE_PAYLOAD = {
+  plan_sketch: "I'd add a rate_limit decorator in api/deps.py and apply it to three routes.",
+  recommended: "create_task",
+  reason: "Touches 4 files with a schema change.",
+  options: [
+    { mode: "create_task", label: "Plan it as a task", description: "Explore then plan." },
+    { mode: "edit", label: "Edit inline now", description: "I edit directly." },
+    { mode: "explain", label: "Just explain", description: "No changes." },
+  ],
+};
+
+describe("ModeGate — renders", () => {
+  it("renders the plan sketch and the recommended option", () => {
+    render(<ModeGate taskId="th1" payload={MODE_PAYLOAD} />);
+    expect(screen.getByText(/rate_limit decorator/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /plan it as a task.*recommended/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /edit inline now/i })).toBeTruthy();
+  });
+});
+
+describe("ModeGate — pick a mode", () => {
+  it("posts modeDecision with the chosen mode and threadId", () => {
+    render(<ModeGate taskId="thread-1" payload={MODE_PAYLOAD} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /edit inline now/i }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "modeDecision",
+      threadId: "thread-1",
+      mode: "edit",
+    });
+  });
+
+  it("is one-shot — all option buttons gone after a pick", () => {
+    render(<ModeGate taskId="thread-1" payload={MODE_PAYLOAD} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /just explain/i }));
+
+    expect(screen.queryByRole("button", { name: /plan it as a task/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /edit inline now/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /just explain/i })).toBeNull();
+  });
+});
+
+// ── 7. EditGate ───────────────────────────────────────────────────────────────
+
+const EDIT_PAYLOAD = {
+  diff_entries: [
+    {
+      path: "services/agentd-py/agentd/api/deps.py",
+      additions: 8,
+      deletions: 0,
+      temp_path: "/tmp/shadow/deps.py",
+    },
+  ],
+};
+
+describe("EditGate — renders", () => {
+  it("renders the changed file basename", () => {
+    render(<EditGate taskId="th1" payload={EDIT_PAYLOAD} />);
+    expect(screen.getByText("deps.py")).toBeTruthy();
+  });
+});
+
+describe("EditGate — Accept", () => {
+  it("posts editDecision accept with threadId", () => {
+    render(<EditGate taskId="thread-1" payload={EDIT_PAYLOAD} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^accept$/i }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "editDecision",
+      threadId: "thread-1",
+      decision: "accept",
+      reason: "",
+    });
+  });
+});
+
+describe("EditGate — Reject", () => {
+  it("posts editDecision reject with threadId", () => {
+    render(<EditGate taskId="thread-1" payload={EDIT_PAYLOAD} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^reject$/i }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "editDecision",
+      threadId: "thread-1",
+      decision: "reject",
+      reason: "",
     });
   });
 });

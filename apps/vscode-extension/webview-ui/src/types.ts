@@ -53,7 +53,7 @@ export interface ToolEventView {
 
 // ── Live slot views ──────────────────────────────────────────────────────────
 export interface LiveGateView {
-  kind: "command" | "scope" | "validation" | "step";
+  kind: "command" | "scope" | "validation" | "step" | "mode" | "edit";
   taskId: string;
   payload: Record<string, unknown>;  // pending_* payload, snake_case
 }
@@ -115,7 +115,7 @@ export type ExtensionMessage =
   | { type: "clearLiveReview" }
   | { type: "renderLiveError"; error: LiveErrorView }
   | { type: "clearLiveError" }
-  | { type: "liveStatus"; status: string | null }
+  | { type: "liveStatus"; status: string | null; turnActive?: boolean }
   | { type: "resolveInlineChangeCard"; taskId: string; resolution: "applied" | "discarded" }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } };
 
@@ -134,6 +134,9 @@ export type WebviewMessage =
   | { type: "validationDecision"; taskId: string; decision: "accept" | "reject" }
   | { type: "commandDecision"; taskId: string; approve: boolean; remember?: boolean; scope?: string; ruleValue?: string }
   | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" }
+  // Agentic chat controller: mode-recommendation gate pick + per-edit review decision
+  | { type: "modeDecision"; threadId: string; mode: string }
+  | { type: "editDecision"; threadId: string; decision: "accept" | "reject"; reason: string }
   | { type: "acceptTask"; taskId: string }
   | { type: "rejectTask"; taskId: string; reason: string }
   | { type: "resumeTask"; taskId: string; stage: "plan" | "execute" }
@@ -165,4 +168,8 @@ export interface AppState {
   liveError: LiveErrorView | null;
   workbar: WorkbarInfo | null;
   liveStatus: string | null;
+  // True while a controller turn / held-open controller gate is in flight (durable
+  // input-disable signal from /live; survives reload). Distinct from inputEnabled,
+  // which is the ephemeral per-turn flag a fresh webview mounts as `true`.
+  turnActive: boolean;
 }

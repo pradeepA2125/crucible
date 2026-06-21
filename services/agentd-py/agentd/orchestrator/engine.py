@@ -62,6 +62,10 @@ from agentd.domain.state_machine import assert_budget, bump_usage, transition
 from agentd.env.ensure import EnvProfileEnsurer
 from agentd.orchestrator.broadcaster import PatchEventBroadcaster
 from agentd.orchestrator.task_control import TaskAborted, TaskControl
+from agentd.patch.diffing import (
+    cap_unified_diff as _cap_unified_diff,  # noqa: F401 back-compat re-export
+    compute_diff_entries as _compute_diff_entries_free,
+)
 from agentd.patch.engine import PatchEngine
 from agentd.planning.agent import PlanningAgent
 from agentd.planning.registry import PlanningToolRegistry
@@ -72,29 +76,13 @@ from agentd.runtime.adapters import GenericPlanningAdapter, PlanningAdapter
 from agentd.runtime.artifacts import task_artifacts_root
 from agentd.storage.base import TaskStore
 from agentd.tools.loop import PlanHandoff, ScopeDecision, ScopeExtensionCallback
+from agentd.workspace.promote import promote_files as _promote_files_free
 from agentd.workspace.shadow import ShadowWorkspace, ShadowWorkspaceManager
 
 logger = logging.getLogger(__name__)
 
-_DIFF_MAX_LINES = 400
-_DIFF_MAX_CHARS = 24_000
-_DIFF_TRUNCATION_MARKER = "\u2026 diff truncated \u2014 open in editor for the full diff"
-
-
-def _cap_unified_diff(diff_text: str) -> str:
-    """Bound per-file diff text for chat payload/persistence."""
-    lines = diff_text.splitlines()
-    truncated = False
-    if len(lines) > _DIFF_MAX_LINES:
-        lines = lines[:_DIFF_MAX_LINES]
-        truncated = True
-    text = "\n".join(lines)
-    if len(text) > _DIFF_MAX_CHARS:
-        text = text[:_DIFF_MAX_CHARS]
-        truncated = True
-    if truncated:
-        text += "\n" + _DIFF_TRUNCATION_MARKER
-    return text
+# Diff capping + per-file DiffEntry computation now live in patch/diffing.py (DRY) \u2014
+# see the _compute_diff_entries method below, which delegates to compute_diff_entries.
 
 
 
@@ -1151,25 +1139,8 @@ class AgentOrchestrator:
         touched_files: list[str],
         inline_task_id: str,
     ) -> list[DiffEntry]:
-        entries: list[DiffEntry] = []
-        for rel in touched_files:
-            shadow_file = shadow_path / rel
-            real_file = real_path / rel
-            if not shadow_file.exists():
-                continue
-            shadow_lines = shadow_file.read_text(errors="replace").splitlines(keepends=True)
-            real_lines = real_file.read_text(errors="replace").splitlines(keepends=True) if real_file.exists() else []
-            diff = list(difflib.unified_diff(real_lines, shadow_lines, lineterm=""))
-            additions = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
-            deletions = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
-            entries.append(DiffEntry(
-                path=rel,
-                additions=additions,
-                deletions=deletions,
-                temp_path=str(shadow_file),
-                unified_diff=_cap_unified_diff("\n".join(diff)),
-            ))
-        return entries
+        # Delegates to the shared free function (patch/diffing.py) — single diff impl.
+        return _compute_diff_entries_free(real_path, shadow_path, touched_files, inline_task_id)
 
     def _load_inline_meta_from_disk(self, inline_task_id: str) -> dict | None:
         """Reconstruct inline shadow metadata from the on-disk manifest (survives reload)."""
@@ -1400,18 +1371,24 @@ class AgentOrchestrator:
         step_title: str,
         diff_entries: list[dict],
         resolution: str,
+        *,
+        broadcast_live: bool = False,
     ) -> None:
         """Persist a reviewed step's diff as a read-only diff_card transcript message.
 
         The live StepGate card is /live-slot only and vanishes once the decision
         lands; this is the durable record (same Class-A model as breadcrumbs).
-        Not broadcast live \u2014 the gate card already showed the diff. resolved is
-        pre-set so the card renders inert (Applied/Discarded), never interactive.
+        resolved is pre-set so the card renders inert (Applied/Discarded), never
+        interactive. By default NOT broadcast live \u2014 the review gate card already
+        showed the diff. `broadcast_live=True` (auto-accept, where no gate ever
+        showed it) also emits a `diff_ready` event so the inert card appears in the
+        transcript without a reload \u2014 mirrors the controller edit auto-accept path.
         """
         if not task.chat_channel_id or self._chat_store is None or not diff_entries:
             return
         from agentd.chat.models import ChatMessage
         thread_id = task.chat_channel_id[len("chat:"):]
+        resolved = "applied" if resolution == "accept" else "discarded"
         msg = ChatMessage(
             role="agent", content=task.task_id, type="diff_card", task_id=task.task_id,
             metadata={
@@ -1419,10 +1396,21 @@ class AgentOrchestrator:
                 "step_id": step_id,
                 "step_title": step_title,
                 "diff_entries": diff_entries,
-                "resolved": "applied" if resolution == "accept" else "discarded",
+                "resolved": resolved,
             },
         )
         self._chat_store.append_message(thread_id, msg)  # type: ignore[union-attr]
+        if broadcast_live:
+            # Push over the task channel (the chat stream is bridged to it during a
+            # create_task handoff \u2014 same channel write_chat_breadcrumb uses).
+            self.broadcaster.broadcast(task.task_id, {
+                "type": "diff_ready",
+                "payload": {
+                    "task_id": task.task_id,
+                    "diff_entries": diff_entries,
+                    "resolved": resolved,
+                },
+            })
 
     async def await_plan_ready(self, task_id: str, timeout_sec: float = 3600.0) -> "TaskRecord | None":
         """Poll until task reaches AWAITING_PLAN_APPROVAL or a terminal state."""
@@ -1652,6 +1640,7 @@ class AgentOrchestrator:
                     _ctrl.step_review_auto_accept if _ctrl is not None
                     else task.step_review_auto_accept
                 )
+                _auto_step_diff: list[dict] | None = None
                 if not _auto:
                     decision = await self._pause_for_step_review(
                         task, step, step_result, shadow_path, real_path,
@@ -1662,6 +1651,18 @@ class AgentOrchestrator:
                             completed_ops_by_file,
                         )
                         continue
+                else:
+                    # Auto-accept shows no live review gate, so capture the diff HERE —
+                    # before the partial-promote, after which real==shadow → empty diff —
+                    # to persist AND live-render a resolved diff_card. Parity with the
+                    # review path's durable record and the controller edit auto-accept
+                    # live render; otherwise the transcript has only a bare breadcrumb.
+                    _auto_step_diff = [
+                        dataclasses.asdict(e)
+                        for e in self._compute_diff_entries(
+                            real_path, shadow_path, step_result.touched_files, task.task_id,
+                        )
+                    ]
                 # Always partial-promote so subsequent steps' EXPLORE reads see prior
                 # accepted changes. Review (if enabled above) runs BEFORE; promote is
                 # required regardless of whether review was shown.
@@ -1679,6 +1680,13 @@ class AgentOrchestrator:
                 ))
                 await self._store.save(task)
                 if _auto:
+                    # Durable resolved diff_card (renders Applied, inert) THEN the
+                    # completion breadcrumb — same order the review path uses
+                    # (diff → ✓). Broadcast live since no gate showed the diff.
+                    self._write_chat_step_diff_record(
+                        task, step.id, step.goal[:120], _auto_step_diff or [],
+                        "accept", broadcast_live=True,
+                    )
                     self._write_step_completed_breadcrumb(task, step)
 
             task = transition(task, TaskStatus.VALIDATING, "full validation started")
@@ -1988,7 +1996,7 @@ class AgentOrchestrator:
         """
         from uuid import uuid4
 
-        from agentd.tools.command_rules import CommandRuleStore
+        from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 
         async def _cb(command: str, args: list[str], cwd: str) -> CommandDecision:
             task = await self._store.get(task_id)
@@ -2056,22 +2064,8 @@ class AgentOrchestrator:
                 task.execution_state.pending_command_request = None
                 if task.status == TaskStatus.AWAITING_COMMAND_DECISION:
                     task = transition(task, TaskStatus.EXECUTING, "command decision received")
-                if decision.approve and decision.remember:
-                    import shlex
-                    if decision.rule_value:
-                        value = decision.rule_value
-                    elif decision.scope == "binary":
-                        value = command.rsplit("/", 1)[-1]
-                    elif decision.scope == "exact":
-                        value = shlex.join([command, *args])
-                    else:  # prefix with no explicit value → lock command + first arg
-                        _toks = [command, *args]
-                        value = shlex.join(_toks[:2] if len(_toks) > 1 else _toks)
-                    rule = CommandRule(
-                        type=decision.scope,
-                        value=value,
-                        added_at=datetime.now(timezone.utc).isoformat(),
-                    )
+                rule = rule_from_decision(decision, command, args)
+                if rule is not None:
                     task.execution_state.approved_commands.append(rule)
                     CommandRuleStore(task.workspace_path).add(rule)
                 await self._store.save(task)
@@ -2157,12 +2151,8 @@ class AgentOrchestrator:
         touched_files: list[str],
     ) -> None:
         """Copy accepted step's files from shadow → real workspace so subsequent steps read them."""
-        for rel in touched_files:
-            src = shadow_path / rel
-            dst = real_path / rel
-            if src.exists():
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
+        # Delegates to the shared free function (workspace/promote.py) — single promote impl.
+        _promote_files_free(shadow_path, real_path, touched_files)
 
     async def _unmerge_step_result(
         self,

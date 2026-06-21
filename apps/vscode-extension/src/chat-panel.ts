@@ -17,6 +17,9 @@ export type ScopeDecisionHandler = (taskId: string, files: string[], decision: "
 export type ValidationDecisionHandler = (taskId: string, decision: "accept" | "reject") => Promise<void>;
 export type CommandDecisionHandler = (taskId: string, decision: CommandDecision) => Promise<void>;
 export type StepDecisionHandler = (taskId: string, decision: "accept" | "discard") => Promise<void>;
+// Controller gates (Phase F): mode is a streamed dispatch, edit a plain ack.
+export type ModeDecisionHandler = (threadId: string, mode: string) => Promise<void>;
+export type EditDecisionHandler = (threadId: string, decision: "accept" | "reject", reason: string) => Promise<void>;
 export type AcceptTaskHandler = (taskId: string) => Promise<void>;
 export type RejectTaskHandler = (taskId: string, reason: string) => Promise<void>;
 export type ResumeTaskHandler = (taskId: string, stage: "plan" | "execute") => Promise<void>;
@@ -42,6 +45,8 @@ export class ChatPanel {
     private readonly onValidationDecision: ValidationDecisionHandler,
     private readonly onCommandDecision: CommandDecisionHandler,
     private readonly onStepDecision: StepDecisionHandler,
+    private readonly onModeDecision: ModeDecisionHandler,
+    private readonly onEditDecision: EditDecisionHandler,
     private readonly onAcceptTask: AcceptTaskHandler,
     private readonly onRejectTask: RejectTaskHandler,
     private readonly onResumeTask: ResumeTaskHandler,
@@ -134,6 +139,11 @@ export class ChatPanel {
       } else if (m["type"] === "stepDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "discard";
         p = this.onStepDecision(m["taskId"] as string, decision);
+      } else if (m["type"] === "modeDecision") {
+        p = this.onModeDecision(m["threadId"] as string, m["mode"] as string);
+      } else if (m["type"] === "editDecision") {
+        const decision = m["decision"] === "accept" ? "accept" : "reject";
+        p = this.onEditDecision(m["threadId"] as string, decision, (m["reason"] as string) ?? "");
       } else if (m["type"] === "acceptTask") {
         p = this.onAcceptTask(m["taskId"] as string);
       } else if (m["type"] === "rejectTask") {
@@ -251,8 +261,8 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "clearLiveError" });
   }
 
-  sendLiveStatus(status: string | null): void {
-    this.panel?.webview.postMessage({ type: "liveStatus", status });
+  sendLiveStatus(status: string | null, turnActive: boolean): void {
+    this.panel?.webview.postMessage({ type: "liveStatus", status, turnActive });
   }
 
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void {

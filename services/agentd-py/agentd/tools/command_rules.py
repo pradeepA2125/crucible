@@ -10,9 +10,34 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from datetime import datetime, timezone
 from pathlib import Path
 
-from agentd.domain.models import CommandRule
+from agentd.domain.models import CommandDecision, CommandRule
+
+
+def rule_from_decision(
+    decision: CommandDecision, command: str, args: list[str],
+) -> CommandRule | None:
+    """Derive the persistable CommandRule from an approve+remember decision; None when
+    the decision is not a remember. Shared by the task engine and the chat controller
+    so the scope→value derivation never drifts between the two gate paths."""
+    if not (decision.approve and decision.remember):
+        return None
+    if decision.rule_value:
+        value = decision.rule_value
+    elif decision.scope == "binary":
+        value = command.rsplit("/", 1)[-1]
+    elif decision.scope == "exact":
+        value = shlex.join([command, *args])
+    else:  # prefix with no explicit value → lock command + first arg
+        toks = [command, *args]
+        value = shlex.join(toks[:2] if len(toks) > 1 else toks)
+    return CommandRule(
+        type=decision.scope,
+        value=value,
+        added_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 def _tokenize(s: str) -> list[str]:

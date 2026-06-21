@@ -75,7 +75,24 @@ class ReasoningEngine(Protocol):
         """
         ...
 
-    async def draft_conventions(self, *, probe: "ProbeResult") -> dict[str, object]:
+    async def create_controller_step(
+        self,
+        plan_context: dict[str, object],
+        history: list[dict[str, object]],
+        tool_definitions: list[dict[str, object]],
+        *,
+        phase: str,
+        on_thinking: Callable[[str], None] | None = None,
+    ) -> dict[str, object]:
+        """One turn of the agentic chat-controller ReAct loop.
+
+        Returns a dict with at minimum {"type": ..., "thought": str} where type is one of
+        tool_call | answer | clarify | propose_mode | edit | submit_changes (gated by `phase`:
+        DECIDE allows the first four, EDIT allows tool_call/edit/submit_changes).
+        """
+        ...
+
+    async def draft_conventions(self, *, probe: ProbeResult) -> dict[str, object]:
         """Single structured LLM call that returns the env_profile body
         (ecosystems + conventions_notes). Called once per workspace at
         registration / refresh time. Implementations should pass the probe

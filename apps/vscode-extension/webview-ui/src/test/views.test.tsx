@@ -192,53 +192,53 @@ describe("LiveSlot — returns null when all slots are null", () => {
 
 describe("inputAvailability", () => {
   it("precedence 5 (default): enabled when inputEnabled=true + no liveStatus", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: null, workbar: null });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: null, workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(false);
     expect(result.placeholder).toBe("Ask anything or describe a change…");
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 1: chat turn streaming (inputEnabled=false, liveStatus=null) → disabled + showStop=true", () => {
-    const result = inputAvailability({ inputEnabled: false, liveStatus: null, workbar: null });
+    const result = inputAvailability({ inputEnabled: false, liveStatus: null, workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Agent is working…");
     expect(result.showStop).toBe(true);
   });
 
   it("precedence 1 + task running: inputEnabled=false + EXECUTING → showStop=false", () => {
-    const result = inputAvailability({ inputEnabled: false, liveStatus: "EXECUTING", workbar: null });
+    const result = inputAvailability({ inputEnabled: false, liveStatus: "EXECUTING", workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 1 + AWAITING_PLAN_APPROVAL: showStop=false", () => {
-    const result = inputAvailability({ inputEnabled: false, liveStatus: "AWAITING_PLAN_APPROVAL", workbar: null });
+    const result = inputAvailability({ inputEnabled: false, liveStatus: "AWAITING_PLAN_APPROVAL", workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 1 + gate: inputEnabled=false + AWAITING_COMMAND_DECISION → showStop=false", () => {
-    const result = inputAvailability({ inputEnabled: false, liveStatus: "AWAITING_COMMAND_DECISION", workbar: null });
+    const result = inputAvailability({ inputEnabled: false, liveStatus: "AWAITING_COMMAND_DECISION", workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 2: AWAITING_PLAN_APPROVAL → disabled, plan-review placeholder, no stop", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: "AWAITING_PLAN_APPROVAL", workbar: null });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: "AWAITING_PLAN_APPROVAL", workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Review the plan — Implement or Give feedback");
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 3: gate status AWAITING_SCOPE_DECISION → disabled, gate placeholder, no stop", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: "AWAITING_SCOPE_DECISION", workbar: null });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: "AWAITING_SCOPE_DECISION", workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Waiting for your decision on the card above");
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 4: EXECUTING without workbar → 'Task is running…'", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: "EXECUTING", workbar: null });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: "EXECUTING", workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Task is running…");
     expect(result.showStop).toBe(false);
@@ -249,6 +249,8 @@ describe("inputAvailability", () => {
       inputEnabled: true,
       liveStatus: "EXECUTING",
       workbar: { stepIndex: 2, totalSteps: 4 },
+      liveGate: null,
+      turnActive: false,
     });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Task is running — step 2 of 4…");
@@ -256,7 +258,7 @@ describe("inputAvailability", () => {
   });
 
   it("precedence 4: VALIDATING → disabled, no stop", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: "VALIDATING", workbar: null });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: "VALIDATING", workbar: null, liveGate: null, turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
@@ -264,13 +266,13 @@ describe("inputAvailability", () => {
   // Tier B: taskStop is true exactly in the abortable execution phases.
   it("taskStop=true for EXECUTING/VALIDATING/REPAIRING", () => {
     for (const status of ["EXECUTING", "VALIDATING", "REPAIRING"]) {
-      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null }).taskStop).toBe(true);
+      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null, liveGate: null, turnActive: false }).taskStop).toBe(true);
     }
   });
 
   it("taskStop=false for non-abortable states (null, plan approval, PROMOTING, gates)", () => {
     for (const status of [null, "AWAITING_PLAN_APPROVAL", "PROMOTING", "AWAITING_COMMAND_DECISION", "PLANNED"]) {
-      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null }).taskStop).toBe(false);
+      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null, liveGate: null, turnActive: false }).taskStop).toBe(false);
     }
   });
 });
