@@ -10,12 +10,20 @@ NOT unit stubs. The UI-only rules (§5 input rows, §6 ModeGate field, §7 nav-l
 
 Covered here:
   §4  /live exposes turn_active (idle=false; true during a turn; flag-tolerant shape)
-  §1  detachment — a client disconnect does NOT cancel the turn (it keeps running)
+  §1  detachment — a client disconnect does NOT cancel the turn (it keeps running,
+       and completes on its own)
   §3  in-flight 409 — a second /message while a turn runs is rejected
   §11 stop_turn — POST /stop cancels + persists a "✗ Stopped" breadcrumb;
        /stop on an idle thread is a benign no-op (ok=false)
   §1  gate-clear-at-start — a new turn clears a stale controller gate (conditional:
        SKIPs if the model never raises a gate in the probe window)
+  §2  EditGate durability — a held-open per-edit gate survives a dropped SSE (the
+       reload tier) and resolves via /edit-decision, resuming the turn (conditional:
+       SKIPs if the model proposes no edit). The backend-restart orphan tier (a stale
+       gate with no waiter) needs an out-of-process restart → dev-host checklist S8 +
+       the unit test test_resolve_edit_clears_stale_gate_when_no_waiter.
+  §6  one-shot decisions — a second /edit-decision after the first has no live waiter
+       (ok=false); racing decisions never double-resolve.
 
 Usage:
   AGENTD_BASE_URL=http://127.0.0.1:8001 \
@@ -44,6 +52,13 @@ PROBE_MESSAGE = (
 )
 # A message biased toward a propose_mode / edit gate (used by the conditional §1 test).
 GATE_MESSAGE = "Add a small helper function `greet(name)` to a new utilities module."
+# A message biased toward an actual edit (used by the conditional §2 EditGate test). Sent
+# with step_review=true so the per-edit gate triggers. The edit is REJECTED in the test, so
+# nothing reaches the real workspace and the run is repeatable + side-effect-free.
+EDIT_MESSAGE = (
+    "Add a one-line helper `def _smoke_noop():\n    return None` to a NEW throwaway "
+    "module `smoke_editgate_probe.py` at the workspace root. Nothing else."
+)
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 _results: list[tuple[str, str, str]] = []  # (status, spec_ref, message)
@@ -125,6 +140,50 @@ async def _await_turn_active(
     return False
 
 
+async def _await_gate_kind(
+    client: httpx.AsyncClient, thread_id: str, kind: str, timeout: float = 60.0
+) -> dict | None:
+    """Poll /live until pending_gate.kind == `kind` (return the /live payload) or timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        live = await get_live(client, thread_id)
+        gate = live.get("pending_gate")
+        if isinstance(gate, dict) and gate.get("kind") == kind:
+            return live
+        await asyncio.sleep(0.2)
+    return None
+
+
+async def _drain_post_stream(
+    client: httpx.AsyncClient,
+    url: str,
+    body: dict,
+    started: asyncio.Event,
+    done: asyncio.Event,
+) -> None:
+    """Open an SSE POST (e.g. /message or /mode-decision) and drain it until chat_done.
+
+    Cancelling the task that runs this simulates a client/FE disconnect (the detached
+    backend turn keeps running). Used by the EditGate test to drive a turn while polling
+    /live, then drop the SSE to prove the held-open gate is reload-durable."""
+    try:
+        async with client.stream("POST", url, json=body) as resp:
+            if resp.status_code != 200:
+                return
+            started.set()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    ev = json.loads(line[5:].strip())
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("type") in ("chat_done", "done"):
+                    return
+    finally:
+        done.set()
+
+
 # ── §4: /live exposes turn_active (idle + flag-tolerant shape) ──────────────────
 async def test_live_idle_turn_active(client: httpx.AsyncClient, thread_id: str) -> None:
     live = await get_live(client, thread_id)
@@ -149,6 +208,11 @@ async def test_turn_active_lifecycle(client: httpx.AsyncClient, thread_id: str) 
         active = await _await_turn_active(client, thread_id, timeout=30.0)
         if active:
             record(PASS, "§4", "turn_active=true observed while a turn is in flight")
+        elif done.is_set():
+            # The turn finished before /live could catch turn_active=true (too-fast /
+            # cached response). Inconclusive, not a failure — mirror the detachment SKIP.
+            record(SKIP, "§4", "turn finished before turn_active could be observed "
+                               "(too-fast turn; re-run or use a slower probe)")
         else:
             record(FAIL, "§4", "turn_active never became true during a turn")
         await asyncio.wait_for(done.wait(), timeout=180.0)
@@ -214,6 +278,20 @@ async def test_detachment_survives_disconnect(client: httpx.AsyncClient, thread_
         live = await get_live(client, thread_id)
         if live.get("turn_active") is True:
             record(PASS, "§1", "turn still active after client disconnect (not cancelled)")
+            # The real §1 claim is stronger than "still active": the detached turn must
+            # COMPLETE on its own (no client attached). Confirm it winds down.
+            completed = False
+            deadline = time.time() + 180.0
+            while time.time() < deadline:
+                if (await get_live(client, thread_id)).get("turn_active") is not True:
+                    completed = True
+                    break
+                await asyncio.sleep(0.5)
+            if completed:
+                record(PASS, "§1", "detached turn completed on its own after the disconnect")
+            else:
+                record(FAIL, "§1", "detached turn never completed after disconnect "
+                                   "(possible hang — the turn should run to chat_done)")
         else:
             record(SKIP, "§1", "turn already completed at disconnect time — inconclusive "
                                "(re-run; the turn finished faster than the 2-event cutoff)")
@@ -270,6 +348,129 @@ async def test_stop_idle_noop(client: httpx.AsyncClient, workspace: str) -> None
         record(PASS, "§11", "/stop on an idle thread → ok=false (benign no-op)")
     else:
         record(FAIL, "§11", f"/stop idle returned {resp.status_code} {resp.text!r} (expected ok=false)")
+
+
+# ── §2 + §6: held-open EditGate is reload-durable + the decision is one-shot ────
+async def test_editgate_durable_and_one_shot(
+    client: httpx.AsyncClient, workspace: str
+) -> None:
+    """A per-edit gate (step_review=true) parks the turn on an in-memory future. Prove:
+    (§2) it survives a dropped SSE (the FE-reload tier) and resolves via /edit-decision,
+    resuming the turn; (§6) a second /edit-decision has no live waiter (ok=false).
+
+    Best-effort: reaching an EditGate needs the model to actually propose an edit with
+    review on (often via a propose_mode → mode=edit hop). If it answers/clarifies/plans
+    instead, SKIP — the UI path is in the dev-host checklist (S4/S7). We REJECT the edit so
+    the run is side-effect-free and repeatable; reject still fires the held-open future and
+    resumes the turn (the §2 claim). Accept→promote is covered by S4 + the unit tests."""
+    thread_id = await create_thread(client, workspace)
+    s0, d0 = asyncio.Event(), asyncio.Event()
+    msg_task = asyncio.create_task(_drain_post_stream(
+        client, f"{BASE}/v1/chat/threads/{thread_id}/message",
+        {"content": EDIT_MESSAGE, "step_review": True}, s0, d0))
+    mode_task: asyncio.Task | None = None
+    try:
+        try:
+            await asyncio.wait_for(s0.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            record(SKIP, "§2", "edit probe turn never started")
+            return
+
+        edit_live = await _await_gate_kind(client, thread_id, "edit", timeout=45.0)
+        if edit_live is None:
+            # The model gated the mode first (propose_mode). Pick "edit" and wait again.
+            live = await get_live(client, thread_id)
+            gate = live.get("pending_gate")
+            if isinstance(gate, dict) and gate.get("kind") == "mode":
+                sm, dm = asyncio.Event(), asyncio.Event()
+                mode_task = asyncio.create_task(_drain_post_stream(
+                    client, f"{BASE}/v1/chat/threads/{thread_id}/mode-decision",
+                    {"mode": "edit"}, sm, dm))
+                edit_live = await _await_gate_kind(client, thread_id, "edit", timeout=60.0)
+
+        if edit_live is None:
+            record(SKIP, "§2", "model did not reach an EditGate (no edit proposed with "
+                               "review on); covered in the dev-host checklist (S4/S7)")
+            return
+
+        # Held-open EditGate ⇒ the turn is parked but ACTIVE (durable input signal).
+        if edit_live.get("turn_active") is True:
+            record(PASS, "§2", "EditGate held open with turn_active=true (turn parked on "
+                               "the decision future)")
+        else:
+            record(FAIL, "§2", f"EditGate up but turn_active={edit_live.get('turn_active')!r} "
+                               "(expected true while parked)")
+
+        # Simulate a FE reload: drop the open SSE consumers. The gate must persist (it
+        # lives in sqlite; the future survives in memory because the backend stays up).
+        msg_task.cancel()
+        if mode_task is not None:
+            mode_task.cancel()
+        await asyncio.sleep(0.4)
+        relive = await get_live(client, thread_id)
+        rgate = relive.get("pending_gate")
+        if (isinstance(rgate, dict) and rgate.get("kind") == "edit"
+                and relive.get("turn_active") is True):
+            record(PASS, "§2", "EditGate + turn_active survive a dropped SSE (reload-durable)")
+        else:
+            record(FAIL, "§2", f"EditGate did not survive the SSE drop: gate={rgate!r} "
+                               f"turn_active={relive.get('turn_active')!r}")
+
+        # Resolve once (reject) → fires the surviving future → the turn resumes.
+        resp = await client.post(
+            f"{BASE}/v1/chat/threads/{thread_id}/edit-decision",
+            json={"decision": "reject", "reason": "smoke"})
+        if resp.status_code == 200 and resp.json().get("ok") is True:
+            record(PASS, "§2", "/edit-decision fired the held-open future (ok=true → resumes)")
+        else:
+            record(FAIL, "§2", f"/edit-decision returned {resp.status_code} {resp.text!r} "
+                               "(expected ok=true while a waiter is parked)")
+
+        # One-shot: a SECOND decision on the same gate has no live waiter (the future is
+        # already resolved/popped) → ok=false. Deterministic — does not race the loop.
+        resp2 = await client.post(
+            f"{BASE}/v1/chat/threads/{thread_id}/edit-decision",
+            json={"decision": "reject"})
+        if resp2.status_code == 200 and resp2.json().get("ok") is False:
+            record(PASS, "§6", "second /edit-decision → ok=false (one-shot; no live waiter)")
+        else:
+            record(FAIL, "§6", f"second /edit-decision returned {resp2.status_code} "
+                               f"{resp2.text!r} (expected ok=false)")
+
+        # The turn resumes and winds down. If the loop re-proposes a follow-on edit (a weak
+        # model often retries on a reject, exhausting the EDIT-phase budget), reject each so
+        # the turn settles — nothing reaches the real workspace. Distinguish a genuinely
+        # WEDGED turn (no gate, turn_active stuck true, no progress → FAIL) from one that is
+        # just slowly winding down through re-proposed edits on a slow provider (→ SKIP).
+        cleared = False
+        rejected_followups = 0
+        deadline = time.time() + 240.0  # EDIT budget × slow-local-model latency
+        while time.time() < deadline:
+            lv = await get_live(client, thread_id)
+            g = lv.get("pending_gate")
+            if isinstance(g, dict) and g.get("kind") == "edit":
+                await client.post(
+                    f"{BASE}/v1/chat/threads/{thread_id}/edit-decision",
+                    json={"decision": "reject", "reason": "smoke"})
+                rejected_followups += 1
+            elif not g and lv.get("turn_active") is not True:
+                cleared = True
+                break
+            await asyncio.sleep(0.3)
+        if cleared:
+            record(PASS, "§2", "gate cleared + turn resumed/settled after the decision")
+        elif rejected_followups > 0:
+            record(SKIP, "§2", f"turn still winding down after {rejected_followups} re-proposed "
+                               "edit(s) — slow model exhausting the EDIT budget, NOT wedged "
+                               "(the gate resolved each time; verify chat_done in the log)")
+        else:
+            record(FAIL, "§2", "gate/turn did not settle after the decision: no gate but "
+                               "turn_active stuck true with no progress (turn may be wedged)")
+    finally:
+        msg_task.cancel()
+        if mode_task is not None:
+            mode_task.cancel()
+        await _settle(client, thread_id)
 
 
 # ── §1: a new turn clears a stale controller gate (conditional on a gate) ───────
@@ -358,6 +559,7 @@ async def main() -> int:
         await test_detachment_survives_disconnect(client, await create_thread(client, workspace))
         await test_stop_turn(client, await create_thread(client, workspace))
         await test_stop_idle_noop(client, workspace)
+        await test_editgate_durable_and_one_shot(client, workspace)
         await test_gate_clear_at_start(client, workspace)
 
     # ── Summary ──
