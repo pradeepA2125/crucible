@@ -1305,6 +1305,19 @@ def build_router(
             ok = await _chat_agent.resolve_edit(thread_id, request)  # type: ignore[attr-defined]
             return {"ok": ok}
 
+        @router.post("/chat/threads/{thread_id}/command-decision")
+        async def post_chat_command_decision(
+            thread_id: str, request: CommandDecision,
+        ) -> dict:
+            # Resolves the held-open run_command gate (EDIT turns). The continuation
+            # surfaces on the already-open message SSE stream (the loop resumes), so this
+            # is a plain JSON ack — mirrors /edit-decision (future.set_result).
+            resolve = getattr(_chat_agent, "resolve_command", None)
+            if resolve is None:
+                return {"ok": False}
+            ok = await resolve(thread_id, request)  # type: ignore[misc]
+            return {"ok": ok}
+
         @router.post("/chat/threads/{thread_id}/stop")
         async def post_stop_turn(thread_id: str) -> dict:
             # Stop a detached controller turn (replaces the old SSE-disconnect cancel).

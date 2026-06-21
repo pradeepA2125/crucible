@@ -177,6 +177,15 @@ class TurboQuantTransport(ModelJsonTransport):
             strict_json = os.environ.get("TURBOQUANT_JSON_SCHEMA", "true").strip().lower() \
                 not in ("0", "false", "no", "off")
         self._strict_json = strict_json
+        # True iff this transport enforces a JSON-schema `oneOf` at the token level, so
+        # the controller may use the tight discriminated-union schema. Measured
+        # (2026-06-21): llama.cpp's GBNF converter enforces `oneOf` cleanly (no deadlock,
+        # zero cross-variant bleed) — UNLIKE Gemini. But enforcement only holds when the
+        # strict json_schema grammar is actually applied: thinking ON makes llama.cpp
+        # silently fall back to loose json_object (grammar dropped). MUST mirror the gate
+        # in `_build_body` (strict + thinking_budget == 0). Fixed at construction, like
+        # `_strict_json`.
+        self.supports_oneof_grammar: bool = strict_json and profile.thinking_budget == 0
 
     # ------------------------------------------------------------------
     # Factory classmethods

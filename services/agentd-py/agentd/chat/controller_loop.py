@@ -33,6 +33,9 @@ if TYPE_CHECKING:
     # Given the files an accepted edit touched, return a compact retrieval-refresh
     # note (pointers only, no bodies) to append to history — or None.
     RetrievalDeltaCb = Callable[[list[str]], Awaitable[str | None]]
+    # Persist the in-flight turn's pills incrementally (tool_events, thinking_log) so a
+    # thread switch / panel reopen mid-turn reconstructs them durably (finding 5).
+    PillsUpdateCb = Callable[[list[dict], list[str]], Awaitable[None]]
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,32 @@ class ControllerLoopExhausted(Exception):
 # The modes propose_mode may offer; resolution routes on these exact strings
 # (resolve_mode: edit/explain re-enter the loop, create_task/resume hand off).
 _VALID_MODES = frozenset({"edit", "create_task", "resume", "explain"})
+
+# Tools that mutate the workspace. They are barred in the DECIDE phase (read-only
+# exploration before mode selection) so the model cannot write source files via the
+# shell (`cat >`/`tee`/`touch`), bypassing the EditGate. Enforced at the dispatch
+# guard only — the advertised tool list (system prompt) is unchanged, keeping the
+# cached prefix byte-stable across the DECIDE→EDIT transition.
+_STATE_CHANGING_TOOLS = frozenset({"run_command"})
+
+STATE_CHANGING_DECIDE_CORRECTION = (
+    "run_command is not available while deciding how to proceed — it can mutate the "
+    "workspace, which must go through review. In this phase use only read-only tools "
+    "(search_code / read_file / list_directory / read_env_profile). To make changes, "
+    "emit propose_mode and let the user pick edit mode; run_command becomes available "
+    "once editing has started."
+)
+
+
+def _decide_state_change_correction(resp: dict[str, object], phase: str) -> str | None:
+    """Reject a state-changing tool_call in DECIDE; None otherwise (inert for other
+    phases and non-tool_call actions)."""
+    if phase != "DECIDE" or str(resp.get("type", "")) != "tool_call":
+        return None
+    if str(resp.get("tool", "")) in _STATE_CHANGING_TOOLS:
+        return STATE_CHANGING_DECIDE_CORRECTION
+    return None
+
 
 PROPOSE_MODE_CORRECTION = (
     "Your propose_mode was rejected: each option MUST be an object "
@@ -74,6 +103,45 @@ def _propose_mode_correction(resp: dict[str, object]) -> str | None:
     for opt in options:
         if not isinstance(opt, dict) or opt.get("mode") not in _VALID_MODES:
             return PROPOSE_MODE_CORRECTION
+    return None
+
+
+def _empty_action_correction(resp: dict[str, object], atype: str) -> str | None:
+    """Return a correction if a REQUIRED field for `atype` is empty, else None.
+
+    The flat union schema (Gemini-compat, no oneOf) cannot enforce per-type required
+    fields at the grammar level, so a weak model can satisfy it with a bare
+    {"type":"answer"} (text dumped into the discarded 'thought') or a tool_call with no
+    tool/args. Without this guard the loop returns an empty turn or executes "" — the
+    empty-answer / empty-tool-call class. Treat these like a malformed action: correct +
+    retry (bounded by the same _MAX_MALFORMED cap). submit_changes is NOT here — its empty
+    summary is handled with a deterministic fallback in the emit branch (the edits are
+    already done; retrying-to-exhaustion would discard real work)."""
+    def _blank(key: str) -> bool:
+        v = resp.get(key)
+        return not (isinstance(v, str) and v.strip())
+
+    if atype == "answer" and _blank("answer"):
+        return (
+            "Your 'answer' was empty. The COMPLETE response goes in the 'answer' field — "
+            "'thought' is discarded. Re-emit type='answer' with a non-empty 'answer', or "
+            "type='clarify' if you genuinely cannot answer."
+        )
+    if atype == "clarify" and _blank("question"):
+        return "Your 'question' was empty. Re-emit type='clarify' with a concrete question."
+    if atype == "tool_call":
+        if _blank("tool"):
+            return (
+                "Your tool_call had no 'tool'. Re-emit type='tool_call' with a tool name from "
+                "AVAILABLE TOOLS and a non-empty 'args' object."
+            )
+        args = resp.get("args")
+        if not isinstance(args, dict) or not args:
+            return (
+                f"Your tool_call for '{resp.get('tool')}' had empty 'args'. Re-emit with that "
+                'tool\'s arguments (e.g. {"path": ...} for read_file, '
+                '{"pattern": ...} for search_code).'
+            )
     return None
 
 
@@ -135,6 +203,7 @@ class ControllerLoop:
         edit_decision_cb: EditDecisionCb | None = None,
         edit_record_cb: EditRecordCb | None = None,
         retrieval_delta_cb: RetrievalDeltaCb | None = None,
+        on_pills_update: PillsUpdateCb | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -156,6 +225,7 @@ class ControllerLoop:
                 edit_decision_cb=edit_decision_cb,
                 edit_record_cb=edit_record_cb,
                 retrieval_delta_cb=retrieval_delta_cb,
+                on_pills_update=on_pills_update,
             )
             if outcome.tool_events is None and self._calls:
                 outcome.tool_events = trace_to_tool_events(
@@ -184,6 +254,7 @@ class ControllerLoop:
         edit_decision_cb: EditDecisionCb | None,
         edit_record_cb: EditRecordCb | None,
         retrieval_delta_cb: RetrievalDeltaCb | None,
+        on_pills_update: PillsUpdateCb | None = None,
     ) -> ControllerOutcome:
         def _on_thinking(chunk: str) -> None:
             # Stream the model's reasoning live so the chat thinking pane updates
@@ -207,23 +278,26 @@ class ControllerLoop:
             )
             atype = str(resp.get("type", ""))
             logger.info("[controller] iter=%d phase=%s action=%s", iteration, self._sm.phase, atype)
-            if atype == "answer":
-                history.append(assistant_turn(resp))
-                return ControllerOutcome(
-                    kind="answer", text=str(resp.get("answer", "")), history=history)
-            # Malformed = wrong action type for the phase, OR a propose_mode whose
-            # mode vocabulary is invalid (enforced like the SM enforces action types).
+            # Reject BEFORE dispatching: wrong action type for the phase, a propose_mode with
+            # invalid mode vocabulary, OR a well-typed action with an empty REQUIRED field (the
+            # flat schema permits {"type":"answer"} / empty tool_call — see
+            # _empty_action_correction). Each is corrected + retried, bounded by _MAX_MALFORMED.
             correction = (
                 MALFORMED_CORRECTION
                 if atype not in self._sm.allowed_types()
                 else _propose_mode_correction(resp) if atype == "propose_mode"
-                else None
+                else _decide_state_change_correction(resp, self._sm.phase)
+                or _empty_action_correction(resp, atype)
             )
             if correction is not None:
                 if atype == "propose_mode":
                     logger.warning(
                         "[controller] propose_mode REJECTED: recommended=%r options=%r",
                         resp.get("recommended"), resp.get("options"))
+                else:
+                    logger.info(
+                        "[controller] %s REJECTED (empty/invalid required field) — correcting",
+                        atype)
                 consecutive_malformed += 1
                 if consecutive_malformed > _MAX_MALFORMED:
                     raise ControllerLoopExhausted(
@@ -233,6 +307,10 @@ class ControllerLoop:
                 history.append({"role": "tool_result", "tool": "", "content": correction})
                 continue
             consecutive_malformed = 0
+            if atype == "answer":
+                history.append(assistant_turn(resp))
+                return ControllerOutcome(
+                    kind="answer", text=str(resp.get("answer", "")), history=history)
             if atype == "tool_call":
                 if iteration >= max_iters:
                     return ControllerOutcome(
@@ -256,16 +334,22 @@ class ControllerLoop:
                             self._sm.phase, iteration, tool, str(args)[:200])
                 # Live tool pill: tool_call before execute, tool_result after. The
                 # frontend pairs these by source ("execution") into a pill with thought.
+                # call_index = the position this call will occupy in the trace (it's
+                # appended below), which equals the persisted pill id (trace_to_tool_events
+                # uses enumerate index). The FE uses it as the pill id so a switch-back
+                # resume dedups replayed pills against the loaded in-flight message.
+                call_index = len(self._calls)
                 self._broadcaster.broadcast(self._channel_id, {
                     "type": "tool_call",
                     "payload": {"tool": tool, "thought": str(resp.get("thought", "")),
-                                "args": args}})
+                                "args": args, "call_index": call_index}})
                 out = await self._registry.execute(tool, args)
                 logger.info("[controller] tool_result tool=%s is_error=%s chars=%d",
                             tool, out.is_error, len(out.output or ""))
                 self._broadcaster.broadcast(self._channel_id, {
                     "type": "tool_result",
-                    "payload": {"output": out.output, "is_error": out.is_error}})
+                    "payload": {"output": out.output, "is_error": out.is_error,
+                                "call_index": call_index}})
                 # Record into the turn trace → persisted as durable pills (reload).
                 call_id = f"c{iteration}"
                 self._calls.append(ToolCall(
@@ -279,6 +363,19 @@ class ControllerLoop:
                 label = f" {path.split('/')[-1]}" if path else ""
                 self._thinking.append(
                     f"{tool}{label} — {thought[:200]}" if thought else f"{tool}{label}")
+                # Durably persist the partial pills now (finding 5): a thread switch /
+                # reopen before turn end reconstructs them from the transcript instead of
+                # the lossy replay buffer. Best-effort — a persist failure never breaks
+                # the turn.
+                if on_pills_update is not None:
+                    try:
+                        pills = trace_to_tool_events(
+                            AgentToolTrace(
+                                step_id="chat", calls=self._calls, results=self._results),
+                            "execution")
+                        await on_pills_update(pills, list(self._thinking))
+                    except Exception:
+                        logger.debug("[controller] inflight pill persist failed", exc_info=True)
                 history.append(assistant_turn(resp))
                 history.append({"role": "tool_result", "tool": tool, "content": out.output})
                 continue
@@ -311,6 +408,19 @@ class ControllerLoop:
                     # echo the malformed patch_ops into history; a weak model copies its own bad
                     # op into a repetition attractor (see planning/loop.py thought-strip). Persist
                     # only the failed *intent*, and let the exception message carry the fix.
+                    #
+                    # Observability: a failed edit produces NO diff card (edit_record_cb only
+                    # fires on success), so without this it is invisible — the UI shows a silent
+                    # wait while the model thrashes. Log it AND surface a live + durable thinking
+                    # line ("✗ edit failed: <reason>") so the failure is legible in agentd.log
+                    # and the chat thinking pane.
+                    reason_line = str(exc).splitlines()[0][:200] if str(exc) else "unknown error"
+                    logger.info("[controller] edit FAILED phase=%s ops=%d: %s",
+                                self._sm.phase, len(ops), reason_line)
+                    self._thinking.append(f"✗ edit failed: {reason_line}")
+                    self._broadcaster.broadcast(self._channel_id, {
+                        "type": "chat_agent_thinking",
+                        "payload": {"message": f"✗ edit failed: {reason_line}"}})
                     intent = {k: v for k, v in resp.items() if k != "patch_ops"}
                     history.append(assistant_turn(intent))
                     history.append({
@@ -340,6 +450,10 @@ class ControllerLoop:
                 history.append(assistant_turn(resp))
                 if accepted:
                     touched = [d.path for d in diff]
+                    # Log the apply outcome (the diff card carries the UI; agentd.log had no
+                    # record of a successful apply — only the pre-apply ops line at L302).
+                    logger.info("[controller] edit applied phase=%s files=%s",
+                                self._sm.phase, touched)
                     history.append({
                         "role": "tool_result", "tool": "edit",
                         "content": f"applied+promoted: {touched}"})
@@ -359,7 +473,12 @@ class ControllerLoop:
             if atype == "submit_changes":
                 # The shadow is closed by run()'s finally on return (no double-close).
                 history.append(assistant_turn(resp))
+                # Deterministic fallback for an empty summary — unlike answer/clarify we do NOT
+                # retry (the edits are already promoted; retrying-to-exhaustion would convert a
+                # done turn into a failure). A non-empty summary keeps the closing chat message
+                # from collapsing to nothing (the "no closing message" gap).
+                summary = str(resp.get("summary", "")).strip() or "Changes submitted."
                 return ControllerOutcome(
-                    kind="submit_changes", text=str(resp.get("summary", "")), history=history)
+                    kind="submit_changes", text=summary, history=history)
             raise NotImplementedError(atype)
         return ControllerOutcome(kind="answer", text="(loop ended)", history=history)

@@ -74,3 +74,47 @@ def test_set_active_task_overwrites_on_resume(store: ChatThreadStore) -> None:
     store.set_active_task(thread.thread_id, "task-parent")
     store.set_active_task(thread.thread_id, "task-child")  # resume churns the id
     assert store.get_thread(thread.thread_id).active_task_id == "task-child"
+
+
+def test_upsert_inflight_pills_creates_then_updates(store: ChatThreadStore) -> None:
+    # Mid-turn pill persistence (finding 5): the first upsert appends a pills-only
+    # agent message tagged with the turn id; subsequent upserts for the SAME turn
+    # update that message in place (no duplicate), so getChatThread reconstructs the
+    # in-flight pills on a switch-away/reopen before the turn completes.
+    thread = store.create_thread("/ws/project")
+    tid = thread.thread_id
+
+    store.upsert_inflight_pills(tid, "turn-1", [{"id": "c0", "tool": "read_file"}])
+    msgs = store.get_thread(tid).messages
+    pill_msgs = [m for m in msgs if (m.metadata or {}).get("inflight_turn_id") == "turn-1"]
+    assert len(pill_msgs) == 1
+    assert [p["id"] for p in pill_msgs[0].metadata["tool_events"]] == ["c0"]
+
+    # Same turn → update in place (still ONE message), pills grow.
+    store.upsert_inflight_pills(
+        tid, "turn-1", [{"id": "c0", "tool": "read_file"}, {"id": "c1", "tool": "search_code"}])
+    msgs = store.get_thread(tid).messages
+    pill_msgs = [m for m in msgs if (m.metadata or {}).get("inflight_turn_id") == "turn-1"]
+    assert len(pill_msgs) == 1
+    assert [p["id"] for p in pill_msgs[0].metadata["tool_events"]] == ["c0", "c1"]
+
+    # A different turn → a NEW message.
+    store.upsert_inflight_pills(tid, "turn-2", [{"id": "c0", "tool": "read_file"}])
+    msgs = store.get_thread(tid).messages
+    assert len([m for m in msgs if (m.metadata or {}).get("inflight_turn_id")]) == 2
+
+
+def test_clear_inflight_markers_drops_marker_keeps_pills(store: ChatThreadStore) -> None:
+    # A prior turn left an in-flight pills message (orphaned before finalize). Clearing
+    # markers at the next turn's start drops the marker but KEEPS the pills (finding 5).
+    thread = store.create_thread("/ws/project")
+    tid = thread.thread_id
+    store.upsert_inflight_pills(tid, "old-turn", [{"id": 0, "tool": "read_file"}])
+    store.clear_inflight_markers(tid)
+    msgs = store.get_thread(tid).messages
+    # Marker gone everywhere…
+    assert all(not (m.metadata or {}).get("inflight_turn_id") for m in msgs)
+    # …but the pills survive as a normal agent message.
+    pill_msgs = [m for m in msgs if (m.metadata or {}).get("tool_events")]
+    assert len(pill_msgs) == 1
+    assert pill_msgs[0].metadata["tool_events"][0]["id"] == 0

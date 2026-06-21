@@ -30,3 +30,24 @@ def test_edit_phase_allows_clarify_but_not_propose_mode():
     assert "clarify" in sm.allowed_types()
     assert "propose_mode" not in sm.allowed_types()
     assert "edit" in sm.allowed_types()
+
+
+def test_explain_phase_forbids_propose_mode_and_edit():
+    # After the user picks "explain", the re-entered turn must DESCRIBE the approach,
+    # not re-open the mode gate (finding 4). EXPLAIN allows exploring + answer/clarify
+    # but forbids propose_mode (the re-propose loop) and edit.
+    sm = ControllerPhaseSM()
+    sm.enter_explain_mode()
+    assert sm.phase == "EXPLAIN"
+    assert "answer" in sm.allowed_types()
+    assert "tool_call" in sm.allowed_types()
+    assert "clarify" in sm.allowed_types()
+    assert "propose_mode" not in sm.allowed_types()
+    assert "edit" not in sm.allowed_types()
+
+
+def test_enter_explain_only_from_decide():
+    sm = ControllerPhaseSM()
+    sm.enter_edit_mode()
+    with pytest.raises(ValueError):
+        sm.enter_explain_mode()

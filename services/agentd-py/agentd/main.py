@@ -365,6 +365,8 @@ _chat_agent = select_chat_handler(
     orchestrator=orchestrator,
     broadcaster=orchestrator.broadcaster,
     retrieval_client=retrieval_client,
+    shell_policy=_shell_policy_env(),
+    command_decision_timeout_sec=_float_env("AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
 ) if reasoning_backend != "scripted" else None
 
 app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client, _chat_agent))

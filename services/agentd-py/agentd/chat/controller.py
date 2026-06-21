@@ -14,11 +14,14 @@ import os
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
 from agentd.chat.models import ChatMessage, PendingGate
+from agentd.domain.models import CommandDecision, ShellPolicy
+from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
 if TYPE_CHECKING:
@@ -87,6 +90,8 @@ class ChatController:
         orchestrator: AgentOrchestrator | None,
         broadcaster: EventBroadcaster,
         retrieval_client: RetrievalArtifactClient | None = None,
+        shell_policy: ShellPolicy = ShellPolicy.ASK,
+        command_decision_timeout_sec: float = 0.0,
     ) -> None:
         self._workspace_path = workspace_path
         self._reasoning = reasoning_engine
@@ -94,6 +99,11 @@ class ChatController:
         self._orchestrator = orchestrator
         self._broadcaster = broadcaster
         self._retrieval = retrieval_client
+        # run_command gating for EDIT turns (DECIDE bars it entirely — see
+        # controller_loop._decide_state_change_correction). Mirrors the task path's
+        # AI_EDITOR_SHELL_POLICY / AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC.
+        self._shell_policy = shell_policy
+        self._command_decision_timeout_sec = max(0.0, command_decision_timeout_sec)
         # Per-thread controller conversation history — the cache prefix replayed as
         # seed_history on the next turn (clarify/discuss resume, spec §12).
         # TODO(controller): unbounded per-thread growth; eviction/compaction is owned
@@ -105,6 +115,9 @@ class ChatController:
         # Per-thread per-edit review future (held-open gate; mirrors the engine's
         # _pending_step_decisions). resolve_edit fires it.
         self._pending_edit: dict[str, asyncio.Future[dict[str, object]]] = {}
+        # Per-thread held-open command-approval future (run_command gate). Fired by
+        # resolve_command; same lifecycle as _pending_edit.
+        self._pending_command: dict[str, asyncio.Future[CommandDecision]] = {}
         # Per-thread "Review each edit" toggle from the message that opened the mode
         # gate — read back in resolve_mode so the edit re-entry honors it (the
         # /mode-decision POST carries no step_review; smoke-found gap #4).
@@ -156,11 +169,14 @@ class ChatController:
         finally:
             self._active_turns.pop(thread_id, None)
 
-    def _build_registry(self) -> AggregatingToolRegistry:
+    def _build_registry(
+        self, command_approval_callback: object | None = None,
+    ) -> AggregatingToolRegistry:
         return AggregatingToolRegistry([BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
             real_workspace_path=Path(self._workspace_path),
             semantic_index=getattr(self._retrieval, "_semantic_index", None),
+            command_approval_callback=command_approval_callback,
         )])
 
     def _seed_for(self, thread_id: str) -> list[dict[str, object]]:
@@ -224,6 +240,10 @@ class ChatController:
                 "payload": {"thread_id": thread_id, "title": title},
             })
         self._store.append_message(thread_id, ChatMessage(role="user", content=message))
+        # A new turn invalidates any prior in-flight pills marker (a stopped/orphaned
+        # earlier turn). Drop it so this turn's switch-back dedup is scoped to its own
+        # message (finding 5); the orphan's pills stay as a normal message.
+        self._store.clear_inflight_markers(thread_id)
         # Remember this turn's review toggle so a propose_mode → "edit" re-entry
         # (resolved via /mode-decision, which carries no step_review) honors it.
         self._step_review_by_thread[thread_id] = step_review
@@ -242,15 +262,18 @@ class ChatController:
             else None
         )
         self._edit_clarify_pending.discard(thread_id)
+        # One id for this turn's in-flight pills message — lets the loop upsert it per
+        # tool result and _finish finalize the SAME message (no duplicate). Finding 5.
+        turn_id = uuid4().hex
         outcome = await self._run_loop(
             thread_id, channel_id, message, seed_history=seed_history,
-            step_review=step_review, phase=resume_phase)
-        await self._finish(thread_id, channel_id, outcome, step_review)
+            step_review=step_review, phase=resume_phase, turn_id=turn_id)
+        await self._finish(thread_id, channel_id, outcome, step_review, turn_id=turn_id)
 
     async def _run_loop(
         self, thread_id: str, channel_id: str, goal: str, *,
         seed_history: list[dict[str, object]] | None, step_review: bool | None,
-        phase: str | None = None,
+        phase: str | None = None, turn_id: str | None = None,
     ) -> ControllerOutcome:
         sm = ControllerPhaseSM()
         # Edits only happen in EDIT phase (entered via /mode-decision). A DECIDE turn
@@ -264,11 +287,27 @@ class ChatController:
                     turn_id=thread_id, real_path=Path(self._workspace_path),
                     workspace_manager=self._orchestrator._workspace_manager,
                     patch_engine=self._orchestrator._patch_engine)
+        elif phase == "EXPLAIN":
+            # User picked "Just explain" — describe the approach, never re-propose the
+            # mode gate (finding 4). The SM forbids propose_mode/edit in EXPLAIN.
+            sm.enter_explain_mode()
+        # run_command (EDIT-only; DECIDE rejects it) is gated through the controller's
+        # command callback — closes over this turn's thread/channel like edit_cb.
+        command_cb = partial(self._command_approval_cb, thread_id, channel_id)
         loop = ControllerLoop(
-            self._reasoning, self._build_registry(), self._broadcaster,
+            self._reasoning, self._build_registry(command_cb), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session=edit)
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path}
+        # Debug-artifact keys (KV-safe: build_controller_step_payload ignores them) so
+        # create_controller_step can dump the exact per-iteration LLM bytes under
+        # chat/<thread_id>/<turn_id>/ (controller analog of the task path's plan-turn-NN).
+        if turn_id:
+            plan_context["artifact_thread_id"] = thread_id
+            plan_context["artifact_turn_id"] = turn_id
+            # Baseline so per-iteration artifact numbering is 0-based WITHIN this turn
+            # (history includes the replayed seed_history from prior turns).
+            plan_context["artifact_seed_len"] = len(seed_history or [])
         seed = self._retrieval_seed(thread_id, goal)
         if seed:
             plan_context["retrieval_seed"] = seed
@@ -279,11 +318,21 @@ class ChatController:
         # Single durable-record writer for every edit resolution (both modes): persists
         # an inert diff_card, + a breadcrumb (review) or a live render (auto-accept).
         record_cb = partial(self._edit_record_cb, thread_id, channel_id, is_review)
+        # Incremental durable pill persistence (finding 5): upsert the in-flight pills
+        # message per tool result so a switch/reopen mid-turn reconstructs them.
+        pills_cb = partial(self._persist_inflight_pills, thread_id, turn_id) \
+            if turn_id else None
         outcome = await loop.run(
             plan_context, seed_history=seed_history,
             auto_accept_edits=(not is_review), edit_decision_cb=edit_cb,
-            edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb)
+            edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
+            on_pills_update=pills_cb)
         self._histories[thread_id] = outcome.history or []
+        # Turn trace artifact (controller analog of tool-trace.json): the whole turn's
+        # info in one file for offline debugging — phase, verbatim history, pills,
+        # thinking, outcome. Best-effort, never fails the turn.
+        if turn_id:
+            self._write_turn_trace(thread_id, turn_id, goal, sm.phase, outcome)
         # Durably persist the verbatim turn history so a backend restart rehydrates
         # seed_history instead of re-exploring cold (mirrors the planner persisting
         # planning_conversation_history on the TaskRecord).
@@ -315,13 +364,12 @@ class ChatController:
 
     async def _finish(
         self, thread_id: str, channel_id: str, outcome: ControllerOutcome,
-        step_review: bool | None,
+        step_review: bool | None, turn_id: str | None = None,
     ) -> None:
         if outcome.kind in ("answer", "clarify"):
             # Persist the turn's tool pills + thinking onto the message so they survive
             # a reload (live SSE pills/thinking die) — mirrors ChatAgent's metadata.
-            self._store.append_message(thread_id, ChatMessage(
-                role="agent", content=outcome.text, metadata=self._turn_metadata(outcome)))
+            self._write_turn_message(thread_id, turn_id, outcome.text, outcome)
             self._broadcaster.broadcast(
                 channel_id, {"type": "chat_response", "payload": {"chunk": outcome.text}})
             self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
@@ -330,16 +378,67 @@ class ChatController:
             # diff_cards are already durable (edit_record_cb); without this closing
             # message the turn's pills/thinking vanish on reload (smoke-found gap #3).
             summary = outcome.text or ""
-            metadata = self._turn_metadata(outcome)
-            if summary or metadata:
-                self._store.append_message(
-                    thread_id, ChatMessage(role="agent", content=summary, metadata=metadata))
+            if summary or self._turn_metadata(outcome):
+                self._write_turn_message(thread_id, turn_id, summary, outcome)
                 if summary:
                     self._broadcaster.broadcast(
                         channel_id, {"type": "chat_response", "payload": {"chunk": summary}})
             self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
         elif outcome.kind == "propose_mode":
             await self._present_mode_choice(thread_id, channel_id, outcome)
+
+    def _write_turn_trace(
+        self, thread_id: str, turn_id: str, goal: str, phase: str,
+        outcome: ControllerOutcome,
+    ) -> None:
+        """One-file turn trace for offline debugging (controller analog of the task
+        path's tool-trace.json). Best-effort — never fails the turn."""
+        try:
+            from agentd.runtime.artifacts import chat_turn_artifacts_root
+
+            out = chat_turn_artifacts_root(thread_id, turn_id, self._workspace_path)
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "turn-trace.json").write_text(
+                json.dumps({
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "goal": goal,
+                    "phase": phase,
+                    "outcome_kind": outcome.kind,
+                    "outcome_text": outcome.text,
+                    "history": outcome.history or [],
+                    "tool_events": outcome.tool_events or [],
+                    "thinking_log": outcome.thinking_log or [],
+                }, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.debug("[controller] turn-trace dump failed", exc_info=True)
+
+    async def _persist_inflight_pills(
+        self, thread_id: str, turn_id: str,
+        tool_events: list[dict[str, object]], thinking_log: list[str],
+    ) -> None:
+        """Per-tool-result callback (finding 5): upsert the in-flight turn's durable
+        pills message so a switch/reopen mid-turn reconstructs them from the transcript."""
+        self._store.upsert_inflight_pills(
+            thread_id, turn_id, tool_events, thinking_log or None)
+
+    def _write_turn_message(
+        self, thread_id: str, turn_id: str | None, content: str, outcome: ControllerOutcome,
+    ) -> None:
+        """Write the turn's closing agent message. If pills were persisted incrementally
+        during the turn, FINALIZE that same in-flight message (set content, drop the
+        marker) — no duplicate. Otherwise (a turn with no tool calls) append fresh."""
+        metadata = self._turn_metadata(outcome)
+        if turn_id and self._store.finalize_inflight_pills(
+            thread_id, turn_id, content,
+            metadata.get("tool_events") or [],  # type: ignore[arg-type]
+            metadata.get("thinking_log"),  # type: ignore[arg-type]
+        ):
+            return
+        self._store.append_message(
+            thread_id, ChatMessage(role="agent", content=content, metadata=metadata))
 
     @staticmethod
     def _turn_metadata(outcome: ControllerOutcome) -> dict[str, object]:
@@ -456,6 +555,80 @@ class ChatController:
         fut.set_result(decision)
         return True
 
+    async def _command_approval_cb(
+        self, thread_id: str, channel_id: str,
+        command: str, args: list[str], cwd: str,
+    ) -> CommandDecision:
+        """Gate a run_command in a chat EDIT turn (mirror engine._build_command_approval_
+        callback on the controller's thread-gate machinery instead of task status).
+
+        ALLOW_ALL skips the gate; a workspace-remembered rule auto-approves (the same
+        CommandRuleStore the task path uses, so approvals carry across both surfaces);
+        otherwise raise a durable kind="command" gate and await /command-decision. The
+        gate clears in place in the finally (Class-A); on approve+remember the rule is
+        persisted via the shared rule_from_decision derivation."""
+        if self._shell_policy == ShellPolicy.ALLOW_ALL:
+            return CommandDecision(approve=True)
+        if CommandRuleStore(self._workspace_path).matches(command, args):
+            return CommandDecision(approve=True)
+
+        self._store.set_controller_gate(thread_id, PendingGate(
+            kind="command", payload={"command": command, "args": args, "cwd": cwd}))
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future[CommandDecision] = loop.create_future()
+        self._pending_command[thread_id] = fut
+        # Instant-render poke (consistency with the task path's command_approval_requested):
+        # the card still renders FROM /live (durable on reload) — this only nudges the FE
+        # poll so it appears immediately instead of on the next 1s tick. Registered the
+        # waiter first so a fast decision always finds it.
+        self._broadcaster.broadcast(channel_id, {
+            "type": "command_approval_requested",
+            "payload": {
+                "decision_id": uuid4().hex,
+                "command": command,
+                "args": args,
+                "cwd": cwd,
+                "step_id": "",
+            },
+        })
+        timeout = self._command_decision_timeout_sec
+        try:
+            decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
+        except (TimeoutError, asyncio.TimeoutError):
+            decision = CommandDecision(approve=False)
+        finally:
+            self._pending_command.pop(thread_id, None)
+            self._store.set_controller_gate(thread_id, None)
+
+        rule = rule_from_decision(decision, command, args)
+        if rule is not None:
+            CommandRuleStore(self._workspace_path).add(rule)
+        self._write_breadcrumb(
+            thread_id, channel_id,
+            f"✓ Command approved: {command}" if decision.approve
+            else f"✗ Command rejected: {command}")
+        return decision
+
+    async def resolve_command(
+        self, thread_id: str, decision: CommandDecision,
+    ) -> bool:
+        """Resolve the run_command gate (POST /command-decision). Fires the live waiter;
+        never mutates/persists during the await (Class-A). Restart orphan (gate in sqlite
+        but the in-memory waiter died) clears the stale gate + a breadcrumb — mirrors
+        resolve_edit so the UI unwedges and the user re-sends."""
+        fut = self._pending_command.get(thread_id)
+        if fut is None or fut.done():
+            thread = self._store.get_thread(thread_id)
+            gate = thread.pending_controller_gate if thread is not None else None
+            if gate is not None and gate.kind == "command":
+                self._store.set_controller_gate(thread_id, None)
+                self._write_breadcrumb(
+                    thread_id, f"chat:{thread_id}",
+                    "Previous turn ended — please re-send your request.")
+            return False
+        fut.set_result(decision)
+        return True
+
     async def stop_turn(self, thread_id: str) -> bool:
         """Cancel a detached turn (POST /stop) — a slimmer cousin of task /abort.
 
@@ -509,6 +682,12 @@ class ChatController:
             if isinstance(opt, dict) and opt.get("mode") == mode:
                 label = str(opt.get("label") or mode)
                 break
+        # The agreed plan_sketch is the concrete plan the user approved — an LLM synthesis
+        # of the WHOLE conversation. Use it as the effective goal for EVERY mode re-entry
+        # (read from the gate BEFORE clearing), not the vague trigger message ("let's do
+        # this") the route forwards. Falls back to the raw goal if the model omitted it.
+        sketch = str(gate.payload.get("plan_sketch") or "").strip()
+        effective_goal = sketch or goal
         self._store.set_controller_gate(thread_id, None)
         # PERSIST + broadcast (mirror engine.write_chat_breadcrumb): a bare broadcast
         # dies on reload, leaving no record of what the user chose.
@@ -517,14 +696,31 @@ class ChatController:
         if mode in ("edit", "explain"):
             if mode == "edit" and self._orchestrator is None:
                 raise RuntimeError("edit mode requires an orchestrator")
-            phase = "EDIT" if mode == "edit" else None
+            phase = "EDIT" if mode == "edit" else "EXPLAIN"
             # Honor the "Review each edit" toggle from the message that opened this
             # gate (explain has no edits, so the value is inert there).
             review = self._step_review_by_thread.get(thread_id)
+            seed_history = self._seed_for(thread_id)
+            if mode == "explain":
+                # The /mode-decision POST isn't part of the loop history, so without this
+                # the re-entered turn has no signal the user chose "explain" and (in the
+                # old DECIDE re-entry) just re-proposed. Inject the intent so the model
+                # describes the approach; the EXPLAIN phase also blocks propose_mode.
+                seed_history = (seed_history or []) + [{
+                    "role": "user",
+                    "content": ("Explain your proposed approach in detail — what you would "
+                                "change and how. Do NOT make any changes or re-propose a "
+                                "mode; just describe the plan."),
+                }]
+            # The edit/explain re-entry is a full turn — give it a turn_id too so it gets
+            # incremental pill persistence (finding 5) AND debug artifacts, like the
+            # handle_message path.
+            turn_id = uuid4().hex
             outcome = await self._run_loop(
-                thread_id, channel_id, goal,
-                seed_history=self._seed_for(thread_id), step_review=review, phase=phase)
-            await self._finish(thread_id, channel_id, outcome, step_review=review)
+                thread_id, channel_id, effective_goal,
+                seed_history=seed_history, step_review=review, phase=phase, turn_id=turn_id)
+            await self._finish(
+                thread_id, channel_id, outcome, step_review=review, turn_id=turn_id)
             return
 
         if mode == "create_task":
@@ -539,15 +735,11 @@ class ChatController:
             # re-explore cold. Derived from the verbatim (uncapped) conversation —
             # restart-durable via _seed_for, one source of truth with seed_history.
             explore_context = _explore_context_from_history(self._seed_for(thread_id))
-            # Use the agent's plan_sketch as the task goal, NOT the bare last message.
-            # The sketch is an LLM synthesis of the WHOLE conversation (explored +
-            # seed_history), so it survives clarify/refine turns where the last message
-            # ("keep it minimal") is meaningless standalone. Fall back to the raw goal
-            # if the model omitted a sketch.
-            sketch = str(gate.payload.get("plan_sketch") or "").strip()
-            task_goal = sketch or goal
+            # effective_goal = the plan_sketch (LLM synthesis of the whole conversation),
+            # falling back to the raw goal — see where it's computed above. A task gets no
+            # chat history, so this is its ONLY intent signal.
             task_id = await self._orchestrator.create_task_from_chat(
-                thread_id=thread_id, goal=task_goal, workspace_path=self._workspace_path,
+                thread_id=thread_id, goal=effective_goal, workspace_path=self._workspace_path,
                 explore_context=explore_context, store=self._store,
                 step_review_auto_accept=(not review) if review is not None else None)
             self._store.append_message(thread_id, ChatMessage(

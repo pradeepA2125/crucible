@@ -24,3 +24,8 @@ class ControllerPhaseSM:
         if self._phase != "DECIDE":
             raise ValueError(f"Cannot enter EDIT from {self._phase}")
         self._phase = "EDIT"
+
+    def enter_explain_mode(self) -> None:
+        if self._phase != "DECIDE":
+            raise ValueError(f"Cannot enter EXPLAIN from {self._phase}")
+        self._phase = "EXPLAIN"

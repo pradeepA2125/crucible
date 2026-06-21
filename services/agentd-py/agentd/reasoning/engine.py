@@ -41,6 +41,23 @@ def _debug_dump(
         pass
 
 
+def _chat_debug_dump(
+    thread_id: str, turn_id: str, name: str, data: object, *, workspace_path: str,
+) -> None:
+    """Controller analog of _debug_dump — nests under chat/<thread_id>/<turn_id>/.
+    Best-effort: a dump failure never breaks a turn."""
+    try:
+        from agentd.runtime.artifacts import chat_turn_artifacts_root
+
+        out = chat_turn_artifacts_root(thread_id, turn_id, workspace_path)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / f"{name}.json").write_text(
+            json.dumps(data, indent=2, default=str), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 class DefaultReasoningEngine(ReasoningEngine):
     def __init__(
         self,
@@ -239,15 +256,49 @@ class DefaultReasoningEngine(ReasoningEngine):
         user_payload = build_controller_step_payload(
             plan_context, history, tool_definitions, phase=phase
         )
+        # Tier 2: use the tight discriminated-union schema only on a provider whose
+        # grammar enforces `oneOf` (getattr-defensive — older transports lack the flag).
+        tight = getattr(self._transport, "supports_oneof_grammar", False)
+        schema = controller_response_schema(phase=phase, tight=tight)
         result = await self._transport.generate_json(
             model=self._model,
             schema_name="controller_step_response",
-            schema=controller_response_schema(phase=phase),
+            schema=schema,
             system_instructions=system_instructions,
             user_payload=user_payload,
             on_thinking=on_thinking,
         )
-        return result if isinstance(result, dict) else {}
+        result = result if isinstance(result, dict) else {}
+        # Artifact: the EXACT bytes entering the LLM this iteration (controller analog of
+        # the task path's debug-plan-turn-NN). Keyed by thread/turn from plan_context
+        # (debug-only keys the payload builder ignores — KV-safe). The iteration is the
+        # 0-based index WITHIN this turn — `history` includes the replayed seed_history,
+        # so we subtract its length (artifact_seed_len) so every turn starts at -00.
+        thread_id = str(plan_context.get("artifact_thread_id") or "")
+        turn_id = str(plan_context.get("artifact_turn_id") or "")
+        if thread_id and turn_id:
+            _seed_raw = plan_context.get("artifact_seed_len")
+            seed_len = _seed_raw if isinstance(_seed_raw, int) else 0
+            iteration = max(0, (len(history) - seed_len) // 2)
+            # `goal` in the payload is THIS turn's user message, not the objective — the
+            # original intent is the first user message in history. Surface it so the
+            # artifact is self-explanatory mid-conversation.
+            original_goal = next(
+                (str(m.get("content")) for m in history if m.get("role") == "user"), "")
+            _chat_debug_dump(
+                thread_id, turn_id, f"controller-turn-{iteration:02d}",
+                {
+                    "phase": phase,
+                    "tight_schema": tight,
+                    "original_goal": original_goal,
+                    "system_instructions": system_instructions,
+                    "user_payload": user_payload,
+                    "schema": schema,
+                    "raw_result": result,
+                },
+                workspace_path=str(plan_context.get("workspace_path") or ""),
+            )
+        return result
 
     async def summarize_run(
         self, *, goal: str, outcome: str, run_events: list[dict[str, object]],

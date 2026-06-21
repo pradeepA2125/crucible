@@ -28,12 +28,17 @@ def select_chat_handler(
     orchestrator: Any | None,
     broadcaster: Any,
     retrieval_client: Any | None = None,
+    shell_policy: Any = None,
+    command_decision_timeout_sec: float = 0.0,
 ) -> Any:
     """Return the flag-selected chat handler. The controller wraps transport+model
     in a ReasoningEngineImpl (it drives the loop through the engine seam, scriptable);
-    the legacy agent takes the raw transport+model directly."""
+    the legacy agent takes the raw transport+model directly. shell_policy /
+    command_decision_timeout_sec gate run_command in controller EDIT turns (same env
+    knobs as the task path); ignored by the legacy ChatAgent (no run_command path)."""
     if is_controller_enabled():
         from agentd.chat.controller import ChatController
+        from agentd.domain.models import ShellPolicy
         from agentd.reasoning.engine import DefaultReasoningEngine
 
         return ChatController(
@@ -43,6 +48,8 @@ def select_chat_handler(
             orchestrator=orchestrator,
             broadcaster=broadcaster,
             retrieval_client=retrieval_client,
+            shell_policy=shell_policy or ShellPolicy.ASK,
+            command_decision_timeout_sec=command_decision_timeout_sec,
         )
 
     from agentd.chat.agent import ChatAgent

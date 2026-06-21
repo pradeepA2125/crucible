@@ -167,6 +167,112 @@ class ChatThreadStore:
         )
         self._conn.commit()
 
+    def upsert_inflight_pills(
+        self,
+        thread_id: str,
+        turn_id: str,
+        tool_events: list[dict],
+        thinking_log: list[str] | None = None,
+    ) -> None:
+        """Append-or-update the in-flight turn's pills-only agent message (finding 5).
+
+        Mid-turn the controller has no durable pill record — only live SSE + the bounded
+        replay buffer, both lost on a thread switch / panel reopen before the turn
+        completes. This writes a durable pills-only message tagged with
+        ``metadata.inflight_turn_id`` and updates it in place on each tool result, so
+        getChatThread reconstructs the partial pills. ``_finish`` later finalizes the
+        SAME message (matched by turn id), so there is no duplicate."""
+        row = self._conn.execute(
+            "SELECT messages_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return
+        messages: list[dict] = json.loads(row["messages_json"])
+        metadata: dict = {"inflight_turn_id": turn_id, "tool_events": tool_events}
+        if thinking_log:
+            metadata["thinking_log"] = thinking_log
+        existing = next(
+            (m for m in messages
+             if (m.get("metadata") or {}).get("inflight_turn_id") == turn_id),
+            None,
+        )
+        if existing is not None:
+            existing["metadata"] = metadata
+        else:
+            messages.append(
+                ChatMessage(role="agent", content="", metadata=metadata).model_dump(mode="json")
+            )
+        self._conn.execute(
+            "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
+            (json.dumps(messages), thread_id),
+        )
+        self._conn.commit()
+
+    def finalize_inflight_pills(
+        self,
+        thread_id: str,
+        turn_id: str,
+        content: str,
+        tool_events: list[dict],
+        thinking_log: list[str] | None = None,
+    ) -> bool:
+        """Finalize the in-flight pills message at turn end: set the final content +
+        pills and DROP the ``inflight_turn_id`` marker so it becomes a normal message.
+        Returns True if an in-flight message existed (so the caller skips appending a
+        duplicate). False when the turn produced no tool calls (no in-flight message)."""
+        row = self._conn.execute(
+            "SELECT messages_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        messages: list[dict] = json.loads(row["messages_json"])
+        existing = next(
+            (m for m in messages
+             if (m.get("metadata") or {}).get("inflight_turn_id") == turn_id),
+            None,
+        )
+        if existing is None:
+            return False
+        metadata: dict = {}
+        if tool_events:
+            metadata["tool_events"] = tool_events
+        if thinking_log:
+            metadata["thinking_log"] = thinking_log
+        existing["content"] = content
+        existing["metadata"] = metadata
+        self._conn.execute(
+            "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
+            (json.dumps(messages), thread_id),
+        )
+        self._conn.commit()
+        return True
+
+    def clear_inflight_markers(self, thread_id: str) -> None:
+        """Drop the ``inflight_turn_id`` marker from any lingering in-flight pills message
+        (a prior turn that was stopped/restart-orphaned before finalize). The pills STAY
+        (finding 5 — partial pills survive), only the marker is removed — so the next
+        turn's switch-back dedup is scoped to ITS own message and a stale message's
+        per-turn pill ids can't false-match. Called at turn start."""
+        row = self._conn.execute(
+            "SELECT messages_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return
+        messages: list[dict] = json.loads(row["messages_json"])
+        changed = False
+        for m in messages:
+            md = m.get("metadata") or {}
+            if md.get("inflight_turn_id") is not None:
+                md.pop("inflight_turn_id", None)
+                m["metadata"] = md
+                changed = True
+        if changed:
+            self._conn.execute(
+                "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
+                (json.dumps(messages), thread_id),
+            )
+            self._conn.commit()
+
     def append_plan_card(self, thread_id: str, task_id: str, plan_markdown: str) -> bool:
         """Append a plan version to a task's transcript, building a version history.
 

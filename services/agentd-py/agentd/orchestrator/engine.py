@@ -1996,7 +1996,7 @@ class AgentOrchestrator:
         """
         from uuid import uuid4
 
-        from agentd.tools.command_rules import CommandRuleStore
+        from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 
         async def _cb(command: str, args: list[str], cwd: str) -> CommandDecision:
             task = await self._store.get(task_id)
@@ -2064,22 +2064,8 @@ class AgentOrchestrator:
                 task.execution_state.pending_command_request = None
                 if task.status == TaskStatus.AWAITING_COMMAND_DECISION:
                     task = transition(task, TaskStatus.EXECUTING, "command decision received")
-                if decision.approve and decision.remember:
-                    import shlex
-                    if decision.rule_value:
-                        value = decision.rule_value
-                    elif decision.scope == "binary":
-                        value = command.rsplit("/", 1)[-1]
-                    elif decision.scope == "exact":
-                        value = shlex.join([command, *args])
-                    else:  # prefix with no explicit value → lock command + first arg
-                        _toks = [command, *args]
-                        value = shlex.join(_toks[:2] if len(_toks) > 1 else _toks)
-                    rule = CommandRule(
-                        type=decision.scope,
-                        value=value,
-                        added_at=datetime.now(timezone.utc).isoformat(),
-                    )
+                rule = rule_from_decision(decision, command, args)
+                if rule is not None:
                     task.execution_state.approved_commands.append(rule)
                     CommandRuleStore(task.workspace_path).add(rule)
                 await self._store.save(task)
