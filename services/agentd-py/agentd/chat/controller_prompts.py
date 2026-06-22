@@ -11,6 +11,25 @@ from __future__ import annotations
 import copy
 import json
 
+# The patch ops the controller edit action exposes — a subset of the engine's
+# PatchOperationV2 union (domain/models.py) chosen for chat edits: full-file
+# create_file, precise search_replace, multi-hunk apply_diff (ideal for rewriting
+# many regions of an existing file), and replace_range (replace a 1-based line span).
+# The dict→engine conversion is free: apply_ops feeds these to PatchDocumentV2, a
+# pydantic discriminated union on `op`, which builds the right op model per dict.
+_PATCH_OP_TYPES = ["create_file", "search_replace", "apply_diff", "replace_range"]
+
+# Sub-schema for replace_range's line anchor (mirrors RangeAnchor in domain/models.py).
+_RANGE_ANCHOR_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["start_line", "end_line"],
+    "properties": {
+        "start_line": {"type": "integer"},
+        "end_line": {"type": "integer"},
+    },
+}
+
 # Flat union (see module docstring). Mirrors PLANNING_STEP_RESPONSE_SCHEMA.
 CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -32,17 +51,20 @@ CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
         "reason": {"type": "string"},
         "options": {"type": "array", "items": {"type": "object"}},
         # edit — each op: 'file' is a workspace-relative PATH (one line); code goes in
-        # 'content' (create_file) or 'search'/'replace' (search_replace). See prompt example.
+        # the op-specific field: 'content' (create_file / replace_range), 'search'/'replace'
+        # (search_replace), 'diff' (apply_diff), 'anchor' (replace_range). See prompt example.
         "patch_ops": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "op": {"type": "string", "enum": ["create_file", "search_replace"]},
+                    "op": {"type": "string", "enum": _PATCH_OP_TYPES},
                     "file": {"type": "string"},
                     "content": {"type": "string"},
                     "search": {"type": "string"},
                     "replace": {"type": "string"},
+                    "diff": {"type": "string"},
+                    "anchor": _RANGE_ANCHOR_SCHEMA,
                     "reason": {"type": "string"},
                 },
                 # Mirror reasoning/tool_prompts.py: force the op-type-agnostic fields the
@@ -81,15 +103,44 @@ _PHASE_TYPES: dict[str, list[str]] = {
 # controller_loop.py and the OUTPUT block in CONTROLLER_SYSTEM_PROMPT.
 _OBJECT = {"type": "object"}
 _STR = {"type": "string"}
-_PATCH_OP_ITEM = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["op", "file", "reason"],  # mirror the flat schema's op-item guard
-    "properties": {
-        "op": {"type": "string", "enum": ["create_file", "search_replace"]},
-        "file": _STR, "content": _STR, "search": _STR, "replace": _STR, "reason": _STR,
+
+# Per-op-type field specs: the op-specific properties + which are required for THAT op.
+# The tight patch-op item is a oneOf over these branches (each a closed object with an
+# `op` `const`), so a constrained-grammar provider FORCES the right fields per op — e.g.
+# replace_range MUST carry anchor + content, apply_diff MUST carry diff. A single flat
+# object can only require the op-agnostic fields (op/file/reason) and lets the model omit
+# the rest, which is how a content-less replace_range slipped through to a pydantic error.
+# (The flat/Gemini schema stays the permissive single object — Gemini deadlocks on oneOf.)
+_OP_FIELD_SPECS: dict[str, dict[str, object]] = {
+    "create_file": {"properties": {"content": _STR}, "required": ["content"]},
+    "search_replace": {
+        "properties": {"search": _STR, "replace": _STR},
+        "required": ["search", "replace"],
+    },
+    "apply_diff": {"properties": {"diff": _STR}, "required": ["diff"]},
+    "replace_range": {
+        "properties": {"anchor": _RANGE_ANCHOR_SCHEMA, "content": _STR},
+        "required": ["anchor", "content"],
     },
 }
+
+
+def _patch_op_branch(op: str) -> dict[str, object]:
+    spec = _OP_FIELD_SPECS[op]
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op", "file", "reason", *spec["required"]],  # type: ignore[misc]
+        "properties": {
+            "op": {"const": op},
+            "file": _STR,
+            "reason": _STR,
+            **spec["properties"],  # type: ignore[dict-item]
+        },
+    }
+
+
+_PATCH_OP_ITEM = {"oneOf": [_patch_op_branch(op) for op in _PATCH_OP_TYPES]}
 _VARIANT_SPECS: dict[str, dict[str, object]] = {
     "tool_call": {
         "required": ["tool", "args"],
@@ -205,13 +256,27 @@ Variant — propose_mode (the request needs a change): {type, plan_sketch, reaso
     {"mode":"explain","label":"Just explain","description":"No changes — I describe the approach."}]}
 
 Variant — edit (EDIT mode only, after the user picked "edit"): {type, patch_ops}
-  "patch_ops" is a NON-EMPTY list. Each op: "file" is a WORKSPACE-RELATIVE PATH (one line like
-  "src/tax.py") — NEVER put code in "file". Code goes in "content" (create_file) or "search"/"replace"
-  (search_replace). EVERY op needs a one-line "reason". Prefer ONE op per turn for a search_replace
-  (broad multi-op rewrites fail as a unit if any single search misses). Read the target region
-  before editing existing code.
+  "patch_ops" is a NON-EMPTY list — one edit can combine MULTIPLE ops on one or more files, and they
+  need NOT be the same type: match the op to EACH change and mix freely (e.g. a create_file plus a
+  couple of search_replace plus a replace_range, all in one list — you are not limited to a list of
+  one op type). They apply in order as one batch: a later op sees earlier ops' results, and if any op
+  fails preflight the whole batch is rejected (nothing is written). Each op: "file" is a
+  WORKSPACE-RELATIVE PATH (one line like "src/tax.py") — NEVER put code in "file". EVERY op needs a
+  one-line "reason". Read the target region before editing existing code. Each op and where it shines:
+    • "create_file" — creates a NEW file with full contents in "content". Applies when the file does
+      not yet exist.
+    • "search_replace" — replaces an exact snippet: "search" = exact existing text, "replace" = new
+      text. Shines for a small, localized change to known text.
+    • "apply_diff" — applies a unified diff ("diff" holds @@ hunks). Shines when one file needs many
+      changes across different regions in a single pass (e.g. a redesign or refactor).
+    • "replace_range" — replaces a contiguous line span: "anchor"={"start_line","end_line"} (1-based,
+      inclusive) and "content" = the new text for those lines. Shines when you know the exact lines
+      to overwrite.
   {"type":"edit","thought":"add helper","patch_ops":[{"op":"create_file","file":"src/tax.py","content":"def with_tax(price, rate):\\n    return price * (1 + rate)\\n","reason":"add tax helper"}]}
   {"type":"edit","thought":"round price","patch_ops":[{"op":"search_replace","file":"src/pricing.py","search":"return total","replace":"return round(total, 2)","reason":"round price"}]}
+  {"type":"edit","thought":"retheme many regions","patch_ops":[{"op":"apply_diff","file":"index.html","diff":"@@ -10,1 +10,1 @@\\n-  background: #87ceeb;\\n+  background: #1a0a2e;\\n","reason":"dusk palette"}]}
+  {"type":"edit","thought":"replace the loop","patch_ops":[{"op":"replace_range","file":"app.js","anchor":{"start_line":42,"end_line":48},"content":"  for (const c of coins) c.spin();\\n","reason":"rewrite update loop"}]}
+  {"type":"edit","thought":"new util + wire it in (mixed ops, one batch)","patch_ops":[{"op":"create_file","file":"src/util.py","content":"def fmt(x):\\n    return str(x)\\n","reason":"new helper"},{"op":"search_replace","file":"src/app.py","search":"import os","replace":"import os\\nfrom src.util import fmt","reason":"wire in helper"}]}
 
 Variant — submit_changes (EDIT mode, when all edits are done): {type, summary}
   "summary": a non-empty one-liner of what you changed. Emit this to END the edit turn.

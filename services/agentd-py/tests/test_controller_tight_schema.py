@@ -85,7 +85,10 @@ def test_tight_edit_patch_ops_items_require_op_file_reason() -> None:
     edit = branches["edit"]
     assert "patch_ops" in edit["required"]
     item = edit["properties"]["patch_ops"]["items"]
-    assert set(item["required"]) == {"op", "file", "reason"}
+    # The item is a oneOf over per-op branches; EVERY branch still requires the
+    # op-agnostic fields (op/file/reason) on top of its op-specific requireds.
+    for branch in item["oneOf"]:
+        assert {"op", "file", "reason"} <= set(branch["required"])
 
 
 def test_tight_submit_changes_requires_summary() -> None:
