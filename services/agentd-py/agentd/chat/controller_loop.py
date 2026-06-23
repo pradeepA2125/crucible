@@ -10,6 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.tool_events import trace_to_tool_events
 from agentd.domain.models import AgentToolTrace, ToolCall, ToolResult
 from agentd.reasoning.react_common import MALFORMED_CORRECTION, assistant_turn, dedup_key
@@ -182,6 +183,7 @@ class ControllerLoop:
         channel_id: str,
         phase_sm: ControllerPhaseSM,
         edit_session: TurnEditSession | None = None,
+        todo_ledger: TodoLedger | None = None,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -189,6 +191,7 @@ class ControllerLoop:
         self._channel_id = channel_id
         self._sm = phase_sm
         self._edit = edit_session
+        self._ledger = todo_ledger or TodoLedger()
         self._calls: list[ToolCall] = []
         self._results: list[ToolResult] = []
         self._thinking: list[str] = []
@@ -271,6 +274,10 @@ class ControllerLoop:
             if iteration == 0:
                 self._broadcaster.broadcast(self._channel_id, {
                     "type": "chat_agent_thinking", "payload": {"message": "Thinking…"}})
+            # Re-surface the live todo ledger into the payload tail every iteration so the
+            # model re-reads its own contract (the detail that makes discretion stick). Empty
+            # string when no list exists -> build_controller_step_payload omits it.
+            plan_context["todo_status"] = self._ledger.render()
             resp = await self._reasoning.create_controller_step(
                 plan_context=plan_context, history=history,
                 tool_definitions=tool_defs, phase=self._sm.phase,
@@ -471,6 +478,25 @@ class ControllerLoop:
                         "content": f"REJECTED by user: {reason}. Revise and re-emit."})
                 continue
             if atype == "submit_changes":
+                # Hard gate: a non-empty ledger is a contract. Block submit while items are
+                # pending/in_progress (NOT blocked/cancelled/done — those never deadlock) and
+                # redirect to the next item. This is a legitimate redirect, NOT a malformed
+                # action, so it does NOT touch consecutive_malformed — only max_iters bounds it.
+                still_open = self._ledger.pending()
+                if still_open:
+                    titles = ", ".join(i.title for i in still_open)
+                    history.append(assistant_turn(resp))
+                    history.append({
+                        "role": "tool_result", "tool": "",
+                        "content": (
+                            f"submit_changes BLOCKED — {len(still_open)} todo item(s) still "
+                            f"open: {titles}. Continue with the next item (one edit at a time), "
+                            "then call write_todos to mark it 'done' (cite evidence in 'note'). "
+                            "If one is genuinely stuck, mark it 'blocked' (with the unblock "
+                            "reason) or 'cancelled' (with why). Do NOT submit until nothing is "
+                            "pending."),
+                    })
+                    continue
                 # The shadow is closed by run()'s finally on return (no double-close).
                 history.append(assistant_turn(resp))
                 # Deterministic fallback for an empty summary — unlike answer/clarify we do NOT
