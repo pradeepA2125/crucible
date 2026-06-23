@@ -20,6 +20,8 @@ from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
 from agentd.chat.models import ChatMessage, PendingGate
+from agentd.chat.todo_ledger import TodoLedger
+from agentd.chat.todo_source import TodoToolSource
 from agentd.domain.models import CommandDecision, ShellPolicy
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
@@ -170,14 +172,19 @@ class ChatController:
             self._active_turns.pop(thread_id, None)
 
     def _build_registry(
-        self, command_approval_callback: object | None = None,
+        self,
+        command_approval_callback: object | None = None,
+        todo_ledger: TodoLedger | None = None,
     ) -> AggregatingToolRegistry:
-        return AggregatingToolRegistry([BuiltinToolSource(
+        sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
             real_workspace_path=Path(self._workspace_path),
             semantic_index=getattr(self._retrieval, "_semantic_index", None),
             command_approval_callback=command_approval_callback,
-        )])
+        )]
+        if todo_ledger is not None:
+            sources.append(TodoToolSource(todo_ledger))
+        return AggregatingToolRegistry(sources)
 
     def _seed_for(self, thread_id: str) -> list[dict[str, object]]:
         """The thread's prior controller turn history to replay as seed_history.
@@ -276,6 +283,9 @@ class ChatController:
         phase: str | None = None, turn_id: str | None = None,
     ) -> ControllerOutcome:
         sm = ControllerPhaseSM()
+        # Request-scoped todo ledger: rehydrate so it survives the DECIDE->EDIT (mode gate)
+        # and clarify-resume loop boundaries within one request.
+        ledger = TodoLedger.from_json(self._store.get_controller_todos(thread_id))
         # Edits only happen in EDIT phase (entered via /mode-decision). A DECIDE turn
         # never reaches the edit branch, so the session — which needs the orchestrator's
         # workspace_manager/patch_engine — is built lazily only when editing.
@@ -295,8 +305,8 @@ class ChatController:
         # command callback — closes over this turn's thread/channel like edit_cb.
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
         loop = ControllerLoop(
-            self._reasoning, self._build_registry(command_cb), self._broadcaster,
-            channel_id=channel_id, phase_sm=sm, edit_session=edit)
+            self._reasoning, self._build_registry(command_cb, ledger), self._broadcaster,
+            channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger)
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path}
         # Debug-artifact keys (KV-safe: build_controller_step_payload ignores them) so
@@ -322,8 +332,9 @@ class ChatController:
         # message per tool result so a switch/reopen mid-turn reconstructs them.
         pills_cb = partial(self._persist_inflight_pills, thread_id, turn_id) \
             if turn_id else None
+        max_iters = int(os.environ.get("AI_EDITOR_CONTROLLER_MAX_ITERS", "500"))
         outcome = await loop.run(
-            plan_context, seed_history=seed_history,
+            plan_context, max_iters=max_iters, seed_history=seed_history,
             auto_accept_edits=(not is_review), edit_decision_cb=edit_cb,
             edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
             on_pills_update=pills_cb)
@@ -337,6 +348,14 @@ class ChatController:
         # seed_history instead of re-exploring cold (mirrors the planner persisting
         # planning_conversation_history on the TaskRecord).
         self._store.set_controller_history(thread_id, outcome.history or [])
+        # Persist the ledger across this request's loop boundaries; clear on a terminal
+        # outcome so the next request starts fresh. propose_mode/clarify are non-terminal —
+        # the follow-on loop rehydrates the in-progress list.
+        if outcome.kind in ("submit_changes", "answer"):
+            self._store.set_controller_todos(thread_id, None)
+        else:
+            self._store.set_controller_todos(
+                thread_id, ledger.to_json() if ledger.items else None)
         # Mark/clear EDIT-clarify resume: a clarify emitted while in EDIT must resume
         # in EDIT on the user's reply. Any other terminal (submit/edit-then-submit,
         # answer) clears it. sm.phase reflects the phase the loop ran in (EDIT is
