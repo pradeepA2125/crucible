@@ -41,6 +41,9 @@ class ChatThreadStore:
         # Pinned retrieval seed (cache-prefix head), added later.
         if "controller_seed_json" not in existing:
             self._conn.execute("ALTER TABLE chat_threads ADD COLUMN controller_seed_json TEXT")
+        # Request-scoped todo ledger (survives DECIDE->EDIT + clarify resume), added later.
+        if "controller_todo_json" not in existing:
+            self._conn.execute("ALTER TABLE chat_threads ADD COLUMN controller_todo_json TEXT")
         self._conn.commit()
 
     @staticmethod
@@ -51,6 +54,11 @@ class ChatThreadStore:
     @staticmethod
     def _seed_from_row(row: sqlite3.Row) -> dict | None:
         raw = row["controller_seed_json"]
+        return json.loads(raw) if raw else None
+
+    @staticmethod
+    def _todos_from_row(row: sqlite3.Row) -> list[dict] | None:
+        raw = row["controller_todo_json"]
         return json.loads(raw) if raw else None
 
     @staticmethod
@@ -90,6 +98,7 @@ class ChatThreadStore:
                 pending_controller_gate=self._gate_from_row(row),
                 controller_conversation_history=self._history_from_row(row),
                 controller_retrieval_seed=self._seed_from_row(row),
+                controller_todos=self._todos_from_row(row),
             )
             for row in rows
         ]
@@ -111,6 +120,7 @@ class ChatThreadStore:
             pending_controller_gate=self._gate_from_row(row),
             controller_conversation_history=self._history_from_row(row),
             controller_retrieval_seed=self._seed_from_row(row),
+            controller_todos=self._todos_from_row(row),
         )
 
     def set_controller_seed(self, thread_id: str, seed: dict | None) -> None:
@@ -145,6 +155,23 @@ class ChatThreadStore:
             (raw, thread_id),
         )
         self._conn.commit()
+
+    def set_controller_todos(self, thread_id: str, raw: str | None) -> None:
+        """Persist (raw = TodoLedger.to_json()) or clear (raw = None) the request's todo
+        ledger. Mirrors set_controller_history: an in-place durable update the next loop
+        run (mode-gate / clarify resume) rehydrates via TodoLedger.from_json."""
+        self._conn.execute(
+            "UPDATE chat_threads SET controller_todo_json = ? WHERE thread_id = ?",
+            (raw, thread_id),
+        )
+        self._conn.commit()
+
+    def get_controller_todos(self, thread_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT controller_todo_json FROM chat_threads WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        return row["controller_todo_json"] if row else None
 
     def set_active_task(self, thread_id: str, task_id: str) -> None:
         """Point the thread at its current task. Resume churns the id (parent→child);

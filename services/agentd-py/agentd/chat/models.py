@@ -71,6 +71,9 @@ class ChatThread(BaseModel):
     # changes ride the history tail as delta notes, never the seed. Mirrors the planner's
     # TaskRecord.planning_initial_context. None until the first turn computes it.
     controller_retrieval_seed: dict[str, Any] | None = None
+    # Request-scoped todo ledger (raw item dicts), surfaced to /live so the user sees the
+    # live checklist. Populated from controller_todo_json; None until the first write_todos.
+    controller_todos: list[dict[str, Any]] | None = None
 
 
 class ChatEvent(BaseModel):
