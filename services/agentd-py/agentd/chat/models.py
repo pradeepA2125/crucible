@@ -102,3 +102,6 @@ class ThreadLiveState(BaseModel):
     failure_summary: FailureSummary | None = None
     run_summary: RunSummary | None = None
     task_narrative: TaskNarrative | None = None
+    # The request's live todo checklist (raw item dicts), surfaced regardless of an active
+    # task/gate so the UI can show progress. None when no list exists.
+    todos: list[dict[str, Any]] | None = None

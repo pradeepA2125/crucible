@@ -131,9 +131,13 @@ def resolve_thread_live(
     (Class-A: gates clear in place, see CLAUDE.md), so the slot self-heals on the
     next poll once the decision route clears it.
     """
+    todos = thread.controller_todos if thread is not None else None
     if thread is not None and thread.pending_controller_gate is not None:
         return ThreadLiveState(
             active_task_id=active_task_id,
             pending_gate=thread.pending_controller_gate,
+            todos=todos,
         )
-    return resolve_live_state(active_task_id, get_task)
+    base = resolve_live_state(active_task_id, get_task)
+    base.todos = todos  # ThreadLiveState is a mutable pydantic model; set after build
+    return base

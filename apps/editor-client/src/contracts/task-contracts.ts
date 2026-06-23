@@ -249,6 +249,14 @@ export const PendingGateSchema = z.object({
 });
 export type PendingGate = z.infer<typeof PendingGateSchema>;
 
+// One item of the controller's live todo checklist (the write_todos ledger).
+export const TodoItemSchema = z.object({
+  title: z.string(),
+  status: z.enum(["pending", "in_progress", "done", "blocked", "cancelled"]),
+  note: z.string().optional().default(""),
+});
+export type TodoItem = z.infer<typeof TodoItemSchema>;
+
 // A thread's current actionable state — what the UI polls and renders from.
 // Resolved server-side from the thread's active task (GET /chat/threads/{id}/live),
 // so reloads and resume task-id churn self-heal on the next poll.
@@ -264,6 +272,7 @@ export const ThreadLiveStateSchema = z.object({
   failureSummary: FailureSummarySchema.nullable().optional(),
   runSummary: RunSummarySchema.nullable().optional(),
   taskNarrative: TaskNarrativeSchema.nullable().optional(),
+  todos: z.array(TodoItemSchema).nullable().optional(),
 });
 export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 
