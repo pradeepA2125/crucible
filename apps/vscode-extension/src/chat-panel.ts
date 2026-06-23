@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import type { ChatMessage, ChatThreadSummary, CommandDecision } from "@ai-editor/editor-client";
-import type { LiveGateView, LivePlanView } from "./controller.js";
+import type { LiveGateView, LivePlanView, LiveTodosView } from "./controller.js";
 
 export type ChatMessageHandler = (message: string, stepReview?: boolean) => Promise<void>;
 export type PlanCardActionHandler = (
@@ -259,6 +259,14 @@ export class ChatPanel {
 
   clearLiveError(): void {
     this.panel?.webview.postMessage({ type: "clearLiveError" });
+  }
+
+  renderLiveTodos(todos: LiveTodosView): void {
+    this.panel?.webview.postMessage({ type: "renderLiveTodos", todos });
+  }
+
+  clearLiveTodos(): void {
+    this.panel?.webview.postMessage({ type: "clearLiveTodos" });
   }
 
   sendLiveStatus(status: string | null, turnActive: boolean): void {

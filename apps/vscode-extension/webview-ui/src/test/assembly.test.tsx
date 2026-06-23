@@ -30,6 +30,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     livePlan: null,
     liveReview: null,
     liveError: null,
+    liveTodos: null,
     workbar: null,
     liveStatus: null,
     turnActive: false,

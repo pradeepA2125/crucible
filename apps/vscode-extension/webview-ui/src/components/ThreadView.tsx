@@ -229,6 +229,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         livePlan={state.livePlan}
         liveReview={state.liveReview}
         liveError={liveError}
+        liveTodos={state.liveTodos}
         onDismissError={() => state.liveError && onDismissError(state.liveError.taskId)}
       />
 

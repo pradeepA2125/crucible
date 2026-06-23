@@ -60,6 +60,13 @@ export interface LiveGateView {
 
 export interface LivePlanView { taskId: string; planMarkdown: string }
 
+export interface TodoItem {
+  title: string;
+  status: "pending" | "in_progress" | "done" | "blocked" | "cancelled";
+  note: string;
+}
+export interface LiveTodosView { items: TodoItem[] }
+
 // LLM-authored run narrative (headline + points), shown on the Review/Error cards.
 export interface TaskNarrativeView {
   headline: string;
@@ -115,6 +122,8 @@ export type ExtensionMessage =
   | { type: "clearLiveReview" }
   | { type: "renderLiveError"; error: LiveErrorView }
   | { type: "clearLiveError" }
+  | { type: "renderLiveTodos"; todos: LiveTodosView }
+  | { type: "clearLiveTodos" }
   | { type: "liveStatus"; status: string | null; turnActive?: boolean }
   | { type: "resolveInlineChangeCard"; taskId: string; resolution: "applied" | "discarded" }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } };
@@ -166,6 +175,7 @@ export interface AppState {
   livePlan: LivePlanView | null;
   liveReview: LiveReviewView | null;
   liveError: LiveErrorView | null;
+  liveTodos: LiveTodosView | null;
   workbar: WorkbarInfo | null;
   liveStatus: string | null;
   // True while a controller turn / held-open controller gate is in flight (durable

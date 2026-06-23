@@ -234,6 +234,8 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     clearLiveReview: () => {},
     renderLiveError: () => {},
     clearLiveError: () => {},
+    renderLiveTodos: () => {},
+    clearLiveTodos: () => {},
     sendLiveStatus: () => {},
     ...overrides,
   };

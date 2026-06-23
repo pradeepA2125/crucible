@@ -78,6 +78,8 @@ export interface ControllerUI {
   clearLiveReview(): void;
   renderLiveError(error: { taskId: string; status: "FAILED" | "ABORTED"; detail?: string; narrative?: { headline: string; points: string[] } }): void;
   clearLiveError(): void;
+  renderLiveTodos(todos: LiveTodosView): void;
+  clearLiveTodos(): void;
   sendLiveStatus(status: string | null, turnActive: boolean): void;
 }
 
@@ -90,6 +92,14 @@ export interface LiveGateView {
 export interface LivePlanView {
   taskId: string;
   planMarkdown: string;
+}
+
+export interface LiveTodosView {
+  items: {
+    title: string;
+    status: "pending" | "in_progress" | "done" | "blocked" | "cancelled";
+    note: string;
+  }[];
 }
 
 export interface DiffService {
@@ -1603,6 +1613,10 @@ export class AiEditorController {
       runSummary: live.runSummary,
       narrative: live.taskNarrative,
       failure: live.failureSummary,
+      // INVARIANT (see CLAUDE.md /live dedup): the todo checklist is a durable signal
+      // consumed after this gate — it MUST be in the signature, or a checklist change
+      // (e.g. an item flipped to done) is deduped away and the card never updates.
+      todos: live.todos,
     });
     if (signature === this.lastLiveSignature) {
       return; // dedup — nothing actionable changed
@@ -1694,6 +1708,12 @@ export class AiEditorController {
       });
     } else {
       this.ui.clearLiveError();
+    }
+
+    if (live.todos && live.todos.length > 0) {
+      this.ui.renderLiveTodos({ items: live.todos });
+    } else {
+      this.ui.clearLiveTodos();
     }
 
     this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false);

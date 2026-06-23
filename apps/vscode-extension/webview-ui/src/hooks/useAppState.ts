@@ -33,6 +33,7 @@ const INITIAL: AppState = {
   livePlan: null,
   liveReview: null,
   liveError: null,
+  liveTodos: null,
   workbar: null,
   liveStatus: null,
   turnActive: false,
@@ -324,6 +325,12 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "clearLiveError":
       return { ...state, liveError: null };
+
+    case "renderLiveTodos":
+      return { ...state, liveTodos: msg.todos };
+
+    case "clearLiveTodos":
+      return { ...state, liveTodos: null };
 
     case "updateWorkbar":
       return { ...state, workbar: msg.info };

@@ -1,5 +1,6 @@
 import { sig } from "../hooks/useAppState";
-import type { LiveGateView, LivePlanView, LiveReviewView, LiveErrorView } from "../types";
+import type { LiveGateView, LivePlanView, LiveReviewView, LiveErrorView, LiveTodosView } from "../types";
+import { TodoCard } from "./messages/TodoCard";
 import { CommandGate } from "./messages/gates/CommandGate";
 import { ScopeGate } from "./messages/gates/ScopeGate";
 import { ValidationGate } from "./messages/gates/ValidationGate";
@@ -44,6 +45,7 @@ interface Props {
   liveReview: LiveReviewView | null;
   /** Already filtered for dismissal by the caller. */
   liveError: LiveErrorView | null;
+  liveTodos?: LiveTodosView | null;
   onDismissError: () => void;
 }
 
@@ -57,12 +59,16 @@ interface Props {
  *
  * Returns null when all four slots are empty.
  */
-export function LiveSlot({ liveGate, livePlan, liveReview, liveError, onDismissError }: Props) {
-  const hasContent = liveGate !== null || livePlan !== null || liveReview !== null || liveError !== null;
+export function LiveSlot({ liveGate, livePlan, liveReview, liveError, liveTodos, onDismissError }: Props) {
+  const hasTodos = liveTodos != null && liveTodos.items.length > 0;
+  const hasContent = liveGate !== null || livePlan !== null || liveReview !== null
+    || liveError !== null || hasTodos;
   if (!hasContent) return null;
 
   return (
     <div className="flex flex-col gap-2 px-3 py-2 flex-shrink-0">
+      {liveTodos != null && liveTodos.items.length > 0 && <TodoCard items={liveTodos.items} />}
+
       {liveGate !== null && (
         // Key is content-addressed so that a new gate for the same task+kind
         // (e.g. a second command decision) remounts the card and discards the
