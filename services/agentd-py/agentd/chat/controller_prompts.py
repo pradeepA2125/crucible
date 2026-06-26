@@ -147,7 +147,10 @@ _VARIANT_SPECS: dict[str, dict[str, object]] = {
         "properties": {"tool": _STR, "args": _OBJECT},
     },
     "answer": {"required": ["answer"], "properties": {"answer": _STR}},
-    "clarify": {"required": ["question"], "properties": {"question": _STR}},
+    "clarify": {
+        "required": ["question"],
+        "properties": {"question": _STR, "options": {"type": "array", "items": _STR}},
+    },
     "propose_mode": {
         "required": ["plan_sketch", "recommended", "reason", "options"],
         "properties": {
@@ -240,9 +243,12 @@ Variant — answer (respond in text): {type, answer}
   Keep "thought" brief so your output lands in "answer". NEVER an empty or placeholder "answer".
   {"type":"answer","thought":"have read the route + loop","answer":"The message flow: `routes.py` ... "}
 
-Variant — clarify (you genuinely cannot proceed): {type, question}
+Variant — clarify (you genuinely cannot proceed): {type, question, options}
   Use when an ambiguity blocks you and reading the workspace won't resolve it. Never a blank answer.
-  {"type":"clarify","thought":"ambiguous target","question":"Which pricing module — src/pricing.py or billing/pricing.py?"}
+  Emit 2-4 SHORT candidate answers in "options" — what you think the user most likely means.
+  NEVER add a "something else"/free-text option yourself; the UI appends a free-text escape
+  automatically. If you truly have no candidates, emit an empty "options" array.
+  {"type":"clarify","thought":"ambiguous target","question":"Which pricing module?","options":["src/pricing.py","billing/pricing.py"]}
 
 Variant — propose_mode (the request needs a change): {type, plan_sketch, reason, recommended, options}
   Inline "edit" is the PRIMARY path for a change of ANY size — small AND large. A large /

@@ -430,8 +430,12 @@ class ControllerLoop:
                 continue
             if atype == "clarify":
                 history.append(assistant_turn(resp))
+                raw_opts = resp.get("options")
+                options = [str(o) for o in raw_opts] if isinstance(raw_opts, list) else []
+                question = str(resp.get("question", ""))
                 return ControllerOutcome(
-                    kind="clarify", text=str(resp.get("question", "")), history=history)
+                    kind="clarify", text=question, history=history,
+                    payload={"question": question, "options": options})
             if atype == "propose_mode":
                 history.append(assistant_turn(resp))
                 return ControllerOutcome(kind="propose_mode", payload={
