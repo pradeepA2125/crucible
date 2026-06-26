@@ -15,7 +15,10 @@ def _loop(tmp_path, steps):
     )
     return ControllerLoop(
         ScriptedReasoningEngine(None, [], controller_step_responses=steps), reg,
-        EventBroadcaster(), channel_id="c", phase_sm=ControllerPhaseSM())
+        EventBroadcaster(), channel_id="c", phase_sm=ControllerPhaseSM(),
+        # These exercise propose_mode loop mechanics with the full mode vocabulary;
+        # flag-gating of the offered set is covered by test_controller_mode_gating.py.
+        task_subsystem_enabled=True)
 
 
 @pytest.mark.asyncio

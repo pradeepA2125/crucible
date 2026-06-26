@@ -19,7 +19,10 @@ def _loop(tmp_path: Path, responses: list[dict]) -> ControllerLoop:
     reg = AggregatingToolRegistry(
         [BuiltinToolSource(shadow_root=tmp_path, real_workspace_path=tmp_path)])
     return ControllerLoop(
-        eng, reg, EventBroadcaster(), channel_id="c1", phase_sm=ControllerPhaseSM())
+        eng, reg, EventBroadcaster(), channel_id="c1", phase_sm=ControllerPhaseSM(),
+        # These exercise the full mode vocabulary (incl. create_task); offered-set
+        # flag-gating is covered by test_controller_mode_gating.py.
+        task_subsystem_enabled=True)
 
 
 @pytest.mark.asyncio

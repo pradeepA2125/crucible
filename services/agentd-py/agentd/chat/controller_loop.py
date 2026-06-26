@@ -90,19 +90,24 @@ PROPOSE_MODE_CORRECTION = (
 )
 
 
-def _propose_mode_correction(resp: dict[str, object]) -> str | None:
-    """Return None if the propose_mode OPTIONS are well-formed, else a correction.
+def _propose_mode_correction(
+    resp: dict[str, object], allowed_modes: frozenset[str] = _VALID_MODES
+) -> str | None:
+    """Return None if the propose_mode OPTIONS are well-formed AND every offered mode is in
+    `allowed_modes`, else a correction.
 
-    Enforces the mode vocabulary the same way the phase SM enforces action types:
-    a weak model that invents modes ("create") or wrong keys (options[].type) gets
-    corrected and retried rather than surfacing an unusable gate. `recommended` is a
-    non-blocking hint — it's normalized in the emit branch, not required here (weak
-    models reliably emit good options but drop the recommended field)."""
+    Enforces the mode vocabulary the same way the phase SM enforces action types: a weak model
+    that invents modes ("create") or wrong keys (options[].type) gets corrected and retried
+    rather than surfacing an unusable gate. `allowed_modes` is {edit, explain} when the task
+    subsystem is OFF (default) — so a model that offers create_task/resume despite the prompt
+    omission gets corrected, not dispatched. `recommended` is a non-blocking hint — it's
+    normalized in the emit branch, not required here (weak models reliably emit good options
+    but drop the recommended field)."""
     options = resp.get("options")
     if not isinstance(options, list) or not options:
         return PROPOSE_MODE_CORRECTION
     for opt in options:
-        if not isinstance(opt, dict) or opt.get("mode") not in _VALID_MODES:
+        if not isinstance(opt, dict) or opt.get("mode") not in allowed_modes:
             return PROPOSE_MODE_CORRECTION
     return None
 
@@ -184,6 +189,7 @@ class ControllerLoop:
         phase_sm: ControllerPhaseSM,
         edit_session: TurnEditSession | None = None,
         todo_ledger: TodoLedger | None = None,
+        task_subsystem_enabled: bool = False,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -192,6 +198,10 @@ class ControllerLoop:
         self._sm = phase_sm
         self._edit = edit_session
         self._ledger = todo_ledger or TodoLedger()
+        # OFF (default): only edit/explain may be offered — the controller handles changes
+        # inline; a model that proposes create_task/resume anyway gets corrected.
+        self._allowed_modes = (
+            _VALID_MODES if task_subsystem_enabled else frozenset({"edit", "explain"}))
         self._calls: list[ToolCall] = []
         self._results: list[ToolResult] = []
         self._thinking: list[str] = []
@@ -292,7 +302,7 @@ class ControllerLoop:
             correction = (
                 MALFORMED_CORRECTION
                 if atype not in self._sm.allowed_types()
-                else _propose_mode_correction(resp) if atype == "propose_mode"
+                else _propose_mode_correction(resp, self._allowed_modes) if atype == "propose_mode"
                 else _decide_state_change_correction(resp, self._sm.phase)
                 or _empty_action_correction(resp, atype)
             )
