@@ -115,3 +115,18 @@ def test_todo_policy_states_concrete_triggers():
     p = CONTROLLER_SYSTEM_PROMPT.lower()
     assert "3+ files" in p
     assert "one at a time" in p
+
+
+def test_edit_hint_steers_incremental_todo_marking():
+    """The live mid-turn EDIT hint must steer the model to RECONCILE the ledger each turn —
+    mark the finished item done (evidence) and use in_progress for partial work — instead of
+    batching every done-flip at the end (smoke Finding #2: qwen3.6 left all items pending,
+    then marked all done in one final call)."""
+    seeded = [{"role": "user", "content": "big multi-file feature"},
+              {"role": "assistant", "content": "{}"}]
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w", "todo_status": "3 items (0 done) — [...]"},
+        history=seeded, tool_definitions=[], phase="EDIT")
+    instr = str(payload["instruction"]).lower()
+    assert "in_progress" in instr            # uses the in_progress state for partial work
+    assert "reconcile" in instr              # reconcile-the-ledger-first framing

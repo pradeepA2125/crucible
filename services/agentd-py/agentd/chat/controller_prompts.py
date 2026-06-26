@@ -295,8 +295,10 @@ TODO LIST POLICY (the write_todos tool) — working memory for BIG, multi-part e
 USE a list (call write_todos with all items, status "pending") when the change is large — any of:
 it spans 3+ files; OR it's a feature that edits multiple places with big chunks of code
 added / replaced / deleted; OR it needs more than ~2 edit cycles. For that shape the list is your
-contract: implement items ONE AT A TIME (emit type='edit' for the next item, then write_todos to
-flip it 'done'), resend the WHOLE list each call (reshape freely — split/insert/reorder by
+contract: implement items ONE AT A TIME, flipping each item's status as you go — 'pending'→
+'in_progress' when you START it, →'done' (with evidence) the moment it is finished, BEFORE you
+begin the next one (reconcile the ledger every turn; never leave all items 'pending' and mark them
+'done' only at the end). Resend the WHOLE list each call (reshape freely — split/insert/reorder by
 resending in the new shape), and submit_changes stays BLOCKED until nothing is pending — this is
 how you finish the whole change instead of stopping after one part.
 SKIP the list when the change is small or cohesive — a single file, a few related ops you can
@@ -426,19 +428,24 @@ def build_controller_step_payload(
         else:
             hint = (
                 "FIRST reflect on your last edit's result (if any): did it apply "
-                "('applied+promoted') or fail ('PATCH FAILED: …')? DECIDE how to track this change: "
-                "if it is BIG — it spans 3+ files, OR edits multiple places with big chunks of code, "
-                "OR needs more than ~2 edit cycles — and no todo list is active yet, call "
-                "write_todos NOW to record every part as 'pending', then work them ONE AT A TIME. If "
-                "a todo list is already active, todo_status shows the remaining items — work the next "
-                "pending one. For a small or cohesive change, skip the list and edit directly. "
+                "('applied+promoted') or fail ('PATCH FAILED: …')? "
+                "If a todo list is active, RECONCILE it NOW — a separate write_todos call THIS "
+                "turn, never batched for the end: (1) if the item you were working is now FULLY "
+                "done, flip it to 'done' and cite the applied edit as evidence in 'note'; (2) if it "
+                "is only PARTIALLY done, leave it 'in_progress' and keep editing THAT SAME item — do "
+                "not start a new one; (3) when you start a new item, flip it 'pending'→'in_progress' "
+                "in that same call. Keep the ledger matching reality every turn so the user sees live "
+                "progress — NEVER leave everything 'pending' and mark it all 'done' at the very end. "
+                "If the change is BIG (3+ files, big chunks across many places, or >~2 edit cycles) "
+                "and no list is active yet, call write_todos NOW to record every part as 'pending'. "
+                "For a small or cohesive change, skip the list and edit directly. "
                 "submit_changes is BLOCKED until nothing is pending. THEN choose ONE: (A) "
                 "CONTINUE/FIX — if an edit failed, re-read the exact lines and re-emit ONE corrected "
-                "op (do NOT repeat the failed op verbatim); for the next item emit type='edit', and "
-                "after it applies call write_todos to mark it 'done' (cite evidence in 'note'). (B) "
-                "DONE — only when no items remain (or the change was small), emit "
-                "type='submit_changes' with a summary. A read-resistant blocker → mark the item "
-                "'blocked' or use type='clarify'. Do NOT propose_mode again."
+                "op (do NOT repeat the failed op verbatim); otherwise emit type='edit' for the "
+                "current 'in_progress' item (or the next pending one). (B) DONE — only when no items "
+                "remain (or the change was small), emit type='submit_changes' with a summary. A "
+                "read-resistant blocker → mark the item 'blocked' or use type='clarify'. Do NOT "
+                "propose_mode again."
             )
     else:  # DECIDE
         if not history:
