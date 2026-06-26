@@ -21,6 +21,13 @@ class _Orch:
         return None
 
 
+@pytest.fixture(autouse=True)
+def _enable_task_subsystem(monkeypatch):
+    # This module is entirely about the create_task/resume mode-decision path, which is
+    # gated behind the task subsystem flag (default off). Opt in for every test here.
+    monkeypatch.setenv("AI_EDITOR_TASK_SUBSYSTEM", "1")
+
+
 def _controller(tmp_path, store, eng, orch):
     return ChatController(
         workspace_path=str(tmp_path), reasoning_engine=eng, thread_store=store,

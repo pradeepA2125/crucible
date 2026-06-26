@@ -22,6 +22,10 @@ _CLASSIFY_SCHEMA: dict[str, object] = {
 _SYSTEM_PROMPT = """\
 You are classifying a user's chat message and, for qa intent, answering it in one step.
 
+NOTE: this small/large size-based routing is the LEGACY (AI_EDITOR_CHAT_CONTROLLER=0) path.
+The reactive controller does NOT classify by size — it edits inline at ANY size (large changes
+are tracked with the todo ledger). These labels exist only for the legacy flow.
+
 Intent values:
   qa           — question or discussion; answering with TEXT fully satisfies the user
   small_change — 1-2 files, localised edit, no interface or schema changes
