@@ -486,6 +486,45 @@ describe("HttpBackendClient", () => {
     expect(live.turnActive).toBe(true);
   });
 
+  test("getThreadLiveState maps the todos checklist from /live", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            active_task_id: null,
+            status: null,
+            pending_gate: null,
+            plan: null,
+            turn_active: true,
+            todos: [
+              { title: "Add model", status: "done", note: "added" },
+              { title: "Add routes", status: "in_progress", note: "" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-1");
+    expect(live.todos).toEqual([
+      { title: "Add model", status: "done", note: "added" },
+      { title: "Add routes", status: "in_progress", note: "" },
+    ]);
+  });
+
+  test("getThreadLiveState maps todos to null when absent", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({ active_task_id: null, status: null, pending_gate: null, plan: null }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-1");
+    expect(live.todos ?? null).toBeNull();
+  });
+
   test("getThreadLiveState defaults turnActive to false when absent", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",

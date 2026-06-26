@@ -477,6 +477,11 @@ export class HttpBackendClient implements BackendTaskClient {
       failureSummary: this.toFailureSummary(raw),
       runSummary: this.toRunSummary(raw),
       taskNarrative: this.toTaskNarrative(raw),
+      // The todo checklist items (title/status/note) are already in the contract shape,
+      // so they pass straight through. Without this hop ThreadLiveStateSchema.todos is
+      // optional and silently parses to undefined → controller.ts never posts
+      // renderLiveTodos → the TodoCard never renders (the whole /live render path is dead).
+      todos: raw["todos"] ?? null,
     });
   }
 

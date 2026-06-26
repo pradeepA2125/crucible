@@ -89,3 +89,29 @@ def test_system_prompt_teaches_write_todos_and_policy():
     assert "write_todos" in p
     assert "enumerate" in p.lower()
     assert "evidence" in p.lower()
+
+
+def test_edit_entry_offers_explicit_todo_choice():
+    """The EDIT hint actually shown at entry presents the use-todo-vs-edit-directly choice
+    with concrete triggers. A mode-gated EDIT turn carries seed conversation, so history is
+    NON-EMPTY at the first EDIT iteration — the live hint is the `else` (mid-turn) branch,
+    NOT the `if not history` branch. This guards against re-introducing the dead-branch bug
+    (guidance placed where it never renders)."""
+    seeded = [{"role": "user", "content": "add a big multi-file feature"},
+              {"role": "assistant", "content": "{}"}]
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w"}, history=seeded,
+        tool_definitions=[], phase="EDIT")
+    instr = str(payload["instruction"]).lower()
+    assert "write_todos" in instr            # the option is named in the live EDIT hint
+    assert "3+ files" in instr               # concrete "use a list" trigger
+    assert "skip the list" in instr          # and when NOT to use it
+
+
+def test_todo_policy_states_concrete_triggers():
+    """The policy gives concrete scenarios (3+ files / big chunks) instead of vague
+    'optional, NOT default' hedging that suppressed the ledger."""
+    from agentd.chat.controller_prompts import CONTROLLER_SYSTEM_PROMPT
+    p = CONTROLLER_SYSTEM_PROMPT.lower()
+    assert "3+ files" in p
+    assert "one at a time" in p

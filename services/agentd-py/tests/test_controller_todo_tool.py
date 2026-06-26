@@ -42,3 +42,32 @@ async def test_write_todos_rejects_bad_status_without_mutating():
 async def test_write_todos_rejects_empty_items():
     out = await TodoToolSource(TodoLedger()).execute("write_todos", {"items": []})
     assert out.is_error is True
+
+
+@pytest.mark.asyncio
+async def test_on_mutate_fires_with_ledger_json_after_successful_write():
+    # Mid-turn persistence hook: the controller wires this to set_controller_todos so /live
+    # renders the checklist WHILE the EDIT turn is still running (the DB is /live's source —
+    # without this the card only appears after the turn ends, by which point a terminal
+    # outcome has already cleared it).
+    led = TodoLedger()
+    captured: list[str | None] = []
+
+    async def _cb(raw: str | None) -> None:
+        captured.append(raw)
+
+    await TodoToolSource(led, on_mutate=_cb).execute(
+        "write_todos", {"items": [{"title": "A", "status": "pending"}]})
+    assert len(captured) == 1
+    assert [i.title for i in TodoLedger.from_json(captured[0]).items] == ["A"]
+
+
+@pytest.mark.asyncio
+async def test_on_mutate_not_fired_on_rejected_write():
+    captured: list[str | None] = []
+
+    async def _cb(raw: str | None) -> None:
+        captured.append(raw)
+
+    await TodoToolSource(TodoLedger(), on_mutate=_cb).execute("write_todos", {"items": []})
+    assert captured == []

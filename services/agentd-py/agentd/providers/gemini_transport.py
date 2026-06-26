@@ -55,6 +55,13 @@ class GeminiJsonTransport(ModelJsonTransport):
         self._include_thoughts = include_thoughts
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
+        # Gemini now accepts a JSON-schema `oneOf` discriminated union via the newer
+        # `response_json_schema` field (verified live against gemini-3.1-flash-lite-preview:
+        # the tight controller schema is accepted as-is and yields valid constrained output).
+        # The older "Gemini deadlocks on oneOf" note predates response_json_schema. Enabling
+        # this routes the controller to the TIGHT schema, which fixes the flat-schema failure
+        # mode where Gemini emitted tool_calls missing required fields.
+        self.supports_oneof_grammar: bool = True
         if models_client is not None:
             self._models: Any = models_client
             return

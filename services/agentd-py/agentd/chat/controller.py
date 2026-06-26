@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -175,6 +176,7 @@ class ChatController:
         self,
         command_approval_callback: object | None = None,
         todo_ledger: TodoLedger | None = None,
+        todo_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -183,8 +185,16 @@ class ChatController:
             command_approval_callback=command_approval_callback,
         )]
         if todo_ledger is not None:
-            sources.append(TodoToolSource(todo_ledger))
+            sources.append(TodoToolSource(todo_ledger, on_mutate=todo_persist_cb))
         return AggregatingToolRegistry(sources)
+
+    async def _persist_todos(self, thread_id: str, raw: str | None) -> None:
+        """Persist the in-flight ledger the moment write_todos mutates it, so GET /live
+        renders the checklist WHILE the EDIT turn is still running. The DB column is /live's
+        source of truth; without this mid-turn write the card never appears for a single
+        continuous EDIT turn (the end-of-turn persistence in _run_loop is too late, and a
+        terminal submit_changes clears the row anyway)."""
+        self._store.set_controller_todos(thread_id, raw or None)
 
     def _seed_for(self, thread_id: str) -> list[dict[str, object]]:
         """The thread's prior controller turn history to replay as seed_history.
@@ -304,8 +314,11 @@ class ChatController:
         # run_command (EDIT-only; DECIDE rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
+        # Persist the ledger mid-turn on every write_todos so /live renders it during the turn.
+        todo_persist_cb = partial(self._persist_todos, thread_id)
         loop = ControllerLoop(
-            self._reasoning, self._build_registry(command_cb, ledger), self._broadcaster,
+            self._reasoning,
+            self._build_registry(command_cb, ledger, todo_persist_cb), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger)
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path}

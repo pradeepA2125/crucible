@@ -6,6 +6,8 @@ a write_todos call is immediately visible to the loop's gate.
 """
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from agentd.chat.todo_ledger import _STATUSES, TodoItem, TodoLedger
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
@@ -45,8 +47,16 @@ _WRITE_TODOS_DEF = ToolDefinition(
 class TodoToolSource:
     name = "todo"
 
-    def __init__(self, ledger: TodoLedger) -> None:
+    def __init__(
+        self,
+        ledger: TodoLedger,
+        on_mutate: Callable[[str | None], Awaitable[None]] | None = None,
+    ) -> None:
         self._ledger = ledger
+        # Awaited with ledger.to_json() right after a successful write_todos so the
+        # controller can persist the in-flight ledger mid-turn (renders on /live while the
+        # turn runs). None-safe: a source built without it (tests, no store) just no-ops.
+        self._on_mutate = on_mutate
 
     def definitions(self) -> list[ToolDefinition]:
         return [_WRITE_TODOS_DEF]
@@ -74,4 +84,6 @@ class TodoToolSource:
             new_items.append(TodoItem(
                 title=str(it["title"]).strip(), status=status, note=str(it.get("note", ""))))
         self._ledger.replace(new_items)
+        if self._on_mutate is not None:
+            await self._on_mutate(self._ledger.to_json())
         return ToolOutput(output="Todo list updated:\n" + self._ledger.render())

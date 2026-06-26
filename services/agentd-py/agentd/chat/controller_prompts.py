@@ -281,18 +281,32 @@ Variant — edit (EDIT mode only, after the user picked "edit"): {type, patch_op
   {"type":"edit","thought":"replace the loop","patch_ops":[{"op":"replace_range","file":"app.js","anchor":{"start_line":42,"end_line":48},"content":"  for (const c of coins) c.spin();\\n","reason":"rewrite update loop"}]}
   {"type":"edit","thought":"new util + wire it in (mixed ops, one batch)","patch_ops":[{"op":"create_file","file":"src/util.py","content":"def fmt(x):\\n    return str(x)\\n","reason":"new helper"},{"op":"search_replace","file":"src/app.py","search":"import os","replace":"import os\\nfrom src.util import fmt","reason":"wire in helper"}]}
 
+  Batching ops in ONE edit shines for a cohesive change — a single file, or a few related ops you
+  apply together. For a BIG multi-part change (3+ files, or large chunks across many places),
+  don't pour it all into one giant batch — use the todo list (see TODO LIST POLICY) and do ONE
+  item per edit so the work stays tracked and you finish all of it.
+  STOP — sequencing rule: for a multi-part change your FIRST action MUST be write_todos, NOT edit.
+  If you are about to emit your first 'edit' and the work spans 3+ files / multiple regions, emit
+  write_todos instead this turn (every part as 'pending'), THEN start editing next turn. Emitting
+  edit first does NOT finish faster — submit_changes stays BLOCKED until the list is clear, and you
+  will lose track of the remaining parts. Recognising "this needs a todo list" in your thought and
+  then emitting edit anyway is the exact mistake to avoid: act on it — call write_todos.
+
 Variant — submit_changes (EDIT mode, when all edits are done): {type, summary}
   "summary": a non-empty one-liner of what you changed. Emit this to END the edit turn.
   {"type":"submit_changes","thought":"done","summary":"Added with_tax() to src/tax.py and rounded the total in pricing.py."}
 
-TODO LIST POLICY (the write_todos tool) — optional working memory, NOT default:
-Create a list (call write_todos with all items, status "pending") ONLY when the request needs
-several distinct features/steps or more than ~2 edit cycles. SKIP it for a single small edit, a
-plain answer, or a clarification. Once a list exists it is your contract: implement items ONE AT
-A TIME (emit type='edit' for the next item, then write_todos to flip it 'done'), and resend the
-WHOLE list each call (reshape freely — split/insert/reorder by resending in the new shape).
-submit_changes is BLOCKED until nothing is pending — this is how you finish the whole request
-instead of stopping after one feature.
+TODO LIST POLICY (the write_todos tool) — working memory for BIG, multi-part edits:
+USE a list (call write_todos with all items, status "pending") when the change is large — any of:
+it spans 3+ files; OR it's a feature that edits multiple places with big chunks of code
+added / replaced / deleted; OR it needs more than ~2 edit cycles. For that shape the list is your
+contract: implement items ONE AT A TIME (emit type='edit' for the next item, then write_todos to
+flip it 'done'), resend the WHOLE list each call (reshape freely — split/insert/reorder by
+resending in the new shape), and submit_changes stays BLOCKED until nothing is pending — this is
+how you finish the whole change instead of stopping after one part.
+SKIP the list when the change is small or cohesive — a single file, a few related ops you can
+apply in one clean batch (see the edit variant), a plain answer, or a clarification — just edit
+directly and submit. The list is the tool for big multi-part work; for everything else it is overhead.
 Rules: mark 'done' ONLY with concrete evidence (a tool/edit result) cited in 'note' — never from
 memory. Mark 'blocked' (with the unblock condition) instead of faking done when stuck; mark
 'cancelled' (with why) instead of silently dropping. Every change must serve the user's original
@@ -361,9 +375,15 @@ def build_controller_step_payload(
     if phase == "EDIT":
         if not history:
             hint = (
-                "EDIT mode. Read the target region of any EXISTING file before you change it "
-                f"(search_code{_graph} → read_file); a brand-new file needs no read. Emit "
-                "type='edit' to make a change, then type='submit_changes' when all edits are done."
+                "EDIT mode — you're approved to edit. FIRST pick your approach: if this change is "
+                "BIG — it spans 3+ files, OR edits multiple places with big chunks of code, OR "
+                "needs more than ~2 edit cycles — call write_todos to record every part as a "
+                "checklist, then work the items ONE AT A TIME (submit_changes is BLOCKED until none "
+                "are pending) so you don't finish only part of it. If the change is small or "
+                "cohesive (one file, a few related ops), SKIP the list and just edit. Read the "
+                f"target region of any EXISTING file before you change it (search_code{_graph} → "
+                "read_file); a brand-new file needs no read. Emit type='edit' to make a change, "
+                "then type='submit_changes' when all edits are done."
             )
         elif final_call:
             hint = (
@@ -372,15 +392,20 @@ def build_controller_step_payload(
             )
         else:
             hint = (
-                "FIRST reflect on your last edit's result: did it apply ('applied+promoted') or "
-                "fail ('PATCH FAILED: …')? If a todo list is active, todo_status shows the "
-                "remaining items — work the next pending one; submit_changes is BLOCKED until "
-                "nothing is pending. THEN choose ONE: (A) CONTINUE/FIX — if it failed, re-read "
-                "the exact lines and re-emit ONE corrected op (do NOT repeat the failed op "
-                "verbatim); for the next item emit type='edit', and after it applies call "
-                "write_todos to mark it 'done' (cite evidence in 'note'). (B) DONE — only when no "
-                "items remain, emit type='submit_changes' with a summary. A read-resistant "
-                "blocker → mark the item 'blocked' or use type='clarify'. Do NOT propose_mode again."
+                "FIRST reflect on your last edit's result (if any): did it apply "
+                "('applied+promoted') or fail ('PATCH FAILED: …')? DECIDE how to track this change: "
+                "if it is BIG — it spans 3+ files, OR edits multiple places with big chunks of code, "
+                "OR needs more than ~2 edit cycles — and no todo list is active yet, call "
+                "write_todos NOW to record every part as 'pending', then work them ONE AT A TIME. If "
+                "a todo list is already active, todo_status shows the remaining items — work the next "
+                "pending one. For a small or cohesive change, skip the list and edit directly. "
+                "submit_changes is BLOCKED until nothing is pending. THEN choose ONE: (A) "
+                "CONTINUE/FIX — if an edit failed, re-read the exact lines and re-emit ONE corrected "
+                "op (do NOT repeat the failed op verbatim); for the next item emit type='edit', and "
+                "after it applies call write_todos to mark it 'done' (cite evidence in 'note'). (B) "
+                "DONE — only when no items remain (or the change was small), emit "
+                "type='submit_changes' with a summary. A read-resistant blocker → mark the item "
+                "'blocked' or use type='clarify'. Do NOT propose_mode again."
             )
     else:  # DECIDE
         if not history:
