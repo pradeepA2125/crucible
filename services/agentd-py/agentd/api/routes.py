@@ -195,6 +195,19 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
+    @router.get("/config")
+    async def get_config() -> dict[str, bool]:
+        """Feature-flag capabilities for the frontend to gate task-path UI."""
+        from agentd.chat.controller_factory import (
+            is_controller_enabled,
+            is_task_subsystem_enabled,
+        )
+
+        return {
+            "task_subsystem_enabled": is_task_subsystem_enabled(),
+            "chat_controller_enabled": is_controller_enabled(),
+        }
+
     # Guards against two concurrent plan-feedback calls for the same task.
     # Safe without a lock: asyncio is single-threaded; the check+add happens
     # with no await in between, so no other coroutine can interleave.
