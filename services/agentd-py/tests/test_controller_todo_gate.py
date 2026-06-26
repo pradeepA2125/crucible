@@ -233,6 +233,35 @@ async def test_edit_entry_flag_set_until_productive_start(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_edit_entry_suppressed_on_clarify_resume(tmp_path: Path):
+    """A clarify-resume CONTINUES an in-flight EDIT feature, so edit_entry must be False even
+    with an empty ledger + no edit applied in this (fresh) loop — driven by
+    plan_context['edit_is_resume']. Without it the "first action, decide your approach" entry
+    hint would wrongly re-appear mid cohesive-edit feature (a history scan can't distinguish this
+    feature's prior edit from an earlier feature's; this explicit signal can)."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    (real / "f.py").write_text("x = 1\n")
+    sm = ControllerPhaseSM()
+    sm.enter_edit_mode()
+    sess = TurnEditSession(
+        turn_id="t1", real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine())
+    ledger = TodoLedger()
+    rec = _RecordingPlanCtx([{"type": "submit_changes", "thought": "d", "summary": "done"}])
+    loop = ControllerLoop(
+        rec, AggregatingToolRegistry([TodoToolSource(ledger)]), EventBroadcaster(),
+        channel_id="c", phase_sm=sm, edit_session=sess, todo_ledger=ledger)
+    out = await loop.run(
+        {"goal": "g", "workspace_path": str(real), "edit_is_resume": True},
+        max_iters=5, auto_accept_edits=True)
+    assert out.kind == "submit_changes"
+    # Empty ledger + no edit applied, but it's a resume → NOT a fresh entry.
+    assert rec.plan_contexts[0].get("edit_entry") is False
+
+
+@pytest.mark.asyncio
 async def test_no_reconcile_marker_when_ledger_empty(tmp_path: Path):
     """A small/cohesive edit with NO active list must not get a phantom reconcile marker —
     the gate is `ledger.pending()`, empty here, so nothing is set."""

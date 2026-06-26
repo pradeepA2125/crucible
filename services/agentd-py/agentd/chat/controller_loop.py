@@ -313,7 +313,8 @@ class ControllerLoop:
             # which it does the moment a list exists OR an edit lands, so the entry hint persists
             # through an empty-edit fumble (keeps steering the right first move).
             plan_context["edit_entry"] = (
-                self._sm.phase == "EDIT" and not self._ledger.items and not self._edit_applied)
+                self._sm.phase == "EDIT" and not self._ledger.items
+                and not self._edit_applied and not plan_context.get("edit_is_resume"))
             resp = await self._reasoning.create_controller_step(
                 plan_context=plan_context, history=history,
                 tool_definitions=tool_defs, phase=self._sm.phase,

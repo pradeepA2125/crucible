@@ -288,13 +288,15 @@ class ChatController:
         turn_id = uuid4().hex
         outcome = await self._run_loop(
             thread_id, channel_id, message, seed_history=seed_history,
-            step_review=step_review, phase=resume_phase, turn_id=turn_id)
+            step_review=step_review, phase=resume_phase, turn_id=turn_id,
+            edit_is_resume=(resume_phase == "EDIT"))
         await self._finish(thread_id, channel_id, outcome, step_review, turn_id=turn_id)
 
     async def _run_loop(
         self, thread_id: str, channel_id: str, goal: str, *,
         seed_history: list[dict[str, object]] | None, step_review: bool | None,
         phase: str | None = None, turn_id: str | None = None,
+        edit_is_resume: bool = False,
     ) -> ControllerOutcome:
         sm = ControllerPhaseSM()
         # Request-scoped todo ledger: rehydrate so it survives the DECIDE->EDIT (mode gate)
@@ -327,6 +329,13 @@ class ChatController:
             task_subsystem_enabled=self._task_subsystem_enabled)
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path}
+        # A clarify-resume continues an in-flight EDIT feature — NOT a fresh entry — so the
+        # loop must NOT show the "first action, decide your approach" entry hint. The per-turn
+        # _edit_applied flag resets on the new loop, and a cohesive (no-list) edit leaves the
+        # ledger empty, so without this signal the entry hint would wrongly re-appear mid-feature.
+        # (A history scan can't tell this feature's prior edit from an earlier feature's — this
+        # explicit flag can.) resolve_mode("edit") is a fresh entry → default False.
+        plan_context["edit_is_resume"] = edit_is_resume
         # Debug-artifact keys (KV-safe: build_controller_step_payload ignores them) so
         # create_controller_step can dump the exact per-iteration LLM bytes under
         # chat/<thread_id>/<turn_id>/ (controller analog of the task path's plan-turn-NN).
