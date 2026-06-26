@@ -568,4 +568,18 @@ describe("HttpBackendClient", () => {
     expect(result.failureSummary).toBeUndefined();
     expect(result.runSummary).toBeUndefined();
   });
+
+  test("getConfig maps /v1/config flags to camelCase", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({ task_subsystem_enabled: false, chat_controller_enabled: true }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const cfg = await client.getConfig();
+    expect(cfg.taskSubsystemEnabled).toBe(false);
+    expect(cfg.chatControllerEnabled).toBe(true);
+  });
 });

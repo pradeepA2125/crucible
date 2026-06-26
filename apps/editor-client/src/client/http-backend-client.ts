@@ -11,6 +11,8 @@ import {
   ChatThreadSchema,
   ChatEventSchema,
   ThreadLiveStateSchema,
+  BackendConfigSchema,
+  type BackendConfig,
   type BackendTaskClient,
   type ThreadLiveState,
   type PatchStreamEvent,
@@ -482,6 +484,14 @@ export class HttpBackendClient implements BackendTaskClient {
       // optional and silently parses to undefined → controller.ts never posts
       // renderLiveTodos → the TodoCard never renders (the whole /live render path is dead).
       todos: raw["todos"] ?? null,
+    });
+  }
+
+  async getConfig(): Promise<BackendConfig> {
+    const raw = await this.fetchJson("/v1/config") as Record<string, unknown>;
+    return BackendConfigSchema.parse({
+      taskSubsystemEnabled: raw["task_subsystem_enabled"] ?? false,
+      chatControllerEnabled: raw["chat_controller_enabled"] ?? false,
     });
   }
 

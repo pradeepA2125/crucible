@@ -276,6 +276,13 @@ export const ThreadLiveStateSchema = z.object({
 });
 export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 
+// Backend feature-flag capabilities (GET /v1/config) — drives task-path UI gating.
+export const BackendConfigSchema = z.object({
+  taskSubsystemEnabled: z.boolean(),
+  chatControllerEnabled: z.boolean(),
+});
+export type BackendConfig = z.infer<typeof BackendConfigSchema>;
+
 export interface BackendTaskClient {
   submitTask(input: TaskSubmission): Promise<{ taskId: string }>;
   getTask(taskId: string): Promise<TaskView>;
@@ -300,6 +307,7 @@ export interface BackendTaskClient {
   createChatThread(workspacePath: string, title?: string): Promise<ChatThreadSummary>;
   getChatThread(threadId: string): Promise<ChatThread>;
   getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
+  getConfig(): Promise<BackendConfig>;
   sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent>;
   // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
   // produce live events); the per-edit gate is a plain JSON ack (its continuation rides
