@@ -48,6 +48,14 @@
         "title": "AI Editor: Open Chat"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "aiEditor.startTask",
+          "when": "aiEditor.taskSubsystemEnabled"
+        }
+      ]
+    },
     "configuration": {
       "title": "AI Editor",
       "properties": {

@@ -192,8 +192,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     openDiff: openReviewDiff,
   });
 
+  // Task-subsystem flag (GET /v1/config): when off, the controller handles changes inline
+  // and the task path (startTask + task_card) is hidden. Set a `when`-context key so the
+  // command palette + webview can gate on it. Default hidden if the backend is unreachable.
+  let taskSubsystemEnabled = false;
+  try {
+    const cfg = await clientFactory(settings.getBackendBaseUrl()).getConfig();
+    taskSubsystemEnabled = cfg.taskSubsystemEnabled;
+  } catch {
+    // backend unreachable at activation — leave hidden.
+  }
+  await vscode.commands.executeCommand(
+    "setContext", "aiEditor.taskSubsystemEnabled", taskSubsystemEnabled);
+
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.startTask", async () => {
+      if (!taskSubsystemEnabled) {
+        void vscode.window.showInformationMessage(
+          "The task path is disabled (AI_EDITOR_TASK_SUBSYSTEM=0). Use the chat to make changes inline.");
+        return;
+      }
       await controller.startTask();
     })
   );
