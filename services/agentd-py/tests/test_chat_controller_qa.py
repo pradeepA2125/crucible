@@ -26,7 +26,9 @@ async def test_qa_turn_persists_answer(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_clarify_turn_persists_question(tmp_path: Path):
+async def test_clarify_turn_sets_clarify_gate(tmp_path: Path):
+    """A clarify renders as a durable Class-A gate (the question lives in the card),
+    not a chat bubble — resolve_clarify writes the combined Q→A breadcrumb later."""
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     ctrl = ChatController(
@@ -39,7 +41,9 @@ async def test_clarify_turn_persists_question(tmp_path: Path):
     await ctrl.handle_message(thread.thread_id, "change the thing", channel_id="c1")
     reloaded = store.get_thread(thread.thread_id)
     assert reloaded is not None
-    assert any(m.role == "agent" and "which file?" in m.content for m in reloaded.messages)
+    gate = reloaded.pending_controller_gate
+    assert gate is not None and gate.kind == "clarify"
+    assert gate.payload["question"] == "which file?"
 
 
 @pytest.mark.asyncio

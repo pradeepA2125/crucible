@@ -129,12 +129,6 @@ class ChatController:
         # gate — read back in resolve_mode so the edit re-entry honors it (the
         # /mode-decision POST carries no step_review; smoke-found gap #4).
         self._step_review_by_thread: dict[str, bool | None] = {}
-        # Threads whose last turn ended on an EDIT-phase clarify: the next user message
-        # is the answer and must RESUME the loop in EDIT (not restart at DECIDE, which
-        # would force re-picking the mode). In-memory like _step_review_by_thread — a
-        # backend restart between the question and the reply degrades gracefully to a
-        # DECIDE turn (the agent re-proposes the mode from rehydrated history).
-        self._edit_clarify_pending: set[str] = set()
         # In-memory registry of the one detached turn per thread (mirrors the
         # orchestrator's _running_tasks). Earns its keep three ways: the in-flight
         # 409 guard (routes), the durable `turn_active` input signal (/live), and the
@@ -270,19 +264,14 @@ class ChatController:
         self._step_review_by_thread[thread_id] = step_review
 
         seed = self._seed_for(thread_id)
-        # On a continued turn (clarify/discuss), append the user's reply to the
-        # prior history and replay it as the cache prefix (spec §12 clarify resume).
+        # On a continued turn (discuss), append the user's reply to the prior history
+        # and replay it as the cache prefix (spec §12 clarify resume).
         seed_history = (seed + [{"role": "user", "content": message}]) if seed else None
-        # If the prior turn ended on an EDIT-phase clarify, this reply is the answer:
-        # resume in EDIT so the agent keeps editing rather than re-proposing the mode.
-        # Requires the orchestrator (the edit session needs it); without one we can't
-        # rebuild EDIT, so fall back to DECIDE.
-        resume_phase = (
-            "EDIT"
-            if thread_id in self._edit_clarify_pending and self._orchestrator is not None
-            else None
-        )
-        self._edit_clarify_pending.discard(thread_id)
+        # Clarify-resume is now driven by resolve_clarify (the gate carries resume_phase),
+        # not a fresh user message: the main composer is disabled while a clarify gate is
+        # pending, so the answer arrives via the card. A plain message here always
+        # supersedes any pending gate (cleared above) and re-enters DECIDE.
+        resume_phase = None
         # One id for this turn's in-flight pills message — lets the loop upsert it per
         # tool result and _finish finalize the SAME message (no duplicate). Finding 5.
         turn_id = uuid4().hex
@@ -401,14 +390,14 @@ class ChatController:
         else:
             self._store.set_controller_todos(
                 thread_id, ledger.to_json() if ledger.items else None)
-        # Mark/clear EDIT-clarify resume: a clarify emitted while in EDIT must resume
-        # in EDIT on the user's reply. Any other terminal (submit/edit-then-submit,
-        # answer) clears it. sm.phase reflects the phase the loop ran in (EDIT is
-        # one-way, never transitions back).
-        if outcome.kind == "clarify" and sm.phase == "EDIT":
-            self._edit_clarify_pending.add(thread_id)
-        else:
-            self._edit_clarify_pending.discard(thread_id)
+        # A clarify raised mid-EDIT must resume in EDIT when answered. Carry the resume
+        # target IN the gate payload (resolve_clarify reads it) rather than a side map
+        # keyed on thread. sm.phase reflects the phase the loop ran in (EDIT is one-way,
+        # never transitions back).
+        if outcome.kind == "clarify":
+            payload = dict(outcome.payload or {})
+            payload["resume_phase"] = "EDIT" if sm.phase == "EDIT" else None
+            outcome.payload = payload
         return outcome
 
     async def _retrieval_delta_cb(self, touched: list[str]) -> str | None:
@@ -430,13 +419,15 @@ class ChatController:
         self, thread_id: str, channel_id: str, outcome: ControllerOutcome,
         step_review: bool | None, turn_id: str | None = None,
     ) -> None:
-        if outcome.kind in ("answer", "clarify"):
+        if outcome.kind == "answer":
             # Persist the turn's tool pills + thinking onto the message so they survive
             # a reload (live SSE pills/thinking die) — mirrors ChatAgent's metadata.
             self._write_turn_message(thread_id, turn_id, outcome.text, outcome)
             self._broadcaster.broadcast(
                 channel_id, {"type": "chat_response", "payload": {"chunk": outcome.text}})
             self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+        elif outcome.kind == "clarify":
+            await self._present_clarify_choice(thread_id, channel_id, outcome)
         elif outcome.kind == "submit_changes":
             # Persist the EDIT turn's summary + exploration pills/thinking. The per-edit
             # diff_cards are already durable (edit_record_cb); without this closing
@@ -529,6 +520,21 @@ class ChatController:
                 role="agent", content="", metadata=metadata))
         self._store.set_controller_gate(
             thread_id, PendingGate(kind="mode", payload=outcome.payload or {}))
+        self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+    async def _present_clarify_choice(
+        self, thread_id: str, channel_id: str, outcome: ControllerOutcome,
+    ) -> None:
+        """Class-A gate: render the clarify question + options as a durable live card
+        (/live → ClarifyGate), survives reload. No chat bubble — the question lives in
+        the card; resolve_clarify writes the combined Q→A breadcrumb on resolution.
+        Resolved by POST /clarify-decision. Mirrors _present_mode_choice."""
+        metadata = self._turn_metadata(outcome)
+        if metadata:
+            self._store.append_message(thread_id, ChatMessage(
+                role="agent", content="", metadata=metadata))
+        self._store.set_controller_gate(
+            thread_id, PendingGate(kind="clarify", payload=outcome.payload or {}))
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
 
     async def _edit_decision_cb(
@@ -825,3 +831,45 @@ class ChatController:
             self._write_breadcrumb(
                 thread_id, channel_id, f"Mode {mode!r} is not available yet.")
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+
+    async def resolve_clarify(
+        self, thread_id: str, answer: str, *, channel_id: str, goal: str,
+    ) -> None:
+        """Resolve the clarify gate (POST /clarify-decision). Clears the gate in place
+        (Class-A), writes ONE combined `❓ q → a` breadcrumb, then re-enters the loop with
+        the answer injected as the user's reply (EDIT if the clarify fired mid-edit, else
+        DECIDE) — a fresh streamed turn, like resolve_mode's edit/explain re-entry.
+
+        Idempotency + empty guards: the read→clear pair has no `await` between it (sqlite
+        is sync), so two concurrent posts can't both re-enter; a blank answer no-ops (the
+        card shouldn't submit blank, but defend)."""
+        answer = (answer or "").strip()
+        thread = self._store.get_thread(thread_id)
+        gate = thread.pending_controller_gate if thread is not None else None
+        if gate is None or gate.kind != "clarify":
+            logger.info("[controller] resolve_clarify no-op: no pending clarify gate (thread=%s)",
+                        thread_id)
+            return
+        if not answer:
+            logger.info("[controller] resolve_clarify no-op: empty answer (thread=%s)", thread_id)
+            return
+        question = str(gate.payload.get("question") or "")
+        resume_phase = gate.payload.get("resume_phase")
+        resume_phase = resume_phase if resume_phase == "EDIT" else None
+        self._store.set_controller_gate(thread_id, None)
+        # PERSIST + broadcast (mirror write_chat_breadcrumb): a bare broadcast dies on
+        # reload, leaving no record of the Q the agent asked or the A the user gave.
+        self._write_breadcrumb(thread_id, channel_id, f"❓ {question} → {answer}")
+
+        # Re-enter: the answer is the user's reply, seeded onto prior history. goal stays
+        # the original goal (the answer rides as history, not as the goal).
+        review = self._step_review_by_thread.get(thread_id)
+        seed_history = (self._seed_for(thread_id) or []) + [
+            {"role": "user", "content": answer}]
+        turn_id = uuid4().hex
+        outcome = await self._run_loop(
+            thread_id, channel_id, goal, seed_history=seed_history,
+            step_review=review, phase=resume_phase, turn_id=turn_id,
+            edit_is_resume=(resume_phase == "EDIT"))
+        await self._finish(
+            thread_id, channel_id, outcome, step_review=review, turn_id=turn_id)

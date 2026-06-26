@@ -1,7 +1,7 @@
 """EDIT-mode clarify: the controller may ask a clarifying question while editing,
-and the user's reply RESUMES the loop in EDIT (not a DECIDE restart that would
-force re-picking the mode). Mirrors the DECIDE clarify≈feedback-resume, but the
-phase is preserved via a per-thread stash."""
+and the user's reply (via the clarify gate → resolve_clarify) RESUMES the loop in
+EDIT (not a DECIDE restart that would force re-picking the mode). The phase is
+preserved via `resume_phase` carried in the clarify gate payload."""
 from pathlib import Path
 
 import pytest
@@ -81,23 +81,26 @@ async def test_clarify_in_edit_mode_resumes_in_edit(tmp_path: Path):
     await ctrl.handle_message(th.thread_id, "add a clamp helper", channel_id=chan)
     # pick edit → EDIT loop emits clarify (question to the user)
     await ctrl.resolve_mode(th.thread_id, "edit", channel_id=chan, goal="add a clamp helper")
-    # the EDIT clarify is stashed so the next message resumes EDIT
-    assert th.thread_id in ctrl._edit_clarify_pending
-    # user answers → the resumed turn runs in EDIT (NOT DECIDE), emits the edit + submit
-    await ctrl.handle_message(th.thread_id, "[0, 1]", channel_id=chan)
+    # The EDIT clarify sets a durable clarify gate carrying resume_phase=EDIT, so the
+    # answer (via resolve_clarify) resumes EDIT rather than restarting DECIDE.
+    gate = store.get_thread(th.thread_id).pending_controller_gate
+    assert gate is not None and gate.kind == "clarify"
+    assert gate.payload["resume_phase"] == "EDIT"
+    # user answers via the card → the resumed turn runs in EDIT, emits the edit + submit
+    await ctrl.resolve_clarify(th.thread_id, "[0, 1]", channel_id=chan, goal="add a clamp helper")
 
     # Phases: turn1=DECIDE, mode-pick=EDIT(clarify), resumed turn=EDIT,EDIT (edit+submit).
     assert eng.phases == ["DECIDE", "EDIT", "EDIT", "EDIT"]
     # The edit was actually applied to the real workspace (instant-promote).
     assert (ws / "util.py").read_text().startswith("def clamp(")
-    # Stash cleared once the EDIT turn terminated cleanly.
-    assert th.thread_id not in ctrl._edit_clarify_pending
+    # Gate cleared once the EDIT turn terminated cleanly.
+    assert store.get_thread(th.thread_id).pending_controller_gate is None
 
 
 @pytest.mark.asyncio
 async def test_decide_clarify_does_not_set_edit_resume(tmp_path: Path):
-    """A plain DECIDE-phase clarify must NOT mark the thread for EDIT resume —
-    only an EDIT-phase clarify does."""
+    """A plain DECIDE-phase clarify sets a clarify gate with resume_phase=None —
+    only an EDIT-phase clarify carries resume_phase=EDIT."""
     ws = tmp_path / "ws"
     ws.mkdir()
     store = ChatThreadStore(tmp_path / "c.sqlite3")
@@ -110,4 +113,6 @@ async def test_decide_clarify_does_not_set_edit_resume(tmp_path: Path):
         orchestrator=_orchestrator(tmp_path), broadcaster=EventBroadcaster(),
         retrieval_client=None)
     await ctrl.handle_message(th.thread_id, "fix it", channel_id=f"chat:{th.thread_id}")
-    assert th.thread_id not in ctrl._edit_clarify_pending
+    gate = store.get_thread(th.thread_id).pending_controller_gate
+    assert gate is not None and gate.kind == "clarify"
+    assert gate.payload["resume_phase"] is None
