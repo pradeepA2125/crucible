@@ -221,7 +221,9 @@ async def test_resolve_mode_edit_honors_remembered_step_review(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_resolve_mode_create_task_uses_plan_sketch_not_last_message(tmp_path: Path):
+async def test_resolve_mode_create_task_uses_plan_sketch_not_last_message(tmp_path: Path, monkeypatch):
+    # create_task is gated behind the task subsystem flag (default off) — opt in.
+    monkeypatch.setenv("AI_EDITOR_TASK_SUBSYSTEM", "1")
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
 

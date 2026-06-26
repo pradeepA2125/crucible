@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from agentd.chat.controller_factory import is_task_subsystem_enabled
 from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
@@ -102,6 +103,9 @@ class ChatController:
         self._orchestrator = orchestrator
         self._broadcaster = broadcaster
         self._retrieval = retrieval_client
+        # Task subsystem flag (default OFF): gates create_task/resume mode handoff and the
+        # task-mode prompt injection. Process-fixed — resolved once, like the controller flag.
+        self._task_subsystem_enabled = is_task_subsystem_enabled()
         # run_command gating for EDIT turns (DECIDE bars it entirely — see
         # controller_loop._decide_state_change_correction). Mirrors the task path's
         # AI_EDITOR_SHELL_POLICY / AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC.
@@ -319,7 +323,8 @@ class ChatController:
         loop = ControllerLoop(
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb), self._broadcaster,
-            channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger)
+            channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger,
+            task_subsystem_enabled=self._task_subsystem_enabled)
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path}
         # Debug-artifact keys (KV-safe: build_controller_step_payload ignores them) so
@@ -707,6 +712,10 @@ class ChatController:
             logger.info("[controller] resolve_mode no-op: no pending mode gate (thread=%s)",
                         thread_id)
             return
+        if mode in ("create_task", "resume") and not self._task_subsystem_enabled:
+            raise ValueError(
+                "task subsystem is disabled (AI_EDITOR_TASK_SUBSYSTEM=0) — only edit/explain "
+                "are available; the controller handles changes inline.")
         # Friendly record of the choice — read the option label from the gate BEFORE
         # clearing it so the breadcrumb reads "▸ You chose: Edit inline now" not a raw mode.
         label = mode
