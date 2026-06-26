@@ -19,6 +19,7 @@ export type CommandDecisionHandler = (taskId: string, decision: CommandDecision)
 export type StepDecisionHandler = (taskId: string, decision: "accept" | "discard") => Promise<void>;
 // Controller gates (Phase F): mode is a streamed dispatch, edit a plain ack.
 export type ModeDecisionHandler = (threadId: string, mode: string) => Promise<void>;
+export type ClarifyDecisionHandler = (threadId: string, answer: string) => Promise<void>;
 export type EditDecisionHandler = (threadId: string, decision: "accept" | "reject", reason: string) => Promise<void>;
 export type AcceptTaskHandler = (taskId: string) => Promise<void>;
 export type RejectTaskHandler = (taskId: string, reason: string) => Promise<void>;
@@ -46,6 +47,7 @@ export class ChatPanel {
     private readonly onCommandDecision: CommandDecisionHandler,
     private readonly onStepDecision: StepDecisionHandler,
     private readonly onModeDecision: ModeDecisionHandler,
+    private readonly onClarifyDecision: ClarifyDecisionHandler,
     private readonly onEditDecision: EditDecisionHandler,
     private readonly onAcceptTask: AcceptTaskHandler,
     private readonly onRejectTask: RejectTaskHandler,
@@ -141,6 +143,8 @@ export class ChatPanel {
         p = this.onStepDecision(m["taskId"] as string, decision);
       } else if (m["type"] === "modeDecision") {
         p = this.onModeDecision(m["threadId"] as string, m["mode"] as string);
+      } else if (m["type"] === "clarifyDecision") {
+        p = this.onClarifyDecision(m["threadId"] as string, m["answer"] as string);
       } else if (m["type"] === "editDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "reject";
         p = this.onEditDecision(m["threadId"] as string, decision, (m["reason"] as string) ?? "");

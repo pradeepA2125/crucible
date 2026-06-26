@@ -6,6 +6,7 @@ import { ScopeGate } from "./messages/gates/ScopeGate";
 import { ValidationGate } from "./messages/gates/ValidationGate";
 import { StepGate } from "./messages/gates/StepGate";
 import { ModeGate } from "./messages/gates/ModeGate";
+import { ClarifyGate } from "./messages/gates/ClarifyGate";
 import { EditGate } from "./messages/gates/EditGate";
 import { PlanCard } from "./messages/PlanCard";
 import { ReviewCard } from "./messages/ReviewCard";
@@ -32,6 +33,8 @@ function GateDispatch({ taskId, kind, payload }: GateDispatchProps) {
       return <StepGate taskId={taskId} payload={payload} />;
     case "mode":
       return <ModeGate taskId={taskId} payload={payload} />;
+    case "clarify":
+      return <ClarifyGate taskId={taskId} payload={payload} />;
     case "edit":
       return <EditGate taskId={taskId} payload={payload} />;
   }

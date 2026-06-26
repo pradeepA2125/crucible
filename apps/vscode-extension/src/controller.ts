@@ -84,7 +84,7 @@ export interface ControllerUI {
 }
 
 export interface LiveGateView {
-  kind: "command" | "step" | "scope" | "validation" | "mode" | "edit";
+  kind: "command" | "step" | "scope" | "validation" | "mode" | "edit" | "clarify";
   payload: Record<string, unknown>;
   taskId: string;
 }
@@ -995,6 +995,18 @@ export class AiEditorController {
     this.ui.setChatInputEnabled(false);
     this.turnAbort = new AbortController();
     await this.streamTurn(client.postModeDecision(threadId, mode));
+  }
+
+  /**
+   * Resolve the controller clarify gate. A STREAMED dispatch: the answer re-enters the
+   * loop (EDIT if the clarify fired mid-edit, else DECIDE), producing live chat events —
+   * consume via streamTurn like a normal turn (mirror of handleModeDecisionFromChat).
+   */
+  async handleClarifyDecisionFromChat(threadId: string, answer: string): Promise<void> {
+    const client = this.clientForChat();
+    this.ui.setChatInputEnabled(false);
+    this.turnAbort = new AbortController();
+    await this.streamTurn(client.postClarifyDecision(threadId, answer));
   }
 
   /**

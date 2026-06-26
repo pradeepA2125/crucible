@@ -32,6 +32,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (taskId, decision) =>
       decision === "accept" ? controller.acceptStep(taskId) : controller.discardStep(taskId),
     (threadId, mode) => controller.handleModeDecisionFromChat(threadId, mode),
+    (threadId, answer) => controller.handleClarifyDecisionFromChat(threadId, answer),
     (threadId, decision, reason) => controller.handleEditDecisionFromChat(threadId, decision, reason),
     (taskId) => controller.acceptTaskPatch(taskId),
     (taskId, reason) => controller.rejectTaskPatch(taskId, reason),

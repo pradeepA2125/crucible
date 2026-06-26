@@ -53,7 +53,7 @@ export interface ToolEventView {
 
 // ── Live slot views ──────────────────────────────────────────────────────────
 export interface LiveGateView {
-  kind: "command" | "scope" | "validation" | "step" | "mode" | "edit";
+  kind: "command" | "scope" | "validation" | "step" | "mode" | "edit" | "clarify";
   taskId: string;
   payload: Record<string, unknown>;  // pending_* payload, snake_case
 }
@@ -145,6 +145,7 @@ export type WebviewMessage =
   | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" }
   // Agentic chat controller: mode-recommendation gate pick + per-edit review decision
   | { type: "modeDecision"; threadId: string; mode: string }
+  | { type: "clarifyDecision"; threadId: string; answer: string }
   | { type: "editDecision"; threadId: string; decision: "accept" | "reject"; reason: string }
   | { type: "acceptTask"; taskId: string }
   | { type: "rejectTask"; taskId: string; reason: string }

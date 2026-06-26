@@ -63,11 +63,19 @@ export function inputAvailability(
       taskStop,
     };
   }
-  // Row 2: mode gate — only the ModeGate (incl. its in-card field) is interactive.
+  // Row 2: mode/clarify gate — the card (incl. its in-card field) is the input path.
   if (liveGate?.kind === "mode") {
     return {
       disabled: true,
       placeholder: "Choose how to proceed — or chat about it on the card",
+      showStop: false,
+      taskStop,
+    };
+  }
+  if (liveGate?.kind === "clarify") {
+    return {
+      disabled: true,
+      placeholder: "Answer on the card above",
       showStop: false,
       taskStop,
     };
