@@ -292,6 +292,8 @@ Variant — submit_changes (EDIT mode, when all edits are done): {type, summary}
   {"type":"submit_changes","thought":"done","summary":"Added with_tax() to src/tax.py and rounded the total in pricing.py."}
 
 TODO LIST POLICY (the write_todos tool) — working memory for BIG, multi-part edits:
+write_todos is a TOOL: invoke it as type='tool_call', tool='write_todos', args={"items":[…]} —
+NEVER as type='edit' (an 'edit' with empty patch_ops applies nothing and wastes the turn).
 USE a list (call write_todos with all items, status "pending") when the change is large — any of:
 it spans 3+ files; OR it's a feature that edits multiple places with big chunks of code
 added / replaced / deleted; OR it needs more than ~2 edit cycles. For that shape the list is your
@@ -408,17 +410,29 @@ def build_controller_step_payload(
     _graph = "/query_graph" if has_query_graph else ""
     final_call = iteration >= max_iters - 1
     if phase == "EDIT":
-        if not history:
+        # `edit_entry` (loop-set: EDIT phase + no list + no edit applied yet) is the real
+        # "first action after choosing inline-edit" signal. The old `not history` test is DEAD
+        # for a mode-gated EDIT — resolve_mode seeds the loop with the whole DECIDE conversation,
+        # so history is non-empty on the first EDIT action and entry fell through to the mid-turn
+        # reconcile `else` hint (irrelevant: no prior edit, no list). That mis-route + write_todos
+        # lacking its action-type syntax caused the live empty-edit thrash (the model's thought
+        # said "use write_todos" but it emitted type='edit' with empty patch_ops). `or not history`
+        # keeps the zero-seed case (direct callers/tests) on the entry hint too.
+        if plan_context.get("edit_entry") or not history:
             hint = (
-                "EDIT mode — you're approved to edit. FIRST pick your approach: if this change is "
-                "BIG — it spans 3+ files, OR edits multiple places with big chunks of code, OR "
-                "needs more than ~2 edit cycles — call write_todos to record every part as a "
-                "checklist, then work the items ONE AT A TIME (submit_changes is BLOCKED until none "
-                "are pending) so you don't finish only part of it. If the change is small or "
-                "cohesive (one file, a few related ops), SKIP the list and just edit. Read the "
-                f"target region of any EXISTING file before you change it (search_code{_graph} → "
-                "read_file); a brand-new file needs no read. Emit type='edit' to make a change, "
-                "then type='submit_changes' when all edits are done."
+                "EDIT mode — approved to edit; this is your FIRST action and nothing is started "
+                "yet. Decide the approach:\n"
+                "• BIG / multi-part (spans 3+ files, OR several independent parts, OR >~2 edit "
+                "cycles): START A TODO LIST FIRST. write_todos is a TOOL — emit "
+                "type='tool_call', tool='write_todos', args={\"items\":[{\"title\":...,"
+                "\"status\":\"pending\"}, …]} listing EVERY part. Do NOT emit type='edit' with an "
+                "empty patch_ops to 'do the todos' — that applies nothing and wastes the turn. "
+                "After the list exists, edit items ONE AT A TIME (submit_changes is BLOCKED until "
+                "none are pending).\n"
+                "• SMALL / cohesive (one file, or a few related ops): SKIP the list — emit "
+                "type='edit' now with a NON-EMPTY patch_ops.\n"
+                f"Read the target region of any EXISTING file before changing it (search_code{_graph} "
+                "→ read_file); a brand-new file needs no read. Finish with type='submit_changes'."
             )
         elif final_call:
             hint = (

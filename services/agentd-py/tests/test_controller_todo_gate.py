@@ -163,6 +163,76 @@ async def test_reconcile_marker_set_after_edit_and_cleared_on_write_todos(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_empty_edit_redirects_to_write_todos_not_malformed(tmp_path: Path):
+    """An 'edit' with empty patch_ops gets a redirect naming write_todos-as-tool_call (the live
+    fumble fix: the model wanted the todo list but emitted type='edit' with no ops). The redirect
+    is NOT counted malformed, so four in a row don't trip the cap, and the model recovers by
+    calling write_todos then a real edit."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    (real / "f.py").write_text("x = 1\n")
+    sm = ControllerPhaseSM()
+    sm.enter_edit_mode()
+    sess = TurnEditSession(
+        turn_id="t1", real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine())
+    ledger = TodoLedger()
+    empty = {"type": "edit", "thought": "todos first", "patch_ops": []}
+    rec = _RecordingPlanCtx([
+        empty, empty, empty, empty,   # 4 empty edits — would trip _MAX_MALFORMED(3) if counted
+        _wt([{"title": "A", "status": "in_progress"}]),
+        {"type": "edit", "thought": "do it", "patch_ops": [
+            {"op": "search_replace", "file": "f.py",
+             "search": "x = 1", "replace": "x = 2", "reason": "r"}]},
+        _wt([{"title": "A", "status": "done", "note": "edited f.py"}]),
+        {"type": "submit_changes", "thought": "d", "summary": "done"},
+    ])
+    loop = ControllerLoop(
+        rec, AggregatingToolRegistry([TodoToolSource(ledger)]), EventBroadcaster(),
+        channel_id="c", phase_sm=sm, edit_session=sess, todo_ledger=ledger)
+    out = await loop.run(
+        {"goal": "g", "workspace_path": str(real)}, max_iters=20, auto_accept_edits=True)
+    assert out.kind == "submit_changes"  # recovered, not exhausted-malformed
+    assert (real / "f.py").read_text() == "x = 2\n"
+    # The redirect explicitly named write_todos as a tool_call.
+    assert any("write_todos" in str(m.get("content", "")) and "tool_call" in str(m.get("content", ""))
+               for m in (out.history or []))
+
+
+@pytest.mark.asyncio
+async def test_edit_entry_flag_set_until_productive_start(tmp_path: Path):
+    """edit_entry is True on the first EDIT action (no list, no edit applied) and clears once a
+    todo list exists — the signal that swaps the entry hint for the mid-turn reconcile hint."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    (real / "f.py").write_text("x = 1\n")
+    sm = ControllerPhaseSM()
+    sm.enter_edit_mode()
+    sess = TurnEditSession(
+        turn_id="t1", real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine())
+    ledger = TodoLedger()
+    rec = _RecordingPlanCtx([
+        _wt([{"title": "A", "status": "in_progress"}]),                       # 0: entry=True
+        {"type": "edit", "thought": "e", "patch_ops": [                       # 1: entry=False (list exists)
+            {"op": "search_replace", "file": "f.py",
+             "search": "x = 1", "replace": "x = 2", "reason": "r"}]},
+        _wt([{"title": "A", "status": "done", "note": "f.py"}]),
+        {"type": "submit_changes", "thought": "d", "summary": "done"},
+    ])
+    loop = ControllerLoop(
+        rec, AggregatingToolRegistry([TodoToolSource(ledger)]), EventBroadcaster(),
+        channel_id="c", phase_sm=sm, edit_session=sess, todo_ledger=ledger)
+    out = await loop.run(
+        {"goal": "g", "workspace_path": str(real)}, max_iters=10, auto_accept_edits=True)
+    assert out.kind == "submit_changes"
+    assert rec.plan_contexts[0].get("edit_entry") is True    # first action, nothing started
+    assert rec.plan_contexts[1].get("edit_entry") is False   # list now exists
+
+
+@pytest.mark.asyncio
 async def test_no_reconcile_marker_when_ledger_empty(tmp_path: Path):
     """A small/cohesive edit with NO active list must not get a phantom reconcile marker —
     the gate is `ledger.pending()`, empty here, so nothing is set."""

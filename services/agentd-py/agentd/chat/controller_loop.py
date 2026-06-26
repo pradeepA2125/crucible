@@ -209,6 +209,11 @@ class ControllerLoop:
         # caller can persist what a CANCELLED turn (/stop) accumulated before the cancel
         # raised, instead of losing the turn's exploration + already-promoted edits (Q2).
         self._history: list[dict[str, object]] = []
+        # Whether any edit has been applied this turn — half of the `edit_entry` signal (the
+        # other half is "no todo list yet"). While both hold, the payload builder shows the
+        # clean EDIT-ENTRY hint (write_todos-as-tool_call) instead of the mid-turn reconcile
+        # hint, so the first-action-after-inline case isn't mis-routed.
+        self._edit_applied = False
 
     def partial_history(self) -> list[dict[str, object]]:
         """The verbatim conversation accumulated so far this turn. Meaningful after a
@@ -243,6 +248,7 @@ class ControllerLoop:
         self._calls = []
         self._results = []
         self._thinking = []
+        self._edit_applied = False
         try:
             outcome = await self._iterate(
                 plan_context, history, tool_defs, seen, max_iters,
@@ -301,6 +307,13 @@ class ControllerLoop:
             # model re-reads its own contract (the detail that makes discretion stick). Empty
             # string when no list exists -> build_controller_step_payload omits it.
             plan_context["todo_status"] = self._ledger.render()
+            # EDIT-entry signal: first action after inline-edit was chosen, nothing started yet
+            # (no list, no edit applied). The payload builder swaps the clean entry hint
+            # (write_todos-as-tool_call) for the mid-turn reconcile hint once this clears —
+            # which it does the moment a list exists OR an edit lands, so the entry hint persists
+            # through an empty-edit fumble (keeps steering the right first move).
+            plan_context["edit_entry"] = (
+                self._sm.phase == "EDIT" and not self._ledger.items and not self._edit_applied)
             resp = await self._reasoning.create_controller_step(
                 plan_context=plan_context, history=history,
                 tool_definitions=tool_defs, phase=self._sm.phase,
@@ -434,6 +447,27 @@ class ControllerLoop:
                 logger.info("[controller] edit phase=%s ops=%d files=%s",
                             self._sm.phase, len(ops),
                             [op.get("file") for op in ops if isinstance(op, dict)])
+                if not ops:
+                    # Empty 'edit' = the live write_todos mis-route: the model's thought wants the
+                    # todo list ("I'll use write_todos first") but it picked type='edit' (the only
+                    # "do something" action it associates with EDIT) and shipped no ops. The old
+                    # apply([]) error ("emit at least one op or submit_changes") pushed it to retry
+                    # the SAME empty edit — observed thrashing 4+ turns. Redirect to the RIGHT action
+                    # type with exact syntax. A redirect, NOT a malformed action (don't touch
+                    # consecutive_malformed) — only max_iters bounds it.
+                    logger.info("[controller] empty edit (ops=0) — redirecting (write_todos/edit/submit)")
+                    history.append(assistant_turn(
+                        {k: v for k, v in resp.items() if k != "patch_ops"}))
+                    history.append({
+                        "role": "tool_result", "tool": "edit",
+                        "content": (
+                            "That 'edit' had no patch_ops, so NOTHING was applied. If you meant to "
+                            "create or update the TODO LIST, that is a TOOL CALL — emit "
+                            '{"type":"tool_call","tool":"write_todos","args":{"items":[…]}}, NOT '
+                            "type='edit'. To change a file, emit type='edit' with a NON-EMPTY "
+                            "patch_ops (each op: file + its op fields). To finish, emit "
+                            "type='submit_changes'.")})
+                    continue
                 try:
                     diff = await self._edit.apply(ops)
                 except Exception as exc:
@@ -485,6 +519,8 @@ class ControllerLoop:
                 history.append(assistant_turn(resp))
                 if accepted:
                     touched = [d.path for d in diff]
+                    # A real edit landed → out of the EDIT-entry window (clears edit_entry).
+                    self._edit_applied = True
                     # Log the apply outcome (the diff card carries the UI; agentd.log had no
                     # record of a successful apply — only the pre-apply ops line at L302).
                     logger.info("[controller] edit applied phase=%s files=%s",

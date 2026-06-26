@@ -168,6 +168,44 @@ def test_no_checkpoint_without_pending_reconcile_files():
     assert "CHECKPOINT" not in str(payload["instruction"])
 
 
+def test_edit_entry_hint_leads_with_write_todos_tool_syntax():
+    """When the loop signals edit_entry (EDIT phase, nothing started), the instruction is the
+    clean ENTRY hint giving the EXACT write_todos action syntax (a tool_call) and warning
+    against the empty-edit fumble — NOT the mid-turn 'reflect on your last edit' reconcile hint
+    (irrelevant on the first action). Regression for the live buried-guidance thrash: the model
+    knew to write_todos but emitted type='edit' with empty patch_ops because it could not
+    discover write_todos is a tool_call."""
+    seeded = [{"role": "user", "content": "build 3 modules"},
+              {"role": "assistant", "content": "{}"}]
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w", "edit_entry": True},
+        history=seeded, tool_definitions=[], phase="EDIT")
+    instr = str(payload["instruction"])
+    assert "tool_call" in instr                       # exact action type for write_todos
+    assert "write_todos" in instr
+    assert "empty" in instr.lower()                   # warns against empty patch_ops
+    assert "reflect on your last edit" not in instr   # NOT the mid-turn reconcile hint
+
+
+def test_edit_mid_turn_hint_when_not_entry():
+    """Without edit_entry (work underway), the mid-turn reconcile hint applies (unchanged)."""
+    seeded = [{"role": "user", "content": "x"}, {"role": "assistant", "content": "{}"}]
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w", "todo_status": "2 items (0 done) — [..]"},
+        history=seeded, tool_definitions=[], phase="EDIT")
+    assert "reflect on your last edit" in str(payload["instruction"])
+
+
+def test_system_prompt_teaches_write_todos_is_a_tool_call():
+    """The TODO LIST POLICY must state write_todos is invoked as a tool_call (not type='edit'),
+    so a weak model routes it correctly instead of shipping an empty edit."""
+    from agentd.chat.controller_prompts import CONTROLLER_SYSTEM_PROMPT
+    p = CONTROLLER_SYSTEM_PROMPT
+    assert "tool_call" in p and "write_todos" in p
+    # The policy block specifically ties write_todos to the tool_call action form.
+    assert "type='tool_call'" in p
+
+
 def test_no_checkpoint_without_active_list():
     """A reconcile marker but NO active todo list → nothing to reconcile → no checkpoint
     (a small/cohesive single edit must not get a phantom checklist nag)."""
