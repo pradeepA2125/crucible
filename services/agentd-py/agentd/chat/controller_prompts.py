@@ -426,7 +426,34 @@ def build_controller_step_payload(
                 "turn — or type='clarify' if a true blocker remains. No more edits after this."
             )
         else:
-            hint = (
+            # Q1 reconcile checkpoint: after an applied edit while a list is ACTIVE, LEAD with a
+            # concrete, file- and item-specific question (the loop sets pending_reconcile_files +
+            # reconcile_item on the just-applied edit; cleared once write_todos runs). Naming the
+            # exact item the edit was for ("is 'Add enemies' done?") is far stickier than the
+            # generic reconcile paragraph below — but it stays non-blocking: PARTIAL keeps editing
+            # the SAME item, so a half-done edit is never pressured into a false 'done'.
+            reconcile_files = plan_context.get("pending_reconcile_files")
+            reconcile_item = plan_context.get("reconcile_item")
+            checkpoint = ""
+            if reconcile_files and todo_status:
+                files_str = (
+                    ", ".join(str(f) for f in reconcile_files)
+                    if isinstance(reconcile_files, list) else str(reconcile_files))
+                if isinstance(reconcile_item, dict) and reconcile_item.get("title"):
+                    item_clause = (
+                        f"Your current todo item is '{reconcile_item.get('title')}' "
+                        f"(status: {reconcile_item.get('status', 'pending')}). "
+                        f"Did this edit COMPLETE it? • If YES → emit write_todos NOW marking "
+                        f"'{reconcile_item.get('title')}' 'done' (cite this edit in 'note'). "
+                        f"• If only PARTIAL → keep editing '{reconcile_item.get('title')}', leave "
+                        "it 'in_progress'. Then continue. ")
+                else:
+                    item_clause = (
+                        "Did this edit COMPLETE one of your todo items? • If YES → emit write_todos "
+                        "NOW marking it 'done' (cite this edit in 'note'). • If only PARTIAL → keep "
+                        "editing that SAME item, leave it 'in_progress'. Then continue. ")
+                checkpoint = f"CHECKPOINT — you just edited {files_str}. {item_clause}"
+            hint = checkpoint + (
                 "FIRST reflect on your last edit's result (if any): did it apply "
                 "('applied+promoted') or fail ('PATCH FAILED: …')? "
                 "If a todo list is active, RECONCILE it NOW — a separate write_todos call THIS "

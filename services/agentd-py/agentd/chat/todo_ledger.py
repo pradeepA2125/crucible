@@ -36,6 +36,17 @@ class TodoLedger:
     def pending(self) -> list[TodoItem]:
         return [i for i in self.items if i.status in ("pending", "in_progress")]
 
+    def active_item(self) -> TodoItem | None:
+        """The item the reconcile checkpoint should name: the one the model is working
+        (first in_progress), falling back to the first pending. None when nothing is open
+        (all done/blocked/cancelled). Lets the post-edit checkpoint ask 'is THIS item done?'
+        instead of a generic 'did you complete any item?'."""
+        in_progress = [i for i in self.items if i.status == "in_progress"]
+        if in_progress:
+            return in_progress[0]
+        pending = [i for i in self.items if i.status == "pending"]
+        return pending[0] if pending else None
+
     def render(self) -> str:
         """Compact one-line status for the payload tail; '' when no list exists."""
         if not self.items:

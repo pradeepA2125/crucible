@@ -130,3 +130,52 @@ def test_edit_hint_steers_incremental_todo_marking():
     instr = str(payload["instruction"]).lower()
     assert "in_progress" in instr            # uses the in_progress state for partial work
     assert "reconcile" in instr              # reconcile-the-ledger-first framing
+
+
+def test_edit_hint_leads_with_reconcile_checkpoint_naming_active_item():
+    """After an applied edit while a list is active, the instruction LEADS with a concrete,
+    file- AND item-specific reconcile checkpoint (Q1): it names the just-edited file and the
+    current todo item so the model answers a pointed 'is THIS item done?' rather than reading
+    a generic reconcile paragraph. The checkpoint is non-blocking — PARTIAL keeps editing the
+    same item, so a half-finished edit is never forced to a false 'done'."""
+    seeded = [{"role": "assistant", "content": "{}"},
+              {"role": "tool_result", "tool": "edit",
+               "content": "applied+promoted: ['game.js']"}]
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w",
+         "todo_status": "2 items (0 done) — [▶ Add enemies] [☐ Jump]",
+         "pending_reconcile_files": ["game.js"],
+         "reconcile_item": {"title": "Add enemies", "status": "in_progress"}},
+        history=seeded, tool_definitions=[], phase="EDIT")
+    instr = str(payload["instruction"])
+    # Leads (right after the Phase= prefix), not buried mid-paragraph.
+    assert instr.startswith("Phase=EDIT. CHECKPOINT")
+    assert "game.js" in instr            # names the just-edited file
+    assert "Add enemies" in instr        # names the active todo item
+    assert "COMPLETE" in instr           # the yes-branch question
+    assert "PARTIAL" in instr            # the no-branch (keep editing the same item)
+
+
+def test_no_checkpoint_without_pending_reconcile_files():
+    """No edit just applied (no marker) → no checkpoint, even with an active list. The
+    generic mid-turn reconcile guidance still applies."""
+    seeded = [{"role": "assistant", "content": "{}"},
+              {"role": "tool_result", "tool": "edit", "content": "applied"}]
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w",
+         "todo_status": "2 items (0 done) — [▶ A] [☐ B]"},
+        history=seeded, tool_definitions=[], phase="EDIT")
+    assert "CHECKPOINT" not in str(payload["instruction"])
+
+
+def test_no_checkpoint_without_active_list():
+    """A reconcile marker but NO active todo list → nothing to reconcile → no checkpoint
+    (a small/cohesive single edit must not get a phantom checklist nag)."""
+    seeded = [{"role": "assistant", "content": "{}"},
+              {"role": "tool_result", "tool": "edit", "content": "applied"}]
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w",
+         "pending_reconcile_files": ["x.js"],
+         "reconcile_item": {"title": "A", "status": "in_progress"}},
+        history=seeded, tool_definitions=[], phase="EDIT")
+    assert "CHECKPOINT" not in str(payload["instruction"])

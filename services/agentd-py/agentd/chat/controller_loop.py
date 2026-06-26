@@ -361,6 +361,11 @@ class ControllerLoop:
                     "payload": {"tool": tool, "thought": str(resp.get("thought", "")),
                                 "args": args, "call_index": call_index}})
                 out = await self._registry.execute(tool, args)
+                # The model reconciled the ledger — clear the post-edit checkpoint marker so
+                # the next turn's instruction stops naming the (now-answered) edit/item (Q1).
+                if tool == "write_todos":
+                    plan_context.pop("pending_reconcile_files", None)
+                    plan_context.pop("reconcile_item", None)
                 logger.info("[controller] tool_result tool=%s is_error=%s chars=%d",
                             tool, out.is_error, len(out.output or ""))
                 self._broadcaster.broadcast(self._channel_id, {
@@ -471,6 +476,21 @@ class ControllerLoop:
                     # record of a successful apply — only the pre-apply ops line at L302).
                     logger.info("[controller] edit applied phase=%s files=%s",
                                 self._sm.phase, touched)
+                    # Q1 reconcile checkpoint: when a todo list is ACTIVE (something still
+                    # open), flag the just-edited files + the active item so the NEXT turn's
+                    # instruction leads with a pointed "is THIS item done?" question. This is
+                    # NOT a hard gate — an edit may only PARTIALLY complete an item, so forcing
+                    # a write_todos would pressure a false 'done'. The model answers the
+                    # checkpoint by marking done OR continuing the same item; the marker clears
+                    # the moment write_todos runs (see the tool_call branch). Soft enforcement:
+                    # if this still slips on a weak model, the next escalation is a gate that
+                    # forces a write_todos call but accepts 'in_progress' as a valid answer.
+                    if self._ledger.pending():
+                        plan_context["pending_reconcile_files"] = touched
+                        active = self._ledger.active_item()
+                        if active is not None:
+                            plan_context["reconcile_item"] = {
+                                "title": active.title, "status": active.status}
                     history.append({
                         "role": "tool_result", "tool": "edit",
                         "content": f"applied+promoted: {touched}"})
