@@ -42,6 +42,8 @@ memory (L3).
 | Substrate | SQLite + `sqlite-vec` (embeddings) + FTS5 (BM25/keyword) — in-process, no new service |
 | Write path | **Hybrid** — background consolidation (default) + agent tools (deliberate) |
 | Integration shape | **Middleware + tools** (automatic compaction/recall in middleware; deliberate write/recall as tools) |
+| Compaction sizing | Hot set **token-bounded** (`MEMORY_HOT_TOKEN_FRAC × window`, default 0.4) with `MEMORY_HOT_TURNS` as a secondary count cap; `hot_frac < trigger_frac` makes reduction provable |
+| Segment tiering | **Decided at read time (Phase 2), not baked at write time.** Phase 1 persists evicted segments with no tier label |
 | L4 | Reuse code graph as grounding target via `query_graph`; no new memory graph |
 | Content × lifecycle | episodic/semantic/procedural `kind` × temporal `valid_to`/`superseded_by` lifecycle |
 
@@ -51,38 +53,63 @@ New subpackage `services/agentd-py/agentd/memory/`:
 
 ```
 harness.py        # MemoryHarness — façade the loops call; orchestrates the units below.
-compactor.py      # Compactor — within-run window mgmt (Phase 1): hot/warm/cold + anchored summary.
+compactor.py      # Compactor — within-run window mgmt (Phase 1): token-bounded hot set + anchored summary.
 recall.py         # RecallEngine — multi-signal retrieval + scoring (Phase 2).
-consolidator.py   # Consolidator — async LLM write path: extract → dedupe → supersede.
-store.py          # MemoryStore — SQLite + sqlite-vec + FTS5. The ONLY DB-aware unit.
-models.py         # Memory, MemoryKind, Scope, CompactionSegment, RecallResult (Pydantic).
+consolidator.py   # Consolidator — async LLM write path: extract → dedupe → supersede (Phase 2).
+store.py          # MemoryStore — SQLite (+ sqlite-vec + FTS5 in Phase 2). The ONLY DB-aware unit.
+models.py         # MemoryKind, Scope, CompactionSegment, AnchoredSummary, RecallResult (Pydantic).
+config.py         # MemoryConfig + from_env.
 ```
 
 **Integration (shape C):**
 - `MemoryHarness` injected into `ControllerLoop` and `ToolLoop` (constructor param, mirrors the
   existing registry injection and how `retrieval_context` already flows).
 - **Automatic path (middleware):** each iteration the loop calls
-  `harness.prepare_turn(history, scope)` → `(maybe_compacted_history, recalled_memories_slot)`.
+  `harness.prepare_turn(history, run_id)` → `(maybe_compacted_history, recalled_memories_slot)`.
   The loop drops `recalled_memories` into the **dynamic tail** of the payload (KV-cache-safe).
-- **Deliberate path (tools):** `remember(content, kind, entities?)` and `recall(query)` registered
-  in both tool registries, gated into per-state allowed-tools sets (same mechanism as `query_graph`).
-- **Async writes:** `Consolidator` runs off the hot path via fire-and-forget `asyncio.create_task`
-  at compaction events and at turn/task terminal — same best-effort pattern as
+  Phase 1 returns an empty recall slot.
+- **Deliberate path (tools, Phase 2):** `remember(content, kind, entities?)` and `recall(query)`
+  registered in both tool registries, gated into per-state allowed-tools sets (same mechanism as
+  `query_graph`).
+- **Async writes (Phase 2):** `Consolidator` runs off the hot path via fire-and-forget
+  `asyncio.create_task` at compaction events and at turn/task terminal — same best-effort pattern as
   `_finalize_task_narrative`.
 
 **Interface contract (keeps units decoupled):**
-- `MemoryStore` is the only DB-aware unit; everyone else speaks `Memory` / `RecallResult` objects.
+- `MemoryStore` is the only DB-aware unit; everyone else speaks model objects.
 - `RecallEngine` and `Consolidator` depend on `MemoryStore` + an embedder, nothing else.
-- `Compactor` depends on the reasoning engine (anchored summaries) + `MemoryStore` (offload). It
-  does **not** depend on `RecallEngine`.
+- `Compactor` depends on an anchored-summary callable (built from the reasoning engine) +
+  `MemoryStore` (offload). It does **not** depend on `RecallEngine`.
 - `MemoryHarness` is the only unit the loops see.
 
 ## §2 — Data model
 
-`MemoryStore` owns three tables in a new DB (`AI_EDITOR_MEMORY_DB_PATH`, default
-`.agentd/memory.sqlite3` — separate file, same pattern as chat DB).
+`MemoryStore` owns its tables in a new DB (`AI_EDITOR_MEMORY_DB_PATH`, default
+`.agentd/memory.sqlite3` — separate file, same pattern as chat DB). **Phase 1 creates only the two
+compaction tables**; the `memories` table + sqlite-vec/FTS5 arrive in Phase 2.
 
-**`memories`** — L3 long-term (and durable L2):
+**`compaction_segments`** — Phase-1 offload (evicted raw history, recoverable in Phase 2):
+```
+id          TEXT PK
+run_id      TEXT     -- thread_id | task_id
+seq         INTEGER  -- order within the run's eviction stream
+content     TEXT     -- the raw evicted message content (verbatim)
+created_at  TEXT
+```
+No `tier` and no `embedding` in Phase 1. **Tiering is a read-time concern** (see §5): whether an old
+segment is worth pulling back depends on the *current query's* relevance, which Phase-2 `RecallEngine`
+computes per-turn — baking a static `warm`/`cold` label at compaction time would pre-decide it. An
+`embedding` column is added in Phase 2 only if raw segments are made directly retrievable.
+
+**`anchored_summaries`** — persistent running summary per run (merged, never regenerated):
+```
+run_id      TEXT PK
+summary_md  TEXT
+version     INTEGER  -- bumped on each merge
+updated_at  TEXT
+```
+
+**`memories`** (Phase 2) — L3 long-term (and durable L2):
 ```
 id            TEXT PK
 scope_kind    TEXT   -- 'workspace' | 'thread' | 'global'        ← concern #3 (scoping)
@@ -98,21 +125,11 @@ source_ref    TEXT   -- thread_id / task_id that produced it
 created_at    TEXT
 embedding            -- sqlite-vec virtual column
 ```
-Plus FTS5 mirror `memories_fts` on `content` + `entities` (exact symbol/path match embeddings blur).
+Plus an FTS5 mirror `memories_fts` on `content` + `entities` (exact symbol/path match embeddings blur).
 
-**`compaction_segments`** — Phase-1 offload (evicted raw history, recallable):
-```
-id, run_id (thread_id|task_id), seq, tier ('warm'|'cold'), content, embedding, created_at
-```
-
-**`anchored_summaries`** — persistent running summary per run (merged, never regenerated):
-```
-run_id PK, summary_md, version, updated_at
-```
-
-**Runtime resolution of the three concerns:**
-1. **Staleness** — retrieval default filters `valid_to IS NULL`; scoring applies `recency_decay`
-   so even live-but-old facts sink. Consolidator may proactively set `valid_to` on contradiction.
+**Runtime resolution of the three concerns (Phase 2):**
+1. **Staleness** — retrieval default filters `valid_to IS NULL`; scoring applies `recency_decay` so
+   even live-but-old facts sink. Consolidator may proactively set `valid_to` on contradiction.
 2. **Change-as-evolution** — when the consolidator writes a fact contradicting an existing one, it
    sets old `valid_to=now` + `superseded_by=new.id` in one transaction. History preserved
    (auditable); only the current fact retrieves by default. **Episodic memories are exempt** —
@@ -121,7 +138,7 @@ run_id PK, summary_md, version, updated_at
    `scope_kind='global'`; thread-scoped memories join when recalling within the same thread.
    Adapted Mem0 four-scope model minus `app_id` (one app).
 
-## §3 — Write path (hybrid)
+## §3 — Write path (hybrid, Phase 2)
 
 **Deliberate (agent tools)** — synchronous:
 - `remember(content, kind, entities?)` → `Consolidator.write_explicit(...)`: embed, run
@@ -147,7 +164,7 @@ Rationale: LLM *proposes* (distill + spot contradiction — what it's good at); 
 (consistent dedup math + irreversible DB mutation — deterministic, unit-testable). Consolidation
 is best-effort; a failure writes nothing that round and never fails the turn.
 
-## §4 — Retrieval & scoring (multi-signal)
+## §4 — Retrieval & scoring (multi-signal, Phase 2)
 
 `RecallEngine.recall(query, scope, k)` — three parallel passes fused:
 ```
@@ -163,6 +180,9 @@ score = w_sem*semantic + w_lex*lexical + w_struct*structural
 Defaults `w_sem=0.5, w_lex=0.3, w_struct=0.2`, all env-tunable (measure, don't hardcode).
 - **Filter before score:** `valid_to IS NULL` (unless explicitly recalling history) + scope filter.
 - **Rerank:** top-3k by fused score → final-k. v1 rerank = fused score (no cross-encoder); seam left.
+- **This is also where evicted `compaction_segments` become recoverable** — recall can fold the raw
+  segment store into its candidate set, which is the read-time realization of "warm vs cold" (relevance
+  decides, not a write-time label).
 - **Query source:** automatic path → current user message + active goal/active-todo; tool path →
   the agent's explicit `recall(query)` string.
 - **Budget:** ≤ `MEMORY_RECALL_TOKEN_BUDGET` (default ~1500 tokens) injected into the dynamic tail.
@@ -170,31 +190,44 @@ Defaults `w_sem=0.5, w_lex=0.3, w_struct=0.2`, all env-tunable (measure, don't h
 
 ## §5 — Compaction (Phase 1, ships first)
 
-`Compactor.maybe_compact(history, run_id)` — called every iteration, acts only when over threshold:
-- **Trigger:** est. tokens ≥ `MEMORY_COMPACT_TRIGGER_FRAC` × window (default **0.65** — compact
-  before degradation, per the 60–70% finding, not at the hard limit).
-- **Tiering:**
-  - **Hot** (most recent turns within a **token budget**, not a fixed count): kept verbatim. The
-    hot set is the newest turns that fit `MEMORY_HOT_TOKEN_FRAC × window` (default **0.4**), with
-    `MEMORY_HOT_TURNS` (default 10) as a secondary max-count cap. Token-bounding (not count-bounding)
-    is what guarantees compaction actually gets back under the window — `hot_frac (0.4) <
-    trigger_frac (0.65)`, so once triggered, eviction always frees space.
-    **Single-message backstop:** always keep ≥1 (the newest) turn; if that turn alone exceeds the
-    hot budget, truncate its in-window copy (head + `…[truncated]…` + tail) while persisting the
-    full original as a segment (lossless on disk). This covers the pathological "one giant turn /
-    history shorter than hot_turns but already over budget" cases that a count-based window can't.
-  - **Warm** (next band): merged into the **anchored summary** —
-    `summarize(old_anchor + warm_band) → new_anchor`, **never regenerate from scratch** (anchoring
-    beats reconstruction on continuity — Factory 36K-message finding).
-  - **Cold:** dropped from context, but raw text already in `compaction_segments` → recallable.
-    Lossy in-window, lossless on-disk.
-- **In-window after compaction:** system block (cached head) + anchored summary + hot turns +
-  recalled-memories tail. Bounded and stable.
-- **Fallback:** summarize failure → keep the prior anchor + hot turns, drop the evicted band from
-  window (still persisted as segments) + `⚠️ memory degraded` breadcrumb; loop never dies. The
-  single-oversize-turn truncation above is also marked `degraded`.
+`Compactor.maybe_compact(history, run_id)` — called at the top of every loop iteration; acts only
+when the live history is over the trigger.
 
-## §6 — Code-graph grounding (L4 reuse)
+- **Trigger:** estimated tokens ≥ `MEMORY_COMPACT_TRIGGER_FRAC × window` (default **0.65** — compact
+  before degradation, per the 60–70% finding, not at the hard limit). Below trigger ⇒ no-op (history
+  returned untouched).
+
+- **Hot set (kept verbatim) — token-bounded, not count-bounded.** Walking newest→oldest, keep turns
+  while they fit `MEMORY_HOT_TOKEN_FRAC × window` (default **0.4**), capped at `MEMORY_HOT_TURNS`
+  (default 10) turns. Token-bounding is what makes compaction *provably* reduce the window: since
+  `hot_frac (0.4) < trigger_frac (0.65)`, crossing the trigger guarantees there is something to evict.
+  - **Always keep ≥1 turn** (the newest — the loop needs the current turn). **Single-message
+    backstop:** if that one turn alone exceeds the hot budget, truncate its in-window copy
+    (head + `…[truncated]…` + tail, sized to the budget) and persist its full original as a segment.
+    This handles "history shorter than `hot_turns` but already over budget" and "one turn bigger than
+    the whole window" — cases a count-based window silently failed.
+
+- **Eviction (everything older than the hot set):**
+  - **Folded into the anchored summary** via merge: `summarize(old_anchor, evicted) → new_anchor` —
+    **never regenerated from scratch** (anchoring beats reconstruction on continuity — Factory
+    36K-message finding). The new anchor replaces the old at an incremented `version`.
+  - **Persisted raw** as `compaction_segments` rows (lossless on disk) so Phase-2 recall can pull any
+    slice back.
+  - Phase 1 folds **all** evicted history into the anchor — no information cliff before recall exists.
+
+- **No `warm`/`cold` label is baked at write time** (see §2). Whether an old segment is worth pulling
+  back is a relevance judgment Phase-2 `RecallEngine` makes per-turn; Phase 1 just persists segments.
+
+- **Post-compaction window (provably bounded):** system block (cached head) + anchored summary
+  (small) + hot set (≤ `hot_frac × window`) + Phase-2 recall tail (≤ `MEMORY_RECALL_TOKEN_BUDGET`).
+  Every term is bounded ⇒ the window cannot grow without bound across a long run.
+
+- **Fallback (best-effort):** if the summarize call fails, keep the prior anchor + hot set, drop the
+  evicted band from the window (it is already persisted as segments), emit a `⚠️ memory degraded`
+  breadcrumb, and continue. The single-oversize-turn truncation is likewise marked `degraded`. A
+  compaction failure never raises out of a loop iteration.
+
+## §6 — Code-graph grounding (L4 reuse, Phase 2)
 
 Memories carry `entities` (paths, `path:Symbol`). After retrieval, for the top 1–2 memories only,
 an optional expansion calls the existing `GraphWalker.query_graph(node=entity)` for one structural
@@ -208,43 +241,53 @@ passively catching staleness (symbol gone ⇒ memory suspect).
 
 Mirrors `retrieval_context` ("never blocks orchestration") and `_finalize_task_narrative` (try/except).
 
-| Failure | Behavior |
-|---|---|
-| Embedder unavailable | Degrade to FTS5-only; log once. Store `embedding=NULL`, backfill later. |
-| Retrieval throws | Empty `recalled_memories` slot; loop proceeds. |
-| Consolidation throws | Nothing written that round; log; turn unaffected. |
-| Compaction summarize throws | Hard-truncate warm band + `⚠️` breadcrumb; continue. |
-| `sqlite-vec` missing | Boot FTS5-only mode + startup WARNING (like `warn_if_incoherent_flags`). |
-| Master kill switch | `AI_EDITOR_MEMORY_ENABLED=0` → `MemoryHarness` is a no-op pass-through; loops behave as today. |
+| Failure | Behavior | Phase |
+|---|---|---|
+| Master kill switch | `AI_EDITOR_MEMORY_ENABLED=0` → `MemoryHarness` is a no-op pass-through; loops behave byte-identically to today. | 1 |
+| Compaction summarize throws | Keep prior anchor + hot set; evicted dropped from window (still persisted as segments); mark `degraded`; continue. | 1 |
+| Single turn > hot budget | Truncate the in-window copy; persist full original as a segment; mark `degraded`. | 1 |
+| `prepare_turn` throws (any reason) | Return history untouched; loop proceeds. | 1 |
+| Embedder unavailable | Degrade to FTS5-only; log once. Store `embedding=NULL`, backfill later. | 2 |
+| Retrieval throws | Empty `recalled_memories` slot; loop proceeds. | 2 |
+| Consolidation throws | Nothing written that round; log; turn unaffected. | 2 |
+| `sqlite-vec` missing | Boot FTS5-only mode + startup WARNING (like `warn_if_incoherent_flags`). | 2 |
 
 The kill switch lets us land dark and enable per-workspace (flag-gating pattern:
 `CHAT_CONTROLLER`, `TASK_SUBSYSTEM`).
 
 ## §8 — Testing
 
-- **`MemoryStore`** — migrations, vec + FTS5 round-trips, scope filtering, supersede txn
-  (old `valid_to`/`superseded_by` atomic), episodic-never-superseded invariant. Real `tmp_path`
-  SQLite, no mocks.
-- **`Consolidator`** — `ScriptedReasoningEngine` canned candidates; assert dedupe-by-threshold,
+**Phase 1:**
+- **`MemoryStore`** — migrations, segment round-trip ordered by `seq`, scope-by-`run_id`, anchor
+  insert-then-version-bump, missing-anchor returns `None`. Real `tmp_path` SQLite, no mocks.
+- **`Compactor`** — scripted summarizer; assert: below-trigger no-op; over-trigger keeps the hot set
+  verbatim and within the token budget; anchor **merges** (prior anchor content survives — not
+  regenerated); evicted lands in `compaction_segments`; a single oversize turn is truncated in-window
+  while its full original is persisted; summarizer failure degrades without raising.
+- **`MemoryHarness`** — disabled = pass-through (same list object, `compacted=False`); enabled
+  delegates to compactor; `prepare_turn` swallows internal errors.
+- **Loop wiring** — scripted long `ControllerLoop` and `ToolLoop` runs cross the threshold and the
+  harness is invoked with the live history + correct `run_id`.
+- **Integration** — a long run crosses compaction, persists segments, versions the anchor, keeps hot
+  verbatim; and a disabled-harness parity check (history untouched).
+
+**Phase 2 (for the Phase-2 plan):**
+- **`Consolidator`** — `ScriptedReasoningEngine` canned candidates; dedupe-by-threshold,
   supersede-on-contradiction, episodic-insert-always.
 - **`RecallEngine`** — domain golden set `(query → expected memory id, ranked)` over symbol/path
   queries (benchmark scores don't transfer); assert weight tuning moves ranks.
-- **`Compactor`** — scripted run crossing 0.65; assert hot verbatim, anchor **merges** (old anchor
-  content survives — not regenerated), cold lands in `compaction_segments` and is recallable.
-- **Integration** — one long scripted `ControllerLoop` run that (a) crosses compaction, (b) writes
-  memories, (c) a *second* run in the same workspace recalls them. The "sturdy between windows"
-  acceptance test.
 - **KV-cache guard** — byte-position assertion that `recalled_memories` lands in the dynamic tail,
   never the cached head (finding #13: unit byte-identity tests miss turn-over-turn prefix breaks).
+  (No-op in Phase 1: the anchor message is a normal history entry, not a tail slot.)
 
 ## §9 — Phase plan
 
-- **Phase 1 — Compaction (ships standalone).** `MemoryStore` (segments + anchored_summaries only),
-  `Compactor`, wire into `ControllerLoop` + `ToolLoop`, kill switch. Can ship FTS5-only / no
-  embeddings. Value: long runs stop degrading mid-window.
-- **Phase 2 — Recall + write path.** `memories` table, `Consolidator` (hybrid), `RecallEngine`,
-  agent tools, scoping, temporal/supersede, graph grounding, payload injection. Value: sturdy
-  between windows.
+- **Phase 1 — Compaction (ships standalone).** `MemoryStore` (`compaction_segments` +
+  `anchored_summaries` only), `Compactor`, `MemoryHarness`, wire into `ControllerLoop` + `ToolLoop`,
+  kill switch. No embeddings, no `sqlite-vec`. Value: long runs stop degrading mid-window.
+- **Phase 2 — Recall + write path.** `memories` table + sqlite-vec/FTS5, `Consolidator` (hybrid),
+  `RecallEngine`, agent tools, scoping, temporal/supersede, graph grounding, recall-tail injection,
+  read-time segment tiering. Value: sturdy between windows.
 - **Phase 3 (deferred, not this spec)** — cross-encoder reranker, cross-workspace global-prefs UI,
   extension memory-inspection panel. Detailed in §9a so a future session can resume without losing
   this context.
@@ -320,21 +363,28 @@ to brainstorm into their own spec when Phase 3 begins.
 ## Config (new env vars)
 
 ```
-AI_EDITOR_MEMORY_ENABLED            # master kill switch (default off — land dark)
-AI_EDITOR_MEMORY_DB_PATH            # default .agentd/memory.sqlite3
-AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC  # default 0.65
-AI_EDITOR_MEMORY_HOT_TURNS          # default 10 (secondary max-count cap on the hot set)
-AI_EDITOR_MEMORY_HOT_TOKEN_FRAC     # default 0.4 (primary token bound on the hot set; < trigger_frac)
-AI_EDITOR_MEMORY_DEDUP_THRESHOLD    # default 0.92
+# Phase 1
+AI_EDITOR_MEMORY_ENABLED               # master kill switch (default off — land dark)
+AI_EDITOR_MEMORY_DB_PATH               # default .agentd/memory.sqlite3
+AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC  # default 0.65 — compact when est. tokens cross this × window
+AI_EDITOR_MEMORY_HOT_TOKEN_FRAC        # default 0.4  — primary token bound on the hot set (< trigger_frac)
+AI_EDITOR_MEMORY_HOT_TURNS             # default 10   — secondary max-count cap on the hot set
+AI_EDITOR_MEMORY_WINDOW_TOKENS         # default 128000 — context window size (see open question)
+
+# Phase 2
+AI_EDITOR_MEMORY_DEDUP_THRESHOLD       # default 0.92
 AI_EDITOR_MEMORY_RECALL_TOKEN_BUDGET   # default ~1500
-AI_EDITOR_MEMORY_WEIGHTS            # w_sem,w_lex,w_struct — default 0.5,0.3,0.2
-AI_EDITOR_MEMORY_GRAPH_GROUNDING    # default on
+AI_EDITOR_MEMORY_WEIGHTS               # w_sem,w_lex,w_struct — default 0.5,0.3,0.2
+AI_EDITOR_MEMORY_GRAPH_GROUNDING       # default on
 ```
 
 ## Open questions / risks
 
-- **Embedder choice** (local sentence-transformer/fastembed vs provider embeddings) — implementation
-  detail; lean local-first for offline + zero per-write API cost. Resolve in the plan.
-- **Token estimation** for the compaction trigger — needs a cheap per-provider tokenizer estimate;
-  reuse whatever the loops already use for budget.
-- **Golden-set authoring** for `RecallEngine` is manual and domain-specific — budget time for it.
+- **Token estimation** for the trigger and hot-budget — Phase 1 uses a cheap `len//4` char heuristic
+  with a seam to plug a real per-provider tokenizer; reuse whatever the loops already use for budget.
+  The heuristic only needs to be *monotone*, since both the trigger and the hot bound use it.
+- **`MEMORY_WINDOW_TOKENS`** is a single configured number in Phase 1; ideally derived per active
+  provider/model. Resolve in the Phase 1 plan / Phase 2.
+- **Embedder choice** (local sentence-transformer/fastembed vs provider embeddings) — Phase 2; lean
+  local-first for offline + zero per-write API cost.
+- **Golden-set authoring** for `RecallEngine` is manual and domain-specific — budget time for it (Phase 2).

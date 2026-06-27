@@ -2,23 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stop the `ControllerLoop` and task `ToolLoop` from degrading when a run outgrows ~65% of the context window, by folding evicted history into a merged "anchored summary" while persisting raw segments to SQLite for later (Phase 2) recall.
+**Goal:** Stop the `ControllerLoop` and task `ToolLoop` from degrading when a run outgrows ~65% of the context window, by keeping a **token-bounded** set of recent turns verbatim, folding everything older into a merged "anchored summary" (one LLM call, never regenerated), and persisting the evicted raw turns to SQLite for later (Phase 2) recall.
 
-**Architecture:** A new flag-gated `agentd/memory/` subpackage. `MemoryHarness` is a façade injected into both loops; each iteration the loop calls `harness.prepare_turn(history, run_id)` which delegates to a `Compactor`. The compactor keeps the last N turns verbatim ("hot"), merges everything older into a per-run anchored summary via one LLM call (never regenerated from scratch), and persists the evicted raw messages as `compaction_segments` rows in a dedicated SQLite DB. Recall is a Phase-2 no-op stub here. The whole subsystem is off unless `AI_EDITOR_MEMORY_ENABLED` is truthy.
+**Architecture:** A new flag-gated `agentd/memory/` subpackage. `MemoryHarness` is a façade injected into both loops; each iteration the loop calls `harness.prepare_turn(history, run_id)`, which delegates to a `Compactor`. The compactor keeps the newest turns that fit a token budget (`hot_frac × window`, default 0.4; `hot_turns` is a secondary count cap), folds the rest into a per-run anchored summary, and persists the evicted raw turns as `compaction_segments`. Because `hot_frac < trigger_frac (0.65)`, compaction provably reduces the window. Recall is a Phase-2 no-op stub here. The subsystem is off unless `AI_EDITOR_MEMORY_ENABLED` is truthy.
 
 **Tech Stack:** Python 3.13, Pydantic, stdlib `sqlite3`, pytest + pytest-asyncio. Reuses the existing `ScriptedReasoningEngine` testing pattern and the `_finalize_task_narrative` best-effort async pattern.
 
 ## Global Constraints
 
 - Python target: 3.13. Use `asyncio.run(...)` or `@pytest.mark.asyncio`, never `get_event_loop().run_until_complete`.
-- Strict typing: no `any`, explicit return types. Mirror existing `agentd/` style.
-- All imports at top of file.
-- The harness is **best-effort**: no compaction/store failure may ever propagate out of a loop iteration. On any internal failure, fall back to leaving history untouched (or hard-truncating) and continue.
+- Strict typing: no `any`, explicit return types. Mirror existing `agentd/` style. All imports at top.
+- The harness is **best-effort**: no compaction/store failure may propagate out of a loop iteration. On any internal failure, leave history untouched (or hard-truncate) and continue.
 - Master kill switch `AI_EDITOR_MEMORY_ENABLED` (default **off**). When off, `MemoryHarness` is a no-op pass-through and both loops behave byte-identically to today.
-- New DB path env: `AI_EDITOR_MEMORY_DB_PATH` (default `.agentd/memory.sqlite3`). Separate file from task/chat DBs.
-- Phase-1-specific simplification (decided, document in code): Phase 1 folds **all** evicted history into the anchor (no information cliff before recall exists). Segments are persisted with a `tier` label (`warm`/`cold`) for Phase 2 granularity, but Phase 1 summarizes uniformly.
-- Default tuning constants (env-overridable): `MEMORY_COMPACT_TRIGGER_FRAC=0.65`, `MEMORY_HOT_TURNS=10`, `MEMORY_HOT_TOKEN_FRAC=0.4`, `MEMORY_WINDOW_TOKENS=128000`.
-- **Hot set is token-bounded, not count-bounded.** The hot (verbatim) set is the newest turns that fit `MEMORY_HOT_TOKEN_FRAC × window`, with `MEMORY_HOT_TURNS` as a secondary max-count cap. `hot_frac (0.4) < trigger_frac (0.65)` guarantees eviction frees space once triggered. Always keep ≥1 turn; if the single newest turn alone exceeds the hot budget, truncate its in-window copy (head + `…[truncated]…` + tail) and persist the full original as a segment. This is what handles "history ≤ hot_turns but already over budget" and "one giant turn > window".
+- New DB path env `AI_EDITOR_MEMORY_DB_PATH` (default `.agentd/memory.sqlite3`). Separate file from task/chat DBs. Phase 1 creates only `compaction_segments` + `anchored_summaries`.
+- **Hot set is token-bounded, not count-bounded.** Keep newest turns that fit `MEMORY_HOT_TOKEN_FRAC × window` (default 0.4), capped at `MEMORY_HOT_TURNS` (default 10). `hot_frac (0.4) < trigger_frac (0.65)` guarantees eviction frees space once triggered. Always keep ≥1 turn; if the single newest turn alone exceeds the hot budget, truncate its in-window copy (head + `…[truncated]…` + tail) and persist the full original as a segment. This is what handles "history ≤ hot_turns but already over budget" and "one giant turn > window".
+- **No `tier` (warm/cold) label is written.** Tiering is a Phase-2 read-time concern; Phase 1 persists evicted turns as plain segments.
+- Phase-1 simplification (decided, document in code): Phase 1 folds **all** evicted history into the anchor — no information cliff before recall exists.
+- Default tuning constants (env-overridable): `MEMORY_COMPACT_TRIGGER_FRAC=0.65`, `MEMORY_HOT_TOKEN_FRAC=0.4`, `MEMORY_HOT_TURNS=10`, `MEMORY_WINDOW_TOKENS=128000`.
 - Run the suite with `pytest` and read the actual `FAILED`/summary lines — never trust a piped exit code.
 
 ---
@@ -29,7 +29,7 @@
 - `agentd/memory/models.py` — `MemoryKind`, `CompactionSegment`, `AnchoredSummary`, `CompactionResult`, `TurnPreparation`.
 - `agentd/memory/config.py` — `MemoryConfig` + `from_env`.
 - `agentd/memory/store.py` — `MemoryStore` (SQLite: `compaction_segments`, `anchored_summaries`).
-- `agentd/memory/compactor.py` — `Compactor`, `estimate_tokens`, `AnchorSummarizer` type, `make_engine_summarizer`.
+- `agentd/memory/compactor.py` — `Compactor`, `estimate_tokens`, `_select_hot`, `_truncate_to_tokens`, `AnchorSummarizer`, `make_engine_summarizer`.
 - `agentd/memory/harness.py` — `MemoryHarness`, `build_memory_harness`, `NO_OP_HARNESS`.
 - `agentd/chat/controller_loop.py` — MODIFY: inject + call harness at top of `_iterate`.
 - `agentd/tools/loop.py` — MODIFY: inject + call harness at top of the iteration loop.
@@ -40,19 +40,17 @@
 ### Task 1: Subpackage scaffold — models + config
 
 **Files:**
-- Create: `agentd/memory/__init__.py`
-- Create: `agentd/memory/models.py`
-- Create: `agentd/memory/config.py`
+- Create: `agentd/memory/__init__.py`, `agentd/memory/models.py`, `agentd/memory/config.py`
 - Test: `tests/memory/test_config.py`
 
 **Interfaces:**
 - Produces:
   - `MemoryKind(str, Enum)` = `EPISODIC|SEMANTIC|PROCEDURAL` (defined now for Phase-2 forward-compat).
-  - `CompactionSegment(BaseModel)`: `id: str, run_id: str, seq: int, tier: Literal["warm","cold"], content: str, created_at: datetime`.
+  - `CompactionSegment(BaseModel)`: `id: str, run_id: str, seq: int, content: str, created_at: datetime`.
   - `AnchoredSummary(BaseModel)`: `run_id: str, summary_md: str, version: int, updated_at: datetime`.
-  - `CompactionResult(BaseModel)`: `compacted: bool, history: list[dict[str, object]], anchor: str | None, degraded: bool = False`.
+  - `CompactionResult(BaseModel)`: `compacted: bool, history: list[dict[str, object]], anchor: str | None = None, degraded: bool = False`.
   - `TurnPreparation(BaseModel)`: `history: list[dict[str, object]], recalled_memories: list[dict[str, object]] = [], compacted: bool = False`.
-  - `MemoryConfig(BaseModel)`: `enabled: bool, db_path: str, trigger_frac: float, hot_turns: int, hot_token_frac: float, window_tokens: int`; classmethod `from_env(env: Mapping[str,str]) -> MemoryConfig`.
+  - `MemoryConfig(BaseModel)`: `enabled: bool, db_path: str, trigger_frac: float, hot_token_frac: float, hot_turns: int, window_tokens: int`; classmethod `from_env(env: Mapping[str,str]) -> MemoryConfig`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -65,8 +63,8 @@ def test_from_env_defaults_disabled():
     assert cfg.enabled is False
     assert cfg.db_path.endswith("memory.sqlite3")
     assert cfg.trigger_frac == 0.65
-    assert cfg.hot_turns == 10
     assert cfg.hot_token_frac == 0.4
+    assert cfg.hot_turns == 10
     assert cfg.window_tokens == 128000
 
 def test_from_env_overrides():
@@ -74,15 +72,15 @@ def test_from_env_overrides():
         "AI_EDITOR_MEMORY_ENABLED": "1",
         "AI_EDITOR_MEMORY_DB_PATH": "/tmp/m.sqlite3",
         "AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC": "0.5",
-        "AI_EDITOR_MEMORY_HOT_TURNS": "4",
         "AI_EDITOR_MEMORY_HOT_TOKEN_FRAC": "0.25",
+        "AI_EDITOR_MEMORY_HOT_TURNS": "4",
         "AI_EDITOR_MEMORY_WINDOW_TOKENS": "8000",
     })
     assert cfg.enabled is True
     assert cfg.db_path == "/tmp/m.sqlite3"
     assert cfg.trigger_frac == 0.5
-    assert cfg.hot_turns == 4
     assert cfg.hot_token_frac == 0.25
+    assert cfg.hot_turns == 4
     assert cfg.window_tokens == 8000
 ```
 
@@ -98,7 +96,6 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'agentd.memory'`
 from __future__ import annotations
 from datetime import datetime
 from enum import Enum
-from typing import Literal
 from pydantic import BaseModel, Field
 
 class MemoryKind(str, Enum):
@@ -110,7 +107,6 @@ class CompactionSegment(BaseModel):
     id: str
     run_id: str
     seq: int
-    tier: Literal["warm", "cold"]
     content: str
     created_at: datetime
 
@@ -144,8 +140,8 @@ class MemoryConfig(BaseModel):
     enabled: bool
     db_path: str
     trigger_frac: float
-    hot_turns: int
     hot_token_frac: float
+    hot_turns: int
     window_tokens: int
 
     @classmethod
@@ -154,8 +150,8 @@ class MemoryConfig(BaseModel):
             enabled=env.get("AI_EDITOR_MEMORY_ENABLED", "").lower() in _TRUTHY,
             db_path=env.get("AI_EDITOR_MEMORY_DB_PATH", ".agentd/memory.sqlite3"),
             trigger_frac=float(env.get("AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC", "0.65")),
-            hot_turns=int(env.get("AI_EDITOR_MEMORY_HOT_TURNS", "10")),
             hot_token_frac=float(env.get("AI_EDITOR_MEMORY_HOT_TOKEN_FRAC", "0.4")),
+            hot_turns=int(env.get("AI_EDITOR_MEMORY_HOT_TURNS", "10")),
             window_tokens=int(env.get("AI_EDITOR_MEMORY_WINDOW_TOKENS", "128000")),
         )
 ```
@@ -179,7 +175,7 @@ __all__ = [
 ]
 ```
 
-Also create empty `tests/memory/__init__.py` if the test layout requires packages (match the existing `tests/` convention — add only if other `tests/` subdirs have one).
+Create `tests/memory/__init__.py` (empty) only if other `tests/` subdirs use package markers — match the existing convention.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -207,7 +203,7 @@ git commit -m "feat(memory): scaffold memory subpackage with models + config"
   - `__init__(self, db_path: str | Path)` — opens/creates DB, runs migrations.
   - `add_segments(self, segments: list[CompactionSegment]) -> None`
   - `get_segments(self, run_id: str) -> list[CompactionSegment]` — ordered by `seq`.
-  - `upsert_anchor(self, run_id: str, summary_md: str) -> AnchoredSummary` — inserts at version 1 or bumps version + updates text.
+  - `upsert_anchor(self, run_id: str, summary_md: str) -> AnchoredSummary` — version 1 on insert, else bump.
   - `get_anchor(self, run_id: str) -> AnchoredSummary | None`
 
 - [ ] **Step 1: Write the failing test**
@@ -218,25 +214,23 @@ from datetime import datetime, timezone
 from agentd.memory.models import CompactionSegment
 from agentd.memory.store import MemoryStore
 
-def _seg(run_id: str, seq: int, tier: str, content: str) -> CompactionSegment:
+def _seg(run_id: str, seq: int, content: str) -> CompactionSegment:
     return CompactionSegment(
-        id=f"{run_id}-{seq}", run_id=run_id, seq=seq, tier=tier,
+        id=f"{run_id}-{seq}", run_id=run_id, seq=seq,
         content=content, created_at=datetime.now(timezone.utc),
     )
 
 def test_segments_round_trip_ordered(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
-    store.add_segments([_seg("r1", 1, "cold", "first"), _seg("r1", 0, "warm", "zeroth")])
+    store.add_segments([_seg("r1", 1, "first"), _seg("r1", 0, "zeroth")])
     got = store.get_segments("r1")
     assert [s.seq for s in got] == [0, 1]
     assert got[0].content == "zeroth"
-    assert got[0].tier == "warm"
 
 def test_segments_scoped_by_run(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
-    store.add_segments([_seg("r1", 0, "cold", "a"), _seg("r2", 0, "cold", "b")])
-    assert len(store.get_segments("r1")) == 1
-    assert store.get_segments("r1")[0].content == "a"
+    store.add_segments([_seg("r1", 0, "a"), _seg("r2", 0, "b")])
+    assert [s.content for s in store.get_segments("r1")] == ["a"]
 
 def test_anchor_insert_then_bump_version(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
@@ -271,7 +265,6 @@ CREATE TABLE IF NOT EXISTS compaction_segments (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
     seq INTEGER NOT NULL,
-    tier TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -296,9 +289,8 @@ class MemoryStore:
     def add_segments(self, segments: list[CompactionSegment]) -> None:
         self._conn.executemany(
             "INSERT OR REPLACE INTO compaction_segments "
-            "(id, run_id, seq, tier, content, created_at) VALUES (?,?,?,?,?,?)",
-            [(s.id, s.run_id, s.seq, s.tier, s.content, s.created_at.isoformat())
-             for s in segments],
+            "(id, run_id, seq, content, created_at) VALUES (?,?,?,?,?)",
+            [(s.id, s.run_id, s.seq, s.content, s.created_at.isoformat()) for s in segments],
         )
         self._conn.commit()
 
@@ -308,7 +300,7 @@ class MemoryStore:
         ).fetchall()
         return [
             CompactionSegment(
-                id=r["id"], run_id=r["run_id"], seq=r["seq"], tier=r["tier"],
+                id=r["id"], run_id=r["run_id"], seq=r["seq"],
                 content=r["content"], created_at=datetime.fromisoformat(r["created_at"]),
             )
             for r in rows
@@ -354,44 +346,65 @@ git commit -m "feat(memory): SQLite store for compaction segments + anchored sum
 
 ---
 
-### Task 3: Compactor — token estimation + below-threshold no-op
+### Task 3: Compactor — token helpers + hot selection + below-threshold no-op
 
 **Files:**
 - Create: `agentd/memory/compactor.py`
 - Test: `tests/memory/test_compactor.py`
 
 **Interfaces:**
-- Consumes: `MemoryStore` (Task 2), `CompactionResult` (Task 1).
+- Consumes: `MemoryStore` (Task 2), `CompactionResult`, `CompactionSegment` (Task 1).
 - Produces:
-  - `estimate_tokens(text: str) -> int` — char/4 heuristic, min 1.
+  - `estimate_tokens(text: str) -> int` — `max(1, len//4)`.
+  - `_truncate_to_tokens(text: str, max_tokens: int) -> str` — head + `…[truncated]…` + tail to fit.
+  - `_select_hot(history, hot_budget_tokens, hot_turns_cap) -> tuple[list[dict], list[dict], int]` — newest turns within the token budget and count cap; always keeps ≥1; returns `(evicted, hot, hot_used_tokens)`.
   - `AnchorSummarizer = Callable[[str, str], Awaitable[str]]` — `(old_anchor, evicted_text) -> new_anchor`.
-  - `Compactor.__init__(self, store: MemoryStore, summarize: AnchorSummarizer, *, window_tokens: int, trigger_frac: float = 0.65, hot_turns: int = 10, hot_token_frac: float = 0.4)`
-  - `_select_hot(history, hot_budget_tokens, hot_turns_cap) -> tuple[list[dict], list[dict], int]` and `_truncate_to_tokens(text, max_tokens) -> str` module helpers (added in Task 4).
-  - `async Compactor.maybe_compact(self, history: list[dict], run_id: str) -> CompactionResult`
+  - `Compactor.__init__(self, store, summarize, *, window_tokens, trigger_frac=0.65, hot_token_frac=0.4, hot_turns=10)`
+  - `async Compactor.maybe_compact(self, history, run_id) -> CompactionResult`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/memory/test_compactor.py
 import pytest
-from agentd.memory.compactor import Compactor, estimate_tokens
+from agentd.memory.compactor import Compactor, estimate_tokens, _select_hot, _truncate_to_tokens
 from agentd.memory.store import MemoryStore
 
-async def _never_called(old: str, new: str) -> str:  # summarizer must NOT run below threshold
+async def _never(old: str, new: str) -> str:
     raise AssertionError("summarize called below threshold")
-
-def _msgs(n: int, size: int = 4) -> list[dict]:
-    return [{"role": "user", "content": "x" * size} for _ in range(n)]
 
 def test_estimate_tokens_charsdiv4():
     assert estimate_tokens("abcd") == 1
     assert estimate_tokens("") == 1
 
+def test_truncate_keeps_head_and_tail():
+    out = _truncate_to_tokens("A" * 100 + "Z" * 100, 10)  # 10 tokens ≈ 40 chars
+    assert "[truncated]" in out
+    assert out.startswith("A") and out.endswith("Z")
+    assert len(out) < 200
+
+def test_select_hot_token_bounded():
+    # each msg ~20 tokens (80 chars); budget 45 tokens keeps 2 newest; cap not hit
+    hist = [{"role": "user", "content": "x" * 80} for _ in range(5)]
+    evicted, hot, used = _select_hot(hist, hot_budget_tokens=45, hot_turns_cap=10)
+    assert len(hot) == 2 and hot == hist[-2:]
+    assert len(evicted) == 3 and used <= 45
+
+def test_select_hot_count_capped():
+    hist = [{"role": "user", "content": "x" * 4} for _ in range(20)]  # tiny msgs
+    evicted, hot, _ = _select_hot(hist, hot_budget_tokens=10_000, hot_turns_cap=3)
+    assert len(hot) == 3 and hot == hist[-3:]
+
+def test_select_hot_always_keeps_one():
+    hist = [{"role": "user", "content": "x" * 4000}]  # one huge msg over any budget
+    evicted, hot, used = _select_hot(hist, hot_budget_tokens=10, hot_turns_cap=10)
+    assert len(hot) == 1 and evicted == [] and used > 10
+
 @pytest.mark.asyncio
 async def test_below_threshold_is_noop(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
-    comp = Compactor(store, _never_called, window_tokens=10000, trigger_frac=0.65, hot_turns=10)
-    history = _msgs(3)
+    comp = Compactor(store, _never, window_tokens=10000, trigger_frac=0.65, hot_token_frac=0.4, hot_turns=10)
+    history = [{"role": "user", "content": "xxxx"} for _ in range(3)]
     result = await comp.maybe_compact(history, "r1")
     assert result.compacted is False
     assert result.history == history
@@ -427,6 +440,35 @@ def _history_tokens(history: list[dict]) -> int:
 def _render(messages: list[dict]) -> str:
     return "\n".join(f"{m.get('role', '')}: {m.get('content', '')}" for m in messages)
 
+def _truncate_to_tokens(text: str, max_tokens: int) -> str:
+    max_chars = max(8, max_tokens * 4)
+    if len(text) <= max_chars:
+        return text
+    head = max_chars // 2
+    tail = max_chars - head
+    return text[:head] + "\n…[truncated]…\n" + text[-tail:]
+
+def _select_hot(
+    history: list[dict], hot_budget_tokens: int, hot_turns_cap: int
+) -> tuple[list[dict], list[dict], int]:
+    """Newest turns that fit the token budget and the count cap. Always keeps ≥1 turn."""
+    hot: list[dict] = []
+    used = 0
+    for m in reversed(history):
+        t = estimate_tokens(str(m.get("content", "")))
+        if hot and (used + t > hot_budget_tokens or len(hot) >= hot_turns_cap):
+            break
+        hot.insert(0, m)
+        used += t
+    evicted = history[: len(history) - len(hot)]
+    return evicted, hot, used
+
+def _anchor_message(text: str) -> dict:
+    return {
+        "role": "user",
+        "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{text}",
+    }
+
 class Compactor:
     def __init__(
         self,
@@ -435,21 +477,20 @@ class Compactor:
         *,
         window_tokens: int,
         trigger_frac: float = 0.65,
-        hot_turns: int = 10,
         hot_token_frac: float = 0.4,
+        hot_turns: int = 10,
     ) -> None:
         self._store = store
         self._summarize = summarize
         self._window_tokens = window_tokens
         self._trigger_frac = trigger_frac
-        self._hot_turns = hot_turns
         self._hot_token_frac = hot_token_frac
+        self._hot_turns = hot_turns
 
     async def maybe_compact(self, history: list[dict], run_id: str) -> CompactionResult:
-        budget = self._window_tokens * self._trigger_frac
-        # Pure token-trigger check. The old `len(history) <= hot_turns` short-circuit was a bug:
-        # a short history of oversized turns can be over budget yet skip compaction entirely.
-        if _history_tokens(history) < budget:
+        # Pure token-trigger check (no count short-circuit: a short history of oversized
+        # turns can be over budget and must still compact).
+        if _history_tokens(history) < self._window_tokens * self._trigger_frac:
             anchor = self._store.get_anchor(run_id)
             return CompactionResult(
                 compacted=False, history=history,
@@ -462,26 +503,25 @@ class Compactor:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_compactor.py -v`
-Expected: PASS (2 passed)
+Expected: PASS (6 passed)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add services/agentd-py/agentd/memory/compactor.py services/agentd-py/tests/memory/test_compactor.py
-git commit -m "feat(memory): compactor token estimation + below-threshold no-op"
+git commit -m "feat(memory): compactor token helpers, hot selection, below-threshold no-op"
 ```
 
 ---
 
-### Task 4: Compactor — over-threshold compaction (hot/evict split, anchor merge, persist)
+### Task 4: Compactor — over-threshold compaction (evict → persist + merge, with truncation backstop)
 
 **Files:**
-- Modify: `agentd/memory/compactor.py` (replace the Task-3 placeholder return in `maybe_compact`)
+- Modify: `agentd/memory/compactor.py` (replace the Task-3 placeholder in `maybe_compact`)
 - Test: `tests/memory/test_compactor.py` (add cases)
 
 **Interfaces:**
-- Consumes: `AnchorSummarizer`, `MemoryStore.add_segments`, `MemoryStore.upsert_anchor`, `MemoryStore.get_anchor`.
-- Produces: `maybe_compact` now returns `compacted=True` with `history = [anchor_message] + hot`, persists evicted as segments, and merges into the anchor via the injected summarizer. Anchor message shape: `{"role": "user", "content": "[MEMORY] Summary of earlier conversation that was compacted:\n<anchor>"}`.
+- Produces: `maybe_compact` over threshold returns `compacted=True` with `history = [anchor_message] + hot`, persists evicted as segments, merges into the anchor via the injected summarizer. Single oversize newest turn ⇒ truncated in-window + full original persisted (`degraded=True`). Empty-evicted (truncation made room alone) ⇒ summarizer not called.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -492,21 +532,17 @@ async def test_over_threshold_compacts(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
     captured = {}
     async def summ(old: str, evicted: str) -> str:
-        captured["old"] = old
-        captured["evicted"] = evicted
+        captured["old"], captured["evicted"] = old, evicted
         return "MERGED ANCHOR"
-    comp = Compactor(store, summ, window_tokens=100, trigger_frac=0.1, hot_turns=2)
-    history = [{"role": "user", "content": f"msg{i}" * 20} for i in range(6)]
+    comp = Compactor(store, summ, window_tokens=100, trigger_frac=0.1,
+                     hot_token_frac=0.4, hot_turns=2)  # hot_budget=40 tokens
+    history = [{"role": "user", "content": "z" * 80} for _ in range(6)]  # ~20 tok each
     result = await comp.maybe_compact(history, "r1")
     assert result.compacted is True
-    # last 2 stay verbatim
-    assert result.history[-2:] == history[-2:]
-    # first element is the anchor message carrying the merged summary
+    assert result.history[-2:] == history[-2:]            # last 2 verbatim (count cap)
     assert result.history[0]["content"].startswith("[MEMORY]")
     assert "MERGED ANCHOR" in result.history[0]["content"]
-    # evicted (first 4) persisted as segments
-    assert len(store.get_segments("r1")) == 4
-    # anchor stored + versioned
+    assert len(store.get_segments("r1")) == 4             # first 4 evicted
     assert store.get_anchor("r1").summary_md == "MERGED ANCHOR"
 
 @pytest.mark.asyncio
@@ -517,93 +553,60 @@ async def test_anchor_merges_not_regenerates(tmp_path):
     async def summ(old: str, evicted: str) -> str:
         seen["old"] = old
         return old + " + NEW"
-    comp = Compactor(store, summ, window_tokens=100, trigger_frac=0.1, hot_turns=2)
+    comp = Compactor(store, summ, window_tokens=100, trigger_frac=0.1,
+                     hot_token_frac=0.4, hot_turns=2)
     history = [{"role": "user", "content": "z" * 80} for _ in range(6)]
-    result = await comp.maybe_compact(history, "r1")
-    assert seen["old"] == "PRIOR"          # prior anchor fed back in (anchored merge)
+    await comp.maybe_compact(history, "r1")
+    assert seen["old"] == "PRIOR"                          # prior anchor fed back in
     assert store.get_anchor("r1").summary_md == "PRIOR + NEW"
     assert store.get_anchor("r1").version == 2
 
 @pytest.mark.asyncio
 async def test_single_oversize_message_is_truncated(tmp_path):
-    # History shorter than hot_turns, but one turn alone busts the window: must truncate,
-    # not no-op. summarize must NOT run (nothing evicted).
     store = MemoryStore(tmp_path / "m.sqlite3")
     async def summ(old: str, evicted: str) -> str:
         raise AssertionError("summarize should not run when nothing is evicted")
     comp = Compactor(store, summ, window_tokens=100, trigger_frac=0.1,
-                     hot_turns=10, hot_token_frac=0.4)  # hot_budget = 40 tokens = 160 chars
-    history = [{"role": "user", "content": "q" * 4000}]  # ~1000 tokens, sole newest turn
+                     hot_token_frac=0.4, hot_turns=10)  # hot_budget=40 tok=160 chars
+    history = [{"role": "user", "content": "q" * 4000}]   # ~1000 tok, sole newest turn
     result = await comp.maybe_compact(history, "r1")
-    assert result.compacted is True
-    assert result.degraded is True
+    assert result.compacted is True and result.degraded is True
     assert len(result.history) == 1
-    assert len(result.history[0]["content"]) < 4000      # truncated to fit hot budget
+    assert len(result.history[0]["content"]) < 4000
     assert "[truncated]" in result.history[0]["content"]
-    assert len(store.get_segments("r1")) == 1            # full original persisted (lossless)
-    assert store.get_segments("r1")[0].content == "q" * 4000
+    assert len(store.get_segments("r1")) == 1
+    assert store.get_segments("r1")[0].content == "q" * 4000  # full original persisted
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_compactor.py -v`
-Expected: FAIL — `test_over_threshold_compacts` asserts `compacted is True` but placeholder returns `False`.
+Expected: FAIL — `test_over_threshold_compacts` asserts `compacted is True` but the placeholder returns `False`.
 
 - [ ] **Step 3: Write minimal implementation**
 
-First add the two module-level helpers (above the `Compactor` class, next to `_render`):
-
-```python
-def _truncate_to_tokens(text: str, max_tokens: int) -> str:
-    max_chars = max(8, max_tokens * 4)
-    if len(text) <= max_chars:
-        return text
-    head = max_chars // 2
-    tail = max_chars - head
-    return text[:head] + "\n…[truncated]…\n" + text[-tail:]
-
-def _select_hot(
-    history: list[dict], hot_budget_tokens: int, hot_turns_cap: int
-) -> tuple[list[dict], list[dict], int]:
-    """Newest turns that fit the token budget (and the count cap). Always keeps ≥1 turn."""
-    hot: list[dict] = []
-    used = 0
-    for m in reversed(history):
-        t = estimate_tokens(str(m.get("content", "")))
-        if hot and (used + t > hot_budget_tokens or len(hot) >= hot_turns_cap):
-            break
-        hot.insert(0, m)
-        used += t
-    evicted = history[: len(history) - len(hot)]
-    return evicted, hot, used
-```
-
-Replace the `# Compaction logic added in Task 4.` block and its `return` in `maybe_compact` with:
+Replace the `# Compaction logic added in Task 4.` line and its `return` with:
 
 ```python
         now = datetime.now(timezone.utc)
+        ms = int(now.timestamp() * 1000)
         hot_budget = int(self._window_tokens * self._hot_token_frac)
         evicted, hot, hot_used = _select_hot(history, hot_budget, self._hot_turns)
         degraded = False
         extra: list[CompactionSegment] = []
-        # Backstop: a single newest turn that alone busts the hot budget must be truncated in-window,
-        # else compaction cannot get us back under the window. Persist the full original first.
+        # Backstop: a single newest turn that alone busts the hot budget must be truncated
+        # in-window, else compaction cannot get us back under the window.
         if hot_used > hot_budget and len(hot) == 1:
             full = str(hot[0].get("content", ""))
             extra.append(CompactionSegment(
-                id=f"{run_id}-tail-{int(now.timestamp() * 1000)}",
-                run_id=run_id, seq=len(evicted), tier="cold", content=full, created_at=now,
+                id=f"{run_id}-tail-{ms}", run_id=run_id, seq=len(evicted),
+                content=full, created_at=now,
             ))
             hot = [{**hot[0], "content": _truncate_to_tokens(full, hot_budget)}]
             degraded = True
-        # Warm = the band nearest hot; cold = the rest. Persisted for Phase-2 recall;
-        # Phase 1 summarizes uniformly (see plan Global Constraints).
-        warm_start = max(0, len(evicted) - self._hot_turns)
         segments = [
             CompactionSegment(
-                id=f"{run_id}-{i}-{int(now.timestamp() * 1000)}",
-                run_id=run_id, seq=i,
-                tier="warm" if i >= warm_start else "cold",
+                id=f"{run_id}-{i}-{ms}", run_id=run_id, seq=i,
                 content=str(m.get("content", "")), created_at=now,
             )
             for i, m in enumerate(evicted)
@@ -613,36 +616,28 @@ Replace the `# Compaction logic added in Task 4.` block and its `return` in `may
         old = self._store.get_anchor(run_id)
         old_text = old.summary_md if old else ""
         if not evicted:
-            # Truncation alone made room — nothing to fold; leave the anchor untouched.
-            keep = (
-                [{"role": "user",
-                  "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{old_text}"}]
-                if old_text else []
-            )
+            keep = [_anchor_message(old_text)] if old_text else []
             return CompactionResult(
                 compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=degraded,
             )
         new_anchor = await self._summarize(old_text, _render(evicted))
         self._store.upsert_anchor(run_id, new_anchor)
-        anchor_message = {
-            "role": "user",
-            "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{new_anchor}",
-        }
         return CompactionResult(
-            compacted=True, history=[anchor_message, *hot], anchor=new_anchor, degraded=degraded,
+            compacted=True, history=[_anchor_message(new_anchor), *hot],
+            anchor=new_anchor, degraded=degraded,
         )
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_compactor.py -v`
-Expected: PASS (4 passed)
+Expected: PASS (9 passed)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add services/agentd-py/agentd/memory/compactor.py services/agentd-py/tests/memory/test_compactor.py
-git commit -m "feat(memory): compactor evicts+merges over-threshold history into anchor"
+git commit -m "feat(memory): compactor evicts+merges over-threshold history, truncates oversize tail"
 ```
 
 ---
@@ -650,11 +645,11 @@ git commit -m "feat(memory): compactor evicts+merges over-threshold history into
 ### Task 5: Compactor — summarizer-failure fallback
 
 **Files:**
-- Modify: `agentd/memory/compactor.py` (wrap the summarize call)
+- Modify: `agentd/memory/compactor.py` (wrap the trailing summarize call)
 - Test: `tests/memory/test_compactor.py` (add case)
 
 **Interfaces:**
-- Produces: on summarizer exception, `maybe_compact` returns `compacted=True, degraded=True` with `history = [old_anchor_message?] + hot` (evicted dropped from window but still persisted as segments), never raising.
+- Produces: on summarizer exception, `maybe_compact` returns `compacted=True, degraded=True` with the prior anchor (if any) + hot; evicted stays persisted; never raises.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -665,13 +660,13 @@ async def test_summarizer_failure_falls_back(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
     async def boom(old: str, evicted: str) -> str:
         raise RuntimeError("provider down")
-    comp = Compactor(store, boom, window_tokens=100, trigger_frac=0.1, hot_turns=2)
+    comp = Compactor(store, boom, window_tokens=100, trigger_frac=0.1,
+                     hot_token_frac=0.4, hot_turns=2)
     history = [{"role": "user", "content": "y" * 80} for _ in range(6)]
     result = await comp.maybe_compact(history, "r1")
-    assert result.degraded is True
-    assert result.compacted is True
-    assert result.history[-2:] == history[-2:]   # hot preserved
-    assert len(store.get_segments("r1")) == 4     # evicted still persisted (lossless on disk)
+    assert result.degraded is True and result.compacted is True
+    assert result.history[-2:] == history[-2:]            # hot preserved
+    assert len(store.get_segments("r1")) == 4             # evicted still persisted (lossless)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -681,17 +676,14 @@ Expected: FAIL — `RuntimeError: provider down` propagates.
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `maybe_compact`, wrap the **trailing** summarize call (the lines after the `if not evicted:` early-return block added in Task 4) in try/except so a provider failure degrades instead of raising. Persist already happens before summarize (Task 4), so a failure is still lossless on disk. Replace:
+Wrap the trailing summarize call (the lines after the `if not evicted:` block). Persist already happens before summarize, so a failure is still lossless. Replace:
 
 ```python
         new_anchor = await self._summarize(old_text, _render(evicted))
         self._store.upsert_anchor(run_id, new_anchor)
-        anchor_message = {
-            "role": "user",
-            "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{new_anchor}",
-        }
         return CompactionResult(
-            compacted=True, history=[anchor_message, *hot], anchor=new_anchor, degraded=degraded,
+            compacted=True, history=[_anchor_message(new_anchor), *hot],
+            anchor=new_anchor, degraded=degraded,
         )
 ```
 
@@ -703,27 +695,23 @@ with:
         except Exception:  # best-effort: never fail a loop iteration
             logger.warning("[memory] anchor summarize failed for run=%s; degrading", run_id, exc_info=True)
             keep = (
-                [{"role": "user",
-                  "content": f"[MEMORY] (earlier context summary unavailable)\n{old_text}"}]
+                [{"role": "user", "content": f"[MEMORY] (earlier context summary unavailable)\n{old_text}"}]
                 if old_text else []
             )
             return CompactionResult(
                 compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=True,
             )
         self._store.upsert_anchor(run_id, new_anchor)
-        anchor_message = {
-            "role": "user",
-            "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{new_anchor}",
-        }
         return CompactionResult(
-            compacted=True, history=[anchor_message, *hot], anchor=new_anchor, degraded=degraded,
+            compacted=True, history=[_anchor_message(new_anchor), *hot],
+            anchor=new_anchor, degraded=degraded,
         )
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_compactor.py -v`
-Expected: PASS (5 passed)
+Expected: PASS (10 passed)
 
 - [ ] **Step 5: Commit**
 
@@ -746,11 +734,11 @@ git commit -m "feat(memory): compactor degrades gracefully on summarizer failure
 - Consumes: `Compactor`, `MemoryStore`, `MemoryConfig`, `TurnPreparation`.
 - Produces:
   - `MemoryHarness.__init__(self, *, enabled: bool, compactor: Compactor | None)`
-  - `async MemoryHarness.prepare_turn(self, history: list[dict], run_id: str) -> TurnPreparation` — disabled or no compactor ⇒ returns history untouched; else delegates to `compactor.maybe_compact`.
+  - `async MemoryHarness.prepare_turn(self, history, run_id) -> TurnPreparation` — disabled/no compactor ⇒ history untouched; else delegate; swallow internal errors.
   - `async MemoryHarness.recall(self, query: str, run_id: str) -> list[dict]` — Phase-2 stub, returns `[]`.
-  - `NO_OP_HARNESS: MemoryHarness` — module singleton, `enabled=False`, used as the default injected value in both loops.
-  - `make_engine_summarizer(reasoning_engine) -> AnchorSummarizer` — builds the production summarizer from the engine's text generation (the same entrypoint `ChatAgent` uses for QA answers — confirm the method name when wiring; it is the engine's plain-text generation call).
-  - `build_memory_harness(config: MemoryConfig, reasoning_engine) -> MemoryHarness` — if `config.enabled`: construct `MemoryStore(config.db_path)`, `Compactor(...)` with `make_engine_summarizer`, return enabled harness; else return `NO_OP_HARNESS`.
+  - `NO_OP_HARNESS: MemoryHarness` — module singleton (`enabled=False`), the default injected into both loops.
+  - `make_engine_summarizer(reasoning_engine) -> AnchorSummarizer`
+  - `build_memory_harness(config: MemoryConfig, reasoning_engine) -> MemoryHarness`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -765,21 +753,27 @@ from agentd.memory.store import MemoryStore
 async def test_disabled_harness_is_passthrough():
     history = [{"role": "user", "content": "hi"}]
     prep = await NO_OP_HARNESS.prepare_turn(history, "r1")
-    assert prep.history is history
-    assert prep.compacted is False
-    assert prep.recalled_memories == []
+    assert prep.history is history and prep.compacted is False and prep.recalled_memories == []
 
 @pytest.mark.asyncio
-async def test_enabled_harness_delegates_to_compactor(tmp_path):
+async def test_enabled_harness_delegates(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
-    async def summ(old: str, evicted: str) -> str:
-        return "A"
-    comp = Compactor(store, summ, window_tokens=100, trigger_frac=0.1, hot_turns=2)
+    async def summ(old, evicted): return "A"
+    comp = Compactor(store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2)
     harness = MemoryHarness(enabled=True, compactor=comp)
     history = [{"role": "user", "content": "q" * 80} for _ in range(6)]
     prep = await harness.prepare_turn(history, "r1")
-    assert prep.compacted is True
-    assert prep.history[0]["content"].startswith("[MEMORY]")
+    assert prep.compacted is True and prep.history[0]["content"].startswith("[MEMORY]")
+
+@pytest.mark.asyncio
+async def test_prepare_turn_swallows_errors(tmp_path):
+    class Boom:
+        async def maybe_compact(self, history, run_id):
+            raise RuntimeError("kaboom")
+    harness = MemoryHarness(enabled=True, compactor=Boom())  # type: ignore[arg-type]
+    history = [{"role": "user", "content": "x"}]
+    prep = await harness.prepare_turn(history, "r1")
+    assert prep.history is history and prep.compacted is False
 
 @pytest.mark.asyncio
 async def test_recall_stub_returns_empty():
@@ -831,7 +825,7 @@ def build_memory_harness(config: MemoryConfig, reasoning_engine: object) -> Memo
     compactor = Compactor(
         store, make_engine_summarizer(reasoning_engine),
         window_tokens=config.window_tokens, trigger_frac=config.trigger_frac,
-        hot_turns=config.hot_turns, hot_token_frac=config.hot_token_frac,
+        hot_token_frac=config.hot_token_frac, hot_turns=config.hot_turns,
     )
     return MemoryHarness(enabled=True, compactor=compactor)
 ```
@@ -856,7 +850,7 @@ def make_engine_summarizer(reasoning_engine: object) -> AnchorSummarizer:
     return _summarize
 ```
 
-> **Wiring note for the implementer:** confirm the exact text-generation method/signature on the reasoning engine (grep `generate_text` in `agentd/reasoning/` and `agentd/chat/agent.py`). Adjust the call in `make_engine_summarizer` to match; the unit tests inject their own summarizer and do not exercise this adapter, so verify it live in Task 9's manual check.
+> **Wiring note:** confirm the exact text-generation method/signature on the reasoning engine (grep `generate_text` in `agentd/reasoning/` and `agentd/chat/agent.py`) and adjust this call to match. Unit tests inject their own summarizer and don't exercise this adapter — verify it live in Task 9.
 
 Update `agentd/memory/__init__.py` to also export `MemoryHarness`, `build_memory_harness`, `NO_OP_HARNESS`.
 
@@ -877,16 +871,16 @@ git commit -m "feat(memory): MemoryHarness facade + build factory + engine summa
 ### Task 7: Wire MemoryHarness into ControllerLoop
 
 **Files:**
-- Modify: `agentd/chat/controller_loop.py` (constructor + top of `_iterate` loop)
+- Modify: `agentd/chat/controller_loop.py` (constructor + top of `_iterate` loop) and `agentd/chat/controller.py` (construction site)
 - Test: `tests/memory/test_controller_loop_compaction.py`
 
 **Interfaces:**
 - Consumes: `MemoryHarness`, `NO_OP_HARNESS`.
-- Produces: `ControllerLoop.__init__` gains `memory_harness: MemoryHarness = NO_OP_HARNESS` (keyword, defaulted — existing constructions unaffected). At the top of each `for iteration` in `_iterate`, before `create_controller_step`, compact in place:
+- Produces: `ControllerLoop.__init__` gains `memory_harness: MemoryHarness = NO_OP_HARNESS` (keyword, defaulted — existing constructions unaffected). At the top of each `for iteration` in `_iterate`, before `create_controller_step`:
   ```python
   run_id = str(plan_context.get("run_id", "chat"))
-  prep = await self._memory_harness.prepare_turn(history, run_id)
-  history[:] = prep.history
+  _prep = await self._memory_harness.prepare_turn(history, run_id)
+  history[:] = _prep.history
   ```
   `history[:]` mutates the same list `partial_history()` and downstream `.append()` calls reference.
 
@@ -900,37 +894,36 @@ from agentd.memory.compactor import Compactor
 from agentd.memory.store import MemoryStore
 
 @pytest.mark.asyncio
-async def test_controller_loop_accepts_and_invokes_harness(tmp_path):
-    # The harness is invoked at the top of each iteration with the live history + run_id.
+async def test_controller_loop_invokes_harness(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
     calls = []
-    async def summ(old, evicted):
-        return "A"
+    async def summ(old, evicted): return "A"
     class SpyCompactor(Compactor):
         async def maybe_compact(self, history, run_id):
             calls.append((len(history), run_id))
             return await super().maybe_compact(history, run_id)
-    comp = SpyCompactor(store, summ, window_tokens=100, trigger_frac=0.1, hot_turns=2)
+    comp = SpyCompactor(store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2)
     harness = MemoryHarness(enabled=True, compactor=comp)
-    # Construct ControllerLoop with the project's existing scripted test fixtures, passing
-    # memory_harness=harness, run one turn with seed_history of >hot_turns large messages,
-    # and assert calls is non-empty and calls[0][1] == "<thread_id>".
-    assert harness is not None  # replace with the real loop drive using existing fixtures
+    # Construct ControllerLoop with the project's existing scripted fixtures (copy from an existing
+    # tests/test_controller_loop*.py), passing memory_harness=harness and
+    # plan_context={"run_id": "thread-x", ...}; drive one run() with seed_history of >hot_turns
+    # oversized messages; then assert calls is non-empty and calls[0][1] == "thread-x".
+    assert harness is not None  # replace with the real loop drive
 ```
 
-> **Implementer:** replace the placeholder assert with the project's standard `ControllerLoop` construction (copy the fixture wiring from an existing `tests/test_controller_loop*.py`), inject `memory_harness=harness` and `plan_context={"run_id": "thread-x", ...}`, drive one `run()` whose `seed_history` has > `hot_turns` oversized messages, then assert `calls` is non-empty and `calls[0][1] == "thread-x"`.
+> **Implementer:** replace the placeholder assert with the standard `ControllerLoop` construction copied from an existing `tests/test_controller_loop*.py`, injecting `memory_harness=harness` and `plan_context["run_id"]="thread-x"`, driving one `run()` whose `seed_history` has > `hot_turns` oversized messages; assert `calls` non-empty and `calls[0][1] == "thread-x"`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_controller_loop_compaction.py -v`
-Expected: FAIL — `ControllerLoop.__init__` has no `memory_harness` param (after the implementer wires the real construction).
+Expected: FAIL — `ControllerLoop.__init__` has no `memory_harness` param.
 
 - [ ] **Step 3: Write minimal implementation**
 
 In `agentd/chat/controller_loop.py`:
-1. Add import: `from agentd.memory.harness import MemoryHarness, NO_OP_HARNESS`.
-2. Add to `__init__` signature: `memory_harness: MemoryHarness = NO_OP_HARNESS,` and store `self._memory_harness = memory_harness`.
-3. At the very top of the `for iteration in range(max_iters + 1):` body in `_iterate` (before the `if iteration == 0:` block), insert:
+1. Import: `from agentd.memory.harness import MemoryHarness, NO_OP_HARNESS`.
+2. `__init__`: add `memory_harness: MemoryHarness = NO_OP_HARNESS,`; store `self._memory_harness = memory_harness`.
+3. At the very top of `for iteration in range(max_iters + 1):` in `_iterate` (before the `if iteration == 0:` block):
 
 ```python
             run_id = str(plan_context.get("run_id", "chat"))
@@ -938,12 +931,12 @@ In `agentd/chat/controller_loop.py`:
             history[:] = _prep.history
 ```
 
-4. In `ChatController` (the constructor of `ControllerLoop`), pass `memory_harness=self._memory_harness` and ensure `plan_context["run_id"] = thread_id` is set before `loop.run(...)`. Grep `ControllerLoop(` in `agentd/chat/controller.py` to find the construction site; thread the harness from `build_memory_harness` created at app startup.
+In `agentd/chat/controller.py`: grep `ControllerLoop(` for the construction site; pass `memory_harness=self._memory_harness` (threaded from `build_memory_harness` at app startup) and set `plan_context["run_id"] = thread_id` before `loop.run(...)`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_controller_loop_compaction.py -v && pytest tests/ -k controller -q`
-Expected: PASS (new test) and existing controller tests still green.
+Expected: PASS (new) and existing controller tests still green.
 
 - [ ] **Step 5: Commit**
 
@@ -957,12 +950,12 @@ git commit -m "feat(memory): wire MemoryHarness compaction into ControllerLoop"
 ### Task 8: Wire MemoryHarness into the task ToolLoop
 
 **Files:**
-- Modify: `agentd/tools/loop.py` (constructor + top of iteration loop ~line 359)
+- Modify: `agentd/tools/loop.py` (constructor ~line 205 + top of `for iteration in range(total_budget):` ~line 359) and the `ToolLoop(` construction site in `agentd/orchestrator/engine.py`
 - Test: `tests/memory/test_tool_loop_compaction.py`
 
 **Interfaces:**
 - Consumes: `MemoryHarness`, `NO_OP_HARNESS`.
-- Produces: `ToolLoop.__init__` gains `memory_harness: MemoryHarness = NO_OP_HARNESS` (keyword, defaulted). At the top of `for iteration in range(total_budget):` (before building `history_tail`/`create_tool_step`), compact in place using `run_id = f"{self._task_id}:{step_id}"` (or `self._task_id` if step id unavailable in scope).
+- Produces: `ToolLoop.__init__` gains `memory_harness: MemoryHarness = NO_OP_HARNESS` (keyword, defaulted). At the top of the iteration loop (before `history_tail`/`create_tool_step`), compact in place with `run_id = str(self._task_id)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -974,7 +967,7 @@ from agentd.memory.compactor import Compactor
 from agentd.memory.store import MemoryStore
 
 @pytest.mark.asyncio
-async def test_tool_loop_invokes_harness_each_iteration(tmp_path):
+async def test_tool_loop_invokes_harness(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
     calls = []
     async def summ(old, evicted): return "A"
@@ -982,15 +975,15 @@ async def test_tool_loop_invokes_harness_each_iteration(tmp_path):
         async def maybe_compact(self, history, run_id):
             calls.append(run_id)
             return await super().maybe_compact(history, run_id)
-    comp = SpyCompactor(store, summ, window_tokens=100, trigger_frac=0.1, hot_turns=2)
+    comp = SpyCompactor(store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2)
     harness = MemoryHarness(enabled=True, compactor=comp)
     # Construct ToolLoop with existing scripted fixtures (copy from tests/test_tool_loop*.py),
     # inject memory_harness=harness, run one step whose history grows beyond hot_turns,
-    # assert calls is non-empty and each entry startswith the task id.
-    assert harness is not None  # replace with real loop drive
+    # assert calls is non-empty and each entry == the task id.
+    assert harness is not None  # replace with the real loop drive
 ```
 
-> **Implementer:** replace the placeholder with the project's standard `ToolLoop` construction from an existing `tests/test_tool_loop*.py`, inject `memory_harness=harness`, drive a step, and assert `calls` is non-empty.
+> **Implementer:** replace the placeholder with the standard `ToolLoop` construction from an existing `tests/test_tool_loop*.py`, inject `memory_harness=harness`, drive a step, assert `calls` non-empty.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1000,24 +993,21 @@ Expected: FAIL — `ToolLoop.__init__` has no `memory_harness` param.
 - [ ] **Step 3: Write minimal implementation**
 
 In `agentd/tools/loop.py`:
-1. Add import: `from agentd.memory.harness import MemoryHarness, NO_OP_HARNESS`.
-2. Add to `__init__` (near the `broadcast_key`/`skip_verify` params, ~line 214): `memory_harness: MemoryHarness = NO_OP_HARNESS,` and store `self._memory_harness = memory_harness`.
-3. At the top of `for iteration in range(total_budget):` (~line 359, before `history_tail=history[-8:]` is built), insert:
+1. Import: `from agentd.memory.harness import MemoryHarness, NO_OP_HARNESS`.
+2. `__init__` (near `broadcast_key`/`skip_verify`): add `memory_harness: MemoryHarness = NO_OP_HARNESS,`; store `self._memory_harness = memory_harness`.
+3. At the top of `for iteration in range(total_budget):` (before `history_tail=history[-8:]` is built):
 
 ```python
-            _run_id = f"{self._task_id}:{step_id}" if "step_id" in dir() else str(self._task_id)
-            _prep = await self._memory_harness.prepare_turn(history, _run_id)
+            _prep = await self._memory_harness.prepare_turn(history, str(self._task_id))
             history[:] = _prep.history
 ```
 
-(Use whatever step identifier is in scope at that point; if none, `str(self._task_id)` alone is acceptable for Phase 1 — segments are still correctly scoped per task.)
-
-4. Thread the harness from the orchestrator that constructs `ToolLoop` (grep `ToolLoop(` in `agentd/orchestrator/engine.py`), passing the same `build_memory_harness` instance created at startup.
+In `agentd/orchestrator/engine.py`: grep `ToolLoop(`; pass `memory_harness=...` (the same `build_memory_harness` instance from startup). Pass it **only** to the step-execution `ToolLoop`, not the inline-change loop (mirror how `abort` is scoped).
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_tool_loop_compaction.py -v && pytest tests/ -k tool_loop -q`
-Expected: PASS (new test) and existing tool-loop tests still green.
+Expected: PASS (new) and existing tool-loop tests still green.
 
 - [ ] **Step 5: Commit**
 
@@ -1032,11 +1022,10 @@ git commit -m "feat(memory): wire MemoryHarness compaction into task ToolLoop"
 
 **Files:**
 - Test: `tests/memory/test_integration_compaction.py`
-- (No new source — exercises the wired system end to end.)
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: an acceptance test proving (a) a long run crosses the threshold, persists segments, versions the anchor, and keeps hot turns verbatim; (b) with `enabled=False` the loop history is untouched (parity).
+- Produces: an acceptance test proving (a) a long run crosses the threshold, persists segments, versions the anchor, keeps hot verbatim, and the anchor carries prior content forward across two compactions; (b) `enabled=False` leaves history untouched.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1052,7 +1041,7 @@ async def test_long_run_compacts_and_persists(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
     async def summ(old, evicted):
         return (old + " | " if old else "") + f"summarized {len(evicted)} chars"
-    comp = Compactor(store, summ, window_tokens=200, trigger_frac=0.1, hot_turns=3)
+    comp = Compactor(store, summ, window_tokens=200, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=3)
     harness = MemoryHarness(enabled=True, compactor=comp)
     history = [{"role": "user", "content": "m" * 50} for _ in range(12)]
     prep = await harness.prepare_turn(history, "run-A")
@@ -1060,28 +1049,27 @@ async def test_long_run_compacts_and_persists(tmp_path):
     assert prep.history[-3:] == history[-3:]            # hot verbatim
     assert len(store.get_segments("run-A")) == 9        # 12 - 3 evicted
     assert store.get_anchor("run-A").version == 1
-    # second compaction merges, not regenerates
     history2 = list(prep.history) + [{"role": "user", "content": "n" * 200} for _ in range(6)]
     prep2 = await harness.prepare_turn(history2, "run-A")
+    assert prep2.compacted is True
     assert store.get_anchor("run-A").version == 2
-    assert "|" in store.get_anchor("run-A").summary_md  # prior anchor carried forward
+    assert "|" in store.get_anchor("run-A").summary_md  # prior anchor carried forward (merge)
 
 @pytest.mark.asyncio
 async def test_disabled_is_byte_identical():
     history = [{"role": "user", "content": "x" * 9999} for _ in range(50)]
     prep = await NO_OP_HARNESS.prepare_turn(history, "run-A")
-    assert prep.history is history
-    assert prep.compacted is False
+    assert prep.history is history and prep.compacted is False
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_integration_compaction.py -v`
-Expected: FAIL until the implementations from Tasks 1–6 are present (should PASS immediately if they are — this test exercises the harness directly, so if it fails, read the assertion).
+Expected: PASS immediately if Tasks 1–6 are correct (this exercises the harness directly). If an assertion fails, read it — most likely the anchor carry-forward.
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 3: Fix any failure**
 
-No new source needed. If an assertion fails, fix the responsible unit (most likely the anchor-merge carry-forward in Task 4/5).
+No new source unless an assertion fails; then fix the responsible unit.
 
 - [ ] **Step 4: Run full suite + live manual check**
 
@@ -1093,16 +1081,17 @@ ruff check agentd/memory                    # lint clean
 
 Live check of the production summarizer adapter (the one path unit tests don't cover):
 ```bash
-# From repo root, with a provider configured:
 export $(cat .env | grep -v "^#" | grep "=" | sed 's/"//g' | xargs)
 AI_EDITOR_MEMORY_ENABLED=1 AI_EDITOR_MEMORY_WINDOW_TOKENS=4000 AI_EDITOR_MEMORY_HOT_TURNS=4 \
+AI_EDITOR_MEMORY_HOT_TOKEN_FRAC=0.4 \
   bash scripts/stress/start-backend.sh --backend gemini --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none
-# Drive a long chat turn; confirm in logs that compaction fires and
-# .agentd/memory.sqlite3 gains compaction_segments + an anchored_summaries row.
+# Drive a long chat turn; confirm compaction fires in logs and the DB fills:
 sqlite3 workspaces/shadow-forge-stress/.agentd/memory.sqlite3 \
   "SELECT run_id, version, length(summary_md) FROM anchored_summaries;"
+sqlite3 workspaces/shadow-forge-stress/.agentd/memory.sqlite3 \
+  "SELECT run_id, count(*) FROM compaction_segments GROUP BY run_id;"
 ```
-Expected: at least one `anchored_summaries` row with `version >= 1`; `compaction_segments` populated; the chat turn completes coherently with the compacted history.
+Expected: ≥1 `anchored_summaries` row (`version >= 1`); `compaction_segments` populated; the turn completes coherently on the compacted history.
 
 - [ ] **Step 5: Commit**
 
@@ -1116,16 +1105,15 @@ git commit -m "test(memory): end-to-end compaction + kill-switch parity"
 ## Self-Review
 
 **Spec coverage (Phase 1 scope only):**
-- §1 component boundaries → Tasks 1–6 (one unit per file, store is the only DB-aware unit). ✓
-- §2 data model (`compaction_segments`, `anchored_summaries`) → Task 2. The `memories` table is Phase 2 — correctly absent. ✓
-- §5 compaction (0.65 trigger, **token-bounded** hot set + single-message truncation backstop, anchored merge not regenerate, fallback) → Tasks 3/4/5, asserted by `test_anchor_merges_not_regenerates`, `test_single_oversize_message_is_truncated`, and `test_summarizer_failure_falls_back`. The token-bound (not count-bound) hot window guarantees post-compaction history fits the window even when `history ≤ hot_turns` or a single turn exceeds it. ✓
-- §7 error handling (best-effort, kill switch) → harness try/except (Task 6) + `NO_OP_HARNESS` parity (Task 9). ✓
-- §8 testing (store, compactor, integration, kill switch) → Tasks 2–9. KV-cache byte-position guard is **deferred to Phase 2** (recalled-memories injection doesn't exist yet in Phase 1 — the anchor message is a normal history entry, not a tail slot). Noted, not a gap.
-- §9 phasing (Phase 1 standalone, FTS5/embeddings absent) → no `sqlite-vec` dependency in this plan. ✓
-- Recall stub present for Phase 2 seam (Task 6). ✓
+- §1 component boundaries → Tasks 1–6 (one unit per file; store is the only DB-aware unit). ✓
+- §2 data model (`compaction_segments` with **no** `tier`/`embedding`, `anchored_summaries`) → Task 2. `memories` table is Phase 2 — correctly absent. ✓
+- §5 compaction (0.65 trigger; **token-bounded** hot set + count cap; single-message truncation backstop; anchored merge not regenerate; all-evicted folded; fallback) → Tasks 3/4/5, asserted by `test_select_hot_*`, `test_over_threshold_compacts`, `test_anchor_merges_not_regenerates`, `test_single_oversize_message_is_truncated`, `test_summarizer_failure_falls_back`. The token bound (not count bound) is what guarantees the post-compaction window fits — proven by the oversize + count-cap tests. ✓
+- §7 error handling (kill switch, prepare_turn swallows, summarize/truncation degrade) → Task 6 (`test_prepare_turn_swallows_errors`) + Task 5 + Task 9 parity. ✓
+- §9 phasing (Phase 1 standalone, no `sqlite-vec`/embeddings) → no embedding column, no vec dependency. ✓
+- Recall stub present for the Phase-2 seam (Task 6). KV-cache guard is a Phase-2 concern (no recall tail exists yet) — noted in spec §8, not a gap. ✓
 
-**Placeholder scan:** the two loop-wiring tests (Tasks 7/8) intentionally defer the fixture wiring to the implementer with explicit instructions to copy existing `tests/test_controller_loop*.py` / `tests/test_tool_loop*.py` construction — this is because the exact fixture signatures live in the codebase and must be read at implementation time, not guessed here. Every source step contains complete code.
+**Placeholder scan:** the two loop-wiring tests (Tasks 7/8) deliberately defer fixture construction to implementation time, with explicit instructions to copy existing `tests/test_controller_loop*.py` / `tests/test_tool_loop*.py` wiring — the exact fixture signatures must be read from the codebase, not guessed. Every source step contains complete code.
 
-**Type consistency:** `prepare_turn → TurnPreparation.history`, `maybe_compact → CompactionResult.history`, `summarize(old, evicted) -> str` consistent across Tasks 3–9. `run_id` is a `str` everywhere. `memory_harness: MemoryHarness = NO_OP_HARNESS` identical in both loops.
+**Type consistency:** `prepare_turn → TurnPreparation.history`; `maybe_compact → CompactionResult.history`; `summarize(old, evicted) -> str`; `_select_hot(history, hot_budget_tokens, hot_turns_cap) -> (evicted, hot, used)`; `run_id: str` everywhere; `memory_harness: MemoryHarness = NO_OP_HARNESS` identical in both loops; `CompactionSegment` fields (`id, run_id, seq, content, created_at`) consistent across store + compactor. ✓
 
-**One known soft spot:** `make_engine_summarizer` calls `reasoning_engine.generate_text(...)` — the exact method name/signature must be confirmed against `agentd/reasoning/` during Task 6 (flagged inline). This is the only place the plan references a codebase method it hasn't pinned, and it is covered by Task 9's live check rather than unit tests by design.
+**One known soft spot:** `make_engine_summarizer` calls `reasoning_engine.generate_text(...)` — the one codebase method the plan hasn't pinned; confirm against `agentd/reasoning/` during Task 6 (flagged inline) and verify via Task 9's live check rather than unit tests.
