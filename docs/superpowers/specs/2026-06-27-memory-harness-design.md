@@ -174,7 +174,15 @@ Defaults `w_sem=0.5, w_lex=0.3, w_struct=0.2`, all env-tunable (measure, don't h
 - **Trigger:** est. tokens ≥ `MEMORY_COMPACT_TRIGGER_FRAC` × window (default **0.65** — compact
   before degradation, per the 60–70% finding, not at the hard limit).
 - **Tiering:**
-  - **Hot** (last N turns, default 10): verbatim, untouched.
+  - **Hot** (most recent turns within a **token budget**, not a fixed count): kept verbatim. The
+    hot set is the newest turns that fit `MEMORY_HOT_TOKEN_FRAC × window` (default **0.4**), with
+    `MEMORY_HOT_TURNS` (default 10) as a secondary max-count cap. Token-bounding (not count-bounding)
+    is what guarantees compaction actually gets back under the window — `hot_frac (0.4) <
+    trigger_frac (0.65)`, so once triggered, eviction always frees space.
+    **Single-message backstop:** always keep ≥1 (the newest) turn; if that turn alone exceeds the
+    hot budget, truncate its in-window copy (head + `…[truncated]…` + tail) while persisting the
+    full original as a segment (lossless on disk). This covers the pathological "one giant turn /
+    history shorter than hot_turns but already over budget" cases that a count-based window can't.
   - **Warm** (next band): merged into the **anchored summary** —
     `summarize(old_anchor + warm_band) → new_anchor`, **never regenerate from scratch** (anchoring
     beats reconstruction on continuity — Factory 36K-message finding).
@@ -182,8 +190,9 @@ Defaults `w_sem=0.5, w_lex=0.3, w_struct=0.2`, all env-tunable (measure, don't h
     Lossy in-window, lossless on-disk.
 - **In-window after compaction:** system block (cached head) + anchored summary + hot turns +
   recalled-memories tail. Bounded and stable.
-- **Fallback:** summarize failure → hard-truncate warm band + `⚠️ memory degraded` breadcrumb;
-  loop never dies.
+- **Fallback:** summarize failure → keep the prior anchor + hot turns, drop the evicted band from
+  window (still persisted as segments) + `⚠️ memory degraded` breadcrumb; loop never dies. The
+  single-oversize-turn truncation above is also marked `degraded`.
 
 ## §6 — Code-graph grounding (L4 reuse)
 
@@ -314,7 +323,8 @@ to brainstorm into their own spec when Phase 3 begins.
 AI_EDITOR_MEMORY_ENABLED            # master kill switch (default off — land dark)
 AI_EDITOR_MEMORY_DB_PATH            # default .agentd/memory.sqlite3
 AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC  # default 0.65
-AI_EDITOR_MEMORY_HOT_TURNS          # default 10
+AI_EDITOR_MEMORY_HOT_TURNS          # default 10 (secondary max-count cap on the hot set)
+AI_EDITOR_MEMORY_HOT_TOKEN_FRAC     # default 0.4 (primary token bound on the hot set; < trigger_frac)
 AI_EDITOR_MEMORY_DEDUP_THRESHOLD    # default 0.92
 AI_EDITOR_MEMORY_RECALL_TOKEN_BUDGET   # default ~1500
 AI_EDITOR_MEMORY_WEIGHTS            # w_sem,w_lex,w_struct — default 0.5,0.3,0.2

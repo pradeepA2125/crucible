@@ -17,7 +17,8 @@
 - Master kill switch `AI_EDITOR_MEMORY_ENABLED` (default **off**). When off, `MemoryHarness` is a no-op pass-through and both loops behave byte-identically to today.
 - New DB path env: `AI_EDITOR_MEMORY_DB_PATH` (default `.agentd/memory.sqlite3`). Separate file from task/chat DBs.
 - Phase-1-specific simplification (decided, document in code): Phase 1 folds **all** evicted history into the anchor (no information cliff before recall exists). Segments are persisted with a `tier` label (`warm`/`cold`) for Phase 2 granularity, but Phase 1 summarizes uniformly.
-- Default tuning constants (env-overridable): `MEMORY_COMPACT_TRIGGER_FRAC=0.65`, `MEMORY_HOT_TURNS=10`, `MEMORY_WINDOW_TOKENS=128000`.
+- Default tuning constants (env-overridable): `MEMORY_COMPACT_TRIGGER_FRAC=0.65`, `MEMORY_HOT_TURNS=10`, `MEMORY_HOT_TOKEN_FRAC=0.4`, `MEMORY_WINDOW_TOKENS=128000`.
+- **Hot set is token-bounded, not count-bounded.** The hot (verbatim) set is the newest turns that fit `MEMORY_HOT_TOKEN_FRAC × window`, with `MEMORY_HOT_TURNS` as a secondary max-count cap. `hot_frac (0.4) < trigger_frac (0.65)` guarantees eviction frees space once triggered. Always keep ≥1 turn; if the single newest turn alone exceeds the hot budget, truncate its in-window copy (head + `…[truncated]…` + tail) and persist the full original as a segment. This is what handles "history ≤ hot_turns but already over budget" and "one giant turn > window".
 - Run the suite with `pytest` and read the actual `FAILED`/summary lines — never trust a piped exit code.
 
 ---
@@ -51,7 +52,7 @@
   - `AnchoredSummary(BaseModel)`: `run_id: str, summary_md: str, version: int, updated_at: datetime`.
   - `CompactionResult(BaseModel)`: `compacted: bool, history: list[dict[str, object]], anchor: str | None, degraded: bool = False`.
   - `TurnPreparation(BaseModel)`: `history: list[dict[str, object]], recalled_memories: list[dict[str, object]] = [], compacted: bool = False`.
-  - `MemoryConfig(BaseModel)`: `enabled: bool, db_path: str, trigger_frac: float, hot_turns: int, window_tokens: int`; classmethod `from_env(env: Mapping[str,str]) -> MemoryConfig`.
+  - `MemoryConfig(BaseModel)`: `enabled: bool, db_path: str, trigger_frac: float, hot_turns: int, hot_token_frac: float, window_tokens: int`; classmethod `from_env(env: Mapping[str,str]) -> MemoryConfig`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -65,6 +66,7 @@ def test_from_env_defaults_disabled():
     assert cfg.db_path.endswith("memory.sqlite3")
     assert cfg.trigger_frac == 0.65
     assert cfg.hot_turns == 10
+    assert cfg.hot_token_frac == 0.4
     assert cfg.window_tokens == 128000
 
 def test_from_env_overrides():
@@ -73,12 +75,14 @@ def test_from_env_overrides():
         "AI_EDITOR_MEMORY_DB_PATH": "/tmp/m.sqlite3",
         "AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC": "0.5",
         "AI_EDITOR_MEMORY_HOT_TURNS": "4",
+        "AI_EDITOR_MEMORY_HOT_TOKEN_FRAC": "0.25",
         "AI_EDITOR_MEMORY_WINDOW_TOKENS": "8000",
     })
     assert cfg.enabled is True
     assert cfg.db_path == "/tmp/m.sqlite3"
     assert cfg.trigger_frac == 0.5
     assert cfg.hot_turns == 4
+    assert cfg.hot_token_frac == 0.25
     assert cfg.window_tokens == 8000
 ```
 
@@ -141,6 +145,7 @@ class MemoryConfig(BaseModel):
     db_path: str
     trigger_frac: float
     hot_turns: int
+    hot_token_frac: float
     window_tokens: int
 
     @classmethod
@@ -150,6 +155,7 @@ class MemoryConfig(BaseModel):
             db_path=env.get("AI_EDITOR_MEMORY_DB_PATH", ".agentd/memory.sqlite3"),
             trigger_frac=float(env.get("AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC", "0.65")),
             hot_turns=int(env.get("AI_EDITOR_MEMORY_HOT_TURNS", "10")),
+            hot_token_frac=float(env.get("AI_EDITOR_MEMORY_HOT_TOKEN_FRAC", "0.4")),
             window_tokens=int(env.get("AI_EDITOR_MEMORY_WINDOW_TOKENS", "128000")),
         )
 ```
@@ -359,7 +365,8 @@ git commit -m "feat(memory): SQLite store for compaction segments + anchored sum
 - Produces:
   - `estimate_tokens(text: str) -> int` — char/4 heuristic, min 1.
   - `AnchorSummarizer = Callable[[str, str], Awaitable[str]]` — `(old_anchor, evicted_text) -> new_anchor`.
-  - `Compactor.__init__(self, store: MemoryStore, summarize: AnchorSummarizer, *, window_tokens: int, trigger_frac: float = 0.65, hot_turns: int = 10)`
+  - `Compactor.__init__(self, store: MemoryStore, summarize: AnchorSummarizer, *, window_tokens: int, trigger_frac: float = 0.65, hot_turns: int = 10, hot_token_frac: float = 0.4)`
+  - `_select_hot(history, hot_budget_tokens, hot_turns_cap) -> tuple[list[dict], list[dict], int]` and `_truncate_to_tokens(text, max_tokens) -> str` module helpers (added in Task 4).
   - `async Compactor.maybe_compact(self, history: list[dict], run_id: str) -> CompactionResult`
 
 - [ ] **Step 1: Write the failing test**
@@ -429,16 +436,20 @@ class Compactor:
         window_tokens: int,
         trigger_frac: float = 0.65,
         hot_turns: int = 10,
+        hot_token_frac: float = 0.4,
     ) -> None:
         self._store = store
         self._summarize = summarize
         self._window_tokens = window_tokens
         self._trigger_frac = trigger_frac
         self._hot_turns = hot_turns
+        self._hot_token_frac = hot_token_frac
 
     async def maybe_compact(self, history: list[dict], run_id: str) -> CompactionResult:
         budget = self._window_tokens * self._trigger_frac
-        if _history_tokens(history) < budget or len(history) <= self._hot_turns:
+        # Pure token-trigger check. The old `len(history) <= hot_turns` short-circuit was a bug:
+        # a short history of oversized turns can be over budget yet skip compaction entirely.
+        if _history_tokens(history) < budget:
             anchor = self._store.get_anchor(run_id)
             return CompactionResult(
                 compacted=False, history=history,
@@ -512,6 +523,25 @@ async def test_anchor_merges_not_regenerates(tmp_path):
     assert seen["old"] == "PRIOR"          # prior anchor fed back in (anchored merge)
     assert store.get_anchor("r1").summary_md == "PRIOR + NEW"
     assert store.get_anchor("r1").version == 2
+
+@pytest.mark.asyncio
+async def test_single_oversize_message_is_truncated(tmp_path):
+    # History shorter than hot_turns, but one turn alone busts the window: must truncate,
+    # not no-op. summarize must NOT run (nothing evicted).
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    async def summ(old: str, evicted: str) -> str:
+        raise AssertionError("summarize should not run when nothing is evicted")
+    comp = Compactor(store, summ, window_tokens=100, trigger_frac=0.1,
+                     hot_turns=10, hot_token_frac=0.4)  # hot_budget = 40 tokens = 160 chars
+    history = [{"role": "user", "content": "q" * 4000}]  # ~1000 tokens, sole newest turn
+    result = await comp.maybe_compact(history, "r1")
+    assert result.compacted is True
+    assert result.degraded is True
+    assert len(result.history) == 1
+    assert len(result.history[0]["content"]) < 4000      # truncated to fit hot budget
+    assert "[truncated]" in result.history[0]["content"]
+    assert len(store.get_segments("r1")) == 1            # full original persisted (lossless)
+    assert store.get_segments("r1")[0].content == "q" * 4000
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -521,15 +551,51 @@ Expected: FAIL — `test_over_threshold_compacts` asserts `compacted is True` bu
 
 - [ ] **Step 3: Write minimal implementation**
 
+First add the two module-level helpers (above the `Compactor` class, next to `_render`):
+
+```python
+def _truncate_to_tokens(text: str, max_tokens: int) -> str:
+    max_chars = max(8, max_tokens * 4)
+    if len(text) <= max_chars:
+        return text
+    head = max_chars // 2
+    tail = max_chars - head
+    return text[:head] + "\n…[truncated]…\n" + text[-tail:]
+
+def _select_hot(
+    history: list[dict], hot_budget_tokens: int, hot_turns_cap: int
+) -> tuple[list[dict], list[dict], int]:
+    """Newest turns that fit the token budget (and the count cap). Always keeps ≥1 turn."""
+    hot: list[dict] = []
+    used = 0
+    for m in reversed(history):
+        t = estimate_tokens(str(m.get("content", "")))
+        if hot and (used + t > hot_budget_tokens or len(hot) >= hot_turns_cap):
+            break
+        hot.insert(0, m)
+        used += t
+    evicted = history[: len(history) - len(hot)]
+    return evicted, hot, used
+```
+
 Replace the `# Compaction logic added in Task 4.` block and its `return` in `maybe_compact` with:
 
 ```python
-        hot = history[-self._hot_turns:]
-        evicted = history[:-self._hot_turns]
-        old = self._store.get_anchor(run_id)
-        old_text = old.summary_md if old else ""
-        new_anchor = await self._summarize(old_text, _render(evicted))
         now = datetime.now(timezone.utc)
+        hot_budget = int(self._window_tokens * self._hot_token_frac)
+        evicted, hot, hot_used = _select_hot(history, hot_budget, self._hot_turns)
+        degraded = False
+        extra: list[CompactionSegment] = []
+        # Backstop: a single newest turn that alone busts the hot budget must be truncated in-window,
+        # else compaction cannot get us back under the window. Persist the full original first.
+        if hot_used > hot_budget and len(hot) == 1:
+            full = str(hot[0].get("content", ""))
+            extra.append(CompactionSegment(
+                id=f"{run_id}-tail-{int(now.timestamp() * 1000)}",
+                run_id=run_id, seq=len(evicted), tier="cold", content=full, created_at=now,
+            ))
+            hot = [{**hot[0], "content": _truncate_to_tokens(full, hot_budget)}]
+            degraded = True
         # Warm = the band nearest hot; cold = the rest. Persisted for Phase-2 recall;
         # Phase 1 summarizes uniformly (see plan Global Constraints).
         warm_start = max(0, len(evicted) - self._hot_turns)
@@ -542,14 +608,28 @@ Replace the `# Compaction logic added in Task 4.` block and its `return` in `may
             )
             for i, m in enumerate(evicted)
         ]
-        self._store.add_segments(segments)
+        if segments or extra:
+            self._store.add_segments(segments + extra)  # persist BEFORE summarize → lossless
+        old = self._store.get_anchor(run_id)
+        old_text = old.summary_md if old else ""
+        if not evicted:
+            # Truncation alone made room — nothing to fold; leave the anchor untouched.
+            keep = (
+                [{"role": "user",
+                  "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{old_text}"}]
+                if old_text else []
+            )
+            return CompactionResult(
+                compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=degraded,
+            )
+        new_anchor = await self._summarize(old_text, _render(evicted))
         self._store.upsert_anchor(run_id, new_anchor)
         anchor_message = {
             "role": "user",
             "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{new_anchor}",
         }
         return CompactionResult(
-            compacted=True, history=[anchor_message, *hot], anchor=new_anchor,
+            compacted=True, history=[anchor_message, *hot], anchor=new_anchor, degraded=degraded,
         )
 ```
 
@@ -601,39 +681,44 @@ Expected: FAIL — `RuntimeError: provider down` propagates.
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `maybe_compact`, wrap the summarize + persist sequence. Replace the body added in Task 4 from `new_anchor = await self._summarize(...)` onward with:
+In `maybe_compact`, wrap the **trailing** summarize call (the lines after the `if not evicted:` early-return block added in Task 4) in try/except so a provider failure degrades instead of raising. Persist already happens before summarize (Task 4), so a failure is still lossless on disk. Replace:
 
 ```python
-        now = datetime.now(timezone.utc)
-        warm_start = max(0, len(evicted) - self._hot_turns)
-        segments = [
-            CompactionSegment(
-                id=f"{run_id}-{i}-{int(now.timestamp() * 1000)}",
-                run_id=run_id, seq=i,
-                tier="warm" if i >= warm_start else "cold",
-                content=str(m.get("content", "")), created_at=now,
-            )
-            for i, m in enumerate(evicted)
-        ]
-        self._store.add_segments(segments)  # persist BEFORE summarize so a failure is still lossless
-        try:
-            new_anchor = await self._summarize(old_text, _render(evicted))
-        except Exception:  # best-effort: never fail a loop iteration
-            logger.warning("[memory] anchor summarize failed for run=%s; degrading", run_id, exc_info=True)
-            keep = (
-                [{"role": "user", "content": f"[MEMORY] (earlier context summary unavailable)\n{old_text}"}]
-                if old_text else []
-            )
-            return CompactionResult(compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=True)
+        new_anchor = await self._summarize(old_text, _render(evicted))
         self._store.upsert_anchor(run_id, new_anchor)
         anchor_message = {
             "role": "user",
             "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{new_anchor}",
         }
-        return CompactionResult(compacted=True, history=[anchor_message, *hot], anchor=new_anchor)
+        return CompactionResult(
+            compacted=True, history=[anchor_message, *hot], anchor=new_anchor, degraded=degraded,
+        )
 ```
 
-(Move the `old = self._store.get_anchor(run_id); old_text = ...` lines to just before this block if Task 4 placed them after; they must precede the `try`.)
+with:
+
+```python
+        try:
+            new_anchor = await self._summarize(old_text, _render(evicted))
+        except Exception:  # best-effort: never fail a loop iteration
+            logger.warning("[memory] anchor summarize failed for run=%s; degrading", run_id, exc_info=True)
+            keep = (
+                [{"role": "user",
+                  "content": f"[MEMORY] (earlier context summary unavailable)\n{old_text}"}]
+                if old_text else []
+            )
+            return CompactionResult(
+                compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=True,
+            )
+        self._store.upsert_anchor(run_id, new_anchor)
+        anchor_message = {
+            "role": "user",
+            "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{new_anchor}",
+        }
+        return CompactionResult(
+            compacted=True, history=[anchor_message, *hot], anchor=new_anchor, degraded=degraded,
+        )
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -746,7 +831,7 @@ def build_memory_harness(config: MemoryConfig, reasoning_engine: object) -> Memo
     compactor = Compactor(
         store, make_engine_summarizer(reasoning_engine),
         window_tokens=config.window_tokens, trigger_frac=config.trigger_frac,
-        hot_turns=config.hot_turns,
+        hot_turns=config.hot_turns, hot_token_frac=config.hot_token_frac,
     )
     return MemoryHarness(enabled=True, compactor=compactor)
 ```
@@ -1033,7 +1118,7 @@ git commit -m "test(memory): end-to-end compaction + kill-switch parity"
 **Spec coverage (Phase 1 scope only):**
 - §1 component boundaries → Tasks 1–6 (one unit per file, store is the only DB-aware unit). ✓
 - §2 data model (`compaction_segments`, `anchored_summaries`) → Task 2. The `memories` table is Phase 2 — correctly absent. ✓
-- §5 compaction (0.65 trigger, hot/warm/cold, anchored merge not regenerate, fallback) → Tasks 3/4/5, asserted by `test_anchor_merges_not_regenerates` + `test_summarizer_failure_falls_back`. ✓
+- §5 compaction (0.65 trigger, **token-bounded** hot set + single-message truncation backstop, anchored merge not regenerate, fallback) → Tasks 3/4/5, asserted by `test_anchor_merges_not_regenerates`, `test_single_oversize_message_is_truncated`, and `test_summarizer_failure_falls_back`. The token-bound (not count-bound) hot window guarantees post-compaction history fits the window even when `history ≤ hot_turns` or a single turn exceeds it. ✓
 - §7 error handling (best-effort, kill switch) → harness try/except (Task 6) + `NO_OP_HARNESS` parity (Task 9). ✓
 - §8 testing (store, compactor, integration, kill switch) → Tasks 2–9. KV-cache byte-position guard is **deferred to Phase 2** (recalled-memories injection doesn't exist yet in Phase 1 — the anchor message is a normal history entry, not a tail slot). Noted, not a gap.
 - §9 phasing (Phase 1 standalone, FTS5/embeddings absent) → no `sqlite-vec` dependency in this plan. ✓
