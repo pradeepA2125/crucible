@@ -125,10 +125,13 @@ class Compactor:
             self._store.add_segments(segments + extra)  # persist BEFORE summarize -> lossless
         old = self._store.get_anchor(run_id)
         old_text = old.summary_md if old else ""
+        evicted_count = len(evicted) + len(extra)
+        old_version = old.version if old else 0
         if not evicted:
             keep = [_anchor_message(old_text)] if old_text else []
             return CompactionResult(
-                compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=degraded
+                compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=degraded,
+                evicted_count=evicted_count, anchor_version=old_version,
             )
         try:
             new_anchor = await self._summarize(old_text, _render(evicted))
@@ -142,12 +145,20 @@ class Compactor:
                 else []
             )
             return CompactionResult(
-                compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=True
+                compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=True,
+                evicted_count=evicted_count, anchor_version=old_version,
             )
-        self._store.upsert_anchor(run_id, new_anchor)
+        summary = self._store.upsert_anchor(run_id, new_anchor)
+        logger.info(
+            "[memory] compacted run=%s anchor=v%d evicted=%d anchor_chars=%d%s",
+            run_id, summary.version, evicted_count, len(new_anchor),
+            " (degraded)" if degraded else "",
+        )
         return CompactionResult(
             compacted=True,
             history=[_anchor_message(new_anchor), *hot],
             anchor=new_anchor,
+            evicted_count=evicted_count,
+            anchor_version=summary.version,
             degraded=degraded,
         )

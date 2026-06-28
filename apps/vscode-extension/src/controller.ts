@@ -643,6 +643,18 @@ export class AiEditorController {
             timestamp: this.now(),
             metadata: { breadcrumb: true },
           });
+        } else if (event.type === "memory_compacted") {
+          // Observability: the memory harness compacted older history into the anchored
+          // summary. Render a subtle system line so the user can see it fired.
+          const evicted = (event.payload["evicted"] as number) ?? 0;
+          const version = (event.payload["anchor_version"] as number) ?? 0;
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: `🗜️ Compacted ${evicted} earlier message${evicted === 1 ? "" : "s"} into memory (v${version})`,
+            type: "text",
+            timestamp: this.now(),
+            metadata: { breadcrumb: true },
+          });
         } else if (event.type === "diff_ready") {
           const taskId = (event.payload["task_id"] as string) ?? "";
           // `resolved` is set by the chat controller's auto-accept edit path (the

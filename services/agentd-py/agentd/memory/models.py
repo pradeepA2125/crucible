@@ -46,6 +46,8 @@ class CompactionResult:
     history: History
     anchor: str | None = None
     degraded: bool = False
+    evicted_count: int = 0  # messages evicted this round (for the observability event)
+    anchor_version: int = 0  # anchored-summary version after this round
 
 
 @dataclass
@@ -53,3 +55,5 @@ class TurnPreparation:
     history: History
     recalled_memories: History = field(default_factory=list)
     compacted: bool = False
+    evicted_count: int = 0  # surfaced from CompactionResult so the loops can broadcast it
+    anchor_version: int = 0

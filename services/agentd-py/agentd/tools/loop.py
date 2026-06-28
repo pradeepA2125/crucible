@@ -372,6 +372,15 @@ class ToolLoop:
             # anchored summary never leaks into another step's context.
             _prep = await self._memory_harness.prepare_turn(history, f"{self._task_id}:{step.id}")
             history[:] = _prep.history
+            if _prep.compacted:
+                # Observability: surface the compaction on the task stream.
+                self._broadcaster.broadcast(self._broadcast_key, {
+                    "type": "memory_compacted",
+                    "payload": {
+                        "evicted": _prep.evicted_count,
+                        "anchor_version": _prep.anchor_version,
+                    },
+                })
             phase = "explore" if sm.state == VerifyPhaseState.EXPLORE else "verify"
             # Fix 1: a state change means the workspace/context moved on — clear the
             # consecutive-repeat cache so a fresh read of the same target is allowed.

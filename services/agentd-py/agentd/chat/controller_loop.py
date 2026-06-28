@@ -312,6 +312,15 @@ class ControllerLoop:
             run_id = str(plan_context.get("run_id", "chat"))
             _prep = await self._memory_harness.prepare_turn(history, run_id)
             history[:] = _prep.history
+            if _prep.compacted:
+                # Observability: surface the compaction so the chat UI can show it fired.
+                self._broadcaster.broadcast(self._channel_id, {
+                    "type": "memory_compacted",
+                    "payload": {
+                        "evicted": _prep.evicted_count,
+                        "anchor_version": _prep.anchor_version,
+                    },
+                })
             # Re-surface the live todo ledger into the payload tail every iteration so the
             # model re-reads its own contract (the detail that makes discretion stick). Empty
             # string when no list exists -> build_controller_step_payload omits it.

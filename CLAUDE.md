@@ -224,6 +224,16 @@ The chat UI separates **interactive** affordances from the **durable transcript*
 
 **`/live` poll dedup-signature invariant (controller.ts `pollThreadLiveState`):** the 1s poll is the durable backstop for any *missed SSE terminal* (`chat_done`, gate-clear). It dedups on a `lastLiveSignature` (JSON of `{taskId, status, turnActive, gate, plan, runSummary, narrative, failure}`) to avoid webview churn, then `return`s early when unchanged. **INVARIANT: every durable signal consumed after the dedup gate MUST be in the signature** — else its transition is swallowed and the webview never learns. This bit three times: `runSummary`/`narrative`/`failure` (Review/Error card never updated) and **`turnActive`** (a controller chat turn has no task, so `status`/`gate`/`plan` stay null the whole turn → the `true→false` end transition was deduped away → `sendLiveStatus(...,false)` never sent → composer wedged on "Agent is working…" forever). The one **documented exception** is the READY_FOR_REVIEW `getTaskResult` fields (modifiedFiles/shadowPath/plan), safe only because they're immutable at that terminal status. Reconciliation has a second half in the webview reducer (`useAppState.ts` `liveStatus` case): on `turnActive=false` **with `status===null`** (controller turn ended) it seals any lingering streaming bubble (no data loss) AND re-enables input *even with no bubble* (an error-before-broadcast turn has none); gated to `status===null` so it never touches input during task execution.
 
+### Memory harness (Phase 1 — context compaction)
+
+Self-contained module (`agentd/memory/`): `harness.py` (the only unit the loops see), `compactor.py` (token-trigger eviction + summarize), `store.py` (SQLite `compaction_segments` + `anchored_summaries`), `models.py`, `config.py`. **Phase 1 = compaction; `recall()` is a Phase-2 stub.** OFF by default (`AI_EDITOR_MEMORY_ENABLED`).
+
+- **Wiring:** both ReAct loops call `await self._memory_harness.prepare_turn(history, run_id)` at the top of each iteration and `history[:] = _prep.history` (in-place, same list object). Sites: `chat/controller_loop.py` (run_id = thread_id) and `tools/loop.py` (run_id = `{task_id}:{step.id}` — per-step, so one step's anchor never leaks into another). `NO_OP_HARNESS` is a byte-identical passthrough when disabled. **prepare_turn is best-effort** — any compactor exception is swallowed (memory must never break a loop iteration).
+- **Budget model (the fracs are setpoints, NOT a partition):** `maybe_compact` fires when `history_tokens ≥ window_tokens × trigger_frac` (default 0.65); it evicts the oldest **whole turns** (lossless at turn boundaries via `_select_hot`) down to a hot floor of `window × hot_token_frac` (0.4), persists them as `compaction_segments` (BEFORE summarizing → lossless), and folds them into the `anchored_summaries` anchor. Steady state is a **sawtooth between 0.4 and 0.65**; the 0.35 above the trigger (up to the full window) is deliberate overshoot headroom, because compaction is only checked at iteration start and one fat turn can blow past the trigger mid-turn. `AI_EDITOR_MEMORY_HOT_TURNS` caps **message count**, not logical turns (misnomer; the token floor usually binds).
+- **Anchor = running summary-of-summary:** each round feeds the prior anchor + newly-evicted text to `make_engine_summarizer` (`harness.py`). `upsert_anchor` bumps `version` per round (v1→v2→…). The injected head message is `[MEMORY] Summary of earlier conversation that was compacted:\n<anchor>`.
+- **Summarizer hardening (weak-model failure modes, all fixed via TDD):** the summary call uses a **single-key** `{"transcript": <flat text>}` payload (a multi-key JSON dict shape gets echoed back verbatim by weak models), the prompt (`_SUMMARY_SYSTEM`) is a 9-section Claude-Code-style "note to your future self" requiring output wrapped in one `<summary>...</summary>` block, and the result is **extracted + validated**: `_extract_summary` pulls the block, `_is_echo` rejects empty/JSON-object output, and the summarizer **retries once then raises `SummarizerEchoError`** → the compactor degrades (keeps the prior anchor, marks `degraded`, logs) rather than persisting garbage. Carry-forward is **goal-relevant, not strictly lossless** — a fully-superseded file may be recency-triaged out (accepted by design; a durable file-ledger outside the LLM summary is the deferred fix).
+- **Observability:** `compactor.maybe_compact` logs `[memory] compacted run=… anchor=vN evicted=K anchor_chars=…` on success (it previously logged only on failure). Both loops broadcast a `memory_compacted` SSE event (`{evicted, anchor_version}`) when `_prep.compacted` — typed in editor-client's `StreamEvent`, rendered by `controller.ts` as a live `🗜️ Compacted N earlier messages into memory (vK)` chat line.
+
 ### Retrieval pipeline
 - `indexer-rs` writes `index-snapshot.json` with `nodes`/`edges`/`diagnostics`/`stats`
 - `agentd-py` reads the snapshot per task via `retrieval/` module; if missing, auto-triggers one index run
@@ -278,6 +288,14 @@ The chat UI separates **interactive** affordances from the **durable transcript*
 **Model selection** (per provider)
 - `AI_EDITOR_GEMINI_MODEL`, `AI_EDITOR_OPENAI_MODEL`, `AI_EDITOR_ANTHROPIC_MODEL`, `AI_EDITOR_GROQ_MODEL`, `AI_EDITOR_OLLAMA_MODEL`
 - `AI_EDITOR_GEMINI_THINKING_LEVEL` — enables extended thinking for Gemini 2.5+ models (`none` | `low` | `medium` | `high`)
+
+**Memory harness (Phase 1 — context compaction; see "Memory harness" under Architecture)**
+- `AI_EDITOR_MEMORY_ENABLED` — master switch (default OFF; truthy = `1/true/yes/on`). When off, `prepare_turn` is a byte-identical passthrough.
+- `AI_EDITOR_MEMORY_DB_PATH` — SQLite path for segments + anchors (default `.agentd/memory.sqlite3`)
+- `AI_EDITOR_MEMORY_WINDOW_TOKENS` — effective context window the fracs are taken against (default `128000`)
+- `AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC` — fire compaction at this × window (default `0.65`)
+- `AI_EDITOR_MEMORY_HOT_TOKEN_FRAC` — evict down to this × window of newest whole turns (default `0.4`)
+- `AI_EDITOR_MEMORY_HOT_TURNS` — cap on **messages** (not logical turns) kept hot (default `10`)
 
 **Tool loop**
 - `AI_EDITOR_TOOL_LOOP_ENABLED` — set to `0` or `false` to fall back to single-shot `create_patch()` (default: `true`)

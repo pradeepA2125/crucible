@@ -5,6 +5,9 @@ from agentd.memory.config import MemoryConfig
 from agentd.memory.harness import (
     NO_OP_HARNESS,
     MemoryHarness,
+    SummarizerEchoError,
+    _extract_summary,
+    _is_echo,
     build_memory_harness,
     make_engine_summarizer,
 )
@@ -17,7 +20,19 @@ class _FakeTransport:
 
     async def generate_text(self, *, model, system_instructions, user_payload, on_thinking=None):
         self.calls.append((model, system_instructions, user_payload))
-        return "SUMMARY"
+        return "<summary>SUMMARY</summary>"
+
+
+class _SeqTransport:
+    """Returns queued responses in order; records the payloads it was called with."""
+
+    def __init__(self, responses: list[str]) -> None:
+        self._responses = list(responses)
+        self.calls: list[tuple] = []
+
+    async def generate_text(self, *, model, system_instructions, user_payload, on_thinking=None):
+        self.calls.append((model, system_instructions, user_payload))
+        return self._responses.pop(0)
 
 
 @pytest.mark.asyncio
@@ -46,6 +61,24 @@ async def test_enabled_harness_delegates(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_prepare_turn_surfaces_compaction_counts(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+
+    async def summ(old, evicted):
+        return "A"
+
+    comp = Compactor(
+        store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
+    )
+    harness = MemoryHarness(enabled=True, compactor=comp)
+    history = [{"role": "user", "content": "q" * 80} for _ in range(6)]
+    prep = await harness.prepare_turn(history, "r1")
+    assert prep.compacted is True
+    assert prep.evicted_count >= 1
+    assert prep.anchor_version == 1
+
+
+@pytest.mark.asyncio
 async def test_prepare_turn_swallows_errors():
     class Boom:
         async def maybe_compact(self, history, run_id):
@@ -62,16 +95,83 @@ async def test_recall_stub_returns_empty():
     assert await NO_OP_HARNESS.recall("anything", "r1") == []
 
 
+def test_extract_summary_pulls_content_inside_tags():
+    assert _extract_summary("noise <summary>kept text</summary> trailing") == "kept text"
+
+
+def test_extract_summary_returns_stripped_when_no_tags():
+    assert _extract_summary("  plain prose summary  ") == "plain prose summary"
+
+
+def test_is_echo_true_for_json_object():
+    # The exact failure we saw live: the model parrots its input payload as JSON.
+    assert _is_echo('{"prior_summary": "x", "evicted_messages": "y"}') is True
+
+
+def test_is_echo_true_for_empty():
+    assert _is_echo("   ") is True
+
+
+def test_is_echo_false_for_prose():
+    assert _is_echo("Goal: do the thing. Files touched: a.py") is False
+
+
 @pytest.mark.asyncio
-async def test_engine_summarizer_calls_transport():
-    t = _FakeTransport()
+async def test_summarizer_sends_single_key_payload_and_extracts_summary():
+    t = _SeqTransport(["<summary>merged memory</summary>"])
     summ = make_engine_summarizer(t, "m1")
-    out = await summ("prior", "evicted text")
-    assert out == "SUMMARY"
+    out = await summ("prior memory", "new evicted msgs")
+    assert out == "merged memory"
     model, _system, payload = t.calls[0]
     assert model == "m1"
-    assert payload["prior_summary"] == "prior"
-    assert payload["evicted_messages"] == "evicted text"
+    # Single text field — NOT the two-key {prior_summary, evicted_messages} shape the
+    # model was echoing back verbatim.
+    assert list(payload.keys()) == ["transcript"]
+    assert "prior memory" in payload["transcript"]
+    assert "new evicted msgs" in payload["transcript"]
+
+
+@pytest.mark.asyncio
+async def test_summarizer_retries_once_on_echo_then_succeeds():
+    t = _SeqTransport(['{"transcript": "...echoed..."}', "<summary>real summary</summary>"])
+    summ = make_engine_summarizer(t, "m1")
+    out = await summ("prior", "evicted")
+    assert out == "real summary"
+    assert len(t.calls) == 2  # retried exactly once
+
+
+@pytest.mark.asyncio
+async def test_summarizer_raises_after_two_echoes():
+    echo = '{"transcript": "echoed both times"}'
+    t = _SeqTransport([echo, echo])
+    summ = make_engine_summarizer(t, "m1")
+    with pytest.raises(SummarizerEchoError):
+        await summ("prior", "evicted")
+    assert len(t.calls) == 2  # one try + one retry, then give up
+
+
+@pytest.mark.asyncio
+async def test_persistent_echo_degrades_and_keeps_prior_anchor(tmp_path):
+    # Full fallback path: make_engine_summarizer -> Compactor. A model that always echoes
+    # must NOT overwrite the anchor with garbage — compaction still happens (degraded),
+    # the prior anchor is preserved.
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.upsert_anchor("r1", "PRIOR ANCHOR")
+    always_echo = _SeqTransport(['{"transcript": "echo"}'] * 4)
+    comp = Compactor(
+        store,
+        make_engine_summarizer(always_echo, "m1"),
+        window_tokens=100,
+        trigger_frac=0.1,
+        hot_token_frac=0.4,
+        hot_turns=2,
+    )
+    history = [{"role": "user", "content": "q" * 80} for _ in range(6)]
+    result = await comp.maybe_compact(history, "r1")
+    assert result.compacted is True
+    assert result.degraded is True
+    assert store.get_anchor("r1").summary_md == "PRIOR ANCHOR"  # garbage never persisted
+    assert len(always_echo.calls) == 2  # one try + one retry, then gave up
 
 
 def test_build_memory_harness_disabled_returns_noop():

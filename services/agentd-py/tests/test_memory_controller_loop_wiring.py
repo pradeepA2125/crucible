@@ -50,3 +50,53 @@ async def test_controller_loop_invokes_memory_harness_with_run_id(tmp_path: Path
         {"goal": "hi", "workspace_path": str(tmp_path), "run_id": "thread-x"}, max_iters=4
     )
     assert calls and calls[0] == "thread-x"
+
+
+@pytest.mark.asyncio
+async def test_controller_loop_broadcasts_memory_compacted(tmp_path: Path):
+    from agentd.memory.models import TurnPreparation
+
+    class _CompactingHarness:
+        """Returns a compacted prep so we can assert the loop broadcasts the event."""
+
+        async def prepare_turn(self, history, run_id):
+            return TurnPreparation(
+                history=history, compacted=True, evicted_count=3, anchor_version=2
+            )
+
+        async def recall(self, query, run_id):
+            return []
+
+    class _RecordingBroadcaster(EventBroadcaster):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[tuple[str, dict]] = []
+
+        def broadcast(self, channel_id, event):
+            self.events.append((channel_id, event))
+            return super().broadcast(channel_id, event)
+
+    bc = _RecordingBroadcaster()
+    eng = ScriptedReasoningEngine(
+        None,
+        [],
+        controller_step_responses=[{"type": "answer", "thought": "done", "answer": "hi"}],
+    )
+    reg = AggregatingToolRegistry(
+        [BuiltinToolSource(shadow_root=tmp_path, real_workspace_path=tmp_path)]
+    )
+    loop = ControllerLoop(
+        eng,
+        reg,
+        bc,
+        channel_id="c1",
+        phase_sm=ControllerPhaseSM(),
+        memory_harness=_CompactingHarness(),  # type: ignore[arg-type]
+    )
+    await loop.run(
+        {"goal": "hi", "workspace_path": str(tmp_path), "run_id": "thread-x"}, max_iters=4
+    )
+    compacted = [e for _, e in bc.events if e.get("type") == "memory_compacted"]
+    assert compacted, "expected a memory_compacted event to be broadcast"
+    assert compacted[0]["payload"]["evicted"] == 3
+    assert compacted[0]["payload"]["anchor_version"] == 2

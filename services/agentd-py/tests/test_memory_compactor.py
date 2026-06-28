@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from agentd.memory.compactor import (
@@ -11,6 +13,36 @@ from agentd.memory.store import MemoryStore
 
 async def _never(old: str, new: str) -> str:
     raise AssertionError("summarize called below threshold")
+
+
+@pytest.mark.asyncio
+async def test_compaction_result_reports_evicted_count_and_version(tmp_path, caplog):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+
+    async def summ(old: str, evicted: str) -> str:
+        return "merged summary"
+
+    comp = Compactor(
+        store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
+    )
+    history = [{"role": "user", "content": "q" * 80} for _ in range(6)]
+    with caplog.at_level(logging.INFO, logger="agentd.memory.compactor"):
+        result = await comp.maybe_compact(history, "r1")
+    assert result.compacted is True
+    assert result.evicted_count >= 1  # something was actually evicted
+    assert result.anchor_version == 1  # first upsert
+    assert any("compacted" in r.message.lower() for r in caplog.records)  # success log emitted
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_reports_zero_counts(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    comp = Compactor(
+        store, _never, window_tokens=100000, trigger_frac=0.65, hot_token_frac=0.4, hot_turns=10
+    )
+    result = await comp.maybe_compact([{"role": "user", "content": "hi"}], "r1")
+    assert result.compacted is False
+    assert result.evicted_count == 0 and result.anchor_version == 0
 
 
 def test_estimate_tokens_charsdiv4():
