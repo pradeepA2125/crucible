@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class Embedder:
         self._model_name = model_name
         self._encoder = encoder
         self._available = True
-        self._model = None  # lazy SentenceTransformer
+        self._model: Any = None  # lazy SentenceTransformer
 
     @property
     def dim(self) -> int:
@@ -50,7 +51,7 @@ class Embedder:
         if self._encoder is not None:
             return self._encoder(texts)
         if self._model is None:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
+            from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self._model_name)
         return [list(map(float, row)) for row in self._model.encode(texts)]
 

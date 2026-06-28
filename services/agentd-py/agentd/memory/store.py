@@ -6,7 +6,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-import sqlite_vec
+import sqlite_vec  # type: ignore[import-untyped]
 
 from agentd.memory.models import AnchoredSummary, CompactionSegment, Memory
 
@@ -232,3 +232,13 @@ class MemoryStore:
             (sqlite_vec.serialize_float32(embedding), k * 4, kind, scope_kind, scope_id, k),
         ).fetchall()
         return [(self._row_to_memory(r), r["dist"]) for r in rows]
+
+    def supersede(self, old_id: str, new_memory: Memory, new_embedding: list[float]) -> None:
+        # FIX #2: ONE transaction — retire old + insert new atomically. If the insert raises,
+        # the UPDATE rolls back too (no orphaned retire). Never nest insert_memory here.
+        with self._conn:
+            self._conn.execute(
+                "UPDATE memories SET valid_to=?, superseded_by=? WHERE id=?",
+                (new_memory.valid_from.isoformat(), new_memory.id, old_id),
+            )
+            self._insert_rows(new_memory, new_embedding)

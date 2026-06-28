@@ -115,3 +115,25 @@ def test_similar_memories_same_kind_scope(tmp_path):
     out = store.similar_memories([1.0] + [0.0] * 383, kind="semantic",
                                  scope_kind="workspace", scope_id="/ws", k=3)
     assert out and out[0][0].id == "s1"
+
+
+def test_supersede_retires_old_and_inserts_new_atomically(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("old", content="uses openai embeddings"), [0.1] * 384)
+    new = _mem("new", content="uses bge-small embeddings")
+    store.supersede("old", new, [0.2] * 384)
+    old = store.get_memory("old")
+    assert old is not None and old.valid_to is not None and old.superseded_by == "new"
+    live = store.get_live_memories("workspace", "/ws")
+    assert {m.id for m in live} == {"new"}
+
+
+def test_supersede_rolls_back_when_insert_fails(tmp_path):
+    # FIX #2: a failing insert must roll back the retire-UPDATE — old stays LIVE, no data loss.
+    import pytest
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("old"), [0.1] * 384)
+    dup = _mem("old")  # duplicate PK 'old' -> the INSERT inside supersede raises
+    with pytest.raises(Exception):
+        store.supersede("old", dup, [0.2] * 384)
+    assert store.get_memory("old").valid_to is None  # UPDATE rolled back; old still live
