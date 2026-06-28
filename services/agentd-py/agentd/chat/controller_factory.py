@@ -28,6 +28,13 @@ def is_task_subsystem_enabled() -> bool:
     return os.getenv(_TASK_SUBSYSTEM_ENV, "0").strip().lower() in _TRUTHY
 
 
+def is_memory_enabled() -> bool:
+    """Whether the memory harness (compaction + recall/remember) is active. Default OFF;
+    opt in with AI_EDITOR_MEMORY_ENABLED=1. Gates the controller's memory tools + prompt."""
+    from agentd.memory.config import MemoryConfig
+    return MemoryConfig.from_env(os.environ).enabled
+
+
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
     """Task-subsystem OFF only works when the controller is ON (the legacy ChatAgent's
     large_change branch has nowhere to go without create_task). Warn — do not fail."""

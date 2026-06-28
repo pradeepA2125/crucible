@@ -31,3 +31,17 @@ async def test_disabled_harness_skips_recall():
     hist = [{"role": "user", "content": "hi"}]
     prep = await harness.prepare_turn(hist, "r1")
     assert prep.history is hist and spy.calls == 0  # passthrough untouched
+
+
+def test_memory_tool_source_none_without_consolidator():
+    from agentd.memory.harness import NO_OP_HARNESS
+    assert NO_OP_HARNESS.memory_tool_source() is None
+
+
+def test_memory_tool_source_present_with_consolidator():
+    class _C:
+        pass
+    harness = MemoryHarness(enabled=True, compactor=None, consolidator=_C(),
+                            scope_kind="workspace", scope_id="/ws")
+    src = harness.memory_tool_source()
+    assert src is not None and src.owns("remember")

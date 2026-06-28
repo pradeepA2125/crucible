@@ -187,6 +187,9 @@ class ChatController:
         )]
         if todo_ledger is not None:
             sources.append(TodoToolSource(todo_ledger, on_mutate=todo_persist_cb))
+        mts = self._memory_harness.memory_tool_source()  # remember + recall (None unless enabled)
+        if mts is not None:
+            sources.append(mts)
         return AggregatingToolRegistry(sources)
 
     async def _persist_todos(self, thread_id: str, raw: str | None) -> None:

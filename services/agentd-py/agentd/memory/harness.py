@@ -208,6 +208,17 @@ class MemoryHarness:
         segs = [s for s in self._store.get_segments(run_id) if seq_lo <= s.seq <= seq_hi]
         return "\n".join(s.content for s in segs)
 
+    def memory_tool_source(self) -> object | None:
+        """A MemoryToolSource (remember + recall) for the controller registry, or None when
+        memory has no consolidator wired (disabled / compaction-only)."""
+        if self._consolidator is None:
+            return None
+        from agentd.memory.tool_source import MemoryToolSource
+        return MemoryToolSource(
+            self._consolidator, self._scope_kind, self._scope_id,
+            recall_engine=self._recall_engine, store=self._store,
+        )
+
     async def recall(self, query: str, run_id: str) -> History:
         return []  # Phase 2 (recall slot filled in Plan 2C)
 
