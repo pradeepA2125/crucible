@@ -94,35 +94,42 @@ class MemoryHarness:
 
     def __init__(
         self, *, enabled: bool, compactor: Compactor | None,
-        consolidator: object | None = None, scope_kind: str = "workspace", scope_id: str = "",
+        consolidator: object | None = None, recall_engine: object | None = None,
+        scope_kind: str = "workspace", scope_id: str = "", recall_token_budget: int = 1500,
     ) -> None:
         self._enabled = enabled
         self._compactor = compactor
         self._consolidator = consolidator
+        self._recall_engine = recall_engine
         self._scope_kind = scope_kind
         self._scope_id = scope_id
+        self._recall_token_budget = recall_token_budget
         # Read segments for the evicted-slice transcript; derived from the compactor's store.
         self._store = getattr(compactor, "_store", None) if compactor is not None else None
         self._bg_tasks: set[asyncio.Task[None]] = set()  # FIX #5: hold refs so tasks aren't GC'd
+        self._recall_cache: dict[str, list[str]] = {}  # per-run rendered recall
+        self._recall_key: str | None = None  # last (run_id::query) recalled, to dedup per turn
 
     async def prepare_turn(self, history: History, run_id: str) -> TurnPreparation:
-        if not self._enabled or self._compactor is None:
+        if not self._enabled:
             return TurnPreparation(history=history, recalled_memories=[], compacted=False)
-        try:
-            result = await self._compactor.maybe_compact(history, run_id)
-        except Exception:  # best-effort: memory must never break a loop iteration
-            logger.warning("[memory] prepare_turn failed for run=%s", run_id, exc_info=True)
-            return TurnPreparation(history=history, recalled_memories=[], compacted=False)
+        # Compaction (only when a compactor is wired) — best-effort.
+        result = None
+        if self._compactor is not None:
+            try:
+                result = await self._compactor.maybe_compact(history, run_id)
+            except Exception:  # best-effort: memory must never break a loop iteration
+                logger.warning("[memory] compaction failed for run=%s", run_id, exc_info=True)
         prep = TurnPreparation(
-            history=result.history,
+            history=result.history if result else history,
             recalled_memories=[],
-            compacted=result.compacted,
-            evicted_count=result.evicted_count,
-            anchor_version=result.anchor_version,
-            evicted_seq_lo=result.evicted_seq_lo,
-            evicted_seq_hi=result.evicted_seq_hi,
+            compacted=bool(result and result.compacted),
+            evicted_count=result.evicted_count if result else 0,
+            anchor_version=result.anchor_version if result else 0,
+            evicted_seq_lo=result.evicted_seq_lo if result else None,
+            evicted_seq_hi=result.evicted_seq_hi if result else None,
         )
-        if (result.compacted and self._consolidator is not None
+        if (result and result.compacted and self._consolidator is not None
                 and result.evicted_seq_hi is not None):
             self.schedule_consolidation(
                 run_id, self._scope_kind, self._scope_id,
@@ -130,7 +137,44 @@ class MemoryHarness:
                                                  result.evicted_seq_hi),
                 seq_lo=result.evicted_seq_lo, seq_hi=result.evicted_seq_hi,
             )
+        # Recall (every turn, cached per query) — best-effort.
+        if self._recall_engine is not None:
+            prep.recalled_memories = await self._fill_recall(history, run_id)
         return prep
+
+    async def _fill_recall(self, history: History, run_id: str) -> list[str]:
+        query = self._recall_query(history)
+        if not query:
+            return self._recall_cache.get(run_id, [])
+        key = f"{run_id}::{query}"
+        if key != self._recall_key:
+            try:
+                mems = await self._recall_engine.recall(  # type: ignore[union-attr]
+                    query, self._scope_kind, self._scope_id, k=8)
+                self._recall_cache[run_id] = self._render_recall(mems)
+            except Exception:  # noqa: BLE001 — best-effort
+                logger.warning("[memory] recall failed for run=%s", run_id)
+                self._recall_cache[run_id] = []
+            self._recall_key = key
+        return self._recall_cache.get(run_id, [])
+
+    @staticmethod
+    def _recall_query(history: History) -> str:
+        for m in reversed(history):
+            if m.get("role") == "user":
+                return str(m.get("content", ""))[:500]
+        return ""
+
+    def _render_recall(self, mems: list[object]) -> list[str]:
+        out: list[str] = []
+        budget = self._recall_token_budget
+        for m in mems:
+            line = f"- ({getattr(m, 'kind', '?')}) {getattr(m, 'content', '')}"
+            budget -= max(1, len(line) // 4)
+            if budget < 0:
+                break
+            out.append(line)
+        return out
 
     def schedule_consolidation(
         self, run_id: str, scope_kind: str, scope_id: str, transcript: str,

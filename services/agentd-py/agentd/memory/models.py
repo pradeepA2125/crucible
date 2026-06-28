@@ -55,7 +55,7 @@ class CompactionResult:
 @dataclass
 class TurnPreparation:
     history: History
-    recalled_memories: History = field(default_factory=list)
+    recalled_memories: list[str] = field(default_factory=list)  # rendered memory lines (tail)
     compacted: bool = False
     evicted_count: int = 0  # surfaced from CompactionResult so the loops can broadcast it
     anchor_version: int = 0
