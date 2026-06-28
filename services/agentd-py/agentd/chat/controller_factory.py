@@ -56,10 +56,16 @@ def select_chat_handler(
     command_decision_timeout_sec gate run_command in controller EDIT turns (same env
     knobs as the task path); ignored by the legacy ChatAgent (no run_command path)."""
     if is_controller_enabled():
+        import os
+
         from agentd.chat.controller import ChatController
         from agentd.domain.models import ShellPolicy
+        from agentd.memory.config import MemoryConfig
+        from agentd.memory.harness import build_memory_harness
         from agentd.reasoning.engine import DefaultReasoningEngine
 
+        # Within-run compaction for controller turns (no-op unless AI_EDITOR_MEMORY_ENABLED).
+        memory_harness = build_memory_harness(MemoryConfig.from_env(os.environ), transport, model)
         return ChatController(
             workspace_path=workspace_path,
             reasoning_engine=DefaultReasoningEngine(model=model, transport=transport),
@@ -69,6 +75,7 @@ def select_chat_handler(
             retrieval_client=retrieval_client,
             shell_policy=shell_policy or ShellPolicy.ASK,
             command_decision_timeout_sec=command_decision_timeout_sec,
+            memory_harness=memory_harness,
         )
 
     from agentd.chat.agent import ChatAgent

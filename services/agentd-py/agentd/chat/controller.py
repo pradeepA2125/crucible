@@ -25,6 +25,7 @@ from agentd.chat.models import ChatMessage, PendingGate
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.domain.models import CommandDecision, ShellPolicy
+from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
@@ -96,6 +97,7 @@ class ChatController:
         retrieval_client: RetrievalArtifactClient | None = None,
         shell_policy: ShellPolicy = ShellPolicy.ASK,
         command_decision_timeout_sec: float = 0.0,
+        memory_harness: MemoryHarness = NO_OP_HARNESS,
     ) -> None:
         self._workspace_path = workspace_path
         self._reasoning = reasoning_engine
@@ -103,6 +105,7 @@ class ChatController:
         self._orchestrator = orchestrator
         self._broadcaster = broadcaster
         self._retrieval = retrieval_client
+        self._memory_harness = memory_harness
         # Task subsystem flag (default OFF): gates create_task/resume mode handoff and the
         # task-mode prompt injection. Process-fixed — resolved once, like the controller flag.
         self._task_subsystem_enabled = is_task_subsystem_enabled()
@@ -315,9 +318,12 @@ class ChatController:
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger,
-            task_subsystem_enabled=self._task_subsystem_enabled)
+            task_subsystem_enabled=self._task_subsystem_enabled,
+            memory_harness=self._memory_harness)
         plan_context: dict[str, object] = {
-            "goal": goal, "workspace_path": self._workspace_path}
+            "goal": goal, "workspace_path": self._workspace_path,
+            # run_id keys the per-thread compaction segments + anchored summary.
+            "run_id": thread_id}
         # A clarify-resume continues an in-flight EDIT feature — NOT a fresh entry — so the
         # loop must NOT show the "first action, decide your approach" entry hint. The per-turn
         # _edit_applied flag resets on the new loop, and a cohesive (no-list) edit leaves the

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.tool_events import trace_to_tool_events
 from agentd.domain.models import AgentToolTrace, ToolCall, ToolResult
+from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.reasoning.react_common import MALFORMED_CORRECTION, assistant_turn, dedup_key
 
 if TYPE_CHECKING:
@@ -190,6 +191,7 @@ class ControllerLoop:
         edit_session: TurnEditSession | None = None,
         todo_ledger: TodoLedger | None = None,
         task_subsystem_enabled: bool = False,
+        memory_harness: MemoryHarness = NO_OP_HARNESS,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -198,6 +200,7 @@ class ControllerLoop:
         self._sm = phase_sm
         self._edit = edit_session
         self._ledger = todo_ledger or TodoLedger()
+        self._memory_harness = memory_harness
         # OFF (default): only edit/explain may be offered — the controller handles changes
         # inline; a model that proposes create_task/resume anyway gets corrected.
         self._allowed_modes = (
@@ -303,6 +306,12 @@ class ControllerLoop:
             if iteration == 0:
                 self._broadcaster.broadcast(self._channel_id, {
                     "type": "chat_agent_thinking", "payload": {"message": "Thinking…"}})
+            # Memory middleware: compact the live history in place before the model call
+            # (no-op unless AI_EDITOR_MEMORY_ENABLED). history[:] keeps the same list object
+            # partial_history() and downstream .append() calls reference.
+            run_id = str(plan_context.get("run_id", "chat"))
+            _prep = await self._memory_harness.prepare_turn(history, run_id)
+            history[:] = _prep.history
             # Re-surface the live todo ledger into the payload tail every iteration so the
             # model re-reads its own contract (the detail that makes discretion stick). Empty
             # string when no list exists -> build_controller_step_payload omits it.
