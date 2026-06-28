@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from uuid import uuid4
 
+from agentd.memory.embedder import Embedder
 from agentd.memory.models import CandidateMemory, Memory
+from agentd.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -100,3 +105,92 @@ def make_engine_consolidator(transport: object, model: str) -> DistillFn:
         return out
 
     return _distill
+
+
+def _cosine_from_l2(distance: float) -> float:
+    # unit vectors: ||a-b||^2 = 2 - 2cos  =>  cos = 1 - d^2/2
+    return 1.0 - (distance * distance) / 2.0
+
+
+class Consolidator:
+    """Async write path: LLM proposes candidates; Python disposes (embed/dedupe/supersede)."""
+
+    def __init__(
+        self, store: MemoryStore, embedder: Embedder, distill: DistillFn,
+        *, similar_k: int = 5, dedup_threshold: float = 0.92,
+    ) -> None:
+        self._store = store
+        self._embedder = embedder
+        self._distill = distill
+        self._k = similar_k
+        self._dedup = dedup_threshold
+
+    async def consolidate(
+        self, run_id: str, scope_kind: str, scope_id: str, transcript: str,
+        seq_lo: int | None, seq_hi: int | None,
+    ) -> int:
+        # FIX #4: bound the existing-context fed to the LLM — ALL live memories would grow the
+        # prompt without limit on a mature workspace until consolidation fails every time.
+        existing = self._bounded_existing(scope_kind, scope_id)
+        candidates = await self._distill(transcript, existing)
+        inserted = 0
+        for c in candidates:
+            emb = await self._embed(c.content)  # FIX #3: off the event loop
+            if self._dispose(c, emb, run_id, scope_kind, scope_id, "consolidation",
+                             seq_lo, seq_hi):
+                inserted += 1
+        return inserted
+
+    def _bounded_existing(self, scope_kind: str, scope_id: str, cap: int = 20) -> list[Memory]:
+        live = self._store.get_live_memories(scope_kind, scope_id)
+        # most-important first, then most-recent — the set most likely to be contradicted.
+        live.sort(key=lambda m: (m.importance, m.valid_from), reverse=True)
+        return live[:cap]
+
+    async def _embed(self, text: str) -> list[float]:
+        # FIX #3: sentence-transformers encode is sync CPU (and the first call downloads the
+        # model). Running it on the asyncio loop freezes every turn + all SSE. Offload to a thread.
+        vec = await asyncio.to_thread(self._embedder.embed, [text])
+        return vec[0] if vec else []
+
+    async def write_explicit(
+        self, content: str, kind: str, entities: list[str], scope_kind: str, scope_id: str,
+    ) -> str:
+        c = CandidateMemory(kind=kind, content=content, entities=entities, importance=8)
+        emb = await self._embed(content)  # FIX #3
+        mem = self._build_memory(c, run_id="", scope_kind=scope_kind, scope_id=scope_id,
+                                 source_kind="agent_tool", seq_lo=None, seq_hi=None)
+        self._store.insert_memory(mem, emb)
+        return mem.id
+
+    def _dispose(
+        self, c: CandidateMemory, emb: list[float], run_id: str, scope_kind: str,
+        scope_id: str, source_kind: str, seq_lo: int | None, seq_hi: int | None,
+    ) -> bool:
+        # CONCURRENCY INVARIANT: _dispose (and similar_memories/insert_memory/supersede) MUST be
+        # await-free — it runs as a background task sharing ONE sqlite3 connection with the
+        # foreground turn; the only safe yield point is BEFORE this, in _distill/_embed.
+        if emb:  # Dedupe: drop a near-identical live memory of same kind+scope.
+            for _mem, dist in self._store.similar_memories(emb, c.kind, scope_kind, scope_id,
+                                                           self._k):
+                if _cosine_from_l2(dist) >= self._dedup:
+                    return False
+        new = self._build_memory(c, run_id, scope_kind, scope_id, source_kind, seq_lo, seq_hi)
+        # Supersede: only when the LLM flagged a conflict AND the kind is not episodic.
+        if c.kind != "episodic" and c.contradicts and self._store.get_memory(c.contradicts):
+            self._store.supersede(c.contradicts, new, emb)
+            return True
+        self._store.insert_memory(new, emb)
+        return True
+
+    def _build_memory(
+        self, c: CandidateMemory, run_id: str, scope_kind: str, scope_id: str,
+        source_kind: str, seq_lo: int | None, seq_hi: int | None,
+    ) -> Memory:
+        now = datetime.now(UTC)
+        return Memory(
+            id=uuid4().hex, scope_kind=scope_kind, scope_id=scope_id, kind=c.kind,
+            content=c.content, entities=c.entities, importance=c.importance,
+            valid_from=now, valid_to=None, superseded_by=None, source_kind=source_kind,
+            source_ref=run_id, source_seq_lo=seq_lo, source_seq_hi=seq_hi, created_at=now,
+        )
