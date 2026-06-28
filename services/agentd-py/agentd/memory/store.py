@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import UTC, datetime
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import sqlite_vec
 
-from agentd.memory.models import AnchoredSummary, CompactionSegment
+from agentd.memory.models import AnchoredSummary, CompactionSegment, Memory
 
 logger = logging.getLogger(__name__)
 
@@ -136,4 +137,49 @@ class MemoryStore:
             summary_md=r["summary_md"],
             version=r["version"],
             updated_at=datetime.fromisoformat(r["updated_at"]),
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 2: long-term memories
+    # ------------------------------------------------------------------
+    def _insert_rows(self, m: Memory, embedding: list[float]) -> None:
+        # FIX #2: raw writes WITHOUT a `with` block, so supersede can wrap the UPDATE + these
+        # inserts in ONE atomic transaction. Caller owns the transaction.
+        self._conn.execute(
+            "INSERT INTO memories (id, scope_kind, scope_id, kind, content, entities, "
+            "importance, valid_from, valid_to, superseded_by, source_kind, source_ref, "
+            "source_seq_lo, source_seq_hi, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (m.id, m.scope_kind, m.scope_id, m.kind, m.content, json.dumps(m.entities),
+             m.importance, m.valid_from.isoformat(),
+             m.valid_to.isoformat() if m.valid_to else None, m.superseded_by, m.source_kind,
+             m.source_ref, m.source_seq_lo, m.source_seq_hi, m.created_at.isoformat()),
+        )
+        self._conn.execute(
+            "INSERT INTO memories_fts (memory_id, content, entities) VALUES (?,?,?)",
+            (m.id, m.content, " ".join(m.entities)),
+        )
+        if embedding and self._vec_enabled:  # FIX #1: skip vec write when degraded
+            self._conn.execute(
+                "INSERT INTO vec_memories (memory_id, embedding) VALUES (?, ?)",
+                (m.id, sqlite_vec.serialize_float32(embedding)),
+            )
+
+    def insert_memory(self, memory: Memory, embedding: list[float]) -> None:
+        with self._conn:  # one transaction across the 3 tables
+            self._insert_rows(memory, embedding)
+
+    def get_memory(self, memory_id: str) -> Memory | None:
+        r = self._conn.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()
+        return self._row_to_memory(r) if r else None
+
+    @staticmethod
+    def _row_to_memory(r: sqlite3.Row) -> Memory:
+        return Memory(
+            id=r["id"], scope_kind=r["scope_kind"], scope_id=r["scope_id"], kind=r["kind"],
+            content=r["content"], entities=json.loads(r["entities"]), importance=r["importance"],
+            valid_from=datetime.fromisoformat(r["valid_from"]),
+            valid_to=datetime.fromisoformat(r["valid_to"]) if r["valid_to"] else None,
+            superseded_by=r["superseded_by"], source_kind=r["source_kind"],
+            source_ref=r["source_ref"], source_seq_lo=r["source_seq_lo"],
+            source_seq_hi=r["source_seq_hi"], created_at=datetime.fromisoformat(r["created_at"]),
         )

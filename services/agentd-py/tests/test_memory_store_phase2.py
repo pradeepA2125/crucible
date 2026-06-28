@@ -47,3 +47,27 @@ def test_store_survives_without_vec(tmp_path, monkeypatch):
     )
     store = MemoryStore(tmp_path / "m.sqlite3")  # must NOT raise
     assert store._vec_enabled is False
+
+
+def test_insert_and_get_memory_roundtrip(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem(), [0.1] * 384)
+    got = store.get_memory("m1")
+    assert got is not None and got.content == "patch ops in patch/engine.py"
+    assert got.entities == ["patch/engine.py"] and got.importance == 7
+    fts = store._conn.execute("SELECT count(*) c FROM memories_fts WHERE memory_id='m1'").fetchone()
+    assert fts["c"] == 1
+    if store._vec_enabled:
+        vec = store._conn.execute(
+            "SELECT count(*) c FROM vec_memories WHERE memory_id='m1'").fetchone()
+        assert vec["c"] == 1
+
+
+def test_insert_with_empty_embedding_skips_vec(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("m2"), [])
+    if store._vec_enabled:
+        vec = store._conn.execute(
+            "SELECT count(*) c FROM vec_memories WHERE memory_id='m2'").fetchone()
+        assert vec["c"] == 0
+    assert store.get_memory("m2") is not None
