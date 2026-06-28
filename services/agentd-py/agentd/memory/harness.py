@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 
 from agentd.memory.compactor import AnchorSummarizer, Compactor
 from agentd.memory.config import MemoryConfig
@@ -251,15 +252,22 @@ def build_memory_harness(
         hot_turns=config.hot_turns,
     )
     consolidator: object | None = None
-    if workspace_path:  # consolidation needs a workspace scope; without one, compaction-only
+    recall_engine: object | None = None
+    if workspace_path:  # memory needs a workspace scope; without one, compaction-only
         from agentd.memory.consolidator import Consolidator, make_engine_consolidator
         from agentd.memory.embedder import Embedder
+        from agentd.memory.recall import RecallEngine
+        embedder = Embedder(config.embedding_model)  # shared by write + read paths (one load)
         consolidator = Consolidator(
-            store, Embedder(config.embedding_model),
-            make_engine_consolidator(transport, model),
+            store, embedder, make_engine_consolidator(transport, model),
             dedup_threshold=config.dedup_threshold,
         )
+        recall_engine = RecallEngine(store, embedder, weights=config.weights)
+        # FIX #3: warm the model in a background thread so the first real turn doesn't eat the
+        # ~130MB load. A daemon thread works regardless of event-loop state at construction.
+        threading.Thread(target=embedder.warmup, daemon=True).start()
     return MemoryHarness(
         enabled=True, compactor=compactor, consolidator=consolidator,
-        scope_kind="workspace", scope_id=workspace_path,
+        recall_engine=recall_engine, scope_kind="workspace", scope_id=workspace_path,
+        recall_token_budget=config.recall_token_budget,
     )
