@@ -324,9 +324,15 @@ def test_sqlite_vec_loaded(tmp_path):
 Run: `python -m pytest tests/test_memory_store_phase2.py -v`
 Expected: FAIL — `vec_version()` unknown / `memories` table absent.
 
-- [ ] **Step 3: Load sqlite-vec and extend the schema**
+- [ ] **Step 3: Load sqlite-vec (GUARDED) and extend the schema**
 
-In `services/agentd-py/agentd/memory/store.py`, add `import sqlite_vec` at the top. Replace the `__init__` body's connection setup so it loads the extension before running the schema:
+> **RUNTIME FIX #1 — sqlite-vec must NOT crash the store.** `sqlite3` may be built without
+> extension support, or `sqlite-vec` may be absent. Phase 1 already uses `MemoryStore`, so an
+> unconditional load would regress compaction. Guard the load, set `self._vec_enabled`, and only
+> create the `vec_memories` table when the extension loaded. The base schema (memories + FTS5)
+> always applies; semantic search degrades to empty when `_vec_enabled` is False.
+
+In `services/agentd-py/agentd/memory/store.py`, add `import logging` + `import sqlite_vec` at the top and a module logger. Replace the `__init__` connection setup:
 
 ```python
     def __init__(self, db_path: str | Path) -> None:
@@ -334,14 +340,27 @@ In `services/agentd-py/agentd/memory/store.py`, add `import sqlite_vec` at the t
         Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._path)
         self._conn.row_factory = sqlite3.Row
-        self._conn.enable_load_extension(True)
-        sqlite_vec.load(self._conn)
-        self._conn.enable_load_extension(False)
-        self._conn.executescript(_SCHEMA)
+        self._vec_enabled = self._try_load_vec()
+        self._conn.executescript(_SCHEMA)  # base tables + FTS5 (always)
+        if self._vec_enabled:
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories "
+                "USING vec0(memory_id TEXT PRIMARY KEY, embedding float[384])"
+            )
         self._conn.commit()
+
+    def _try_load_vec(self) -> bool:
+        try:
+            self._conn.enable_load_extension(True)
+            sqlite_vec.load(self._conn)
+            self._conn.enable_load_extension(False)
+            return True
+        except Exception:  # noqa: BLE001 — degrade to FTS5-only, never crash the store
+            logger.warning("[memory] sqlite-vec unavailable; semantic search disabled (FTS5-only)")
+            return False
 ```
 
-Extend `_SCHEMA` (append before the closing `"""`):
+Extend `_SCHEMA` (append before the closing `"""`) — note `vec_memories` is created separately above, NOT here:
 
 ```python
 CREATE TABLE IF NOT EXISTS memories (
@@ -362,13 +381,20 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope_kind, scope_id, valid_to);
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-    memory_id TEXT PRIMARY KEY,
-    embedding float[384]
-);
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     memory_id UNINDEXED, content, entities
 );
+```
+
+The Step-1 test `test_sqlite_vec_loaded` should `@pytest.mark.skipif(not <vec available>)` OR assert `store._vec_enabled` is a bool — on CI without the extension it must still pass (the store degrades, doesn't crash). Add a degrade test:
+
+```python
+def test_store_survives_without_vec(tmp_path, monkeypatch):
+    import agentd.memory.store as store_mod
+    monkeypatch.setattr(store_mod.sqlite_vec, "load",
+                        lambda c: (_ for _ in ()).throw(RuntimeError("no ext")))
+    store = MemoryStore(tmp_path / "m.sqlite3")  # must NOT raise
+    assert store._vec_enabled is False
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -470,7 +496,7 @@ Add to `MemoryStore` in `store.py` (add `import json` at top):
                 "INSERT INTO memories_fts (memory_id, content, entities) VALUES (?,?,?)",
                 (m.id, m.content, " ".join(m.entities)),
             )
-            if embedding:
+            if embedding and self._vec_enabled:  # FIX #1: skip vec write when degraded
                 self._conn.execute(
                     "INSERT INTO vec_memories (memory_id, embedding) VALUES (?, ?)",
                     (m.id, sqlite_vec.serialize_float32(embedding)),
@@ -585,14 +611,16 @@ Add to `MemoryStore`:
     def search_semantic(
         self, query_embedding: list[float], k: int, scope_kind: str, scope_id: str
     ) -> list[tuple[str, float]]:
-        if not query_embedding:
+        # FIX #1: degrade silently when vec is disabled. FIX #6: over-fetch (k*4) from the ANN
+        # BEFORE the live+scope JOIN filter, else LIMIT k caps pre-filter and under-retrieves.
+        if not query_embedding or not self._vec_enabled:
             return []
         rows = self._conn.execute(
             "SELECT v.memory_id AS mid, v.distance AS dist "
             "FROM vec_memories v JOIN memories m ON m.id = v.memory_id "
-            "WHERE v.embedding MATCH ? AND m.valid_to IS NULL "
+            "WHERE v.embedding MATCH ? AND k = ? AND m.valid_to IS NULL "
             "AND m.scope_kind=? AND m.scope_id=? ORDER BY v.distance LIMIT ?",
-            (sqlite_vec.serialize_float32(query_embedding), scope_kind, scope_id, k),
+            (sqlite_vec.serialize_float32(query_embedding), k * 4, scope_kind, scope_id, k),
         ).fetchall()
         return [(r["mid"], r["dist"]) for r in rows]
 
@@ -611,19 +639,22 @@ Add to `MemoryStore`:
     def similar_memories(
         self, embedding: list[float], kind: str, scope_kind: str, scope_id: str, k: int
     ) -> list[tuple[Memory, float]]:
-        if not embedding:
+        if not embedding or not self._vec_enabled:  # FIX #1
             return []
         rows = self._conn.execute(
             "SELECT m.*, v.distance AS dist "
             "FROM vec_memories v JOIN memories m ON m.id = v.memory_id "
-            "WHERE v.embedding MATCH ? AND m.valid_to IS NULL AND m.kind=? "
+            "WHERE v.embedding MATCH ? AND k = ? AND m.valid_to IS NULL AND m.kind=? "
             "AND m.scope_kind=? AND m.scope_id=? ORDER BY v.distance LIMIT ?",
-            (sqlite_vec.serialize_float32(embedding), kind, scope_kind, scope_id, k),
+            (sqlite_vec.serialize_float32(embedding), k * 4, kind, scope_kind, scope_id, k),
         ).fetchall()
         return [(self._row_to_memory(r), r["dist"]) for r in rows]
 ```
 
-Note: vec0 KNN requires the `MATCH` + `ORDER BY distance LIMIT k` form shown; the join filters to live + scope after the ANN.
+> **Note (vec0 KNN syntax):** sqlite-vec selects neighbors via a `k = ?` constraint inside the
+> `MATCH` query (over-fetched to `k*4` here so the live+scope JOIN can filter down — FIX #6). If
+> the installed `sqlite-vec` rejects `k = ?`, use its documented KNN form (`LIMIT` only) — verify
+> against the installed version before adjusting; the `k*4` over-fetch principle stands either way.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -672,19 +703,58 @@ Expected: FAIL — `supersede` not defined.
 
 - [ ] **Step 3: Write the implementation**
 
-Add to `MemoryStore`:
+> **RUNTIME FIX #2 — supersede must be ONE atomic transaction.** Do NOT call `insert_memory`
+> inside `supersede`'s `with self._conn`: `insert_memory` opens its own `with self._conn`, whose
+> exit **commits mid-way**, so the `UPDATE` (retire old) can commit even if the insert then fails
+> → a memory retired with no replacement (permanent data loss). Inline all writes in one block.
+
+Add a private `_insert_rows` helper that does the raw writes WITHOUT a `with` block, and have
+both `insert_memory` and `supersede` wrap it in their own single transaction:
 
 ```python
+    def _insert_rows(self, m: Memory, embedding: list[float]) -> None:
+        self._conn.execute(
+            "INSERT INTO memories (id, scope_kind, scope_id, kind, content, entities, "
+            "importance, valid_from, valid_to, superseded_by, source_kind, source_ref, "
+            "source_seq_lo, source_seq_hi, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (m.id, m.scope_kind, m.scope_id, m.kind, m.content, json.dumps(m.entities),
+             m.importance, m.valid_from.isoformat(),
+             m.valid_to.isoformat() if m.valid_to else None, m.superseded_by, m.source_kind,
+             m.source_ref, m.source_seq_lo, m.source_seq_hi, m.created_at.isoformat()),
+        )
+        self._conn.execute(
+            "INSERT INTO memories_fts (memory_id, content, entities) VALUES (?,?,?)",
+            (m.id, m.content, " ".join(m.entities)),
+        )
+        if embedding and self._vec_enabled:
+            self._conn.execute(
+                "INSERT INTO vec_memories (memory_id, embedding) VALUES (?, ?)",
+                (m.id, sqlite_vec.serialize_float32(embedding)),
+            )
+
     def supersede(self, old_id: str, new_memory: Memory, new_embedding: list[float]) -> None:
-        with self._conn:  # atomic: retire old + insert new together
+        with self._conn:  # ONE transaction: retire old + insert new atomically
             self._conn.execute(
                 "UPDATE memories SET valid_to=?, superseded_by=? WHERE id=?",
                 (new_memory.valid_from.isoformat(), new_memory.id, old_id),
             )
-            self.insert_memory(new_memory, new_embedding)
+            self._insert_rows(new_memory, new_embedding)
 ```
 
-Note: `insert_memory` opens its own `with self._conn`; nested `with` on the same sqlite3 connection is a no-op savepoint-wise but commits once at the outer exit — acceptable here because both run on one connection in one process. If a test reveals double-commit issues, inline the inserts instead of calling `insert_memory`.
+Refactor `insert_memory` (Task 4) to delegate: `def insert_memory(self, memory, embedding): \n    with self._conn:\n        self._insert_rows(memory, embedding)`.
+
+Add a fail-path test proving atomicity (a failing insert leaves the old row LIVE):
+
+```python
+def test_supersede_rolls_back_when_insert_fails(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("old"), [0.1] * 384)
+    bad = _mem("old")  # duplicate PK 'old' -> the INSERT inside supersede raises
+    import pytest
+    with pytest.raises(Exception):
+        store.supersede("old", bad, [0.2] * 384)
+    assert store.get_memory("old").valid_to is None  # old still LIVE — UPDATE rolled back
+```
 
 - [ ] **Step 4: Run test to verify it passes**
 

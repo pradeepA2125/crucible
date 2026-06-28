@@ -306,7 +306,13 @@ Expected: FAIL — `Consolidator` not defined.
 
 - [ ] **Step 3: Write the implementation**
 
-Append to `services/agentd-py/agentd/memory/consolidator.py` (add imports `from datetime import UTC, datetime`, `from uuid import uuid4`, `from agentd.memory.embedder import Embedder`, `from agentd.memory.store import MemoryStore`):
+Append to `services/agentd-py/agentd/memory/consolidator.py` (add imports `import asyncio`, `from datetime import UTC, datetime`, `from uuid import uuid4`, `from agentd.memory.embedder import Embedder`, `from agentd.memory.store import MemoryStore`).
+
+> **CONCURRENCY INVARIANT (document in a comment on `_dispose`):** `_dispose` and every method
+> it calls (`similar_memories`, `insert_memory`, `supersede`) MUST be **await-free**. Consolidation
+> runs as a background task sharing ONE `sqlite3` connection with the foreground turn; the only safe
+> yield point is the `await self._distill(...)`/`await self._embed(...)` *before* any DB write.
+> An `await` mid-`_dispose` would interleave another coroutine's cursor on the same connection.
 
 ```python
 def _cosine_from_l2(distance: float) -> float:
@@ -331,23 +337,35 @@ class Consolidator:
         self, run_id: str, scope_kind: str, scope_id: str, transcript: str,
         seq_lo: int | None, seq_hi: int | None,
     ) -> int:
-        existing = self._store.get_live_memories(scope_kind, scope_id)
+        # FIX #4: bound the existing-context fed to the LLM — ALL live memories would grow the
+        # prompt without limit on a mature workspace until consolidation fails every time.
+        existing = self._bounded_existing(scope_kind, scope_id)
         candidates = await self._distill(transcript, existing)
         inserted = 0
         for c in candidates:
-            vec = self._embedder.embed([c.content])
-            emb = vec[0] if vec else []
+            emb = await self._embed(c.content)  # FIX #3: off the event loop
             if self._dispose(c, emb, run_id, scope_kind, scope_id, "consolidation",
                              seq_lo, seq_hi):
                 inserted += 1
         return inserted
 
+    def _bounded_existing(self, scope_kind: str, scope_id: str, cap: int = 20) -> list[Memory]:
+        live = self._store.get_live_memories(scope_kind, scope_id)
+        # most-important first, then most-recent — the set most likely to be contradicted.
+        live.sort(key=lambda m: (m.importance, m.valid_from), reverse=True)
+        return live[:cap]
+
+    async def _embed(self, text: str) -> list[float]:
+        # FIX #3: sentence-transformers encode is sync CPU (and the first call downloads the
+        # model). Running it on the asyncio loop freezes every turn + all SSE. Offload to a thread.
+        vec = await asyncio.to_thread(self._embedder.embed, [text])
+        return vec[0] if vec else []
+
     async def write_explicit(
         self, content: str, kind: str, entities: list[str], scope_kind: str, scope_id: str,
     ) -> str:
         c = CandidateMemory(kind=kind, content=content, entities=entities, importance=8)
-        vec = self._embedder.embed([content])
-        emb = vec[0] if vec else []
+        emb = await self._embed(content)  # FIX #3
         mem = self._build_memory(c, run_id="", scope_kind=scope_kind, scope_id=scope_id,
                                  source_kind="agent_tool", seq_lo=None, seq_hi=None)
         self._store.insert_memory(mem, emb)
@@ -471,7 +489,7 @@ and add `evicted_seq_lo=seq_lo, evicted_seq_hi=seq_hi` to each `CompactionResult
 
 - [ ] **Step 4: Wire the harness**
 
-In `harness.py`, extend `MemoryHarness.__init__` to accept `consolidator=None, scope_kind="workspace", scope_id=""` and store them. In `prepare_turn`, after building the result, schedule consolidation:
+In `harness.py`, extend `MemoryHarness.__init__` to accept `consolidator=None, scope_kind="workspace", scope_id=""` and store them, and initialize `self._bg_tasks: set[asyncio.Task] = set()` (FIX #5 strong-ref holder). In `prepare_turn`, after building the result, schedule consolidation:
 
 ```python
         prep = TurnPreparation(
@@ -488,13 +506,27 @@ In `harness.py`, extend `MemoryHarness.__init__` to accept `consolidator=None, s
         return prep
 
     def schedule_consolidation(self, run_id, scope_kind, scope_id, transcript, seq_lo, seq_hi):
+        # FIX #5: (a) no-op if there's no consolidator or no running loop (called from sync
+        # context) — never crash a caller. (b) hold a strong ref to the task or the event loop
+        # may GC it mid-flight ("Task was destroyed but it is pending").
+        if self._consolidator is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("[memory] no running loop; skipping consolidation for run=%s", run_id)
+            return
+
         async def _run():
             try:
                 await self._consolidator.consolidate(
                     run_id, scope_kind, scope_id, transcript, seq_lo, seq_hi)
             except Exception:  # noqa: BLE001
                 logger.warning("[memory] scheduled consolidation failed for run=%s", run_id)
-        asyncio.create_task(_run())
+
+        task = loop.create_task(_run())
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     def _render_segments(self, run_id, seq_lo, seq_hi):
         segs = [s for s in self._store_segments(run_id) if seq_lo <= s.seq <= seq_hi]

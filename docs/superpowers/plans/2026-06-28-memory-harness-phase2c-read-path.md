@@ -151,7 +151,7 @@ git commit -m "feat(memory): RecallEngine scoring (min-max fuse + recency + impo
 
 **Interfaces:**
 - Consumes: `MemoryStore` (2A: `get_memory`, `search_semantic`, `search_lexical`), `Embedder` (2A), `_fuse` (Task 1).
-- Produces: `RecallEngine(store, embedder, *, weights, candidate_k=30)`. `recall(query: str, scope_kind: str, scope_id: str, k: int) -> list[Memory]`. Structural signal = `len(query_entity_tokens ∩ memory.entities)`. Embedder-unavailable → semantic dict empty (FTS5 + structural only). Best-effort: exceptions → `[]`.
+- Produces: `RecallEngine(store, embedder, *, weights, candidate_k=30, min_score=0.15)`. **`async def recall(query, scope_kind, scope_id, k) -> list[Memory]`** (FIX #3 — embeds off the event loop via `asyncio.to_thread`). Applies a **relevance floor** `min_score` (FIX #7 — don't inject weak/irrelevant memories into every turn). Structural signal = `len(query_entity_tokens ∩ memory.entities)`. Embedder-unavailable → semantic dict empty (FTS5 + structural only). Best-effort: exceptions → `[]`. **All callers `await` it; test spies are `async`.**
 
 - [ ] **Step 1: Write the failing test**
 
@@ -187,8 +187,8 @@ async def test_recall_returns_lexical_match(tmp_path):
                         emb.embed(["auth flow"])[0])
     store.insert_memory(_mem("tax", content="tax compute", entities=("src/tax.py",)),
                         emb.embed(["tax compute"])[0])
-    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2))
-    out = eng.recall("auth", "workspace", "/ws", k=1)
+    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2), min_score=0.0)
+    out = await eng.recall("auth", "workspace", "/ws", k=1)
     assert out and out[0].id == "auth"
 
 
@@ -199,9 +199,21 @@ async def test_recall_degrades_without_embedder(tmp_path):
         raise RuntimeError("no model")
     emb = Embedder(encoder=boom)
     store.insert_memory(_mem("auth", content="auth flow", entities=("src/auth.py",)), [])
-    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2))
-    out = eng.recall("auth", "workspace", "/ws", k=1)
+    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2), min_score=0.0)
+    out = await eng.recall("auth", "workspace", "/ws", k=1)
     assert out and out[0].id == "auth"  # lexical still works
+
+
+@pytest.mark.asyncio
+async def test_recall_floor_drops_weak_matches(tmp_path):
+    # FIX #7: nothing relevant → inject nothing (don't pollute every turn).
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    emb = _embedder()
+    store.insert_memory(_mem("auth", content="auth flow", entities=("src/auth.py",)),
+                        emb.embed(["auth flow"])[0])
+    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2), min_score=0.99)
+    out = await eng.recall("completely unrelated zzzzz", "workspace", "/ws", k=5)
+    assert out == []
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -211,7 +223,7 @@ Expected: FAIL — `RecallEngine` not defined.
 
 - [ ] **Step 3: Write the implementation**
 
-Append to `recall.py` (add `import re`, `from datetime import UTC`, `from agentd.memory.embedder import Embedder`, `from agentd.memory.store import MemoryStore`):
+Append to `recall.py` (add `import asyncio`, `import re`, `from datetime import UTC`, `from agentd.memory.embedder import Embedder`, `from agentd.memory.store import MemoryStore`):
 
 ```python
 _ENTITY_RE = re.compile(r"[\w./:]+")
@@ -225,27 +237,30 @@ def _query_entities(query: str) -> set[str]:
 class RecallEngine:
     def __init__(
         self, store: MemoryStore, embedder: Embedder, *,
-        weights: tuple[float, float, float], candidate_k: int = 30,
+        weights: tuple[float, float, float], candidate_k: int = 30, min_score: float = 0.15,
     ) -> None:
         self._store = store
         self._embedder = embedder
         self._weights = weights
         self._cand_k = candidate_k
+        self._min_score = min_score  # FIX #7: relevance floor
 
-    def recall(self, query: str, scope_kind: str, scope_id: str, k: int) -> list[Memory]:
+    async def recall(self, query: str, scope_kind: str, scope_id: str, k: int) -> list[Memory]:
         try:
-            return self._recall(query, scope_kind, scope_id, k)
-        except Exception:  # noqa: BLE001 — best-effort
+            return await self._recall(query, scope_kind, scope_id, k)
+        except Exception:  # noqa: BLE001 — best-effort: never break the turn
             logger.warning("[memory] recall failed for scope=%s", scope_id)
             return []
 
-    def _recall(self, query: str, scope_kind: str, scope_id: str, k: int) -> list[Memory]:
+    async def _recall(self, query: str, scope_kind: str, scope_id: str, k: int) -> list[Memory]:
         sem: dict[str, float] = {}
-        vecs = self._embedder.embed([query]) if self._embedder.available else []
-        if vecs:
-            for mid, dist in self._store.search_semantic(vecs[0], self._cand_k,
-                                                         scope_kind, scope_id):
-                sem[mid] = 1.0 - (dist * dist) / 2.0  # cosine from L2 (unit vectors)
+        if self._embedder.available:
+            # FIX #3: embed off the event loop (sync CPU + first-call model load).
+            vecs = await asyncio.to_thread(self._embedder.embed, [query])
+            if vecs:
+                for mid, dist in self._store.search_semantic(vecs[0], self._cand_k,
+                                                             scope_kind, scope_id):
+                    sem[mid] = 1.0 - (dist * dist) / 2.0  # cosine from L2 (unit vectors)
         lex: dict[str, float] = {}
         for mid, rank in self._store.search_lexical(query, self._cand_k, scope_kind, scope_id):
             lex[mid] = -rank  # bm25: lower rank = better → negate so higher = better
@@ -254,7 +269,8 @@ class RecallEngine:
         mems = [m for m in (self._store.get_memory(i) for i in ids) if m is not None]
         struct = {m.id: float(len(qents & set(m.entities))) for m in mems}
         ranked = _fuse(mems, sem, lex, struct, self._weights, datetime.now(UTC))
-        return [m for m, _ in ranked[:k]]
+        # FIX #7: drop weak matches so a no-relevant-memory turn injects nothing.
+        return [m for m, score in ranked[:k] if score >= self._min_score]
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -294,7 +310,7 @@ class _SpyRecall:
     def __init__(self):
         self.calls = 0
 
-    def recall(self, query, scope_kind, scope_id, k):
+    async def recall(self, query, scope_kind, scope_id, k):  # async (FIX #3)
         self.calls += 1
         return []
 
@@ -325,7 +341,8 @@ In `harness.py`, extend `MemoryHarness.__init__` with `recall_engine=None, recal
             query = self._recall_query(history)
             key = f"{run_id}::{query}"
             if key != self._recall_key:
-                mems = self._recall_engine.recall(query, self._scope_kind, self._scope_id, k=8)
+                mems = await self._recall_engine.recall(  # await (FIX #3 async recall)
+                    query, self._scope_kind, self._scope_id, k=8)
                 self._recall_cache[run_id] = self._render_recall(mems)
                 self._recall_key = key
             recalled = self._recall_cache.get(run_id, [])
@@ -449,7 +466,7 @@ class _SpyRecall:
     def __init__(self, mems):
         self._mems = mems
 
-    def recall(self, query, scope_kind, scope_id, k):
+    async def recall(self, query, scope_kind, scope_id, k):  # async (FIX #3)
         return self._mems
 
 
@@ -480,7 +497,7 @@ Update `MemoryToolSource.__init__` to `(self, consolidator, scope_kind, scope_id
             if self._recall_engine is None:
                 return ToolOutput(output="recall unavailable", is_error=True)
             query = str(args.get("query", "")).strip()
-            mems = self._recall_engine.recall(query, self._scope_kind, self._scope_id, k=8)
+            mems = await self._recall_engine.recall(query, self._scope_kind, self._scope_id, k=8)
             if not mems:
                 return ToolOutput(output="(no relevant memories)")
             lines = [f"- ({m.kind}) {m.content}" for m in mems]
@@ -529,26 +546,31 @@ from agentd.memory.store import MemoryStore
 from tests.test_memory_store_phase2 import _mem
 
 
-def test_grounding_appended_best_effort(tmp_path):
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_grounding_appended_best_effort(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
     emb = Embedder(encoder=lambda ts: [[1.0] + [0.0] * 383 for _ in ts])
     store.insert_memory(_mem("a", content="patch ops", entities=("patch/engine.py",)),
                         emb.embed(["patch ops"])[0])
-    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2))
-    grounded = eng.recall_grounded("patch", "workspace", "/ws", k=1,
-                                   ground=lambda entity: f"callers of {entity}")
+    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2), min_score=0.0)
+    grounded = await eng.recall_grounded("patch", "workspace", "/ws", k=1,
+                                         ground=lambda entity: f"callers of {entity}")
     assert "grounding" in grounded[0].lower()
 
 
-def test_grounding_swallows_errors(tmp_path):
+@pytest.mark.asyncio
+async def test_grounding_swallows_errors(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
     emb = Embedder(encoder=lambda ts: [[1.0] + [0.0] * 383 for _ in ts])
     store.insert_memory(_mem("a", content="patch ops", entities=("patch/engine.py",)),
                         emb.embed(["patch ops"])[0])
-    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2))
+    eng = RecallEngine(store, emb, weights=(0.5, 0.3, 0.2), min_score=0.0)
     def boom(entity):
         raise RuntimeError("no snapshot")
-    out = eng.recall_grounded("patch", "workspace", "/ws", k=1, ground=boom)
+    out = await eng.recall_grounded("patch", "workspace", "/ws", k=1, ground=boom)
     assert out  # still returns the memory line, grounding skipped
 ```
 
@@ -561,11 +583,11 @@ Expected: FAIL — `recall_grounded` not defined.
 
 Add to `RecallEngine`:
 ```python
-    def recall_grounded(
+    async def recall_grounded(
         self, query: str, scope_kind: str, scope_id: str, k: int,
         ground: "Callable[[str], str] | None" = None,
     ) -> list[str]:
-        mems = self.recall(query, scope_kind, scope_id, k)
+        mems = await self.recall(query, scope_kind, scope_id, k)
         lines = [f"- ({m.kind}) {m.content}" for m in mems]
         if ground is not None:
             for i, m in enumerate(mems[:2]):  # top 1-2 only
@@ -603,6 +625,7 @@ git commit -m "feat(memory): best-effort code-graph grounding for top recalls"
 
 **Interfaces:**
 - Consumes: all of 2A + 2B + 2C.
+- Produces: `build_memory_harness` constructs the `Embedder`, `Consolidator`, `RecallEngine`, and `MemoryToolSource`, wires them into `MemoryHarness`, and — **FIX #3 (warmup)** — kicks a one-time background model warmup so the first real turn doesn't eat the bge-small load: `if config.enabled and embedder.available: asyncio.get_event_loop().run_in_executor(None, embedder.embed, ["warmup"])` guarded in try/except (no loop at construction → skip; the first `to_thread` embed will load it lazily anyway). Add `Embedder.warmup()` that calls `self.embed(["warmup"])` for an explicit, testable entry point.
 
 - [ ] **Step 1: Write the test**
 
@@ -637,8 +660,8 @@ async def test_write_in_run_one_recall_in_run_two(tmp_path):
 
     # Run 2: a fresh store over the SAME db recalls it
     store2 = MemoryStore(db)
-    eng = RecallEngine(store2, emb, weights=(0.5, 0.3, 0.2))
-    out = eng.recall("patch engine op types", "workspace", "/ws", k=3)
+    eng = RecallEngine(store2, emb, weights=(0.5, 0.3, 0.2), min_score=0.0)
+    out = await eng.recall("patch engine op types", "workspace", "/ws", k=3)
     assert any("7 op types" in m.content for m in out)
 ```
 
