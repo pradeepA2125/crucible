@@ -71,3 +71,47 @@ def test_insert_with_empty_embedding_skips_vec(tmp_path):
             "SELECT count(*) c FROM vec_memories WHERE memory_id='m2'").fetchone()
         assert vec["c"] == 0
     assert store.get_memory("m2") is not None
+
+
+def test_get_live_memories_filters_scope_and_validity(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("live"), [0.1] * 384)
+    retired = _mem("dead").model_copy(update={"valid_to": _mem("dead").valid_from})
+    store.insert_memory(retired, [0.1] * 384)
+    other = _mem("other").model_copy(update={"scope_id": "/elsewhere"})
+    store.insert_memory(other, [0.1] * 384)
+    live = store.get_live_memories("workspace", "/ws")
+    assert {m.id for m in live} == {"live"}
+
+
+def test_search_semantic_orders_by_distance(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    if not store._vec_enabled:
+        import pytest
+        pytest.skip("sqlite-vec unavailable")
+    near = [1.0] + [0.0] * 383
+    far = [0.0, 1.0] + [0.0] * 382
+    store.insert_memory(_mem("near"), near)
+    store.insert_memory(_mem("far"), far)
+    hits = store.search_semantic(near, k=2, scope_kind="workspace", scope_id="/ws")
+    assert hits[0][0] == "near"  # closest first
+
+
+def test_search_lexical_matches_entities(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("a", content="auth flow lives here", entities=("src/auth.py",)),
+                        [0.1] * 384)
+    store.insert_memory(_mem("b", content="tax compute", entities=("src/tax.py",)), [0.1] * 384)
+    hits = store.search_lexical("auth", k=5, scope_kind="workspace", scope_id="/ws")
+    assert hits and hits[0][0] == "a"
+
+
+def test_similar_memories_same_kind_scope(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    if not store._vec_enabled:
+        import pytest
+        pytest.skip("sqlite-vec unavailable")
+    store.insert_memory(_mem("s1"), [1.0] + [0.0] * 383)
+    out = store.similar_memories([1.0] + [0.0] * 383, kind="semantic",
+                                 scope_kind="workspace", scope_id="/ws", k=3)
+    assert out and out[0][0].id == "s1"

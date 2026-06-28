@@ -183,3 +183,52 @@ class MemoryStore:
             source_ref=r["source_ref"], source_seq_lo=r["source_seq_lo"],
             source_seq_hi=r["source_seq_hi"], created_at=datetime.fromisoformat(r["created_at"]),
         )
+
+    def get_live_memories(self, scope_kind: str, scope_id: str) -> list[Memory]:
+        rows = self._conn.execute(
+            "SELECT * FROM memories WHERE valid_to IS NULL AND scope_kind=? AND scope_id=?",
+            (scope_kind, scope_id),
+        ).fetchall()
+        return [self._row_to_memory(r) for r in rows]
+
+    def search_semantic(
+        self, query_embedding: list[float], k: int, scope_kind: str, scope_id: str
+    ) -> list[tuple[str, float]]:
+        # FIX #1: degrade when vec disabled. FIX #6: over-fetch (k*4) BEFORE the live+scope JOIN
+        # filter, else the KNN cap drops in-scope hits.
+        if not query_embedding or not self._vec_enabled:
+            return []
+        rows = self._conn.execute(
+            "SELECT v.memory_id AS mid, v.distance AS dist "
+            "FROM vec_memories v JOIN memories m ON m.id = v.memory_id "
+            "WHERE v.embedding MATCH ? AND k = ? AND m.valid_to IS NULL "
+            "AND m.scope_kind=? AND m.scope_id=? ORDER BY v.distance LIMIT ?",
+            (sqlite_vec.serialize_float32(query_embedding), k * 4, scope_kind, scope_id, k),
+        ).fetchall()
+        return [(r["mid"], r["dist"]) for r in rows]
+
+    def search_lexical(
+        self, query: str, k: int, scope_kind: str, scope_id: str
+    ) -> list[tuple[str, float]]:
+        rows = self._conn.execute(
+            "SELECT f.memory_id AS mid, bm25(memories_fts) AS rank "
+            "FROM memories_fts f JOIN memories m ON m.id = f.memory_id "
+            "WHERE memories_fts MATCH ? AND m.valid_to IS NULL "
+            "AND m.scope_kind=? AND m.scope_id=? ORDER BY rank LIMIT ?",
+            (query, scope_kind, scope_id, k),
+        ).fetchall()
+        return [(r["mid"], r["rank"]) for r in rows]
+
+    def similar_memories(
+        self, embedding: list[float], kind: str, scope_kind: str, scope_id: str, k: int
+    ) -> list[tuple[Memory, float]]:
+        if not embedding or not self._vec_enabled:  # FIX #1
+            return []
+        rows = self._conn.execute(
+            "SELECT m.*, v.distance AS dist "
+            "FROM vec_memories v JOIN memories m ON m.id = v.memory_id "
+            "WHERE v.embedding MATCH ? AND k = ? AND m.valid_to IS NULL AND m.kind=? "
+            "AND m.scope_kind=? AND m.scope_id=? ORDER BY v.distance LIMIT ?",
+            (sqlite_vec.serialize_float32(embedding), k * 4, kind, scope_kind, scope_id, k),
+        ).fetchall()
+        return [(self._row_to_memory(r), r["dist"]) for r in rows]
