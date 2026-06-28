@@ -1125,12 +1125,12 @@ git commit -m "test(memory): end-to-end compaction + kill-switch parity"
 ## Self-Review
 
 **Spec coverage (Phase 1 scope only):**
-- §1 component boundaries → Tasks 1–6 (one unit per file; store is the only DB-aware unit). ✓
-- §2 data model (`compaction_segments` with **no** `tier`/`embedding`, `anchored_summaries`, run-monotonic `seq` via `next_seq`) → Task 2, asserted by `test_next_seq_monotonic_across_batches`. `memories` table is Phase 2 — correctly absent. ✓
-- §5 compaction (0.65 trigger; **token-bounded** hot set + count cap; single-message truncation backstop; anchored merge not regenerate; all-evicted folded; fallback) → Tasks 3/4/5, asserted by `test_select_hot_*`, `test_over_threshold_compacts`, `test_anchor_merges_not_regenerates`, `test_single_oversize_message_is_truncated`, `test_summarizer_failure_falls_back`. The token bound (not count bound) is what guarantees the post-compaction window fits — proven by the oversize + count-cap tests. ✓
-- §7 error handling (kill switch, prepare_turn swallows, summarize/truncation degrade) → Task 6 (`test_prepare_turn_swallows_errors`) + Task 5 + Task 9 parity. ✓
-- §9 phasing (Phase 1 standalone, no `sqlite-vec`/embeddings) → no embedding column, no vec dependency. ✓
-- Recall stub present for the Phase-2 seam (Task 6). KV-cache guard is a Phase-2 concern (no recall tail exists yet) — noted in spec §8, not a gap. ✓
+- Shared foundations / component map → Tasks 1–6 (one unit per file; store is the only DB-aware unit). ✓
+- "Phase 1 — P1 data model" (`compaction_segments` with **no** `tier`/`embedding`, `anchored_summaries`, run-monotonic `seq` via `next_seq`) → Task 2, asserted by `test_next_seq_monotonic_across_batches`. `memories` table is Phase 2 — correctly absent. ✓
+- "Phase 1 — P1 compaction algorithm" (0.65 trigger; **token-bounded** hot set + count cap; single-message truncation backstop; anchored merge not regenerate; all-evicted folded; fallback) → Tasks 3/4/5, asserted by `test_select_hot_*`, `test_over_threshold_compacts`, `test_anchor_merges_not_regenerates`, `test_single_oversize_message_is_truncated`, `test_summarizer_failure_falls_back`. The token bound (not count bound) is what guarantees the post-compaction window fits — proven by the oversize + count-cap tests. ✓
+- "Phase 1 — P1 error handling" (kill switch, prepare_turn swallows, summarize/truncation degrade) → Task 6 (`test_prepare_turn_swallows_errors`) + Task 5 + Task 9 parity. ✓
+- "Phasing & maturity" / "Phase 1" (standalone, no `sqlite-vec`/embeddings) → no embedding column, no vec dependency. ✓
+- Recall stub present for the Phase-2 seam (Task 6). KV-cache guard is a Phase-2 concern (no recall tail exists yet) — noted in the spec's "P2 testing", not a gap. ✓
 
 **Placeholder scan:** the two loop-wiring tests (Tasks 7/8) deliberately defer fixture construction to implementation time, with explicit instructions to copy existing `tests/test_controller_loop*.py` / `tests/test_tool_loop*.py` wiring — the exact fixture signatures must be read from the codebase, not guessed. Every source step contains complete code.
 
