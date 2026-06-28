@@ -57,3 +57,33 @@ class TurnPreparation:
     compacted: bool = False
     evicted_count: int = 0  # surfaced from CompactionResult so the loops can broadcast it
     anchor_version: int = 0
+
+
+class Memory(BaseModel):
+    """A distilled, retrievable long-term memory (L3 / durable L2)."""
+
+    id: str
+    scope_kind: str            # 'workspace' | 'thread' | 'global' (global unwritten in P2)
+    scope_id: str
+    kind: str                  # 'episodic' | 'semantic' | 'procedural'
+    content: str
+    entities: list[str]
+    importance: int            # LLM-rated salience 1-10
+    valid_from: datetime       # event time
+    valid_to: datetime | None  # None = currently true
+    superseded_by: str | None
+    source_kind: str           # 'consolidation' | 'agent_tool'
+    source_ref: str
+    source_seq_lo: int | None  # A+link span into compaction_segments
+    source_seq_hi: int | None
+    created_at: datetime       # ingestion time
+
+
+class CandidateMemory(BaseModel):
+    """What the consolidator LLM proposes — content-level fields only; Python assigns the rest."""
+
+    kind: str
+    content: str
+    entities: list[str]
+    importance: int
+    contradicts: str | None = None

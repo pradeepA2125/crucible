@@ -14,6 +14,11 @@ class MemoryConfig(BaseModel):
     hot_token_frac: float
     hot_turns: int
     window_tokens: int
+    dedup_threshold: float
+    recall_token_budget: int
+    weights: tuple[float, float, float]
+    graph_grounding: bool
+    embedding_model: str
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> MemoryConfig:
@@ -24,4 +29,11 @@ class MemoryConfig(BaseModel):
             hot_token_frac=float(env.get("AI_EDITOR_MEMORY_HOT_TOKEN_FRAC", "0.4")),
             hot_turns=int(env.get("AI_EDITOR_MEMORY_HOT_TURNS", "10")),
             window_tokens=int(env.get("AI_EDITOR_MEMORY_WINDOW_TOKENS", "128000")),
+            dedup_threshold=float(env.get("AI_EDITOR_MEMORY_DEDUP_THRESHOLD", "0.92")),
+            recall_token_budget=int(env.get("AI_EDITOR_MEMORY_RECALL_TOKEN_BUDGET", "1500")),
+            weights=tuple(  # type: ignore[arg-type]
+                float(x) for x in env.get("AI_EDITOR_MEMORY_WEIGHTS", "0.5,0.3,0.2").split(",")
+            ),
+            graph_grounding=env.get("AI_EDITOR_MEMORY_GRAPH_GROUNDING", "true").lower() in _TRUTHY,
+            embedding_model=env.get("AI_EDITOR_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
         )
