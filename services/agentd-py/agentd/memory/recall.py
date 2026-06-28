@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
-from datetime import datetime
+import re
+from datetime import UTC, datetime
 
+from agentd.memory.embedder import Embedder
 from agentd.memory.models import Memory
+from agentd.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -46,3 +50,50 @@ def _fuse(
         scored.append((m, s))
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored
+
+
+_ENTITY_RE = re.compile(r"[\w./:]+")
+
+
+def _query_entities(query: str) -> set[str]:
+    # path-ish tokens: contain a / . or : (e.g. src/tax.py, foo.py:Bar)
+    return {t for t in _ENTITY_RE.findall(query) if any(c in t for c in "/.:")}
+
+
+class RecallEngine:
+    def __init__(
+        self, store: MemoryStore, embedder: Embedder, *,
+        weights: tuple[float, float, float], candidate_k: int = 30, min_score: float = 0.15,
+    ) -> None:
+        self._store = store
+        self._embedder = embedder
+        self._weights = weights
+        self._cand_k = candidate_k
+        self._min_score = min_score  # FIX #7: relevance floor
+
+    async def recall(self, query: str, scope_kind: str, scope_id: str, k: int) -> list[Memory]:
+        try:
+            return await self._recall(query, scope_kind, scope_id, k)
+        except Exception:  # noqa: BLE001 — best-effort: never break the turn
+            logger.warning("[memory] recall failed for scope=%s", scope_id)
+            return []
+
+    async def _recall(self, query: str, scope_kind: str, scope_id: str, k: int) -> list[Memory]:
+        sem: dict[str, float] = {}
+        if self._embedder.available:
+            # FIX #3: embed off the event loop (sync CPU + first-call model load).
+            vecs = await asyncio.to_thread(self._embedder.embed, [query])
+            if vecs:
+                for mid, dist in self._store.search_semantic(vecs[0], self._cand_k,
+                                                             scope_kind, scope_id):
+                    sem[mid] = 1.0 - (dist * dist) / 2.0  # cosine from L2 (unit vectors)
+        lex: dict[str, float] = {}
+        for mid, rank in self._store.search_lexical(query, self._cand_k, scope_kind, scope_id):
+            lex[mid] = -rank  # bm25: lower rank = better → negate so higher = better
+        qents = _query_entities(query)
+        ids = set(sem) | set(lex)
+        mems = [m for m in (self._store.get_memory(i) for i in ids) if m is not None]
+        struct = {m.id: float(len(qents & set(m.entities))) for m in mems}
+        ranked = _fuse(mems, sem, lex, struct, self._weights, datetime.now(UTC))
+        # FIX #7: drop weak matches so a no-relevant-memory turn injects nothing.
+        return [m for m, score in ranked[:k] if score >= self._min_score]
