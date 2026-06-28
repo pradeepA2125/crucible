@@ -73,4 +73,5 @@ async def test_tool_loop_invokes_harness_with_task_id(tmp_path):
     )
     result = await loop.run(step, {}, TaskBudget(), TaskUsage())
     assert isinstance(result, VerifyResult)
-    assert calls and all(c == "task-mem" for c in calls)
+    # run_id is per-step (task_id:step_id) so steps don't share an anchored summary.
+    assert calls and all(c == "task-mem:S1" for c in calls)

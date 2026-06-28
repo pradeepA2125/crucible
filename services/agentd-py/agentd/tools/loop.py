@@ -367,8 +367,10 @@ class ToolLoop:
                 raise TaskAborted()
             # Memory middleware: compact the live ReAct history in place before the model
             # call (no-op unless AI_EDITOR_MEMORY_ENABLED). step_context is separate and
-            # untouched — only the growing conversation `history` is compacted.
-            _prep = await self._memory_harness.prepare_turn(history, str(self._task_id))
+            # untouched — only the growing conversation `history` is compacted. run_id is
+            # per-step (each step builds a fresh ToolLoop with its own history) so one step's
+            # anchored summary never leaks into another step's context.
+            _prep = await self._memory_harness.prepare_turn(history, f"{self._task_id}:{step.id}")
             history[:] = _prep.history
             phase = "explore" if sm.state == VerifyPhaseState.EXPLORE else "verify"
             # Fix 1: a state change means the workspace/context moved on — clear the
