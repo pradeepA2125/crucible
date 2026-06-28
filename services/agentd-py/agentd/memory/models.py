@@ -48,6 +48,8 @@ class CompactionResult:
     degraded: bool = False
     evicted_count: int = 0  # messages evicted this round (for the observability event)
     anchor_version: int = 0  # anchored-summary version after this round
+    evicted_seq_lo: int | None = None  # segment seq span evicted this round (consolidation input)
+    evicted_seq_hi: int | None = None
 
 
 @dataclass
@@ -57,6 +59,8 @@ class TurnPreparation:
     compacted: bool = False
     evicted_count: int = 0  # surfaced from CompactionResult so the loops can broadcast it
     anchor_version: int = 0
+    evicted_seq_lo: int | None = None  # surfaced so the harness can consolidate the evicted slice
+    evicted_seq_hi: int | None = None
 
 
 class Memory(BaseModel):

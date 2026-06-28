@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -89,11 +90,20 @@ def _render_transcript(old_anchor: str, evicted_text: str) -> str:
 
 
 class MemoryHarness:
-    """The only memory unit the loops see. Compaction in Phase 1; recall is a Phase-2 stub."""
+    """The only memory unit the loops see. Compaction (P1) + recall/consolidation (P2)."""
 
-    def __init__(self, *, enabled: bool, compactor: Compactor | None) -> None:
+    def __init__(
+        self, *, enabled: bool, compactor: Compactor | None,
+        consolidator: object | None = None, scope_kind: str = "workspace", scope_id: str = "",
+    ) -> None:
         self._enabled = enabled
         self._compactor = compactor
+        self._consolidator = consolidator
+        self._scope_kind = scope_kind
+        self._scope_id = scope_id
+        # Read segments for the evicted-slice transcript; derived from the compactor's store.
+        self._store = getattr(compactor, "_store", None) if compactor is not None else None
+        self._bg_tasks: set[asyncio.Task[None]] = set()  # FIX #5: hold refs so tasks aren't GC'd
 
     async def prepare_turn(self, history: History, run_id: str) -> TurnPreparation:
         if not self._enabled or self._compactor is None:
@@ -103,16 +113,58 @@ class MemoryHarness:
         except Exception:  # best-effort: memory must never break a loop iteration
             logger.warning("[memory] prepare_turn failed for run=%s", run_id, exc_info=True)
             return TurnPreparation(history=history, recalled_memories=[], compacted=False)
-        return TurnPreparation(
+        prep = TurnPreparation(
             history=result.history,
             recalled_memories=[],
             compacted=result.compacted,
             evicted_count=result.evicted_count,
             anchor_version=result.anchor_version,
+            evicted_seq_lo=result.evicted_seq_lo,
+            evicted_seq_hi=result.evicted_seq_hi,
         )
+        if (result.compacted and self._consolidator is not None
+                and result.evicted_seq_hi is not None):
+            self.schedule_consolidation(
+                run_id, self._scope_kind, self._scope_id,
+                transcript=self._render_segments(run_id, result.evicted_seq_lo,
+                                                 result.evicted_seq_hi),
+                seq_lo=result.evicted_seq_lo, seq_hi=result.evicted_seq_hi,
+            )
+        return prep
+
+    def schedule_consolidation(
+        self, run_id: str, scope_kind: str, scope_id: str, transcript: str,
+        seq_lo: int | None, seq_hi: int | None,
+    ) -> None:
+        # FIX #5: (a) no-op if no consolidator or no running loop (sync caller) — never crash;
+        # (b) hold a strong ref or the loop may GC the task mid-flight.
+        if self._consolidator is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("[memory] no running loop; skipping consolidation for run=%s", run_id)
+            return
+
+        async def _run() -> None:
+            try:
+                await self._consolidator.consolidate(  # type: ignore[union-attr]
+                    run_id, scope_kind, scope_id, transcript, seq_lo, seq_hi)
+            except Exception:  # noqa: BLE001 — best-effort
+                logger.warning("[memory] scheduled consolidation failed for run=%s", run_id)
+
+        task = loop.create_task(_run())
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    def _render_segments(self, run_id: str, seq_lo: int | None, seq_hi: int | None) -> str:
+        if self._store is None or seq_lo is None or seq_hi is None:
+            return ""
+        segs = [s for s in self._store.get_segments(run_id) if seq_lo <= s.seq <= seq_hi]
+        return "\n".join(s.content for s in segs)
 
     async def recall(self, query: str, run_id: str) -> History:
-        return []  # Phase 2
+        return []  # Phase 2 (recall slot filled in Plan 2C)
 
 
 NO_OP_HARNESS = MemoryHarness(enabled=False, compactor=None)
@@ -140,7 +192,8 @@ def make_engine_summarizer(transport: ModelJsonTransport, model: str) -> AnchorS
 
 
 def build_memory_harness(
-    config: MemoryConfig, transport: ModelJsonTransport, model: str
+    config: MemoryConfig, transport: ModelJsonTransport, model: str,
+    *, workspace_path: str = "",
 ) -> MemoryHarness:
     if not config.enabled:
         return NO_OP_HARNESS
@@ -153,4 +206,16 @@ def build_memory_harness(
         hot_token_frac=config.hot_token_frac,
         hot_turns=config.hot_turns,
     )
-    return MemoryHarness(enabled=True, compactor=compactor)
+    consolidator: object | None = None
+    if workspace_path:  # consolidation needs a workspace scope; without one, compaction-only
+        from agentd.memory.consolidator import Consolidator, make_engine_consolidator
+        from agentd.memory.embedder import Embedder
+        consolidator = Consolidator(
+            store, Embedder(config.embedding_model),
+            make_engine_consolidator(transport, model),
+            dedup_threshold=config.dedup_threshold,
+        )
+    return MemoryHarness(
+        enabled=True, compactor=compactor, consolidator=consolidator,
+        scope_kind="workspace", scope_id=workspace_path,
+    )

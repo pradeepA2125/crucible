@@ -127,11 +127,15 @@ class Compactor:
         old_text = old.summary_md if old else ""
         evicted_count = len(evicted) + len(extra)
         old_version = old.version if old else 0
+        # Segment seq span just written, so the harness can consolidate exactly this slice.
+        seq_lo = base if evicted_count else None
+        seq_hi = base + evicted_count - 1 if evicted_count else None
         if not evicted:
             keep = [_anchor_message(old_text)] if old_text else []
             return CompactionResult(
                 compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=degraded,
                 evicted_count=evicted_count, anchor_version=old_version,
+                evicted_seq_lo=seq_lo, evicted_seq_hi=seq_hi,
             )
         try:
             new_anchor = await self._summarize(old_text, _render(evicted))
@@ -147,6 +151,7 @@ class Compactor:
             return CompactionResult(
                 compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=True,
                 evicted_count=evicted_count, anchor_version=old_version,
+                evicted_seq_lo=seq_lo, evicted_seq_hi=seq_hi,
             )
         summary = self._store.upsert_anchor(run_id, new_anchor)
         logger.info(
@@ -161,4 +166,6 @@ class Compactor:
             evicted_count=evicted_count,
             anchor_version=summary.version,
             degraded=degraded,
+            evicted_seq_lo=seq_lo,
+            evicted_seq_hi=seq_hi,
         )
