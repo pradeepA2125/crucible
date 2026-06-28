@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from agentd.memory.models import CompactionSegment
 from agentd.memory.store import MemoryStore
@@ -10,7 +10,7 @@ def _seg(run_id: str, seq: int, content: str) -> CompactionSegment:
         run_id=run_id,
         seq=seq,
         content=content,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

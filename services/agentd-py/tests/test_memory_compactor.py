@@ -80,3 +80,65 @@ async def test_below_threshold_is_noop(tmp_path):
     assert result.compacted is False
     assert result.history == history
     assert store.get_anchor("r1") is None
+
+
+@pytest.mark.asyncio
+async def test_over_threshold_compacts(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    captured = {}
+
+    async def summ(old: str, evicted: str) -> str:
+        captured["old"], captured["evicted"] = old, evicted
+        return "MERGED ANCHOR"
+
+    comp = Compactor(
+        store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
+    )  # hot_budget = 40 tokens
+    history = [{"role": "user", "content": "z" * 80} for _ in range(6)]  # ~20 tok each
+    result = await comp.maybe_compact(history, "r1")
+    assert result.compacted is True
+    assert result.history[-2:] == history[-2:]  # last 2 verbatim (count cap)
+    assert result.history[0]["content"].startswith("[MEMORY]")
+    assert "MERGED ANCHOR" in result.history[0]["content"]
+    assert len(store.get_segments("r1")) == 4  # first 4 evicted
+    assert store.get_anchor("r1").summary_md == "MERGED ANCHOR"
+
+
+@pytest.mark.asyncio
+async def test_anchor_merges_not_regenerates(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.upsert_anchor("r1", "PRIOR")
+    seen = {}
+
+    async def summ(old: str, evicted: str) -> str:
+        seen["old"] = old
+        return old + " + NEW"
+
+    comp = Compactor(
+        store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
+    )
+    history = [{"role": "user", "content": "z" * 80} for _ in range(6)]
+    await comp.maybe_compact(history, "r1")
+    assert seen["old"] == "PRIOR"  # prior anchor fed back in
+    assert store.get_anchor("r1").summary_md == "PRIOR + NEW"
+    assert store.get_anchor("r1").version == 2
+
+
+@pytest.mark.asyncio
+async def test_single_oversize_message_is_truncated(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+
+    async def summ(old: str, evicted: str) -> str:
+        raise AssertionError("summarize should not run when nothing is evicted")
+
+    comp = Compactor(
+        store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=10
+    )  # hot_budget = 40 tok = 160 chars
+    history = [{"role": "user", "content": "q" * 4000}]  # ~1000 tok, sole newest turn
+    result = await comp.maybe_compact(history, "r1")
+    assert result.compacted is True and result.degraded is True
+    assert len(result.history) == 1
+    assert len(result.history[0]["content"]) < 4000
+    assert "[truncated]" in result.history[0]["content"]
+    assert len(store.get_segments("r1")) == 1
+    assert store.get_segments("r1")[0].content == "q" * 4000  # full original persisted

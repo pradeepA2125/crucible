@@ -16,7 +16,7 @@ class MemoryConfig(BaseModel):
     window_tokens: int
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str]) -> "MemoryConfig":
+    def from_env(cls, env: Mapping[str, str]) -> MemoryConfig:
         return cls(
             enabled=env.get("AI_EDITOR_MEMORY_ENABLED", "").lower() in _TRUTHY,
             db_path=env.get("AI_EDITOR_MEMORY_DB_PATH", ".agentd/memory.sqlite3"),

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from agentd.memory.models import AnchoredSummary, CompactionSegment
@@ -66,7 +66,7 @@ class MemoryStore:
         return 0 if r["m"] is None else r["m"] + 1
 
     def upsert_anchor(self, run_id: str, summary_md: str) -> AnchoredSummary:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         existing = self._conn.execute(
             "SELECT version FROM anchored_summaries WHERE run_id=?", (run_id,)
         ).fetchone()
