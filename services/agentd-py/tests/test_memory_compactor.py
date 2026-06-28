@@ -142,3 +142,21 @@ async def test_single_oversize_message_is_truncated(tmp_path):
     assert "[truncated]" in result.history[0]["content"]
     assert len(store.get_segments("r1")) == 1
     assert store.get_segments("r1")[0].content == "q" * 4000  # full original persisted
+
+
+@pytest.mark.asyncio
+async def test_summarizer_failure_falls_back(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+
+    async def boom(old: str, evicted: str) -> str:
+        raise RuntimeError("provider down")
+
+    comp = Compactor(
+        store, boom, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
+    )
+    history = [{"role": "user", "content": "y" * 80} for _ in range(6)]
+    result = await comp.maybe_compact(history, "r1")
+    assert result.degraded is True and result.compacted is True
+    assert result.history[-2:] == history[-2:]  # hot preserved
+    assert len(store.get_segments("r1")) == 4  # evicted still persisted (lossless)
+    assert store.get_anchor("r1") is None  # no anchor written on failure

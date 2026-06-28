@@ -135,7 +135,20 @@ class Compactor:
             return CompactionResult(
                 compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=degraded
             )
-        new_anchor = await self._summarize(old_text, _render(evicted))
+        try:
+            new_anchor = await self._summarize(old_text, _render(evicted))
+        except Exception:  # best-effort: never fail a loop iteration
+            logger.warning(
+                "[memory] anchor summarize failed for run=%s; degrading", run_id, exc_info=True
+            )
+            keep = (
+                [_anchor_message(f"(earlier context summary unavailable)\n{old_text}")]
+                if old_text
+                else []
+            )
+            return CompactionResult(
+                compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=True
+            )
         self._store.upsert_anchor(run_id, new_anchor)
         return CompactionResult(
             compacted=True,
