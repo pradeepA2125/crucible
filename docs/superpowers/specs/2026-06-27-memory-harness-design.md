@@ -56,6 +56,7 @@ Each phase is independently shippable and flag-gated. The whole subsystem is dar
 | Phasing | Compaction first, recall second | — |
 | Target loops | `ControllerLoop` + task `ToolLoop` (within-run window overflow) | P1 |
 | Compaction sizing | Hot set **token-bounded** (`MEMORY_HOT_TOKEN_FRAC × window`, default 0.4) with `MEMORY_HOT_TURNS` as a secondary count cap; `hot_frac < trigger_frac` makes reduction provable | P1 |
+| Hot losslessness | Hot set = whole logical turns only (user/assistant + its `tool_result`/`tool` continuations); a turn that doesn't fully fit is evicted entirely (survives via the summary), never split or left dangling | P1 |
 | Substrate | SQLite + `sqlite-vec` (embeddings) + FTS5 (BM25/keyword) — in-process, no new service | P1 (sqlite only) / P2 (vec+FTS5) |
 | Write path | **Hybrid** — background consolidation (default) + agent tools (deliberate) | P2 |
 | Integration shape | **Middleware + tools** (automatic compaction/recall in middleware; deliberate write/recall as tools) | P1 (middleware) / P2 (tools) |
@@ -161,6 +162,13 @@ when the live history is over the trigger.
     (head + `…[truncated]…` + tail, sized to the budget) and persist its full original as a segment.
     This handles "history shorter than `hot_turns` but already over budget" and "one turn bigger than
     the whole window" — cases a count-based window silently failed.
+  - **Lossless at turn boundaries.** A logical turn = a user/assistant message plus its following
+    continuation messages (`tool_result`, `tool`). The hot set contains only *whole* turns: if the
+    budget boundary falls inside a turn, the partial remainder is pushed entirely to eviction (it
+    survives via the anchored summary) rather than kept as a dangling half-turn (e.g. a `tool_result`
+    with no preceding action). `_select_hot` enforces this by trimming leading continuation messages
+    so the hot set always begins at a turn start. (The single oversize-turn backstop above is the one
+    intentional exception, and even there the full original is persisted.)
 
 - **Eviction (everything older than the hot set):** each evicted message does **two things at once**:
   - **Folded into the anchored summary** via merge: `summarize(old_anchor, evicted) → new_anchor` —

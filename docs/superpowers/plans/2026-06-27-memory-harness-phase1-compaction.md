@@ -16,6 +16,7 @@
 - Master kill switch `AI_EDITOR_MEMORY_ENABLED` (default **off**). When off, `MemoryHarness` is a no-op pass-through and both loops behave byte-identically to today.
 - New DB path env `AI_EDITOR_MEMORY_DB_PATH` (default `.agentd/memory.sqlite3`). Separate file from task/chat DBs. Phase 1 creates only `compaction_segments` + `anchored_summaries`.
 - **Hot set is token-bounded, not count-bounded.** Keep newest turns that fit `MEMORY_HOT_TOKEN_FRAC × window` (default 0.4), capped at `MEMORY_HOT_TURNS` (default 10). `hot_frac (0.4) < trigger_frac (0.65)` guarantees eviction frees space once triggered. Always keep ≥1 turn; if the single newest turn alone exceeds the hot budget, truncate its in-window copy (head + `…[truncated]…` + tail) and persist the full original as a segment. This is what handles "history ≤ hot_turns but already over budget" and "one giant turn > window".
+- **Hot set is lossless at turn boundaries.** A logical turn = a user/assistant message + its following continuation messages (`tool_result`, `tool`). `_select_hot` keeps only *whole* turns: if the budget boundary falls inside a turn, the partial remainder is pushed to eviction (it survives via the summary), so hot never contains a dangling `tool_result` without its action. Enforced by trimming leading continuation messages so hot begins at a turn start.
 - **No `tier` (warm/cold) label is written.** Tiering is a Phase-2 read-time concern; Phase 1 persists evicted turns as plain segments.
 - **`seq` is run-monotonic, not per-batch.** A run can compact many times; each segment's `seq` continues from the run's current max (`store.next_seq(run_id)`) so ordering is stable across compaction rounds (a per-batch `seq=i` would collide round-over-round and corrupt `get_segments` ordering for Phase-2 recall).
 - **Segment granularity is 1 message = 1 segment, verbatim (Phase 1).** No size target / chunking — segments are write-only here (never retrieved until Phase 2), so lossless raw preservation is all that's needed. Token-target chunking is a Phase-2 decision (captured in the spec's open questions).
@@ -375,7 +376,8 @@ git commit -m "feat(memory): SQLite store for compaction segments + anchored sum
 - Produces:
   - `estimate_tokens(text: str) -> int` — `max(1, len//4)`.
   - `_truncate_to_tokens(text: str, max_tokens: int) -> str` — head + `…[truncated]…` + tail to fit.
-  - `_select_hot(history, hot_budget_tokens, hot_turns_cap) -> tuple[list[dict], list[dict], int]` — newest turns within the token budget and count cap; always keeps ≥1; returns `(evicted, hot, hot_used_tokens)`.
+  - `_select_hot(history, hot_budget_tokens, hot_turns_cap) -> tuple[list[dict], list[dict], int]` — newest *whole logical turns* within the token budget and count cap; trims leading continuation messages so hot begins at a turn start (lossless); always keeps ≥1; returns `(evicted, hot, hot_used_tokens)`.
+  - `_is_turn_start(m: dict) -> bool` + `_CONTINUATION_ROLES = {"tool_result", "tool"}` — turn-boundary helper.
   - `AnchorSummarizer = Callable[[str, str], Awaitable[str]]` — `(old_anchor, evicted_text) -> new_anchor`.
   - `Compactor.__init__(self, store, summarize, *, window_tokens, trigger_frac=0.65, hot_token_frac=0.4, hot_turns=10)`
   - `async Compactor.maybe_compact(self, history, run_id) -> CompactionResult`
@@ -417,6 +419,29 @@ def test_select_hot_always_keeps_one():
     hist = [{"role": "user", "content": "x" * 4000}]  # one huge msg over any budget
     evicted, hot, used = _select_hot(hist, hot_budget_tokens=10, hot_turns_cap=10)
     assert len(hot) == 1 and evicted == [] and used > 10
+
+def test_select_hot_lossless_at_turn_boundary():
+    # Naive per-message walk would strand tool_result "r1" (its action a1 falls outside
+    # the count cap). Trim must push r1 to eviction so hot begins at a turn start.
+    hist = [
+        {"role": "assistant", "content": "a1"},
+        {"role": "tool_result", "content": "r1"},   # older turn
+        {"role": "assistant", "content": "a2"},
+        {"role": "tool_result", "content": "r2"},   # newer turn
+    ]
+    evicted, hot, _ = _select_hot(hist, hot_budget_tokens=10_000, hot_turns_cap=3)
+    assert hot[0]["role"] != "tool_result"          # hot begins at a turn start
+    assert hot == hist[-2:]                          # whole newer turn kept
+    assert hist[1] in evicted                        # stranded r1 pushed to eviction
+
+def test_select_hot_keeps_action_result_pair_together():
+    hist = [
+        {"role": "user", "content": "u"},
+        {"role": "assistant", "content": "a"},
+        {"role": "tool_result", "content": "r"},
+    ]
+    evicted, hot, _ = _select_hot(hist, hot_budget_tokens=10_000, hot_turns_cap=10)
+    assert hot == hist and evicted == []            # all fit; pair stays intact
 
 @pytest.mark.asyncio
 async def test_below_threshold_is_noop(tmp_path):
@@ -466,10 +491,23 @@ def _truncate_to_tokens(text: str, max_tokens: int) -> str:
     tail = max_chars - head
     return text[:head] + "\n…[truncated]…\n" + text[-tail:]
 
+_CONTINUATION_ROLES = {"tool_result", "tool"}
+
+def _is_turn_start(m: dict) -> bool:
+    # A turn starts at a user/assistant (or any non-continuation) message; tool results
+    # attach backward to the action that produced them. Unknown roles default to turn-start.
+    return str(m.get("role", "")) not in _CONTINUATION_ROLES
+
 def _select_hot(
     history: list[dict], hot_budget_tokens: int, hot_turns_cap: int
 ) -> tuple[list[dict], list[dict], int]:
-    """Newest turns that fit the token budget and the count cap. Always keeps ≥1 turn."""
+    """Newest *whole logical turns* that fit the token budget and the count cap.
+
+    Lossless at turn boundaries: never keeps a partial turn. If the budget boundary falls
+    inside a turn, the partial remainder is pushed to eviction (it survives via the anchored
+    summary) by trimming leading continuation messages so hot begins at a turn start. Always
+    keeps ≥1 message even if the whole hot set is continuations (degenerate).
+    """
     hot: list[dict] = []
     used = 0
     for m in reversed(history):
@@ -478,6 +516,9 @@ def _select_hot(
             break
         hot.insert(0, m)
         used += t
+    while len(hot) > 1 and not _is_turn_start(hot[0]):
+        hot.pop(0)
+    used = sum(estimate_tokens(str(m.get("content", ""))) for m in hot)  # recompute after trim
     evicted = history[: len(history) - len(hot)]
     return evicted, hot, used
 
@@ -521,7 +562,7 @@ class Compactor:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_compactor.py -v`
-Expected: PASS (6 passed)
+Expected: PASS (8 passed)
 
 - [ ] **Step 5: Commit**
 
@@ -651,7 +692,7 @@ Replace the `# Compaction logic added in Task 4.` line and its `return` with:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_compactor.py -v`
-Expected: PASS (9 passed)
+Expected: PASS (11 passed)
 
 - [ ] **Step 5: Commit**
 
@@ -731,7 +772,7 @@ with:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/agentd-py && pytest tests/memory/test_compactor.py -v`
-Expected: PASS (10 passed)
+Expected: PASS (12 passed)
 
 - [ ] **Step 5: Commit**
 
