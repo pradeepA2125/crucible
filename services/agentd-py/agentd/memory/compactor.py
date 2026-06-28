@@ -4,13 +4,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
-from agentd.memory.models import CompactionResult, CompactionSegment
+from agentd.memory.models import CompactionResult, CompactionSegment, History
 from agentd.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
 
 AnchorSummarizer = Callable[[str, str], Awaitable[str]]
-History = list[dict[str, object]]
 
 _CONTINUATION_ROLES = {"tool_result", "tool"}
 

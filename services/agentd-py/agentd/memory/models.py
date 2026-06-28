@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+
+# A conversation history / message list as the loops pass it around.
+History = list[dict[str, object]]
 
 
 class MemoryKind(StrEnum):
@@ -33,14 +37,19 @@ class AnchoredSummary(BaseModel):
     updated_at: datetime
 
 
-class CompactionResult(BaseModel):
+# CompactionResult / TurnPreparation are internal transfer objects, not persisted or
+# validated — dataclasses (not pydantic) so they hold the exact list object passed in
+# (pydantic v2 would copy it, breaking the disabled-harness byte-identical no-op).
+@dataclass
+class CompactionResult:
     compacted: bool
-    history: list[dict[str, object]]
+    history: History
     anchor: str | None = None
     degraded: bool = False
 
 
-class TurnPreparation(BaseModel):
-    history: list[dict[str, object]]
-    recalled_memories: list[dict[str, object]] = Field(default_factory=list)
+@dataclass
+class TurnPreparation:
+    history: History
+    recalled_memories: History = field(default_factory=list)
     compacted: bool = False
