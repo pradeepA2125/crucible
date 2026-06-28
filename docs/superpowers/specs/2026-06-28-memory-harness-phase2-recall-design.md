@@ -5,16 +5,22 @@
 (that doc stays as the cross-phase context; this is the build-targeted refinement).
 **Predecessor:** Phase 1 (compaction) shipped — `feat/memory-harness` @ `09cc1ed`.
 
-> ## ⛔ Pre-implementation gate — web research required
-> Before the implementation plan is written, do a **web-search research pass on current
-> agent-memory standards** and fold the findings back into this spec. Memory is a fast-moving
-> area; the taxonomy, scoring, dedupe threshold, lifecycle model, and **consolidation prompt**
-> here are reasoned defaults, not validated against the field. Research targets (at least):
-> Mem0, MemGPT/Letta, Zep/Graphiti, Cognee, LangMem, Generative-Agents memory stream,
-> and any current survey on episodic/semantic/procedural agent memory + memory consolidation
-> prompting. Validate: the 3-kind taxonomy + definitions, dedupe cosine threshold (0.92),
-> recency-decay shape, multi-signal scoring weights, and the consolidation prompt structure.
-> **Do not start `writing-plans` until this pass is done and its deltas are reflected here.**
+> ## ✅ Pre-implementation research pass — DONE (2026-06-28), deltas folded below
+> Web-research pass on current agent-memory standards completed (Mem0, Letta/MemGPT,
+> Zep/Graphiti, Generative Agents, and the episodic/semantic/procedural + consolidation
+> literature). Findings validated most of the design and produced six deltas, all now
+> reflected in the sections below. Sources at the foot of this doc.
+
+## Research findings & deltas (folded into the design)
+
+| # | Finding (source) | Delta applied |
+|---|---|---|
+| D1 | **Generative Agents** scoring is `recency + importance + relevance`, each min-max-normalized to [0,1]; recency = exponential decay (factor ~0.995); **importance = LLM-rated salience** (1–10). Our scoring had no importance term. | **Add an `importance` signal**: the consolidator rates each candidate; stored on the memory; folded into recall score. Recency = exponential decay w/ env half-life; **min-max normalize each signal** before weighting (§1, §3, §4). |
+| D2 | **Mem0** = extract → retrieve **top-K embedding-similar** → LLM decides **ADD/UPDATE/DELETE/NOOP**. | Consolidator dedup context = **top-K similar** memories (not "all run memories"). Keep our `contradicts`-hint + **Python-deterministic dispose** as the deliberate weak-model-safe variant of ADD/UPDATE/DELETE/NOOP — documented, not changed (§2). |
+| D3 | **Zep/Graphiti** is **bitemporal** (event time vs ingestion time); supersede = close valid window + open new edge; stale auto-filtered. | Make bitemporal explicit: `valid_from` = event time, `created_at` = ingestion time. Validates our `valid_to`+`superseded_by`+`valid_to IS NULL` filter unchanged (§1). |
+| D4 | **Letta**: three-tier OS model (core/archival/recall); **procedural memory is the least-well-served / hardest** kind in every framework. | Framing: our **anchor ≈ core, `memories` ≈ archival, `compaction_segments` ≈ recall**. Flag **procedural as the hardest kind** — strongest few-shot, and a risk to watch (§4). |
+| D5 | **Consolidation = transform episodic → durable semantic/procedural**; "the most important and least-implemented" part; **domain-specific** prompts beat task-agnostic ones. | Validates the user's call that the consolidation prompt needs real authoring + our coding-domain few-shot. Cross-episode **reflection** (abstracting recurring episodes into a procedure) noted as future (§8). |
+| D6 | Importance defined **per-kind** in some work (procedural=success rate, episodic=task score). | Keep a **single LLM 1–10 importance** for v1 (simpler, Generative-Agents-style); per-kind importance noted as future (§8). |
 
 ## Decisions locked in this brainstorm
 
@@ -56,14 +62,15 @@ scope_id      TEXT   -- workspace path | thread_id
 kind          TEXT   -- 'episodic' | 'semantic' | 'procedural'
 content       TEXT   -- distilled fact / event / skill (atomic)
 entities      JSON   -- ['src/tax.py', 'src/tax.py:compute_vat'] — grounding hooks
-valid_from    TEXT
+importance    INTEGER -- D1: LLM-rated salience 1-10 (recall scoring term)
+valid_from    TEXT   -- D3: EVENT time — when the fact became true
 valid_to      TEXT   -- NULL = currently true; set = retired
 superseded_by TEXT   -- id of the memory that replaced it
 source_kind   TEXT   -- 'consolidation' | 'agent_tool'
 source_ref    TEXT   -- thread_id | task_id that produced it
 source_seq_lo INTEGER -- A+link: compaction_segments seq span this was distilled from
 source_seq_hi INTEGER
-created_at    TEXT
+created_at    TEXT   -- D3: INGESTION time — when we recorded it (bitemporal-lite)
 embedding             -- sqlite-vec virtual column (bge-small, 384-dim)
 ```
 - **`memories_fts`** — FTS5 mirror on `content` + `entities` (exact symbol/path match; embeddings blur those).
@@ -87,9 +94,14 @@ or never runs loses nothing — it can be re-distilled later.
 
 LLM call (proposes), `ScriptedReasoningEngine`-compatible, **structured** (`generate_json`):
 ```
-input:  transcript (evicted slice | full run)  +  the run's existing memories (each tagged id)
-output: list[ CandidateMemory{ kind, content, entities, contradicts?: memory_id } ]
+input:  transcript (evicted slice | full run)  +  top-K embedding-similar existing memories
+        (D2 — each tagged with its id, as dedup/contradiction context; NOT all run memories)
+output: list[ CandidateMemory{ kind, content, entities, importance, contradicts?: memory_id } ]
 ```
+> **D2 note:** Mem0's standard is the LLM deciding ADD/UPDATE/DELETE/NOOP against the retrieved
+> similar set. We keep the **dispose** step in Python (deterministic dedupe/supersede) — a
+> deliberate weak-model-safe variant: the model proposes + flags conflicts, Python owns the
+> irreversible mutation. The retrieval-of-similar context (D2) is adopted; the decision locus is not.
 
 Deterministic post-process (disposes — no LLM, the high-value test surface):
 1. **Embed** each candidate (shared `Embedder`).
@@ -106,14 +118,18 @@ or `thread`; `global` is never written (Phase 3 gates it behind a curation UI).
 
 ## 3. Read path (recall + injection + grounding)
 
-`RecallEngine.recall(query, scope, k)` — three signals fused:
+`RecallEngine.recall(query, scope, k)` — signals fused (each **min-max normalized to [0,1]**, per D1):
 ```
-semantic   = sqlite-vec ANN over memories.embedding   → cosine [0,1]
-lexical    = FTS5 BM25 over content + entities         → normalized [0,1]
-structural = query symbols/paths ∩ memory.entities     → [0,1]
-score = w_sem·sem + w_lex·lex + w_struct·struct + recency_decay(valid_from) + scope_boost − staleness_penalty
+semantic   = sqlite-vec ANN over memories.embedding   → cosine
+lexical    = FTS5 BM25 over content + entities
+structural = query symbols/paths ∩ memory.entities
+importance = memory.importance / 10                    (D1 — LLM-rated salience)
+recency    = exp(-Δ / half_life) over valid_from        (D1 — exponential decay)
+score = w_sem·sem + w_lex·lex + w_struct·struct + w_imp·importance + w_rec·recency + scope_boost
 ```
-Defaults `w_sem=0.5, w_lex=0.3, w_struct=0.2` — env-tunable, **tuned against a golden set**.
+Defaults `w_sem=0.5, w_lex=0.3, w_struct=0.2` (retrieval signals) + `w_imp`, `w_rec`, and the
+recency half-life env-tunable — all **tuned against a golden set**, not shipped blind. (Staleness
+is handled by the `valid_to` filter below, not a score penalty — D3.)
 
 - **Filter before score:** `valid_to IS NULL` + scope filter `(workspace=cwd) ∪ (thread=current)`. No `global` in P2.
 - **Rerank:** top-3k by fused score → final-k; v1 rerank = the fused score (cross-encoder is P3, seam left at the `→`).
@@ -138,9 +154,9 @@ The hardest surface — a weak model decides classification, extraction, and con
 Reframe that shrinks it: **the model proposes only content-level fields; Python owns all
 bookkeeping.** The model never sees `source_kind`, scope, lifecycle, ids (except as references),
 or the DB schema. The output schema is deliberately minimal:
-`CandidateMemory{ kind, content, entities, contradicts? }`.
+`CandidateMemory{ kind, content, entities, importance, contradicts? }`.
 
-The prompt must teach exactly four things:
+The prompt must teach exactly five things:
 
 **(1) The `kind` taxonomy — defined + few-shot:**
 
@@ -151,7 +167,13 @@ The prompt must teach exactly four things:
 | **procedural** | a reusable *how-to* / process | "Run the backend via `start-backend.sh`, always quoting `--workspace`." | superseded when the process changes |
 
 Carries **1–2 worked examples per kind** (the only reliable way a weak model learns the line)
-and the explicit rule **"episodic is immutable; never mark it `contradicts`."**
+and the explicit rule **"episodic is immutable; never mark it `contradicts`."** **Procedural is
+the hardest kind to extract well (D4 — least-served across all frameworks) — give it the
+strongest few-shot and watch its quality in the golden set.**
+
+**(1b) Importance (D1):** rate each candidate **1–10** on how much it would help a future session
+("the project uses bge-small" = high; "read file X this turn" = low). One integer; drives recall
+ranking so salient facts beat recent-but-trivial ones.
 
 **(2) Atomicity + entities:** one fact per memory; extract `entities` as the verbatim
 `path` / `path:Symbol` tokens (structural-recall + graph-grounding hooks).
@@ -230,3 +252,20 @@ AI_EDITOR_EMBEDDING_MODEL             # reuse existing — default BAAI/bge-smal
   consolidated kinds should auto-scope to `thread`.
 - **Deterministic supersede heuristic** — whether to add the secondary same-entity/conflict-band
   rule (§2.3) beyond the LLM `contradicts` hint, and its exact cosine band if so.
+- **Importance scale + weights** (D1) — confirm 1–10 vs categorical; tune `w_imp`/`w_rec` + the
+  recency half-life against the golden set.
+- **Reflection / episodic→semantic abstraction** (D5) — periodic consolidation of recurring
+  episodes into higher-level semantic/procedural insights. Deferred (Phase 3-class); the
+  per-trigger consolidator does not abstract across episodes in v1.
+- **Per-kind importance** (D6) — procedural=success-rate, episodic=task-score. v1 uses a single
+  LLM 1–10; revisit if golden-set ranking needs it.
+
+---
+
+## Sources (research pass, 2026-06-28)
+
+- [Mem0: Production-Ready AI Agents with Scalable Long-Term Memory](https://arxiv.org/abs/2504.19413) — extract → retrieve-similar → ADD/UPDATE/DELETE/NOOP.
+- [Letta (MemGPT) memory tiers + framework comparison 2026](https://mcp.directory/blog/mem0-vs-letta-vs-zep-vs-cognee-2026) — core/archival/recall; procedural least-served.
+- [Zep: A Temporal Knowledge Graph Architecture for Agent Memory](https://arxiv.org/abs/2501.13956) — bitemporal valid_at/invalid_at supersession.
+- [Generative Agents: Interactive Simulacra of Human Behavior](https://arxiv.org/abs/2304.03442) — recency(exp decay) + importance(LLM 1–10) + relevance scoring.
+- [Position: Episodic Memory is the Missing Piece for Long-Term LLM Agents](https://arxiv.org/pdf/2502.06975) and [Episodic-Semantic Memory Architecture for Long-Horizon Agents](https://arxiv.org/html/2605.17625v1) — consolidation = episodic→semantic; domain-specific prompts.
