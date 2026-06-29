@@ -364,6 +364,14 @@ export interface BackendTaskClient {
   getChatThread(threadId: string): Promise<ChatThread>;
   getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
   getConfig(): Promise<BackendConfig>;
+  getMemoryInspect(threadId: string): Promise<RecallTrace | null>;
+  listMemories(filter: {
+    scopeKind: string;
+    scopeId: string;
+    kind?: string;
+    includeRetired?: boolean;
+  }): Promise<MemoryView[]>;
+  getSupersedeChain(memoryId: string): Promise<MemoryView[]>;
   sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent>;
   // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
   // produce live events); the per-edit gate is a plain JSON ack (its continuation rides

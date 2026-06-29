@@ -582,4 +582,93 @@ describe("HttpBackendClient", () => {
     expect(cfg.taskSubsystemEnabled).toBe(false);
     expect(cfg.chatControllerEnabled).toBe(true);
   });
+
+  test("getConfig maps memory_enabled", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({ task_subsystem_enabled: false, chat_controller_enabled: true, memory_enabled: true }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const cfg = await client.getConfig();
+    expect(cfg.memoryEnabled).toBe(true);
+  });
+
+  test("getMemoryInspect maps a snake_case trace to camelCase", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            query: "q", scope_kind: "workspace", scope_id: "/ws", k: 8, floor: 0.15, reranked: false,
+            entries: [{
+              memory_id: "a", kind: "semantic", content: "c", importance: 5,
+              signals: { semantic: 1, lexical: 0, structural: 0, importance: 0.4, recency: 0.9 },
+              fused_score: 0.99, rerank_score: null, final_rank: 0, injected: true,
+            }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const trace = await client.getMemoryInspect("chat-1");
+    expect(trace?.entries[0].memoryId).toBe("a");
+    expect(trace?.entries[0].fusedScore).toBe(0.99);
+    expect(trace?.scopeKind).toBe("workspace");
+  });
+
+  test("getMemoryInspect returns null on soft-empty payload", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(JSON.stringify({ entries: [] }), { status: 200, headers: { "content-type": "application/json" } }),
+    });
+    expect(await client.getMemoryInspect("chat-none")).toBeNull();
+  });
+
+  test("listMemories maps memories and forwards filter params", async () => {
+    let calledUrl = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (url) => {
+        calledUrl = String(url);
+        return new Response(
+          JSON.stringify([{
+            id: "m1", scope_kind: "workspace", scope_id: "/ws", kind: "episodic", content: "c",
+            entities: [], importance: 3, valid_from: "2026-06-29T00:00:00Z", valid_to: null,
+            superseded_by: null, source_kind: "consolidation", source_ref: "r",
+            source_seq_lo: null, source_seq_hi: null, created_at: "2026-06-29T00:00:00Z",
+          }]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+    });
+    const out = await client.listMemories({ scopeKind: "workspace", scopeId: "/ws", kind: "episodic", includeRetired: true });
+    expect(out[0].id).toBe("m1");
+    expect(out[0].validTo).toBeNull();
+    expect(calledUrl).toContain("scope_kind=workspace");
+    expect(calledUrl).toContain("kind=episodic");
+    expect(calledUrl).toContain("include_retired=true");
+  });
+
+  test("getSupersedeChain maps the chain", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify([
+            { id: "old", scope_kind: "workspace", scope_id: "/ws", kind: "semantic", content: "v1",
+              entities: [], importance: 5, valid_from: "x", valid_to: "y", superseded_by: "new",
+              source_kind: "consolidation", source_ref: "r", source_seq_lo: null, source_seq_hi: null, created_at: "x" },
+            { id: "new", scope_kind: "workspace", scope_id: "/ws", kind: "semantic", content: "v2",
+              entities: [], importance: 5, valid_from: "y", valid_to: null, superseded_by: null,
+              source_kind: "consolidation", source_ref: "r", source_seq_lo: null, source_seq_hi: null, created_at: "y" },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const chain = await client.getSupersedeChain("new");
+    expect(chain.map((m) => m.id)).toEqual(["old", "new"]);
+  });
 });

@@ -13,6 +13,10 @@ import {
   ThreadLiveStateSchema,
   BackendConfigSchema,
   type BackendConfig,
+  RecallTraceSchema,
+  type RecallTrace,
+  MemoryViewSchema,
+  type MemoryView,
   type BackendTaskClient,
   type ThreadLiveState,
   type PatchStreamEvent,
@@ -531,7 +535,40 @@ export class HttpBackendClient implements BackendTaskClient {
     return BackendConfigSchema.parse({
       taskSubsystemEnabled: raw["task_subsystem_enabled"] ?? false,
       chatControllerEnabled: raw["chat_controller_enabled"] ?? false,
+      memoryEnabled: raw["memory_enabled"] ?? false,
     });
+  }
+
+  async getMemoryInspect(threadId: string): Promise<RecallTrace | null> {
+    const raw = await this.fetchJson(
+      `/v1/memory/inspect?thread_id=${encodeURIComponent(threadId)}`
+    ) as Record<string, unknown>;
+    // Soft-empty: the route returns {} or {entries: []} when no trace is recorded yet.
+    const entries = raw["entries"] as unknown[] | undefined;
+    if (raw["query"] === undefined || !entries || entries.length === 0) {
+      return null;
+    }
+    return RecallTraceSchema.parse(mapRecallTrace(raw));
+  }
+
+  async listMemories(filter: {
+    scopeKind: string;
+    scopeId: string;
+    kind?: string;
+    includeRetired?: boolean;
+  }): Promise<MemoryView[]> {
+    const params = new URLSearchParams({ scope_kind: filter.scopeKind, scope_id: filter.scopeId });
+    if (filter.kind) params.set("kind", filter.kind);
+    if (filter.includeRetired) params.set("include_retired", "true");
+    const raw = await this.fetchJson(`/v1/memory?${params.toString()}`) as Record<string, unknown>[];
+    return raw.map((m) => MemoryViewSchema.parse(mapMemoryView(m)));
+  }
+
+  async getSupersedeChain(memoryId: string): Promise<MemoryView[]> {
+    const raw = await this.fetchJson(
+      `/v1/memory/${encodeURIComponent(memoryId)}/chain`
+    ) as Record<string, unknown>[];
+    return raw.map((m) => MemoryViewSchema.parse(mapMemoryView(m)));
   }
 
   async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent> {
@@ -788,4 +825,47 @@ export class HttpBackendClient implements BackendTaskClient {
     }
     return String(value);
   }
+}
+
+function mapMemoryView(m: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: m["id"],
+    scopeKind: m["scope_kind"],
+    scopeId: m["scope_id"],
+    kind: m["kind"],
+    content: m["content"],
+    entities: m["entities"] ?? [],
+    importance: m["importance"],
+    validFrom: m["valid_from"],
+    validTo: m["valid_to"] ?? null,
+    supersededBy: m["superseded_by"] ?? null,
+    sourceKind: m["source_kind"],
+    sourceRef: m["source_ref"],
+    sourceSeqLo: m["source_seq_lo"] ?? null,
+    sourceSeqHi: m["source_seq_hi"] ?? null,
+    createdAt: m["created_at"],
+  };
+}
+
+function mapRecallTrace(t: Record<string, unknown>): Record<string, unknown> {
+  const entries = (t["entries"] as Record<string, unknown>[]).map((e) => ({
+    memoryId: e["memory_id"],
+    kind: e["kind"],
+    content: e["content"],
+    importance: e["importance"],
+    signals: e["signals"], // keys are single words — identical in snake/camel
+    fusedScore: e["fused_score"],
+    rerankScore: e["rerank_score"] ?? null,
+    finalRank: e["final_rank"],
+    injected: e["injected"],
+  }));
+  return {
+    query: t["query"],
+    scopeKind: t["scope_kind"],
+    scopeId: t["scope_id"],
+    k: t["k"],
+    floor: t["floor"],
+    reranked: t["reranked"],
+    entries,
+  };
 }
