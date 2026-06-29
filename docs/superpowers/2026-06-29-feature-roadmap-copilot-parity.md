@@ -27,7 +27,7 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 | Cross-session memory + inspectable recall | ✅ **ahead** (wedge) | done |
 | Symbol-graph retrieval | ✅ ahead | done |
 | Diff review + revert | ✅ on par (granular per-hunk: gap) | P6 |
-| Project instructions / prompt files | ❌ | **P1** |
+| Project instructions / prompt files | ✅ on par (done, on branch) | P1 |
 | Agent Skills (agentskills.io) | ❌ | **P2** |
 | MCP client (+ GitHub integration) | ❌ | **P3** |
 | Polished UI / settings / one-command install | ❌ | **P4** |
@@ -73,6 +73,26 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 **Exit criteria:** an `AGENTS.md` measurably steers a live run; `/prompt-name` expands in chat; flag `AI_EDITOR_PROJECT_INSTRUCTIONS`; tests + live smoke green.
 
 **Decided:** `AGENTS.md` primary (+ `.github/copilot-instructions.md` fallback). Per-directory nested instructions deferred.
+
+### ✅ Status: DONE (2026-06-30, branch `docs/copilot-parity-roadmap`, not yet merged to `main`)
+
+Spec: `docs/superpowers/specs/2026-06-29-project-instructions-prompt-files-design.md` · Plan: `docs/superpowers/plans/2026-06-29-project-instructions-prompt-files.md`. Implemented TDD task-by-task; documented in `CLAUDE.md` ("Project instructions (AGENTS.md) + prompt files (P1)").
+
+**What shipped:**
+- **Project instructions (backend, controller-only):** `agentd/instructions/loader.py::ProjectInstructionsLoader` — mtime-cached `<workspace>/AGENTS.md` reader (self-updates on edit with no restart; best-effort; size-capped). Injected into the **controller** system prompt via `format_controller_system_prompt(project_instructions=…)` (a new labeled block, `.replace`-safe for literal `{}`), wired through `DefaultReasoningEngine.create_controller_step` + `controller_factory`. Flags: `AI_EDITOR_PROJECT_INSTRUCTIONS` (default **ON**, kill-switch) + `AI_EDITOR_INSTRUCTIONS_MAX_CHARS` (default 16000).
+- **Prompt files (frontend-only, expand-before-send):** `.ai-editor/prompts/<name>.md` expanded in the composer via `/name [args]` (`$ARGUMENTS` + `$1..$N`). `src/prompt-files.ts` helpers → `controller.ts listPrompts/expandPrompt` → `chat-panel.ts`/`extension.ts` plumbing → `InputArea.tsx` expand-before-send (webview mirrors `parseSlashCommand` in `webview-ui/src/slash.ts`). **No backend route / no editor-client contract change.**
+
+**Scope deviations from the original plan (intentional):**
+- **AGENTS.md only** — dropped the `.github/copilot-instructions.md` fallback (single source, simpler; revisit if requested).
+- **Controller-only injection** — did NOT touch `planning/prompts.py`/the task path (the task subsystem is flag-gated OFF; the controller is the live path).
+
+**Verification:** full suites green — Python 1061 pass/1 skip; TS 308 (editor-client 45 + vscode-extension 59 + webview-ui 205); typecheck + builds clean. **Live-smoke verified**: AGENTS.md text reached the real LLM system prompt + self-updated FOX→OWL with no restart (artifact-confirmed on a running backend); `/summarize <file>` expansion driven end-to-end in the VS Code dev host via CDP.
+
+**Post-merge bug found + fixed (`fd6fef3`):** an unmatched `/name` (no such prompt file) made the composer a silent dead-end (Enter/Send did nothing). Now `found=false` sends the typed text as a normal message. Unit-tested + live-verified.
+
+**Incidental infra fixes (committed):** `agentd-py` editable install was pointed at a stale worktree; `pip install -e .` broke on flat-layout discovery (pinned `packages.find = ["agentd*"]`); full pytest couldn't collect (`pythonpath = ["."]` for `from tests.` helpers).
+
+**Deferred (optional follow-ups, not blockers):** an inline "no prompt named X" hint (vs. send-as-text on miss); `/`-autocomplete suggestion list; per-directory nested instructions; planning/task-path injection if the task subsystem is ever enabled.
 
 ---
 
