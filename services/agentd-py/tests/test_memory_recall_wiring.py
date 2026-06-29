@@ -14,6 +14,13 @@ class _SpyRecall:
         self.last_query = query
         return self._mems
 
+    async def recall_with_trace(self, query, scope_kind, scope_id, k):  # Phase 3 trace
+        from agentd.memory.models import RecallTrace
+        self.calls += 1
+        self.last_query = query
+        return self._mems, RecallTrace(query=query, scope_kind=scope_kind, scope_id=scope_id,
+                                       k=k, floor=0.0, reranked=False, entries=[])
+
 
 @pytest.mark.asyncio
 async def test_recall_runs_once_per_query(tmp_path):
@@ -24,6 +31,15 @@ async def test_recall_runs_once_per_query(tmp_path):
     await harness.prepare_turn(hist, "thread-x")
     await harness.prepare_turn(hist, "thread-x")  # same query → cached
     assert spy.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_exposes_recall_trace(tmp_path):
+    spy = _SpyRecall(mems=[])
+    harness = MemoryHarness(enabled=True, compactor=None, recall_engine=spy,
+                            scope_kind="workspace", scope_id="/ws")
+    prep = await harness.prepare_turn([], "thread-z", query="what does X do")
+    assert prep.recall_trace is not None and prep.recall_trace.query == "what does X do"
 
 
 @pytest.mark.asyncio

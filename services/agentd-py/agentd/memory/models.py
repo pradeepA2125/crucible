@@ -61,6 +61,7 @@ class TurnPreparation:
     anchor_version: int = 0
     evicted_seq_lo: int | None = None  # surfaced so the harness can consolidate the evicted slice
     evicted_seq_hi: int | None = None
+    recall_trace: RecallTrace | None = None  # Phase 3 — inspector trace (forward-ref)
 
 
 class Memory(BaseModel):

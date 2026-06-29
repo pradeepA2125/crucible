@@ -8,7 +8,7 @@ import threading
 
 from agentd.memory.compactor import AnchorSummarizer, Compactor
 from agentd.memory.config import MemoryConfig
-from agentd.memory.models import History, TurnPreparation
+from agentd.memory.models import History, RecallTrace, TurnPreparation
 from agentd.memory.store import MemoryStore
 from agentd.providers.contracts import ModelJsonTransport
 
@@ -109,6 +109,7 @@ class MemoryHarness:
         self._store = getattr(compactor, "_store", None) if compactor is not None else None
         self._bg_tasks: set[asyncio.Task[None]] = set()  # FIX #5: hold refs so tasks aren't GC'd
         self._recall_cache: dict[str, list[str]] = {}  # per-run rendered recall
+        self._trace_cache: dict[str, RecallTrace | None] = {}  # per-run trace (for the artifact)
         self._recall_key: str | None = None  # last (run_id::query) recalled, to dedup per turn
 
     async def prepare_turn(
@@ -142,26 +143,32 @@ class MemoryHarness:
             )
         # Recall (every turn, cached per query) — best-effort.
         if self._recall_engine is not None:
-            prep.recalled_memories = await self._fill_recall(history, run_id, query)
+            lines, trace = await self._fill_recall(history, run_id, query)
+            prep.recalled_memories = lines
+            prep.recall_trace = trace
         return prep
 
-    async def _fill_recall(self, history: History, run_id: str, query: str = "") -> list[str]:
+    async def _fill_recall(
+        self, history: History, run_id: str, query: str = "",
+    ) -> tuple[list[str], RecallTrace | None]:
         # The current user message is in the loop's plan_context (`goal`), NOT in `history` on
         # the first turn — so prefer the explicit query; fall back to the last user msg in history.
         query = query.strip() or self._recall_query(history)
         if not query:
-            return self._recall_cache.get(run_id, [])
+            return self._recall_cache.get(run_id, []), None
         key = f"{run_id}::{query}"
         if key != self._recall_key:
             try:
-                mems = await self._recall_engine.recall(  # type: ignore[union-attr]
+                mems, trace = await self._recall_engine.recall_with_trace(  # type: ignore[union-attr]
                     query, self._scope_kind, self._scope_id, k=8)
                 self._recall_cache[run_id] = self._render_recall(mems)
+                self._trace_cache[run_id] = trace
             except Exception:  # noqa: BLE001 — best-effort
                 logger.warning("[memory] recall failed for run=%s", run_id)
                 self._recall_cache[run_id] = []
+                self._trace_cache[run_id] = None
             self._recall_key = key
-        return self._recall_cache.get(run_id, [])
+        return self._recall_cache.get(run_id, []), self._trace_cache.get(run_id)
 
     @staticmethod
     def _recall_query(history: History) -> str:
@@ -277,7 +284,15 @@ def build_memory_harness(
             store, embedder, make_engine_consolidator(transport, model),
             dedup_threshold=config.dedup_threshold,
         )
-        recall_engine = RecallEngine(store, embedder, weights=config.weights)
+        reranker: object | None = None
+        if config.reranker_enabled:  # Phase 3.1 — independent flag, default off
+            from agentd.memory.reranker import Reranker
+            reranker = Reranker(config.reranker_model)
+            threading.Thread(target=reranker.warmup, daemon=True).start()
+        recall_engine = RecallEngine(
+            store, embedder, weights=config.weights,
+            reranker=reranker, rerank_min_candidates=config.rerank_min_candidates,
+        )
         # FIX #3: warm the model in a background thread so the first real turn doesn't eat the
         # ~130MB load. A daemon thread works regardless of event-loop state at construction.
         threading.Thread(target=embedder.warmup, daemon=True).start()

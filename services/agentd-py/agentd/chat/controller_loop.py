@@ -317,6 +317,20 @@ class ControllerLoop:
             history[:] = _prep.history
             # Recalled long-term memories → the payload tail (KV-safe). Empty list omits it.
             plan_context["recalled_memories"] = _prep.recalled_memories
+            # Phase 3: persist the recall trace next to the controller-turn artifacts (inspector).
+            if _prep.recall_trace is not None:
+                try:
+                    from agentd.runtime.artifacts import chat_turn_artifacts_root
+                    _tid = str(plan_context.get("artifact_thread_id") or "")
+                    _turn = str(plan_context.get("artifact_turn_id") or "")
+                    _ws = str(plan_context.get("workspace_path") or "")
+                    if _tid and _turn:
+                        _out = chat_turn_artifacts_root(_tid, _turn, _ws)
+                        _out.mkdir(parents=True, exist_ok=True)
+                        (_out / f"memory-recall-{iteration:02d}.json").write_text(
+                            _prep.recall_trace.model_dump_json(indent=2), encoding="utf-8")
+                except Exception:  # noqa: BLE001 — best-effort
+                    logger.warning("[memory] recall-trace dump failed")
             if _prep.compacted:
                 # Observability: surface the compaction so the chat UI can show it fired.
                 self._broadcaster.broadcast(self._channel_id, {
