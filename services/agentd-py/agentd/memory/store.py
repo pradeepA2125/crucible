@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,14 @@ import sqlite_vec  # type: ignore[import-untyped]
 from agentd.memory.models import AnchoredSummary, CompactionSegment, Memory
 
 logger = logging.getLogger(__name__)
+
+_FTS_TOKEN = re.compile(r"\w+")
+
+
+def _fts_match_query(text: str) -> str:
+    """Turn an arbitrary query into a safe FTS5 MATCH expression: bare word tokens, each quoted
+    as a literal (neutralizing AND/OR/NOT/paths/punctuation), OR-joined. Empty when no tokens."""
+    return " OR ".join(f'"{t}"' for t in _FTS_TOKEN.findall(text))
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS compaction_segments (
@@ -210,12 +219,17 @@ class MemoryStore:
     def search_lexical(
         self, query: str, k: int, scope_kind: str, scope_id: str
     ) -> list[tuple[str, float]]:
+        # A raw user query (paths/dots/colons/AND/OR) is NOT a valid FTS5 MATCH expression and
+        # raises a syntax error. Tokenize to bare words, quote each as a literal, OR-join.
+        match = _fts_match_query(query)
+        if not match:
+            return []
         rows = self._conn.execute(
             "SELECT f.memory_id AS mid, bm25(memories_fts) AS rank "
             "FROM memories_fts f JOIN memories m ON m.id = f.memory_id "
             "WHERE memories_fts MATCH ? AND m.valid_to IS NULL "
             "AND m.scope_kind=? AND m.scope_id=? ORDER BY rank LIMIT ?",
-            (query, scope_kind, scope_id, k),
+            (match, scope_kind, scope_id, k),
         ).fetchall()
         return [(r["mid"], r["rank"]) for r in rows]
 

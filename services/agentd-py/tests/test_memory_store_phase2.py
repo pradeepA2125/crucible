@@ -106,6 +106,19 @@ def test_search_lexical_matches_entities(tmp_path):
     assert hits and hits[0][0] == "a"
 
 
+def test_search_lexical_handles_fts5_special_chars(tmp_path):
+    # Live-smoke bug: a raw user query with paths/dots/colons/operators broke FTS5 MATCH
+    # (syntax error) and nuked the whole recall. Must NOT throw, and should still match tokens.
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("a", content="auth flow in src/auth.py", entities=("src/auth.py",)),
+                        [0.1] * 384)
+    for q in ["Read src/auth.py and walk through", "auth.py:login", "auth AND flow",
+              "what (does) this do?", "  ", "/"]:
+        hits = store.search_lexical(q, k=5, scope_kind="workspace", scope_id="/ws")  # no raise
+        assert isinstance(hits, list)
+    assert store.search_lexical("src/auth.py", k=5, scope_kind="workspace", scope_id="/ws")
+
+
 def test_similar_memories_same_kind_scope(tmp_path):
     store = MemoryStore(tmp_path / "m.sqlite3")
     if not store._vec_enabled:

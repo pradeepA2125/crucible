@@ -76,7 +76,7 @@ class RecallEngine:
         try:
             return await self._recall(query, scope_kind, scope_id, k)
         except Exception:  # noqa: BLE001 — best-effort: never break the turn
-            logger.warning("[memory] recall failed for scope=%s", scope_id)
+            logger.warning("[memory] recall failed for scope=%s", scope_id, exc_info=True)
             return []
 
     async def _recall(self, query: str, scope_kind: str, scope_id: str, k: int) -> list[Memory]:
