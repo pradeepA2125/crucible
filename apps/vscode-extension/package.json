@@ -86,6 +86,7 @@
   },
   "scripts": {
     "webview:build": "npm --prefix webview-ui run build",
+    "webview:test": "npm --prefix webview-ui test",
     "prebuild": "npm --prefix webview-ui install && npm --prefix webview-ui run build",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
