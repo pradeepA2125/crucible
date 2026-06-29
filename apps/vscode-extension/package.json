@@ -15,6 +15,7 @@
     "onCommand:aiEditor.refreshTask",
     "onCommand:aiEditor.attachToTask",
     "onCommand:aiEditor.openChat",
+    "onCommand:aiEditor.openMemoryPanel",
     "onWebviewPanel:aiEditorChat"
   ],
   "contributes": {
@@ -46,6 +47,10 @@
       {
         "command": "aiEditor.openChat",
         "title": "AI Editor: Open Chat"
+      },
+      {
+        "command": "aiEditor.openMemoryPanel",
+        "title": "AI Editor: Open Memory Inspector"
       }
     ],
     "menus": {
@@ -53,6 +58,10 @@
         {
           "command": "aiEditor.startTask",
           "when": "aiEditor.taskSubsystemEnabled"
+        },
+        {
+          "command": "aiEditor.openMemoryPanel",
+          "when": "aiEditor.memoryEnabled"
         }
       ]
     },

@@ -2,6 +2,7 @@ import { HttpBackendClient } from "@ai-editor/editor-client";
 import * as vscode from "vscode";
 
 import { ChatPanel } from "./chat-panel.js";
+import { MemoryPanel } from "./memory-panel.js";
 import {
   AiEditorController,
   type BackendClientFactory,
@@ -197,14 +198,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // and the task path (startTask + task_card) is hidden. Set a `when`-context key so the
   // command palette + webview can gate on it. Default hidden if the backend is unreachable.
   let taskSubsystemEnabled = false;
+  let memoryEnabled = false;
   try {
     const cfg = await clientFactory(settings.getBackendBaseUrl()).getConfig();
     taskSubsystemEnabled = cfg.taskSubsystemEnabled;
+    memoryEnabled = cfg.memoryEnabled;
   } catch {
     // backend unreachable at activation — leave hidden.
   }
   await vscode.commands.executeCommand(
     "setContext", "aiEditor.taskSubsystemEnabled", taskSubsystemEnabled);
+  await vscode.commands.executeCommand(
+    "setContext", "aiEditor.memoryEnabled", memoryEnabled);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.startTask", async () => {
@@ -238,6 +243,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.openChat", () => {
       void controller.openChat();
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiEditor.openMemoryPanel", () => {
+      if (!memoryEnabled) {
+        void vscode.window.showInformationMessage(
+          "The memory inspector is disabled (AI_EDITOR_MEMORY_ENABLED=0).");
+        return;
+      }
+      new MemoryPanel(
+        context.extensionUri,
+        controller.memoryDataSource(),
+        controller.memoryThreadId(),
+        controller.memoryWorkspacePath()
+      ).open();
     })
   );
   // Re-attach message handler when VS Code restores the chat panel after a
