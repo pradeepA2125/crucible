@@ -19,6 +19,9 @@ class MemoryConfig(BaseModel):
     weights: tuple[float, float, float]
     graph_grounding: bool
     embedding_model: str
+    reranker_enabled: bool
+    reranker_model: str
+    rerank_min_candidates: int
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> MemoryConfig:
@@ -36,4 +39,7 @@ class MemoryConfig(BaseModel):
             ),
             graph_grounding=env.get("AI_EDITOR_MEMORY_GRAPH_GROUNDING", "true").lower() in _TRUTHY,
             embedding_model=env.get("AI_EDITOR_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
+            reranker_enabled=env.get("AI_EDITOR_MEMORY_RERANKER", "").lower() in _TRUTHY,
+            reranker_model=env.get("AI_EDITOR_MEMORY_RERANKER_MODEL", "BAAI/bge-reranker-base"),
+            rerank_min_candidates=int(env.get("AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES", "8")),
         )
