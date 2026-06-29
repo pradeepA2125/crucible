@@ -64,7 +64,7 @@ export function BrowserTab({
   return (
     <div data-testid="memory-browser-tab" className="flex h-full flex-col bg-[#0b1220] text-[#cbd5e1]">
       {/* Filter bar — chips + live/retired count (wireframe). */}
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#1e293b] px-3 py-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[#1e293b] px-4 py-2.5 text-[12px]">
         <label className="flex items-center gap-1 rounded-md bg-[#0f172a] px-2.5 py-1">
           scope:
           <select
@@ -112,8 +112,8 @@ export function BrowserTab({
       </div>
 
       {/* List + detail split (1.1fr / 1fr, wireframe). */}
-      <div className="grid min-h-0 flex-1 gap-3 p-3" style={{ gridTemplateColumns: "1.1fr 1fr" }}>
-        <ul data-testid="memory-list" className="flex flex-col gap-1.5 overflow-auto text-[12px]">
+      <div className="grid min-h-0 flex-1 gap-4 p-4" style={{ gridTemplateColumns: "1.1fr 1fr" }}>
+        <ul data-testid="memory-list" className="flex flex-col gap-2 overflow-auto text-[12px]">
           {memories.map((m) => {
             const retired = isRetired(m);
             const isSel = selected === m.id;
@@ -121,20 +121,21 @@ export function BrowserTab({
               <li
                 key={m.id}
                 onClick={() => select(m.id)}
-                className={`cursor-pointer rounded-[7px] border p-2 ${
+                className={`cursor-pointer rounded-lg border p-2.5 leading-snug ${
                   isSel ? "border-[#2563eb] bg-[#0b1220]" : "border-[#334155] bg-[#111827]"
                 } ${retired ? "opacity-50" : ""}`}
               >
-                <KindBadge kind={m.kind} />
-                {retired ? (
-                  <span className="text-[#fca5a5]"> · retired</span>
-                ) : (
-                  <span className="text-[#94a3b8]"> · imp {m.importance}</span>
-                )}
-                &nbsp;
-                <span className={retired ? "text-[#94a3b8] line-through" : "text-[#e2e8f0]"}>
+                <div className="mb-1 flex items-center gap-1.5">
+                  <KindBadge kind={m.kind} />
+                  {retired ? (
+                    <span className="text-[#fca5a5]">retired</span>
+                  ) : (
+                    <span className="text-[#94a3b8]">imp {m.importance}</span>
+                  )}
+                </div>
+                <div className={`line-clamp-2 ${retired ? "text-[#94a3b8] line-through" : "text-[#e2e8f0]"}`}>
                   {m.content}
-                </span>
+                </div>
               </li>
             );
           })}
@@ -142,11 +143,11 @@ export function BrowserTab({
 
         <div
           data-testid="memory-detail"
-          className="overflow-auto rounded-lg border border-[#334155] bg-[#0b1220] p-3 text-[12px]"
+          className="overflow-auto rounded-lg border border-[#334155] bg-[#0b1220] p-4 text-[12px]"
         >
           {detail ? (
             <>
-              <div className="mb-2">
+              <div className="mb-3">
                 <KindBadge kind={detail.kind} />
                 {isRetired(detail) ? (
                   <span className="ml-1 rounded bg-[#7f1d1d] px-[7px] py-px text-[11px] text-[#fca5a5]">
@@ -158,9 +159,11 @@ export function BrowserTab({
                   </span>
                 )}
               </div>
-              <div className="mb-2.5 whitespace-pre-wrap text-[#e2e8f0]">{detail.content}</div>
+              <div className="mb-3 whitespace-pre-wrap leading-relaxed text-[#e2e8f0]">
+                {detail.content}
+              </div>
               {detail.entities.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-1">
+                <div className="mb-3 flex flex-wrap gap-1.5">
                   {detail.entities.map((e) => (
                     <span
                       key={e}
@@ -187,11 +190,11 @@ export function BrowserTab({
               </div>
 
               {chain && chain.length > 1 && (
-                <div className="mt-3 border-t border-[#1e293b] pt-2.5">
-                  <div className="mb-1.5 text-[11px] tracking-wide text-[#94a3b8]">
+                <div className="mt-4 border-t border-[#1e293b] pt-3">
+                  <div className="mb-2 text-[11px] tracking-wide text-[#94a3b8]">
                     SUPERSEDE CHAIN
                   </div>
-                  <div data-testid="supersede-chain" className="flex flex-col gap-1 text-[#cbd5e1]">
+                  <div data-testid="supersede-chain" className="flex flex-col gap-1.5 text-[#cbd5e1]">
                     {chain.map((c, i) => (
                       <div key={c.id} data-testid={`chain-node-${c.id}`}>
                         {isRetired(c) ? (
