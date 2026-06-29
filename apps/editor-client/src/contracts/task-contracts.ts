@@ -281,8 +281,63 @@ export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 export const BackendConfigSchema = z.object({
   taskSubsystemEnabled: z.boolean(),
   chatControllerEnabled: z.boolean(),
+  memoryEnabled: z.boolean(),
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;
+
+// ── Memory inspector (Phase 3-B). Read-only views of the recall trace + memory store.
+// camelCase; the HttpBackendClient maps the snake_case route payloads into these.
+export const RecallSignalsSchema = z.object({
+  semantic: z.number(),
+  lexical: z.number(),
+  structural: z.number(),
+  importance: z.number(),
+  recency: z.number(),
+});
+export type RecallSignals = z.infer<typeof RecallSignalsSchema>;
+
+export const RecallTraceEntrySchema = z.object({
+  memoryId: z.string(),
+  kind: z.string(),
+  content: z.string(),
+  importance: z.number(),
+  signals: RecallSignalsSchema,
+  fusedScore: z.number(),
+  rerankScore: z.number().nullable(),
+  finalRank: z.number(),
+  injected: z.boolean(),
+});
+export type RecallTraceEntry = z.infer<typeof RecallTraceEntrySchema>;
+
+export const RecallTraceSchema = z.object({
+  query: z.string(),
+  scopeKind: z.string(),
+  scopeId: z.string(),
+  k: z.number(),
+  floor: z.number(),
+  reranked: z.boolean(),
+  entries: z.array(RecallTraceEntrySchema),
+});
+export type RecallTrace = z.infer<typeof RecallTraceSchema>;
+
+export const MemoryViewSchema = z.object({
+  id: z.string(),
+  scopeKind: z.string(),
+  scopeId: z.string(),
+  kind: z.string(),
+  content: z.string(),
+  entities: z.array(z.string()),
+  importance: z.number(),
+  validFrom: z.string(),
+  validTo: z.string().nullable(),
+  supersededBy: z.string().nullable(),
+  sourceKind: z.string(),
+  sourceRef: z.string(),
+  sourceSeqLo: z.number().nullable(),
+  sourceSeqHi: z.number().nullable(),
+  createdAt: z.string(),
+});
+export type MemoryView = z.infer<typeof MemoryViewSchema>;
 
 export interface BackendTaskClient {
   submitTask(input: TaskSubmission): Promise<{ taskId: string }>;
