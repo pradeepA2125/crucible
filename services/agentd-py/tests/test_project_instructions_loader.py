@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from agentd.chat.controller_factory import is_project_instructions_enabled
 from agentd.instructions.loader import ProjectInstructionsLoader
 
 
@@ -48,9 +49,6 @@ def test_disappearing_file_after_load_returns_none(tmp_path: Path) -> None:
     assert loader.load() == "hi"
     f.unlink()
     assert loader.load() is None
-
-
-from agentd.chat.controller_factory import is_project_instructions_enabled
 
 
 def test_instructions_flag_default_on(monkeypatch) -> None:

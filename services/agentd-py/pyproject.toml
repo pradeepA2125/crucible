@@ -45,6 +45,9 @@ dev = [
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+# The project root must be importable so test helpers shared via `from tests.X
+# import ...` resolve; the strict-editable install adds a finder, not the root.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
