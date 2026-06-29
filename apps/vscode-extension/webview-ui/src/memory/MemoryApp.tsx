@@ -26,29 +26,28 @@ export default function MemoryApp() {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
+  const tabClass = (active: boolean) =>
+    `rounded-t-md px-3.5 py-1.5 text-[13px] ${
+      active ? "bg-[#2563eb] font-semibold text-white" : "bg-[#1f2937] text-[#9ca3af]"
+    }`;
+
   return (
-    <div className="flex flex-col h-screen text-sm text-[var(--vscode-foreground)]">
-      <div className="flex items-center gap-2 border-b border-[var(--vscode-panel-border)] px-3 py-2">
-        <button
-          className={tab === "trace" ? "font-semibold underline" : "opacity-70"}
-          onClick={() => setTab("trace")}
-        >
+    <div className="flex h-screen flex-col bg-[#0b1220] text-sm text-[#cbd5e1]">
+      <div className="flex items-center gap-2 border-b border-[#1e293b] px-3 pt-2">
+        <button className={tabClass(tab === "trace")} onClick={() => setTab("trace")}>
           Recall Trace
         </button>
-        <button
-          className={tab === "browser" ? "font-semibold underline" : "opacity-70"}
-          onClick={() => setTab("browser")}
-        >
+        <button className={tabClass(tab === "browser")} onClick={() => setTab("browser")}>
           Browser
         </button>
         <button
-          className="ml-auto opacity-80 hover:opacity-100"
+          className="ml-auto mb-1 text-[#94a3b8] hover:text-[#cbd5e1]"
           onClick={() => vscode.postMessage({ type: "refresh" })}
         >
           ⟳ Refresh
         </button>
       </div>
-      {error && <div className="px-3 py-1 text-[var(--vscode-errorForeground)]">{error}</div>}
+      {error && <div className="px-3 py-1 text-[#fca5a5]">{error}</div>}
       <div className="flex-1 overflow-auto">
         {tab === "trace" ? (
           <RecallTraceTab trace={trace} />

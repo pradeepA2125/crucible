@@ -2,11 +2,28 @@ import { useState } from "react";
 import { vscode } from "./vscodeApi";
 import type { MemoryView } from "./types";
 
+// Slate-dark palette + structure from the approved "Browser tab" wireframe (.superpowers).
+const KIND_BG: Record<string, string> = {
+  semantic: "#1d4ed8",
+  procedural: "#6d28d9",
+  episodic: "#0e7490",
+};
 const KINDS = ["all", "episodic", "semantic", "procedural"] as const;
 const SCOPES = ["workspace", "thread"] as const;
 
 function isRetired(m: MemoryView): boolean {
   return m.validTo !== null;
+}
+
+function KindBadge({ kind }: { kind: string }) {
+  return (
+    <span
+      className="rounded px-1.5 py-px text-[10px] text-white"
+      style={{ background: KIND_BG[kind] ?? "#334155" }}
+    >
+      {kind}
+    </span>
+  );
 }
 
 export function BrowserTab({
@@ -45,11 +62,13 @@ export function BrowserTab({
   const chain = selected ? chains[selected] ?? null : null;
 
   return (
-    <div data-testid="memory-browser-tab" className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--vscode-panel-border)] px-3 py-2 text-xs">
-        <label className="flex items-center gap-1">
-          scope
+    <div data-testid="memory-browser-tab" className="flex h-full flex-col bg-[#0b1220] text-[#cbd5e1]">
+      {/* Filter bar — chips + live/retired count (wireframe). */}
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#1e293b] px-3 py-2 text-[12px]">
+        <label className="flex items-center gap-1 rounded-md bg-[#0f172a] px-2.5 py-1">
+          scope:
           <select
+            className="bg-transparent text-[#cbd5e1] outline-none"
             value={scopeKind}
             onChange={(e) => {
               setScopeKind(e.target.value);
@@ -61,9 +80,10 @@ export function BrowserTab({
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-1">
-          kind
+        <label className="flex items-center gap-1 rounded-md bg-[#0f172a] px-2.5 py-1">
+          kind:
           <select
+            className="bg-transparent text-[#cbd5e1] outline-none"
             value={kind}
             onChange={(e) => {
               setKind(e.target.value);
@@ -75,7 +95,7 @@ export function BrowserTab({
             ))}
           </select>
         </label>
-        <label className="flex items-center gap-1">
+        <label className="flex items-center gap-1 rounded-md bg-[#0f172a] px-2.5 py-1">
           <input
             type="checkbox"
             checked={includeRetired}
@@ -86,68 +106,115 @@ export function BrowserTab({
           />
           include retired
         </label>
-        <span className="ml-auto opacity-70">{liveCount} live · {retiredCount} retired</span>
+        <span className="ml-auto text-[#94a3b8]">
+          {liveCount} live · {retiredCount} retired
+        </span>
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        <ul data-testid="memory-list" className="w-1/2 overflow-auto border-r border-[var(--vscode-panel-border)]">
-          {memories.map((m) => (
-            <li
-              key={m.id}
-              onClick={() => select(m.id)}
-              className={`cursor-pointer border-b border-[var(--vscode-panel-border)] px-3 py-2 ${
-                selected === m.id ? "bg-[var(--vscode-list-activeSelectionBackground)]" : ""
-              } ${isRetired(m) ? "line-through opacity-50" : ""}`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="rounded bg-[var(--vscode-badge-background)] px-1.5 text-xs text-[var(--vscode-badge-foreground)]">
-                  {m.kind}
+      {/* List + detail split (1.1fr / 1fr, wireframe). */}
+      <div className="grid min-h-0 flex-1 gap-3 p-3" style={{ gridTemplateColumns: "1.1fr 1fr" }}>
+        <ul data-testid="memory-list" className="flex flex-col gap-1.5 overflow-auto text-[12px]">
+          {memories.map((m) => {
+            const retired = isRetired(m);
+            const isSel = selected === m.id;
+            return (
+              <li
+                key={m.id}
+                onClick={() => select(m.id)}
+                className={`cursor-pointer rounded-[7px] border p-2 ${
+                  isSel ? "border-[#2563eb] bg-[#0b1220]" : "border-[#334155] bg-[#111827]"
+                } ${retired ? "opacity-50" : ""}`}
+              >
+                <KindBadge kind={m.kind} />
+                {retired ? (
+                  <span className="text-[#fca5a5]"> · retired</span>
+                ) : (
+                  <span className="text-[#94a3b8]"> · imp {m.importance}</span>
+                )}
+                &nbsp;
+                <span className={retired ? "text-[#94a3b8] line-through" : "text-[#e2e8f0]"}>
+                  {m.content}
                 </span>
-                <span className="text-xs opacity-70">imp {m.importance}</span>
-              </div>
-              <div className="truncate text-xs">{m.content}</div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
 
-        <div data-testid="memory-detail" className="w-1/2 overflow-auto p-3 text-xs">
+        <div
+          data-testid="memory-detail"
+          className="overflow-auto rounded-lg border border-[#334155] bg-[#0b1220] p-3 text-[12px]"
+        >
           {detail ? (
             <>
-              <div className="mb-2 whitespace-pre-wrap">{detail.content}</div>
-              <div className="mb-2 flex flex-wrap gap-1">
-                {detail.entities.map((e) => (
-                  <span key={e} className="rounded bg-[var(--vscode-badge-background)] px-1.5 text-[var(--vscode-badge-foreground)]">
-                    {e}
+              <div className="mb-2">
+                <KindBadge kind={detail.kind} />
+                {isRetired(detail) ? (
+                  <span className="ml-1 rounded bg-[#7f1d1d] px-[7px] py-px text-[11px] text-[#fca5a5]">
+                    retired
                   </span>
-                ))}
+                ) : (
+                  <span className="ml-1 rounded bg-[#065f46] px-[7px] py-px text-[11px] text-[#6ee7b7]">
+                    live
+                  </span>
+                )}
               </div>
-              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 opacity-80">
-                <dt>kind</dt><dd>{detail.kind}</dd>
-                <dt>importance</dt><dd>{detail.importance}</dd>
-                <dt>source</dt><dd>{detail.sourceKind} ({detail.sourceRef})</dd>
-                <dt>seq span</dt><dd>{detail.sourceSeqLo ?? "—"} – {detail.sourceSeqHi ?? "—"}</dd>
-                <dt>valid from</dt><dd>{detail.validFrom}</dd>
-                <dt>valid to</dt><dd>{detail.validTo ?? "(current)"}</dd>
-              </dl>
+              <div className="mb-2.5 whitespace-pre-wrap text-[#e2e8f0]">{detail.content}</div>
+              {detail.entities.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1">
+                  {detail.entities.map((e) => (
+                    <span
+                      key={e}
+                      className="rounded-[10px] bg-[#1e293b] px-[7px] py-0.5 text-[11px] text-[#93c5fd]"
+                    >
+                      {e}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="leading-[1.7] text-[#94a3b8]">
+                <b>importance</b> {detail.importance} &nbsp;·&nbsp; <b>scope</b> {detail.scopeKind}
+                <br />
+                <b>source</b> {detail.sourceKind} · run {detail.sourceRef}
+                <br />
+                <b>valid_from</b> {detail.validFrom} &nbsp;·&nbsp; <b>segments</b> seq{" "}
+                {detail.sourceSeqLo ?? "—"}–{detail.sourceSeqHi ?? "—"}
+                {isRetired(detail) && (
+                  <>
+                    <br />
+                    <b>valid_to</b> <span className="text-[#fca5a5]">{detail.validTo}</span>
+                  </>
+                )}
+              </div>
+
               {chain && chain.length > 1 && (
-                <div data-testid="supersede-chain" className="mt-3">
-                  <div className="mb-1 font-semibold">supersede chain</div>
-                  <ol className="flex flex-col gap-1">
-                    {chain.map((c) => (
-                      <li
-                        key={c.id}
-                        data-testid={`chain-node-${c.id}`}
-                        className={c.id === detail.id ? "font-semibold" : "opacity-70"}
-                      >
-                        {isRetired(c) ? "↳" : "●"} {c.content}
-                      </li>
+                <div className="mt-3 border-t border-[#1e293b] pt-2.5">
+                  <div className="mb-1.5 text-[11px] tracking-wide text-[#94a3b8]">
+                    SUPERSEDE CHAIN
+                  </div>
+                  <div data-testid="supersede-chain" className="flex flex-col gap-1 text-[#cbd5e1]">
+                    {chain.map((c, i) => (
+                      <div key={c.id} data-testid={`chain-node-${c.id}`}>
+                        {isRetired(c) ? (
+                          <span className="opacity-60">
+                            <span className="line-through">{c.content}</span>{" "}
+                            <span className="text-[#fca5a5]">retired</span>
+                          </span>
+                        ) : (
+                          <span>
+                            <b>{c.content}</b> <span className="text-[#6ee7b7]">live</span>
+                          </span>
+                        )}
+                        {i < chain.length - 1 && (
+                          <div className="ml-1.5 text-[#64748b]">↓ superseded_by</div>
+                        )}
+                      </div>
                     ))}
-                  </ol>
+                  </div>
                 </div>
               )}
             </>
           ) : (
-            <span className="opacity-60">Select a memory to inspect.</span>
+            <span className="text-[#64748b]">Select a memory to inspect.</span>
           )}
         </div>
       </div>
