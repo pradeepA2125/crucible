@@ -42,4 +42,27 @@ describe("InputArea slash-command expansion", () => {
     const ta = screen.getByLabelText("Chat input") as HTMLTextAreaElement;
     expect(ta.value).toBe("Review src/a.py");
   });
+
+  it("an unmatched slash command (found=false) sends the original text, not a dead-end", () => {
+    render(<Harness />);
+    const ta = screen.getByLabelText("Chat input");
+    // Enter posts expandPrompt and stashes the original text.
+    fireEvent.keyDown(ta, { key: "Enter" });
+    // Host: no such prompt.
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "promptExpanded", name: "review", found: false, text: "" },
+        })
+      );
+    });
+    const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls).toContainEqual({
+      type: "sendMessage",
+      text: "/review src/a.py",
+      stepReview: true,
+    });
+    // And the composer is cleared (message left the box).
+    expect((ta as HTMLTextAreaElement).value).toBe("");
+  });
 });

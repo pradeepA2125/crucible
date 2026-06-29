@@ -50,19 +50,35 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
     }
   }, [availability.taskStop]);
 
+  // The text we sent for expansion, held across the async host round-trip so a
+  // "no such prompt" reply can fall back to sending it as a normal message.
+  const pendingSlashRef = useRef<string | null>(null);
+
   // Prompt-file expansion: the host replies to an expandPrompt request with the
-  // substituted body, which fills the draft so the user can review/edit and send.
+  // substituted body (found=true → fill the draft for review). When there is no
+  // matching prompt (found=false), the typed text was NOT a command — send it as
+  // a normal message rather than silently swallowing it (no dead-end composer).
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       const m = e.data as Record<string, unknown>;
-      if (m?.["type"] === "promptExpanded" && m["found"] === true) {
+      if (m?.["type"] !== "promptExpanded") return;
+      if (m["found"] === true) {
+        pendingSlashRef.current = null;
         onDraftChange(m["text"] as string);
+        return;
       }
-      // found=false → leave the draft as typed (soft no-op).
+      const original = pendingSlashRef.current;
+      pendingSlashRef.current = null;
+      if (original) {
+        vscode.postMessage({ type: "sendMessage", text: original, stepReview });
+        onDraftChange("");
+        const el = textareaRef.current;
+        if (el) el.style.height = "auto";
+      }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [onDraftChange]);
+  }, [onDraftChange, stepReview]);
 
   function autoGrow() {
     const el = textareaRef.current;
@@ -82,8 +98,10 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
     if (!trimmed) return;
     const slash = parseSlashCommand(trimmed);
     if (slash) {
-      // Expand first; the host replies with promptExpanded which fills the draft.
-      // The user then reviews/edits and sends again (now non-slash → real send).
+      // Expand first; the host replies with promptExpanded. found=true fills the
+      // draft (user reviews, then sends again → real send); found=false falls back
+      // to sending `original` as a normal message (see the listener above).
+      pendingSlashRef.current = trimmed;
       vscode.postMessage({ type: "expandPrompt", name: slash.name, args: slash.args });
       return;
     }
