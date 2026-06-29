@@ -91,3 +91,29 @@ class CandidateMemory(BaseModel):
     entities: list[str]
     importance: int
     contradicts: str | None = None
+
+
+class RecallTraceEntry(BaseModel):
+    """One candidate's scoring breakdown for the inspector (incl. below-floor candidates)."""
+
+    memory_id: str
+    kind: str
+    content: str
+    importance: int
+    signals: dict[str, float]  # normalized semantic/lexical/structural/importance/recency
+    fused_score: float
+    rerank_score: float | None
+    final_rank: int
+    injected: bool
+
+
+class RecallTrace(BaseModel):
+    """What recall did this turn — turn-level summary + all scored candidates."""
+
+    query: str
+    scope_kind: str
+    scope_id: str
+    k: int
+    floor: float
+    reranked: bool
+    entries: list[RecallTraceEntry]
