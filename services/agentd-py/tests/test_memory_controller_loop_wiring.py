@@ -59,7 +59,7 @@ async def test_controller_loop_broadcasts_memory_compacted(tmp_path: Path):
     class _CompactingHarness:
         """Returns a compacted prep so we can assert the loop broadcasts the event."""
 
-        async def prepare_turn(self, history, run_id):
+        async def prepare_turn(self, history, run_id, query=""):
             return TurnPreparation(
                 history=history, compacted=True, evicted_count=3, anchor_version=2
             )
