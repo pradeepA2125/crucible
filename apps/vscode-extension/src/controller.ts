@@ -12,6 +12,7 @@ import type {
   ThreadLiveState,
 } from "@ai-editor/editor-client";
 
+import type { MemoryDataSource } from "./memory-data.js";
 import { buildReviewFileEntries } from "./review-files.js";
 import { SessionStore } from "./session-store.js";
 import { shouldStopPolling, TaskPoller } from "./task-poller.js";
@@ -210,6 +211,32 @@ export class AiEditorController {
   openReviewPanel(): void {
     // The unified chat panel replaced the review panel.
     this.ui.openChatPanel();
+  }
+
+  // ── Memory inspector (Phase 3-B) ────────────────────────────────────────────
+  // vscode-free seam: the controller exposes the read-only data source + the active
+  // thread + workspace; extension.ts owns MemoryPanel construction (it needs vscode +
+  // extensionUri). The client is session-independent (built from the backend URL, like
+  // attachToTask) since the inspector opens from chat with no task session.
+  memoryDataSource(): MemoryDataSource {
+    return {
+      getInspect: (tid) =>
+        tid ? this.memoryClient().getMemoryInspect(tid) : Promise.resolve(null),
+      browse: (filter) => this.memoryClient().listMemories(filter),
+      getChain: (memoryId) => this.memoryClient().getSupersedeChain(memoryId),
+    };
+  }
+
+  memoryThreadId(): string {
+    return this.activeThreadId ?? "";
+  }
+
+  memoryWorkspacePath(): string {
+    return this.session?.workspacePath ?? this.ui.getWorkspacePath() ?? "";
+  }
+
+  private memoryClient(): BackendTaskClient {
+    return this.createClient(this.settings.getBackendBaseUrl());
   }
 
   async attachToTask(): Promise<void> {
