@@ -256,3 +256,38 @@ class MemoryStore:
                 (new_memory.valid_from.isoformat(), new_memory.id, old_id),
             )
             self._insert_rows(new_memory, new_embedding)
+
+    # ------------------------------------------------------------------
+    # Phase 3: read-only browse (the inspector panel)
+    # ------------------------------------------------------------------
+    def list_memories(
+        self, scope_kind: str, scope_id: str, kind: str | None = None,
+        include_retired: bool = False,
+    ) -> list[Memory]:
+        sql = "SELECT * FROM memories WHERE scope_kind=? AND scope_id=?"
+        args: list[object] = [scope_kind, scope_id]
+        if not include_retired:
+            sql += " AND valid_to IS NULL"
+        if kind:
+            sql += " AND kind=?"
+            args.append(kind)
+        sql += " ORDER BY importance DESC, valid_from DESC"
+        return [self._row_to_memory(r) for r in self._conn.execute(sql, args).fetchall()]
+
+    def get_supersede_chain(self, memory_id: str) -> list[Memory]:
+        # Walk back to the oldest (the row nobody supersedes), then forward via superseded_by.
+        cur = self.get_memory(memory_id)
+        while cur is not None:
+            prev = self._conn.execute(
+                "SELECT * FROM memories WHERE superseded_by=?", (cur.id,)
+            ).fetchone()
+            if prev is None:
+                break
+            cur = self._row_to_memory(prev)
+        chain: list[Memory] = []
+        seen: set[str] = set()
+        while cur is not None and cur.id not in seen:
+            seen.add(cur.id)
+            chain.append(cur)
+            cur = self.get_memory(cur.superseded_by) if cur.superseded_by else None
+        return chain

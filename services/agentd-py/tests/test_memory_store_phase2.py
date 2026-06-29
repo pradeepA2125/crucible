@@ -141,6 +141,27 @@ def test_supersede_retires_old_and_inserts_new_atomically(tmp_path):
     assert {m.id for m in live} == {"new"}
 
 
+def test_list_memories_filters(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("live"), [0.1] * 384)
+    retired = _mem("dead").model_copy(update={"valid_to": _mem("dead").valid_from})
+    store.insert_memory(retired, [0.1] * 384)
+    epi = _mem("epi").model_copy(update={"kind": "episodic"})
+    store.insert_memory(epi, [0.1] * 384)
+    assert {m.id for m in store.list_memories("workspace", "/ws")} == {"live", "epi"}
+    assert {m.id for m in store.list_memories("workspace", "/ws", include_retired=True)} == {
+        "live", "epi", "dead"}
+    assert {m.id for m in store.list_memories("workspace", "/ws", kind="episodic")} == {"epi"}
+
+
+def test_supersede_chain(tmp_path):
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    store.insert_memory(_mem("old", content="v1"), [0.1] * 384)
+    store.supersede("old", _mem("new", content="v2"), [0.2] * 384)
+    chain = store.get_supersede_chain("new")
+    assert [m.id for m in chain] == ["old", "new"]  # oldest → newest
+
+
 def test_supersede_rolls_back_when_insert_fails(tmp_path):
     # FIX #2: a failing insert must roll back the retire-UPDATE — old stays LIVE, no data loss.
     import pytest
