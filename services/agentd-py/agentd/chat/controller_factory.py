@@ -35,6 +35,13 @@ def is_memory_enabled() -> bool:
     return MemoryConfig.from_env(os.environ).enabled
 
 
+def is_project_instructions_enabled() -> bool:
+    """Whether a workspace AGENTS.md is injected into the controller system
+    prompt. Default ON — reading the project's AGENTS.md is table-stakes parity.
+    Kill-switch only: AI_EDITOR_PROJECT_INSTRUCTIONS=0 (or false/no/off)."""
+    return os.getenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "1").strip().lower() in _TRUTHY
+
+
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
     """Task-subsystem OFF only works when the controller is ON (the legacy ChatAgent's
     large_change branch has nowhere to go without create_task). Warn — do not fail."""

@@ -48,3 +48,18 @@ def test_disappearing_file_after_load_returns_none(tmp_path: Path) -> None:
     assert loader.load() == "hi"
     f.unlink()
     assert loader.load() is None
+
+
+from agentd.chat.controller_factory import is_project_instructions_enabled
+
+
+def test_instructions_flag_default_on(monkeypatch) -> None:
+    monkeypatch.delenv("AI_EDITOR_PROJECT_INSTRUCTIONS", raising=False)
+    assert is_project_instructions_enabled() is True
+
+
+def test_instructions_flag_explicit_off(monkeypatch) -> None:
+    monkeypatch.setenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "0")
+    assert is_project_instructions_enabled() is False
+    monkeypatch.setenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "false")
+    assert is_project_instructions_enabled() is False
