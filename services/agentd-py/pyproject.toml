@@ -69,3 +69,8 @@ warn_unused_configs = true
 [build-system]
 requires = ["setuptools>=75", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+# Pin discovery to the import package; a stray `workspaces/` test dir at the
+# project root otherwise trips setuptools flat-layout multi-package detection.
+include = ["agentd*"]
