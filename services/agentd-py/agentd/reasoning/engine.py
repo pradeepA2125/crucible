@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from agentd.domain.models import (
     Diagnostic,
@@ -19,6 +20,9 @@ from agentd.reasoning.prompt_builder import (
     build_plan_payload,
 )
 from agentd.runtime.artifacts import task_artifacts_root
+
+if TYPE_CHECKING:
+    from agentd.instructions.loader import ProjectInstructionsLoader
 
 
 def _debug_dump(
@@ -64,9 +68,11 @@ class DefaultReasoningEngine(ReasoningEngine):
         *,
         model: str,
         transport: ModelJsonTransport,
+        project_instructions_loader: ProjectInstructionsLoader | None = None,
     ) -> None:
         self._model = model
         self._transport = transport
+        self._project_instructions_loader = project_instructions_loader
 
     async def create_plan(
         self,
@@ -252,7 +258,14 @@ class DefaultReasoningEngine(ReasoningEngine):
             format_controller_system_prompt,
         )
 
-        system_instructions = format_controller_system_prompt(tool_definitions)
+        instructions = (
+            self._project_instructions_loader.load()
+            if self._project_instructions_loader is not None
+            else None
+        )
+        system_instructions = format_controller_system_prompt(
+            tool_definitions, project_instructions=instructions
+        )
         user_payload = build_controller_step_payload(
             plan_context, history, tool_definitions, phase=phase
         )

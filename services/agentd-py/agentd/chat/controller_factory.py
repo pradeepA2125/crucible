@@ -74,6 +74,7 @@ def select_chat_handler(
 
         from agentd.chat.controller import ChatController
         from agentd.domain.models import ShellPolicy
+        from agentd.instructions.loader import ProjectInstructionsLoader
         from agentd.memory.config import MemoryConfig
         from agentd.memory.harness import build_memory_harness
         from agentd.reasoning.engine import DefaultReasoningEngine
@@ -82,9 +83,20 @@ def select_chat_handler(
         # AI_EDITOR_MEMORY_ENABLED). workspace_path enables consolidation (workspace scope).
         memory_harness = build_memory_harness(
             MemoryConfig.from_env(os.environ), transport, model, workspace_path=workspace_path)
+        # Auto-inject the workspace AGENTS.md into the controller system prompt (default on;
+        # mtime-cached so an edit self-updates without a restart). Frozen workspace_path.
+        project_instructions_loader = (
+            ProjectInstructionsLoader(workspace_path)
+            if is_project_instructions_enabled()
+            else None
+        )
         return ChatController(
             workspace_path=workspace_path,
-            reasoning_engine=DefaultReasoningEngine(model=model, transport=transport),
+            reasoning_engine=DefaultReasoningEngine(
+                model=model,
+                transport=transport,
+                project_instructions_loader=project_instructions_loader,
+            ),
             thread_store=thread_store,
             orchestrator=orchestrator,
             broadcaster=broadcaster,
