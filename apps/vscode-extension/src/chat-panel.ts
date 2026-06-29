@@ -29,6 +29,12 @@ export type StopTurnHandler = () => void;
 export type AbortTaskHandler = (revert: boolean) => Promise<void>;
 // Tier B: live-mutable "Review each step" preference for the running task.
 export type SetReviewPrefHandler = (autoAccept: boolean) => Promise<void>;
+// P1: prompt-file expansion in the composer (.ai-editor/prompts/<name>.md).
+export type ListPromptsHandler = () => Promise<string[]>;
+export type ExpandPromptHandler = (
+  name: string,
+  args: string
+) => Promise<{ found: boolean; text: string }>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -55,6 +61,8 @@ export class ChatPanel {
     private readonly onStopTurn: StopTurnHandler,
     private readonly onAbortTask: AbortTaskHandler,
     private readonly onSetReviewPref: SetReviewPrefHandler,
+    private readonly onListPrompts: ListPromptsHandler,
+    private readonly onExpandPrompt: ExpandPromptHandler,
     private readonly onReady: () => Promise<void> = async () => {}
   ) {}
 
@@ -162,6 +170,23 @@ export class ChatPanel {
         p = this.onAbortTask(m["revert"] === true);
       } else if (m["type"] === "setReviewPref") {
         p = this.onSetReviewPref(m["autoAccept"] === true);
+      } else if (m["type"] === "listPrompts") {
+        p = (async () => {
+          const names = await this.onListPrompts();
+          this.panel?.webview.postMessage({ type: "promptList", names });
+        })();
+      } else if (m["type"] === "expandPrompt") {
+        const name = m["name"] as string;
+        const args = (m["args"] as string) ?? "";
+        p = (async () => {
+          const result = await this.onExpandPrompt(name, args);
+          this.panel?.webview.postMessage({
+            type: "promptExpanded",
+            name,
+            found: result.found,
+            text: result.text,
+          });
+        })();
       } else {
         return;
       }
