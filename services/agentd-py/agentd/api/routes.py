@@ -251,7 +251,10 @@ def build_router(
         if not is_memory_enabled():
             return {"entries": []}
         ws = os.getenv("AI_EDITOR_WORKSPACE_PATH", "")
-        base = chat_turn_artifacts_root(thread_id, "", ws).parent  # …/chat/<thread>/
+        # turn_id="" is a no-op path join, so this is already …/chat/<thread>/ — the turn_id
+        # dirs are the glob's `*` level. (Taking .parent here drops to …/chat/ and the glob
+        # then probes one level too shallow, matching nothing.)
+        base = chat_turn_artifacts_root(thread_id, "", ws)
         files = sorted(glob.glob(str(base / "*" / "memory-recall-*.json")), key=os.path.getmtime)
         if not files:
             return {"entries": []}

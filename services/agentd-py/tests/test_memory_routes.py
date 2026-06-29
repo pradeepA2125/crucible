@@ -43,3 +43,21 @@ def test_inspect_soft_empty_without_trace(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     r = c.get("/v1/memory/inspect", params={"thread_id": "chat-none"})
     assert r.status_code == 200 and r.json().get("entries", []) == []
+
+
+def test_inspect_serves_persisted_trace(tmp_path, monkeypatch):
+    # The trace lands at chat/<thread>/<turn>/memory-recall-NN.json — the route must glob
+    # the turn_id level, not the thread level. (A prior .parent over-strip matched nothing.)
+    from agentd.runtime.artifacts import chat_turn_artifacts_root
+
+    turn_dir = chat_turn_artifacts_root("chat-trace", "turn-1", str(tmp_path))
+    turn_dir.mkdir(parents=True, exist_ok=True)
+    (turn_dir / "memory-recall-00.json").write_text(
+        '{"query": "what does X do", "entries": [{"memory_id": "a"}]}', encoding="utf-8")
+
+    c = _client(tmp_path, monkeypatch)
+    r = c.get("/v1/memory/inspect", params={"thread_id": "chat-trace"})
+    body = r.json()
+    assert r.status_code == 200
+    assert body["query"] == "what does X do"
+    assert [e["memory_id"] for e in body["entries"]] == ["a"]
