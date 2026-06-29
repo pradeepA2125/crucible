@@ -200,13 +200,63 @@ def build_router(
         """Feature-flag capabilities for the frontend to gate task-path UI."""
         from agentd.chat.controller_factory import (
             is_controller_enabled,
+            is_memory_enabled,
             is_task_subsystem_enabled,
         )
 
         return {
             "task_subsystem_enabled": is_task_subsystem_enabled(),
             "chat_controller_enabled": is_controller_enabled(),
+            "memory_enabled": is_memory_enabled(),
         }
+
+    # ------------------------------------------------------------------
+    # Phase 3 — read-only memory inspector (no mutation; gated by the memory flag).
+    # Self-resolve the store + workspace from env (no build_router signature change).
+    # ------------------------------------------------------------------
+    def _memory_store():  # noqa: ANN202 — mypy infers MemoryStore from the return
+        from agentd.memory.config import MemoryConfig
+        from agentd.memory.store import MemoryStore
+
+        return MemoryStore(MemoryConfig.from_env(os.environ).db_path)
+
+    @router.get("/memory")
+    async def browse_memories(
+        scope_kind: str, scope_id: str, kind: str | None = None, include_retired: bool = False,
+    ) -> list[dict]:
+        from agentd.chat.controller_factory import is_memory_enabled
+
+        if not is_memory_enabled():
+            return []
+        st = _memory_store()
+        return [m.model_dump(mode="json")
+                for m in st.list_memories(scope_kind, scope_id, kind, include_retired)]
+
+    @router.get("/memory/{memory_id}/chain")
+    async def memory_chain(memory_id: str) -> list[dict]:
+        from agentd.chat.controller_factory import is_memory_enabled
+
+        if not is_memory_enabled():
+            return []
+        return [m.model_dump(mode="json")
+                for m in _memory_store().get_supersede_chain(memory_id)]
+
+    @router.get("/memory/inspect")
+    async def inspect_recall(thread_id: str) -> dict:
+        import glob
+
+        from agentd.chat.controller_factory import is_memory_enabled
+        from agentd.runtime.artifacts import chat_turn_artifacts_root
+
+        if not is_memory_enabled():
+            return {"entries": []}
+        ws = os.getenv("AI_EDITOR_WORKSPACE_PATH", "")
+        base = chat_turn_artifacts_root(thread_id, "", ws).parent  # …/chat/<thread>/
+        files = sorted(glob.glob(str(base / "*" / "memory-recall-*.json")), key=os.path.getmtime)
+        if not files:
+            return {"entries": []}
+        with open(files[-1]) as f:
+            return json.loads(f.read())
 
     # Guards against two concurrent plan-feedback calls for the same task.
     # Safe without a lock: asyncio is single-threaded; the check+add happens
