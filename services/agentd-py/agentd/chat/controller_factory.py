@@ -97,12 +97,20 @@ def select_chat_handler(
             if is_project_instructions_enabled()
             else None
         )
+        # Discover agentskills.io SKILL.md skills for the controller catalog (default off;
+        # mtime-cached so a skill add self-updates without a restart). Frozen workspace_path.
+        from agentd.skills.loader import SkillCatalogLoader
+
+        skill_catalog_loader = (
+            SkillCatalogLoader(workspace_path) if is_skills_enabled() else None
+        )
         return ChatController(
             workspace_path=workspace_path,
             reasoning_engine=DefaultReasoningEngine(
                 model=model,
                 transport=transport,
                 project_instructions_loader=project_instructions_loader,
+                skill_catalog_loader=skill_catalog_loader,
             ),
             thread_store=thread_store,
             orchestrator=orchestrator,

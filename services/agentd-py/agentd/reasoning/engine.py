@@ -69,10 +69,12 @@ class DefaultReasoningEngine(ReasoningEngine):
         model: str,
         transport: ModelJsonTransport,
         project_instructions_loader: ProjectInstructionsLoader | None = None,
+        skill_catalog_loader: object | None = None,
     ) -> None:
         self._model = model
         self._transport = transport
         self._project_instructions_loader = project_instructions_loader
+        self._skill_catalog_loader = skill_catalog_loader
 
     async def create_plan(
         self,
@@ -263,8 +265,16 @@ class DefaultReasoningEngine(ReasoningEngine):
             if self._project_instructions_loader is not None
             else None
         )
+        skills_catalog = None
+        if self._skill_catalog_loader is not None:
+            from agentd.skills.catalog import select_catalog_for_budget
+            from agentd.skills.config import skills_catalog_max_chars
+
+            full = self._skill_catalog_loader.load_catalog()  # type: ignore[attr-defined]
+            shown, _hidden = select_catalog_for_budget(full, skills_catalog_max_chars())
+            skills_catalog = shown
         system_instructions = format_controller_system_prompt(
-            tool_definitions, project_instructions=instructions
+            tool_definitions, project_instructions=instructions, skills_catalog=skills_catalog
         )
         user_payload = build_controller_step_payload(
             plan_context, history, tool_definitions, phase=phase

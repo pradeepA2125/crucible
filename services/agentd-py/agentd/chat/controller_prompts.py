@@ -367,12 +367,23 @@ the user; follow it unless it conflicts with a safety rule):
 {instructions}"""
 
 
+_SKILLS_BLOCK_HEADER = """
+
+AVAILABLE SKILLS (specialized playbooks for this workspace):
+Each line is a skill's name + when to use it. When a skill is relevant to the
+current task, call read_skill(name) to load its full instructions into context.
+A skill may bundle helper scripts under its scripts/ folder — run them with
+run_command, e.g. run_command(command="python .ai-editor/skills/<name>/scripts/<file>.py").
+"""
+
+
 def format_controller_system_prompt(
     tool_definitions: list[dict[str, object]],
     *,
     task_subsystem_enabled: bool | None = None,
     memory_enabled: bool | None = None,
     project_instructions: str | None = None,
+    skills_catalog: list | None = None,
 ) -> str:
     """Assemble the controller system prompt. The propose_mode mode-vocabulary block is
     swapped by the task-subsystem flag (default resolved from env) — see the spec. The
@@ -400,6 +411,12 @@ def format_controller_system_prompt(
         base += _INSTRUCTIONS_BLOCK_TEMPLATE.replace(
             "{instructions}", project_instructions.strip()
         )
+    if skills_catalog:
+        from agentd.skills.catalog import render_skills_catalog
+
+        rendered = render_skills_catalog(skills_catalog)
+        if rendered:
+            base += _SKILLS_BLOCK_HEADER + rendered
     return base
 
 
