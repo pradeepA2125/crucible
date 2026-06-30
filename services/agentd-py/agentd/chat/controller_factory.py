@@ -42,6 +42,13 @@ def is_project_instructions_enabled() -> bool:
     return os.getenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "1").strip().lower() in _TRUTHY
 
 
+def is_skills_enabled() -> bool:
+    """Whether agentskills.io SKILL.md skills are discovered + offered to the
+    controller (catalog + read_skill + /skill forced-load). Default OFF — new
+    capability, ship dark. Opt in with AI_EDITOR_SKILLS_ENABLED=1."""
+    return os.getenv("AI_EDITOR_SKILLS_ENABLED", "0").strip().lower() in _TRUTHY
+
+
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
     """Task-subsystem OFF only works when the controller is ON (the legacy ChatAgent's
     large_change branch has nowhere to go without create_task). Warn — do not fail."""
