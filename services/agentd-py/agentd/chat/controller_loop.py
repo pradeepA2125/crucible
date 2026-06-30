@@ -192,6 +192,7 @@ class ControllerLoop:
         todo_ledger: TodoLedger | None = None,
         task_subsystem_enabled: bool = False,
         memory_harness: MemoryHarness = NO_OP_HARNESS,
+        active_skills: dict[str, str] | None = None,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -201,6 +202,9 @@ class ControllerLoop:
         self._edit = edit_session
         self._ledger = todo_ledger or TodoLedger()
         self._memory_harness = memory_harness
+        # Shared with the SkillToolSource: read_skill writes activated bodies here; each
+        # iteration we re-inject them into the dynamic tail (compaction-resilient).
+        self._active_skills = active_skills if active_skills is not None else {}
         # OFF (default): only edit/explain may be offered — the controller handles changes
         # inline; a model that proposes create_task/resume anyway gets corrected.
         self._allowed_modes = (
@@ -344,6 +348,11 @@ class ControllerLoop:
             # model re-reads its own contract (the detail that makes discretion stick). Empty
             # string when no list exists -> build_controller_step_payload omits it.
             plan_context["todo_status"] = self._ledger.render()
+            # Re-inject activated skill bodies into the tail every iteration (compaction-
+            # resilient); empty list -> build_controller_step_payload omits it.
+            plan_context["active_skills"] = [
+                {"name": n, "body": b} for n, b in self._active_skills.items()
+            ]
             # EDIT-entry signal: first action after inline-edit was chosen, nothing started yet
             # (no list, no edit applied). The payload builder swaps the clean entry hint
             # (write_todos-as-tool_call) for the mid-turn reconcile hint once this clears —

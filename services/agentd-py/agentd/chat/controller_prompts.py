@@ -457,6 +457,11 @@ def build_controller_step_payload(
     if isinstance(recalled, list) and recalled:
         payload["recalled_memories"] = recalled
     payload["goal"] = plan_context.get("goal", "")
+    # Activated skill bodies ride the tail (finding #13) and are re-injected every iteration
+    # so memory compaction can't strand an activated body; omitted when none are active.
+    active_skills = plan_context.get("active_skills")
+    if isinstance(active_skills, list) and active_skills:
+        payload["active_skills"] = active_skills
     # Per-turn-varying ledger status (ControllerLoop sets it each iteration). Tail-only so the
     # KV prefix stays stable; omitted when blank (no list) so simple turns are byte-identical.
     todo_status = plan_context.get("todo_status")

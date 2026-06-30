@@ -25,7 +25,10 @@ from agentd.chat.models import ChatMessage, PendingGate
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.domain.models import CommandDecision, ShellPolicy
+from agentd.chat.controller_factory import is_skills_enabled
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
+from agentd.skills.loader import SkillCatalogLoader
+from agentd.skills.tool_source import SkillToolSource
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
@@ -178,6 +181,7 @@ class ChatController:
         command_approval_callback: object | None = None,
         todo_ledger: TodoLedger | None = None,
         todo_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
+        active_skills: dict[str, str] | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -190,6 +194,9 @@ class ChatController:
         mts = self._memory_harness.memory_tool_source()  # remember + recall (None unless enabled)
         if mts is not None:
             sources.append(mts)
+        if is_skills_enabled() and active_skills is not None:
+            sources.append(SkillToolSource(
+                SkillCatalogLoader(self._workspace_path), active_skills))
         return AggregatingToolRegistry(sources)
 
     async def _persist_todos(self, thread_id: str, raw: str | None) -> None:
@@ -243,6 +250,7 @@ class ChatController:
 
     async def handle_message(
         self, thread_id: str, message: str, channel_id: str, step_review: bool | None = None,
+        forced_skills: list[str] | None = None,
     ) -> None:
         thread = self._store.get_thread(thread_id)
         if thread is None:
@@ -284,14 +292,14 @@ class ChatController:
         outcome = await self._run_loop(
             thread_id, channel_id, message, seed_history=seed_history,
             step_review=step_review, phase=resume_phase, turn_id=turn_id,
-            edit_is_resume=(resume_phase == "EDIT"))
+            edit_is_resume=(resume_phase == "EDIT"), forced_skills=forced_skills)
         await self._finish(thread_id, channel_id, outcome, step_review, turn_id=turn_id)
 
     async def _run_loop(
         self, thread_id: str, channel_id: str, goal: str, *,
         seed_history: list[dict[str, object]] | None, step_review: bool | None,
         phase: str | None = None, turn_id: str | None = None,
-        edit_is_resume: bool = False,
+        edit_is_resume: bool = False, forced_skills: list[str] | None = None,
     ) -> ControllerOutcome:
         sm = ControllerPhaseSM()
         # Request-scoped todo ledger: rehydrate so it survives the DECIDE->EDIT (mode gate)
@@ -317,12 +325,26 @@ class ChatController:
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
         # Persist the ledger mid-turn on every write_todos so /live renders it during the turn.
         todo_persist_cb = partial(self._persist_todos, thread_id)
+        # Shared active-skills map: SkillToolSource (in the registry) writes activated bodies
+        # here, the loop re-injects them into the dynamic tail each iteration. A /skill
+        # forced-load seeds it now so the body is active from iteration 1.
+        active_skills: dict[str, str] = {}
+        if is_skills_enabled() and forced_skills:
+            catalog = SkillCatalogLoader(self._workspace_path).load_catalog()
+            for name in forced_skills:
+                manifest = next((m for m in catalog if m.name == name), None)
+                if manifest is not None:
+                    try:
+                        active_skills[name] = manifest.body_path.read_text(encoding="utf-8")
+                    except OSError:
+                        pass
         loop = ControllerLoop(
             self._reasoning,
-            self._build_registry(command_cb, ledger, todo_persist_cb), self._broadcaster,
+            self._build_registry(command_cb, ledger, todo_persist_cb,
+                                  active_skills=active_skills), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger,
             task_subsystem_enabled=self._task_subsystem_enabled,
-            memory_harness=self._memory_harness)
+            memory_harness=self._memory_harness, active_skills=active_skills)
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path,
             # run_id keys the per-thread compaction segments + anchored summary.
