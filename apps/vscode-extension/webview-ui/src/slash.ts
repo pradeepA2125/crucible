@@ -8,3 +8,18 @@ export function parseSlashCommand(text: string): { name: string; args: string } 
   if (!match) return null;
   return { name: match[1] ?? "", args: (match[2] ?? "").trim() };
 }
+
+/**
+ * Resolve a `/name args` against the known skill catalog for deterministic forced-load.
+ * Returns the message to send + the forced skill, or null when `name` is not a skill.
+ * Called only AFTER prompt-file expansion missed (found=false), so a prompt file of the
+ * same name always wins (the host resolves prompts first).
+ */
+export function resolveSkillCommand(
+  name: string,
+  args: string,
+  skillNames: string[],
+): { forcedSkills: string[]; message: string } | null {
+  if (!skillNames.includes(name)) return null;
+  return { forcedSkills: [name], message: args };
+}

@@ -134,7 +134,7 @@ export type ExtensionMessage =
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
   | { type: "webviewReady" }
-  | { type: "sendMessage"; text: string; stepReview?: boolean }
+  | { type: "sendMessage"; text: string; stepReview?: boolean; forcedSkills?: string[] }
   | { type: "implementPlan"; taskId: string }
   | { type: "planFeedback"; taskId: string; feedback: string }
   | { type: "newChat" }
@@ -160,7 +160,9 @@ export type WebviewMessage =
   | { type: "setReviewPref"; autoAccept: boolean }
   // P1: prompt-file (.ai-editor/prompts/<name>.md) listing + expand-before-send
   | { type: "listPrompts" }
-  | { type: "expandPrompt"; name: string; args: string };
+  | { type: "expandPrompt"; name: string; args: string }
+  // P2: skill (.ai-editor/skills/<name>/SKILL.md) catalog for /skill forced-load
+  | { type: "listSkills" };
 
 // ── App state ─────────────────────────────────────────────────────────────────
 export interface StreamingBubble {

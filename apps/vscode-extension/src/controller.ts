@@ -257,6 +257,17 @@ export class AiEditorController {
     return { found: true, text: substitutePrompt(body, args) };
   }
 
+  /** Skill catalog (.ai-editor/skills/<name>/SKILL.md) for the composer's /skill forced-load. */
+  async listSkills(): Promise<{ name: string; description: string }[]> {
+    const ws = this.memoryWorkspacePath();
+    if (!ws) return [];
+    try {
+      return await this.memoryClient().listSkills(ws);
+    } catch {
+      return [];
+    }
+  }
+
   private memoryClient(): BackendTaskClient {
     return this.createClient(this.settings.getBackendBaseUrl());
   }
@@ -585,7 +596,7 @@ export class AiEditorController {
     this.startLiveStatePolling();
   }
 
-  async sendChatMessage(text: string, stepReview?: boolean): Promise<void> {
+  async sendChatMessage(text: string, stepReview?: boolean, forcedSkills?: string[]): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
 
@@ -617,7 +628,9 @@ export class AiEditorController {
         threadId,
         text,
         this.turnAbort.signal,
-        stepReview !== undefined ? { stepReview } : undefined,
+        stepReview !== undefined || forcedSkills?.length
+          ? { ...(stepReview !== undefined ? { stepReview } : {}), ...(forcedSkills?.length ? { forcedSkills } : {}) }
+          : undefined,
       ),
     );
   }

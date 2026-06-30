@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { vscode } from "../vscodeApi";
-import { parseSlashCommand } from "../slash";
+import { parseSlashCommand, resolveSkillCommand } from "../slash";
 import type { InputAvailability } from "../inputAvailability";
 
 interface Props {
@@ -53,6 +53,30 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
   // The text we sent for expansion, held across the async host round-trip so a
   // "no such prompt" reply can fall back to sending it as a normal message.
   const pendingSlashRef = useRef<string | null>(null);
+  // Known skill names for deterministic /skill forced-load (the catalog from the host).
+  // A prompt file of the same name wins (the host resolves prompts first).
+  const [skillNames, setSkillNames] = useState<string[]>([]);
+  // Fetch the catalog lazily on the first "/" keystroke (not on mount) so a composer
+  // that never types a slash command makes no extra round-trip.
+  const skillsRequestedRef = useRef(false);
+
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      const m = e.data as Record<string, unknown>;
+      if (m?.["type"] !== "skillList") return;
+      const skills = (m["skills"] as { name: string }[] | undefined) ?? [];
+      setSkillNames(skills.map((s) => s.name));
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  function maybeRequestSkills(value: string) {
+    if (!skillsRequestedRef.current && value.startsWith("/")) {
+      skillsRequestedRef.current = true;
+      vscode.postMessage({ type: "listSkills" });
+    }
+  }
 
   // Prompt-file expansion: the host replies to an expandPrompt request with the
   // substituted body (found=true → fill the draft for review). When there is no
@@ -69,16 +93,28 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
       }
       const original = pendingSlashRef.current;
       pendingSlashRef.current = null;
-      if (original) {
+      if (!original) return;
+      // No prompt file matched — was it a /skill? Deterministic forced-load: send the
+      // args as the message tagged with the skill. Otherwise send the typed text as-is.
+      const slash = parseSlashCommand(original);
+      const skill = slash ? resolveSkillCommand(slash.name, slash.args, skillNames) : null;
+      if (skill) {
+        vscode.postMessage({
+          type: "sendMessage",
+          text: skill.message,
+          stepReview,
+          forcedSkills: skill.forcedSkills,
+        });
+      } else {
         vscode.postMessage({ type: "sendMessage", text: original, stepReview });
-        onDraftChange("");
-        const el = textareaRef.current;
-        if (el) el.style.height = "auto";
       }
+      onDraftChange("");
+      const el = textareaRef.current;
+      if (el) el.style.height = "auto";
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [onDraftChange, stepReview]);
+  }, [onDraftChange, stepReview, skillNames]);
 
   function autoGrow() {
     const el = textareaRef.current;
@@ -89,6 +125,7 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
 
   function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
     onDraftChange(e.target.value);
+    maybeRequestSkills(e.target.value);
     autoGrow();
   }
 

@@ -3,7 +3,11 @@ import * as vscode from "vscode";
 import type { ChatMessage, ChatThreadSummary, CommandDecision } from "@ai-editor/editor-client";
 import type { LiveGateView, LivePlanView, LiveTodosView } from "./controller.js";
 
-export type ChatMessageHandler = (message: string, stepReview?: boolean) => Promise<void>;
+export type ChatMessageHandler = (
+  message: string,
+  stepReview?: boolean,
+  forcedSkills?: string[]
+) => Promise<void>;
 export type PlanCardActionHandler = (
   taskId: string,
   action: "implement" | "feedback",
@@ -35,6 +39,8 @@ export type ExpandPromptHandler = (
   name: string,
   args: string
 ) => Promise<{ found: boolean; text: string }>;
+// P2: skill catalog for the composer's /skill forced-load.
+export type ListSkillsHandler = () => Promise<{ name: string; description: string }[]>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -63,6 +69,7 @@ export class ChatPanel {
     private readonly onSetReviewPref: SetReviewPrefHandler,
     private readonly onListPrompts: ListPromptsHandler,
     private readonly onExpandPrompt: ExpandPromptHandler,
+    private readonly onListSkills: ListSkillsHandler = async () => [],
     private readonly onReady: () => Promise<void> = async () => {}
   ) {}
 
@@ -115,7 +122,10 @@ export class ChatPanel {
         }
         p = this.onReady();
       } else if (m["type"] === "sendMessage") {
-        p = this.onMessage(m["text"] as string, m["stepReview"] === true);
+        const forcedSkills = Array.isArray(m["forcedSkills"])
+          ? (m["forcedSkills"] as string[])
+          : undefined;
+        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills);
       } else if (m["type"] === "implementPlan") {
         p = this.onPlanAction(m["taskId"] as string, "implement");
       } else if (m["type"] === "planFeedback") {
@@ -174,6 +184,11 @@ export class ChatPanel {
         p = (async () => {
           const names = await this.onListPrompts();
           this.panel?.webview.postMessage({ type: "promptList", names });
+        })();
+      } else if (m["type"] === "listSkills") {
+        p = (async () => {
+          const skills = await this.onListSkills();
+          this.panel?.webview.postMessage({ type: "skillList", skills });
         })();
       } else if (m["type"] === "expandPrompt") {
         const name = m["name"] as string;

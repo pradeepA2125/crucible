@@ -20,7 +20,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const chatPanel = new ChatPanel(
     context.extensionUri,
-    (message, stepReview) => controller.sendChatMessage(message, stepReview),
+    (message, stepReview, forcedSkills) => controller.sendChatMessage(message, stepReview, forcedSkills),
     (taskId, action, feedback) => controller.handlePlanCardAction(taskId, action, feedback),
     () => controller.newChatThread(),
     (threadId) => controller.switchChatThread(threadId),
@@ -43,6 +43,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (autoAccept) => controller.setReviewPref(autoAccept),
     () => controller.listPrompts(),
     (name: string, args: string) => controller.expandPrompt(name, args),
+    () => controller.listSkills(),
     () => controller.openChat()
   );
 
@@ -201,10 +202,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // command palette + webview can gate on it. Default hidden if the backend is unreachable.
   let taskSubsystemEnabled = false;
   let memoryEnabled = false;
+  let skillsEnabled = false;
   try {
     const cfg = await clientFactory(settings.getBackendBaseUrl()).getConfig();
     taskSubsystemEnabled = cfg.taskSubsystemEnabled;
     memoryEnabled = cfg.memoryEnabled;
+    skillsEnabled = cfg.skillsEnabled;
   } catch {
     // backend unreachable at activation — leave hidden.
   }
@@ -212,6 +215,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     "setContext", "aiEditor.taskSubsystemEnabled", taskSubsystemEnabled);
   await vscode.commands.executeCommand(
     "setContext", "aiEditor.memoryEnabled", memoryEnabled);
+  await vscode.commands.executeCommand(
+    "setContext", "aiEditor.skillsEnabled", skillsEnabled);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.startTask", async () => {
