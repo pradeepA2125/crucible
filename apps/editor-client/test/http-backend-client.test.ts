@@ -1,6 +1,37 @@
 import { describe, expect, test } from "vitest";
 import { HttpBackendClient } from "../src/client/http-backend-client.js";
 
+describe("HttpBackendClient skills", () => {
+  test("sendChatMessage includes forced_skills in the body", async () => {
+    let sentBody = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (_url, init) => {
+        sentBody = (init?.body as string) ?? "";
+        return new Response("", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+    });
+    const iter = client.sendChatMessage("t1", "hi", undefined, { forcedSkills: ["git-commit"] });
+    await iter[Symbol.asyncIterator]().next();
+    expect(JSON.parse(sentBody).forced_skills).toEqual(["git-commit"]);
+  });
+
+  test("listSkills maps the response", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(JSON.stringify({ skills: [{ name: "a", description: "b" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    expect(await client.listSkills("/ws")).toEqual([{ name: "a", description: "b" }]);
+  });
+});
+
 describe("HttpBackendClient", () => {
   test("maps snake_case backend payload to camelCase task view", async () => {
     const client = new HttpBackendClient({

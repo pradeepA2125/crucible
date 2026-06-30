@@ -98,6 +98,7 @@ describe("memory inspector schemas (Phase 3-B)", () => {
       taskSubsystemEnabled: false,
       chatControllerEnabled: true,
       memoryEnabled: true,
+      skillsEnabled: false,
     });
     expect(c.memoryEnabled).toBe(true);
   });

@@ -17,6 +17,8 @@ import {
   type RecallTrace,
   MemoryViewSchema,
   type MemoryView,
+  SkillSummarySchema,
+  type SkillSummary,
   type BackendTaskClient,
   type ThreadLiveState,
   type PatchStreamEvent,
@@ -536,7 +538,15 @@ export class HttpBackendClient implements BackendTaskClient {
       taskSubsystemEnabled: raw["task_subsystem_enabled"] ?? false,
       chatControllerEnabled: raw["chat_controller_enabled"] ?? false,
       memoryEnabled: raw["memory_enabled"] ?? false,
+      skillsEnabled: raw["skills_enabled"] ?? false,
     });
+  }
+
+  async listSkills(workspace: string): Promise<SkillSummary[]> {
+    const raw = await this.fetchJson(
+      `/v1/skills?workspace=${encodeURIComponent(workspace)}`
+    ) as { skills?: unknown[] };
+    return (raw.skills ?? []).map((s) => SkillSummarySchema.parse(s));
   }
 
   async getMemoryInspect(threadId: string): Promise<RecallTrace | null> {
@@ -571,7 +581,7 @@ export class HttpBackendClient implements BackendTaskClient {
     return raw.map((m) => MemoryViewSchema.parse(mapMemoryView(m)));
   }
 
-  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent> {
+  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[] }): AsyncIterable<StreamEvent> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
       {
@@ -580,6 +590,9 @@ export class HttpBackendClient implements BackendTaskClient {
         body: JSON.stringify({
           content: message,
           ...(options?.stepReview !== undefined ? { step_review: options.stepReview } : {}),
+          ...(options?.forcedSkills && options.forcedSkills.length
+            ? { forced_skills: options.forcedSkills }
+            : {}),
         }),
         signal: signal ?? null,
       }

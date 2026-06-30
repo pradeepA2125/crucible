@@ -282,8 +282,12 @@ export const BackendConfigSchema = z.object({
   taskSubsystemEnabled: z.boolean(),
   chatControllerEnabled: z.boolean(),
   memoryEnabled: z.boolean(),
+  skillsEnabled: z.boolean(),
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;
+
+export const SkillSummarySchema = z.object({ name: z.string(), description: z.string() });
+export type SkillSummary = z.infer<typeof SkillSummarySchema>;
 
 // ── Memory inspector (Phase 3-B). Read-only views of the recall trace + memory store.
 // camelCase; the HttpBackendClient maps the snake_case route payloads into these.
@@ -372,7 +376,8 @@ export interface BackendTaskClient {
     includeRetired?: boolean;
   }): Promise<MemoryView[]>;
   getSupersedeChain(memoryId: string): Promise<MemoryView[]>;
-  sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean }): AsyncIterable<StreamEvent>;
+  listSkills(workspace: string): Promise<SkillSummary[]>;
+  sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[] }): AsyncIterable<StreamEvent>;
   // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
   // produce live events); the per-edit gate is a plain JSON ack (its continuation rides
   // the already-open message stream).
