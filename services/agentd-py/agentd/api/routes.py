@@ -201,6 +201,7 @@ def build_router(
         from agentd.chat.controller_factory import (
             is_controller_enabled,
             is_memory_enabled,
+            is_skills_enabled,
             is_task_subsystem_enabled,
         )
 
@@ -208,7 +209,20 @@ def build_router(
             "task_subsystem_enabled": is_task_subsystem_enabled(),
             "chat_controller_enabled": is_controller_enabled(),
             "memory_enabled": is_memory_enabled(),
+            "skills_enabled": is_skills_enabled(),
         }
+
+    @router.get("/skills")
+    async def list_skills(workspace: str) -> dict:
+        """Read-only skill catalog for the composer's /-autocomplete (gated by the flag)."""
+        from agentd.chat.controller_factory import is_skills_enabled
+
+        if not is_skills_enabled():
+            return {"skills": []}
+        from agentd.skills.loader import SkillCatalogLoader
+
+        catalog = SkillCatalogLoader(workspace).load_catalog()
+        return {"skills": [{"name": m.name, "description": m.description} for m in catalog]}
 
     # ------------------------------------------------------------------
     # Phase 3 — read-only memory inspector (no mutation; gated by the memory flag).
