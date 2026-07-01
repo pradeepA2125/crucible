@@ -19,7 +19,8 @@ dependencies = [
   "libcst>=1.5.0",
   "tree-sitter-languages>=1.10.2",
   "unidiff>=0.7.5",
-  "pyyaml>=6.0"
+  "pyyaml>=6.0",
+  "mcp>=1.20,<2"
 ]
 
 [project.scripts]
