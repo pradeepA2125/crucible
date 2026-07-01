@@ -182,6 +182,13 @@ class CommandDecision(BaseModel):
     rule_value: str | None = None
 
 
+class McpToolDecision(BaseModel):
+    """User decision on an mcp_tool approval gate (chat controller). Remember
+    persists the exact (server, tool) pair to the workspace McpRuleStore."""
+    approve: bool
+    remember: bool = False
+
+
 class CommandRule(BaseModel):
     """A persisted user-approved shell command rule (workspace store + per-task set)."""
     type: Literal["exact", "prefix", "binary"]

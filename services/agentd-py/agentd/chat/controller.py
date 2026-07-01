@@ -24,7 +24,7 @@ from agentd.chat.edit_session import TurnEditSession
 from agentd.chat.models import ChatMessage, PendingGate
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
-from agentd.domain.models import CommandDecision, ShellPolicy
+from agentd.domain.models import CommandDecision, McpToolDecision, ShellPolicy
 from agentd.chat.controller_factory import is_skills_enabled
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.skills.loader import SkillCatalogLoader
@@ -101,6 +101,7 @@ class ChatController:
         shell_policy: ShellPolicy = ShellPolicy.ASK,
         command_decision_timeout_sec: float = 0.0,
         memory_harness: MemoryHarness = NO_OP_HARNESS,
+        mcp_manager: object | None = None,
     ) -> None:
         self._workspace_path = workspace_path
         self._reasoning = reasoning_engine
@@ -131,6 +132,12 @@ class ChatController:
         # Per-thread held-open command-approval future (run_command gate). Fired by
         # resolve_command; same lifecycle as _pending_edit.
         self._pending_command: dict[str, asyncio.Future[CommandDecision]] = {}
+        # MCP: process-scoped connection manager (None unless AI_EDITOR_MCP_ENABLED —
+        # constructed in select_chat_handler, connected in main.py's startup hook).
+        self._mcp_manager = mcp_manager
+        # thread_id → future for the in-flight mcp_tool gate; same lifecycle as
+        # _pending_command.
+        self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
         # Per-thread "Review each edit" toggle from the message that opened the mode
         # gate — read back in resolve_mode so the edit re-entry honors it (the
         # /mode-decision POST carries no step_review; smoke-found gap #4).
@@ -182,6 +189,7 @@ class ChatController:
         todo_ledger: TodoLedger | None = None,
         todo_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
         active_skills: dict[str, str] | None = None,
+        mcp_approval_cb: object | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -197,6 +205,10 @@ class ChatController:
         if is_skills_enabled() and active_skills is not None:
             sources.append(SkillToolSource(
                 SkillCatalogLoader(self._workspace_path), active_skills))
+        if self._mcp_manager is not None and mcp_approval_cb is not None:
+            from agentd.mcp.tool_source import McpToolSource
+
+            sources.append(McpToolSource(self._mcp_manager, mcp_approval_cb))
         return AggregatingToolRegistry(sources)
 
     async def _persist_todos(self, thread_id: str, raw: str | None) -> None:
@@ -323,6 +335,8 @@ class ChatController:
         # run_command (EDIT-only; DECIDE rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
+        # MCP tool calls gate through the same thread-gate machinery (kind="mcp_tool").
+        mcp_cb = partial(self._mcp_approval_cb, thread_id, channel_id)
         # Persist the ledger mid-turn on every write_todos so /live renders it during the turn.
         todo_persist_cb = partial(self._persist_todos, thread_id)
         # Shared active-skills map: SkillToolSource (in the registry) writes activated bodies
@@ -341,7 +355,8 @@ class ChatController:
         loop = ControllerLoop(
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb,
-                                  active_skills=active_skills), self._broadcaster,
+                                  active_skills=active_skills,
+                                  mcp_approval_cb=mcp_cb), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger,
             task_subsystem_enabled=self._task_subsystem_enabled,
             memory_harness=self._memory_harness, active_skills=active_skills)
@@ -730,6 +745,63 @@ class ChatController:
             thread = self._store.get_thread(thread_id)
             gate = thread.pending_controller_gate if thread is not None else None
             if gate is not None and gate.kind == "command":
+                self._store.set_controller_gate(thread_id, None)
+                self._write_breadcrumb(
+                    thread_id, f"chat:{thread_id}",
+                    "Previous turn ended — please re-send your request.")
+            return False
+        fut.set_result(decision)
+        return True
+
+    async def _mcp_approval_cb(
+        self, thread_id: str, channel_id: str,
+        server: str, tool: str, args: dict[str, object],
+    ) -> bool:
+        """Gate an MCP tool call (mirror of _command_approval_cb on the same
+        thread-gate machinery). A remembered (server, tool) rule auto-approves;
+        otherwise raise a durable kind="mcp_tool" gate and await /mcp-decision."""
+        from agentd.mcp.config import mcp_decision_timeout_sec
+        from agentd.mcp.rules import McpRuleStore
+
+        if McpRuleStore(self._workspace_path).matches(server, tool):
+            return True
+
+        self._store.set_controller_gate(thread_id, PendingGate(
+            kind="mcp_tool", payload={"server": server, "tool": tool, "args": args}))
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future[McpToolDecision] = loop.create_future()
+        self._pending_mcp[thread_id] = fut
+        # Instant-render poke — the card still renders FROM /live (durable on reload).
+        self._broadcaster.broadcast(channel_id, {
+            "type": "mcp_approval_requested",
+            "payload": {"server": server, "tool": tool, "args": args},
+        })
+        timeout = mcp_decision_timeout_sec()
+        try:
+            decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
+        except (TimeoutError, asyncio.TimeoutError):
+            decision = McpToolDecision(approve=False)
+        finally:
+            self._pending_mcp.pop(thread_id, None)
+            self._store.set_controller_gate(thread_id, None)
+
+        if decision.approve and decision.remember:
+            McpRuleStore(self._workspace_path).add(server, tool)
+        self._write_breadcrumb(
+            thread_id, channel_id,
+            f"✓ MCP tool approved: {server}.{tool}" if decision.approve
+            else f"✗ MCP tool rejected: {server}.{tool}")
+        return decision.approve
+
+    async def resolve_mcp(self, thread_id: str, decision: McpToolDecision) -> bool:
+        """Resolve the mcp_tool gate (POST /mcp-decision). Fires the live waiter;
+        never mutates/persists during the await (Class-A). Restart orphan clears
+        the stale gate + breadcrumb — mirrors resolve_command."""
+        fut = self._pending_mcp.get(thread_id)
+        if fut is None or fut.done():
+            thread = self._store.get_thread(thread_id)
+            gate = thread.pending_controller_gate if thread is not None else None
+            if gate is not None and gate.kind == "mcp_tool":
                 self._store.set_controller_gate(thread_id, None)
                 self._write_breadcrumb(
                     thread_id, f"chat:{thread_id}",

@@ -39,10 +39,11 @@ class PendingGate(BaseModel):
     """The one gate a thread is waiting on, if any.
 
     command/step/scope/validation are derived from the active *task* status
-    (see live_state._GATE_FIELD). mode/edit/clarify are *controller* gates — the
-    controller has no task, so they live on the thread (pending_controller_gate).
+    (see live_state._GATE_FIELD). mode/edit/clarify/mcp_tool are *controller*
+    gates — the controller has no task, so they live on the thread
+    (pending_controller_gate).
     """
-    kind: Literal["command", "step", "scope", "validation", "mode", "edit", "clarify"]
+    kind: Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
