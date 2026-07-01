@@ -367,6 +367,22 @@ the user; follow it unless it conflicts with a safety rule):
 {instructions}"""
 
 
+_MCP_BLOCK = """
+
+EXTERNAL MCP TOOLS
+Tools named `mcp__<server>__<tool>` come from external MCP servers the user
+connected (for example GitHub, databases, web services). They act on real
+third-party systems and can have side effects — the same weight as run_command,
+unlike a local file read. Their parameter schemas are in TOOLS like any other
+tool; call one directly when the user's request needs the external system it
+exposes.
+- Calling one pauses the turn for a live user approval card. That pause is
+  expected behavior, not an error — wait for it, do not route around it.
+- If the user rejects a call, do not silently retry the same call; adapt your
+  approach or ask what they want to do next.
+"""
+
+
 _SKILLS_BLOCK_HEADER = """
 
 AVAILABLE SKILLS — specialized playbooks for this workspace. Each line is a skill's
@@ -444,6 +460,12 @@ def format_controller_system_prompt(
         rendered = render_skills_catalog(skills_catalog)
         if rendered:
             base += _SKILLS_BLOCK_HEADER + rendered
+    # MCP teaching block: keyed off the merged tool definitions themselves (the
+    # mcp__ namespace), so no separate loader/flag parameter is needed and the
+    # block stays in lockstep with what tools_json actually contains.
+    if any(str((d or {}).get("name", "")).startswith("mcp__")
+           for d in tool_definitions if isinstance(d, dict)):
+        base += _MCP_BLOCK
     return base
 
 
