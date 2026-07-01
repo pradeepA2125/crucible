@@ -28,7 +28,7 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 | Symbol-graph retrieval | ✅ ahead | done |
 | Diff review + revert | ✅ on par (granular per-hunk: gap) | P6 |
 | Project instructions / prompt files | ✅ on par (done, on branch) | P1 |
-| Agent Skills (agentskills.io) | ❌ | **P2** |
+| Agent Skills (agentskills.io) | ✅ done (on branch) | **P2** |
 | MCP client (+ GitHub integration) | ❌ | **P3** |
 | Polished UI / settings / one-command install | ❌ | **P4** |
 | Subagents / custom agents / code-review agent | ❌ (dormant task path) | **P5** |
@@ -115,6 +115,18 @@ Spec: `docs/superpowers/specs/2026-06-29-project-instructions-prompt-files-desig
 **Exit criteria:** a project `SKILL.md` is discovered, relevance-gated, and demonstrably changes agent behavior on a matching task; a skill-bundled script runs through the shell gate; flag `AI_EDITOR_SKILLS_ENABLED`; tests + live smoke green.
 
 **Risks / Open Qs:** context budgeting (when to load a body, eviction) — mitigated by reusing compaction/recall budgeting; security of running skill-bundled scripts (route through the existing shell-policy gate; never auto-run без approval); precedence vs project instructions (P1).
+
+### ✅ Status: DONE (2026-06-30, branch `docs/copilot-parity-roadmap`, not yet merged to `main`)
+
+Spec: `docs/superpowers/specs/2026-06-30-agent-skills-design.md` · Plan: `docs/superpowers/plans/2026-06-30-agent-skills.md`. Documented in `CLAUDE.md` ("Agent Skills (P2, copilot-parity roadmap)").
+
+**What shipped:** `.ai-editor/skills/<name>/SKILL.md` discovery (`agentd/skills/`: loader + models + catalog + config + tool_source), a budget-guarded catalog injected into the controller system prompt, model-driven `read_skill(name)` loading a skill's body into the dynamic payload tail (`active_skills`, re-injected every iteration, compaction-resilient), and `/skill` deterministic forced-load (`forced_skills` message field seeds `active_skills` before iteration 1). Flag `AI_EDITOR_SKILLS_ENABLED`, default OFF, controller-only. `rank_skills_by_relevance` (the scale path, reuses the memory `Embedder`) is built + tested but not wired live — v1 uses order-truncation, sufficient until catalog size demands query-ranking.
+
+**2026-07-02 follow-up — closed the model-driven activation gap:** the initial live-smoke (2026-06-30) concluded model-driven `read_skill` was a "judgment gap" on local/weak models and that `/skill` forced-load was the only reliable activation path. Found + fixed the actual wiring bug behind that: the skill-check hint only ever fired on a thread's literal first-ever message (`if not history:`, but `history` seeds from the whole thread's replayed conversation) — every later message in an ongoing thread silently never got the check. Fixed via a run-scoped `decide_entry` flag. Also removed two self-inflicted prompt anti-patterns (a hardcoded example-category list mirroring the installed catalog; a competing "FIRST action MUST" claim stacked right after the skill-check's own) and added a few-shot worked example + explicit "unconditional" framing (technique borrowed from comparing against Anthropic's own Claude Skills system-prompt approach). **Model-driven `read_skill` now fires 2-for-2 live on TQP/qwen3.6:35b** (a creative-work request → `brainstorming`; a real bug report → `systematic-debugging`), no forced-load needed, each on turn 2+ of an ongoing thread — the realistic case the original test missed.
+
+**Verification:** full py suite green (1091 tests collected, 1 skip, no failures) after the 2026-07-02 fix; original 2026-06-30 landing verified at py 1062+/1 skip + TS 316. Live-smoke verified both dates (backend :8000 then :8002, TQP, `shadow-forge-stress`).
+
+**Deferred (unchanged from original plan):** the unified `/`-autocomplete dropdown (prompts+skills badged) → **P4**; wiring `rank_skills_by_relevance` to the tail until catalog size demands it; broader cross-provider validation (only TQP/qwen tested so far — gemini has a pre-existing empty-tool-args issue unrelated to skills, per `CLAUDE.md`).
 
 ---
 
