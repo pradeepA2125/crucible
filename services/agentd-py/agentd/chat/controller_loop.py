@@ -361,6 +361,13 @@ class ControllerLoop:
             plan_context["edit_entry"] = (
                 self._sm.phase == "EDIT" and not self._ledger.items
                 and not self._edit_applied and not plan_context.get("edit_is_resume"))
+            # DECIDE-entry signal: the first model call of THIS run (iteration is the
+            # for-loop counter above, fresh every run() — unlike `history`, which seeds
+            # from the whole thread's replayed conversation and is non-empty for every
+            # message after the thread's first ever). Without this, the "first move"
+            # hint (which is where the skill-triage check lives) only ever fired once
+            # per thread, not once per user message.
+            plan_context["decide_entry"] = self._sm.phase == "DECIDE" and iteration == 0
             resp = await self._reasoning.create_controller_step(
                 plan_context=plan_context, history=history,
                 tool_definitions=tool_defs, phase=self._sm.phase,

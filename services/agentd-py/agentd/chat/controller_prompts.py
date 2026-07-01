@@ -369,10 +369,34 @@ the user; follow it unless it conflicts with a safety rule):
 
 _SKILLS_BLOCK_HEADER = """
 
-AVAILABLE SKILLS (specialized playbooks for this workspace):
-Each line is a skill's name + when to use it. When a skill is relevant to the
-current task, load it with a tool_call that passes the skill's name in args:
-  {"type":"tool_call","thought":"load the relevant skill","tool":"read_skill","args":{"name":"<skill-name>"}}
+AVAILABLE SKILLS — specialized playbooks for this workspace. Each line is a skill's
+name + its "when to use it", written by the skill's own author — the trigger to
+match is what that line says, not any fixed set of verbs or a request that merely
+sounds similar to one skill's example. Treat the match as intent classification:
+name the kind of request this is, then check that label against each line below —
+a line is an intent trigger, not a keyword filter. Every one of these applies
+equally: judge each request against every line below, every turn (your per-turn
+instruction repeats this check — it is not a one-time read of this block).
+
+This check is UNCONDITIONAL: do not first decide for yourself whether the task
+"really needs" a skill, or silently downgrade a match because the request seems
+small — the skill's own trigger line already decided that; your job is only to
+match your label against it, not to re-judge its importance.
+
+Worked pattern (illustrative shape only — the actual skill names below are
+whatever this workspace has installed, not these):
+  Request: "there's a bug where X happens instead of Y" -> label: "a bug/debugging
+  request" -> a catalog line's trigger covers bugs/unexpected behavior -> FIRST
+  action: tool_call read_skill(that skill's real name).
+  Request: "let's add a new capability to do Z" -> label: "new/creative feature
+  work" -> a catalog line's trigger covers creative work or building something new
+  -> FIRST action: tool_call read_skill(that skill's real name).
+  Both examples load the skill BEFORE any search_code/read_file/answer — the
+  label-to-trigger match is itself the first action, not a preamble to one.
+
+When a skill's line could apply, even partially, load it BEFORE answering, editing,
+planning, or exploring:
+  {"type":"tool_call","thought":"<why this skill's trigger matches>","tool":"read_skill","args":{"name":"<skill-name>"}}
 The args object MUST contain "name". If a skill's instructions are already present
 in your payload (active_skills), follow them directly — do NOT call read_skill again.
 A skill may bundle helper scripts under its scripts/ folder — run them with
@@ -429,6 +453,7 @@ def build_controller_step_payload(
     tool_definitions: list[dict[str, object]],
     *,
     phase: str,
+    skills_available: bool = False,
 ) -> dict[str, object]:
     """Build the user payload for one controller turn.
 
@@ -557,10 +582,39 @@ def build_controller_step_payload(
                 "propose_mode again."
             )
     else:  # DECIDE
-        if not history:
+        # Runs every DECIDE turn regardless of thread-history length — a returning
+        # thread's 5th user message gets this exact check on ITS first iteration, not
+        # only the thread's very first message ever (decide_entry is loop-run-scoped,
+        # set by ControllerLoop; `not history` is only the fallback for direct callers/
+        # tests that never set it). Generic across whatever the catalog holds — no
+        # hardcoded keyword categories (any skill's OWN "when to use" line is the match
+        # target, not a proxy list of verbs).
+        skill_check = (
+            "SKILL CHECK — do this BEFORE locating code, answering, or proposing anything: "
+            "treat this as intent classification, in two steps. (1) Name the KIND of request "
+            "this is, in your own words, in one short phrase — exactly as you naturally would "
+            "if asked \"what is this request?\" (you already do this kind of labeling "
+            "unprompted — use it deliberately here). Do NOT pick your wording from this "
+            "workspace's own catalog below, and do NOT force it into a fixed set of categories "
+            "— whatever installed skills exist should never bias what label you'd give an "
+            "unrelated request. (2) Check that label against every skill's \"when to use\" line "
+            "in the AVAILABLE SKILLS list (system prompt) — each line IS an intent trigger written "
+            "by that skill's own author. A match means your label is close in MEANING, not "
+            "overlapping in wording. This is UNCONDITIONAL: once you find a matching line, load "
+            "it — do not then re-judge whether the task \"really needs\" it, or downgrade a match "
+            "because the request seems small; the trigger line already made that call. If your "
+            "label matches any line, even partially, THIS check "
+            "wins over everything else below: your FIRST action MUST be tool_call read_skill(name), "
+            "BEFORE locating code, answering, or proposing anything — there is no other \"first "
+            "action\" that outranks it. \"this looks simple\", \"I already know how to do this\", "
+            "and \"let me explore first\" are NOT valid reasons to skip the check. "
+        ) if skills_available else ""
+        if plan_context.get("decide_entry") or not history:
             hint = (
-                "Plan your first move. For a code-specific request (how/where/trace, or a change) "
-                f"your FIRST action must LOCATE the code: call search_code/search_semantic{_graph} "
+                skill_check +
+                "Once the skill check above is done (no line matched, or the matched skill's body "
+                "is now in your payload), plan your next move. For a code-specific request "
+                f"(how/where/trace, or a change) LOCATE the code: call search_code/search_semantic{_graph} "
                 "— do NOT answer or propose_mode cold from the seed (it lacks most file bodies; "
                 "answering from it confabulates). Answer directly ONLY if this is a purely "
                 "conversational message needing no repo access."
@@ -572,7 +626,13 @@ def build_controller_step_payload(
                 "No more tool calls."
             )
         else:
+            skill_reminder = (
+                "Haven't classified this request's intent against the AVAILABLE SKILLS list yet "
+                "this turn? Do that now, before committing — name the kind of request this is, "
+                "then load any skill whose trigger matches that label. "
+            ) if skills_available else ""
             hint = (
+                skill_reminder +
                 "FIRST reflect: which files/functions can you cite from code you ACTUALLY opened "
                 "this turn, and is anything material still unread? THEN choose ONE: (A) READ MORE "
                 "— if any claim you'd make rests on a file you haven't opened, locate it "

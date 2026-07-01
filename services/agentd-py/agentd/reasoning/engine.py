@@ -277,7 +277,8 @@ class DefaultReasoningEngine(ReasoningEngine):
             tool_definitions, project_instructions=instructions, skills_catalog=skills_catalog
         )
         user_payload = build_controller_step_payload(
-            plan_context, history, tool_definitions, phase=phase
+            plan_context, history, tool_definitions, phase=phase,
+            skills_available=bool(skills_catalog),
         )
         # Tier 2: use the tight discriminated-union schema only on a provider whose
         # grammar enforces `oneOf` (getattr-defensive — older transports lack the flag).
