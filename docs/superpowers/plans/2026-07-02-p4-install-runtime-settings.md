@@ -33,8 +33,9 @@ Extract the `main.py` if/elif transport chain into a reusable factory so the val
 **Files:**
 - Create: `services/agentd-py/agentd/providers/factory.py`
 - Modify: `services/agentd-py/agentd/main.py:116-258` (replace chain with factory calls)
-- Modify: `services/agentd-py/agentd/providers/openai_transport.py` (optional `api_key` param)
 - Test: `services/agentd-py/tests/test_provider_factory.py`
+
+(`OpenAIJsonTransport` already accepts `api_key=` — verified; no transport changes needed.)
 
 **Interfaces:**
 - Produces: `build_transport(backend: str, credentials: dict[str, str] | None = None) -> object` — raises `ValueError` on unknown backend. `default_model(backend: str) -> str`. `resolve_model(backend: str) -> str` (env override or default). `PROVIDER_KEY_ENV: dict[str, str]` (backend → key env-var name; local providers absent).
@@ -73,9 +74,13 @@ def test_build_transport_unknown_backend_raises() -> None:
 def test_build_transport_credentials_override_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    transport = build_transport("groq", credentials={"GROQ_API_KEY": "sk-req"})
-    assert transport._api_key == "sk-req"  # GroqJsonTransport stores it
+    # Behavioral: OpenAIJsonTransport raises RuntimeError without a key, so
+    # construction succeeding proves the request credential reached it.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+        build_transport("openai")
+    transport = build_transport("openai", credentials={"OPENAI_API_KEY": "sk-req"})
+    assert transport is not None
 
 
 def test_provider_key_env_covers_cloud_backends() -> None:
@@ -85,10 +90,6 @@ def test_provider_key_env_covers_cloud_backends() -> None:
     for local in ("ollama", "turboquant"):
         assert local not in PROVIDER_KEY_ENV
 ```
-
-> If `GroqJsonTransport` stores the key under a different attribute name, read
-> `agentd/providers/groq_transport.py` first and assert on the real attribute —
-> the point of the test is that the request credential wins over env.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -258,10 +259,10 @@ def build_transport(backend: str, credentials: dict[str, str] | None = None) -> 
     raise ValueError(f"Unsupported backend: {backend}")
 ```
 
-Add the optional `api_key` param to `OpenAIJsonTransport.__init__` (forward to its
-`AsyncOpenAI(api_key=api_key)` client; `None` keeps today's env-based behavior).
 Check each transport's real `__init__` while implementing — the kwargs above are
-transcribed from `main.py:151-258`; the factory must match them exactly.
+transcribed from `main.py:151-258`; the factory must match them exactly. Several
+transports (openai, groq) raise `RuntimeError` at construction when their key is
+missing — Task 2's `ping_provider` converts that into a clean validation error.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -380,6 +381,20 @@ def test_validate_unknown_backend(tmp_path: Path) -> None:
     body = _client(tmp_path, _OkTransport()).post(
         "/v1/providers/validate", json={"backend": "nope"}).json()
     assert body["ok"] is False and "Unsupported backend" in body["error"]
+
+
+def test_validate_missing_key_is_clean_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No factory stubbing here — the REAL factory + a deleted env key must come
+    # back as ok:false with the transport's actionable message, not a 500.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = FastAPI()
+    app.include_router(build_router(
+        InMemoryTaskStore(), object(), ShadowWorkspaceManager(tmp_path / "s"), None, None))
+    body = TestClient(app).post(
+        "/v1/providers/validate", json={"backend": "openai"}).json()
+    assert body["ok"] is False and "OPENAI_API_KEY" in body["error"]
 ```
 
 > Monkeypatching the module attribute works only if `validate.py` calls
@@ -434,7 +449,10 @@ async def ping_provider(
     try:
         transport = build_transport(backend, credentials=credentials)
         resolved = model or resolve_model(backend)
-    except ValueError as exc:
+    except Exception as exc:
+        # Broad on purpose: transports raise RuntimeError at construction when a
+        # key is missing ("OPENAI_API_KEY is required…") — that IS the actionable
+        # message the wizard should show, not a 500.
         raise ProviderValidationError(str(exc)) from exc
     await ping_transport(transport, resolved)
     return resolved
@@ -1244,6 +1262,79 @@ git commit -m "feat(api): MCP server management routes (list/upsert/delete/recon
 
 ---
 
+### Task 6b: `AI_EDITOR_SKILLS_DISABLED` filter (the consumer side)
+
+Task 10's spawn env and the Task 13 skill toggle emit this var — without a backend
+consumer it does nothing (dry-run finding). Filter at the catalog loader so every
+consumer (controller prompt, `read_skill`, `/v1/skills`, forced-load) sees the
+same filtered set.
+
+**Files:**
+- Modify: `services/agentd-py/agentd/skills/loader.py` (`SkillCatalogLoader.load_catalog` filters)
+- Test: `services/agentd-py/tests/test_skills_disabled_env.py`
+
+**Interfaces:**
+- Produces: `load_catalog()` drops manifests whose `name` is in the comma-separated
+  `AI_EDITOR_SKILLS_DISABLED` env var (names stripped, empty entries ignored).
+  Read per call — NOT cached with the mtime signature, so a restart isn't needed
+  for tests but the env is process-stable in production anyway.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# services/agentd-py/tests/test_skills_disabled_env.py
+from pathlib import Path
+
+import pytest
+
+from agentd.skills.loader import SkillCatalogLoader
+
+
+def _write_skill(ws: Path, name: str) -> None:
+    d = ws / ".ai-editor" / "skills" / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: d\n---\nbody\n", encoding="utf-8")
+
+
+def test_disabled_env_filters_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_skill(tmp_path, "keep-me")
+    _write_skill(tmp_path, "drop-me")
+    loader = SkillCatalogLoader(tmp_path)
+    monkeypatch.setenv("AI_EDITOR_SKILLS_DISABLED", " drop-me , ,missing")
+    assert [m.name for m in loader.load_catalog()] == ["keep-me"]
+    monkeypatch.delenv("AI_EDITOR_SKILLS_DISABLED")
+    assert sorted(m.name for m in loader.load_catalog()) == ["drop-me", "keep-me"]
+```
+
+- [ ] **Step 2: Run → FAIL, implement, run → PASS**
+
+Run: `cd services/agentd-py && pytest tests/test_skills_disabled_env.py`
+Implementation in `load_catalog` (apply the filter to the returned list AFTER the
+mtime-cached scan, so the cache stays name-agnostic):
+
+```python
+def _disabled_names() -> frozenset[str]:
+    raw = os.getenv("AI_EDITOR_SKILLS_DISABLED", "")
+    return frozenset(n.strip() for n in raw.split(",") if n.strip())
+```
+
+and `return [m for m in catalog if m.name not in _disabled_names()]` at the
+existing return site(s).
+
+- [ ] **Step 3: Full suite + commit**
+
+Run: `cd services/agentd-py && pytest`
+
+```bash
+git add services/agentd-py/agentd/skills/loader.py services/agentd-py/tests/test_skills_disabled_env.py
+git commit -m "feat(skills): honor AI_EDITOR_SKILLS_DISABLED in catalog discovery"
+```
+
+---
+
 ## Part B — editor-client contracts
 
 ### Task 7: Client methods + Zod schemas
@@ -1251,7 +1342,7 @@ git commit -m "feat(api): MCP server management routes (list/upsert/delete/recon
 **Files:**
 - Modify: `apps/editor-client/src/contracts/task-contracts.ts`
 - Modify: `apps/editor-client/src/client/http-backend-client.ts`
-- Test: `apps/editor-client/src/client/__tests__/settings-client.test.ts` (follow the directory's existing test-file layout — if client tests live elsewhere, put it beside them)
+- Test: `apps/editor-client/test/settings-client.test.ts` (the package's tests live in `test/`, ESM imports with `.js` suffix, fetch mocked via the client's injected `fetchFn` option — verified against `test/http-backend-client.test.ts`)
 
 **Interfaces (produced — Tasks 12–14 consume these exact names):**
 
@@ -1296,64 +1387,67 @@ Snake↔camel mapping happens in the client (backend sends `enabled_in_file`/`to
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-// apps/editor-client/src/client/__tests__/settings-client.test.ts
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { HttpBackendClient } from "../http-backend-client";
+// apps/editor-client/test/settings-client.test.ts
+import { describe, expect, test } from "vitest";
+import { HttpBackendClient } from "../src/client/http-backend-client.js";
 
-const client = new HttpBackendClient({ baseUrl: "http://x" });
+interface Sent { url: string; method: string; body: unknown }
 
-function mockFetchOnce(body: unknown) {
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), {
-    status: 200, headers: { "content-type": "application/json" },
-  })));
-  return globalThis.fetch as ReturnType<typeof vi.fn>;
+function clientWith(responseBody: unknown, sent: Sent[] = []) {
+  return new HttpBackendClient({
+    baseUrl: "http://localhost:8000",
+    fetchFn: async (url, init) => {
+      sent.push({
+        url: String(url),
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(init.body as string) : undefined,
+      });
+      return new Response(JSON.stringify(responseBody), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    },
+  });
 }
 
-afterEach(() => vi.unstubAllGlobals());
-
 describe("settings client methods", () => {
-  it("validateProvider posts body and parses result", async () => {
-    const fetch = mockFetchOnce({ ok: true, model: "m" });
-    const res = await client.validateProvider({ backend: "groq", credentials: { GROQ_API_KEY: "k" } });
+  test("validateProvider posts body and parses result", async () => {
+    const sent: Sent[] = [];
+    const res = await clientWith({ ok: true, model: "m" }, sent)
+      .validateProvider({ backend: "groq", credentials: { GROQ_API_KEY: "k" } });
     expect(res).toEqual({ ok: true, model: "m" });
-    const [url, init] = fetch.mock.calls[0];
-    expect(String(url)).toContain("/v1/providers/validate");
-    expect(JSON.parse((init as RequestInit).body as string).backend).toBe("groq");
+    expect(sent[0].url).toContain("/v1/providers/validate");
+    expect((sent[0].body as { backend: string }).backend).toBe("groq");
   });
 
-  it("setProvider PUTs to /v1/config/provider", async () => {
-    const fetch = mockFetchOnce({ ok: true, backend: "groq", model: "m2" });
-    const res = await client.setProvider({ backend: "groq", model: "m2" });
+  test("setProvider PUTs to /v1/config/provider", async () => {
+    const sent: Sent[] = [];
+    const res = await clientWith({ ok: true, backend: "groq", model: "m2" }, sent)
+      .setProvider({ backend: "groq", model: "m2" });
     expect(res).toEqual({ backend: "groq", model: "m2" });
-    expect((fetch.mock.calls[0][1] as RequestInit).method).toBe("PUT");
+    expect(sent[0].method).toBe("PUT");
+    expect(sent[0].url).toContain("/v1/config/provider");
   });
 
-  it("listMcpServers maps snake_case to camelCase", async () => {
-    mockFetchOnce({ enabled: true, servers: [{
+  test("listMcpServers maps snake_case to camelCase", async () => {
+    const res = await clientWith({ enabled: true, servers: [{
       name: "web", transport: "stdio", enabled_in_file: true,
-      state: "connected", detail: null, tool_count: 2 }] });
-    const res = await client.listMcpServers();
+      state: "connected", detail: null, tool_count: 2 }] }).listMcpServers();
     expect(res.servers[0]).toEqual({
       name: "web", transport: "stdio", enabledInFile: true,
       state: "connected", detail: null, toolCount: 2 });
   });
 
-  it("upsertMcpServer PUTs entry + disabled", async () => {
-    const fetch = mockFetchOnce({ enabled: true, servers: [] });
-    await client.upsertMcpServer("web", { command: "uv", enabled: true }, ["gh"]);
-    const [url, init] = fetch.mock.calls[0];
-    expect(String(url)).toContain("/v1/mcp/servers/web");
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+  test("upsertMcpServer PUTs entry + disabled", async () => {
+    const sent: Sent[] = [];
+    await clientWith({ enabled: true, servers: [] }, sent)
+      .upsertMcpServer("web", { command: "uv", enabled: true }, ["gh"]);
+    expect(sent[0].url).toContain("/v1/mcp/servers/web");
+    expect(sent[0].method).toBe("PUT");
+    expect(sent[0].body).toEqual({
       entry: { command: "uv", enabled: true }, disabled: ["gh"] });
   });
 });
 ```
-
-> Match the file's existing fetch-mocking idiom if the client uses an injected
-> fetch or a helper — read `http-backend-client.ts:55` (constructor/options) and
-> one existing method (`listSkills`, line 574) first, then write these tests in
-> the same style. The assertions above are the contract; the mocking mechanics
-> follow the codebase.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1401,7 +1495,7 @@ git commit -m "feat(editor-client): validate/set provider + MCP server managemen
 
 **Files:**
 - Create: `apps/vscode-extension/src/runtime/manifest.ts`
-- Test: `apps/vscode-extension/src/runtime/__tests__/manifest.test.ts` (mirror the extension's existing test dir layout — if tests live in `src/*.test.ts`, use `src/runtime/manifest.test.ts`)
+- Test: `apps/vscode-extension/test/runtime-manifest.test.ts` (the extension's tests live flat in `test/`, ESM imports with `.js` suffix — verified against `test/memory-data.test.ts`)
 
 **Interfaces (produced):**
 
@@ -1429,9 +1523,9 @@ export function verifyChecksum(data: Buffer, expectedHex: string): void; // thro
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-// apps/vscode-extension/src/runtime/__tests__/manifest.test.ts
+// apps/vscode-extension/test/runtime-manifest.test.ts
 import { describe, expect, it } from "vitest";
-import { platformKey, sha256Hex, verifyChecksum } from "../manifest";
+import { platformKey, sha256Hex, verifyChecksum } from "../src/runtime/manifest.js";
 
 describe("platformKey", () => {
   it("maps the four supported targets", () => {
@@ -1528,7 +1622,7 @@ git commit -m "feat(runtime): manifest types + platform key + sha256 verificatio
 
 **Files:**
 - Create: `apps/vscode-extension/src/runtime/installer.ts`
-- Test: `apps/vscode-extension/src/runtime/__tests__/installer.test.ts`
+- Test: `apps/vscode-extension/test/runtime-installer.test.ts`
 
 **Interfaces:**
 - Consumes: Task 8 types + `verifyChecksum` + `platformKey`.
@@ -1575,13 +1669,13 @@ true only when nothing failed (skipped is not failed).
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-// apps/vscode-extension/src/runtime/__tests__/installer.test.ts
+// apps/vscode-extension/test/runtime-installer.test.ts
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RuntimeInstaller, venvPython, type InstallerDeps } from "../installer";
-import { sha256Hex, type RuntimeManifest } from "../manifest";
+import { RuntimeInstaller, venvPython, type InstallerDeps } from "../src/runtime/installer.js";
+import { sha256Hex, type RuntimeManifest } from "../src/runtime/manifest.js";
 
 const BIN = Buffer.from("#!/bin/sh\necho hi\n");
 
@@ -1681,7 +1775,7 @@ import { join } from "node:path";
 import {
   platformKey, verifyChecksum,
   type ComponentId, type PlatformKey, type RuntimeManifest,
-} from "./manifest";
+} from "./manifest.js";
 
 export interface ExecResult { code: number; stdout: string; stderr: string }
 export interface InstallerDeps {
@@ -1829,7 +1923,7 @@ git commit -m "feat(runtime): RuntimeInstaller — provision uv/agentd/indexer/r
 
 **Files:**
 - Create: `apps/vscode-extension/src/runtime/backend-process.ts`
-- Test: `apps/vscode-extension/src/runtime/__tests__/backend-process.test.ts`
+- Test: `apps/vscode-extension/test/runtime-backend-process.test.ts`
 
 **Interfaces:**
 - Consumes: `binPath`/`venvPython` (Task 9); lockfile JSON shape from Task 4 (`{pid, port, started_at}` at `<workspace>/.agentd/agentd.lock`).
@@ -1906,12 +2000,12 @@ default-on flags `AI_EDITOR_CHAT_CONTROLLER=1`, `AI_EDITOR_SKILLS_ENABLED=1`,
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-// apps/vscode-extension/src/runtime/__tests__/backend-process.test.ts
+// apps/vscode-extension/test/runtime-backend-process.test.ts
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BackendProcess, buildBackendEnv, type ProcessDeps } from "../backend-process";
+import { BackendProcess, buildBackendEnv, type ProcessDeps } from "../src/runtime/backend-process.js";
 
 function deps(overrides: Partial<ProcessDeps> = {}) {
   const spawned: { cmd: string; args: string[]; env: Record<string, string> }[] = [];
@@ -2015,8 +2109,8 @@ Implement exactly the interface + logic specified above. Structure:
 // vscode-free. One instance per workspace folder; owns agentd + watcher children.
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { binPath, venvPython } from "./installer";
-import { platformKey, type PlatformKey } from "./manifest";
+import { binPath, venvPython } from "./installer.js";
+import { platformKey, type PlatformKey } from "./manifest.js";
 
 // ... interfaces from the block above ...
 
@@ -2181,7 +2275,7 @@ git commit -m "feat(extension): RuntimeManager wiring — managed install/spawn,
 - Create: `apps/vscode-extension/src/setup-panel.ts` (vscode panel class)
 - Modify: `apps/vscode-extension/webview-ui/vite.config.ts` (add `setup` input)
 - Modify: `apps/vscode-extension/src/extension.ts` (`aiEditor.runSetup` opens the panel)
-- Test: `apps/vscode-extension/src/__tests__/setup-data.test.ts` (or the dir's test layout), plus webview-ui component test if the suite has precedent
+- Test: `apps/vscode-extension/test/setup-data.test.ts`, plus a webview-ui component test colocated as `webview-ui/src/setup/SetupApp.test.tsx` if warranted (precedent: `src/memory/MemoryApp.test.tsx`)
 
 **Interfaces:**
 - Consumes: `RuntimeManager` (Task 11), `HttpBackendClient.validateProvider` (Task 7).
@@ -2231,9 +2325,9 @@ Install → Provider form → Start & validate → Done).
 - [ ] **Step 1: Write the failing handler tests**
 
 ```ts
-// apps/vscode-extension/src/__tests__/setup-data.test.ts
+// apps/vscode-extension/test/setup-data.test.ts
 import { describe, expect, it } from "vitest";
-import { createSetupHandler, PROVIDERS, type SetupDeps } from "../setup-data";
+import { createSetupHandler, PROVIDERS, type SetupDeps } from "../src/setup-data.js";
 
 function deps(overrides: Partial<SetupDeps> = {}): SetupDeps {
   return {
@@ -2339,7 +2433,7 @@ git commit -m "feat(setup): first-run wizard — install progress, provider pick
 - Create: `apps/vscode-extension/src/settings-data.ts` (vscode-free) + `src/settings-panel.ts`
 - Modify: `apps/vscode-extension/webview-ui/vite.config.ts` (add `settings` input)
 - Modify: `apps/vscode-extension/src/extension.ts` (`aiEditor.openSettingsPanel`)
-- Test: `apps/vscode-extension/src/__tests__/settings-data.test.ts`
+- Test: `apps/vscode-extension/test/settings-data.test.ts`
 
 **Interfaces:**
 - Consumes: Task 7 client methods; `RuntimeManager` (Task 11: `mcpDisabled`/`setMcpDisabled`/`skillsDisabled`/`setSkillsDisabled`/`restart`/`runtimeDir`); `GET /v1/config` provider report (Task 3); `GET /v1/skills`.
@@ -2423,9 +2517,9 @@ Behavior pins (each is a test):
 - [ ] **Step 1: Write the failing handler tests**
 
 ```ts
-// apps/vscode-extension/src/__tests__/settings-data.test.ts
+// apps/vscode-extension/test/settings-data.test.ts
 import { describe, expect, it, vi } from "vitest";
-import { createSettingsHandler, type SettingsDeps } from "../settings-data";
+import { createSettingsHandler, type SettingsDeps } from "../src/settings-data.js";
 
 function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & { disabled: string[] } {
   const box = { disabled: [] as string[], skills: [] as string[] };
@@ -2536,7 +2630,7 @@ git commit -m "feat(settings): settings panel — provider hot-swap, MCP managem
 
 **Files:**
 - Create: `apps/vscode-extension/src/mcp-quickpick.ts` (pure helpers) + command wiring in `extension.ts`
-- Test: `apps/vscode-extension/src/__tests__/mcp-quickpick.test.ts`
+- Test: `apps/vscode-extension/test/mcp-quickpick.test.ts`
 
 **Interfaces:**
 - Produces: `buildMcpEntry(input: { transport: "stdio" | "http" | "sse"; commandLine?: string; url?: string; envVarNames: string[] }): Record<string, unknown>` — pure, unit-tested; the vscode command (`aiEditor.mcpAddServer`) chains QuickPick(transport) → InputBox(command or URL) → InputBox(name) → InputBox(comma-separated env var names) → `client.upsertMcpServer(name, buildMcpEntry(...), disabled)` → info toast with resulting state. `aiEditor.mcpListServers`: QuickPick of servers (`$(check)/$(error)` + tool count) → per-server actions (Enable/Disable → same toggle path as Task 13, Reconnect, Remove).
@@ -2544,9 +2638,9 @@ git commit -m "feat(settings): settings panel — provider hot-swap, MCP managem
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-// apps/vscode-extension/src/__tests__/mcp-quickpick.test.ts
+// apps/vscode-extension/test/mcp-quickpick.test.ts
 import { describe, expect, it } from "vitest";
-import { buildMcpEntry } from "../mcp-quickpick";
+import { buildMcpEntry } from "../src/mcp-quickpick.js";
 
 describe("buildMcpEntry", () => {
   it("stdio: splits command line, env vars become ${VAR} refs, enabled true", () => {
