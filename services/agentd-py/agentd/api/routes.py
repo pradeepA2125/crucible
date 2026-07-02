@@ -20,6 +20,7 @@ from agentd.domain.models import (
     ScopeDecisionRequest,
     ScopeDecisionResponse,
     CommandDecision,
+    McpToolDecision,
     CommandDecisionResponse,
     ValidationDecisionRequest,
     ValidationDecisionResponse,
@@ -200,6 +201,7 @@ def build_router(
         """Feature-flag capabilities for the frontend to gate task-path UI."""
         from agentd.chat.controller_factory import (
             is_controller_enabled,
+            is_mcp_enabled,
             is_memory_enabled,
             is_skills_enabled,
             is_task_subsystem_enabled,
@@ -210,6 +212,7 @@ def build_router(
             "chat_controller_enabled": is_controller_enabled(),
             "memory_enabled": is_memory_enabled(),
             "skills_enabled": is_skills_enabled(),
+            "mcp_enabled": is_mcp_enabled(),
         }
 
     @router.get("/skills")
@@ -1451,6 +1454,19 @@ def build_router(
             # surfaces on the already-open message SSE stream (the loop resumes), so this
             # is a plain JSON ack — mirrors /edit-decision (future.set_result).
             resolve = getattr(_chat_agent, "resolve_command", None)
+            if resolve is None:
+                return {"ok": False}
+            ok = await resolve(thread_id, request)  # type: ignore[misc]
+            return {"ok": ok}
+
+        @router.post("/chat/threads/{thread_id}/mcp-decision")
+        async def post_chat_mcp_decision(
+            thread_id: str, request: McpToolDecision,
+        ) -> dict:
+            # Resolves the held-open mcp_tool gate. The continuation surfaces on the
+            # already-open message SSE stream (the loop resumes) — plain JSON ack,
+            # mirrors /command-decision (future.set_result).
+            resolve = getattr(_chat_agent, "resolve_mcp", None)
             if resolve is None:
                 return {"ok": False}
             ok = await resolve(thread_id, request)  # type: ignore[misc]

@@ -49,6 +49,13 @@ def is_skills_enabled() -> bool:
     return os.getenv("AI_EDITOR_SKILLS_ENABLED", "0").strip().lower() in _TRUTHY
 
 
+def is_mcp_enabled() -> bool:
+    """Whether external MCP servers from .ai-editor/mcp.json are connected and
+    offered to the controller. Default OFF — external tool execution, ship dark.
+    Opt in with AI_EDITOR_MCP_ENABLED=1."""
+    return os.getenv("AI_EDITOR_MCP_ENABLED", "0").strip().lower() in _TRUTHY
+
+
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
     """Task-subsystem OFF only works when the controller is ON (the legacy ChatAgent's
     large_change branch has nowhere to go without create_task). Warn — do not fail."""
@@ -104,6 +111,16 @@ def select_chat_handler(
         skill_catalog_loader = (
             SkillCatalogLoader(workspace_path) if is_skills_enabled() else None
         )
+        # MCP servers (default off): the manager is CONSTRUCTED here (frozen
+        # workspace_path, mirrors the other loaders) but CONNECTS in main.py's
+        # startup event handler — this factory runs at module import with no
+        # event loop, and the SDK's transports need one (spec §3.2/§3.6).
+        mcp_manager = None
+        if is_mcp_enabled():
+            from agentd.mcp.client import McpConnectionManager
+            from agentd.mcp.config import McpConfigLoader
+
+            mcp_manager = McpConnectionManager(McpConfigLoader(workspace_path))
         return ChatController(
             workspace_path=workspace_path,
             reasoning_engine=DefaultReasoningEngine(
@@ -119,6 +136,7 @@ def select_chat_handler(
             shell_policy=shell_policy or ShellPolicy.ASK,
             command_decision_timeout_sec=command_decision_timeout_sec,
             memory_harness=memory_harness,
+            mcp_manager=mcp_manager,
         )
 
     from agentd.chat.agent import ChatAgent

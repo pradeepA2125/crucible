@@ -382,6 +382,15 @@ _chat_agent = select_chat_handler(
     command_decision_timeout_sec=_float_env("AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
 ) if reasoning_backend != "scripted" else None
 
+# MCP servers connect once per process at APP STARTUP, not at construction — this
+# module runs synchronously at import (no event loop), and the SDK's stdio/http
+# transports are async context managers held open by per-server tasks. Shutdown
+# mirrors it so stdio subprocesses die with us.
+_mcp_manager = getattr(_chat_agent, "_mcp_manager", None)
+if _mcp_manager is not None:
+    app.add_event_handler("startup", _mcp_manager.start)
+    app.add_event_handler("shutdown", _mcp_manager.shutdown)
+
 warn_if_incoherent_flags(logging.getLogger("agentd.startup"))
 
 app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client, _chat_agent))
