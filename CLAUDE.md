@@ -386,6 +386,7 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - **`InMemoryTaskStore.get()` returns the SAME object reference** (no copy), which MASKS stale-reference / object-divergence bugs. For a test that depends on production semantics — store returns a fresh copy, e.g. verifying a coroutine advanced the *caller's* task object — use `SQLiteTaskStore(tmp_path / "x.sqlite3")` instead.
 - **Never `asyncio.get_event_loop().run_until_complete(coro)` in tests.** On Python 3.13 it raises `RuntimeError: There is no current event loop` once a prior `@pytest.mark.asyncio` test closes the loop, so the test passes in isolation but fails order-dependently in the full suite. Use `asyncio.run(coro)` or `@pytest.mark.asyncio async def`.
 - **`pytest | tail` (or any pipe) masks pytest's exit code** with the pipe's last command's (always 0). Read the actual `FAILED`/summary lines, never trust the reported exit code of a piped run.
+- **Never pass `-q` to pytest here** — `pyproject.toml` already sets `addopts = "-q"`, so a CLI `-q` stacks to `-qq`, which suppresses the final `N passed in Xs` summary line entirely (you get dots with no count and no failure summary). Run plain `pytest [paths]` for the summary; when you must capture output, redirect to a file and check `$?` directly: `pytest --color=no > /tmp/out.txt 2>&1; echo exit=$?; tail -5 /tmp/out.txt`.
 - A shifting failure set across full-suite runs = order/state pollution or environment dependence (e.g. `test_graph_walker_reachability` is `@requires_live_snapshot` and reflects `index-snapshot.json` freshness). Reproduce a suspect failure **in isolation** before attributing it to your change.
 
 ## Key Configuration
@@ -409,6 +410,7 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `AI_EDITOR_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
 - `AI_EDITOR_DOC_WRITE_ENABLED` — offer the `write_doc` per-write-gated docs tool to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "write_doc".
 - `AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC` — seconds to wait for the doc_write gate decision; `0` (default) = wait forever; timeout → reject.
+- **`start-backend.sh` defaults ON (2026-07-02):** `AI_EDITOR_CHAT_CONTROLLER`, `AI_EDITOR_SKILLS_ENABLED`, `AI_EDITOR_MCP_ENABLED`, `AI_EDITOR_DOC_WRITE_ENABLED` (+ `AI_EDITOR_SEMANTIC_RETRIEVAL=true`) — the engine defaults above stay OFF, but the script opts in (`${VAR:-1}`, override via env to opt out; same pattern as the scope-policy note). The repo-root `.env` sets the same flags for manual runs.
 - Provider API keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, etc.
 
 **Model selection** (per provider)

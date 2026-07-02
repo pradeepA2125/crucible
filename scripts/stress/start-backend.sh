@@ -369,6 +369,14 @@ echo "uvicorn_log=$LOG_FILE"
   export AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH"
   export AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT"
   export AI_EDITOR_SHELL_POLICY="${AI_EDITOR_SHELL_POLICY:-ask}"
+  # Default-on feature flags (2026-07-02): reactive controller + its tool surface
+  # (skills catalog, MCP servers from .ai-editor/mcp.json, gated write_doc).
+  # Override any of these via env to opt out.
+  export AI_EDITOR_CHAT_CONTROLLER="${AI_EDITOR_CHAT_CONTROLLER:-1}"
+  export AI_EDITOR_SKILLS_ENABLED="${AI_EDITOR_SKILLS_ENABLED:-1}"
+  export AI_EDITOR_MCP_ENABLED="${AI_EDITOR_MCP_ENABLED:-1}"
+  export AI_EDITOR_DOC_WRITE_ENABLED="${AI_EDITOR_DOC_WRITE_ENABLED:-1}"
+  export AI_EDITOR_SEMANTIC_RETRIEVAL="${AI_EDITOR_SEMANTIC_RETRIEVAL:-true}"
   # UX decision (chat UI redesign): the step gate is the conscious approval moment
   # on the large path — review every step by default. Override via env to opt out.
   export AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT="${AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT:-false}"
