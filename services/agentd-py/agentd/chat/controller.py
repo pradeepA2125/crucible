@@ -844,7 +844,7 @@ class ChatController:
         timeout = doc_write_decision_timeout_sec()
         try:
             decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             decision = DocWriteDecision(approve=False)
         finally:
             self._pending_doc.pop(thread_id, None)
