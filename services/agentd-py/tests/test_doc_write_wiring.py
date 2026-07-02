@@ -76,3 +76,20 @@ def test_block_present_with_write_doc():
     assert "approval" in text
     # No superiority framing after the block header.
     assert "instead of" not in text.split("WRITING DOCS")[1].lower()
+
+
+def test_block_has_worked_examples_and_unconditional_clause():
+    """Weak-model action-selection gap (seen live on TQP 2026-07-02): the model
+    thought 'I should use write_doc' then emitted answer/propose_mode anyway.
+    Fix = worked few-shot examples + an 'IS the complete workflow' clause
+    (same recipe as the P2 read_skill fix), not more abstract rewording."""
+    block = _prompt(_BASE + _DOC).split("WRITING DOCS")[1]
+    # A literal tool_call shape the model can pattern-match.
+    assert '"tool":"write_doc"' in block.replace(" ", "").replace("\n", "")
+    # The unconditional clause: one standalone file => write_doc is the whole job.
+    assert "complete workflow" in block
+    assert "even when the request seems small" in block
+    # Updating an existing doc = read then ONE write_doc with the full content.
+    assert "read_file" in block
+    # Anti-hallucination guard: never describe a write that did not happen.
+    assert "Never claim" in block

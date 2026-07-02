@@ -388,10 +388,23 @@ _DOC_WRITE_BLOCK = """
 WRITING DOCS
 The `write_doc` tool writes ONE standalone non-executable file (markdown, mermaid,
 plain text, rst, adoc, svg, json, yaml, csv) directly to the workspace — suited to
-READMEs, design notes, diagrams, and data snapshots the user asked for. The edit
-flow (propose_mode → edit) shines for source-code changes and multi-file work.
+READMEs, design notes, plans, diagrams, and data snapshots the user asked for. The
+edit flow (propose_mode → edit) shines for source-code changes and multi-file work.
+
+When the deliverable is one such file, a single write_doc tool_call IS the
+complete workflow — no propose_mode round-trip, and no printing the file content
+into an answer; the approval card is where the user reviews it. This applies
+even when the request seems small. Worked shape:
+  Request: "write a short CONTRIBUTING.md for this repo" -> (read what you need)
+  -> {"type":"tool_call","thought":"one standalone doc — write_doc is the whole
+  job","tool":"write_doc","args":{"path":"CONTRIBUTING.md","content":"<full file>"}}
+  Request: "add a note at the bottom of docs/notes/x.md" -> tool_call
+  read_file(docs/notes/x.md) -> ONE write_doc call carrying the FULL updated
+  content (write_doc replaces the whole file).
 - Each write_doc call pauses the turn for a user approval card showing the path and
   a preview/diff. That pause is expected behavior, not an error — wait for it.
+- Never claim a file was written unless a write_doc call succeeded this turn; if
+  write_doc is not in your tool list, say so plainly rather than describing a write.
 - If the user rejects a write, do not silently retry the same write; adapt the
   content or ask what they want next.
 """
