@@ -29,7 +29,7 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 | Diff review + revert | ✅ on par (granular per-hunk: gap) | P6 |
 | Project instructions / prompt files | ✅ on par (done, on branch) | P1 |
 | Agent Skills (agentskills.io) | ✅ done (on branch) | **P2** |
-| MCP client (+ GitHub integration) | ❌ | **P3** |
+| MCP client (+ GitHub integration) | ✅ done (on branch) | **P3** |
 | Polished UI / settings / one-command install | ❌ | **P4** |
 | Subagents / custom agents / code-review agent | ❌ (dormant task path) | **P5** |
 | Per-hunk accept, vision, tab-completion, cloud agent | ❌ | **P6 / non-goal** |

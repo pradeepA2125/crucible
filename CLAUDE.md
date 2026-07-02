@@ -196,6 +196,48 @@ agentskills.io `SKILL.md` skills: an always-on catalog + model-driven progressiv
 - **Activation (`agentd/skills/tool_source.py::SkillToolSource`):** one read-only tool **`read_skill(name)`** — resolves name→`SKILL.md`, caps the body (`AI_EDITOR_SKILLS_BODY_MAX_CHARS` default 20000), writes it into the **shared `active_skills` dict**, returns it. Registered in `ChatController._build_registry` (one `sources.append(...)` when `is_skills_enabled()`). The activated bodies ride the **dynamic payload tail** (`build_controller_step_payload` → `active_skills`, alongside `recalled_memories`) and are **re-injected every iteration** by `ControllerLoop` (compaction-resilient — the analog of opencode's `synthetic`/`noReply`). The `active_skills` dict is **created in `ChatController._run_loop`** (alongside `ledger`) and passed to BOTH `_build_registry` and `ControllerLoop` (same object). Turn-scoped in v1 (cross-turn persistence deferred).
 - **`/skill` forced-load (deterministic explicit invocation):** `GET /v1/skills?workspace=` lists the catalog (gated-empty when off); `/v1/config` gained `skills_enabled`. The chat-message body accepts `forced_skills: list[str]` (route → `handle_message(forced_skills=…)` → `_run_loop` seeds `active_skills` from the catalog **before iteration 1**, so the body is active without the model choosing `read_skill`). Frontend: editor-client `sendChatMessage(..., {forcedSkills})` + `listSkills()` + `SkillSummary`/`skillsEnabled` Zod. The composer (`InputArea.tsx`) lazily fetches the catalog on the first `/` keystroke (`listSkills`→`skillList`); on an un-matched `/name` (prompt-file miss — **prompt file wins on name collision**, the host resolves prompts first), `resolveSkillCommand` (in `webview-ui/src/slash.ts`) sends the args as the message tagged with `forced_skills=[name]`. `aiEditor.skillsEnabled` `when`-context from `/v1/config` (mirrors `memoryEnabled`). **Deviation from plan:** the full `/`-autocomplete dropdown (prompts+skills with badges) is deferred to P4 (composer UX phase) — the webview lacks prompt-name exposure for a unified list; v1 ships the forced-load capability via the existing expand-before-send flow.
 
+#### MCP client (P3, copilot-parity roadmap)
+
+External MCP tool servers (stdio + HTTP/SSE) connected from `<workspace>/.ai-editor/mcp.json`,
+tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval gate. Flag-gated,
+**default OFF** (`AI_EDITOR_MCP_ENABLED`), **controller-only**. Spec/plan:
+`docs/superpowers/specs/2026-07-02-mcp-client-github-integration-design.md` +
+`…/plans/2026-07-02-mcp-client-github-integration.md`.
+
+- **Config (`agentd/mcp/config.py::McpConfigLoader`):** mtime-cached `.ai-editor/mcp.json`
+  (`{"mcpServers": {name: {command/args/env | type+url/headers, "enabled": true}}}`). An entry
+  connects ONLY with explicit `"enabled": true` (allowlist beyond presence). `${VAR}` in
+  env/headers resolves against the process environment at connect time; a missing var fails
+  that server's connect with a message naming it. Malformed file/entry → skipped with a
+  warning, never a crash. Server names: `[A-Za-z0-9][A-Za-z0-9_-]*`, no `__`.
+- **Connections (`agentd/mcp/client.py::McpConnectionManager`):** official `mcp` SDK (v1 API,
+  pinned `<2`). One background asyncio task per server owns the transport+session context
+  managers (anyio cancel scopes are task-pinned) and parks on a stop event. **Connects at app
+  startup via `app.add_event_handler("startup", manager.start)`** — NOT at factory time
+  (module-level, no event loop). `reconcile(configs)` is the P4 settings-UI seam; per-server
+  `McpServerStatus` is queryable. Failed server = zero tools + warning (degrade-not-raise).
+- **Tools (`agentd/mcp/tool_source.py::McpToolSource`):** dynamic `definitions()` from
+  `list_tools()`, namespaced `mcp__<server>__<tool>`; schemas ride `tools_json` via the
+  existing `AggregatingToolRegistry` seam. Budget: `AI_EDITOR_MCP_TOOLS_MAX_CHARS` (default
+  16000, order-truncation). Results: text blocks flattened; non-text counted-not-rendered;
+  `isError` → `ToolOutput(is_error=True)` — the loop adapts, never crashes.
+- **Gate:** every call raises `PendingGate(kind="mcp_tool", payload={server, tool, args})`
+  (Class-A: renders from `/live`, survives reload; `mcp_approval_requested` SSE is only the
+  instant-render poke). Resolved by `POST /v1/chat/threads/{id}/mcp-decision`
+  `{approve, remember}`; remember persists the exact `(server, tool)` pair to
+  `.ai-editor/approved-mcp-tools.json` (`McpRuleStore`) — auto-approves next time.
+  `AI_EDITOR_MCP_DECISION_TIMEOUT_SEC` (default 0 = wait forever; timeout → reject).
+  **`PendingGate.kind` gained `"mcp_tool"` in BOTH `chat/models.py` AND the editor-client
+  Zod enum** (the `.min(1)`-class footgun) **AND webview `types.ts`**.
+- **Prompt:** `_MCP_BLOCK` teaching block auto-appends when any tool def name starts with
+  `mcp__` (detected from `tool_definitions` — no loader param). Teaches: external/side-
+  effecting + the approval pause is expected, not an error.
+- **Env:** `AI_EDITOR_MCP_ENABLED` (off) · `AI_EDITOR_MCP_DECISION_TIMEOUT_SEC` (0) ·
+  `AI_EDITOR_MCP_TOOLS_MAX_CHARS` (16000) · `AI_EDITOR_MCP_CONNECT_TIMEOUT_SEC` (30) ·
+  `AI_EDITOR_MCP_CALL_TIMEOUT_SEC` (120). `/v1/config` exposes `mcp_enabled`.
+- **GitHub:** proof-via-user-config (no bundled entry): an `mcp.json` entry for the official
+  GitHub MCP server with a `${GITHUB_PAT}` header, verified live end-to-end.
+
 SSE event types from the chat message endpoint:
 
 | Event | Description |
@@ -326,6 +368,11 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `AI_EDITOR_INSTRUCTIONS_MAX_CHARS` — size cap for the injected AGENTS.md (default `16000`; over-budget truncates with a marker).
 - `AI_EDITOR_SKILLS_ENABLED` — discover + offer `.ai-editor/skills/*/SKILL.md` to the controller (catalog + `read_skill` + `/skill` forced-load). Default **OFF**; opt in with `1/true/yes/on`. See "Agent Skills (P2)".
 - `AI_EDITOR_SKILLS_CATALOG_MAX_CHARS` (default `16000`; order-truncates the catalog) + `AI_EDITOR_SKILLS_BODY_MAX_CHARS` (default `20000`; caps a loaded skill body).
+- `AI_EDITOR_MCP_ENABLED` — connect external MCP servers from `.ai-editor/mcp.json` and offer their tools to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "MCP client (P3)".
+- `AI_EDITOR_MCP_DECISION_TIMEOUT_SEC` — seconds to wait for the user's mcp_tool gate decision; `0` (default) = wait forever; timeout → reject.
+- `AI_EDITOR_MCP_TOOLS_MAX_CHARS` — char budget for MCP tool definitions in tools_json (default `16000`; order-truncation).
+- `AI_EDITOR_MCP_CONNECT_TIMEOUT_SEC` — per-server connect wait at startup before continuing without it (default `30`).
+- `AI_EDITOR_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
 - Provider API keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, etc.
 
 **Model selection** (per provider)
