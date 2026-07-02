@@ -44,7 +44,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => controller.listPrompts(),
     (name: string, args: string) => controller.expandPrompt(name, args),
     () => controller.listSkills(),
-    () => controller.openChat()
+    () => controller.openChat(),
+    (threadId, decision) => controller.handleMcpDecisionFromChat(threadId, decision)
   );
 
   const ui: ControllerUI = {

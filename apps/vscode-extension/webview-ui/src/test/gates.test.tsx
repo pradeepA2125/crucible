@@ -6,6 +6,7 @@ import { ValidationGate } from "../components/messages/gates/ValidationGate";
 import { StepGate } from "../components/messages/gates/StepGate";
 import { ModeGate } from "../components/messages/gates/ModeGate";
 import { EditGate } from "../components/messages/gates/EditGate";
+import { McpGate } from "../components/messages/gates/McpGate";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
@@ -465,5 +466,47 @@ describe("EditGate — Reject", () => {
       decision: "reject",
       reason: "",
     });
+  });
+});
+
+// ── McpGate ───────────────────────────────────────────────────────────────────
+
+describe("McpGate", () => {
+  it("renders server.tool + args and posts mcpDecision on approve", () => {
+    render(
+      <McpGate
+        taskId="th1"
+        payload={{ server: "gh", tool: "create_issue", args: { title: "bug" } }}
+      />
+    );
+    expect(screen.getByText(/Call MCP tool: gh\.create_issue/)).toBeTruthy();
+    expect(screen.getByText(/"title": "bug"/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Approve once"));
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "mcpDecision", threadId: "th1", approve: true, remember: false,
+    });
+  });
+
+  it("approve & remember posts remember=true", () => {
+    render(<McpGate taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
+    fireEvent.click(screen.getByText(/Approve & remember/));
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "mcpDecision", threadId: "th1", approve: true, remember: true,
+    });
+  });
+
+  it("reject posts approve=false", () => {
+    render(<McpGate taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
+    fireEvent.click(screen.getByText("Reject"));
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "mcpDecision", threadId: "th1", approve: false, remember: false,
+    });
+  });
+
+  it("one-shot guard: second click posts nothing", () => {
+    render(<McpGate taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
+    fireEvent.click(screen.getByText("Reject"));
+    postMessage.mockClear();
+    expect(screen.queryByText("Approve once")).toBeNull();
   });
 });

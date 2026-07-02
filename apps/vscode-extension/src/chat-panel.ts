@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
-import type { ChatMessage, ChatThreadSummary, CommandDecision } from "@ai-editor/editor-client";
+import type { ChatMessage, ChatThreadSummary, CommandDecision, McpToolDecision } from "@ai-editor/editor-client";
 import type { LiveGateView, LivePlanView, LiveTodosView } from "./controller.js";
 
 export type ChatMessageHandler = (
@@ -41,6 +41,8 @@ export type ExpandPromptHandler = (
 ) => Promise<{ found: boolean; text: string }>;
 // P2: skill catalog for the composer's /skill forced-load.
 export type ListSkillsHandler = () => Promise<{ name: string; description: string }[]>;
+// P3: controller mcp_tool gate — approve/reject an external MCP tool call.
+export type McpDecisionHandler = (threadId: string, decision: McpToolDecision) => Promise<void>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -70,7 +72,8 @@ export class ChatPanel {
     private readonly onListPrompts: ListPromptsHandler,
     private readonly onExpandPrompt: ExpandPromptHandler,
     private readonly onListSkills: ListSkillsHandler = async () => [],
-    private readonly onReady: () => Promise<void> = async () => {}
+    private readonly onReady: () => Promise<void> = async () => {},
+    private readonly onMcpDecision: McpDecisionHandler = async () => {}
   ) {}
 
   /** Called by the webview serializer when VS Code restores a persisted panel. */
@@ -156,6 +159,11 @@ export class ChatPanel {
           ruleValue: typeof m["ruleValue"] === "string" ? (m["ruleValue"] as string) : undefined,
         };
         p = this.onCommandDecision(m["taskId"] as string, decision);
+      } else if (m["type"] === "mcpDecision") {
+        p = this.onMcpDecision(m["threadId"] as string, {
+          approve: m["approve"] === true,
+          remember: m["remember"] === true,
+        });
       } else if (m["type"] === "stepDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "discard";
         p = this.onStepDecision(m["taskId"] as string, decision);

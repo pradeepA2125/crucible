@@ -3,6 +3,7 @@ import type {
   ChatMessage,
   ChatThreadSummary,
   CommandDecision,
+  McpToolDecision,
   StreamEvent,
   ResumeTaskResponse,
   TaskResult,
@@ -87,7 +88,7 @@ export interface ControllerUI {
 }
 
 export interface LiveGateView {
-  kind: "command" | "step" | "scope" | "validation" | "mode" | "edit" | "clarify";
+  kind: "command" | "step" | "scope" | "validation" | "mode" | "edit" | "clarify" | "mcp_tool";
   payload: Record<string, unknown>;
   taskId: string;
 }
@@ -796,6 +797,8 @@ export class AiEditorController {
           this.forwardGateWait("validation");
         } else if (event.type === "command_approval_requested") {
           this.forwardGateWait("command");
+        } else if (event.type === "mcp_approval_requested") {
+          this.forwardGateWait("mcp_tool");
         } else if (event.type === "thread_title_updated") {
           const threadId = (event.payload["thread_id"] as string) ?? "";
           const title = (event.payload["title"] as string) ?? "";
@@ -998,6 +1001,8 @@ export class AiEditorController {
           this.forwardGateWait("validation");
         } else if (event.type === "command_approval_requested") {
           this.forwardGateWait("command");
+        } else if (event.type === "mcp_approval_requested") {
+          this.forwardGateWait("mcp_tool");
         } else if (
           event.type === "env_profile_building" ||
           event.type === "env_profile_built" ||
@@ -1358,10 +1363,11 @@ export class AiEditorController {
    * Both SSE loops call this — reconciles a pre-existing divergence where
    * streamTaskIntoChatThread's validation/command cases were poke-only.
    */
-  private forwardGateWait(kind: "scope" | "validation" | "command"): void {
+  private forwardGateWait(kind: "scope" | "validation" | "command" | "mcp_tool"): void {
     const label =
       kind === "scope" ? "Waiting for scope approval…"
       : kind === "validation" ? "Waiting for validation decision…"
+      : kind === "mcp_tool" ? "Waiting for MCP tool approval…"
       : "Waiting for command approval…";
     this.ui.appendChatThinkingEntry(label);
     void this.pollThreadLiveState();
@@ -1459,6 +1465,21 @@ export class AiEditorController {
     } catch (err) {
       if (this.isBenignConflict(err)) return;
       this.ui.showError(`Failed to send command decision: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async handleMcpDecisionFromChat(
+    threadId: string,
+    decision: McpToolDecision
+  ): Promise<void> {
+    try {
+      // mcp_tool gates are controller-only (no task path) — always the chat route.
+      await this.clientForChat().postChatMcpDecision(threadId, decision);
+    } catch (err) {
+      if (this.isBenignConflict(err)) return;
+      this.ui.showError(
+        `Failed to send MCP decision: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 

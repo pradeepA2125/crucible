@@ -53,7 +53,7 @@ export interface ToolEventView {
 
 // ── Live slot views ──────────────────────────────────────────────────────────
 export interface LiveGateView {
-  kind: "command" | "scope" | "validation" | "step" | "mode" | "edit" | "clarify";
+  kind: "command" | "scope" | "validation" | "step" | "mode" | "edit" | "clarify" | "mcp_tool";
   taskId: string;
   payload: Record<string, unknown>;  // pending_* payload, snake_case
 }
@@ -145,6 +145,8 @@ export type WebviewMessage =
   | { type: "scopeDecision"; taskId: string; files: string[]; decision: "approve" | "reject"; remember: boolean }
   | { type: "validationDecision"; taskId: string; decision: "accept" | "reject" }
   | { type: "commandDecision"; taskId: string; approve: boolean; remember?: boolean; scope?: string; ruleValue?: string }
+  // Controller mcp_tool gate: approve/reject an external MCP tool call (threadId — no task)
+  | { type: "mcpDecision"; threadId: string; approve: boolean; remember: boolean }
   | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" }
   // Agentic chat controller: mode-recommendation gate pick + per-edit review decision
   | { type: "modeDecision"; threadId: string; mode: string }
