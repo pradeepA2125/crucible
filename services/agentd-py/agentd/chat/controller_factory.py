@@ -56,6 +56,12 @@ def is_mcp_enabled() -> bool:
     return os.getenv("AI_EDITOR_MCP_ENABLED", "0").strip().lower() in _TRUTHY
 
 
+def is_doc_write_enabled() -> bool:
+    """Whether the controller offers write_doc (per-write-gated doc/data writes).
+    Default OFF. Opt in with AI_EDITOR_DOC_WRITE_ENABLED=1."""
+    return os.getenv("AI_EDITOR_DOC_WRITE_ENABLED", "0").strip().lower() in _TRUTHY
+
+
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
     """Task-subsystem OFF only works when the controller is ON (the legacy ChatAgent's
     large_change branch has nowhere to go without create_task). Warn — do not fail."""

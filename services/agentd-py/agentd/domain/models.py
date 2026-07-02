@@ -189,6 +189,12 @@ class McpToolDecision(BaseModel):
     remember: bool = False
 
 
+class DocWriteDecision(BaseModel):
+    """User decision on a doc_write approval gate (chat controller). No remember
+    option — every write is unique content (spec §3.3)."""
+    approve: bool
+
+
 class CommandRule(BaseModel):
     """A persisted user-approved shell command rule (workspace store + per-task set)."""
     type: Literal["exact", "prefix", "binary"]

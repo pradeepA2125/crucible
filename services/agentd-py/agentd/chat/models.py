@@ -43,7 +43,7 @@ class PendingGate(BaseModel):
     gates — the controller has no task, so they live on the thread
     (pending_controller_gate).
     """
-    kind: Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]
+    kind: Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool", "doc_write"]
     payload: dict[str, Any] = Field(default_factory=dict)
 
 

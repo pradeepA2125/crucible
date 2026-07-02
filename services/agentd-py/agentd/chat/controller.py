@@ -24,8 +24,8 @@ from agentd.chat.edit_session import TurnEditSession
 from agentd.chat.models import ChatMessage, PendingGate
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
-from agentd.domain.models import CommandDecision, McpToolDecision, ShellPolicy
-from agentd.chat.controller_factory import is_skills_enabled
+from agentd.domain.models import CommandDecision, DocWriteDecision, McpToolDecision, ShellPolicy
+from agentd.chat.controller_factory import is_doc_write_enabled, is_skills_enabled
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource
@@ -138,6 +138,9 @@ class ChatController:
         # thread_id → future for the in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
+        # thread_id → future for the in-flight doc_write gate; same lifecycle as
+        # _pending_mcp.
+        self._pending_doc: dict[str, asyncio.Future[DocWriteDecision]] = {}
         # Per-thread "Review each edit" toggle from the message that opened the mode
         # gate — read back in resolve_mode so the edit re-entry honors it (the
         # /mode-decision POST carries no step_review; smoke-found gap #4).
@@ -190,6 +193,7 @@ class ChatController:
         todo_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
         active_skills: dict[str, str] | None = None,
         mcp_approval_cb: object | None = None,
+        doc_approval_cb: object | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -209,6 +213,10 @@ class ChatController:
             from agentd.mcp.tool_source import McpToolSource
 
             sources.append(McpToolSource(self._mcp_manager, mcp_approval_cb))
+        if is_doc_write_enabled() and doc_approval_cb is not None:
+            from agentd.chat.doc_write_source import DocWriteToolSource
+
+            sources.append(DocWriteToolSource(self._workspace_path, doc_approval_cb))
         return AggregatingToolRegistry(sources)
 
     async def _persist_todos(self, thread_id: str, raw: str | None) -> None:
@@ -337,6 +345,8 @@ class ChatController:
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
         # MCP tool calls gate through the same thread-gate machinery (kind="mcp_tool").
         mcp_cb = partial(self._mcp_approval_cb, thread_id, channel_id)
+        # write_doc gates through the same machinery (kind="doc_write").
+        doc_cb = partial(self._doc_approval_cb, thread_id, channel_id)
         # Persist the ledger mid-turn on every write_todos so /live renders it during the turn.
         todo_persist_cb = partial(self._persist_todos, thread_id)
         # Shared active-skills map: SkillToolSource (in the registry) writes activated bodies
@@ -356,7 +366,8 @@ class ChatController:
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb,
                                   active_skills=active_skills,
-                                  mcp_approval_cb=mcp_cb), self._broadcaster,
+                                  mcp_approval_cb=mcp_cb,
+                                  doc_approval_cb=doc_cb), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger,
             task_subsystem_enabled=self._task_subsystem_enabled,
             memory_harness=self._memory_harness, active_skills=active_skills)
@@ -802,6 +813,58 @@ class ChatController:
             thread = self._store.get_thread(thread_id)
             gate = thread.pending_controller_gate if thread is not None else None
             if gate is not None and gate.kind == "mcp_tool":
+                self._store.set_controller_gate(thread_id, None)
+                self._write_breadcrumb(
+                    thread_id, f"chat:{thread_id}",
+                    "Previous turn ended — please re-send your request.")
+            return False
+        fut.set_result(decision)
+        return True
+
+    async def _doc_approval_cb(
+        self, thread_id: str, channel_id: str,
+        path: str, exists: bool, preview: str,
+    ) -> bool:
+        """Gate a write_doc call (mirror of _mcp_approval_cb, minus remember-rules —
+        every write is unique content). Raises a durable kind="doc_write" gate and
+        awaits /doc-decision."""
+        from agentd.chat.doc_write_source import doc_write_decision_timeout_sec
+
+        self._store.set_controller_gate(thread_id, PendingGate(
+            kind="doc_write",
+            payload={"path": path, "exists": exists, "preview": preview}))
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future[DocWriteDecision] = loop.create_future()
+        self._pending_doc[thread_id] = fut
+        # Instant-render poke — the card still renders FROM /live (durable on reload).
+        self._broadcaster.broadcast(channel_id, {
+            "type": "doc_write_requested",
+            "payload": {"path": path, "exists": exists},
+        })
+        timeout = doc_write_decision_timeout_sec()
+        try:
+            decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
+        except (TimeoutError, asyncio.TimeoutError):
+            decision = DocWriteDecision(approve=False)
+        finally:
+            self._pending_doc.pop(thread_id, None)
+            self._store.set_controller_gate(thread_id, None)
+
+        self._write_breadcrumb(
+            thread_id, channel_id,
+            f"✓ Doc written: {path}" if decision.approve
+            else f"✗ Doc write rejected: {path}")
+        return decision.approve
+
+    async def resolve_doc_write(self, thread_id: str, decision: DocWriteDecision) -> bool:
+        """Resolve the doc_write gate (POST /doc-decision). Fires the live waiter;
+        never mutates/persists during the await (Class-A). Restart orphan clears the
+        stale gate + breadcrumb — mirrors resolve_mcp."""
+        fut = self._pending_doc.get(thread_id)
+        if fut is None or fut.done():
+            thread = self._store.get_thread(thread_id)
+            gate = thread.pending_controller_gate if thread is not None else None
+            if gate is not None and gate.kind == "doc_write":
                 self._store.set_controller_gate(thread_id, None)
                 self._write_breadcrumb(
                     thread_id, f"chat:{thread_id}",
