@@ -20,6 +20,7 @@ from agentd.domain.models import (
     ScopeDecisionRequest,
     ScopeDecisionResponse,
     CommandDecision,
+    DocWriteDecision,
     McpToolDecision,
     CommandDecisionResponse,
     ValidationDecisionRequest,
@@ -1467,6 +1468,18 @@ def build_router(
             # already-open message SSE stream (the loop resumes) — plain JSON ack,
             # mirrors /command-decision (future.set_result).
             resolve = getattr(_chat_agent, "resolve_mcp", None)
+            if resolve is None:
+                return {"ok": False}
+            ok = await resolve(thread_id, request)  # type: ignore[misc]
+            return {"ok": ok}
+
+        @router.post("/chat/threads/{thread_id}/doc-decision")
+        async def post_chat_doc_decision(
+            thread_id: str, request: DocWriteDecision,
+        ) -> dict:
+            # Resolves the held-open doc_write gate; continuation rides the open
+            # message SSE stream — plain JSON ack, mirrors /mcp-decision.
+            resolve = getattr(_chat_agent, "resolve_doc_write", None)
             if resolve is None:
                 return {"ok": False}
             ok = await resolve(thread_id, request)  # type: ignore[misc]

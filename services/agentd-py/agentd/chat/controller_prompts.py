@@ -383,6 +383,20 @@ exposes.
 """
 
 
+_DOC_WRITE_BLOCK = """
+
+WRITING DOCS
+The `write_doc` tool writes ONE standalone non-executable file (markdown, mermaid,
+plain text, rst, adoc, svg, json, yaml, csv) directly to the workspace — suited to
+READMEs, design notes, diagrams, and data snapshots the user asked for. The edit
+flow (propose_mode → edit) shines for source-code changes and multi-file work.
+- Each write_doc call pauses the turn for a user approval card showing the path and
+  a preview/diff. That pause is expected behavior, not an error — wait for it.
+- If the user rejects a write, do not silently retry the same write; adapt the
+  content or ask what they want next.
+"""
+
+
 _SKILLS_BLOCK_HEADER = """
 
 AVAILABLE SKILLS — specialized playbooks for this workspace. Each line is a skill's
@@ -466,6 +480,11 @@ def format_controller_system_prompt(
     if any(str((d or {}).get("name", "")).startswith("mcp__")
            for d in tool_definitions if isinstance(d, dict)):
         base += _MCP_BLOCK
+    # write_doc teaching block: keyed off the merged tool definitions (same pattern
+    # as the MCP block) so no separate flag parameter is needed.
+    if any(str((d or {}).get("name", "")) == "write_doc"
+           for d in tool_definitions if isinstance(d, dict)):
+        base += _DOC_WRITE_BLOCK
     return base
 
 
