@@ -426,16 +426,27 @@ This check is UNCONDITIONAL: do not first decide for yourself whether the task
 small — the skill's own trigger line already decided that; your job is only to
 match your label against it, not to re-judge its importance.
 
+A match is judged against the line's WHOLE description: when an author enumerates
+what their trigger covers ("creating X, building Y, ..."), that enumeration bounds
+the trigger — a single headline word from the line ("any", a broad adjective) is
+not the meaning on its own, the enumeration is.
+
 Worked pattern (illustrative shape only — the actual skill names below are
 whatever this workspace has installed, not these):
   Request: "there's a bug where X happens instead of Y" -> label: "a bug/debugging
   request" -> a catalog line's trigger covers bugs/unexpected behavior -> FIRST
   action: tool_call read_skill(that skill's real name).
-  Request: "let's add a new capability to do Z" -> label: "new/creative feature
-  work" -> a catalog line's trigger covers creative work or building something new
+  Request: "let's add a new capability to do Z" -> label: "building a new feature"
+  -> a catalog line's trigger covers designing/building new functionality
   -> FIRST action: tool_call read_skill(that skill's real name).
-  Both examples load the skill BEFORE any search_code/read_file/answer — the
-  label-to-trigger match is itself the first action, not a preamble to one.
+  Request: "write a short README for this repo" -> label: "writing one document
+  the user already specified" -> check each line's FULL scope: in THIS example no
+  installed line's enumeration covers document writing (a line scoped to building
+  features/components does not) -> no read_skill; proceed directly. (If a line's
+  scope DOES cover your label, it matches — this example shows the non-match
+  shape, not a rule about documents.)
+  The matching examples load the skill BEFORE any search_code/read_file/answer —
+  the label-to-trigger match is itself the first action, not a preamble to one.
 
 When a skill's line could apply, even partially, load it BEFORE answering, editing,
 planning, or exploring:
@@ -654,7 +665,9 @@ def build_controller_step_payload(
             "unrelated request. (2) Check that label against every skill's \"when to use\" line "
             "in the AVAILABLE SKILLS list (system prompt) — each line IS an intent trigger written "
             "by that skill's own author. A match means your label is close in MEANING, not "
-            "overlapping in wording. This is UNCONDITIONAL: once you find a matching line, load "
+            "overlapping in wording — and the line's enumeration bounds that meaning: when the "
+            "author lists what the trigger covers, your label must fall inside that list, not "
+            "merely share a broad headline word with it. This is UNCONDITIONAL: once you find a matching line, load "
             "it — do not then re-judge whether the task \"really needs\" it, or downgrade a match "
             "because the request seems small; the trigger line already made that call. If your "
             "label matches any line, even partially, THIS check "
