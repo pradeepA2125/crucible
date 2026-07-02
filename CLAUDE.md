@@ -237,6 +237,40 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   `AI_EDITOR_MCP_CALL_TIMEOUT_SEC` (120). `/v1/config` exposes `mcp_enabled`.
 - **GitHub:** proof-via-user-config (no bundled entry): an `mcp.json` entry for the official
   GitHub MCP server with a `${GITHUB_PAT}` header, verified live end-to-end.
+- **Shipped web-search default (2026-07-02):** `resources/mcp-servers/ollama-web-search.py`
+  (vendored first-party `ollama-python` example, PEP-723 deps, run via `uv run`) exposes
+  `web_search`/`web_fetch` from Ollama's hosted API. Canonical `.ai-editor/mcp.json` entry —
+  the P4 installer will write it as a default:
+  `"web": {"command": "uv", "args": ["run", "<repo>/resources/mcp-servers/ollama-web-search.py"], "env": {"OLLAMA_API_KEY": "${OLLAMA_API_KEY}"}, "enabled": true}`.
+  Key: free, https://ollama.com/settings/keys, exported in the backend env. Missing key →
+  that server's connect fails naming the var; everything else unaffected. Provider swaps are
+  config (community SearXNG/Tavily/Brave MCP servers), not code. Spec/plan:
+  `docs/superpowers/specs|plans/2026-07-02-doc-write-tool-web-search-defaults*`.
+
+#### write_doc (gated docs/data writes from chat)
+
+One-tool lightweight write path for standalone non-executable artifacts — the alternative
+to full EDIT mode for READMEs/diagrams/data. Flag-gated, **default OFF**
+(`AI_EDITOR_DOC_WRITE_ENABLED`), **controller-only**. Spec/plan:
+`docs/superpowers/specs|plans/2026-07-02-doc-write-tool-web-search-defaults*`.
+
+- **Tool (`agentd/chat/doc_write_source.py::DocWriteToolSource`):** `write_doc(path, content)`,
+  one file per call. Validation BEFORE the gate (is_error output, no gate): workspace-relative
+  path (traversal/absolute rejected), extension allowlist `.md .mmd .mermaid .txt .rst .adoc
+  .svg .json .yaml .yml .csv` (case-insensitive, final suffix), content ≤ 1 MB.
+- **Gate:** every call raises `PendingGate(kind="doc_write", payload={path, exists, preview})`
+  (Class-A; `doc_write_requested` SSE is only the instant-render poke). `preview` = capped
+  unified diff (existing file) or capped content (new file). Resolved by
+  `POST /v1/chat/threads/{id}/doc-decision {approve}` — **NO remember option** (every write is
+  unique content). Approve → write to the REAL workspace (mkdir parents). Timeout env
+  `AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC` (0 = wait forever; timeout → reject).
+  `PendingGate.kind` gained `"doc_write"` in chat/models.py + editor-client Zod + webview
+  types.ts (the three-enum footgun).
+- **Phase availability (explicit decision):** available in DECIDE **and** EDIT; in EDIT a
+  doc write is still gated per write and lands immediately, independent of the edit
+  session's shadow.
+- **Prompt:** `_DOC_WRITE_BLOCK` auto-appends when a `write_doc` tool def is present
+  (the `_MCP_BLOCK` detection pattern — no new parameter).
 
 SSE event types from the chat message endpoint:
 
@@ -373,6 +407,8 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `AI_EDITOR_MCP_TOOLS_MAX_CHARS` — char budget for MCP tool definitions in tools_json (default `16000`; order-truncation).
 - `AI_EDITOR_MCP_CONNECT_TIMEOUT_SEC` — per-server connect wait at startup before continuing without it (default `30`).
 - `AI_EDITOR_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
+- `AI_EDITOR_DOC_WRITE_ENABLED` — offer the `write_doc` per-write-gated docs tool to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "write_doc".
+- `AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC` — seconds to wait for the doc_write gate decision; `0` (default) = wait forever; timeout → reject.
 - Provider API keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, etc.
 
 **Model selection** (per provider)
