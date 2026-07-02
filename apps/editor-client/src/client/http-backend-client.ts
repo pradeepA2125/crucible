@@ -32,6 +32,7 @@ import {
   type CommandDecision,
   type CommandDecisionResponse,
   type McpToolDecision,
+  type DocWriteDecision,
   type ValidationDecisionResponse,
   type ChatThreadSummary,
   type ChatThread,
@@ -248,6 +249,17 @@ export class HttpBackendClient implements BackendTaskClient {
         method: "POST",
         body: JSON.stringify({ approve: decision.approve, remember: decision.remember }),
       }
+    );
+  }
+
+  // Controller doc_write gate: a plain JSON ack — mirrors postChatMcpDecision.
+  async postChatDocDecision(
+    threadId: string,
+    decision: DocWriteDecision
+  ): Promise<void> {
+    await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/doc-decision`,
+      { method: "POST", body: JSON.stringify({ approve: decision.approve }) }
     );
   }
 

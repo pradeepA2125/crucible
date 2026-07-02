@@ -158,6 +158,12 @@ export interface McpToolDecision {
   remember: boolean;
 }
 
+// User decision on a doc_write approval gate (chat controller). No remember —
+// every write is unique content.
+export interface DocWriteDecision {
+  approve: boolean;
+}
+
 export interface DiffEntry {
   path: string;
   additions: number;
@@ -185,6 +191,7 @@ export type StreamEvent =
   | { type: "validation_decision_requested"; payload: { task_id: string; diagnostics: Array<{ source: string; message: string; level: string }> } }
   | { type: "command_approval_requested"; payload: { decision_id: string; command: string; args: string[]; cwd: string; step_id: string } }
   | { type: "mcp_approval_requested"; payload: { server: string; tool: string; args: Record<string, unknown> } }
+  | { type: "doc_write_requested"; payload: { path: string; exists: boolean } }
   | { type: "tool_thinking_chunk"; payload: { chunk: string } }
   | { type: "chat_agent_thinking"; payload: { message: string } }
   | { type: "chat_agent_thinking_chunk"; payload: { chunk: string } }
@@ -253,7 +260,7 @@ export type ChatEvent = z.infer<typeof ChatEventSchema>;
 // is the RUNTIME gate: a kind missing here makes ThreadLiveStateSchema.parse() throw, which
 // pollThreadLiveState swallows, so the gate silently never renders.
 export const PendingGateSchema = z.object({
-  kind: z.enum(["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]),
+  kind: z.enum(["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool", "doc_write"]),
   payload: z.record(z.unknown()).default({}),
 });
 export type PendingGate = z.infer<typeof PendingGateSchema>;
@@ -398,6 +405,8 @@ export interface BackendTaskClient {
   postChatCommandDecision(threadId: string, decision: CommandDecision): Promise<void>;
   // Controller mcp_tool gate: a plain JSON ack (continuation rides the open message stream).
   postChatMcpDecision(threadId: string, decision: McpToolDecision): Promise<void>;
+  // Controller doc_write gate: a plain JSON ack (continuation rides the open message stream).
+  postChatDocDecision(threadId: string, decision: DocWriteDecision): Promise<void>;
   // Stop a detached controller turn (POST /chat/threads/{id}/stop). ok=false is benign.
   stopChatTurn(threadId: string): Promise<{ ok: boolean }>;
   // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used
