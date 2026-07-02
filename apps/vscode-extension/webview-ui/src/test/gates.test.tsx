@@ -7,6 +7,7 @@ import { StepGate } from "../components/messages/gates/StepGate";
 import { ModeGate } from "../components/messages/gates/ModeGate";
 import { EditGate } from "../components/messages/gates/EditGate";
 import { McpGate } from "../components/messages/gates/McpGate";
+import { DocWriteGate } from "../components/messages/gates/DocWriteGate";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
@@ -508,5 +509,40 @@ describe("McpGate", () => {
     fireEvent.click(screen.getByText("Reject"));
     postMessage.mockClear();
     expect(screen.queryByText("Approve once")).toBeNull();
+  });
+});
+
+// ── DocWriteGate ─────────────────────────────────────────────────────────────
+
+describe("DocWriteGate", () => {
+  it("renders path + preview and posts docDecision on approve", () => {
+    render(
+      <DocWriteGate
+        taskId="th1"
+        payload={{ path: "docs/plan.md", exists: false, preview: "# Plan" }}
+      />
+    );
+    expect(screen.getByText(/Write file: docs\/plan\.md/)).toBeTruthy();
+    expect(screen.getByText(/New file/)).toBeTruthy();
+    expect(screen.getByText(/# Plan/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Approve"));
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "docDecision", threadId: "th1", approve: true,
+    });
+  });
+
+  it("existing file shows modify subtitle and reject posts approve=false", () => {
+    render(<DocWriteGate taskId="th1" payload={{ path: "a.md", exists: true, preview: "-x\n+y" }} />);
+    expect(screen.getByText(/Modifies existing file/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Reject"));
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "docDecision", threadId: "th1", approve: false,
+    });
+  });
+
+  it("one-shot guard: buttons disappear after resolve", () => {
+    render(<DocWriteGate taskId="th1" payload={{ path: "a.md", exists: false, preview: "p" }} />);
+    fireEvent.click(screen.getByText("Reject"));
+    expect(screen.queryByText("Approve")).toBeNull();
   });
 });

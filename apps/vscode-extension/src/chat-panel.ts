@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
-import type { ChatMessage, ChatThreadSummary, CommandDecision, McpToolDecision } from "@ai-editor/editor-client";
+import type { ChatMessage, ChatThreadSummary, CommandDecision, DocWriteDecision, McpToolDecision } from "@ai-editor/editor-client";
 import type { LiveGateView, LivePlanView, LiveTodosView } from "./controller.js";
 
 export type ChatMessageHandler = (
@@ -43,6 +43,8 @@ export type ExpandPromptHandler = (
 export type ListSkillsHandler = () => Promise<{ name: string; description: string }[]>;
 // P3: controller mcp_tool gate — approve/reject an external MCP tool call.
 export type McpDecisionHandler = (threadId: string, decision: McpToolDecision) => Promise<void>;
+// Controller doc_write gate — approve/reject a write_doc file write.
+export type DocDecisionHandler = (threadId: string, decision: DocWriteDecision) => Promise<void>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -73,7 +75,8 @@ export class ChatPanel {
     private readonly onExpandPrompt: ExpandPromptHandler,
     private readonly onListSkills: ListSkillsHandler = async () => [],
     private readonly onReady: () => Promise<void> = async () => {},
-    private readonly onMcpDecision: McpDecisionHandler = async () => {}
+    private readonly onMcpDecision: McpDecisionHandler = async () => {},
+    private readonly onDocDecision: DocDecisionHandler = async () => {}
   ) {}
 
   /** Called by the webview serializer when VS Code restores a persisted panel. */
@@ -163,6 +166,10 @@ export class ChatPanel {
         p = this.onMcpDecision(m["threadId"] as string, {
           approve: m["approve"] === true,
           remember: m["remember"] === true,
+        });
+      } else if (m["type"] === "docDecision") {
+        p = this.onDocDecision(m["threadId"] as string, {
+          approve: m["approve"] === true,
         });
       } else if (m["type"] === "stepDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "discard";

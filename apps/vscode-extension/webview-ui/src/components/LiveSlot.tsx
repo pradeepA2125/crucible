@@ -9,6 +9,7 @@ import { ModeGate } from "./messages/gates/ModeGate";
 import { ClarifyGate } from "./messages/gates/ClarifyGate";
 import { EditGate } from "./messages/gates/EditGate";
 import { McpGate } from "./messages/gates/McpGate";
+import { DocWriteGate } from "./messages/gates/DocWriteGate";
 import { PlanCard } from "./messages/PlanCard";
 import { ReviewCard } from "./messages/ReviewCard";
 import { ErrorCard } from "./messages/ErrorCard";
@@ -40,6 +41,8 @@ function GateDispatch({ taskId, kind, payload }: GateDispatchProps) {
       return <EditGate taskId={taskId} payload={payload} />;
     case "mcp_tool":
       return <McpGate taskId={taskId} payload={payload} />;
+    case "doc_write":
+      return <DocWriteGate taskId={taskId} payload={payload} />;
   }
 }
 
