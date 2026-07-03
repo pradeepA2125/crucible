@@ -262,6 +262,23 @@ if _mcp_manager is not None:
     app.add_event_handler("startup", _mcp_manager.start)
     app.add_event_handler("shutdown", _mcp_manager.shutdown)
 
+# Managed-spawn lockfile: the extension sets AI_EDITOR_PORT and reads/reaps
+# <workspace>/.agentd/agentd.lock. The dev script doesn't set it — no-op there.
+_lock_port_raw = os.getenv("AI_EDITOR_PORT", "").strip()
+if _lock_port_raw.isdigit():
+    from agentd.runtime_lock import clear_lock, write_lock
+
+    _lock_port = int(_lock_port_raw)
+
+    def _write_runtime_lock() -> None:
+        write_lock(_chat_workspace_path, port=_lock_port)
+
+    def _clear_runtime_lock() -> None:
+        clear_lock(_chat_workspace_path)
+
+    app.add_event_handler("startup", _write_runtime_lock)
+    app.add_event_handler("shutdown", _clear_runtime_lock)
+
 warn_if_incoherent_flags(logging.getLogger("agentd.startup"))
 
 # Hot-swap seam: one ProviderRuntime holding every live DefaultReasoningEngine.
