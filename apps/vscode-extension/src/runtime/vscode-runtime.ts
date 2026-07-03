@@ -165,8 +165,14 @@ export class RuntimeManager {
     await this.context.globalState.update("aiEditor.provider.backend", backend);
     await this.context.globalState.update("aiEditor.provider.model", model);
     if (apiKey) {
-      await this.context.secrets.store(`aiEditor.providerKey.${backend}`, apiKey);
+      await this.storeProviderKey(backend, apiKey);
     }
+  }
+
+  /** Secret-only write (settings panel's hot-swap path stores the key separately
+   * from the backend/model prefs — see SettingsPanel.buildDeps' setProvider wrapper). */
+  async storeProviderKey(backend: string, key: string): Promise<void> {
+    await this.context.secrets.store(`aiEditor.providerKey.${backend}`, key);
   }
 
   private extraEnvFromSettings(): Record<string, string> {

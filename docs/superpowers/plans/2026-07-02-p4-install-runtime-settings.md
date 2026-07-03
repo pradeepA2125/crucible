@@ -2322,7 +2322,7 @@ runs against a short-lived backend**: `saveAndStart` order is install → start 
 validate-via-route → report. Reflect exactly that in `SetupApp` step order:
 Install → Provider form → Start & validate → Done).
 
-- [ ] **Step 1: Write the failing handler tests**
+- [x] **Step 1: Write the failing handler tests**
 
 ```ts
 // apps/vscode-extension/test/setup-data.test.ts
@@ -2383,13 +2383,13 @@ describe("createSetupHandler", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure, then implement `setup-data.ts`**
+- [x] **Step 2: Run to verify failure, then implement `setup-data.ts`**
 
 Run: `npm run -w @ai-editor/vscode-extension test` → FAIL. Implement the handler as a
 plain switch over `msg.type` calling deps and posting the mapped results (every
 deps call in try/catch → `setup/error`).
 
-- [ ] **Step 3: Implement the webview app**
+- [x] **Step 3: Implement the webview app**
 
 `SetupApp.tsx`: four-step state machine (`welcome → install → provider → done`),
 `useState` for step + per-component progress rows + provider form + validate state.
@@ -2402,7 +2402,7 @@ button posting `setup/save`; on `setup/ready` advance to done with an
 used by the chat webview (reuse its CSS variables; polish is deferred to C).
 Message plumbing mirrors `src/memory/vscodeApi.tsx`.
 
-- [ ] **Step 4: Implement `setup-panel.ts` + wire vite/extension**
+- [x] **Step 4: Implement `setup-panel.ts` + wire vite/extension**
 
 Copy `src/memory-panel.ts`, with exactly these deltas: entry `setup.html`,
 viewType `aiEditor.setup`, title `"AI Editor Setup"`, message handler =
@@ -2413,7 +2413,7 @@ viewType `aiEditor.setup`, title `"AI Editor Setup"`, message handler =
 the wizard on the provider step. Add the `setup` input to `vite.config.ts`
 `rollupOptions.input`. `aiEditor.runSetup` opens the panel.
 
-- [ ] **Step 5: Build everything, run suites, commit**
+- [x] **Step 5: Build everything, run suites, commit**
 
 Run: `npm run build && npm run test && npm run typecheck`
 (Remember: webview-ui has its own build step inside `npm run build`; rebuild before
@@ -2514,7 +2514,7 @@ Behavior pins (each is a test):
   (env-path change; applied by `settings/restartBackend`).
 - Every action ends by posting a full rebuilt `settings/state` (except pure errors).
 
-- [ ] **Step 1: Write the failing handler tests**
+- [x] **Step 1: Write the failing handler tests**
 
 ```ts
 // apps/vscode-extension/test/settings-data.test.ts
@@ -2594,14 +2594,14 @@ describe("createSettingsHandler", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure, implement `settings-data.ts`**
+- [x] **Step 2: Run to verify failure, implement `settings-data.ts`**
 
 Run → FAIL, then implement per the behavior pins. `buildState()` helper fans out
 the four reads in `Promise.all` and merges user-local disabled sets into
 `userEnabled`/`enabled` booleans; `restartRequired` is handler-instance state,
 cleared after `settings/restartBackend`.
 
-- [ ] **Step 3: Implement the webview app + panel + wiring**
+- [x] **Step 3: Implement the webview app + panel + wiring**
 
 `SettingsApp.tsx` sections (one component each, rendered from the single
 `SettingsState`): **Providers** (same form pieces as the wizard's provider step —
@@ -2615,7 +2615,7 @@ rows → assembles the entry object with `"enabled": true` and `${VAR}` referenc
 `settings.html`, viewType `aiEditor.settings`, title `"AI Editor Settings"`.
 Wire `aiEditor.openSettingsPanel`. Add the vite input.
 
-- [ ] **Step 4: Build, run all suites, commit**
+- [x] **Step 4: Build, run all suites, commit**
 
 Run: `npm run build && npm run test && npm run typecheck`
 

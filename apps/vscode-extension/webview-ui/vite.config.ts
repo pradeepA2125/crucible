@@ -13,6 +13,7 @@ export default defineConfig({
         index: resolve(__dirname, "index.html"),
         memory: resolve(__dirname, "memory.html"),
         setup: resolve(__dirname, "setup.html"),
+        settings: resolve(__dirname, "settings.html"),
       },
       output: {
         entryFileNames: "assets/[name].js",
