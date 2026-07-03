@@ -29,15 +29,6 @@ from agentd.domain.models import ScopePolicy, ScopeRemember, ScopeTrigger, Shell
 from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.patch.engine import PatchEngine
-from agentd.providers.anthropic_transport import AnthropicJsonTransport
-from agentd.providers.gemini_transport import GeminiJsonTransport
-from agentd.providers.groq_transport import GroqJsonTransport
-from agentd.providers.huggingface_transport import HuggingFaceJsonTransport
-from agentd.providers.ollama_transport import OllamaJsonTransport
-from agentd.providers.openai_transport import OpenAIJsonTransport
-from agentd.providers.openrouter_transport import OpenRouterJsonTransport
-from agentd.providers.turboquant_transport import TurboQuantTransport
-from agentd.providers.watsonx_transport import WatsonxJsonTransport
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.engine import DefaultReasoningEngine
 from agentd.retrieval.artifact_client import RetrievalArtifactClient
@@ -91,16 +82,6 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
-def _optional_int_env(name: str) -> int | None:
-    raw = os.getenv(name)
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
-
-
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -148,113 +129,12 @@ if reasoning_backend == "scripted":
             }
         ],
     )
-elif reasoning_backend == "anthropic":
-    transport = AnthropicJsonTransport(
-        api_key=os.getenv("ANTHROPIC_API_KEY"),
-        endpoint=os.getenv("AI_EDITOR_ANTHROPIC_ENDPOINT", "https://api.anthropic.com/v1/messages"),
-        anthropic_version=os.getenv("AI_EDITOR_ANTHROPIC_VERSION", "2023-06-01"),
-        max_tokens=_int_env("AI_EDITOR_ANTHROPIC_MAX_TOKENS", 4096),
-        timeout_sec=_float_env("AI_EDITOR_ANTHROPIC_TIMEOUT_SEC", 60.0),
-    )
-    reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
-        transport=transport,
-    )
-elif reasoning_backend == "gemini":
-    thinking_level = os.getenv("AI_EDITOR_GEMINI_THINKING_LEVEL")
-    thinking_budget = _optional_int_env("AI_EDITOR_GEMINI_THINKING_BUDGET")
-    thinking_enabled = _bool_env("AI_EDITOR_GEMINI_THINKING_ENABLED", True)
-    if thinking_enabled and thinking_budget is None and not thinking_level:
-        # Default to high reasoning for Gemini 3.x models (thinking_level, not thinking_budget).
-        # thinking_budget=-1 is the Gemini 2.5 dynamic-budget API; 3.x models use thinking_level.
-        thinking_level = "high"
-
-    transport = GeminiJsonTransport(
-        api_key=os.getenv("GEMINI_API_KEY"),
-        thinking_enabled=thinking_enabled,
-        thinking_budget=thinking_budget,
-        thinking_level=thinking_level,
-        include_thoughts=_bool_env("AI_EDITOR_GEMINI_INCLUDE_THOUGHTS", False),
-        timeout_sec=_float_env("AI_EDITOR_GEMINI_TIMEOUT_SEC", 120.0),
-        max_retries=_int_env("AI_EDITOR_GEMINI_MAX_RETRIES", 4),
-    )
-    reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_GEMINI_MODEL", "gemini-3-flash-preview"),
-        transport=transport,
-    )
-elif reasoning_backend == "huggingface":
-    transport = HuggingFaceJsonTransport(
-        api_key=os.getenv("HF_TOKEN"),
-        max_new_tokens=_int_env("AI_EDITOR_HUGGINGFACE_MAX_NEW_TOKENS", 4096),
-        seed=_optional_int_env("AI_EDITOR_HUGGINGFACE_SEED"),
-        timeout_sec=_float_env("AI_EDITOR_HUGGINGFACE_TIMEOUT_SEC", 60.0),
-    )
-    reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv(
-            "AI_EDITOR_HUGGINGFACE_MODEL",
-            "deepseek-ai/DeepSeek-R1:fastest",
-        ),
-        transport=transport,
-    )
-elif reasoning_backend == "groq":
-    transport = GroqJsonTransport(
-        api_key=os.getenv("GROQ_API_KEY"),
-        endpoint=os.getenv("AI_EDITOR_GROQ_ENDPOINT"),
-        max_tokens=_int_env("AI_EDITOR_GROQ_MAX_TOKENS", 4096),
-        timeout_sec=_float_env("AI_EDITOR_GROQ_TIMEOUT_SEC", 60.0),
-        max_retries=_int_env("AI_EDITOR_GROQ_MAX_RETRIES", 4),
-    )
-    reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_GROQ_MODEL", "openai/gpt-oss-120b"),
-        transport=transport,
-    )
-elif reasoning_backend == "openrouter":
-
-    transport = OpenRouterJsonTransport(
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        max_tokens=_int_env("AI_EDITOR_OPENROUTER_MAX_TOKENS", 4096),
-        timeout_sec=_float_env("AI_EDITOR_OPENROUTER_TIMEOUT_SEC", 120.0),
-        max_retries=_int_env("AI_EDITOR_OPENROUTER_MAX_RETRIES", 4),
-    )
-    reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv(
-            "AI_EDITOR_OPENROUTER_MODEL", "stepfun/step-3.5-flash:free"
-        ),
-        transport=transport,
-    )
-elif reasoning_backend == "watsonx":
-    transport = WatsonxJsonTransport(
-        api_key=os.getenv("WATSONX_API_KEY"),
-        project_id=os.getenv("WATSONX_PROJECT_ID"),
-        url=os.getenv("WATSONX_URL"),
-        space_id=os.getenv("WATSONX_SPACE_ID"),
-    )
-    reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_WATSONX_MODEL", "ibm/granite-3-8b-instruct"),
-        transport=transport,
-    )
-elif reasoning_backend == "ollama":
-    transport = OllamaJsonTransport(
-        host=os.getenv("OLLAMA_HOST"),
-        keep_alive=os.getenv("AI_EDITOR_OLLAMA_KEEP_ALIVE"),
-        timeout_sec=_float_env("AI_EDITOR_OLLAMA_TIMEOUT_SEC", 600.0),
-        max_retries=_int_env("AI_EDITOR_OLLAMA_MAX_RETRIES", 4),
-    )
-    reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_OLLAMA_MODEL", "glm-4.7-flash:latest"),
-        transport=transport,
-    )
-elif reasoning_backend == "turboquant":
-    transport = TurboQuantTransport.from_env()
-    reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_TURBOQUANT_MODEL", "devstral-small-2:24b-q4_k_xl"),
-        transport=transport,
-    )
 else:
-    transport = OpenAIJsonTransport()
+    from agentd.providers.factory import build_transport, resolve_model
+
+    transport = build_transport(reasoning_backend)
     reasoning_engine = DefaultReasoningEngine(
-        model=os.getenv("AI_EDITOR_OPENAI_MODEL", "gpt-5"),
-        transport=transport,
+        model=resolve_model(reasoning_backend), transport=transport
     )
 
 validator = CommandValidator.from_env()
@@ -321,26 +201,17 @@ _chat_thread_store = ChatThreadStore(_chat_db_path)
 
 # workspace_path for chat — the real repo being edited; defaults to cwd if not set
 _chat_workspace_path = os.getenv("AI_EDITOR_WORKSPACE_PATH", str(Path.cwd()))
-_BACKEND_MODEL_ENVVAR: dict[str, str] = {
-    "anthropic":   "AI_EDITOR_ANTHROPIC_MODEL",
-    "gemini":      "AI_EDITOR_GEMINI_MODEL",
-    "huggingface": "AI_EDITOR_HUGGINGFACE_MODEL",
-    "groq":        "AI_EDITOR_GROQ_MODEL",
-    "openrouter":  "AI_EDITOR_OPENROUTER_MODEL",
-    "watsonx":     "AI_EDITOR_WATSONX_MODEL",
-    "ollama":      "AI_EDITOR_OLLAMA_MODEL",
-    "turboquant":  "AI_EDITOR_TURBOQUANT_MODEL",
-    "openai":      "AI_EDITOR_OPENAI_MODEL",
-}
+from agentd.providers.factory import MODEL_ENV_VAR
+
 _chat_model = os.getenv(
-    _BACKEND_MODEL_ENVVAR.get(reasoning_backend, "AI_EDITOR_OPENAI_MODEL"), "gpt-4o"
+    MODEL_ENV_VAR.get(reasoning_backend, "AI_EDITOR_OPENAI_MODEL"), "gpt-4o"
 )
 # Within-run compaction for task ToolLoop steps (no-op unless AI_EDITOR_MEMORY_ENABLED;
 # scripted backend has no transport). Disjoint run_id namespace (task_id) from the chat
 # controller's harness — both share the one memory DB file, which sqlite handles fine.
 _task_memory_harness = (
     build_memory_harness(
-        MemoryConfig.from_env(os.environ), transport, _chat_model,  # type: ignore[possibly-unbound]
+        MemoryConfig.from_env(os.environ), transport, _chat_model,
         workspace_path=_chat_workspace_path,  # enables consolidation (workspace scope)
     )
     if reasoning_backend != "scripted"
@@ -372,7 +243,7 @@ orchestrator = AgentOrchestrator(
 # AI_EDITOR_CHAT_CONTROLLER flag-selects the new ChatController vs the legacy ChatAgent.
 _chat_agent = select_chat_handler(
     workspace_path=_chat_workspace_path,
-    transport=transport,  # type: ignore[possibly-unbound]  # defined for all real backends
+    transport=transport,  # defined for all real backends
     model=_chat_model,
     thread_store=_chat_thread_store,
     orchestrator=orchestrator,
