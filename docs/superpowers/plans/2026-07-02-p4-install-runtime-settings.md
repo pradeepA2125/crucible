@@ -41,7 +41,7 @@ Extract the `main.py` if/elif transport chain into a reusable factory so the val
 - Produces: `build_transport(backend: str, credentials: dict[str, str] | None = None) -> object` — raises `ValueError` on unknown backend. `default_model(backend: str) -> str`. `resolve_model(backend: str) -> str` (env override or default). `PROVIDER_KEY_ENV: dict[str, str]` (backend → key env-var name; local providers absent).
 - Consumed by: Tasks 2, 3 (validate, hot-swap), and `main.py`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # services/agentd-py/tests/test_provider_factory.py
@@ -91,12 +91,12 @@ def test_provider_key_env_covers_cloud_backends() -> None:
         assert local not in PROVIDER_KEY_ENV
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd services/agentd-py && pytest tests/test_provider_factory.py`
 Expected: FAIL — `ModuleNotFoundError: agentd.providers.factory`
 
-- [ ] **Step 3: Implement the factory**
+- [x] **Step 3: Implement the factory**
 
 Move the chain from `main.py` verbatim, with `_env()` credential-aware lookup:
 
@@ -264,12 +264,12 @@ transcribed from `main.py:151-258`; the factory must match them exactly. Several
 transports (openai, groq) raise `RuntimeError` at construction when their key is
 missing — Task 2's `ping_provider` converts that into a clean validation error.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd services/agentd-py && pytest tests/test_provider_factory.py`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Refactor `main.py` to use the factory**
+- [x] **Step 5: Refactor `main.py` to use the factory**
 
 Replace `main.py:116-258` (keep the `scripted` branch as-is) with:
 
@@ -294,12 +294,12 @@ Also replace the `_BACKEND_MODEL_ENVVAR` dict at `main.py:324-337` with
 `_chat_model = os.getenv(MODEL_ENV_VAR.get(reasoning_backend, "AI_EDITOR_OPENAI_MODEL"), "gpt-4o")`.
 Delete the now-unused transport imports at the top of `main.py`.
 
-- [ ] **Step 6: Run the full backend suite**
+- [x] **Step 6: Run the full backend suite**
 
 Run: `cd services/agentd-py && pytest`
 Expected: no new failures (baseline ~1091 collected, 1 skip). Also: `ruff check . && mypy agentd`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add services/agentd-py/agentd/providers/factory.py services/agentd-py/agentd/main.py \
@@ -320,7 +320,7 @@ git commit -m "refactor(providers): extract transport factory from main.py modul
 - Consumes: `build_transport`, `resolve_model` (Task 1).
 - Produces: `ping_transport(transport, model, timeout_sec=30.0) -> None` (raises `ProviderValidationError` with an actionable message); `ping_provider(backend, model=None, credentials=None) -> str` (returns the resolved model). Route: `POST /v1/providers/validate` body `{"backend": str, "model": str|null, "credentials": {str: str}}` → `200 {"ok": true, "model": str}` or `200 {"ok": false, "error": str}` (always 200; `ok` is the signal — the wizard renders `error` verbatim).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # services/agentd-py/tests/test_provider_validate_route.py
@@ -403,12 +403,12 @@ def test_validate_missing_key_is_clean_error(
 > "build_transport", ...)` is the cleaner pytest idiom — use `monkeypatch` in the
 > real test, the shape above shows intent).
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd services/agentd-py && pytest tests/test_provider_validate_route.py`
 Expected: FAIL — `ModuleNotFoundError` / 404
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # services/agentd-py/agentd/providers/validate.py
@@ -479,12 +479,12 @@ class ProviderValidateRequest(BaseModel):
         return {"ok": True, "model": resolved}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd services/agentd-py && pytest tests/test_provider_validate_route.py`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Full suite + commit**
+- [x] **Step 5: Full suite + commit**
 
 Run: `cd services/agentd-py && pytest && ruff check . && mypy agentd`
 
@@ -513,7 +513,7 @@ Known, documented v1 limitation: the memory-harness summarizer keeps its
 construction-time transport until the next restart (it works — it's the previous
 provider). Note this in the route docstring.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # services/agentd-py/tests/test_provider_hotswap.py
@@ -594,12 +594,12 @@ def test_put_route_409_when_no_runtime(tmp_path: Path) -> None:
     assert client.get("/v1/config").json()["provider"] is None
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd services/agentd-py && pytest tests/test_provider_hotswap.py`
 Expected: FAIL — `ModuleNotFoundError: agentd.providers.runtime`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `DefaultReasoningEngine.set_provider` (in `reasoning/engine.py`, right after `__init__`):
 
@@ -711,12 +711,12 @@ and pass `provider_runtime=provider_runtime` to `build_router(...)` at `main.py:
 (The legacy `ChatAgent` holds a raw transport, not an engine — `getattr` returns
 `None` there; controller path is the live one.)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd services/agentd-py && pytest tests/test_provider_hotswap.py`
 Expected: PASS (4 tests)
 
-- [ ] **Step 5: Full suite + commit**
+- [x] **Step 5: Full suite + commit**
 
 Run: `cd services/agentd-py && pytest && ruff check . && mypy agentd`
 
@@ -740,7 +740,7 @@ git commit -m "feat(api): provider/model hot-swap — ProviderRuntime + PUT /v1/
 - Produces: `LockInfo` dataclass (`pid: int, port: int, started_at: float`); `write_lock(workspace, *, port, pid=None)`; `read_lock(workspace) -> LockInfo | None`; `clear_lock(workspace)`; `is_pid_alive(pid) -> bool`. Lock path: `<workspace>/.agentd/agentd.lock` (JSON). Extension (Task 10) reads/reaps the same file shape.
 - Activation: main.py writes the lock at startup **only when `AI_EDITOR_PORT` is set** (the extension always sets it; the dev script doesn't — no behavior change for the script flow).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # services/agentd-py/tests/test_runtime_lock.py
@@ -781,12 +781,12 @@ def test_is_pid_alive() -> None:
     assert is_pid_alive(2**22 + 12345) is False  # exceeds default pid_max
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd services/agentd-py && pytest tests/test_runtime_lock.py`
 Expected: FAIL — `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # services/agentd-py/agentd/runtime_lock.py
@@ -867,7 +867,7 @@ if _lock_port_raw.isdigit():
     app.add_event_handler("shutdown", _clear_runtime_lock)
 ```
 
-- [ ] **Step 4: Run tests, full suite, commit**
+- [x] **Step 4: Run tests, full suite, commit**
 
 Run: `cd services/agentd-py && pytest tests/test_runtime_lock.py && pytest`
 Expected: PASS; no new failures.
@@ -891,7 +891,7 @@ git commit -m "feat(runtime): per-workspace agentd.lock written at startup when 
 **Interfaces:**
 - Produces: `admin.upsert_server(path: Path, name: str, entry: dict) -> None` (RMW, preserves unknown top-level keys AND unknown per-entry keys, `${VAR}` stays verbatim; raises `ValueError` on invalid name — reuse `_NAME_RE` from `config.py`); `admin.remove_server(path, name) -> bool`; `admin.read_raw_servers(path) -> dict[str, dict]` (all entries, including `enabled: false` ones — the GET route lists everything). `McpConnectionManager.reconcile(configs, disabled: frozenset[str] = frozenset())`; `McpConnectionManager.reconnect(name: str, disabled: frozenset[str] = frozenset())` (stop handle + reconcile from loader); `McpConnectionManager.loader` property; `McpConfigLoader.config_path` property.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # services/agentd-py/tests/test_mcp_admin.py
@@ -975,12 +975,12 @@ async def test_reconcile_disabled_filters_and_reconnect(tmp_path: Path) -> None:
     await manager.shutdown()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd services/agentd-py && pytest tests/test_mcp_admin.py`
 Expected: FAIL — `ModuleNotFoundError: agentd.mcp.admin`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # services/agentd-py/agentd/mcp/admin.py
@@ -1062,7 +1062,7 @@ def remove_server(path: Path, name: str) -> bool:
         return self._path
 ```
 
-- [ ] **Step 4: Run tests, full suite, commit**
+- [x] **Step 4: Run tests, full suite, commit**
 
 Run: `cd services/agentd-py && pytest tests/test_mcp_admin.py && pytest && ruff check . && mypy agentd`
 
@@ -1089,7 +1089,7 @@ git commit -m "feat(mcp): admin RMW helpers + reconcile(disabled) + manual recon
   - `DELETE /v1/mcp/servers/{name}` body `{"disabled": [str]}` → remove + reconcile → GET payload; 404 if absent.
   - `POST /v1/mcp/servers/{name}/reconnect` body `{"disabled": [str]}` → `manager.reconnect` → GET payload.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # services/agentd-py/tests/test_mcp_routes.py
@@ -1169,12 +1169,12 @@ def test_delete_and_reconnect(tmp_path: Path) -> None:
     assert client.request("DELETE", "/v1/mcp/servers/web", json={}).status_code == 404
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd services/agentd-py && pytest tests/test_mcp_routes.py`
 Expected: FAIL — `build_router` has no `mcp_manager` param / 404s
 
-- [ ] **Step 3: Implement the routes**
+- [x] **Step 3: Implement the routes**
 
 In `routes.py` — signature `build_router(..., provider_runtime=None, mcp_manager=None)`, body models near the others:
 
@@ -1250,7 +1250,7 @@ class McpDisabledRequest(BaseModel):
 
 `main.py:396`: `build_router(store, orchestrator, workspace_manager, retrieval_client, _chat_agent, provider_runtime=provider_runtime, mcp_manager=_mcp_manager)`.
 
-- [ ] **Step 4: Run tests, full suite, commit**
+- [x] **Step 4: Run tests, full suite, commit**
 
 Run: `cd services/agentd-py && pytest tests/test_mcp_routes.py && pytest && ruff check . && mypy agentd`
 
@@ -1279,7 +1279,7 @@ same filtered set.
   Read per call — NOT cached with the mtime signature, so a restart isn't needed
   for tests but the env is process-stable in production anyway.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # services/agentd-py/tests/test_skills_disabled_env.py
@@ -1309,7 +1309,7 @@ def test_disabled_env_filters_catalog(
     assert sorted(m.name for m in loader.load_catalog()) == ["drop-me", "keep-me"]
 ```
 
-- [ ] **Step 2: Run → FAIL, implement, run → PASS**
+- [x] **Step 2: Run → FAIL, implement, run → PASS**
 
 Run: `cd services/agentd-py && pytest tests/test_skills_disabled_env.py`
 Implementation in `load_catalog` (apply the filter to the returned list AFTER the
@@ -1324,7 +1324,7 @@ def _disabled_names() -> frozenset[str]:
 and `return [m for m in catalog if m.name not in _disabled_names()]` at the
 existing return site(s).
 
-- [ ] **Step 3: Full suite + commit**
+- [x] **Step 3: Full suite + commit**
 
 Run: `cd services/agentd-py && pytest`
 
@@ -1384,7 +1384,7 @@ reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>
 
 Snake↔camel mapping happens in the client (backend sends `enabled_in_file`/`tool_count`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // apps/editor-client/test/settings-client.test.ts
@@ -1449,12 +1449,12 @@ describe("settings client methods", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `npm run -w @ai-editor/editor-client test`
 Expected: FAIL — methods don't exist
 
-- [ ] **Step 3: Implement schemas + methods**
+- [x] **Step 3: Implement schemas + methods**
 
 Add the schemas to `task-contracts.ts` (exported, near `SkillSummary`); extend
 `BackendConfigSchema` with the optional nullable `provider` object. Implement the
@@ -1475,12 +1475,12 @@ private static mapMcpList(raw: unknown): McpServerList {
 }
 ```
 
-- [ ] **Step 4: Run tests, build, typecheck**
+- [x] **Step 4: Run tests, build, typecheck**
 
 Run: `npm run -w @ai-editor/editor-client test && npm run -w @ai-editor/editor-client build && npm run typecheck`
 Expected: PASS / clean. (Build before extension typecheck — the extension types off `dist/index.d.ts`.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/editor-client/src
@@ -1520,7 +1520,7 @@ export function sha256Hex(data: Buffer): string;
 export function verifyChecksum(data: Buffer, expectedHex: string): void; // throws Error naming both digests
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // apps/vscode-extension/test/runtime-manifest.test.ts
@@ -1551,12 +1551,12 @@ describe("checksums", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `npm run -w ai-editor-vscode-extension test`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/vscode-extension/src/runtime/manifest.ts
@@ -1607,7 +1607,7 @@ export function verifyChecksum(data: Buffer, expectedHex: string): void {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify pass, commit**
+- [x] **Step 4: Run tests to verify pass, commit**
 
 Run: `npm run -w ai-editor-vscode-extension test`
 
@@ -1666,7 +1666,7 @@ Failure isolation: a failed component marks `failed` with the error message and
 uv failure marks agentd `failed: "uv unavailable"` without running it); `ok` is
 true only when nothing failed (skipped is not failed).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // apps/vscode-extension/test/runtime-installer.test.ts
@@ -1760,12 +1760,12 @@ describe("venvPython", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `npm run -w ai-editor-vscode-extension test`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `installer.ts`**
+- [x] **Step 3: Implement `installer.ts`**
 
 ```ts
 // apps/vscode-extension/src/runtime/installer.ts
@@ -1908,7 +1908,7 @@ export class RuntimeInstaller {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify pass, commit**
+- [x] **Step 4: Run tests to verify pass, commit**
 
 Run: `npm run -w ai-editor-vscode-extension test && npm run -w ai-editor-vscode-extension typecheck`
 
@@ -1997,7 +1997,7 @@ default-on flags `AI_EDITOR_CHAT_CONTROLLER=1`, `AI_EDITOR_SKILLS_ENABLED=1`,
    when the indexer binary is missing.
 6. Return `{ port, reused: false }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // apps/vscode-extension/test/runtime-backend-process.test.ts
@@ -2095,12 +2095,12 @@ describe("BackendProcess.start", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `npm run -w ai-editor-vscode-extension test`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `backend-process.ts`**
+- [x] **Step 3: Implement `backend-process.ts`**
 
 Implement exactly the interface + logic specified above. Structure:
 
@@ -2162,7 +2162,7 @@ export function buildBackendEnv(
 is `{ ...process.env, ...buildBackendEnv(...) } as Record<string, string>`. Keep both
 `ChildHandle`s; `stop()` kills watcher first, then backend.
 
-- [ ] **Step 4: Run tests to verify pass, commit**
+- [x] **Step 4: Run tests to verify pass, commit**
 
 Run: `npm run -w ai-editor-vscode-extension test && npm run -w ai-editor-vscode-extension typecheck`
 
@@ -2205,7 +2205,7 @@ export class RuntimeManager {
 }
 ```
 
-- [ ] **Step 1: Implement `vscode-runtime.ts`**
+- [x] **Step 1: Implement `vscode-runtime.ts`**
 
 Key decisions (all mechanical):
 - `runtimeDir = join(os.homedir(), ".ai-editor", "runtime")`.
@@ -2223,7 +2223,7 @@ Key decisions (all mechanical):
   `"releaseTag": "dev-unpinned"`); `install()` reads it.
 - `restart` = `stop()` + `startForWorkspace()` with fresh settings/env.
 
-- [ ] **Step 2: Wire `extension.ts`**
+- [x] **Step 2: Wire `extension.ts`**
 
 In `activate()`: construct `RuntimeManager`; register commands
 `aiEditor.runSetup` (opens the Task 12 wizard), `aiEditor.restartBackend`,
@@ -2254,7 +2254,7 @@ Also assemble `BackendSettings.extraEnv` here from the Task 15 VS Code settings:
 them — otherwise the Task 10 defaults stand), plus `skillsDisabled` from
 `manager.skillsDisabled()`.
 
-- [ ] **Step 3: Build + typecheck + commit**
+- [x] **Step 3: Build + typecheck + commit**
 
 Run: `npm run build && npm run typecheck && npm run test`
 Expected: clean; existing extension tests unaffected.
