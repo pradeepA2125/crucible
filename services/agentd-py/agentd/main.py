@@ -304,6 +304,7 @@ app.include_router(
         retrieval_client,
         _chat_agent,
         provider_runtime=provider_runtime,
+        mcp_manager=_mcp_manager,
     )
 )
 

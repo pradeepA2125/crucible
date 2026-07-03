@@ -63,6 +63,15 @@ class ProviderSwapRequest(BaseModel):
     credentials: dict[str, str] = {}
 
 
+class McpUpsertRequest(BaseModel):
+    entry: dict[str, object]
+    disabled: list[str] = []
+
+
+class McpDisabledRequest(BaseModel):
+    disabled: list[str] = []
+
+
 def _to_task_result(task: TaskRecord) -> TaskResult:
     selected_patch = None
     patch_candidates = []
@@ -208,11 +217,12 @@ def build_router(
     retrieval_client: RetrievalArtifactClient | None = None,
     chat_agent: object | None = None,
     provider_runtime: object | None = None,
+    mcp_manager: object | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
     @router.get("/config")
-    async def get_config() -> dict:
+    async def get_config() -> dict[str, object]:
         """Feature-flag capabilities for the frontend to gate task-path UI."""
         from agentd.chat.controller_factory import (
             is_controller_enabled,
@@ -239,7 +249,7 @@ def build_router(
         }
 
     @router.put("/config/provider")
-    async def put_config_provider(body: ProviderSwapRequest) -> dict:
+    async def put_config_provider(body: ProviderSwapRequest) -> dict[str, object]:
         """Hot-swap the reasoning provider/model in-process (applies next turn).
 
         Known v1 limitation: the memory-harness summarizer keeps its
@@ -260,7 +270,7 @@ def build_router(
         return {"ok": True, **result}
 
     @router.post("/providers/validate")
-    async def validate_provider(body: ProviderValidateRequest) -> dict:
+    async def validate_provider(body: ProviderValidateRequest) -> dict[str, object]:
         """One cheap ping against a (backend, model, credentials) triple.
 
         Always 200; `ok` is the signal — the setup wizard renders `error` verbatim.
@@ -273,6 +283,77 @@ def build_router(
         except ProviderValidationError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "model": resolved}
+
+    def _mcp_server_listing() -> dict[str, object]:
+        from agentd.mcp.admin import read_raw_servers
+
+        if mcp_manager is None:
+            return {"enabled": False, "servers": []}
+        statuses = {s.name: s for s in mcp_manager.statuses()}  # type: ignore[attr-defined]
+        servers = []
+        for name, entry in read_raw_servers(
+            mcp_manager.loader.config_path  # type: ignore[attr-defined]
+        ).items():
+            status = statuses.get(name)
+            transport = str(
+                entry.get("type") or ("stdio" if entry.get("command") else "http")
+            )
+            servers.append(
+                {
+                    "name": name,
+                    "transport": transport,
+                    "enabled_in_file": entry.get("enabled") is True,
+                    "state": status.state if status else "not_connected",
+                    "detail": getattr(status, "detail", None) if status else None,
+                    "tool_count": getattr(status, "tool_count", 0) if status else 0,
+                }
+            )
+        return {"enabled": True, "servers": servers}
+
+    @router.get("/mcp/servers")
+    async def list_mcp_servers() -> dict[str, object]:
+        return _mcp_server_listing()
+
+    @router.put("/mcp/servers/{name}")
+    async def put_mcp_server(name: str, body: McpUpsertRequest) -> dict[str, object]:
+        from agentd.mcp.admin import upsert_server
+
+        if mcp_manager is None:
+            raise HTTPException(status_code=409, detail="MCP is disabled")
+        try:
+            upsert_server(
+                mcp_manager.loader.config_path, name, body.entry  # type: ignore[attr-defined]
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await mcp_manager.reconcile(  # type: ignore[attr-defined]
+            mcp_manager.loader.load(),  # type: ignore[attr-defined]
+            disabled=frozenset(body.disabled),
+        )
+        return _mcp_server_listing()
+
+    @router.delete("/mcp/servers/{name}")
+    async def delete_mcp_server(name: str, body: McpDisabledRequest) -> dict[str, object]:
+        from agentd.mcp.admin import remove_server
+
+        if mcp_manager is None:
+            raise HTTPException(status_code=409, detail="MCP is disabled")
+        if not remove_server(mcp_manager.loader.config_path, name):  # type: ignore[attr-defined]
+            raise HTTPException(status_code=404, detail=f"no MCP server named {name!r}")
+        await mcp_manager.reconcile(  # type: ignore[attr-defined]
+            mcp_manager.loader.load(),  # type: ignore[attr-defined]
+            disabled=frozenset(body.disabled),
+        )
+        return _mcp_server_listing()
+
+    @router.post("/mcp/servers/{name}/reconnect")
+    async def reconnect_mcp_server(name: str, body: McpDisabledRequest) -> dict[str, object]:
+        if mcp_manager is None:
+            raise HTTPException(status_code=409, detail="MCP is disabled")
+        await mcp_manager.reconnect(  # type: ignore[attr-defined]
+            name, disabled=frozenset(body.disabled)
+        )
+        return _mcp_server_listing()
 
     @router.get("/skills")
     async def list_skills(workspace: str) -> dict:
