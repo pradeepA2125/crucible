@@ -57,6 +57,12 @@ class ProviderValidateRequest(BaseModel):
     credentials: dict[str, str] = {}
 
 
+class ProviderSwapRequest(BaseModel):
+    backend: str
+    model: str | None = None
+    credentials: dict[str, str] = {}
+
+
 def _to_task_result(task: TaskRecord) -> TaskResult:
     selected_patch = None
     patch_candidates = []
@@ -201,11 +207,12 @@ def build_router(
     workspace_manager: ShadowWorkspaceManager,
     retrieval_client: RetrievalArtifactClient | None = None,
     chat_agent: object | None = None,
+    provider_runtime: object | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
     @router.get("/config")
-    async def get_config() -> dict[str, bool]:
+    async def get_config() -> dict:
         """Feature-flag capabilities for the frontend to gate task-path UI."""
         from agentd.chat.controller_factory import (
             is_controller_enabled,
@@ -221,7 +228,36 @@ def build_router(
             "memory_enabled": is_memory_enabled(),
             "skills_enabled": is_skills_enabled(),
             "mcp_enabled": is_mcp_enabled(),
+            "provider": (
+                {
+                    "backend": provider_runtime.backend,  # type: ignore[attr-defined]
+                    "model": provider_runtime.model,  # type: ignore[attr-defined]
+                }
+                if provider_runtime is not None
+                else None
+            ),
         }
+
+    @router.put("/config/provider")
+    async def put_config_provider(body: ProviderSwapRequest) -> dict:
+        """Hot-swap the reasoning provider/model in-process (applies next turn).
+
+        Known v1 limitation: the memory-harness summarizer keeps its
+        construction-time transport until the next restart.
+        """
+        from agentd.providers.validate import ProviderValidationError
+
+        if provider_runtime is None:
+            raise HTTPException(status_code=409, detail="provider hot-swap unavailable")
+        try:
+            result = await provider_runtime.swap(  # type: ignore[attr-defined]
+                backend=body.backend,
+                model=body.model,
+                credentials=body.credentials or None,
+            )
+        except (ProviderValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, **result}
 
     @router.post("/providers/validate")
     async def validate_provider(body: ProviderValidateRequest) -> dict:

@@ -264,7 +264,31 @@ if _mcp_manager is not None:
 
 warn_if_incoherent_flags(logging.getLogger("agentd.startup"))
 
-app.include_router(build_router(store, orchestrator, workspace_manager, retrieval_client, _chat_agent))
+# Hot-swap seam: one ProviderRuntime holding every live DefaultReasoningEngine.
+# The legacy ChatAgent holds a raw transport (not an engine) — getattr yields None
+# there; the controller path is the live one.
+from agentd.providers.runtime import ProviderRuntime
+
+provider_runtime: ProviderRuntime | None = None
+if reasoning_backend != "scripted":
+    _engines = [reasoning_engine]
+    _ctrl_engine = getattr(_chat_agent, "_reasoning", None)
+    if isinstance(_ctrl_engine, DefaultReasoningEngine) and _ctrl_engine is not reasoning_engine:
+        _engines.append(_ctrl_engine)
+    provider_runtime = ProviderRuntime(
+        backend=reasoning_backend, model=_chat_model, engines=_engines
+    )
+
+app.include_router(
+    build_router(
+        store,
+        orchestrator,
+        workspace_manager,
+        retrieval_client,
+        _chat_agent,
+        provider_runtime=provider_runtime,
+    )
+)
 
 
 

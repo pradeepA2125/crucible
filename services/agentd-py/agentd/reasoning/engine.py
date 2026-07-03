@@ -76,6 +76,13 @@ class DefaultReasoningEngine(ReasoningEngine):
         self._project_instructions_loader = project_instructions_loader
         self._skill_catalog_loader = skill_catalog_loader
 
+    def set_provider(self, *, model: str, transport: ModelJsonTransport) -> None:
+        """Hot-swap seam (PUT /v1/config/provider). Safe between turns: in-flight
+        coroutines already hold self._transport locally; the next call reads the
+        new pair. Loaders (instructions/skills) are untouched."""
+        self._model = model
+        self._transport = transport
+
     async def create_plan(
         self,
         task: TaskRecord,
