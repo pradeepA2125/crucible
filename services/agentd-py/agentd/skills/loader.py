@@ -7,6 +7,7 @@ warning, never raising into a turn.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -20,6 +21,13 @@ _NAME_MAX = 64
 _DESC_MAX = 1024
 
 
+def _disabled_names() -> frozenset[str]:
+    # Read per call, AFTER the mtime-cached scan — the cache stays name-agnostic
+    # and a toggle (new env at next managed spawn) needs no cache invalidation.
+    raw = os.getenv("AI_EDITOR_SKILLS_DISABLED", "")
+    return frozenset(n.strip() for n in raw.split(",") if n.strip())
+
+
 class SkillCatalogLoader:
     SKILLS_SUBDIR = Path(".ai-editor") / "skills"
 
@@ -30,6 +38,7 @@ class SkillCatalogLoader:
         self._cached: list[SkillManifest] | None = None
 
     def load_catalog(self) -> list[SkillManifest]:
+        disabled = _disabled_names()
         with self._lock:
             try:
                 mtime_ns = self._root.stat().st_mtime_ns
@@ -39,14 +48,23 @@ class SkillCatalogLoader:
                 return self._cached
             except OSError as exc:
                 logger.warning("[skills] cannot stat %s: %s", self._root, exc)
-                return self._cached if self._cached is not None else []
+                catalog = self._cached if self._cached is not None else []
+                return self._filter(catalog, disabled)
 
-            if self._cached_mtime_ns == mtime_ns and self._cached is not None:
-                return self._cached
+            if self._cached_mtime_ns != mtime_ns or self._cached is None:
+                self._cached = self._scan()
+                self._cached_mtime_ns = mtime_ns
+            return self._filter(self._cached, disabled)
 
-            self._cached = self._scan()
-            self._cached_mtime_ns = mtime_ns
-            return self._cached
+    @staticmethod
+    def _filter(
+        catalog: list[SkillManifest], disabled: frozenset[str]
+    ) -> list[SkillManifest]:
+        # No filter active → hand back the cached list itself (identity is the
+        # documented no-re-scan signal for callers and tests).
+        if not disabled:
+            return catalog
+        return [m for m in catalog if m.name not in disabled]
 
     def _scan(self) -> list[SkillManifest]:
         out: list[SkillManifest] = []
