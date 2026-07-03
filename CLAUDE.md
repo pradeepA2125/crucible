@@ -272,6 +272,111 @@ to full EDIT mode for READMEs/diagrams/data. Flag-gated, **default OFF**
 - **Prompt:** `_DOC_WRITE_BLOCK` auto-appends when a `write_doc` tool def is present
   (the `_MCP_BLOCK` detection pattern — no new parameter).
 
+#### P4 — Install, managed runtime & settings UI (copilot-parity roadmap)
+
+A new user goes from zero → working chat turn via a VSIX install + first-run wizard:
+the extension provisions the whole runtime (uv-managed agentd, indexer, ripgrep,
+LSPs), spawns/supervises the backend per workspace, and a settings webview
+round-trips provider/MCP/skills/policy config. Spec/plan:
+`docs/superpowers/specs|plans/2026-07-02-p4-install-runtime-settings*`.
+
+- **Provider factory + validate + hot-swap (backend):** `agentd/providers/factory.py`
+  (`build_transport(backend, credentials=None)`, `resolve_model`, `default_model`,
+  `PROVIDER_KEY_ENV`) is the one place a `(backend, credentials)` pair becomes a
+  transport — used at app startup, by validate, and by hot-swap; request-supplied
+  credentials override process env and are held only in the transport object
+  (never persisted/logged). `POST /v1/providers/validate` (`agentd/providers/validate.py`)
+  pings a provider (`generate_text` with a 30s timeout) and always returns
+  `200 {"ok": bool, "model"?, "error"?}` — never a 500, so the wizard/panel can render
+  the provider's own error message verbatim. `PUT /v1/config/provider`
+  (`agentd/providers/runtime.py::ProviderRuntime.swap`) validates first, then mutates
+  every live `DefaultReasoningEngine` (orchestrator + chat controller) in place —
+  applies **from the next turn**, no restart. Known v1 limitation: the memory-harness
+  summarizer keeps its construction-time transport until process restart. `GET /v1/config`
+  reports `provider: {backend, model} | null`.
+- **Startup lockfile:** `agentd/runtime_lock.py` writes `<workspace>/.agentd/agentd.lock`
+  (JSON `{pid, port, started_at}`) at startup **only when `AI_EDITOR_PORT` is set**
+  (managed spawns; the dev `start-backend.sh` flow is unaffected). The extension reads/reaps
+  this file to decide "reuse the still-running backend" vs. "spawn a new one" — one
+  workspace, one backend, by construction.
+- **MCP admin routes:** `agentd/mcp/admin.py` (`upsert_server`/`remove_server`/`read_raw_servers`,
+  read-modify-write over `.ai-editor/mcp.json`, preserves unknown keys, `${VAR}` refs stay
+  verbatim) + `McpConnectionManager.reconcile(configs, disabled=frozenset())` /
+  `.reconnect(name, disabled=...)`. Routes (soft-gated: no manager → `GET` returns
+  `{"enabled": false, "servers": []}`, writes 409): `GET /v1/mcp/servers`,
+  `PUT /v1/mcp/servers/{name}` (upsert), `DELETE /v1/mcp/servers/{name}`,
+  `POST /v1/mcp/servers/{name}/reconnect`. Enable/disable is **user-local**
+  (extension `globalState`, passed as `disabled` on every reconcile-triggering call) —
+  the shareable `mcp.json` file is never touched by a toggle.
+- **`AI_EDITOR_SKILLS_DISABLED`** (comma-separated skill names): `SkillCatalogLoader.load_catalog()`
+  filters these out after the mtime-cached scan (so every consumer — controller prompt,
+  `read_skill`, `/v1/skills`, forced-load — sees the same filtered set). Read per call, not
+  cached with the mtime signature.
+- **Extension runtime core (vscode-free, `apps/vscode-extension/src/runtime/`):**
+  `manifest.ts` (`RuntimeManifest`/`PlatformKey` types, `platformKey()`, `sha256Hex`/`verifyChecksum`) →
+  `installer.ts` (`RuntimeInstaller.installAll()`: uv → agentd (venv + `uv pip install`) →
+  indexer → ripgrep → lsps, in dependency order; resume via `install-state.json`; a failed
+  component marks dependents `failed` without aborting independent ones; missing Node.js
+  degrades `lsps` to `skipped` with a "code-graph edges degraded" detail, never a hard failure) →
+  `backend-process.ts` (`BackendProcess.start()`: reuse a live locked backend via the lockfile,
+  else reap-and-spawn `venvPython -m uvicorn agentd.main:app --port <port>` with
+  `buildBackendEnv(...)`, poll `/health` up to 60s, pre-warm the index via
+  `POST /v1/index/build`, then spawn the indexer watcher). `runtime/vscode-runtime.ts::RuntimeManager`
+  is the thin vscode wiring on top: install root `~/.ai-editor/runtime`, provider
+  backend/model in `globalState` + key in `SecretStorage`, per-workspace `BackendProcess`
+  instances, status bar (`$(rocket) starting…` → `✓ :<port>` → `$(error) failed`), **crash
+  backoff** (2s/4s/8s, max 3 attempts, counter resets after 5 min healthy), and an
+  **upgrade prompt** when the bundled `resources/runtime-manifest.json`'s `releaseTag`
+  differs from the installed one.
+- **First-run setup wizard** (`src/setup-data.ts` + `webview-ui/src/setup/SetupApp.tsx` +
+  `src/setup-panel.ts`, command `aiEditor.runSetup`): four-step flow
+  welcome → install (per-component progress + Retry) → provider picker (9 providers,
+  defaults mirroring `factory.py::_DEFAULT_MODEL`) → done. `saveAndStart` order is
+  install → start backend → validate-via-route → report, because cloud provider
+  validation is impossible before a backend exists to proxy the ping.
+- **Settings panel** (`src/settings-data.ts` + `webview-ui/src/settings/SettingsApp.tsx` +
+  `src/settings-panel.ts`, command `aiEditor.openSettingsPanel`, also the status-bar
+  command): one `createSettingsHandler` rebuilds a full `SettingsState` snapshot after
+  every action. **Provider** section hot-swaps (validate → store secret → `PUT
+  /v1/config/provider`; failure aborts before calling setProvider) and persists the
+  choice to `globalState` for the next managed restart (`RuntimeManager.saveProvider`,
+  called from the panel's `setProvider` wrapper — separate from `storeProviderKey`,
+  which the panel's `storeSecret` dep uses for the SecretStorage-only write).
+  **MCP servers** section: list/add/remove/reconnect/enable-toggle (toggle both updates
+  the user-local disabled list AND calls `reconnectMcpServer` — no restart). **Skills**
+  and **policy/memory** env-flag changes flag `restartRequired: true`, applied via the
+  **Restart backend** button (`RuntimeManager.restart`). **Runtime** section shows
+  `runtime.json` versions.
+- **MCP tier-1 QuickPick commands** (`src/mcp-quickpick.ts::buildMcpEntry`, pure —
+  stdio env vars become `${VAR}` refs; http/sse's first env var becomes an
+  `Authorization: Bearer ${VAR}` header, the GitHub-server convention): `aiEditor.mcpAddServer`
+  chains QuickPick(transport) → InputBox(command/URL) → InputBox(name) →
+  InputBox(env vars) → `upsertMcpServer`; `aiEditor.mcpListServers` → QuickPick of
+  servers (state dot + tool count) → Enable/Disable/Reconnect/Remove.
+- **GOTCHA — npm package renamed.** `apps/vscode-extension/package.json`'s `name` moved
+  from `@ai-editor/vscode-extension` to **`ai-editor-vscode-extension`**: `vsce` rejects
+  `@`/`/` in the extension identity (only surfaced once Task 15 added real marketplace
+  fields and ran `vsce ls --tree`). Every `npm run -w @ai-editor/vscode-extension ...`
+  reference in this repo's live docs/scripts was updated — use the new unscoped name
+  going forward. `apps/vscode-extension/.vscodeignore` was added at the same time
+  (previously absent — without it `vsce package` would bundle `src/`, `test/`,
+  `webview-ui/src/`, etc.). `publisher`/`icon`/`repository`/`categories` are placeholder
+  marketplace fields (real branding is a later phase).
+- **Release pipeline:** `scripts/release/make_manifest.py::build_manifest` scans a dist
+  dir for conventionally-named artifacts (`ai-editor-indexer-<platform>[.exe]`,
+  `rg-<platform>[.exe]`, `uv-<platform>[.exe]`, `ai_editor_agentd-<ver>-py3-none-any.whl`),
+  sha256-hashes each, and emits the `RuntimeManifest` JSON (platform-outer iteration order
+  so a missing-artifact `FileNotFoundError` names a stable first offender).
+  `scripts/release/fetch_tools.py::stage(archive_bytes, kind, platform)` is a pure
+  tar.gz/zip member-extractor (searches by basename, not a hardcoded nested path) for
+  restaging official uv/ripgrep release archives under our naming convention — network
+  I/O is confined to `main()`. `.github/workflows/release.yml` (tag-triggered `v*`):
+  test → per-OS indexer matrix build → fetch-tools → package (wheel + manifest.json +
+  `vsce package`) → attach to the GitHub Release → `vsce publish` (needs a `VSCE_PAT`
+  repo secret). Exit-smoke criteria (fresh `~/.ai-editor`-less machine, wizard → chat →
+  settings hot-swap/MCP-add/policy-restart → lockfile reuse on reactivation) are
+  documented in the plan but require a live VS Code session to actually run.
+
 SSE event types from the chat message endpoint:
 
 | Event | Description |
@@ -410,6 +515,8 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `AI_EDITOR_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
 - `AI_EDITOR_DOC_WRITE_ENABLED` — offer the `write_doc` per-write-gated docs tool to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "write_doc".
 - `AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC` — seconds to wait for the doc_write gate decision; `0` (default) = wait forever; timeout → reject.
+- `AI_EDITOR_PORT` — when set, writes `<workspace>/.agentd/agentd.lock` (`{pid, port, started_at}`) at startup and clears it at shutdown. Only the extension's managed spawn sets this; `start-backend.sh`/manual runs don't, so they never write a lockfile. See "P4 — Install, managed runtime & settings UI".
+- `AI_EDITOR_SKILLS_DISABLED` — comma-separated skill names to exclude from the catalog (user-local disable, set by the extension's settings panel; not cached with the catalog's mtime signature).
 - **`start-backend.sh` defaults ON (2026-07-02):** `AI_EDITOR_CHAT_CONTROLLER`, `AI_EDITOR_SKILLS_ENABLED`, `AI_EDITOR_MCP_ENABLED`, `AI_EDITOR_DOC_WRITE_ENABLED` (+ `AI_EDITOR_SEMANTIC_RETRIEVAL=true`) — the engine defaults above stay OFF, but the script opts in (`${VAR:-1}`, override via env to opt out; same pattern as the scope-policy note). The repo-root `.env` sets the same flags for manual runs.
 - Provider API keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, etc.
 
@@ -451,9 +558,13 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `AI_EDITOR_VALIDATION_COMMANDS_JSON` — JSON array of validation commands to run after execution; overrides auto-detection
 
 ### VS Code extension settings (package.json contributes.configuration)
-- `aiEditor.backendBaseUrl` — default `http://localhost:8000`
+- `aiEditor.backendBaseUrl` — default `http://127.0.0.1:8000`. Leave default for the managed backend; set explicitly to attach to a dev backend (e.g. `start-backend.sh`) instead — an explicit value always wins over managed spawn.
 - `aiEditor.defaultMode` — `inline | file_edit | project_edit | autonomous`
 - `aiEditor.pollIntervalMs` — default `2000`
+- `aiEditor.managedRuntime.enabled` — default `true`. Kill-switch back to the pure dev flow (disable to skip install/spawn entirely and require an explicit `backendBaseUrl`).
+- `aiEditor.policy.shell` — `ask | allow_all`, default `ask`. Becomes `AI_EDITOR_SHELL_POLICY` in the managed spawn's env only when explicitly set (otherwise `buildBackendEnv`'s default of `ask` stands).
+- `aiEditor.policy.scope` — `strict | ask | auto`, default `ask`. Becomes `AI_EDITOR_SCOPE_POLICY`, same explicit-only override rule.
+- `aiEditor.memory.enabled` / `aiEditor.memory.reranker` — booleans, default `false`. Become `AI_EDITOR_MEMORY_ENABLED` / `AI_EDITOR_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
 
 ---
 
