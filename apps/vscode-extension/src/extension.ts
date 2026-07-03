@@ -10,6 +10,7 @@ import {
 } from "./controller.js";
 import { openReviewDiff } from "./review-diff.js";
 import { RuntimeManager } from "./runtime/vscode-runtime.js";
+import { SetupPanel } from "./setup-panel.js";
 import { VscodeSessionStore } from "./vscode-session-store.js";
 import {
   checkBackendHealth,
@@ -342,6 +343,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         controller.memoryThreadId(),
         controller.memoryWorkspacePath()
       ).open();
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiEditor.runSetup", () => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!folder) {
+        void vscode.window.showWarningMessage("Open a folder to run setup.");
+        return;
+      }
+      new SetupPanel(context.extensionUri, runtimeManager, folder, clientFactory, () => {
+        void controller.openChat();
+      }).open();
     })
   );
   // Re-attach message handler when VS Code restores the chat panel after a
