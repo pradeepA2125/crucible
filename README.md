@@ -31,9 +31,9 @@ npm run build
 
 ### VS Code extension package
 ```bash
-npm run -w @ai-editor/vscode-extension typecheck
-npm run -w @ai-editor/vscode-extension test
-npm run -w @ai-editor/vscode-extension build
+npm run -w ai-editor-vscode-extension typecheck
+npm run -w ai-editor-vscode-extension test
+npm run -w ai-editor-vscode-extension build
 ```
 
 ### Python backend

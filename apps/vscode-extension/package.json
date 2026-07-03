@@ -1,6 +1,18 @@
 {
-  "name": "@ai-editor/vscode-extension",
+  "name": "ai-editor-vscode-extension",
+  "displayName": "AI Editor",
+  "description": "Agentic AI pair programmer: spec-first task planning, shadow-workspace patch review, and an inline chat controller — with a managed local runtime (no separate backend setup required).",
   "version": "0.1.0",
+  "publisher": "ai-editor",
+  "icon": "resources/icon.png",
+  "categories": [
+    "AI",
+    "Programming Languages"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pradeepA2125/shadow-forge.git"
+  },
   "private": true,
   "type": "module",
   "main": "./dist/extension.js",
@@ -16,6 +28,11 @@
     "onCommand:aiEditor.attachToTask",
     "onCommand:aiEditor.openChat",
     "onCommand:aiEditor.openMemoryPanel",
+    "onCommand:aiEditor.runSetup",
+    "onCommand:aiEditor.openSettingsPanel",
+    "onCommand:aiEditor.restartBackend",
+    "onCommand:aiEditor.mcpAddServer",
+    "onCommand:aiEditor.mcpListServers",
     "onWebviewPanel:aiEditorChat"
   ],
   "contributes": {
@@ -51,6 +68,26 @@
       {
         "command": "aiEditor.openMemoryPanel",
         "title": "AI Editor: Open Memory Inspector"
+      },
+      {
+        "command": "aiEditor.runSetup",
+        "title": "AI Editor: Run Setup"
+      },
+      {
+        "command": "aiEditor.openSettingsPanel",
+        "title": "AI Editor: Open Settings"
+      },
+      {
+        "command": "aiEditor.restartBackend",
+        "title": "AI Editor: Restart Backend"
+      },
+      {
+        "command": "aiEditor.mcpAddServer",
+        "title": "AI Editor: Add MCP Server"
+      },
+      {
+        "command": "aiEditor.mcpListServers",
+        "title": "AI Editor: List MCP Servers"
       }
     ],
     "menus": {
@@ -71,7 +108,7 @@
         "aiEditor.backendBaseUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8000",
-          "description": "Base URL for the running agentd-py backend service."
+          "description": "Leave default for the managed backend; set explicitly to attach to a dev backend (e.g. one started via start-backend.sh)."
         },
         "aiEditor.defaultMode": {
           "type": "string",
@@ -89,6 +126,40 @@
           "default": 1000,
           "minimum": 250,
           "description": "Polling interval used while a task is running."
+        },
+        "aiEditor.managedRuntime.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Provision and spawn the AI Editor runtime (backend, indexer, ripgrep, language servers) automatically per workspace. Disable to fall back to the pure dev flow (start-backend.sh + an explicit aiEditor.backendBaseUrl)."
+        },
+        "aiEditor.policy.shell": {
+          "type": "string",
+          "default": "ask",
+          "enum": [
+            "ask",
+            "allow_all"
+          ],
+          "description": "Shell command policy for the execution agent's run_command tool. 'ask' surfaces an approval card for every command; 'allow_all' skips the gate."
+        },
+        "aiEditor.policy.scope": {
+          "type": "string",
+          "default": "ask",
+          "enum": [
+            "strict",
+            "ask",
+            "auto"
+          ],
+          "description": "Scope-extension policy for out-of-plan file writes. 'ask' pauses for approval; 'strict' auto-rejects; 'auto' silently approves and audit-logs."
+        },
+        "aiEditor.memory.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the cross-session memory harness (compaction, recall, consolidation). Requires a managed restart to take effect."
+        },
+        "aiEditor.memory.reranker": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the cross-encoder reranker for memory recall (requires aiEditor.memory.enabled). Requires a managed restart to take effect."
         }
       }
     }

@@ -152,7 +152,7 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
   (
     cd "$ROOT"
     npm run -w @ai-editor/editor-client build
-    npm run -w @ai-editor/vscode-extension build
+    npm run -w ai-editor-vscode-extension build
   )
 fi
 

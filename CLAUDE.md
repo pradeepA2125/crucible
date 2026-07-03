@@ -25,8 +25,8 @@ npm run typecheck    # tsc --noEmit across all workspaces
 ### TypeScript (workspace-scoped)
 ```bash
 npm run -w @ai-editor/editor-client test
-npm run -w @ai-editor/vscode-extension test
-npm run -w @ai-editor/vscode-extension typecheck
+npm run -w ai-editor-vscode-extension test
+npm run -w ai-editor-vscode-extension typecheck
 ```
 
 ### Python backend

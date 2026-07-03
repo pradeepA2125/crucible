@@ -83,7 +83,7 @@ if [[ "$SKIP_NPM" != "1" ]]; then
     cd "$WORKSPACE"
     npm install
     npm run -w @ai-editor/editor-client build
-    npm run -w @ai-editor/vscode-extension build
+    npm run -w ai-editor-vscode-extension build
   )
 
   test -f "$WORKSPACE/apps/editor-client/dist/index.js"

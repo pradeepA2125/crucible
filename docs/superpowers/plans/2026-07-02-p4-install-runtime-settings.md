@@ -1553,7 +1553,7 @@ describe("checksums", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/vscode-extension test`
+Run: `npm run -w ai-editor-vscode-extension test`
 Expected: FAIL — module not found
 
 - [ ] **Step 3: Implement**
@@ -1609,7 +1609,7 @@ export function verifyChecksum(data: Buffer, expectedHex: string): void {
 
 - [ ] **Step 4: Run tests to verify pass, commit**
 
-Run: `npm run -w @ai-editor/vscode-extension test`
+Run: `npm run -w ai-editor-vscode-extension test`
 
 ```bash
 git add apps/vscode-extension/src/runtime
@@ -1762,7 +1762,7 @@ describe("venvPython", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/vscode-extension test`
+Run: `npm run -w ai-editor-vscode-extension test`
 Expected: FAIL — module not found
 
 - [ ] **Step 3: Implement `installer.ts`**
@@ -1910,7 +1910,7 @@ export class RuntimeInstaller {
 
 - [ ] **Step 4: Run tests to verify pass, commit**
 
-Run: `npm run -w @ai-editor/vscode-extension test && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `npm run -w ai-editor-vscode-extension test && npm run -w ai-editor-vscode-extension typecheck`
 
 ```bash
 git add apps/vscode-extension/src/runtime
@@ -2097,7 +2097,7 @@ describe("BackendProcess.start", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/vscode-extension test`
+Run: `npm run -w ai-editor-vscode-extension test`
 Expected: FAIL — module not found
 
 - [ ] **Step 3: Implement `backend-process.ts`**
@@ -2164,7 +2164,7 @@ is `{ ...process.env, ...buildBackendEnv(...) } as Record<string, string>`. Keep
 
 - [ ] **Step 4: Run tests to verify pass, commit**
 
-Run: `npm run -w @ai-editor/vscode-extension test && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `npm run -w ai-editor-vscode-extension test && npm run -w ai-editor-vscode-extension typecheck`
 
 ```bash
 git add apps/vscode-extension/src/runtime
@@ -2385,7 +2385,7 @@ describe("createSetupHandler", () => {
 
 - [x] **Step 2: Run to verify failure, then implement `setup-data.ts`**
 
-Run: `npm run -w @ai-editor/vscode-extension test` → FAIL. Implement the handler as a
+Run: `npm run -w ai-editor-vscode-extension test` → FAIL. Implement the handler as a
 plain switch over `msg.type` calling deps and posting the mapped results (every
 deps call in try/catch → `setup/error`).
 
@@ -2685,7 +2685,7 @@ git commit -m "feat(mcp): tier-1 QuickPick add/list commands over the management
 **Files:**
 - Modify: `apps/vscode-extension/package.json`
 
-- [ ] **Step 1: Add contributions**
+- [x] **Step 1: Add contributions**
 
 `contributes.commands`: `aiEditor.runSetup` ("AI Editor: Run Setup"),
 `aiEditor.openSettingsPanel` ("AI Editor: Open Settings"),
@@ -2703,7 +2703,7 @@ kill-switch back to the pure dev flow); add the env-flag settings the panel and
 (`resources/icon.png` — commit a simple placeholder; branding is C), `categories`
 (`["AI", "Programming Languages"]`), `repository`.
 
-- [ ] **Step 2: Verify + commit**
+- [x] **Step 2: Verify + commit**
 
 Run: `npm run build && npm run typecheck` and `npx vsce ls --tree` (from
 `apps/vscode-extension`; requires `vsce` — `npm i -D @vscode/vsce` if absent) to
