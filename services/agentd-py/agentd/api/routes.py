@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from agentd.domain.models import (
     AbortRequest,
@@ -48,6 +49,12 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 # controller's KV-cache prefix, large and with no UI consumer (and a strict-Zod
 # client would reject the unexpected keys).
 _THREAD_INTERNAL_FIELDS = {"controller_conversation_history", "controller_retrieval_seed"}
+
+
+class ProviderValidateRequest(BaseModel):
+    backend: str
+    model: str | None = None
+    credentials: dict[str, str] = {}
 
 
 def _to_task_result(task: TaskRecord) -> TaskResult:
@@ -215,6 +222,21 @@ def build_router(
             "skills_enabled": is_skills_enabled(),
             "mcp_enabled": is_mcp_enabled(),
         }
+
+    @router.post("/providers/validate")
+    async def validate_provider(body: ProviderValidateRequest) -> dict:
+        """One cheap ping against a (backend, model, credentials) triple.
+
+        Always 200; `ok` is the signal — the setup wizard renders `error` verbatim.
+        Credentials are request-scoped and never persisted or logged.
+        """
+        from agentd.providers.validate import ProviderValidationError, ping_provider
+
+        try:
+            resolved = await ping_provider(body.backend, body.model, body.credentials)
+        except ProviderValidationError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "model": resolved}
 
     @router.get("/skills")
     async def list_skills(workspace: str) -> dict:
