@@ -299,11 +299,36 @@ export const BackendConfigSchema = z.object({
   memoryEnabled: z.boolean(),
   skillsEnabled: z.boolean(),
   mcpEnabled: z.boolean(),
+  // Current reasoning provider (null when the backend runs scripted / pre-P4).
+  provider: z.object({ backend: z.string(), model: z.string() }).nullable().optional(),
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;
 
 export const SkillSummarySchema = z.object({ name: z.string(), description: z.string() });
 export type SkillSummary = z.infer<typeof SkillSummarySchema>;
+
+// ── Settings surfaces (P4): provider validation + MCP server management.
+export const ProviderValidateResultSchema = z.object({
+  ok: z.boolean(),
+  model: z.string().optional(),
+  error: z.string().optional(),
+});
+export type ProviderValidateResult = z.infer<typeof ProviderValidateResultSchema>;
+
+export const McpServerViewSchema = z.object({
+  name: z.string(),
+  transport: z.string(),
+  enabledInFile: z.boolean(),
+  state: z.string(),
+  detail: z.string().nullable(),
+  toolCount: z.number(),
+});
+export const McpServerListSchema = z.object({
+  enabled: z.boolean(),
+  servers: z.array(McpServerViewSchema),
+});
+export type McpServerView = z.infer<typeof McpServerViewSchema>;
+export type McpServerList = z.infer<typeof McpServerListSchema>;
 
 // ── Memory inspector (Phase 3-B). Read-only views of the recall trace + memory store.
 // camelCase; the HttpBackendClient maps the snake_case route payloads into these.
@@ -393,6 +418,13 @@ export interface BackendTaskClient {
   }): Promise<MemoryView[]>;
   getSupersedeChain(memoryId: string): Promise<MemoryView[]>;
   listSkills(workspace: string): Promise<SkillSummary[]>;
+  // Settings surfaces (P4): provider validation/hot-swap + MCP server management.
+  validateProvider(req: { backend: string; model?: string; credentials?: Record<string, string> }): Promise<ProviderValidateResult>;
+  setProvider(req: { backend: string; model?: string; credentials?: Record<string, string> }): Promise<{ backend: string; model: string }>;
+  listMcpServers(): Promise<McpServerList>;
+  upsertMcpServer(name: string, entry: Record<string, unknown>, disabled: string[]): Promise<McpServerList>;
+  deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
+  reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
   sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[] }): AsyncIterable<StreamEvent>;
   // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
   // produce live events); the per-edit gate is a plain JSON ack (its continuation rides

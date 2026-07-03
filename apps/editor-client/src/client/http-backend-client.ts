@@ -19,6 +19,10 @@ import {
   type MemoryView,
   SkillSummarySchema,
   type SkillSummary,
+  ProviderValidateResultSchema,
+  type ProviderValidateResult,
+  McpServerListSchema,
+  type McpServerList,
   type BackendTaskClient,
   type ThreadLiveState,
   type PatchStreamEvent,
@@ -568,6 +572,7 @@ export class HttpBackendClient implements BackendTaskClient {
       memoryEnabled: raw["memory_enabled"] ?? false,
       skillsEnabled: raw["skills_enabled"] ?? false,
       mcpEnabled: raw["mcp_enabled"] ?? false,
+      provider: raw["provider"] ?? null,
     });
   }
 
@@ -576,6 +581,89 @@ export class HttpBackendClient implements BackendTaskClient {
       `/v1/skills?workspace=${encodeURIComponent(workspace)}`
     ) as { skills?: unknown[] };
     return (raw.skills ?? []).map((s) => SkillSummarySchema.parse(s));
+  }
+
+  async validateProvider(req: {
+    backend: string;
+    model?: string;
+    credentials?: Record<string, string>;
+  }): Promise<ProviderValidateResult> {
+    const raw = await this.fetchJson("/v1/providers/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        backend: req.backend,
+        model: req.model ?? null,
+        credentials: req.credentials ?? {},
+      }),
+    });
+    return ProviderValidateResultSchema.parse(raw);
+  }
+
+  async setProvider(req: {
+    backend: string;
+    model?: string;
+    credentials?: Record<string, string>;
+  }): Promise<{ backend: string; model: string }> {
+    const raw = await this.fetchJson("/v1/config/provider", {
+      method: "PUT",
+      body: JSON.stringify({
+        backend: req.backend,
+        model: req.model ?? null,
+        credentials: req.credentials ?? {},
+      }),
+    }) as Record<string, unknown>;
+    return { backend: String(raw["backend"]), model: String(raw["model"]) };
+  }
+
+  async listMcpServers(): Promise<McpServerList> {
+    const raw = await this.fetchJson("/v1/mcp/servers");
+    return HttpBackendClient.mapMcpList(raw);
+  }
+
+  async upsertMcpServer(
+    name: string,
+    entry: Record<string, unknown>,
+    disabled: string[]
+  ): Promise<McpServerList> {
+    const raw = await this.fetchJson(`/v1/mcp/servers/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ entry, disabled }),
+    });
+    return HttpBackendClient.mapMcpList(raw);
+  }
+
+  async deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList> {
+    const raw = await this.fetchJson(`/v1/mcp/servers/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ disabled }),
+    });
+    return HttpBackendClient.mapMcpList(raw);
+  }
+
+  async reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList> {
+    const raw = await this.fetchJson(
+      `/v1/mcp/servers/${encodeURIComponent(name)}/reconnect`,
+      { method: "POST", body: JSON.stringify({ disabled }) }
+    );
+    return HttpBackendClient.mapMcpList(raw);
+  }
+
+  private static mapMcpList(raw: unknown): McpServerList {
+    const wire = raw as {
+      enabled?: boolean;
+      servers?: Record<string, unknown>[];
+    };
+    return McpServerListSchema.parse({
+      enabled: wire.enabled ?? false,
+      servers: (wire.servers ?? []).map((s) => ({
+        name: s["name"],
+        transport: s["transport"],
+        enabledInFile: s["enabled_in_file"] ?? false,
+        state: s["state"],
+        detail: s["detail"] ?? null,
+        toolCount: s["tool_count"] ?? 0,
+      })),
+    });
   }
 
   async getMemoryInspect(threadId: string): Promise<RecallTrace | null> {
