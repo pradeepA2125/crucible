@@ -2635,7 +2635,7 @@ git commit -m "feat(settings): settings panel — provider hot-swap, MCP managem
 **Interfaces:**
 - Produces: `buildMcpEntry(input: { transport: "stdio" | "http" | "sse"; commandLine?: string; url?: string; envVarNames: string[] }): Record<string, unknown>` — pure, unit-tested; the vscode command (`aiEditor.mcpAddServer`) chains QuickPick(transport) → InputBox(command or URL) → InputBox(name) → InputBox(comma-separated env var names) → `client.upsertMcpServer(name, buildMcpEntry(...), disabled)` → info toast with resulting state. `aiEditor.mcpListServers`: QuickPick of servers (`$(check)/$(error)` + tool count) → per-server actions (Enable/Disable → same toggle path as Task 13, Reconnect, Remove).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // apps/vscode-extension/test/mcp-quickpick.test.ts
@@ -2663,7 +2663,7 @@ describe("buildMcpEntry", () => {
 });
 ```
 
-- [ ] **Step 2: Run → FAIL, implement helper + commands, run → PASS**
+- [x] **Step 2: Run → FAIL, implement helper + commands, run → PASS**
 
 `buildMcpEntry` is a ~25-line pure function matching the assertions exactly
 (stdio env map `VAR → "${VAR}"`; http/sse first env var becomes the
@@ -2671,7 +2671,7 @@ describe("buildMcpEntry", () => {
 research doc; additional vars become bare `${VAR}` headers keyed by their name).
 Command wiring in `extension.ts` per the Interfaces block.
 
-- [ ] **Step 3: Build, typecheck, commit**
+- [x] **Step 3: Build, typecheck, commit**
 
 ```bash
 git add apps/vscode-extension/src

@@ -159,6 +159,10 @@ declare module "vscode" {
       options: { enableScripts?: boolean; retainContextWhenHidden?: boolean; localResourceRoots?: readonly Uri[] }
     ): WebviewPanel;
     function showQuickPick(items: readonly string[], options?: { placeHolder?: string }): Thenable<string | undefined>;
+    function showQuickPick<T extends QuickPickItem>(
+      items: readonly T[],
+      options?: { placeHolder?: string }
+    ): Thenable<T | undefined>;
     function setStatusBarMessage(text: string, hideAfterTimeout?: number): Disposable;
     function registerWebviewPanelSerializer(viewType: string, serializer: WebviewPanelSerializer): Disposable;
   }

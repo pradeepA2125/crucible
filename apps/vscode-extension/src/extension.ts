@@ -8,6 +8,7 @@ import {
   type BackendClientFactory,
   type ControllerUI,
 } from "./controller.js";
+import { buildMcpEntry, type McpEntryInput } from "./mcp-quickpick.js";
 import { openReviewDiff } from "./review-diff.js";
 import { RuntimeManager } from "./runtime/vscode-runtime.js";
 import { SettingsPanel } from "./settings-panel.js";
@@ -366,6 +367,144 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
       new SettingsPanel(context.extensionUri, runtimeManager, folder, clientFactory).open();
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiEditor.mcpAddServer", async () => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!folder) {
+        void vscode.window.showWarningMessage("Open a folder to add an MCP server.");
+        return;
+      }
+      const url = runtimeManager.backendUrl(folder);
+      if (!url) {
+        void vscode.window.showWarningMessage(
+          "Backend not started yet — run \"AI Editor: Run Setup\" or restart the backend.");
+        return;
+      }
+      const transportPick = await vscode.window.showQuickPick(
+        [
+          { label: "stdio", description: "spawn a local process (command + args)" },
+          { label: "http", description: "streamable HTTP endpoint" },
+          { label: "sse", description: "server-sent events endpoint" },
+        ],
+        { placeHolder: "Transport" },
+      );
+      if (!transportPick) return;
+      const transport = transportPick.label as McpEntryInput["transport"];
+
+      const commandOrUrl = await vscode.window.showInputBox({
+        prompt: transport === "stdio" ? "Command line" : "Server URL",
+        placeHolder: transport === "stdio" ? "uv run server.py" : "https://example.com/mcp",
+        ignoreFocusOut: true,
+      });
+      if (!commandOrUrl) return;
+
+      const name = await vscode.window.showInputBox({
+        prompt: "Server name",
+        placeHolder: "e.g. github",
+        ignoreFocusOut: true,
+      });
+      if (!name) return;
+
+      const envVarsRaw = (await vscode.window.showInputBox({
+        prompt: "Env var names (comma-separated, optional)",
+        placeHolder: "e.g. GITHUB_PAT",
+        ignoreFocusOut: true,
+      })) as string | undefined;
+      const envVarNames = (envVarsRaw ?? "")
+        .split(",")
+        .map((v: string) => v.trim())
+        .filter(Boolean);
+
+      const entry = buildMcpEntry({
+        transport,
+        ...(transport === "stdio" ? { commandLine: commandOrUrl } : { url: commandOrUrl }),
+        envVarNames,
+      });
+
+      try {
+        const result = await clientFactory(url).upsertMcpServer(
+          name, entry, runtimeManager.mcpDisabled());
+        void vscode.window.showInformationMessage(
+          `MCP server "${name}" added (${result.servers.length} configured).`);
+      } catch (err) {
+        void vscode.window.showErrorMessage(
+          `Failed to add MCP server: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiEditor.mcpListServers", async () => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!folder) {
+        void vscode.window.showWarningMessage("Open a folder to list MCP servers.");
+        return;
+      }
+      const url = runtimeManager.backendUrl(folder);
+      if (!url) {
+        void vscode.window.showWarningMessage(
+          "Backend not started yet — run \"AI Editor: Run Setup\" or restart the backend.");
+        return;
+      }
+      const client = clientFactory(url);
+      let list;
+      try {
+        list = await client.listMcpServers();
+      } catch (err) {
+        void vscode.window.showErrorMessage(
+          `Failed to list MCP servers: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+      if (list.servers.length === 0) {
+        void vscode.window.showInformationMessage("No MCP servers configured.");
+        return;
+      }
+      const serverPick = await vscode.window.showQuickPick(
+        list.servers.map((s) => ({
+          label: `${s.state === "connected" ? "$(check)" : "$(error)"} ${s.name}`,
+          description: `${s.transport} · ${s.toolCount} tools · ${s.state}`,
+          server: s,
+        })),
+        { placeHolder: "Select an MCP server" },
+      );
+      if (!serverPick) return;
+      const { server } = serverPick;
+      const disabledNow = runtimeManager.mcpDisabled();
+      const isDisabled = disabledNow.includes(server.name);
+
+      const actionPick = await vscode.window.showQuickPick(
+        [
+          { label: isDisabled ? "Enable" : "Disable" },
+          { label: "Reconnect" },
+          { label: "Remove" },
+        ],
+        { placeHolder: `Action for "${server.name}"` },
+      );
+      if (!actionPick) return;
+
+      try {
+        if (actionPick.label === "Enable" || actionPick.label === "Disable") {
+          const next = actionPick.label === "Disable"
+            ? Array.from(new Set([...disabledNow, server.name]))
+            : disabledNow.filter((n) => n !== server.name);
+          await runtimeManager.setMcpDisabled(next);
+          const result = await client.reconnectMcpServer(server.name, next);
+          void vscode.window.showInformationMessage(
+            `"${server.name}" ${actionPick.label === "Disable" ? "disabled" : "enabled"} (${result.servers.length} configured).`);
+        } else if (actionPick.label === "Reconnect") {
+          const result = await client.reconnectMcpServer(server.name, disabledNow);
+          void vscode.window.showInformationMessage(
+            `"${server.name}" reconnect requested (${result.servers.length} configured).`);
+        } else {
+          const result = await client.deleteMcpServer(server.name, disabledNow);
+          void vscode.window.showInformationMessage(
+            `"${server.name}" removed (${result.servers.length} configured).`);
+        }
+      } catch (err) {
+        void vscode.window.showErrorMessage(
+          `MCP action failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     })
   );
   // Re-attach message handler when VS Code restores the chat panel after a
