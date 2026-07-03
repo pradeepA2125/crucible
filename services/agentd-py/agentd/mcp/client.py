@@ -95,13 +95,21 @@ class McpConnectionManager:
         self._session_factory = session_factory
         self._handles: dict[str, _ServerHandle] = {}
 
+    @property
+    def loader(self) -> McpConfigLoader:
+        return self._loader
+
     async def start(self) -> None:
         """Eager one-shot connect at app startup (FastAPI startup handler —
         the module-level factory has no running event loop)."""
         await self.reconcile(self._loader.load())
 
-    async def reconcile(self, configs: list[McpServerConfig]) -> None:
-        desired = {c.name: c for c in configs}
+    async def reconcile(
+        self,
+        configs: list[McpServerConfig],
+        disabled: frozenset[str] = frozenset(),
+    ) -> None:
+        desired = {c.name: c for c in configs if c.name not in disabled}
         for name in list(self._handles):
             handle = self._handles[name]
             if name not in desired or desired[name].fingerprint() != handle.fingerprint:
@@ -156,6 +164,11 @@ class McpConnectionManager:
                 await handle.task
             except Exception:
                 logger.debug("[mcp] serve task for %s errored on stop", name, exc_info=True)
+
+    async def reconnect(self, name: str, disabled: frozenset[str] = frozenset()) -> None:
+        """Manual retry from the settings UI: drop the handle, re-reconcile."""
+        await self._stop_handle(name)
+        await self.reconcile(self._loader.load(), disabled=disabled)
 
     async def shutdown(self) -> None:
         for name in list(self._handles):

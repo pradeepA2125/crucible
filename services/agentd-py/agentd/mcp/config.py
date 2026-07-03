@@ -77,6 +77,10 @@ class McpConfigLoader:
         self._sig: tuple[int, int] | None = None
         self._cached: list[McpServerConfig] = []
 
+    @property
+    def config_path(self) -> Path:
+        return self._path
+
     def load(self) -> list[McpServerConfig]:
         try:
             stat = self._path.stat()
