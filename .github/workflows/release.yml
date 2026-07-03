@@ -1,0 +1,99 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: npm install && npm run build && npm run test && npm run typecheck
+      - run: |
+          cd services/agentd-py
+          python -m venv .venv && . .venv/bin/activate
+          pip install -e .[dev] --no-build-isolation
+          pytest
+      - run: cd services/indexer-rs && cargo test
+
+  indexer:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { os: macos-14, platform: darwin-arm64 }
+          - { os: macos-13, platform: darwin-x64 }
+          - { os: ubuntu-latest, platform: linux-x64 }
+          - { os: windows-latest, platform: win32-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd services/indexer-rs && cargo build --release
+      - name: stage binary (posix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp services/indexer-rs/target/release/ai-editor-indexer \
+             dist/ai-editor-indexer-${{ matrix.platform }}
+      - name: stage binary (windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          copy services\indexer-rs\target\release\ai-editor-indexer.exe dist\ai-editor-indexer-${{ matrix.platform }}.exe
+      - uses: actions/upload-artifact@v4
+        with: { name: "indexer-${{ matrix.platform }}", path: dist/ }
+
+  fetch-tools:
+    # uv + ripgrep: download official release binaries per platform, restage
+    # under our naming convention. Pinned versions live in this job's env.
+    needs: test
+    runs-on: ubuntu-latest
+    env: { UV_VERSION: "0.5.24", RG_VERSION: "14.1.1" }
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/release/fetch_tools.py --uv "$UV_VERSION" --rg "$RG_VERSION" --out dist/
+      - uses: actions/upload-artifact@v4
+        with: { name: tools, path: dist/ }
+
+  package:
+    needs: [indexer, fetch-tools]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/download-artifact@v4
+        with: { path: dist-artifacts, merge-multiple: true }
+      - run: |
+          cd services/agentd-py
+          pip install build && python -m build --wheel --outdir ../../dist-artifacts
+      - run: |
+          python scripts/release/make_manifest.py \
+            --release-tag "${GITHUB_REF_NAME}" --dist dist-artifacts \
+            --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
+            --component-version indexer=${GITHUB_REF_NAME#v} \
+            --component-version ripgrep=14.1.1 --component-version uv=0.5.24 \
+            --lsp-packages "pyright@1.1.400,typescript-language-server@4.3.3" \
+            --out dist-artifacts/manifest.json
+      - run: |
+          npm install && npm run build
+          cp dist-artifacts/manifest.json apps/vscode-extension/resources/runtime-manifest.json
+          cd apps/vscode-extension && npx vsce package --out ../../dist-artifacts/
+      - name: attach to release
+        uses: softprops/action-gh-release@v2
+        with: { files: dist-artifacts/* }
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist-artifacts, merge-multiple: true }
+      - run: npx vsce publish --packagePath dist-artifacts/*.vsix -p ${{ secrets.VSCE_PAT }}

@@ -2802,7 +2802,7 @@ git commit -m "feat(release): manifest.json generator with sha256s over conventi
 **Files:**
 - Create: `.github/workflows/release.yml`
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 ```yaml
 # .github/workflows/release.yml
@@ -2914,14 +2914,14 @@ as `make_manifest.py` (pure `stage(archive_bytes, kind, platform)` helper
 unit-tested with small fixture archives built in the test via `tarfile`/`zipfile`;
 network only in `main()`).
 
-- [ ] **Step 2: Validate the workflow file**
+- [x] **Step 2: Validate the workflow file**
 
 Run: `python3 -c "import yaml, pathlib; yaml.safe_load(pathlib.Path('.github/workflows/release.yml').read_text()); print('yaml ok')"`
 and `actionlint .github/workflows/release.yml` if `actionlint` is installed (skip otherwise — note it in the commit body).
 The real proof is the first `v0.*` tag on the public repo; expect one or two
 iterate-on-CI commits — that's normal, keep them `ci(release): fix …`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/release.yml scripts/release
