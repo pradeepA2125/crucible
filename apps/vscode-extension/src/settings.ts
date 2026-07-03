@@ -8,7 +8,18 @@ const DEFAULT_MODE: TaskMode = "project_edit";
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 export class VscodeSettingsProvider implements SettingsProvider {
+  // Set by the managed runtime once its backend is up. An explicitly user-set
+  // aiEditor.backendBaseUrl (the dev flow) always wins over this.
+  private managedBackendUrl: string | null = null;
+
+  setManagedBackendUrl(url: string | null): void {
+    this.managedBackendUrl = url;
+  }
+
   getBackendBaseUrl(): string {
+    if (this.managedBackendUrl !== null && !isBackendBaseUrlUserSet()) {
+      return this.managedBackendUrl;
+    }
     return vscode.workspace
       .getConfiguration("aiEditor")
       .get<string>("backendBaseUrl", DEFAULT_BACKEND_BASE_URL)
@@ -38,6 +49,16 @@ export class VscodeSettingsProvider implements SettingsProvider {
 
     return Math.max(250, Math.floor(configured));
   }
+}
+
+export function isBackendBaseUrlUserSet(): boolean {
+  const info = vscode.workspace.getConfiguration("aiEditor").inspect<string>("backendBaseUrl");
+  return (
+    info !== undefined &&
+    (info.globalValue !== undefined ||
+      info.workspaceValue !== undefined ||
+      info.workspaceFolderValue !== undefined)
+  );
 }
 
 export async function checkBackendHealth(baseUrl: string): Promise<boolean> {

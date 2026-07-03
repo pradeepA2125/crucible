@@ -9,12 +9,68 @@ import {
   type ControllerUI,
 } from "./controller.js";
 import { openReviewDiff } from "./review-diff.js";
+import { RuntimeManager } from "./runtime/vscode-runtime.js";
 import { VscodeSessionStore } from "./vscode-session-store.js";
-import { checkBackendHealth, VscodeSettingsProvider } from "./settings.js";
+import {
+  checkBackendHealth,
+  isBackendBaseUrlUserSet,
+  VscodeSettingsProvider,
+} from "./settings.js";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const settings = new VscodeSettingsProvider();
   const sessionStore = new VscodeSessionStore(context.workspaceState);
+
+  const runtimeOutput = vscode.window.createOutputChannel("AI Editor Runtime");
+  context.subscriptions.push(runtimeOutput);
+  const runtimeManager = new RuntimeManager(context, runtimeOutput);
+  context.subscriptions.push({
+    dispose: () => {
+      void runtimeManager.dispose();
+    },
+  });
+
+  // Managed runtime: spawn/reuse a per-workspace backend unless the user pinned
+  // an explicit backendBaseUrl (the dev flow) or turned the manager off.
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+  const managedRuntimeActive =
+    vscode.workspace.getConfiguration("aiEditor").get<boolean>("managedRuntime.enabled", true) &&
+    !isBackendBaseUrlUserSet() &&
+    workspaceFolder !== null;
+  let managedBackendStarted = false;
+  if (managedRuntimeActive && runtimeManager.isInstalled() && workspaceFolder) {
+    // Upgrade prompt: bundled manifest newer than the installed runtime.
+    const installed = runtimeManager.installedRuntime();
+    const bundled = runtimeManager.bundledManifest();
+    if (
+      installed && bundled &&
+      bundled.releaseTag !== "dev-unpinned" &&
+      bundled.releaseTag !== installed.releaseTag
+    ) {
+      void vscode.window
+        .showInformationMessage(
+          `AI Editor runtime ${bundled.releaseTag} is available (installed: ${installed.releaseTag}). Install now?`,
+          "Install",
+        )
+        .then(async (choice: string | undefined) => {
+          if (choice !== "Install") return;
+          const result = await runtimeManager.install(() => {});
+          if (result.ok && workspaceFolder) {
+            await runtimeManager.restart(workspaceFolder);
+          }
+        });
+    }
+    try {
+      await runtimeManager.startForWorkspace(workspaceFolder);
+      const url = runtimeManager.backendUrl(workspaceFolder);
+      if (url) {
+        settings.setManagedBackendUrl(url);
+        managedBackendStarted = true;
+      }
+    } catch (err) {
+      runtimeOutput.appendLine(`[runtime] managed start failed: ${String(err)}`);
+    }
+  }
 
   let controller: AiEditorController;
 
@@ -255,6 +311,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
   context.subscriptions.push(
+    vscode.commands.registerCommand("aiEditor.restartBackend", async () => {
+      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!folder) {
+        void vscode.window.showWarningMessage("Open a folder to restart its backend.");
+        return;
+      }
+      try {
+        await runtimeManager.restart(folder);
+        const url = runtimeManager.backendUrl(folder);
+        if (url) settings.setManagedBackendUrl(url);
+        void vscode.window.showInformationMessage(
+          `AI Editor backend restarted (${url ?? "unknown"}).`);
+      } catch (err) {
+        void vscode.window.showErrorMessage(
+          `Restart failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })
+  );
+  context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.openMemoryPanel", () => {
       if (!memoryEnabled) {
         void vscode.window.showInformationMessage(
@@ -288,10 +363,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   const backendBaseUrl = settings.getBackendBaseUrl();
-  const healthy = await checkBackendHealth(backendBaseUrl);
+  const healthy = managedBackendStarted || (await checkBackendHealth(backendBaseUrl));
   if (!healthy) {
     void vscode.window.showWarningMessage(
-      `AI Editor backend is not reachable at ${backendBaseUrl}. Start agentd-py, then run \"AI Editor: Start Task\".`
+      managedRuntimeActive && !runtimeManager.isInstalled()
+        ? "AI Editor runtime is not installed yet. Run \"AI Editor: Run Setup\" to install it."
+        : `AI Editor backend is not reachable at ${backendBaseUrl}. Start agentd-py, then run \"AI Editor: Start Task\".`
     );
   }
 

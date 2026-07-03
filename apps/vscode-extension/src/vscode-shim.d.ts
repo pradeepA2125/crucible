@@ -5,12 +5,21 @@ declare module "vscode" {
 
   export interface Memento {
     get<T>(key: string): T | undefined;
+    get<T>(key: string, defaultValue: T): T;
     update(key: string, value: unknown): Thenable<void>;
+  }
+
+  export interface SecretStorage {
+    get(key: string): Thenable<string | undefined>;
+    store(key: string, value: string): Thenable<void>;
+    delete(key: string): Thenable<void>;
   }
 
   export interface ExtensionContext {
     subscriptions: Disposable[];
     workspaceState: Memento;
+    globalState: Memento;
+    secrets: SecretStorage;
     extensionUri: Uri;
   }
 
@@ -20,8 +29,24 @@ declare module "vscode" {
     readonly index: number;
   }
 
+  export interface ConfigurationInspect<T> {
+    key: string;
+    defaultValue?: T;
+    globalValue?: T;
+    workspaceValue?: T;
+    workspaceFolderValue?: T;
+  }
+
   export interface Configuration {
     get<T>(key: string, defaultValue?: T): T;
+    inspect<T>(key: string): ConfigurationInspect<T> | undefined;
+    update(key: string, value: unknown, target?: ConfigurationTarget | boolean): Thenable<void>;
+  }
+
+  export enum ConfigurationTarget {
+    Global = 1,
+    Workspace = 2,
+    WorkspaceFolder = 3,
   }
 
   export interface TextDocument {
@@ -85,6 +110,32 @@ declare module "vscode" {
     deserializeWebviewPanel(webviewPanel: WebviewPanel, state: unknown): Thenable<void>;
   }
 
+  export enum StatusBarAlignment {
+    Left = 1,
+    Right = 2,
+  }
+
+  export interface StatusBarItem extends Disposable {
+    text: string;
+    tooltip?: string;
+    command?: string;
+    show(): void;
+    hide(): void;
+  }
+
+  export interface OutputChannel extends Disposable {
+    readonly name: string;
+    append(value: string): void;
+    appendLine(value: string): void;
+    show(preserveFocus?: boolean): void;
+  }
+
+  export interface QuickPickItem {
+    label: string;
+    description?: string;
+    detail?: string;
+  }
+
   export namespace window {
     function showInputBox(options?: InputBoxOptions): Thenable<string | undefined>;
     function showInformationMessage(message: string): Thenable<string | undefined>;
@@ -93,8 +144,14 @@ declare module "vscode" {
       options: MessageOptions,
       ...items: string[]
     ): Thenable<string | undefined>;
+    function showInformationMessage(
+      message: string,
+      ...items: string[]
+    ): Thenable<string | undefined>;
     function showWarningMessage(message: string): Thenable<string | undefined>;
-    function showErrorMessage(message: string): Thenable<string | undefined>;
+    function showErrorMessage(message: string, ...items: string[]): Thenable<string | undefined>;
+    function createStatusBarItem(alignment?: StatusBarAlignment, priority?: number): StatusBarItem;
+    function createOutputChannel(name: string): OutputChannel;
     function createWebviewPanel(
       viewType: string,
       title: string,

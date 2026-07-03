@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "releaseTag": "dev-unpinned",
+  "_comment": "Hand-written dev placeholder. Release builds overwrite this with scripts/release/make_manifest.py output (real per-OS urls + sha256s).",
+  "components": {
+    "uv": { "version": "0.5.24", "urls": {}, "sha256": {} },
+    "agentd": { "version": "0.0.0" },
+    "indexer": { "version": "0.0.0", "urls": {}, "sha256": {} },
+    "ripgrep": { "version": "14.1.1", "urls": {}, "sha256": {} },
+    "lsps": {
+      "version": "1",
+      "npmPackages": ["pyright@1.1.400", "typescript-language-server@4.3.3"]
+    }
+  }
+}
