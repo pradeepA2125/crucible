@@ -2727,7 +2727,7 @@ git commit -m "chore(extension): commands, configuration, and marketplace manife
 **Interfaces:**
 - Produces: `build_manifest(release_tag: str, dist_dir: Path, url_base: str) -> dict` scanning `dist_dir` for the conventional artifact names below and emitting the Task 8 `RuntimeManifest` JSON shape (camelCase keys). CLI: `python scripts/release/make_manifest.py --release-tag vX --dist DIR --url-base URL --out manifest.json`. Artifact naming convention (CI produces exactly these): `ai-editor-indexer-<platform>[.exe]`, `rg-<platform>[.exe]`, `uv-<platform>[.exe]` with `<platform>` ∈ the four keys; `ai_editor_agentd-<ver>-py3-none-any.whl`. Versions: binaries from `--component-version name=ver` repeatable flags; agentd version parsed from the wheel filename; `lsps` pinned via `--lsp-packages "pyright@X,typescript-language-server@Y"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # scripts/release/test_make_manifest.py
@@ -2779,7 +2779,7 @@ def test_missing_platform_artifact_raises(tmp_path: Path) -> None:
                        lsp_packages=[])
 ```
 
-- [ ] **Step 2: Run → FAIL, implement, run → PASS**
+- [x] **Step 2: Run → FAIL, implement, run → PASS**
 
 Run: `cd services/agentd-py && pytest ../../scripts/release/test_make_manifest.py`
 Implementation: ~90 lines — glob the conventions, `hashlib.sha256` each file,
@@ -2788,7 +2788,7 @@ required platform → `FileNotFoundError` naming the file (release must fail lou
 not ship a partial manifest). `lsps.version` = sha1 of the joined package list
 (changes when pins change).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add scripts/release
