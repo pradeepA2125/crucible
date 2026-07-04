@@ -259,8 +259,8 @@ _chat_agent = select_chat_handler(
 # mirrors it so stdio subprocesses die with us.
 _mcp_manager = getattr(_chat_agent, "_mcp_manager", None)
 if _mcp_manager is not None:
-    app.add_event_handler("startup", _mcp_manager.start)
-    app.add_event_handler("shutdown", _mcp_manager.shutdown)
+    app.router.add_event_handler("startup", _mcp_manager.start)
+    app.router.add_event_handler("shutdown", _mcp_manager.shutdown)
 
 # Managed-spawn lockfile: the extension sets AI_EDITOR_PORT and reads/reaps
 # <workspace>/.agentd/agentd.lock. The dev script doesn't set it — no-op there.
@@ -276,8 +276,8 @@ if _lock_port_raw.isdigit():
     def _clear_runtime_lock() -> None:
         clear_lock(_chat_workspace_path)
 
-    app.add_event_handler("startup", _write_runtime_lock)
-    app.add_event_handler("shutdown", _clear_runtime_lock)
+    app.router.add_event_handler("startup", _write_runtime_lock)
+    app.router.add_event_handler("shutdown", _clear_runtime_lock)
 
 warn_if_incoherent_flags(logging.getLogger("agentd.startup"))
 
