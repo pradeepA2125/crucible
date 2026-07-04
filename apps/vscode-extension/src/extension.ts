@@ -356,7 +356,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       new SetupPanel(context.extensionUri, runtimeManager, folder, clientFactory, () => {
         void controller.openChat();
-      }).open();
+      }, (url) => settings.setManagedBackendUrl(url)).open();
     })
   );
   context.subscriptions.push(

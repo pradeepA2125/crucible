@@ -16,7 +16,8 @@ export class SetupPanel {
     private readonly runtimeManager: RuntimeManager,
     private readonly workspacePath: string,
     private readonly clientFactory: BackendClientFactory,
-    private readonly openChatCommand: () => void
+    private readonly openChatCommand: () => void,
+    private readonly setManagedBackendUrl: (url: string | null) => void
   ) {}
 
   open(): void {
@@ -66,6 +67,11 @@ export class SetupPanel {
         if (!result.ok) {
           throw new Error(result.error ?? "Provider validation failed after starting the backend.");
         }
+        // The chat controller/settings provider must learn about this URL too — otherwise
+        // a manually-run setup (e.g. the wizard didn't auto-open, or a retry after a failed
+        // first attempt) leaves the controller pointed at the stale default backendBaseUrl
+        // and every chat call fails with "fetch failed" even though the backend is healthy.
+        this.setManagedBackendUrl(url);
         return { port };
       },
       openChat: () => this.openChatCommand(),
