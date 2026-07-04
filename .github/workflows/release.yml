@@ -85,7 +85,12 @@ jobs:
       - run: |
           npm install && npm run build
           cp dist-artifacts/manifest.json apps/vscode-extension/resources/runtime-manifest.json
-          cd apps/vscode-extension && npx vsce package --out ../../dist-artifacts/
+          # --no-dependencies: extension.ts is esbuild-bundled into one self-contained
+          # dist/extension.js (see apps/vscode-extension/esbuild.js), so no node_modules
+          # bundling is needed. Without this flag, vsce's default dependency-bundling
+          # walks the whole npm-workspaces monorepo root and crashes on any file it
+          # finds there (e.g. tsconfig.base.json) — confirmed live on a clean checkout.
+          cd apps/vscode-extension && npx vsce package --no-dependencies --out ../../dist-artifacts/
       - name: attach to release
         uses: softprops/action-gh-release@v2
         with: { files: dist-artifacts/* }
