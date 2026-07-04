@@ -105,7 +105,7 @@ export default function SettingsApp() {
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-8 p-6 text-sm">
+    <div className="mx-auto flex h-full max-w-2xl flex-col gap-8 overflow-y-auto p-6 text-sm">
       <header>
         <h1 className="text-lg font-semibold">AI Editor Settings</h1>
       </header>
