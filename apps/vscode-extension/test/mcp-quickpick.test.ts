@@ -9,6 +9,14 @@ describe("buildMcpEntry", () => {
       command: "uv", args: ["run", "server.py", "--x"],
       env: { API_KEY: "${API_KEY}" }, enabled: true });
   });
+  it("stdio: preserves a quoted argument containing a space", () => {
+    expect(buildMcpEntry({
+      transport: "stdio",
+      commandLine: 'uv run --with mcp "/Users/x/AI editor/server.py"',
+      envVarNames: [] })).toEqual({
+      command: "uv", args: ["run", "--with", "mcp", "/Users/x/AI editor/server.py"],
+      enabled: true });
+  });
   it("http: url + headers from env var names", () => {
     expect(buildMcpEntry({
       transport: "http", url: "https://x", envVarNames: ["GITHUB_PAT"] })).toEqual({
