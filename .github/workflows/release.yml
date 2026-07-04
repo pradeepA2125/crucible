@@ -96,7 +96,11 @@ jobs:
         with: { files: dist-artifacts/* }
 
   publish:
+    # Marketplace publish is opt-in: skipped entirely (not failed) when VSCE_PAT
+    # isn't configured, so GitHub-Releases-only distribution (see install.sh)
+    # works with zero Marketplace account/PAT setup.
     needs: package
+    if: ${{ secrets.VSCE_PAT != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

@@ -19,6 +19,30 @@ Production-grade AI editor foundation with a polyglot architecture.
 - Python fits agent orchestration and model/provider integrations.
 - Rust fits high-throughput incremental indexing and graph updates.
 
+## Install the VS Code extension
+
+No Marketplace listing yet — install straight from the latest GitHub Release:
+
+**macOS / Linux**
+```bash
+curl -fsSL https://raw.githubusercontent.com/pradeepA2125/shadow-forge/main/install.sh | bash
+```
+
+**Windows (PowerShell)**
+```powershell
+iwr https://raw.githubusercontent.com/pradeepA2125/shadow-forge/main/install.ps1 -useb | iex
+```
+
+Both scripts download the `.vsix` attached to the latest release and run
+`code --install-extension` for you (also detects `code-insiders`/`cursor`). Requires the
+`code` CLI on `PATH` — in VS Code: Cmd/Ctrl+Shift+P → "Shell Command: Install 'code' command in
+PATH". After install, open any folder and the setup wizard walks through provisioning the
+managed backend runtime.
+
+Prefer to inspect before running? Download the script and read it first, or grab the `.vsix`
+directly from the [Releases page](https://github.com/pradeepA2125/shadow-forge/releases) and
+run `code --install-extension path/to/file.vsix` yourself.
+
 ## Quick start
 
 ### TypeScript client package
