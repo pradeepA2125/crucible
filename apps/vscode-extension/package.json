@@ -20,6 +20,7 @@
     "vscode": "^1.85.0"
   },
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:aiEditor.startTask",
     "onCommand:aiEditor.openReviewPanel",
     "onCommand:aiEditor.acceptPatch",
