@@ -16,7 +16,7 @@ jobs:
       - run: |
           cd services/agentd-py
           python -m venv .venv && . .venv/bin/activate
-          pip install -e .[dev] --no-build-isolation
+          pip install -e .[dev]
           pytest
       - run: cd services/indexer-rs && cargo test
 
