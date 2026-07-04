@@ -25,19 +25,33 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: macos-14, platform: darwin-arm64 }
-          - { os: macos-13, platform: darwin-x64 }
-          - { os: ubuntu-latest, platform: linux-x64 }
-          - { os: windows-latest, platform: win32-x64 }
+          # GitHub retired the free Intel macOS runner (macos-13); darwin-x64
+          # is cross-compiled from the arm64 macos-latest host instead of a
+          # native x64 runner.
+          - { os: macos-latest, platform: darwin-arm64, target: "" }
+          - { os: macos-latest, platform: darwin-x64, target: x86_64-apple-darwin }
+          - { os: ubuntu-latest, platform: linux-x64, target: "" }
+          - { os: windows-latest, platform: win32-x64, target: "" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: cd services/indexer-rs && cargo build --release
-      - name: stage binary (posix)
-        if: runner.os != 'Windows'
+      - if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
+      - if: matrix.target == ''
+        run: cd services/indexer-rs && cargo build --release
+      - if: matrix.target != ''
+        run: cd services/indexer-rs && cargo build --release --target ${{ matrix.target }}
+      - name: stage binary (posix, native)
+        if: runner.os != 'Windows' && matrix.target == ''
         run: |
           mkdir -p dist
           cp services/indexer-rs/target/release/ai-editor-indexer \
+             dist/ai-editor-indexer-${{ matrix.platform }}
+      - name: stage binary (posix, cross-compiled)
+        if: runner.os != 'Windows' && matrix.target != ''
+        run: |
+          mkdir -p dist
+          cp services/indexer-rs/target/${{ matrix.target }}/release/ai-editor-indexer \
              dist/ai-editor-indexer-${{ matrix.platform }}
       - name: stage binary (windows)
         if: runner.os == 'Windows'
@@ -98,11 +112,16 @@ jobs:
   publish:
     # Marketplace publish is opt-in: skipped entirely (not failed) when VSCE_PAT
     # isn't configured, so GitHub-Releases-only distribution (see install.sh)
-    # works with zero Marketplace account/PAT setup.
+    # works with zero Marketplace account/PAT setup. The `secrets` context is
+    # never allowed inside an `if:` expression (job- or step-level) — only in
+    # env/with/run — so the secret is lifted into a job-level env var first and
+    # the step gates on `env.VSCE_PAT` instead.
     needs: package
-    if: ${{ secrets.VSCE_PAT != '' }}
     runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
       - uses: actions/download-artifact@v4
         with: { path: dist-artifacts, merge-multiple: true }
-      - run: npx vsce publish --packagePath dist-artifacts/*.vsix -p ${{ secrets.VSCE_PAT }}
+      - if: ${{ env.VSCE_PAT != '' }}
+        run: npx vsce publish --packagePath dist-artifacts/*.vsix -p "$VSCE_PAT"
