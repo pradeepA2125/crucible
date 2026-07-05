@@ -42,7 +42,7 @@ export function OverviewSection({ state, onNavigate }: Props) {
           >
             <span
               className="flex h-7 w-7 items-center justify-center rounded-[8px]"
-              style={{ background: "var(--accent-bg)", color: "var(--color-accent)" }}
+              style={{ background: `color-mix(in srgb, ${s.tint} 16%, transparent)`, color: s.tint }}
             >
               <Icon name={s.icon} size={14} />
             </span>

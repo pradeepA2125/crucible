@@ -62,24 +62,8 @@ export function EmptyState({ onPick }: Props) {
             key={chip.text}
             type="button"
             onClick={() => onPick(chip.text)}
-            className={[
-              "flex items-center gap-2 w-full px-3 py-2 rounded-lg",
-              "text-left text-xs text-text-2",
-              "border transition-all duration-150",
-              "hover:-translate-y-px",
-            ].join(" ")}
-            style={{
-              background: "var(--color-surface)",
-              borderColor: "var(--color-border)",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor =
-                "var(--accent-brd)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor =
-                "var(--color-border)";
-            }}
+            className="menu-item flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-text-2"
+            style={{ background: "var(--color-surface)" }}
           >
             <span style={{ color: "var(--color-accent)", flexShrink: 0 }}>
               <Icon name={chip.icon} size={12} />

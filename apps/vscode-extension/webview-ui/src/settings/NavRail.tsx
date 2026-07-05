@@ -1,6 +1,6 @@
 import { Icon } from "../components/Icon";
 import type { IconName } from "../components/Icon";
-import { SECTIONS, type SectionId } from "./sections/meta";
+import { SECTIONS, OVERVIEW_TINT, type SectionId } from "./sections/meta";
 
 interface NavRailProps {
   active: SectionId;
@@ -17,9 +17,9 @@ const PAD_TOP = 8; // p-2
  * bar slides (spring ease) to the active item instead of re-rendering per row.
  */
 export function NavRail({ active, counts, onSelect }: NavRailProps) {
-  const items: { id: SectionId; label: string; icon: IconName }[] = [
-    { id: "overview", label: "Overview", icon: "home" },
-    ...SECTIONS.map((s) => ({ id: s.id as SectionId, label: s.label, icon: s.icon })),
+  const items: { id: SectionId; label: string; icon: IconName; tint: string }[] = [
+    { id: "overview", label: "Overview", icon: "home", tint: OVERVIEW_TINT },
+    ...SECTIONS.map((s) => ({ id: s.id as SectionId, label: s.label, icon: s.icon, tint: s.tint })),
   ];
   const activeIdx = Math.max(0, items.findIndex((i) => i.id === active));
 
@@ -51,14 +51,15 @@ export function NavRail({ active, counts, onSelect }: NavRailProps) {
             aria-current={isActive ? "page" : undefined}
             onClick={() => onSelect(item.id)}
             className={[
-              "flex items-center gap-2 h-[30px] mb-[2px] px-2.5 rounded-md",
-              "text-xs text-left cursor-pointer border-0 bg-transparent",
-              "transition-colors duration-150",
-              isActive ? "" : "text-text-2 hover:bg-surface-2 hover:text-text",
+              "menu-item flex items-center gap-2 h-[30px] mb-[2px] px-2.5 rounded-lg",
+              "text-xs text-left cursor-pointer bg-transparent",
+              isActive ? "" : "text-text-2",
             ].join(" ")}
             style={isActive ? { background: "var(--accent-bg)", color: "var(--color-accent-ink)" } : undefined}
           >
-            <Icon name={item.icon} size={12} />
+            <span style={{ color: item.tint, display: "inline-flex" }}>
+              <Icon name={item.icon} size={12} />
+            </span>
             <span className="flex-1 truncate">{item.label}</span>
             {counts[item.id] !== undefined && (
               <span

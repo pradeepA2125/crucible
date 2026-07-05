@@ -193,6 +193,64 @@ code, pre, .mono {
   box-shadow: 0 6px 20px -8px rgba(0,0,0,.6), 0 0 20px var(--accent-glow);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   DESIGN LANGUAGE — "Violet-cool elevated" primitives.
+   Reusable across every panel, modal, and menu so the app reads as one system.
+   Prefer these over inline styles; extend here when a new surface is needed.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Elevated floating surface — modals, popovers, cards that sit above the page. */
+.surface-card {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  box-shadow:
+    0 24px 70px -20px rgba(0, 0, 0, 0.78),
+    0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+/* Dim + blur backdrop for modals. Opacity alone is invisible over a near-black
+   page — the blur is what makes the layer above read as "on top". */
+.scrim {
+  background: rgba(6, 6, 9, 0.58);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* Accent wash — a faint violet gradient for titlebars / section headers. */
+.accent-wash {
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.14), rgba(139, 92, 246, 0)),
+    var(--color-surface-3);
+}
+
+/* Interactive menu/list row that lifts into a soft card on hover: gentle 3D
+   rise + accent tint + accent-ink text + soft shadow. Give the element its own
+   rounded-* class. Icons keep their own colour (wrap them in a tinted span). */
+.menu-item {
+  border: 1px solid transparent;
+  transition:
+    transform var(--dur-fast) var(--ease-spring),
+    background-color var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+  will-change: transform;
+}
+.menu-item:hover {
+  transform: translateY(-1.5px);
+  background: var(--accent-bg);
+  border-color: var(--accent-brd);
+  color: var(--color-accent-ink);
+  box-shadow:
+    0 6px 16px -8px rgba(0, 0, 0, 0.55),
+    0 0 16px -6px var(--accent-glow);
+}
+.menu-item:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px -4px rgba(0, 0, 0, 0.5);
+}
+
 /* Accessibility: kill all motion when the user asks for it */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
