@@ -373,7 +373,7 @@ describe("InputArea — Enter sends text and clears draft", () => {
 
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: false });
 
-    expect(postMessage).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
     expect(onDraftChange).not.toHaveBeenCalled();
   });
 
@@ -388,7 +388,7 @@ describe("InputArea — Enter sends text and clears draft", () => {
 
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: false });
 
-    expect(postMessage).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
   });
 
   it("Shift+Enter does not send", () => {
@@ -403,7 +403,7 @@ describe("InputArea — Enter sends text and clears draft", () => {
 
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: true });
 
-    expect(postMessage).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
     // onDraftChange should not be called (no clear on Shift+Enter)
     expect(onDraftChange).not.toHaveBeenCalled();
   });
@@ -446,7 +446,8 @@ describe("InputArea — Stop button", () => {
     fireEvent.click(stopBtn);
     fireEvent.click(stopBtn);
 
-    expect(postMessage).toHaveBeenCalledTimes(1);
+    // One-shot: only one stopTurn despite three clicks (mount-time listModels is unrelated).
+    expect(postMessage.mock.calls.filter((c) => c[0]?.type === "stopTurn")).toHaveLength(1);
     expect(postMessage).toHaveBeenCalledWith({ type: "stopTurn" });
   });
 });
@@ -476,7 +477,8 @@ describe("InputArea — Tier B task abort + dynamic review pref", () => {
     const revertBtn = screen.getByRole("button", { name: /stop and revert/i });
     fireEvent.click(revertBtn);
     fireEvent.click(revertBtn);
-    expect(postMessage).toHaveBeenCalledTimes(1);
+    // One-shot: only one abortTask despite two clicks (mount-time listModels is unrelated).
+    expect(postMessage.mock.calls.filter((c) => c[0]?.type === "abortTask")).toHaveLength(1);
     expect(postMessage).toHaveBeenCalledWith({ type: "abortTask", revert: true });
   });
 

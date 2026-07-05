@@ -197,8 +197,8 @@ describe("ThreadView — empty state", () => {
       "Add error handling to the API routes",
     );
 
-    // Clicking a chip must NOT send a message.
-    expect(postMessage).not.toHaveBeenCalled();
+    // Clicking a chip must NOT send a message (mount-time listModels is unrelated).
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "sendMessage" }));
   });
 });
 
