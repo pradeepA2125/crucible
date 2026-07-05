@@ -2,7 +2,7 @@
   "name": "ai-editor-vscode-extension",
   "displayName": "AI Editor",
   "description": "Agentic AI pair programmer: spec-first task planning, shadow-workspace patch review, and an inline chat controller — with a managed local runtime (no separate backend setup required).",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "ai-editor",
   "icon": "resources/icon.png",
   "categories": [
