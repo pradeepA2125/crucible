@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 export type IconName =
   | "spark" | "search" | "plus" | "clock" | "chev-r" | "chev-l" | "chev-d"
   | "check" | "x" | "copy" | "file" | "term" | "list" | "diff" | "warn"
-  | "send" | "stop" | "retry" | "bolt" | "bug";
+  | "send" | "stop" | "retry" | "bolt" | "bug"
+  | "home" | "key" | "plug" | "book" | "shield" | "chip" | "gear";
 
 interface Props {
   name: IconName;
@@ -127,6 +128,57 @@ const ICONS: Record<IconName, ReactNode> = {
     <>
       <circle cx="8" cy="9" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
       <path d="M8 5.5V4M5 3l1.2 1.5M11 3L9.8 4.5M3 9h1.5M11.5 9H13M4 12.5l1.3-1.2M12 12.5l-1.3-1.2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </>
+  ),
+
+  home: (
+    <>
+      <path d="M2.5 7.5L8 2.5l5.5 5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 7v6.5h8V7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </>
+  ),
+
+  key: (
+    <>
+      <circle cx="5" cy="8" r="2.6" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M7.6 8h6M11 8v2.4M13.6 8v1.8" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </>
+  ),
+
+  plug: (
+    <>
+      <path d="M5.5 2v3M10.5 2v3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M4 5h8v2.5a4 4 0 01-8 0V5z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M8 11.5V14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </>
+  ),
+
+  book: (
+    <>
+      <path d="M3 3a1.5 1.5 0 011.5-1.5H13v11H4.8A1.8 1.8 0 003 14.3V3z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M13 12.5H4.8A1.8 1.8 0 003 14.3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M6 5h4.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </>
+  ),
+
+  shield: (
+    <>
+      <path d="M8 1.8l5.3 1.9v4.4c0 3.2-2.2 5.4-5.3 6.4-3.1-1-5.3-3.2-5.3-6.4V3.7L8 1.8z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M5.7 8l1.7 1.7L10.6 6.4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </>
+  ),
+
+  chip: (
+    <>
+      <rect x="4.5" y="4.5" width="7" height="7" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M6.5 4.5V2M9.5 4.5V2M6.5 14v-2.5M9.5 14v-2.5M4.5 6.5H2M4.5 9.5H2M14 6.5h-2.5M14 9.5h-2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </>
+  ),
+
+  gear: (
+    <>
+      <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </>
   ),
 };
