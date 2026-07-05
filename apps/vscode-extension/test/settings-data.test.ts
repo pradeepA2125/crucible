@@ -56,6 +56,8 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
     keyEnvVar: () => "X_KEY",
     readEnvFlags: () => ({ "aiEditor.policy.shell": "ask" }),
     updateSetting: async () => {},
+    readInstructions: () => ({ content: "", exists: false }),
+    writeInstructions: () => {},
     restartBackend: async () => {},
     disabled: box.disabled,
     skillsBox: box.skills,
@@ -117,5 +119,24 @@ describe("createSettingsHandler", () => {
     await handle({ type: "settings/restartBackend" });
     const last = stateMsg(posted[posted.length - 1]).state;
     expect(last.restartRequired).toBe(false);
+  });
+
+  it("loadInstructions posts the file state", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const d = deps({ readInstructions: () => ({ content: "# hi", exists: true }) });
+    await createSettingsHandler(d, (m) => posted.push(m))({ type: "settings/loadInstructions" });
+    expect(posted).toContainEqual({ type: "settings/instructions", content: "# hi", exists: true });
+  });
+
+  it("saveInstructions writes then echoes the saved state", async () => {
+    const written: string[] = [];
+    const posted: SettingsOutMsg[] = [];
+    const d = deps({ writeInstructions: (c: string) => written.push(c) });
+    await createSettingsHandler(d, (m) => posted.push(m))({
+      type: "settings/saveInstructions",
+      content: "# new",
+    });
+    expect(written).toEqual(["# new"]);
+    expect(posted).toContainEqual({ type: "settings/instructions", content: "# new", exists: true });
   });
 });

@@ -26,11 +26,14 @@ export type SettingsInMsg =
   | { type: "settings/mcpReconnect"; name: string }
   | { type: "settings/skillToggle"; name: string; enabled: boolean }
   | { type: "settings/setEnvFlag"; key: string; value: string }
+  | { type: "settings/loadInstructions" }
+  | { type: "settings/saveInstructions"; content: string }
   | { type: "settings/restartBackend" };
 
 // host → webview
 export type SettingsOutMsg =
   | { type: "settings/state"; state: SettingsState }
+  | { type: "settings/instructions"; content: string; exists: boolean }
   | { type: "settings/error"; message: string };
 
 export interface SettingsDeps {
@@ -66,6 +69,8 @@ export interface SettingsDeps {
   keyEnvVar(backend: string): string | undefined;
   readEnvFlags(): Record<string, string>;
   updateSetting(key: string, value: string): Promise<void>;
+  readInstructions(): { content: string; exists: boolean };
+  writeInstructions(content: string): void;
   restartBackend(): Promise<void>;
 }
 
@@ -169,6 +174,15 @@ export function createSettingsHandler(
           await deps.updateSetting(msg.key, msg.value);
           restartRequired = true;
           await postState();
+          return;
+        }
+        case "settings/loadInstructions": {
+          post({ type: "settings/instructions", ...deps.readInstructions() });
+          return;
+        }
+        case "settings/saveInstructions": {
+          deps.writeInstructions(msg.content);
+          post({ type: "settings/instructions", content: msg.content, exists: true });
           return;
         }
         case "settings/restartBackend": {

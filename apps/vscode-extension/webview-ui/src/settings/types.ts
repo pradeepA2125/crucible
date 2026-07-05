@@ -30,11 +30,14 @@ export type SettingsInMsg =
   | { type: "settings/mcpReconnect"; name: string }
   | { type: "settings/skillToggle"; name: string; enabled: boolean }
   | { type: "settings/setEnvFlag"; key: string; value: string }
+  | { type: "settings/loadInstructions" }
+  | { type: "settings/saveInstructions"; content: string }
   | { type: "settings/restartBackend" };
 
 // host → webview
 export type SettingsOutMsg =
   | { type: "settings/state"; state: SettingsState }
+  | { type: "settings/instructions"; content: string; exists: boolean }
   | { type: "settings/error"; message: string };
 
 export interface ProviderInfo {

@@ -9,6 +9,7 @@ import {
   type SettingsDeps,
   type SettingsInMsg,
 } from "./settings-data.js";
+import { loadInstructions, saveInstructions } from "./instructions-file.js";
 
 const ENV_FLAG_KEYS = [
   "aiEditor.policy.shell",
@@ -103,6 +104,8 @@ export class SettingsPanel {
           .getConfiguration()
           .update(key, value, vscode.ConfigurationTarget.Global);
       },
+      readInstructions: () => loadInstructions(this.workspacePath),
+      writeInstructions: (content) => saveInstructions(this.workspacePath, content),
       restartBackend: () => this.runtimeManager.restart(this.workspacePath),
     };
   }
