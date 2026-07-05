@@ -46,6 +46,16 @@ export type McpDecisionHandler = (threadId: string, decision: McpToolDecision) =
 // Controller doc_write gate — approve/reject a write_doc file write.
 export type DocDecisionHandler = (threadId: string, decision: DocWriteDecision) => Promise<void>;
 
+// Composer model quick-swap (options are ModelOption[] from composer-models.ts, kept
+// as unknown[] here since chat-panel doesn't import that type; the webview mirrors it).
+export interface ComposerModelState {
+  current: { backend: string; model: string } | null;
+  options: unknown[];
+}
+export type ListModelsHandler = () => Promise<ComposerModelState>;
+export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
+export type OpenSettingsHandler = () => void;
+
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
 
@@ -76,7 +86,10 @@ export class ChatPanel {
     private readonly onListSkills: ListSkillsHandler = async () => [],
     private readonly onReady: () => Promise<void> = async () => {},
     private readonly onMcpDecision: McpDecisionHandler = async () => {},
-    private readonly onDocDecision: DocDecisionHandler = async () => {}
+    private readonly onDocDecision: DocDecisionHandler = async () => {},
+    private readonly onListModels: ListModelsHandler = async () => ({ current: null, options: [] }),
+    private readonly onSetModel: SetModelHandler = async () => ({ current: null, options: [] }),
+    private readonly onOpenSettings: OpenSettingsHandler = () => {}
   ) {}
 
   /** Called by the webview serializer when VS Code restores a persisted panel. */
@@ -217,6 +230,26 @@ export class ChatPanel {
             text: result.text,
           });
         })();
+      } else if (m["type"] === "listModels") {
+        p = (async () => {
+          const result = await this.onListModels();
+          this.panel?.webview.postMessage({ type: "modelList", ...result });
+        })();
+      } else if (m["type"] === "setModel") {
+        // Handles its own errors so a swap failure never re-enables input via
+        // the generic p.catch — it renders in-popover and the composer stays put.
+        p = (async () => {
+          try {
+            const result = await this.onSetModel(m["backend"] as string, m["model"] as string);
+            this.panel?.webview.postMessage({ type: "modelList", ...result });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.panel?.webview.postMessage({ type: "modelSwapError", message });
+          }
+        })();
+      } else if (m["type"] === "openSettings") {
+        this.onOpenSettings();
+        return;
       } else {
         return;
       }

@@ -274,6 +274,11 @@ export class AiEditorController {
     return this.createClient(this.settings.getBackendBaseUrl());
   }
 
+  /** Session-independent client for config reads/hot-swap (composer model menu). */
+  configClient(): BackendTaskClient {
+    return this.createClient(this.settings.getBackendBaseUrl());
+  }
+
   async attachToTask(): Promise<void> {
     const taskId = (await this.ui.promptForTaskId())?.trim();
     if (!taskId) {

@@ -9,8 +9,10 @@ import {
   type ControllerUI,
 } from "./controller.js";
 import { buildMcpEntry, type McpEntryInput } from "./mcp-quickpick.js";
+import { buildModelOptions } from "./composer-models.js";
+import { PROVIDERS } from "./setup-data.js";
 import { openReviewDiff } from "./review-diff.js";
-import { RuntimeManager } from "./runtime/vscode-runtime.js";
+import { PROVIDER_KEY_ENV, RuntimeManager } from "./runtime/vscode-runtime.js";
 import { SettingsPanel } from "./settings-panel.js";
 import { SetupPanel } from "./setup-panel.js";
 import { VscodeSessionStore } from "./vscode-session-store.js";
@@ -77,6 +79,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   let controller: AiEditorController;
 
+  // Composer model quick-swap: the current provider + the set of providers with a
+  // stored key (offered for hot-swap). Rebuilt after every swap.
+  const composerModelState = async () => {
+    const config = await controller.configClient().getConfig();
+    const keyed: string[] = [];
+    for (const p of PROVIDERS) {
+      if (p.keyEnvVar && (await runtimeManager.getProviderKey(p.id)) !== undefined) keyed.push(p.id);
+    }
+    const current = config.provider ?? null;
+    return { current, options: buildModelOptions(current, keyed, PROVIDERS) };
+  };
+
   const chatPanel = new ChatPanel(
     context.extensionUri,
     (message, stepReview, forcedSkills) => controller.sendChatMessage(message, stepReview, forcedSkills),
@@ -105,7 +119,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => controller.listSkills(),
     () => controller.openChat(),
     (threadId, decision) => controller.handleMcpDecisionFromChat(threadId, decision),
-    (threadId, decision) => controller.handleDocDecisionFromChat(threadId, decision)
+    (threadId, decision) => controller.handleDocDecisionFromChat(threadId, decision),
+    () => composerModelState(),
+    async (backend, model) => {
+      // Pass the stored key as request credentials: the running backend's env may
+      // predate this key (factory.py: request credentials override process env).
+      const key = await runtimeManager.getProviderKey(backend);
+      const envVar = PROVIDER_KEY_ENV[backend];
+      const credentials = envVar && key ? { [envVar]: key } : undefined;
+      await controller.configClient().setProvider({ backend, model, ...(credentials ? { credentials } : {}) });
+      await runtimeManager.saveProvider(backend, model);
+      return composerModelState();
+    },
+    () => {
+      void vscode.commands.executeCommand("aiEditor.openSettingsPanel");
+    }
   );
 
   const ui: ControllerUI = {

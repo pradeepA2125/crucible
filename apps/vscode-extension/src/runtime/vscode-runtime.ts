@@ -175,6 +175,11 @@ export class RuntimeManager {
     await this.context.secrets.store(`aiEditor.providerKey.${backend}`, key);
   }
 
+  /** Stored API key for a backend, if the user ever validated one (composer model menu). */
+  async getProviderKey(backend: string): Promise<string | undefined> {
+    return (await this.context.secrets.get(`aiEditor.providerKey.${backend}`)) ?? undefined;
+  }
+
   private extraEnvFromSettings(): Record<string, string> {
     const cfg = vscode.workspace.getConfiguration();
     const out: Record<string, string> = {};
