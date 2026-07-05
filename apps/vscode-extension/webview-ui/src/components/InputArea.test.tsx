@@ -65,4 +65,11 @@ describe("InputArea slash-command expansion", () => {
     // And the composer is cleared (message left the box).
     expect((ta as HTMLTextAreaElement).value).toBe("");
   });
+
+  it("renders the model chip and the settings gear", () => {
+    render(<Harness />);
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "listModels" });
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "openSettings" });
+  });
 });

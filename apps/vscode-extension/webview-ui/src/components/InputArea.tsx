@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { Icon } from "./Icon";
+import { ModelMenu } from "./ModelMenu";
 import { vscode } from "../vscodeApi";
 import { parseSlashCommand, resolveSkillCommand } from "../slash";
 import type { InputAvailability } from "../inputAvailability";
@@ -211,6 +212,18 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
 
       {/* Footer row */}
       <div className="flex items-center gap-1.5 pt-1">
+        {/* Model hot-swap chip + settings shortcut. */}
+        <ModelMenu />
+        <button
+          type="button"
+          onClick={() => vscode.postMessage({ type: "openSettings" })}
+          aria-label="Open settings"
+          title="AI Editor settings"
+          className="flex h-6 w-6 items-center justify-center rounded-[7px] cursor-pointer text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text"
+        >
+          <Icon name="gear" size={12} />
+        </button>
+
         {/* Tier B: task-abort buttons — shown while a task is in an abortable phase.
             "Stop & keep" leaves applied changes; "Stop & revert" rolls the workspace back. */}
         {availability.taskStop && (

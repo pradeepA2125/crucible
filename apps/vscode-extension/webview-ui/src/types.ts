@@ -1,3 +1,11 @@
+/** Mirror of src/composer-models.ts ModelOption (webview never imports src/). */
+export interface ModelOption {
+  backend: string;
+  label: string;
+  model: string;
+  active: boolean;
+}
+
 // ── Wire shape of a persisted chat message (mirrors editor-client ChatMessageSchema).
 // EVERY message has role + type; cards are discriminated by `type`, not by `role`.
 export interface ChatMsg {
@@ -166,7 +174,11 @@ export type WebviewMessage =
   | { type: "listPrompts" }
   | { type: "expandPrompt"; name: string; args: string }
   // P2: skill (.ai-editor/skills/<name>/SKILL.md) catalog for /skill forced-load
-  | { type: "listSkills" };
+  | { type: "listSkills" }
+  // Composer model quick-swap (ModelMenu) + settings shortcut.
+  | { type: "listModels" }
+  | { type: "setModel"; backend: string; model: string }
+  | { type: "openSettings" };
 
 // ── App state ─────────────────────────────────────────────────────────────────
 export interface StreamingBubble {
