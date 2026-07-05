@@ -14,6 +14,8 @@ import { PROVIDERS } from "./setup-data.js";
 import { openReviewDiff } from "./review-diff.js";
 import { PROVIDER_KEY_ENV, RuntimeManager } from "./runtime/vscode-runtime.js";
 import { SettingsPanel } from "./settings-panel.js";
+import { createSettingsHandler } from "./settings-data.js";
+import { buildSettingsDeps } from "./settings-deps.js";
 import { asSettingsSectionId } from "./settings-sections.js";
 import { SetupPanel } from "./setup-panel.js";
 import { VscodeSessionStore } from "./vscode-session-store.js";
@@ -282,6 +284,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   const clientFactory: BackendClientFactory = (baseUrl) => new HttpBackendClient({ baseUrl });
+
+  // The chat webview embeds the settings UI (floating overlay); give it a settings
+  // handler that shares the exact host wiring the standalone SettingsPanel uses.
+  // Bound per webview mount (registerHandlers) so workspace/backend are resolved live.
+  chatPanel.setSettingsHandlerFactory((post) =>
+    createSettingsHandler(
+      buildSettingsDeps({
+        runtimeManager,
+        workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
+        clientFactory,
+        resolveBackendUrl: () => settings.getBackendBaseUrl(),
+      }),
+      post,
+    ),
+  );
 
   controller = new AiEditorController(clientFactory, sessionStore, settings, ui, {
     openDiff: openReviewDiff,

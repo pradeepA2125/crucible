@@ -9,6 +9,9 @@ interface Props {
   availability: InputAvailability;
   draft: string;
   onDraftChange: (text: string) => void;
+  // Opens the in-chat settings popup. When absent (standalone/test call sites),
+  // the gear falls back to the legacy openSettings host message.
+  onOpenSettings?: () => void;
 }
 
 // 5 lines × ~19.2px line-height ≈ 96px. Caps the textarea's auto-grow.
@@ -21,7 +24,7 @@ const MAX_TEXTAREA_HEIGHT = 96;
  * newline. When availability.showStop is true, a Stop button appears on the
  * left side of the footer row and posts { type: "stopTurn" } once.
  */
-export function InputArea({ availability, draft, onDraftChange }: Props) {
+export function InputArea({ availability, draft, onDraftChange, onOpenSettings }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [stopping, setStopping] = useState(false);
   // One-shot guard for the Tier B task-abort buttons (keep / revert).
@@ -216,7 +219,9 @@ export function InputArea({ availability, draft, onDraftChange }: Props) {
         <ModelMenu />
         <button
           type="button"
-          onClick={() => vscode.postMessage({ type: "openSettings" })}
+          onClick={() =>
+            onOpenSettings ? onOpenSettings() : vscode.postMessage({ type: "openSettings" })
+          }
           aria-label="Open settings"
           title="AI Editor settings"
           className="flex h-6 w-6 items-center justify-center rounded-[7px] cursor-pointer text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text"

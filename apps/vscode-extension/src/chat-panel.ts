@@ -2,6 +2,14 @@ import * as fs from "node:fs";
 import * as vscode from "vscode";
 import type { ChatMessage, ChatThreadSummary, CommandDecision, DocWriteDecision, McpToolDecision } from "@ai-editor/editor-client";
 import type { LiveGateView, LivePlanView, LiveTodosView } from "./controller.js";
+import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
+
+// Builds a settings message handler bound to a poster into THIS webview — the chat
+// bundle now embeds the settings UI (floating overlay), so its settings/* messages
+// are handled here and replies posted back into the same webview. See settings-deps.ts.
+export type SettingsHandlerFactory = (
+  post: (msg: SettingsOutMsg) => void,
+) => (msg: SettingsInMsg) => void | Promise<void>;
 
 export type ChatMessageHandler = (
   message: string,
@@ -58,6 +66,12 @@ export type OpenSettingsHandler = (section?: string) => void;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
+  // Settings handler for the embedded floating settings overlay. The factory is
+  // injected by extension.ts (it needs clientFactory, defined after this panel is
+  // constructed); the concrete handler is (re)built per webview mount in
+  // registerHandlers so it can post replies into the live panel.
+  private settingsHandlerFactory: SettingsHandlerFactory | null = null;
+  private settingsHandle: ((msg: SettingsInMsg) => void | Promise<void>) | null = null;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -91,6 +105,13 @@ export class ChatPanel {
     private readonly onSetModel: SetModelHandler = async () => ({ current: null, options: [] }),
     private readonly onOpenSettings: OpenSettingsHandler = () => {}
   ) {}
+
+  /** Injects the settings handler factory for the embedded settings overlay. Called
+   * once by extension.ts after clientFactory is available; the handler itself is
+   * built per webview mount in registerHandlers. */
+  setSettingsHandlerFactory(factory: SettingsHandlerFactory): void {
+    this.settingsHandlerFactory = factory;
+  }
 
   /** Called by the webview serializer when VS Code restores a persisted panel. */
   reattach(restoredPanel: vscode.WebviewPanel): void {
@@ -129,8 +150,21 @@ export class ChatPanel {
 
   private registerHandlers(): void {
     if (!this.panel) return;
+    // (Re)build the embedded-settings handler bound to this webview's poster. Fresh
+    // per mount, so its restartRequired state resets on reload — matching the panel.
+    this.settingsHandle = this.settingsHandlerFactory
+      ? this.settingsHandlerFactory((out) => {
+          void this.panel?.webview.postMessage(out);
+        })
+      : null;
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
       const m = msg as Record<string, unknown>;
+      // Settings overlay (embedded SettingsApp) speaks settings/* — route to the
+      // dedicated handler, which posts settings/state|error|instructions back.
+      if (typeof m["type"] === "string" && (m["type"] as string).startsWith("settings/")) {
+        void this.settingsHandle?.(m as unknown as SettingsInMsg);
+        return;
+      }
       let p: Promise<void>;
       if (m["type"] === "webviewReady") {
         // Webview state resets on reload; the workbar is SSE-fed (not in the

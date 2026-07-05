@@ -27,13 +27,16 @@ describe("SettingsDrawer", () => {
     expect(onSelect).toHaveBeenCalledWith("runtime");
   });
 
-  it("closes on scrim click and on Escape", () => {
+  it("closes on Escape", () => {
     const onClose = vi.fn();
     render(<SettingsDrawer open onClose={onClose} onSelect={() => {}} />);
-    fireEvent.click(screen.getByTestId("drawer-scrim"));
-    expect(onClose).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("squeezes rather than overlays — renders no scrim backdrop", () => {
+    render(<SettingsDrawer open onClose={() => {}} onSelect={() => {}} />);
+    expect(screen.queryByTestId("drawer-scrim")).toBeNull();
   });
 
   it("renders nothing when closed", () => {

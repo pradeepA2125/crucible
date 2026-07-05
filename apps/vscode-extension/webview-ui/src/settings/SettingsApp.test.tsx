@@ -74,4 +74,12 @@ describe("SettingsApp shell", () => {
     deliver({ type: "settings/navigate", section: "runtime" });
     expect(screen.getByRole("heading", { name: "Runtime" })).toBeTruthy();
   });
+
+  it("starts on the section named by initialSection instead of Overview", () => {
+    // The floating in-chat overlay embeds SettingsApp and opens it directly at the
+    // section the user picked in the drawer — no navigate round-trip.
+    render(<SettingsApp initialSection="provider" />);
+    deliver({ type: "settings/state", state });
+    expect(screen.getByRole("heading", { name: "Provider" })).toBeTruthy();
+  });
 });

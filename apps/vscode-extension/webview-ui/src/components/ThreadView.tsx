@@ -8,7 +8,9 @@ import { LiveSlot } from "./LiveSlot";
 import { WorkBar } from "./WorkBar";
 import { InputArea } from "./InputArea";
 import { SettingsDrawer } from "./SettingsDrawer";
+import { ChatSettingsOverlay } from "./ChatSettingsOverlay";
 import { inputAvailability } from "../inputAvailability";
+import type { SectionId } from "../settings/sections/meta";
 import type { AppState, ChatMsg } from "../types";
 
 // Gate statuses where the workbar should be HIDDEN (user is deciding something).
@@ -36,6 +38,8 @@ interface Props {
 export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError }: Props) {
   const [draft, setDraft] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Which settings section the floating popup is open at; null = closed.
+  const [settingsSection, setSettingsSection] = useState<SectionId | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // UX Rule 3: navLocked while input is disabled (local SSE loop appending) OR while a
@@ -92,7 +96,19 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     !state.thinkingStatus;
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden">
+    <div className="relative flex h-full overflow-hidden">
+      {/* Settings drawer — squeezes the chat column (inline sibling, no overlay). */}
+      <SettingsDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onSelect={(section) => {
+          setSettingsSection(section);
+          setDrawerOpen(false);
+        }}
+      />
+
+      {/* ── Chat column ── */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       {/* ── Header ── */}
       <div
         className="flex items-center gap-2 px-2 py-2 flex-shrink-0"
@@ -272,18 +288,15 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           availability={availability}
           draft={draft}
           onDraftChange={setDraft}
+          onOpenSettings={() => setSettingsSection("overview")}
         />
       </div>
+      </div>
 
-      {/* Settings drawer overlay — selecting a section deep-links the full pane. */}
-      <SettingsDrawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        onSelect={(section) => {
-          vscode.postMessage({ type: "openSettings", section });
-          setDrawerOpen(false);
-        }}
-      />
+      {/* Floating settings popup — over the whole chat, opened at the picked section. */}
+      {settingsSection !== null && (
+        <ChatSettingsOverlay section={settingsSection} onClose={() => setSettingsSection(null)} />
+      )}
     </div>
   );
 }

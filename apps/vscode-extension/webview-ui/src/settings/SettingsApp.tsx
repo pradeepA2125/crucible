@@ -18,12 +18,12 @@ import { vscode } from "./vscodeApi";
  * SettingsState snapshot, every mutating action posts and receives a
  * rebuilt snapshot. Sections are pure presentation over {state, busy, send}.
  */
-export default function SettingsApp() {
+export default function SettingsApp({ initialSection = "overview" }: { initialSection?: SectionId } = {}) {
   const [state, setState] = useState<SettingsState | null>(null);
   const [instructions, setInstructions] = useState<{ content: string; exists: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [section, setSection] = useState<SectionId>("overview");
+  const [section, setSection] = useState<SectionId>(initialSection);
   const instructionsRequested = useRef(false);
 
   useEffect(() => {

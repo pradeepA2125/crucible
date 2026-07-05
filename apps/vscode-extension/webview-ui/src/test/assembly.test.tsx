@@ -376,7 +376,7 @@ describe("App — view routing", () => {
 // ── ThreadView: settings drawer (☰) ───────────────────────────────────────────
 
 describe("ThreadView — settings drawer", () => {
-  it("toggles the drawer from the header and deep-links a section via openSettings", () => {
+  it("toggles the drawer from the header and opens the settings popup for a section", () => {
     render(
       <ThreadView
         state={makeState()}
@@ -393,9 +393,15 @@ describe("ThreadView — settings drawer", () => {
     fireEvent.click(screen.getByRole("button", { name: /settings menu/i }));
     expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeTruthy();
 
-    // Selecting a section posts openSettings with that id and closes the drawer.
+    // Selecting a section opens the in-chat settings popup and closes the drawer
+    // (no separate editor tab; the embedded SettingsApp mounts and loads).
     fireEvent.click(screen.getByRole("button", { name: /Runtime/ }));
-    expect(postMessage).toHaveBeenCalledWith({ type: "openSettings", section: "runtime" });
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "openSettings" }),
+    );
+    expect(screen.getByRole("dialog", { name: /settings/i })).toBeTruthy();
+    // Drawer nav is gone; the popup shows the settings app (loading until state arrives).
     expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
+    expect(screen.getByText(/Loading settings/i)).toBeTruthy();
   });
 });
