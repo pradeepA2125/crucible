@@ -9,6 +9,7 @@ import {
   type SettingsDeps,
   type SettingsInMsg,
 } from "./settings-data.js";
+import type { SettingsSectionId } from "./settings-sections.js";
 import { loadInstructions, saveInstructions } from "./instructions-file.js";
 
 const ENV_FLAG_KEYS = [
@@ -23,19 +24,31 @@ const ENV_FLAG_KEYS = [
  * Mirrors setup-panel.ts/memory-panel.ts. */
 export class SettingsPanel {
   private panel: vscode.WebviewPanel | null = null;
+  // Section to deep-link to once the freshly-created webview signals readiness
+  // (its `settings/load` mount message). Posting before mount would race the
+  // webview's own message listener; deferring makes the jump reliable.
+  private pendingSection: SettingsSectionId | null = null;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly runtimeManager: RuntimeManager,
     private readonly workspacePath: string,
     private readonly clientFactory: BackendClientFactory,
+    // Resolves the backend URL the same way the chat controller does — honors an
+    // explicit `aiEditor.backendBaseUrl` (dev-attach flow), falling back to the
+    // managed backend. runtimeManager.backendUrl() alone only knows the managed
+    // port, so the panel could never reach a dev backend without this.
+    private readonly resolveBackendUrl: () => string,
   ) {}
 
-  open(): void {
+  open(section?: SettingsSectionId): void {
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.One);
+      // Already mounted — its listener is live, so navigate immediately.
+      if (section) this.panel.webview.postMessage({ type: "settings/navigate", section });
       return;
     }
+    this.pendingSection = section ?? null;
     this.panel = vscode.window.createWebviewPanel(
       "aiEditorSettings",
       "AI Editor Settings",
@@ -48,15 +61,23 @@ export class SettingsPanel {
     this.panel.webview.html = this.buildHtml();
     const handle = createSettingsHandler(this.buildDeps(), (msg) => this.panel?.webview.postMessage(msg));
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
-      void handle(msg as SettingsInMsg);
+      const inbound = msg as SettingsInMsg;
+      // The webview posts `settings/load` on mount — the reliable "I'm ready"
+      // signal. Fire the deferred deep-link navigate exactly once, then hand off.
+      if (inbound?.type === "settings/load" && this.pendingSection) {
+        this.panel?.webview.postMessage({ type: "settings/navigate", section: this.pendingSection });
+        this.pendingSection = null;
+      }
+      void handle(inbound);
     });
     this.panel.onDidDispose(() => {
       this.panel = null;
+      this.pendingSection = null;
     });
   }
 
   private client() {
-    const url = this.runtimeManager.backendUrl(this.workspacePath);
+    const url = this.resolveBackendUrl().trim();
     if (!url) {
       throw new Error("Backend not started yet — run \"AI Editor: Run Setup\" or restart the backend.");
     }

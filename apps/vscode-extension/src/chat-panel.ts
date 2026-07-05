@@ -54,7 +54,7 @@ export interface ComposerModelState {
 }
 export type ListModelsHandler = () => Promise<ComposerModelState>;
 export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
-export type OpenSettingsHandler = () => void;
+export type OpenSettingsHandler = (section?: string) => void;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -248,7 +248,7 @@ export class ChatPanel {
           }
         })();
       } else if (m["type"] === "openSettings") {
-        this.onOpenSettings();
+        this.onOpenSettings(typeof m["section"] === "string" ? m["section"] : undefined);
         return;
       } else {
         return;

@@ -38,6 +38,8 @@ export default function SettingsApp() {
         setInstructions({ content: msg.content, exists: msg.exists });
       } else if (msg.type === "settings/error") {
         setError(msg.message);
+      } else if (msg.type === "settings/navigate") {
+        setSection(msg.section);
       }
     };
     window.addEventListener("message", onMessage);
@@ -60,6 +62,27 @@ export default function SettingsApp() {
   };
 
   if (!state) {
+    // A buildState failure on the host (e.g. backend unreachable) posts settings/error
+    // before any state arrives. Surface it here — otherwise the panel hangs on
+    // "Loading settings…" forever, since the error banner below is gated on `state`.
+    if (error) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+          <p className="text-sm font-medium" style={{ color: "var(--color-red)" }}>
+            Couldn’t load settings
+          </p>
+          <p className="max-w-[420px] text-xs text-text-3">{error}</p>
+          <BtnPrimary
+            onClick={() => {
+              setError(null);
+              vscode.postMessage({ type: "settings/load" });
+            }}
+          >
+            Retry
+          </BtnPrimary>
+        </div>
+      );
+    }
     return <div className="p-6 text-sm text-text-3">Loading settings…</div>;
   }
 

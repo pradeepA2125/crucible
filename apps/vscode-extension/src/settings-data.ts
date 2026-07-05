@@ -1,5 +1,7 @@
 import type { McpServerList, McpServerView } from "@ai-editor/editor-client";
 
+import type { SettingsSectionId } from "./settings-sections.js";
+
 // vscode-free message handler for the settings panel (settings-panel.ts wires it to
 // RuntimeManager + HttpBackendClient). Mirrors setup-data.ts/memory-data.ts's split.
 
@@ -34,7 +36,8 @@ export type SettingsInMsg =
 export type SettingsOutMsg =
   | { type: "settings/state"; state: SettingsState }
   | { type: "settings/instructions"; content: string; exists: boolean }
-  | { type: "settings/error"; message: string };
+  | { type: "settings/error"; message: string }
+  | { type: "settings/navigate"; section: SettingsSectionId };
 
 export interface SettingsDeps {
   client: {

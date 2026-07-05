@@ -55,4 +55,23 @@ describe("SettingsApp shell", () => {
     navClick(/Skills/);
     expect(screen.getByText(/require a backend restart/)).toBeTruthy();
   });
+
+  it("surfaces a load error instead of hanging on 'Loading settings…'", () => {
+    render(<SettingsApp />);
+    // buildState failed on the host (e.g. backend unreachable) before any state arrived.
+    deliver({ type: "settings/error", message: "Backend not started yet" });
+    expect(screen.getByText(/Backend not started yet/)).toBeTruthy();
+    // Retry re-requests the initial load.
+    (vscode.postMessage as ReturnType<typeof vi.fn>).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "settings/load" });
+  });
+
+  it("deep-links to a section on a settings/navigate message", () => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/state", state });
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeTruthy();
+    deliver({ type: "settings/navigate", section: "runtime" });
+    expect(screen.getByRole("heading", { name: "Runtime" })).toBeTruthy();
+  });
 });

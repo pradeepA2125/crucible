@@ -1,5 +1,6 @@
 // Local mirror of src/settings-data.ts message protocol — the webview bundle never
 // imports the extension's src/ (separate Vite bundle). Mirrors setup/types.ts's split.
+import type { SectionId } from "./sections/meta";
 
 export interface McpServerRow {
   name: string;
@@ -38,7 +39,8 @@ export type SettingsInMsg =
 export type SettingsOutMsg =
   | { type: "settings/state"; state: SettingsState }
   | { type: "settings/instructions"; content: string; exists: boolean }
-  | { type: "settings/error"; message: string };
+  | { type: "settings/error"; message: string }
+  | { type: "settings/navigate"; section: SectionId };
 
 export interface ProviderInfo {
   id: string;

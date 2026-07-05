@@ -178,7 +178,8 @@ export type WebviewMessage =
   // Composer model quick-swap (ModelMenu) + settings shortcut.
   | { type: "listModels" }
   | { type: "setModel"; backend: string; model: string }
-  | { type: "openSettings" };
+  // section (optional) deep-links the Settings pane to a section (from the chat drawer).
+  | { type: "openSettings"; section?: string };
 
 // ── App state ─────────────────────────────────────────────────────────────────
 export interface StreamingBubble {

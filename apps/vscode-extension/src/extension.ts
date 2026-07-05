@@ -14,6 +14,7 @@ import { PROVIDERS } from "./setup-data.js";
 import { openReviewDiff } from "./review-diff.js";
 import { PROVIDER_KEY_ENV, RuntimeManager } from "./runtime/vscode-runtime.js";
 import { SettingsPanel } from "./settings-panel.js";
+import { asSettingsSectionId } from "./settings-sections.js";
 import { SetupPanel } from "./setup-panel.js";
 import { VscodeSessionStore } from "./vscode-session-store.js";
 import {
@@ -131,8 +132,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await runtimeManager.saveProvider(backend, model);
       return composerModelState();
     },
-    () => {
-      void vscode.commands.executeCommand("aiEditor.openSettingsPanel");
+    (section?: string) => {
+      void vscode.commands.executeCommand("aiEditor.openSettingsPanel", section);
     }
   );
 
@@ -387,15 +388,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }, (url) => settings.setManagedBackendUrl(url)).open();
     })
   );
+  // Retained singleton so a tree-row click (or repeat command) reveals + deep-links
+  // the existing panel instead of spawning a duplicate webview tab.
+  let settingsPanel: SettingsPanel | null = null;
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.openSettingsPanel", () => {
-      const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!folder) {
-        void vscode.window.showWarningMessage("Open a folder to view AI Editor settings.");
-        return;
-      }
-      new SettingsPanel(context.extensionUri, runtimeManager, folder, clientFactory).open();
-    })
+    vscode.commands.registerCommand(
+      "aiEditor.openSettingsPanel",
+      (sectionArg?: unknown) => {
+        const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!folder) {
+          void vscode.window.showWarningMessage("Open a folder to view AI Editor settings.");
+          return;
+        }
+        if (!settingsPanel) {
+          settingsPanel = new SettingsPanel(
+            context.extensionUri,
+            runtimeManager,
+            folder,
+            clientFactory,
+            () => settings.getBackendBaseUrl(),
+          );
+        }
+        settingsPanel.open(asSettingsSectionId(sectionArg));
+      },
+    )
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("aiEditor.mcpAddServer", async () => {

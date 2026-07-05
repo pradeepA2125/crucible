@@ -7,6 +7,7 @@ import { AgentRow } from "./messages/AgentRow";
 import { LiveSlot } from "./LiveSlot";
 import { WorkBar } from "./WorkBar";
 import { InputArea } from "./InputArea";
+import { SettingsDrawer } from "./SettingsDrawer";
 import { inputAvailability } from "../inputAvailability";
 import type { AppState, ChatMsg } from "../types";
 
@@ -34,6 +35,7 @@ interface Props {
  */
 export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError }: Props) {
   const [draft, setDraft] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // UX Rule 3: navLocked while input is disabled (local SSE loop appending) OR while a
@@ -90,12 +92,37 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     !state.thinkingStatus;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="relative flex h-full flex-col overflow-hidden">
       {/* ── Header ── */}
       <div
         className="flex items-center gap-2 px-2 py-2 flex-shrink-0"
         style={{ borderBottom: "1px solid var(--color-border)" }}
       >
+        {/* Settings drawer toggle (☰) — available even during a turn. */}
+        <button
+          type="button"
+          onClick={() => setDrawerOpen((o) => !o)}
+          aria-label="Settings menu"
+          title="Settings"
+          className={[
+            "flex items-center justify-center w-6 h-6 rounded-md",
+            "border transition-colors duration-150",
+          ].join(" ")}
+          style={{ color: "var(--color-text-3)", background: "transparent", borderColor: "transparent" }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-bg)";
+            (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--accent-brd)";
+            (e.currentTarget as HTMLButtonElement).style.color = "var(--color-accent)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent";
+            (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-3)";
+          }}
+        >
+          <Icon name="menu" size={14} />
+        </button>
+
         {/* Back button */}
         <button
           type="button"
@@ -247,6 +274,16 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           onDraftChange={setDraft}
         />
       </div>
+
+      {/* Settings drawer overlay — selecting a section deep-links the full pane. */}
+      <SettingsDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onSelect={(section) => {
+          vscode.postMessage({ type: "openSettings", section });
+          setDrawerOpen(false);
+        }}
+      />
     </div>
   );
 }

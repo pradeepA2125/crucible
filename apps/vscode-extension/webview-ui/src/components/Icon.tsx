@@ -4,7 +4,7 @@ export type IconName =
   | "spark" | "search" | "plus" | "clock" | "chev-r" | "chev-l" | "chev-d"
   | "check" | "x" | "copy" | "file" | "term" | "list" | "diff" | "warn"
   | "send" | "stop" | "retry" | "bolt" | "bug"
-  | "home" | "key" | "plug" | "book" | "shield" | "chip" | "gear";
+  | "home" | "key" | "plug" | "book" | "shield" | "chip" | "gear" | "menu";
 
 interface Props {
   name: IconName;
@@ -15,6 +15,10 @@ interface Props {
 // Each entry is the inner content of the 16×16 viewBox symbol, converted to JSX.
 // Colors remain currentColor so CSS drives them — no hardcoded fills/strokes.
 const ICONS: Record<IconName, ReactNode> = {
+  menu: (
+    <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  ),
+
   spark: (
     <path fill="currentColor" d="M8 1l1.7 4.6L14.5 7 9.7 8.7 8 13.5 6.3 8.7 1.5 7l4.8-1.4L8 1z" />
   ),

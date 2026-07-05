@@ -372,3 +372,30 @@ describe("App — view routing", () => {
     expect(screen.getByText("Hello thread")).toBeTruthy();
   });
 });
+
+// ── ThreadView: settings drawer (☰) ───────────────────────────────────────────
+
+describe("ThreadView — settings drawer", () => {
+  it("toggles the drawer from the header and deep-links a section via openSettings", () => {
+    render(
+      <ThreadView
+        state={makeState()}
+        onBack={vi.fn()}
+        dismissedErrorTaskId={null}
+        onDismissError={vi.fn()}
+      />,
+    );
+
+    // Closed by default.
+    expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
+
+    // Open via the header ☰.
+    fireEvent.click(screen.getByRole("button", { name: /settings menu/i }));
+    expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeTruthy();
+
+    // Selecting a section posts openSettings with that id and closes the drawer.
+    fireEvent.click(screen.getByRole("button", { name: /Runtime/ }));
+    expect(postMessage).toHaveBeenCalledWith({ type: "openSettings", section: "runtime" });
+    expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
+  });
+});
