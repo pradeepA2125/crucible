@@ -1,7 +1,29 @@
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import GraphApp from "./GraphApp";
-import type { SceneHandle } from "./types";
+import type { SceneCallbacks, SceneHandle, SpaceModel } from "./types";
+
+const modelWithOneStar: SpaceModel = {
+  workspaceRoot: "/ws",
+  generatedAtMs: 1,
+  packages: [{ id: "apps/web", fileCount: 1, dirs: ["apps/web/src"] }],
+  stars: [
+    {
+      id: "apps/web/src/a.ts",
+      pkg: "apps/web",
+      dir: "apps/web/src",
+      symbolCount: 2,
+      inDeg: 1,
+      outDeg: 1,
+      kindMix: {},
+      isEntry: false,
+      isHub: false,
+    },
+  ],
+  bundles: [],
+  intraBundles: [],
+  links: [],
+};
 
 const postMessage = vi.fn();
 vi.mock("./vscodeApi", () => ({ vscode: { postMessage: (m: unknown) => postMessage(m) } }));
@@ -63,5 +85,43 @@ describe("GraphApp shell", () => {
     });
     // Layout is async (worker with sync fallback) — wait for the scene handoff.
     await waitFor(() => expect(scene.setSpace).toHaveBeenCalledOnce());
+  });
+
+  it("clicking a star requests fileDetail and shows the info card", async () => {
+    const scene = fakeScene();
+    let cb: SceneCallbacks | null = null;
+    render(
+      <GraphApp
+        createScene={(_c, callbacks) => {
+          cb = callbacks;
+          return scene;
+        }}
+      />
+    );
+    hostPost({ type: "space", staleAgeSec: null, model: modelWithOneStar });
+    await waitFor(() => expect(scene.setSpace).toHaveBeenCalled());
+    act(() => cb!.onPickStar("apps/web/src/a.ts"));
+    expect(postMessage).toHaveBeenCalledWith({ type: "fileDetail", fileId: "apps/web/src/a.ts" });
+    expect(screen.getByRole("button", { name: /open in editor/i })).toBeTruthy();
+  });
+
+  it("Escape pops focus back to the package level", async () => {
+    const scene = fakeScene();
+    let cb: SceneCallbacks | null = null;
+    render(
+      <GraphApp
+        createScene={(_c, callbacks) => {
+          cb = callbacks;
+          return scene;
+        }}
+      />
+    );
+    hostPost({ type: "space", staleAgeSec: null, model: modelWithOneStar });
+    await waitFor(() => expect(scene.setSpace).toHaveBeenCalled());
+    act(() => cb!.onPickStar("apps/web/src/a.ts"));
+    act(() => {
+      fireEvent.keyDown(window, { key: "Escape" });
+    });
+    expect(scene.setFocus).toHaveBeenLastCalledWith({ level: 1, pkg: "apps/web" });
   });
 });
