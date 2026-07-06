@@ -30,7 +30,7 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 | Project instructions / prompt files | ✅ on par (done, on branch) | P1 |
 | Agent Skills (agentskills.io) | ✅ done (on branch) | **P2** |
 | MCP client (+ GitHub integration) | ✅ done (on branch) | **P3** |
-| Polished UI / settings / one-command install | ❌ | **P4** |
+| Polished UI / settings / one-command install | ✅ done (merged) | **P4** |
 | Subagents / custom agents / code-review agent | ❌ (dormant task path) | **P5** |
 | Per-hunk accept, vision, tab-completion, cloud agent | ❌ | **P6 / non-goal** |
 
@@ -126,7 +126,7 @@ Spec: `docs/superpowers/specs/2026-06-30-agent-skills-design.md` · Plan: `docs/
 
 **Verification:** full py suite green (1091 tests collected, 1 skip, no failures) after the 2026-07-02 fix; original 2026-06-30 landing verified at py 1062+/1 skip + TS 316. Live-smoke verified both dates (backend :8000 then :8002, TQP, `shadow-forge-stress`).
 
-**Deferred (unchanged from original plan):** the unified `/`-autocomplete dropdown (prompts+skills badged) → **P4**; wiring `rank_skills_by_relevance` to the tail until catalog size demands it; broader cross-provider validation (only TQP/qwen tested so far — gemini has a pre-existing empty-tool-args issue unrelated to skills, per `CLAUDE.md`).
+**Deferred (unchanged from original plan):** wiring `rank_skills_by_relevance` to the tail until catalog size demands it; broader cross-provider validation (only TQP/qwen tested so far — gemini has a pre-existing empty-tool-args issue unrelated to skills, per `CLAUDE.md`). The unified `/`-autocomplete dropdown (prompts+skills badged), originally deferred to P4, shipped 2026-07-06 (see Phase 4 status).
 
 ---
 
@@ -153,6 +153,21 @@ Spec: `docs/superpowers/specs/2026-06-30-agent-skills-design.md` · Plan: `docs/
 ---
 
 ## Phase 4 — Polished UI, Settings & Installation  ⟵ *productization milestone (before subagents)*
+
+### ✅ Status: DONE (2026-07-06, merged + pushed to `main`)
+
+Landed in three sub-passes, all merged: **P4-A** (install/managed runtime, provider factory +
+hot-swap, MCP admin routes — `docs/superpowers/specs|plans/2026-07-02-p4-install-runtime-settings*`)
+· **P4-B** (Settings left-nav pane, setup wizard reskin, chat settings drawer/floating overlay,
+composer model hot-swap — see CLAUDE.md's "Settings/Setup/Composer UI overhaul") · **P4-C**
+(this scope's remaining UI-polish tail: memory inspector palette migration + a chat-window
+shortcut to open it, `@`-file mentions, and a unified `/`-autocomplete dropdown for
+prompts+skills — `docs/superpowers/specs|plans/2026-07-06-*`). Live-smoke verified (real backend +
+VS Code dev host, CDP-driven): dropdowns render and filter live, a mentioned file's content folds
+into that turn only (confirmed via direct SQLite inspection — zero leakage into persisted
+history), and the sent mention renders as a clickable link that opens the file. Packaging
+(Marketplace publish, branding) and the onboarding-walkthrough/empty-state polish beyond what
+shipped in P4-A/B remain open — tracked as regular backlog, not blocking P5.
 
 **Goal:** Turn the capability stack (P1–P3) into a **shippable, installable, configurable product** — the moment a new user can install and drive it without the current manual venv/start-backend/dev-host dance.
 

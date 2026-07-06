@@ -7,6 +7,7 @@ Production-grade AI editor foundation with a polyglot architecture.
 - Program plan: `docs/program/parity-plus-6-month-plan.md`
 - Delivery model: `docs/program/linear-execution-model.md`
 - Strategy/docs model: `docs/program/notion-structure.md`
+- Copilot-agent parity tracker (P1–P6: instructions/prompt files, Agent Skills, MCP client, install/settings/composer UI, subagents): `docs/superpowers/2026-06-29-feature-roadmap-copilot-parity.md` — P1–P4 done and merged as of 2026-07-06.
 
 ## Service layout
 - `apps/editor-client` (TypeScript): editor-facing contracts and HTTP client
