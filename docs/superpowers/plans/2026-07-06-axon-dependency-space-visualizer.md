@@ -1397,6 +1397,10 @@ export class GraphPanel {
       },
       buildIndex: async () => {
         await fetch(new URL("/v1/index/build", this.backendBaseUrl), { method: "POST" });
+        // .ai-editor/ may not have existed when the panel opened (fs.watch on a missing
+        // dir throws) — re-arm so the snapshot ignites the space when the build lands.
+        this.stopWatcher();
+        this.startWatcher();
       },
     };
   }
@@ -2085,6 +2089,8 @@ async function requestLayout(model: SpaceModel): Promise<LayoutResult> {
 
 and call it from the model effect (`requestLayout(model).then((layout) => sceneRef.current?.setSpace(model, layout))`, guarding against a stale model with a request-id ref).
 
+**Test update required:** layout is now asynchronous, so Task 7's "hands the model to the scene" assertion must become `await waitFor(() => expect(scene.setSpace).toHaveBeenCalledOnce())` (import `waitFor` from `@testing-library/react`). jsdom has no `Worker`, so the try/catch falls through to the synchronous `computeLayout` — still a microtask later.
+
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd apps/vscode-extension/webview-ui && npx vitest run src/graph`
@@ -2111,7 +2117,7 @@ git commit -m "feat(graph): deterministic seeded layout with worker + sync fallb
 - Produces:
   - `EMBER` palette constant (Task 10/11 use `EMBER.clusterTints[i % 5]`, `EMBER.kinds[kind]`, `EMBER.star`, `EMBER.beacon`, `EMBER.out`, `EMBER.inn`).
   - `starSize(inDeg, outDeg, isHub): number`, `particleCount(edgeCount): number`, `mixToCounts(kindMix, total): Record<EdgeKind, number>`, `sphericalToPosition(yaw, pitch, radius, target): [number, number, number]`.
-  - `class CameraRig { constructor(camera: THREE.PerspectiveCamera); yaw/pitch/radius/target goals; update(dt): void; attach(el: HTMLElement, onClick: (x, y, dragged) => void): () => void; flyTo(target: [number,number,number], radius: number): void; reset(): void }` — drag orbit, wheel dolly, inertia smoothing `k = 1 - exp(-4.2 * dt)`, idle drift toggle.
+  - `class CameraRig { constructor(camera: THREE.PerspectiveCamera); yaw/pitch/radius/target goals; update(dt): void; attach(el: HTMLElement, onClick: (x: number, y: number) => void): () => void; flyTo(target: [number,number,number], radius: number): void; reset(): void }` — drag orbit, wheel dolly, inertia smoothing `k = 1 - exp(-4.2 * dt)`, idle drift toggle. (`onClick` fires only when total drag < 6px.)
 
 - [ ] **Step 1: Failing scene-math tests**
 
@@ -2857,6 +2863,8 @@ if (!factoryRef.current) {
 
 (make the effect body an async function invoked immediately; jsdom tests always pass `createScene`, so the dynamic import never runs under vitest).
 
+**WebGL-unavailable fallback (spec: Failure modes):** wrap the factory call in try/catch — `new THREE.WebGLRenderer` throws when no GL context is available. On catch, set a `glFailed` state and render a plain-text fallback instead of the canvas: package list with file counts + a notice ("WebGL unavailable — showing structure only"). Also, while `conn.kind === "empty"` with `building: true`, poll `vscode.postMessage({ type: "refresh" })` every 3s (clear the interval when `space` arrives) so the panel ignites when the index build lands even if the file watcher couldn't arm.
+
 - [ ] **Step 4: Build + typecheck + existing tests**
 
 Run: `cd apps/vscode-extension/webview-ui && npx vitest run src/graph && npm run build && cd -`
@@ -3099,7 +3107,8 @@ export function graphReducer(s: GraphUiState, a: GraphAction): GraphUiState {
       return { ...s, layers: { ...s.layers, [a.kind]: a.on } };
     }
     case "hostFileDetail": {
-      const want = s.focus.level >= 2 ? s.focus.fileId : null;
+      // NOTE: `level >= 2` would NOT narrow the discriminated union — use explicit discriminants.
+      const want = s.focus.level === 2 || s.focus.level === 3 ? s.focus.fileId : null;
       return a.detail.fileId === want ? { ...s, fileDetail: a.detail } : s;
     }
     case "hostSymbolDetail":
@@ -3704,16 +3713,19 @@ Expected: all PASS. Confirm `dist/assets/index.js` (chat bundle) byte size is wi
 
 - [ ] **Step 2: Real-snapshot spot check**
 
-```bash
-node -e "
-const { GraphSnapshotStore } = require('./apps/vscode-extension/dist/graph/snapshot-store.js');
-const st = new GraphSnapshotStore(process.env.HOME + '/projects/AI editor/workspaces/shadow-forge-stress/.ai-editor/index-snapshot.json');
+Write a throwaway script (run with `npx tsx` from `apps/vscode-extension/` to sidestep module-format friction):
+
+```typescript
+// /tmp/axon-spot-check.ts
+import { GraphSnapshotStore } from "./src/graph/snapshot-store.js";
+const st = new GraphSnapshotStore(
+  `${process.env.HOME}/projects/AI editor/workspaces/shadow-forge-stress/.ai-editor/index-snapshot.json`
+);
 const m = st.load();
-console.log('stars', m.stars.length, 'packages', m.packages.map(p => p.id), 'bundles', m.bundles.length);
-console.log('entries', m.stars.filter(s => s.isEntry).length, 'hubs', m.stars.filter(s => s.isHub).length);
-"
+console.log("stars", m.stars.length, "packages", m.packages.map((p) => p.id), "bundles", m.bundles.length);
+console.log("entries", m.stars.filter((s) => s.isEntry).length, "hubs", m.stars.filter((s) => s.isHub).length);
 ```
-Expected: ~314 stars, packages resembling `apps/*`+`services/*`, ≥1 bundle, ≥1 entry, ≥1 hub. (Adjust the require path to the actual compiled output layout.)
+Expected: ~314 stars, packages resembling `apps/*`+`services/*`, ≥1 bundle, ≥1 entry, ≥1 hub.
 
 - [ ] **Step 3: Live smoke (CDP recipe, per memory `smoke_controller_cdp_driving_recipe`)**
 
