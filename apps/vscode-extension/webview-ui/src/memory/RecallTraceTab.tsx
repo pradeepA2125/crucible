@@ -1,27 +1,24 @@
 import type { RecallTrace, RecallTraceEntry, RecallSignals } from "./types";
 
-// Slate-dark palette from the approved design wireframe (.superpowers brainstorm,
-// "Memory Inspector — proposed layout", locked as Layout A with full-word labels).
-const KIND_BG: Record<string, string> = {
-  semantic: "#1d4ed8",
-  procedural: "#6d28d9",
-  episodic: "#0e7490",
+const KIND_TINT: Record<string, string> = {
+  semantic: "var(--color-code)",
+  procedural: "var(--color-accent)",
+  episodic: "var(--color-green)",
 };
 
-// Per-signal bar colours (wireframe): retrieval signals blue, importance purple, recency green.
 const SIGNALS: { key: keyof RecallSignals; label: string; color: string }[] = [
-  { key: "semantic", label: "semantic", color: "#3b82f6" },
-  { key: "lexical", label: "lexical", color: "#3b82f6" },
-  { key: "structural", label: "structural", color: "#3b82f6" },
-  { key: "importance", label: "importance", color: "#8b5cf6" },
-  { key: "recency", label: "recency", color: "#10b981" },
+  { key: "semantic", label: "semantic", color: "var(--color-code)" },
+  { key: "lexical", label: "lexical", color: "var(--color-code)" },
+  { key: "structural", label: "structural", color: "var(--color-code)" },
+  { key: "importance", label: "importance", color: "var(--color-accent-deep)" },
+  { key: "recency", label: "recency", color: "var(--color-green)" },
 ];
 
 function KindBadge({ kind }: { kind: string }) {
   return (
     <span
-      className="rounded px-[7px] py-px text-[11px] text-white"
-      style={{ background: KIND_BG[kind] ?? "#334155" }}
+      className="rounded px-[7px] py-px text-[11px] font-semibold"
+      style={{ background: KIND_TINT[kind] ?? "var(--color-text-3)", color: "var(--color-panel)" }}
     >
       {kind}
     </span>
@@ -32,11 +29,11 @@ function SignalCell({ label, value, color }: { label: string; value: number; col
   const pct = Math.max(0, Math.min(1, value)) * 100;
   return (
     <div data-signal={label} className="flex flex-col gap-1">
-      <span className="flex justify-between text-[10px] text-[#94a3b8]">
+      <span className="flex justify-between text-[10px]" style={{ color: "var(--color-text-2)" }}>
         <span>{label}</span>
-        <span className="tabular-nums text-[#cbd5e1]">{value.toFixed(2)}</span>
+        <span className="tabular-nums" style={{ color: "var(--color-text)" }}>{value.toFixed(2)}</span>
       </span>
-      <div className="h-1.5 rounded-full bg-[#1e293b]">
+      <div className="h-1.5 rounded-full" style={{ background: "var(--color-border)" }}>
         <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: color }} />
       </div>
     </div>
@@ -52,7 +49,6 @@ function Entry({
   reranked: boolean;
   fusedRank: number;
 }) {
-  // Rank label mirrors the wireframe: "✓ injected · #1", and on a rerank move "· #2 ▲ from #4".
   let rankSuffix = "";
   if (reranked && fusedRank !== entry.finalRank) {
     rankSuffix = ` ${entry.finalRank < fusedRank ? "▲" : "▼"} from #${fusedRank + 1}`;
@@ -61,20 +57,27 @@ function Entry({
   return (
     <div
       data-testid={`trace-entry-${entry.memoryId}`}
-      className={`mb-3 rounded-lg border border-[#334155] bg-[#111827] p-3.5 ${entry.injected ? "" : "opacity-55"}`}
+      className={`mb-3 rounded-lg border p-3.5 ${entry.injected ? "" : "opacity-55"}`}
+      style={{ borderColor: "var(--color-border-strong)", background: "var(--color-surface)" }}
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <span className="min-w-0 flex items-center gap-2">
           <KindBadge kind={entry.kind} />
-          <span className="line-clamp-2 leading-snug text-[#cbd5e1]">{entry.content}</span>
+          <span className="line-clamp-2 leading-snug" style={{ color: "var(--color-text)" }}>{entry.content}</span>
         </span>
         {entry.injected ? (
-          <span className="shrink-0 whitespace-nowrap rounded bg-[#065f46] px-2 py-0.5 text-[11px] text-[#6ee7b7]">
+          <span
+            className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px]"
+            style={{ background: "var(--green-bg)", border: "1px solid var(--green-brd)", color: "var(--color-green)" }}
+          >
             ✓ injected · #{entry.finalRank + 1}
             {rankSuffix}
           </span>
         ) : (
-          <span className="shrink-0 whitespace-nowrap rounded bg-[#7f1d1d] px-2 py-0.5 text-[11px] text-[#fca5a5]">
+          <span
+            className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px]"
+            style={{ background: "var(--red-bg)", border: "1px solid var(--red-brd)", color: "var(--color-red)" }}
+          >
             ✗ below floor
           </span>
         )}
@@ -87,16 +90,16 @@ function Entry({
         {SIGNALS.map((s) => (
           <SignalCell key={s.key} label={s.label} value={entry.signals[s.key]} color={s.color} />
         ))}
-        <div className="border-l border-[#1e293b] pl-4 text-right text-[10px] text-[#94a3b8]">
+        <div className="pl-4 text-right text-[10px]" style={{ borderLeft: "1px solid var(--color-border)", color: "var(--color-text-2)" }}>
           fused
           <br />
-          <b className="text-[13px] text-[#e2e8f0]">{entry.fusedScore.toFixed(3)}</b>
+          <b className="text-[13px]" style={{ color: "var(--color-text)" }}>{entry.fusedScore.toFixed(3)}</b>
         </div>
         {reranked && (
-          <div className="text-right text-[10px] text-[#94a3b8]">
+          <div className="text-right text-[10px]" style={{ color: "var(--color-text-2)" }}>
             rerank
             <br />
-            <b className="text-[13px] text-[#34d399]">
+            <b className="text-[13px]" style={{ color: "var(--color-green)" }}>
               {entry.rerankScore !== null ? `${entry.rerankScore.toFixed(2)} ▲` : "—"}
             </b>
           </div>
@@ -109,27 +112,31 @@ function Entry({
 export function RecallTraceTab({ trace }: { trace: RecallTrace | null }) {
   if (!trace) {
     return (
-      <div className="p-3 text-[#94a3b8]">No recall recorded yet. Run a chat turn, then Refresh.</div>
+      <div className="p-3" style={{ color: "var(--color-text-2)" }}>
+        No recall recorded yet. Run a chat turn, then Refresh.
+      </div>
     );
   }
 
-  // Fused-order ranking, so a reranked row can show "▲ from #N" vs its pre-rerank position.
   const byFused = [...trace.entries].sort((a, b) => b.fusedScore - a.fusedScore);
   const fusedRankOf = new Map(byFused.map((e, i) => [e.memoryId, i]));
 
   return (
-    <div data-testid="memory-trace-tab" className="bg-[#0b1220] p-4 text-[#cbd5e1]">
-      <div className="mb-4 rounded-md bg-[#0f172a] px-3.5 py-2.5 text-[12px] leading-relaxed text-[#cbd5e1]">
+    <div data-testid="memory-trace-tab" className="p-4" style={{ background: "var(--color-panel)", color: "var(--color-text)" }}>
+      <div
+        className="mb-4 rounded-md px-3.5 py-2.5 text-[12px] leading-relaxed"
+        style={{ background: "var(--color-surface-2)", color: "var(--color-text)" }}
+      >
         <b>query</b> "{trace.query}" &nbsp;·&nbsp; <b>scope</b> {trace.scopeKind} &nbsp;·&nbsp;{" "}
         <b>{trace.entries.length} candidates</b> &nbsp;·&nbsp;{" "}
-        <span className={trace.reranked ? "text-[#34d399]" : "text-[#94a3b8]"}>
+        <span style={{ color: trace.reranked ? "var(--color-green)" : "var(--color-text-2)" }}>
           reranked {trace.reranked ? "✓" : "✗"}
         </span>{" "}
         &nbsp;·&nbsp; <b>floor</b> {trace.floor.toFixed(2)} &nbsp;·&nbsp; <b>k</b> {trace.k}
       </div>
 
       {trace.entries.length === 0 ? (
-        <div className="text-[#94a3b8]">
+        <div style={{ color: "var(--color-text-2)" }}>
           0 candidates (recall returned nothing — empty query or no matches).
         </div>
       ) : (
@@ -145,18 +152,22 @@ export function RecallTraceTab({ trace }: { trace: RecallTrace | null }) {
             <div
               key={e.memoryId}
               data-testid={`trace-entry-${e.memoryId}`}
-              className="mb-3 rounded-lg border border-[#334155] bg-[#111827] p-3.5 opacity-55"
+              className="mb-3 rounded-lg border p-3.5 opacity-55"
+              style={{ borderColor: "var(--color-border-strong)", background: "var(--color-surface)" }}
             >
               <div className="mb-2 flex items-start justify-between gap-3">
                 <span className="min-w-0 flex items-center gap-2">
                   <KindBadge kind={e.kind} />
-                  <span className="line-clamp-2 leading-snug text-[#cbd5e1]">{e.content}</span>
+                  <span className="line-clamp-2 leading-snug" style={{ color: "var(--color-text)" }}>{e.content}</span>
                 </span>
-                <span className="shrink-0 whitespace-nowrap rounded bg-[#7f1d1d] px-2 py-0.5 text-[11px] text-[#fca5a5]">
+                <span
+                  className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px]"
+                  style={{ background: "var(--red-bg)", border: "1px solid var(--red-brd)", color: "var(--color-red)" }}
+                >
                   ✗ below floor
                 </span>
               </div>
-              <div className="text-[#64748b]">
+              <div style={{ color: "var(--color-text-3)" }}>
                 fused <b>{e.fusedScore.toFixed(2)}</b> &lt; floor {trace.floor.toFixed(2)} — not
                 injected
               </div>

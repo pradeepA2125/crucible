@@ -28,26 +28,37 @@ export default function MemoryApp() {
 
   const tabClass = (active: boolean) =>
     `rounded-t-md px-3.5 py-1.5 text-[13px] ${
-      active ? "bg-[#2563eb] font-semibold text-white" : "bg-[#1f2937] text-[#9ca3af]"
+      active ? "font-semibold" : ""
     }`;
+  const tabStyle = (active: boolean): React.CSSProperties =>
+    active
+      ? { background: "var(--color-accent-deep)", color: "#fff" }
+      : { background: "var(--color-surface-2)", color: "var(--color-text-2)" };
 
   return (
-    <div className="flex h-screen flex-col bg-[#0b1220] text-sm text-[#cbd5e1]">
-      <div className="flex items-center gap-2 border-b border-[#1e293b] px-3 pt-2">
-        <button className={tabClass(tab === "trace")} onClick={() => setTab("trace")}>
+    <div
+      className="flex h-screen flex-col text-sm"
+      style={{ background: "var(--color-panel)", color: "var(--color-text)" }}
+    >
+      <div
+        className="flex items-center gap-2 px-3 pt-2"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <button className={tabClass(tab === "trace")} style={tabStyle(tab === "trace")} onClick={() => setTab("trace")}>
           Recall Trace
         </button>
-        <button className={tabClass(tab === "browser")} onClick={() => setTab("browser")}>
+        <button className={tabClass(tab === "browser")} style={tabStyle(tab === "browser")} onClick={() => setTab("browser")}>
           Browser
         </button>
         <button
-          className="ml-auto mb-1 text-[#94a3b8] hover:text-[#cbd5e1]"
+          className="ml-auto mb-1"
+          style={{ color: "var(--color-text-2)" }}
           onClick={() => vscode.postMessage({ type: "refresh" })}
         >
           ⟳ Refresh
         </button>
       </div>
-      {error && <div className="px-3 py-1 text-[#fca5a5]">{error}</div>}
+      {error && <div className="px-3 py-1" style={{ color: "var(--color-red)" }}>{error}</div>}
       <div className="flex-1 overflow-auto">
         {tab === "trace" ? (
           <RecallTraceTab trace={trace} />
