@@ -22,7 +22,7 @@ class _SlowController(ChatController):
         self._gate = gate
 
     async def handle_message(self, thread_id, message, channel_id, step_review=None,
-                             forced_skills=None):
+                             forced_skills=None, mentioned_files=None):
         await self._gate.wait()
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
 

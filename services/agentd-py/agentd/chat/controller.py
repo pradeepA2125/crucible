@@ -271,6 +271,7 @@ class ChatController:
     async def handle_message(
         self, thread_id: str, message: str, channel_id: str, step_review: bool | None = None,
         forced_skills: list[str] | None = None,
+        mentioned_files: list[dict[str, str]] | None = None,
     ) -> None:
         thread = self._store.get_thread(thread_id)
         if thread is None:
@@ -288,7 +289,25 @@ class ChatController:
                 "type": "thread_title_updated",
                 "payload": {"thread_id": thread_id, "title": title},
             })
-        self._store.append_message(thread_id, ChatMessage(role="user", content=message))
+        # @-mentions are turn-scoped: the model sees the referenced file content
+        # only for THIS turn (folded into turn_message below, which feeds
+        # _run_loop's goal / plan_context["goal"]). The persisted/display message
+        # and conversation history keep the short original text, tagged with the
+        # mentioned paths only (never content) so the transcript can render
+        # clickable mentions without duplicating file content into chat storage.
+        turn_message = message
+        mentioned_paths: list[str] = []
+        if mentioned_files:
+            mentioned_paths = [f["path"] for f in mentioned_files if f.get("path")]
+            blocks = "\n\n".join(
+                f"### {f['path']}\n```\n{f['content']}\n```"
+                for f in mentioned_files if f.get("path")
+            )
+            if blocks:
+                turn_message = f"{message}\n\n---\nReferenced files:\n{blocks}"
+        self._store.append_message(thread_id, ChatMessage(
+            role="user", content=message,
+            metadata={"mentioned_files": mentioned_paths} if mentioned_paths else {}))
         # A new turn invalidates any prior in-flight pills marker (a stopped/orphaned
         # earlier turn). Drop it so this turn's switch-back dedup is scoped to its own
         # message (finding 5); the orphan's pills stay as a normal message.
@@ -300,7 +319,7 @@ class ChatController:
         seed = self._seed_for(thread_id)
         # On a continued turn (discuss), append the user's reply to the prior history
         # and replay it as the cache prefix (spec §12 clarify resume).
-        seed_history = (seed + [{"role": "user", "content": message}]) if seed else None
+        seed_history = (seed + [{"role": "user", "content": turn_message}]) if seed else None
         # Clarify-resume is now driven by resolve_clarify (the gate carries resume_phase),
         # not a fresh user message: the main composer is disabled while a clarify gate is
         # pending, so the answer arrives via the card. A plain message here always
@@ -310,7 +329,7 @@ class ChatController:
         # tool result and _finish finalize the SAME message (no duplicate). Finding 5.
         turn_id = uuid4().hex
         outcome = await self._run_loop(
-            thread_id, channel_id, message, seed_history=seed_history,
+            thread_id, channel_id, turn_message, seed_history=seed_history,
             step_review=step_review, phase=resume_phase, turn_id=turn_id,
             edit_is_resume=(resume_phase == "EDIT"), forced_skills=forced_skills)
         await self._finish(thread_id, channel_id, outcome, step_review, turn_id=turn_id)

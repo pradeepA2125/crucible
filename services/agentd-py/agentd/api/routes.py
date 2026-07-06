@@ -1357,6 +1357,15 @@ def build_router(
             forced_skills = (
                 [str(s) for s in _raw_forced] if isinstance(_raw_forced, list) else None
             )
+            _raw_mentioned = request.get("mentioned_files")
+            mentioned_files = (
+                [
+                    {"path": str(f.get("path", "")), "content": str(f.get("content", ""))}
+                    for f in _raw_mentioned
+                    if isinstance(f, dict) and f.get("path")
+                ]
+                if isinstance(_raw_mentioned, list) else None
+            ) or None
             channel_id = f"chat:{thread_id}"
 
             # Flag-tolerant: only the ChatController detaches turns. The legacy
@@ -1376,7 +1385,8 @@ def build_router(
                     thread_id,
                     _chat_agent.handle_message(
                         thread_id, message, channel_id=channel_id,
-                        step_review=step_review, forced_skills=forced_skills),
+                        step_review=step_review, forced_skills=forced_skills,
+                        mentioned_files=mentioned_files),
                     channel_id=channel_id,
                 )
                 queue = _chat_agent._broadcaster.subscribe(channel_id)
