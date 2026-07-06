@@ -2,7 +2,9 @@ import { useRef, useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { ModelMenu } from "./ModelMenu";
 import { vscode } from "../vscodeApi";
-import { parseSlashCommand, resolveSkillCommand } from "../slash";
+import { parseSlashCommand, resolveSkillCommand, buildSlashDropdownItems } from "../slash";
+import { detectTrigger } from "../composerTrigger";
+import { TriggerDropdown } from "./TriggerDropdown";
 import type { InputAvailability } from "../inputAvailability";
 
 interface Props {
@@ -64,21 +66,38 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
   // that never types a slash command makes no extra round-trip.
   const skillsRequestedRef = useRef(false);
 
+  // Unified "/" + "@" dropdown state.
+  const [trigger, setTrigger] = useState<{ kind: "slash" | "file"; query: string; start: number; end: number } | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [promptNames, setPromptNames] = useState<string[]>([]);
+  const [skillCatalog, setSkillCatalog] = useState<{ name: string; description: string }[]>([]);
+  const promptsRequestedRef = useRef(false);
+
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       const m = e.data as Record<string, unknown>;
-      if (m?.["type"] !== "skillList") return;
-      const skills = (m["skills"] as { name: string }[] | undefined) ?? [];
-      setSkillNames(skills.map((s) => s.name));
+      if (m?.["type"] === "skillList") {
+        const skills = (m["skills"] as { name: string; description: string }[] | undefined) ?? [];
+        setSkillNames(skills.map((s) => s.name));
+        setSkillCatalog(skills);
+      } else if (m?.["type"] === "promptList") {
+        setPromptNames((m["names"] as string[] | undefined) ?? []);
+      }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  function maybeRequestSkills(value: string) {
-    if (!skillsRequestedRef.current && value.startsWith("/")) {
-      skillsRequestedRef.current = true;
-      vscode.postMessage({ type: "listSkills" });
+  function maybeRequestCatalogs(value: string) {
+    if (value.startsWith("/")) {
+      if (!skillsRequestedRef.current) {
+        skillsRequestedRef.current = true;
+        vscode.postMessage({ type: "listSkills" });
+      }
+      if (!promptsRequestedRef.current) {
+        promptsRequestedRef.current = true;
+        vscode.postMessage({ type: "listPrompts" });
+      }
     }
   }
 
@@ -128,9 +147,62 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
   }
 
   function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    onDraftChange(e.target.value);
-    maybeRequestSkills(e.target.value);
+    const value = e.target.value;
+    onDraftChange(value);
+    maybeRequestCatalogs(value);
+    const cursor = e.target.selectionStart ?? value.length;
+    const t = detectTrigger(value, cursor);
+    setTrigger(t);
+    setActiveIndex(0);
     autoGrow();
+  }
+
+  const dropdownItems =
+    trigger?.kind === "slash"
+      ? buildSlashDropdownItems(trigger.query, promptNames, skillCatalog).map((i) => ({
+          id: i.id, label: i.label, sublabel: i.sublabel, badge: i.badge,
+        }))
+      : [];
+
+  function applyTriggerSelection(id: string) {
+    if (!trigger) return;
+    const el = textareaRef.current;
+    const before = draft.slice(0, trigger.start);
+    const after = draft.slice(trigger.end);
+    const insertion = trigger.kind === "slash" ? `/${id} ` : `@${id} `;
+    const next = `${before}${insertion}${after}`;
+    onDraftChange(next);
+    setTrigger(null);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const pos = before.length + insertion.length;
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
+  function handleTriggerKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
+    if (!trigger || dropdownItems.length === 0) return false;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => (i + 1) % dropdownItems.length);
+      return true;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => (i - 1 + dropdownItems.length) % dropdownItems.length);
+      return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      applyTriggerSelection(dropdownItems[activeIndex].id);
+      return true;
+    }
+    if (e.key === "Escape") {
+      setTrigger(null);
+      return true;
+    }
+    return false;
   }
 
   function doSend() {
@@ -154,6 +226,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (handleTriggerKeyDown(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       doSend();
@@ -178,7 +251,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
   return (
     <div
       className={[
-        "rounded-[10px] border px-3 pt-2 pb-1.5",
+        "relative rounded-[10px] border px-3 pt-2 pb-1.5",
         "transition-opacity duration-150",
         availability.disabled ? "opacity-55" : "opacity-100",
       ].join(" ")}
@@ -189,6 +262,14 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
       // Focus-within ring is applied via inline style on a wrapper trick using
       // onFocusCapture/onBlurCapture to avoid Tailwind v4 focus-within issues.
     >
+      {trigger && dropdownItems.length > 0 && (
+        <TriggerDropdown
+          items={dropdownItems}
+          activeIndex={activeIndex}
+          onHover={setActiveIndex}
+          onSelect={applyTriggerSelection}
+        />
+      )}
       {/* Textarea */}
       <textarea
         ref={textareaRef}

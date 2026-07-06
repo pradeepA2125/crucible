@@ -23,3 +23,31 @@ export function resolveSkillCommand(
   if (!skillNames.includes(name)) return null;
   return { forcedSkills: [name], message: args };
 }
+
+export interface SlashDropdownItem {
+  id: string;
+  label: string;
+  sublabel?: string;
+  badge: "Prompt" | "Skill";
+}
+
+/**
+ * Merge prompt names + skill catalog into one filtered, badged list for the
+ * unified "/" dropdown. Prompt-file-wins-on-collision (mirrors resolveSkillCommand):
+ * a name present in both lists renders only its Prompt row.
+ */
+export function buildSlashDropdownItems(
+  query: string,
+  promptNames: string[],
+  skills: { name: string; description: string }[],
+): SlashDropdownItem[] {
+  const q = query.toLowerCase();
+  const promptSet = new Set(promptNames);
+  const prompts: SlashDropdownItem[] = promptNames
+    .filter((n) => n.toLowerCase().includes(q))
+    .map((n) => ({ id: n, label: n, badge: "Prompt" as const }));
+  const skillItems: SlashDropdownItem[] = skills
+    .filter((s) => !promptSet.has(s.name) && s.name.toLowerCase().includes(q))
+    .map((s) => ({ id: s.name, label: s.name, sublabel: s.description, badge: "Skill" as const }));
+  return [...prompts, ...skillItems];
+}

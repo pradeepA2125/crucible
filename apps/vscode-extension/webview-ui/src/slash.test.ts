@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSlashCommand, resolveSkillCommand } from "./slash";
+import { parseSlashCommand, resolveSkillCommand, buildSlashDropdownItems } from "./slash";
 
 describe("parseSlashCommand", () => {
   it("parses name and args", () => {
@@ -27,5 +27,25 @@ describe("resolveSkillCommand", () => {
       forcedSkills: ["git-commit"],
       message: "",
     });
+  });
+});
+
+describe("buildSlashDropdownItems", () => {
+  it("badges prompts and skills, filtered by query", () => {
+    const items = buildSlashDropdownItems(
+      "rev",
+      ["review", "changelog"],
+      [{ name: "git-commit", description: "Commit staged changes" }],
+    );
+    expect(items).toEqual([{ id: "review", label: "review", badge: "Prompt" }]);
+  });
+
+  it("prompt wins on name collision with a skill", () => {
+    const items = buildSlashDropdownItems(
+      "",
+      ["shared-name"],
+      [{ name: "shared-name", description: "a skill" }],
+    );
+    expect(items).toEqual([{ id: "shared-name", label: "shared-name", badge: "Prompt" }]);
   });
 });

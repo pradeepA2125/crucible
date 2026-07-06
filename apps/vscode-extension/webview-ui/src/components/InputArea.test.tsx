@@ -18,6 +18,11 @@ function Harness() {
   return <InputArea availability={availability} draft={draft} onDraftChange={setDraft} />;
 }
 
+function EmptyHarness() {
+  const [draft, setDraft] = useState("");
+  return <InputArea availability={availability} draft={draft} onDraftChange={setDraft} />;
+}
+
 describe("InputArea slash-command expansion", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -71,5 +76,43 @@ describe("InputArea slash-command expansion", () => {
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "listModels" });
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "openSettings" });
+  });
+});
+
+describe("InputArea unified / dropdown", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("shows prompt and skill rows after typing / and requests both catalogs", () => {
+    render(<EmptyHarness />);
+    const ta = screen.getByLabelText("Chat input") as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: "/" } });
+    const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls).toContainEqual({ type: "listSkills" });
+    expect(calls).toContainEqual({ type: "listPrompts" });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "promptList", names: ["review"] } }));
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "skillList", skills: [{ name: "git-commit", description: "Commit staged changes" }] },
+      }));
+    });
+    expect(screen.getByText("review")).toBeTruthy();
+    expect(screen.getByText("git-commit")).toBeTruthy();
+    expect(screen.getByText("Prompt")).toBeTruthy();
+    expect(screen.getByText("Skill")).toBeTruthy();
+  });
+
+  it("Enter on a dropdown row inserts the name without sending", () => {
+    render(<EmptyHarness />);
+    const ta = screen.getByLabelText("Chat input") as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: "/" } });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "promptList", names: ["review"] } }));
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "skillList", skills: [] } }));
+    });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(ta.value).toBe("/review ");
+    const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls.find((c) => c.type === "sendMessage")).toBeUndefined();
   });
 });
