@@ -165,6 +165,7 @@ declare module "vscode" {
     ): Thenable<T | undefined>;
     function setStatusBarMessage(text: string, hideAfterTimeout?: number): Disposable;
     function registerWebviewPanelSerializer(viewType: string, serializer: WebviewPanelSerializer): Disposable;
+    function showTextDocument(uriOrDocument: Uri | TextDocument): Thenable<unknown>;
   }
 
   export namespace workspace {
@@ -178,6 +179,8 @@ declare module "vscode" {
             content?: string;
           }
     ): Thenable<TextDocument>;
+    function findFiles(include: string, exclude?: string | null, maxResults?: number): Thenable<Uri[]>;
+    function asRelativePath(pathOrUri: string | Uri, includeWorkspaceFolder?: boolean): string;
   }
 
   export namespace commands {

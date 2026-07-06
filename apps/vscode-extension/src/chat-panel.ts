@@ -64,6 +64,8 @@ export type ListModelsHandler = () => Promise<ComposerModelState>;
 export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
 export type OpenSettingsHandler = (section?: string) => void;
 export type OpenMemoryPanelHandler = () => void;
+export type ListWorkspaceFilesHandler = () => Promise<string[]>;
+export type OpenFileHandler = (relativePath: string) => void;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -105,7 +107,9 @@ export class ChatPanel {
     private readonly onListModels: ListModelsHandler = async () => ({ current: null, options: [] }),
     private readonly onSetModel: SetModelHandler = async () => ({ current: null, options: [] }),
     private readonly onOpenSettings: OpenSettingsHandler = () => {},
-    private readonly onOpenMemoryPanel: OpenMemoryPanelHandler = () => {}
+    private readonly onOpenMemoryPanel: OpenMemoryPanelHandler = () => {},
+    private readonly onListWorkspaceFiles: ListWorkspaceFilesHandler = async () => [],
+    private readonly onOpenFile: OpenFileHandler = () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -254,6 +258,14 @@ export class ChatPanel {
           const skills = await this.onListSkills();
           this.panel?.webview.postMessage({ type: "skillList", skills });
         })();
+      } else if (m["type"] === "listWorkspaceFiles") {
+        p = (async () => {
+          const paths = await this.onListWorkspaceFiles();
+          this.panel?.webview.postMessage({ type: "workspaceFileList", paths });
+        })();
+      } else if (m["type"] === "openFile") {
+        this.onOpenFile(m["path"] as string);
+        return;
       } else if (m["type"] === "expandPrompt") {
         const name = m["name"] as string;
         const args = (m["args"] as string) ?? "";

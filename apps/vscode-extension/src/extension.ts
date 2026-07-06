@@ -1,5 +1,6 @@
 import { HttpBackendClient } from "@ai-editor/editor-client";
 import * as vscode from "vscode";
+import * as path from "node:path";
 
 import { ChatPanel } from "./chat-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
@@ -139,6 +140,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     () => {
       void vscode.commands.executeCommand("aiEditor.openMemoryPanel");
+    },
+    async () => {
+      const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!ws) return [];
+      const uris: vscode.Uri[] = await vscode.workspace.findFiles(
+        "**/*",
+        "{**/node_modules/**,**/.git/**,**/dist/**,**/target/**,**/__pycache__/**,**/.venv/**,**/.agentd/**,**/.ai-editor/**}",
+        5000
+      );
+      return uris.map((u) => vscode.workspace.asRelativePath(u, false));
+    },
+    (relativePath: string) => {
+      const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!ws) return;
+      void vscode.window.showTextDocument(vscode.Uri.file(path.join(ws, relativePath)));
     }
   );
 

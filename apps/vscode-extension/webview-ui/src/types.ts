@@ -137,7 +137,8 @@ export type ExtensionMessage =
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } }
   // P1: prompt-file expansion replies from the host
   | { type: "promptList"; names: string[] }
-  | { type: "promptExpanded"; name: string; found: boolean; text: string };
+  | { type: "promptExpanded"; name: string; found: boolean; text: string }
+  | { type: "workspaceFileList"; paths: string[] };
 
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
@@ -181,7 +182,10 @@ export type WebviewMessage =
   // section (optional) deep-links the Settings pane to a section (from the chat drawer).
   | { type: "openSettings"; section?: string }
   // Chat-window shortcut to the standalone Memory Inspector panel/command.
-  | { type: "openMemoryPanel" };
+  | { type: "openMemoryPanel" }
+  // @-mention composer: workspace file listing + click-to-open.
+  | { type: "listWorkspaceFiles" }
+  | { type: "openFile"; path: string };
 
 // ── App state ─────────────────────────────────────────────────────────────────
 export interface StreamingBubble {
