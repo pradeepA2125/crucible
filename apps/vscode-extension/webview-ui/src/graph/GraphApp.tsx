@@ -14,6 +14,27 @@ type Conn =
   | { kind: "empty"; reason: "missing" | "malformed"; message: string; building: boolean }
   | { kind: "ready" };
 
+async function requestLayout(model: SpaceModel): Promise<LayoutResult> {
+  try {
+    const worker = new Worker(new URL("./layout.worker.ts", import.meta.url), { type: "module" });
+    return await new Promise<LayoutResult>((resolve, reject) => {
+      worker.onmessage = (ev: MessageEvent<LayoutResult>) => {
+        worker.terminate();
+        resolve(ev.data);
+      };
+      worker.onerror = (e) => {
+        worker.terminate();
+        reject(e);
+      };
+      worker.postMessage(model);
+    });
+  } catch {
+    // Worker unavailable (restricted webview / jsdom) — compute synchronously.
+    const { computeLayout } = await import("./layout");
+    return computeLayout(model);
+  }
+}
+
 export default function GraphApp({ createScene }: Props) {
   const [conn, setConn] = useState<Conn>({ kind: "connecting" });
   const [model, setModel] = useState<SpaceModel | null>(null);
@@ -44,7 +65,8 @@ export default function GraphApp({ createScene }: Props) {
     return () => clearInterval(t);
   }, [conn]);
 
-  // Scene lifecycle + naive layout (worker layout replaces this in the layout task).
+  // Scene lifecycle: worker-computed layout, guarded against stale models.
+  const layoutReqRef = useRef(0);
   useEffect(() => {
     if (!model || !canvasRef.current || !createScene) return;
     if (!sceneRef.current) {
@@ -55,11 +77,11 @@ export default function GraphApp({ createScene }: Props) {
         onBackgroundClick: () => {},
       });
     }
-    const layout: LayoutResult = {
-      ids: model.stars.map((s) => s.id),
-      positions: new Float32Array(model.stars.length * 3),
-    };
-    sceneRef.current.setSpace(model, layout);
+    const req = ++layoutReqRef.current;
+    void requestLayout(model).then((layout) => {
+      if (req !== layoutReqRef.current) return; // a newer model superseded this layout
+      sceneRef.current?.setSpace(model, layout);
+    });
   }, [model, createScene]);
 
   useEffect(() => () => sceneRef.current?.dispose(), []);

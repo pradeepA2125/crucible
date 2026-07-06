@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import GraphApp from "./GraphApp";
 import type { SceneHandle } from "./types";
@@ -45,7 +45,7 @@ describe("GraphApp shell", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "buildIndex" });
   });
 
-  it("hands the model to the scene when space arrives", () => {
+  it("hands the model to the scene when space arrives", async () => {
     const scene = fakeScene();
     render(<GraphApp createScene={() => scene} />);
     hostPost({
@@ -61,6 +61,7 @@ describe("GraphApp shell", () => {
         links: [],
       },
     });
-    expect(scene.setSpace).toHaveBeenCalledOnce();
+    // Layout is async (worker with sync fallback) — wait for the scene handoff.
+    await waitFor(() => expect(scene.setSpace).toHaveBeenCalledOnce());
   });
 });
