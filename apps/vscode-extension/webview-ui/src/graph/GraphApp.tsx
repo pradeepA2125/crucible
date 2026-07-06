@@ -38,8 +38,10 @@ async function requestLayout(model: SpaceModel): Promise<LayoutResult> {
 export default function GraphApp({ createScene }: Props) {
   const [conn, setConn] = useState<Conn>({ kind: "connecting" });
   const [model, setModel] = useState<SpaceModel | null>(null);
+  const [glFailed, setGlFailed] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sceneRef = useRef<SceneHandle | null>(null);
+  const factoryRef = useRef<Props["createScene"] | null>(createScene ?? null);
 
   useEffect(() => {
     const onMsg = (ev: MessageEvent) => {
@@ -68,21 +70,35 @@ export default function GraphApp({ createScene }: Props) {
   // Scene lifecycle: worker-computed layout, guarded against stale models.
   const layoutReqRef = useRef(0);
   useEffect(() => {
-    if (!model || !canvasRef.current || !createScene) return;
-    if (!sceneRef.current) {
-      sceneRef.current = createScene(canvasRef.current, {
-        onPickStar: () => {},
-        onPickPackage: () => {},
-        onPickSatellite: () => {},
-        onBackgroundClick: () => {},
-      });
-    }
+    if (!model || !canvasRef.current) return;
+    const canvas = canvasRef.current;
     const req = ++layoutReqRef.current;
-    void requestLayout(model).then((layout) => {
+    void (async () => {
+      if (!factoryRef.current) {
+        // Production path: lazy-load the Three.js factory so jsdom tests
+        // (which always inject createScene) never touch WebGL code.
+        const mod = await import("./scene/graph-scene");
+        factoryRef.current = mod.createGraphScene;
+      }
+      if (!sceneRef.current) {
+        try {
+          sceneRef.current = factoryRef.current(canvas, {
+            onPickStar: () => {},
+            onPickPackage: () => {},
+            onPickSatellite: () => {},
+            onBackgroundClick: () => {},
+          });
+        } catch {
+          // WebGL unavailable — plain-text structure fallback (spec: Failure modes).
+          setGlFailed(true);
+          return;
+        }
+      }
+      const layout = await requestLayout(model);
       if (req !== layoutReqRef.current) return; // a newer model superseded this layout
       sceneRef.current?.setSpace(model, layout);
-    });
-  }, [model, createScene]);
+    })();
+  }, [model]);
 
   useEffect(() => () => sceneRef.current?.dispose(), []);
 
@@ -101,10 +117,24 @@ export default function GraphApp({ createScene }: Props) {
           onBuild={() => vscode.postMessage({ type: "buildIndex" })}
         />
       )}
+      {glFailed && model && (
+        <div className="p-8 text-sm text-[var(--color-text-dim)] overflow-auto h-full">
+          <div className="text-[10px] uppercase tracking-[0.3em] mb-4">
+            WebGL unavailable — showing structure only
+          </div>
+          <ul className="space-y-1 font-mono text-xs">
+            {model.packages.map((p) => (
+              <li key={p.id}>
+                {p.id} — {p.fileCount} files
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <canvas
         ref={canvasRef}
         className="w-full h-full block"
-        style={{ display: conn.kind === "ready" ? "block" : "none" }}
+        style={{ display: conn.kind === "ready" && !glFailed ? "block" : "none" }}
       />
     </div>
   );
