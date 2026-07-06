@@ -139,6 +139,32 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           <Icon name="menu" size={14} />
         </button>
 
+        {/* Memory Inspector shortcut — opens the standalone panel (aiEditor.openMemoryPanel),
+            which already degrades gracefully if AI_EDITOR_MEMORY_ENABLED is off. */}
+        <button
+          type="button"
+          onClick={() => vscode.postMessage({ type: "openMemoryPanel" })}
+          aria-label="Memory Inspector"
+          title="Memory Inspector"
+          className={[
+            "flex items-center justify-center w-6 h-6 rounded-md",
+            "border transition-colors duration-150",
+          ].join(" ")}
+          style={{ color: "var(--color-text-3)", background: "transparent", borderColor: "transparent" }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "var(--accent-bg)";
+            (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--accent-brd)";
+            (e.currentTarget as HTMLButtonElement).style.color = "var(--color-accent)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent";
+            (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-3)";
+          }}
+        >
+          <Icon name="db" size={14} />
+        </button>
+
         {/* Back button */}
         <button
           type="button"

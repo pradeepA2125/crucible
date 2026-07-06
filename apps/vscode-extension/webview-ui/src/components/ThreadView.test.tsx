@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { ThreadView } from "./ThreadView";
+import { vscode } from "../vscodeApi";
 import type { AppState } from "../types";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
@@ -66,5 +67,14 @@ describe("ThreadView settings overlay", () => {
     expect(screen.getByTestId("settings-app")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /close settings/i }));
     expect(screen.queryByTestId("settings-app")).toBeNull();
+  });
+});
+
+describe("ThreadView memory shortcut", () => {
+  it("posts openMemoryPanel when the memory inspector button is clicked", () => {
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: /memory inspector/i }));
+    const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls).toContainEqual({ type: "openMemoryPanel" });
   });
 });

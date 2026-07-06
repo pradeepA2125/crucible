@@ -63,6 +63,7 @@ export interface ComposerModelState {
 export type ListModelsHandler = () => Promise<ComposerModelState>;
 export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
 export type OpenSettingsHandler = (section?: string) => void;
+export type OpenMemoryPanelHandler = () => void;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -103,7 +104,8 @@ export class ChatPanel {
     private readonly onDocDecision: DocDecisionHandler = async () => {},
     private readonly onListModels: ListModelsHandler = async () => ({ current: null, options: [] }),
     private readonly onSetModel: SetModelHandler = async () => ({ current: null, options: [] }),
-    private readonly onOpenSettings: OpenSettingsHandler = () => {}
+    private readonly onOpenSettings: OpenSettingsHandler = () => {},
+    private readonly onOpenMemoryPanel: OpenMemoryPanelHandler = () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -283,6 +285,9 @@ export class ChatPanel {
         })();
       } else if (m["type"] === "openSettings") {
         this.onOpenSettings(typeof m["section"] === "string" ? m["section"] : undefined);
+        return;
+      } else if (m["type"] === "openMemoryPanel") {
+        this.onOpenMemoryPanel();
         return;
       } else {
         return;

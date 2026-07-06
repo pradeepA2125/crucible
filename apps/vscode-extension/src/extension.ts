@@ -136,6 +136,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     (section?: string) => {
       void vscode.commands.executeCommand("aiEditor.openSettingsPanel", section);
+    },
+    () => {
+      void vscode.commands.executeCommand("aiEditor.openMemoryPanel");
     }
   );
 
@@ -161,6 +164,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     showError: (message) => {
       void vscode.window.showErrorMessage(message);
+    },
+    promptSetup: (message) => {
+      // Actionable first-run nudge: a Run Setup button that opens the wizard.
+      void vscode.window
+        .showInformationMessage(message, "Run Setup")
+        .then((choice: string | undefined) => {
+          if (choice === "Run Setup") {
+            void vscode.commands.executeCommand("aiEditor.runSetup");
+          }
+        });
     },
     promptForResumeStage: () =>
       vscode.window.showQuickPick(

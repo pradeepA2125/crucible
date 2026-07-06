@@ -179,7 +179,9 @@ export type WebviewMessage =
   | { type: "listModels" }
   | { type: "setModel"; backend: string; model: string }
   // section (optional) deep-links the Settings pane to a section (from the chat drawer).
-  | { type: "openSettings"; section?: string };
+  | { type: "openSettings"; section?: string }
+  // Chat-window shortcut to the standalone Memory Inspector panel/command.
+  | { type: "openMemoryPanel" };
 
 // ── App state ─────────────────────────────────────────────────────────────────
 export interface StreamingBubble {
