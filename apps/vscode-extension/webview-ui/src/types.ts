@@ -143,7 +143,7 @@ export type ExtensionMessage =
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
   | { type: "webviewReady" }
-  | { type: "sendMessage"; text: string; stepReview?: boolean; forcedSkills?: string[] }
+  | { type: "sendMessage"; text: string; stepReview?: boolean; forcedSkills?: string[]; mentionedPaths?: string[] }
   | { type: "implementPlan"; taskId: string }
   | { type: "planFeedback"; taskId: string; feedback: string }
   | { type: "newChat" }

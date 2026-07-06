@@ -116,3 +116,62 @@ describe("InputArea unified / dropdown", () => {
     expect(calls.find((c) => c.type === "sendMessage")).toBeUndefined();
   });
 });
+
+describe("InputArea @-file mentions", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("shows matching files after typing @ and requests the file list once", () => {
+    render(<EmptyHarness />);
+    const ta = screen.getByLabelText("Chat input") as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: "look at @src" } });
+    const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls).toContainEqual({ type: "listWorkspaceFiles" });
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "workspaceFileList", paths: ["src/foo.py", "src/bar.py", "readme.md"] },
+      }));
+    });
+    expect(screen.getByText("src/foo.py")).toBeTruthy();
+    expect(screen.getByText("src/bar.py")).toBeTruthy();
+    expect(screen.queryByText("readme.md")).toBeNull();
+  });
+
+  it("selecting a file inserts @path and sending includes mentionedPaths", () => {
+    render(<EmptyHarness />);
+    const ta = screen.getByLabelText("Chat input") as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: "@src" } });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "workspaceFileList", paths: ["src/foo.py"] },
+      }));
+    });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(ta.value).toBe("@src/foo.py ");
+
+    fireEvent.change(ta, { target: { value: "@src/foo.py look here" } });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls).toContainEqual({
+      type: "sendMessage", text: "@src/foo.py look here", stepReview: true,
+      mentionedPaths: ["src/foo.py"],
+    });
+  });
+
+  it("does not send mentionedPaths for a mention the user deleted before sending", () => {
+    render(<EmptyHarness />);
+    const ta = screen.getByLabelText("Chat input") as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: "@src" } });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { type: "workspaceFileList", paths: ["src/foo.py"] },
+      }));
+    });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    fireEvent.change(ta, { target: { value: "never mind" } });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    const sent = calls.find((c) => c.type === "sendMessage");
+    expect(sent.mentionedPaths).toBeUndefined();
+  });
+});

@@ -72,6 +72,11 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
   const [promptNames, setPromptNames] = useState<string[]>([]);
   const [skillCatalog, setSkillCatalog] = useState<{ name: string; description: string }[]>([]);
   const promptsRequestedRef = useRef(false);
+  const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
+  const filesRequestedRef = useRef(false);
+  // Ordered set of paths inserted via the @ dropdown in the CURRENT draft — only
+  // these resolve to a real mention on send (not any stray "@text" the user typed).
+  const trackedMentionsRef = useRef<string[]>([]);
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
@@ -82,6 +87,8 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
         setSkillCatalog(skills);
       } else if (m?.["type"] === "promptList") {
         setPromptNames((m["names"] as string[] | undefined) ?? []);
+      } else if (m?.["type"] === "workspaceFileList") {
+        setWorkspaceFiles((m["paths"] as string[] | undefined) ?? []);
       }
     }
     window.addEventListener("message", onMessage);
@@ -98,6 +105,10 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
         promptsRequestedRef.current = true;
         vscode.postMessage({ type: "listPrompts" });
       }
+    }
+    if (value.includes("@") && !filesRequestedRef.current) {
+      filesRequestedRef.current = true;
+      vscode.postMessage({ type: "listWorkspaceFiles" });
     }
   }
 
@@ -162,6 +173,11 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
       ? buildSlashDropdownItems(trigger.query, promptNames, skillCatalog).map((i) => ({
           id: i.id, label: i.label, sublabel: i.sublabel, badge: i.badge,
         }))
+      : trigger?.kind === "file"
+      ? workspaceFiles
+          .filter((p) => p.toLowerCase().includes(trigger.query.toLowerCase()))
+          .slice(0, 20)
+          .map((p) => ({ id: p, label: p }))
       : [];
 
   function applyTriggerSelection(id: string) {
@@ -171,6 +187,9 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
     const after = draft.slice(trigger.end);
     const insertion = trigger.kind === "slash" ? `/${id} ` : `@${id} `;
     const next = `${before}${insertion}${after}`;
+    if (trigger.kind === "file" && !trackedMentionsRef.current.includes(id)) {
+      trackedMentionsRef.current = [...trackedMentionsRef.current, id];
+    }
     onDraftChange(next);
     setTrigger(null);
     requestAnimationFrame(() => {
@@ -216,9 +235,17 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
       // to sending `original` as a normal message (see the listener above).
       pendingSlashRef.current = trimmed;
       vscode.postMessage({ type: "expandPrompt", name: slash.name, args: slash.args });
+      trackedMentionsRef.current = [];
       return;
     }
-    vscode.postMessage({ type: "sendMessage", text: trimmed, stepReview });
+    const mentionedPaths = trackedMentionsRef.current.filter((p) => draft.includes(`@${p}`));
+    vscode.postMessage({
+      type: "sendMessage",
+      text: trimmed,
+      stepReview,
+      ...(mentionedPaths.length ? { mentionedPaths } : {}),
+    });
+    trackedMentionsRef.current = [];
     onDraftChange("");
     // Reset height after clearing.
     const el = textareaRef.current;
