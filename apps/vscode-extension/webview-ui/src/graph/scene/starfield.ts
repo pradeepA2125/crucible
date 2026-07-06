@@ -51,6 +51,51 @@ const STAR_FRAG = /* glsl */ `
   }
 `;
 
+interface PosTween {
+  i: number;
+  from: [number, number, number];
+  to: [number, number, number];
+  start: number;
+}
+interface Birth {
+  i: number;
+  target: number;
+  start: number;
+}
+interface PendingMorph {
+  stars: StarRecord[];
+  layout: LayoutResult;
+  pkgOrder: string[];
+  applyAt: number;
+}
+
+const MORPH_TWEEN_SEC = 0.9;
+const IGNITE_SEC = 0.6;
+const FADE_SEC = 0.4;
+
+/** Pure centroid computation — usable before the geometry rebuild lands. */
+export function computeCentroids(
+  stars: StarRecord[],
+  layout: LayoutResult
+): Map<string, [number, number, number]> {
+  const idx = new Map(layout.ids.map((id, i) => [id, i]));
+  const acc = new Map<string, { x: number; y: number; z: number; n: number }>();
+  for (const s of stars) {
+    if (!s.pkg) continue;
+    const i = idx.get(s.id);
+    if (i === undefined) continue;
+    const c = acc.get(s.pkg) ?? { x: 0, y: 0, z: 0, n: 0 };
+    c.x += layout.positions[i * 3]!;
+    c.y += layout.positions[i * 3 + 1]!;
+    c.z += layout.positions[i * 3 + 2]!;
+    c.n += 1;
+    acc.set(s.pkg, c);
+  }
+  const out = new Map<string, [number, number, number]>();
+  for (const [pkg, c] of acc) if (c.n) out.set(pkg, [c.x / c.n, c.y / c.n, c.z / c.n]);
+  return out;
+}
+
 export class Starfield {
   readonly points: THREE.Points;
   private geo = new THREE.BufferGeometry();
@@ -61,6 +106,10 @@ export class Starfield {
   private nebulae: THREE.Sprite[] = [];
   private dust: THREE.Points | null = null;
   private pkgIndex = new Map<string, number>();
+  private posTweens: PosTween[] = [];
+  private births: Birth[] = [];
+  private fading: number[] = [];
+  private pendingMorph: PendingMorph | null = null;
 
   constructor(private readonly scene: THREE.Scene) {
     this.mat = new THREE.ShaderMaterial({
@@ -224,8 +273,98 @@ export class Starfield {
     }
   }
 
+  /** Morph the field to a new model: removed stars fade out, retained stars tween
+   * to their new positions, added stars ignite from zero size. */
+  morphTo(
+    stars: StarRecord[],
+    layout: LayoutResult,
+    pkgOrder: string[],
+    removedIds: string[],
+    now: number
+  ): void {
+    const fadeIdx = removedIds.map((id) => this.idIndex.get(id)).filter((i): i is number => i !== undefined);
+    this.pendingMorph = {
+      stars,
+      layout,
+      pkgOrder,
+      applyAt: fadeIdx.length ? now + FADE_SEC : now,
+    };
+    this.fading = fadeIdx;
+    if (!fadeIdx.length) this.applyPendingMorph(now);
+  }
+
+  private applyPendingMorph(now: number): void {
+    const pm = this.pendingMorph;
+    if (!pm) return;
+    this.pendingMorph = null;
+    this.fading = [];
+    // Capture old positions before the rebuild so retained stars can tween.
+    const oldPos = new Map<string, [number, number, number]>();
+    const prev = this.geo.getAttribute("position") as THREE.BufferAttribute | undefined;
+    if (prev) {
+      this.ids.forEach((id, i) => oldPos.set(id, [prev.getX(i), prev.getY(i), prev.getZ(i)]));
+    }
+    this.setStars(pm.stars, pm.layout, pm.pkgOrder);
+    const pos = this.geo.getAttribute("position") as THREE.BufferAttribute;
+    const sizes = this.geo.getAttribute("aSize") as THREE.BufferAttribute;
+    this.posTweens = [];
+    this.births = [];
+    pm.layout.ids.forEach((id, i) => {
+      const from = oldPos.get(id);
+      const to: [number, number, number] = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+      if (from) {
+        pos.setXYZ(i, from[0], from[1], from[2]);
+        this.posTweens.push({ i, from, to, start: now });
+      } else {
+        this.births.push({ i, target: sizes.getX(i), start: now });
+        sizes.setX(i, 0);
+      }
+    });
+    pos.needsUpdate = true;
+    sizes.needsUpdate = true;
+  }
+
   update(t: number): void {
     this.mat.uniforms.uTime!.value = t;
+    if (this.fading.length) {
+      const dims = this.geo.getAttribute("aDim") as THREE.BufferAttribute | undefined;
+      const pm = this.pendingMorph;
+      if (dims && pm) {
+        const k = Math.min(1, Math.max(0, 1 - (pm.applyAt - t) / FADE_SEC));
+        for (const i of this.fading) dims.setX(i, 1 - k);
+        dims.needsUpdate = true;
+      }
+    }
+    if (this.pendingMorph && t >= this.pendingMorph.applyAt) this.applyPendingMorph(t);
+    if (this.posTweens.length) {
+      const pos = this.geo.getAttribute("position") as THREE.BufferAttribute;
+      this.posTweens = this.posTweens.filter((tw) => {
+        const k = Math.min(1, (t - tw.start) / MORPH_TWEEN_SEC);
+        const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        pos.setXYZ(
+          tw.i,
+          tw.from[0] + (tw.to[0] - tw.from[0]) * e,
+          tw.from[1] + (tw.to[1] - tw.from[1]) * e,
+          tw.from[2] + (tw.to[2] - tw.from[2]) * e
+        );
+        return k < 1;
+      });
+      pos.needsUpdate = true;
+      this.geo.computeBoundingSphere();
+    }
+    if (this.births.length) {
+      const sizes = this.geo.getAttribute("aSize") as THREE.BufferAttribute;
+      this.births = this.births.filter((b) => {
+        const k = Math.min(1, (t - b.start) / IGNITE_SEC);
+        // ease-out-back: overshoot to 1.4x then settle — the "ignite" flare
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        const e = 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2);
+        sizes.setX(b.i, b.target * Math.max(0, e));
+        return k < 1;
+      });
+      sizes.needsUpdate = true;
+    }
   }
 
   dispose(): void {

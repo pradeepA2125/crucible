@@ -15,7 +15,7 @@ import type {
   SymbolDetail,
 } from "../types";
 import { CameraRig } from "./camera";
-import { Starfield } from "./starfield";
+import { computeCentroids, Starfield } from "./starfield";
 import { Flows } from "./flows";
 
 export function createGraphScene(canvas: HTMLCanvasElement, cb: SceneCallbacks): SceneHandle {
@@ -194,8 +194,12 @@ class GraphScene implements SceneHandle {
   }
 
   morph(model: SpaceModel, layout: LayoutResult, removed: string[]): void {
-    void removed; // tweened ignite/fade morph lands in the refresh task
-    this.setSpace(model, layout);
+    this.model = model;
+    const pkgOrder = model.packages.map((p) => p.id);
+    this.starfield.morphTo(model.stars, layout, pkgOrder, removed, this.elapsed);
+    // Beams re-anchor to the NEW layout's centroids immediately (the starfield
+    // geometry rebuild may be deferred behind the removed-star fade).
+    this.flows.setBundles(model.bundles, computeCentroids(model.stars, layout));
   }
 
   setFocus(focus: FocusState): void {

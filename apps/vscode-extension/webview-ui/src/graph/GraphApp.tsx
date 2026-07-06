@@ -1,4 +1,5 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { aggregateToDirs, applyDiff, LOD_STAR_THRESHOLD } from "./lod";
 import { vscode } from "./vscodeApi";
 import { EmptyState } from "./hud/EmptyState";
 import { Breadcrumb } from "./hud/Breadcrumb";
@@ -50,7 +51,9 @@ async function requestLayout(model: SpaceModel): Promise<LayoutResult> {
 export default function GraphApp({ createScene }: Props) {
   const [conn, setConn] = useState<Conn>({ kind: "connecting" });
   const [model, setModel] = useState<SpaceModel | null>(null);
+  const [staleAgeSec, setStaleAgeSec] = useState<number | null>(null);
   const [glFailed, setGlFailed] = useState(false);
+  const morphRef = useRef<{ isDiff: boolean; removed: string[] }>({ isDiff: false, removed: [] });
   const [state, dispatch] = useReducer(graphReducer, undefined, initialGraphState);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sceneRef = useRef<SceneHandle | null>(null);
@@ -66,8 +69,21 @@ export default function GraphApp({ createScene }: Props) {
     const onMsg = (ev: MessageEvent) => {
       const m = ev.data as GraphToWebview;
       if (m.type === "space") {
+        morphRef.current = { isDiff: false, removed: [] };
         setModel(m.model);
+        setStaleAgeSec(m.staleAgeSec);
         setConn({ kind: "ready" });
+      } else if (m.type === "spaceDiff") {
+        const prev = modelRef.current;
+        if (!prev) return;
+        morphRef.current = { isDiff: true, removed: m.diff.removed };
+        setModel(applyDiff(prev, m.diff));
+        setStaleAgeSec(null); // a fresh snapshot just landed
+        // If the focused file vanished, pop focus back to its package.
+        const focus = stateRef.current.focus;
+        if ((focus.level === 2 || focus.level === 3) && m.diff.removed.includes(focus.fileId)) {
+          dispatch({ type: "pickPackage", pkg: focus.pkg });
+        }
       } else if (m.type === "noSnapshot") {
         setConn({ kind: "empty", reason: m.reason, message: m.message, building: m.building });
       } else if (m.type === "fileDetail") {
@@ -103,9 +119,20 @@ export default function GraphApp({ createScene }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Monster-repo LOD: above the threshold, L0 renders directory-level aggregate
+  // stars; any deeper focus swaps the real file stars back in.
+  const renderModel = useMemo(() => {
+    if (!model) return null;
+    if (model.stars.length > LOD_STAR_THRESHOLD && state.focus.level === 0) {
+      return aggregateToDirs(model);
+    }
+    return model;
+  }, [model, state.focus.level]);
+
   // Scene lifecycle: worker-computed layout, guarded against stale models.
   const layoutReqRef = useRef(0);
   useEffect(() => {
+    const model = renderModel;
     if (!model || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const req = ++layoutReqRef.current;
@@ -119,6 +146,13 @@ export default function GraphApp({ createScene }: Props) {
       if (!sceneRef.current) {
         const callbacks: SceneCallbacks = {
           onPickStar: (id) => {
+            if (id.startsWith("dir:")) {
+              // LOD aggregate star -> route to its package focus.
+              const agg = modelRef.current ? aggregateToDirs(modelRef.current) : null;
+              const pkg = agg?.stars.find((s) => s.id === id)?.pkg;
+              if (pkg) dispatch({ type: "pickPackage", pkg });
+              return;
+            }
             const star = modelRef.current?.stars.find((s) => s.id === id);
             if (!star) return;
             dispatch({ type: "pickStar", fileId: id, pkg: star.pkg });
@@ -153,9 +187,15 @@ export default function GraphApp({ createScene }: Props) {
       }
       const layout = await requestLayout(model);
       if (req !== layoutReqRef.current) return; // a newer model superseded this layout
-      sceneRef.current?.setSpace(model, layout);
+      const morph = morphRef.current;
+      if (morph.isDiff) {
+        morphRef.current = { isDiff: false, removed: [] };
+        sceneRef.current?.morph(model, layout, morph.removed);
+      } else {
+        sceneRef.current?.setSpace(model, layout);
+      }
     })();
-  }, [model]);
+  }, [renderModel]);
 
   // Focus -> scene: dimming, camera, detail requests.
   useEffect(() => {
@@ -242,6 +282,15 @@ export default function GraphApp({ createScene }: Props) {
             onPop={() => dispatch({ type: "pop" })}
             onReset={() => dispatch({ type: "reset" })}
           />
+          {staleAgeSec !== null && (
+            <div
+              className="absolute top-16 left-4 px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-[0.15em]
+                         bg-[rgba(22,7,9,0.6)] border border-[rgba(251,146,60,0.22)] backdrop-blur-md
+                         text-[#fbbf24] opacity-80"
+            >
+              index stale · {Math.round(staleAgeSec / 60)}m — watching for rebuild
+            </div>
+          )}
           <Legend />
           <EdgeLayers
             layers={state.layers}
