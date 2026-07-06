@@ -5,6 +5,7 @@ import { Breadcrumb } from "./hud/Breadcrumb";
 import { Legend } from "./hud/Legend";
 import { EdgeLayers } from "./hud/EdgeLayers";
 import { InfoCard } from "./hud/InfoCard";
+import { SearchBar } from "./hud/SearchBar";
 import { graphReducer, initialGraphState } from "./useGraphState";
 import type {
   GraphToWebview,
@@ -255,6 +256,25 @@ export default function GraphApp({ createScene }: Props) {
               onDive={() => dispatch({ type: "dive" })}
             />
           )}
+          <SearchBar
+            stars={model?.stars ?? []}
+            symbolHits={state.searchHits}
+            onQuerySymbols={(query) => vscode.postMessage({ type: "searchSymbols", query })}
+            onGoFile={(fileId) => {
+              const star = modelRef.current?.stars.find((s) => s.id === fileId);
+              if (!star) return;
+              dispatch({ type: "pickStar", fileId, pkg: star.pkg });
+              sceneRef.current?.flyToStar(fileId, 260);
+            }}
+            onGoSymbol={(hit) => {
+              const star = modelRef.current?.stars.find((s) => s.id === hit.fileId);
+              if (!star) return;
+              dispatch({ type: "pickStar", fileId: hit.fileId, pkg: star.pkg });
+              dispatch({ type: "dive" });
+              dispatch({ type: "pickSymbol", symbolId: hit.symbolId });
+              sceneRef.current?.flyToStar(hit.fileId, 120);
+            }}
+          />
         </>
       )}
     </div>
