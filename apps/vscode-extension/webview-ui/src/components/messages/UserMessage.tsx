@@ -1,12 +1,48 @@
+import { vscode } from "../../vscodeApi";
+
 /**
  * Right-aligned user bubble.
  * Matches .ubub in the hi-fi mockup.
  *
  * Inline backtick spans rendered as <code> (mono, text-code) — no markdown engine.
+ * mentionedFiles are the paths the composer's @ dropdown actually inserted for this
+ * message (not a blind @-regex scan) — only those "@path" tokens render clickable.
  * Arbitrary border-radius matches the mockup's 12px 12px 4px 12px shape.
  */
-export function UserMessage({ content }: { content: string }) {
-  const parts = content.split(/(`[^`]+`)/);
+export function UserMessage({
+  content,
+  mentionedFiles = [],
+}: {
+  content: string;
+  mentionedFiles?: string[];
+}) {
+  const codeParts = content.split(/(`[^`]+`)/);
+
+  function renderTextSegment(text: string, keyPrefix: string) {
+    if (mentionedFiles.length === 0) return <span key={keyPrefix}>{text}</span>;
+    const mentionTokens = mentionedFiles.map((p) => `@${p}`);
+    const pattern = new RegExp(`(${mentionTokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`);
+    const pieces = text.split(pattern);
+    return (
+      <span key={keyPrefix}>
+        {pieces.map((piece, i) =>
+          mentionTokens.includes(piece) ? (
+            <span
+              key={i}
+              role="button"
+              tabIndex={0}
+              onClick={() => vscode.postMessage({ type: "openFile", path: piece.slice(1) })}
+              style={{ color: "var(--color-accent)", cursor: "pointer", textDecoration: "underline" }}
+            >
+              {piece}
+            </span>
+          ) : (
+            <span key={i}>{piece}</span>
+          ),
+        )}
+      </span>
+    );
+  }
 
   return (
     <div
@@ -18,7 +54,7 @@ export function UserMessage({ content }: { content: string }) {
         borderRadius: "12px 12px 4px 12px",
       }}
     >
-      {parts.map((part, i) => {
+      {codeParts.map((part, i) => {
         if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
           return (
             <code key={i} className="mono text-code">
@@ -26,7 +62,7 @@ export function UserMessage({ content }: { content: string }) {
             </code>
           );
         }
-        return <span key={i}>{part}</span>;
+        return renderTextSegment(part, `seg-${i}`);
       })}
     </div>
   );

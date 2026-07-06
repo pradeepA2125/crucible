@@ -140,7 +140,12 @@ export function MessageRow({ msg, planVersion }: Props) {
     case "text":
     default: {
       if (msg.role === "user") {
-        return <UserMessage content={msg.content} />;
+        return (
+          <UserMessage
+            content={msg.content}
+            mentionedFiles={msg.metadata?.mentioned_files as string[] | undefined}
+          />
+        );
       }
 
       if (msg.metadata?.breadcrumb === true) {
