@@ -425,7 +425,7 @@ export interface BackendTaskClient {
   upsertMcpServer(name: string, entry: Record<string, unknown>, disabled: string[]): Promise<McpServerList>;
   deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
   reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
-  sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[] }): AsyncIterable<StreamEvent>;
+  sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[]; mentionedFiles?: { path: string; content: string }[] }): AsyncIterable<StreamEvent>;
   // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
   // produce live events); the per-edit gate is a plain JSON ack (its continuation rides
   // the already-open message stream).

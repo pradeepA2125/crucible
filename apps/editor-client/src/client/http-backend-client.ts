@@ -698,7 +698,7 @@ export class HttpBackendClient implements BackendTaskClient {
     return raw.map((m) => MemoryViewSchema.parse(mapMemoryView(m)));
   }
 
-  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[] }): AsyncIterable<StreamEvent> {
+  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[]; mentionedFiles?: { path: string; content: string }[] }): AsyncIterable<StreamEvent> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
       {
@@ -709,6 +709,9 @@ export class HttpBackendClient implements BackendTaskClient {
           ...(options?.stepReview !== undefined ? { step_review: options.stepReview } : {}),
           ...(options?.forcedSkills && options.forcedSkills.length
             ? { forced_skills: options.forcedSkills }
+            : {}),
+          ...(options?.mentionedFiles && options.mentionedFiles.length
+            ? { mentioned_files: options.mentionedFiles }
             : {}),
         }),
         signal: signal ?? null,

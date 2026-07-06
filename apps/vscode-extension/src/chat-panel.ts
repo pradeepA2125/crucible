@@ -14,7 +14,8 @@ export type SettingsHandlerFactory = (
 export type ChatMessageHandler = (
   message: string,
   stepReview?: boolean,
-  forcedSkills?: string[]
+  forcedSkills?: string[],
+  mentionedPaths?: string[]
 ) => Promise<void>;
 export type PlanCardActionHandler = (
   taskId: string,
@@ -184,7 +185,10 @@ export class ChatPanel {
         const forcedSkills = Array.isArray(m["forcedSkills"])
           ? (m["forcedSkills"] as string[])
           : undefined;
-        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills);
+        const mentionedPaths = Array.isArray(m["mentionedPaths"])
+          ? (m["mentionedPaths"] as string[])
+          : undefined;
+        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills, mentionedPaths);
       } else if (m["type"] === "implementPlan") {
         p = this.onPlanAction(m["taskId"] as string, "implement");
       } else if (m["type"] === "planFeedback") {

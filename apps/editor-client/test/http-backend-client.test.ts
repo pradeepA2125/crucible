@@ -19,6 +19,36 @@ describe("HttpBackendClient skills", () => {
     expect(JSON.parse(sentBody).forced_skills).toEqual(["git-commit"]);
   });
 
+  test("sendChatMessage includes mentioned_files in the body", async () => {
+    let sentBody = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (_url, init) => {
+        sentBody = (init?.body as string) ?? "";
+        return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    const iter = client.sendChatMessage("t1", "hi", undefined, {
+      mentionedFiles: [{ path: "src/a.py", content: "x = 1" }],
+    });
+    await iter[Symbol.asyncIterator]().next();
+    expect(JSON.parse(sentBody).mentioned_files).toEqual([{ path: "src/a.py", content: "x = 1" }]);
+  });
+
+  test("sendChatMessage omits mentioned_files when not provided", async () => {
+    let sentBody = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (_url, init) => {
+        sentBody = (init?.body as string) ?? "";
+        return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    const iter = client.sendChatMessage("t1", "hi");
+    await iter[Symbol.asyncIterator]().next();
+    expect(JSON.parse(sentBody).mentioned_files).toBeUndefined();
+  });
+
   test("listSkills maps the response", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",

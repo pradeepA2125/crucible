@@ -17,6 +17,7 @@ import type {
 import * as path from "path";
 import type { MemoryDataSource } from "./memory-data.js";
 import { listPromptNames, loadPromptBody, substitutePrompt } from "./prompt-files.js";
+import { readMentionedFiles } from "./mentioned-files.js";
 import { buildReviewFileEntries } from "./review-files.js";
 import { SessionStore } from "./session-store.js";
 import { shouldStopPolling, TaskPoller } from "./task-poller.js";
@@ -56,6 +57,9 @@ export interface ControllerUI {
   showInfo(message: string): void;
   showWarning(message: string): void;
   showError(message: string): void;
+  // Guide a first-run user into the setup wizard (unconfigured provider / unreachable
+  // backend) instead of surfacing a raw error. The host renders an actionable prompt.
+  promptSetup(message: string): void;
   openChatPanel(): void;
   appendChatMessage(message: ChatMessage): void;
   appendChatChunk(chunk: string): void;
@@ -522,6 +526,21 @@ export class AiEditorController {
   async openChat(): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
+    // First-run gate: an unreachable backend or an unconfigured provider means the
+    // user hasn't finished setup. Route them into the wizard rather than failing
+    // later with a confusing "Failed to create chat thread" error.
+    try {
+      const config = await client.getConfig();
+      if (!config.provider) {
+        this.ui.promptSetup("Choose a model provider to start chatting.");
+        return;
+      }
+    } catch {
+      this.ui.promptSetup(
+        "AI Editor isn't set up yet — install the runtime and pick a model provider.",
+      );
+      return;
+    }
     let threads: ChatThreadSummary[];
     try {
       threads = await client.listChatThreads(workspacePath);
@@ -603,7 +622,9 @@ export class AiEditorController {
     this.startLiveStatePolling();
   }
 
-  async sendChatMessage(text: string, stepReview?: boolean, forcedSkills?: string[]): Promise<void> {
+  async sendChatMessage(
+    text: string, stepReview?: boolean, forcedSkills?: string[], mentionedPaths?: string[]
+  ): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
 
@@ -619,6 +640,10 @@ export class AiEditorController {
     }
 
     const threadId = this.activeThreadId;
+    const mentionedFiles =
+      mentionedPaths && mentionedPaths.length && workspacePath
+        ? readMentionedFiles(workspacePath, mentionedPaths)
+        : undefined;
 
     this.ui.appendChatMessage({
       role: "user",
@@ -635,8 +660,12 @@ export class AiEditorController {
         threadId,
         text,
         this.turnAbort.signal,
-        stepReview !== undefined || forcedSkills?.length
-          ? { ...(stepReview !== undefined ? { stepReview } : {}), ...(forcedSkills?.length ? { forcedSkills } : {}) }
+        stepReview !== undefined || forcedSkills?.length || mentionedFiles?.length
+          ? {
+              ...(stepReview !== undefined ? { stepReview } : {}),
+              ...(forcedSkills?.length ? { forcedSkills } : {}),
+              ...(mentionedFiles?.length ? { mentionedFiles } : {}),
+            }
           : undefined,
       ),
     );
