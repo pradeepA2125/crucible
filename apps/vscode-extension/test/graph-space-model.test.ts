@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSpaceModel } from "../src/graph/space-model.js";
-import { ROOT, edge, fileNode, snap, symNode } from "./graph-fixtures.js";
+import { ROOT, edge, extModule, fileNode, snap, symNode } from "./graph-fixtures.js";
 
 void ROOT;
 
@@ -90,5 +90,69 @@ describe("buildSpaceModel — packages & orphans", () => {
     const m = buildSpaceModel(snap(threeFiles("apps/web"), []));
     expect(m.packages[0].fileCount).toBe(3);
     expect(m.packages[0].dirs).toEqual(["apps/web/src"]);
+  });
+});
+
+describe("resolveModuleSpec via Imports edges", () => {
+  it("resolves ./x.js relative specs to sibling .ts files", () => {
+    const files = [fileNode("apps/web/src/a.ts"), fileNode("apps/web/src/b.ts"), fileNode("apps/web/src/c.ts")];
+    const ext = extModule("./b.js", "apps/web/src/a.ts");
+    const m = buildSpaceModel(snap([...files, ext], [edge(files[0]!.id, ext.id, "Imports")]));
+    const sa = m.stars.find((s) => s.id === "apps/web/src/a.ts")!;
+    const sb = m.stars.find((s) => s.id === "apps/web/src/b.ts")!;
+    expect(sa.outDeg).toBe(1);
+    expect(sb.inDeg).toBe(1);
+  });
+
+  it("resolves ../dir specs through .. and index files", () => {
+    const files = [
+      fileNode("apps/web/src/client/a.ts"),
+      fileNode("apps/web/src/domain/index.ts"),
+      fileNode("apps/web/src/client/pad.ts"),
+    ];
+    const ext = extModule("../domain", "apps/web/src/client/a.ts");
+    const m = buildSpaceModel(snap([...files, ext], [edge(files[0]!.id, ext.id, "Imports")]));
+    expect(m.stars.find((s) => s.id === "apps/web/src/domain/index.ts")!.inDeg).toBe(1);
+  });
+
+  it("leaves bare package specs unresolved (no edge)", () => {
+    const files = [fileNode("apps/web/src/a.ts"), fileNode("apps/web/src/b.ts"), fileNode("apps/web/src/c.ts")];
+    const ext = extModule("react", "apps/web/src/a.ts");
+    const m = buildSpaceModel(snap([...files, ext], [edge(files[0]!.id, ext.id, "Imports")]));
+    expect(m.stars.find((s) => s.id === "apps/web/src/a.ts")!.outDeg).toBe(0);
+  });
+});
+
+describe("bundles, intraBundles, links", () => {
+  function crossSnap() {
+    const aFiles = [fileNode("apps/web/src/a.ts"), fileNode("apps/web/src/b.ts"), fileNode("apps/web/src/c.ts")];
+    const sFiles = [fileNode("services/api/m.py"), fileNode("services/api/n.py"), fileNode("services/api/o.py")];
+    const edges = [
+      edge(aFiles[0]!.id, sFiles[0]!.id, "Calls"),
+      edge(aFiles[1]!.id, sFiles[0]!.id, "Calls"),
+      edge(aFiles[0]!.id, sFiles[1]!.id, "Imports"),
+      edge(aFiles[0]!.id, aFiles[1]!.id, "Imports"), // intra-package
+    ];
+    return snap([...aFiles, ...sFiles], edges);
+  }
+
+  it("aggregates cross-package edges into one bundle with kindMix", () => {
+    const m = buildSpaceModel(crossSnap());
+    expect(m.bundles).toHaveLength(1);
+    const b = m.bundles[0]!;
+    expect(b.fromPkg).toBe("apps/web");
+    expect(b.toPkg).toBe("services/api");
+    expect(b.count).toBe(3);
+    expect(b.kindMix).toEqual({ Calls: 2, Imports: 1 });
+  });
+
+  it("aggregates intra-package edges per directory pair", () => {
+    const m = buildSpaceModel(crossSnap());
+    expect(m.intraBundles).toEqual([{ pkg: "apps/web", fromDir: "apps/web/src", toDir: "apps/web/src", count: 1 }]);
+  });
+
+  it("emits deduped intra-package file links with a < b", () => {
+    const m = buildSpaceModel(crossSnap());
+    expect(m.links).toEqual([{ a: "apps/web/src/a.ts", b: "apps/web/src/b.ts", count: 1 }]);
   });
 });

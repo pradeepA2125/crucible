@@ -127,16 +127,37 @@ export function resolveFileEdges(snapData: RawSnapshot): FileEdgeRecord[] {
 }
 
 /** Best-effort resolution of a relative import spec to a workspace file.
- * Bare package specs (no leading '.') stay external -> null.
- * NOTE: stub for now — implemented in the bundling task. */
+ * Bare package specs (no leading '.') stay external -> null. Matters a lot on
+ * LSP-off snapshots, where most Imports edges point at external:module:<spec>. */
 export function resolveModuleSpec(
   spec: string,
   fromFileRel: string,
   fileSet: Set<string>
 ): string | null {
-  void spec;
-  void fromFileRel;
-  void fileSet;
+  if (!spec.startsWith(".")) return null;
+  // Normalize dir(fromFile) + spec without node:path (keep this file vscode- AND platform-free).
+  const base = fromFileRel.includes("/") ? fromFileRel.slice(0, fromFileRel.lastIndexOf("/")) : "";
+  const segs = base ? base.split("/") : [];
+  for (const part of spec.split("/")) {
+    if (part === "." || part === "") continue;
+    if (part === "..") segs.pop();
+    else segs.push(part);
+  }
+  const p = segs.join("/");
+  const candidates = [
+    p,
+    p.replace(/\.js$/, ".ts"),
+    p.replace(/\.js$/, ".tsx"),
+    `${p}.ts`,
+    `${p}.tsx`,
+    `${p}.js`,
+    `${p}.py`,
+    `${p}.rs`,
+    `${p}/index.ts`,
+    `${p}/index.tsx`,
+    `${p}/__init__.py`,
+  ];
+  for (const c of candidates) if (fileSet.has(c)) return c;
   return null;
 }
 
@@ -199,14 +220,49 @@ export function buildSpaceModel(snapData: RawSnapshot): SpaceModel {
   }
   for (const p of packages.values()) p.dirs.sort();
 
+  const bundleMap = new Map<string, Bundle>();
+  const intraMap = new Map<string, IntraBundle>();
+  const linkMap = new Map<string, FileLink>();
+  for (const fe of fileEdges) {
+    const from = stars.get(fe.fromFile);
+    const to = stars.get(fe.toFile);
+    if (!from || !to) continue;
+    if (from.pkg && to.pkg && from.pkg !== to.pkg) {
+      const key = `${from.pkg} ${to.pkg}`;
+      let b = bundleMap.get(key);
+      if (!b) {
+        b = { fromPkg: from.pkg, toPkg: to.pkg, count: 0, kindMix: {} };
+        bundleMap.set(key, b);
+      }
+      b.count += 1;
+      b.kindMix[fe.kind] = (b.kindMix[fe.kind] ?? 0) + 1;
+    } else if (from.pkg && from.pkg === to.pkg) {
+      const ikey = `${from.pkg} ${from.dir} ${to.dir}`;
+      let ib = intraMap.get(ikey);
+      if (!ib) {
+        ib = { pkg: from.pkg, fromDir: from.dir, toDir: to.dir, count: 0 };
+        intraMap.set(ikey, ib);
+      }
+      ib.count += 1;
+      const [la, lb] = from.id < to.id ? [from.id, to.id] : [to.id, from.id];
+      const lkey = `${la} ${lb}`;
+      let l = linkMap.get(lkey);
+      if (!l) {
+        l = { a: la, b: lb, count: 0 };
+        linkMap.set(lkey, l);
+      }
+      l.count += 1;
+    }
+  }
+
   const model: SpaceModel = {
     workspaceRoot: root,
     generatedAtMs: snapData.generated_at_ms ?? 0,
     packages: [...packages.values()].sort((a, b) => a.id.localeCompare(b.id)),
     stars: [...stars.values()].sort((a, b) => a.id.localeCompare(b.id)),
-    bundles: [],
-    intraBundles: [],
-    links: [],
+    bundles: [...bundleMap.values()].sort((a, b) => b.count - a.count),
+    intraBundles: [...intraMap.values()].sort((a, b) => b.count - a.count),
+    links: [...linkMap.values()].sort((a, b) => a.a.localeCompare(b.a) || a.b.localeCompare(b.b)),
   };
   return model;
 }
