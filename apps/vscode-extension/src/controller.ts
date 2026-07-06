@@ -650,7 +650,7 @@ export class AiEditorController {
       content: text,
       type: "text",
       timestamp: this.now(),
-      metadata: {},
+      metadata: mentionedPaths?.length ? { mentioned_files: mentionedPaths } : {},
     });
 
     this.ui.setChatInputEnabled(false);

@@ -9,6 +9,7 @@ import type {
   ThreadLiveState,
 } from "@ai-editor/editor-client";
 import { promises as fsp } from "fs";
+import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { describe, expect, test } from "vitest";
@@ -240,6 +241,7 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     renderLiveTodos: () => {},
     clearLiveTodos: () => {},
     sendLiveStatus: () => {},
+    promptSetup: () => {},
     ...overrides,
   };
 }
@@ -526,6 +528,48 @@ describe("AiEditorController — chat", () => {
     expect(appendedMessages[0].role).toBe("user");
     expect(appendedMessages[0].content).toBe("What is the answer?");
     expect(chunks).toContain("The answer is 42.");
+  });
+
+  test("sendChatMessage with mentionedPaths tags the optimistic echo with mentioned_files metadata", async () => {
+    const appendedMessages: ChatMessage[] = [];
+    const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), "mention-ctrl-"));
+    fs.writeFileSync(path.join(workspacePath, "a.py"), "x = 1");
+
+    const chatBackend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+        rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+      }),
+      createChatThread: async (ws) => ({
+        threadId: "chat-new", workspacePath: ws, title: "New Chat",
+        createdAt: "2026-05-11T00:00:00Z",
+      }),
+      listChatThreads: async () => [],
+      getChatThread: async (threadId) => ({
+        threadId, workspacePath, title: "New Chat", messages: [], touchedFiles: [],
+      }),
+      sendChatMessage: async function* () {
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+      },
+    };
+
+    const store = new MemorySessionStore();
+    const controller = new AiEditorController(
+      () => chatBackend,
+      store,
+      createSettings(),
+      createUi({
+        getWorkspacePath: () => workspacePath,
+        appendChatMessage: (m) => appendedMessages.push(m),
+      }),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+
+    await controller.sendChatMessage("look at @a.py", undefined, undefined, ["a.py"]);
+    controller.dispose();
+
+    expect(appendedMessages[0].metadata).toEqual({ mentioned_files: ["a.py"] });
   });
 
   test("thinking entries: chat_agent_thinking appends entry; explore_tool_call forwards structured tool event, finally hides indicator", async () => {
@@ -1729,5 +1773,60 @@ describe("AiEditorController — command-decision", () => {
     expect(await controller.expandPrompt("ghost", "")).toEqual({ found: false, text: "" });
 
     await fsp.rm(ws, { recursive: true, force: true });
+  });
+});
+
+describe("AiEditorController.openChat — setup routing (first-run gap)", () => {
+  const emptyState = (): StubBackendState => ({
+    submitPayloads: [],
+    getTaskCalls: [],
+    acceptCalls: [],
+    rejectCalls: [],
+    getResultCalls: [],
+    planFeedbackCalls: [],
+  });
+
+  function build(getConfig: () => Promise<{ provider?: unknown }>) {
+    const backend = { ...createStubBackend(emptyState()), getConfig } as unknown as BackendTaskClient;
+    const setupPrompts: string[] = [];
+    let chatOpened = false;
+    const ui = createUi({
+      promptSetup: (msg: string) => setupPrompts.push(msg),
+      openChatPanel: () => {
+        chatOpened = true;
+      },
+    });
+    const controller = new AiEditorController(
+      () => backend,
+      new MemorySessionStore(),
+      createSettings(),
+      ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-03-03T00:00:00.000Z",
+    );
+    return { controller, setupPrompts, chatOpened: () => chatOpened };
+  }
+
+  test("prompts setup (not a raw error) when no provider is configured", async () => {
+    const h = build(async () => ({ provider: null }));
+    await h.controller.openChat();
+    expect(h.setupPrompts.length).toBe(1);
+    expect(h.chatOpened()).toBe(false);
+  });
+
+  test("prompts setup when the backend is unreachable", async () => {
+    const h = build(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    await h.controller.openChat();
+    expect(h.setupPrompts.length).toBe(1);
+    expect(h.chatOpened()).toBe(false);
+  });
+
+  test("opens chat normally when a provider is configured", async () => {
+    const h = build(async () => ({ provider: { backend: "turboquant", model: "qwen3" } }));
+    await h.controller.openChat();
+    expect(h.setupPrompts.length).toBe(0);
+    expect(h.chatOpened()).toBe(true);
   });
 });
