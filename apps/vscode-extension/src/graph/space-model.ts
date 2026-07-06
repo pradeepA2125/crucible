@@ -161,6 +161,70 @@ export function resolveModuleSpec(
   return null;
 }
 
+const ENTRY_NAMES = new Set([
+  "main.py", "main.rs", "main.ts", "index.ts", "index.tsx",
+  "extension.ts", "App.tsx", "app.py",
+]);
+const HUB_MIN_DEGREE = 8;
+const HUB_MAX_PER_PKG = 5;
+
+function detectEntriesAndHubs(stars: Map<string, StarRecord>): void {
+  const byPkg = new Map<string, StarRecord[]>();
+  for (const s of stars.values()) {
+    const base = s.id.slice(s.id.lastIndexOf("/") + 1);
+    s.isEntry =
+      ENTRY_NAMES.has(base) ||
+      (base.endsWith(".html") && s.pkg !== "") ||
+      (s.outDeg >= 3 && s.inDeg === 0);
+    if (s.pkg) {
+      const arr = byPkg.get(s.pkg) ?? [];
+      arr.push(s);
+      byPkg.set(s.pkg, arr);
+    }
+  }
+  for (const arr of byPkg.values()) {
+    const cap = Math.min(HUB_MAX_PER_PKG, Math.max(1, Math.ceil(arr.length * 0.02)));
+    [...arr]
+      .sort((a, b) => b.inDeg + b.outDeg - (a.inDeg + a.outDeg))
+      .slice(0, cap)
+      .forEach((s) => {
+        if (s.inDeg + s.outDeg >= HUB_MIN_DEGREE) s.isHub = true;
+      });
+  }
+}
+
+export interface SpaceDiff {
+  added: StarRecord[];
+  removed: string[];
+  changed: StarRecord[];
+  packages: PackageInfo[];
+  bundles: Bundle[];
+  intraBundles: IntraBundle[];
+  links: FileLink[];
+}
+
+export function diffSpaceModel(prev: SpaceModel, next: SpaceModel): SpaceDiff {
+  const prevById = new Map(prev.stars.map((s) => [s.id, s]));
+  const nextIds = new Set(next.stars.map((s) => s.id));
+  const added: StarRecord[] = [];
+  const changed: StarRecord[] = [];
+  for (const s of next.stars) {
+    const old = prevById.get(s.id);
+    if (!old) added.push(s);
+    else if (JSON.stringify(old) !== JSON.stringify(s)) changed.push(s);
+  }
+  const removed = prev.stars.filter((s) => !nextIds.has(s.id)).map((s) => s.id);
+  return {
+    added,
+    removed,
+    changed,
+    packages: next.packages,
+    bundles: next.bundles,
+    intraBundles: next.intraBundles,
+    links: next.links,
+  };
+}
+
 export function buildSpaceModel(snapData: RawSnapshot): SpaceModel {
   const root = snapData.workspace_root;
   const stars = new Map<string, StarRecord>();
@@ -254,6 +318,8 @@ export function buildSpaceModel(snapData: RawSnapshot): SpaceModel {
       l.count += 1;
     }
   }
+
+  detectEntriesAndHubs(stars);
 
   const model: SpaceModel = {
     workspaceRoot: root,

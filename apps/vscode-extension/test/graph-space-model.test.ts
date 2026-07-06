@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSpaceModel } from "../src/graph/space-model.js";
+import { buildSpaceModel, diffSpaceModel } from "../src/graph/space-model.js";
 import { ROOT, edge, extModule, fileNode, snap, symNode } from "./graph-fixtures.js";
 
 void ROOT;
@@ -154,5 +154,47 @@ describe("bundles, intraBundles, links", () => {
   it("emits deduped intra-package file links with a < b", () => {
     const m = buildSpaceModel(crossSnap());
     expect(m.links).toEqual([{ a: "apps/web/src/a.ts", b: "apps/web/src/b.ts", count: 1 }]);
+  });
+});
+
+describe("entry points & hubs", () => {
+  it("flags conventional entry names", () => {
+    const files = [fileNode("services/api/main.py"), fileNode("services/api/util.py"), fileNode("services/api/io.py")];
+    const m = buildSpaceModel(snap(files, []));
+    expect(m.stars.find((s) => s.id === "services/api/main.py")!.isEntry).toBe(true);
+    expect(m.stars.find((s) => s.id === "services/api/util.py")!.isEntry).toBe(false);
+  });
+
+  it("flags graph-signal entries: outDeg>=3 and inDeg==0", () => {
+    const files = ["root.ts", "d1.ts", "d2.ts", "d3.ts"].map((n) => fileNode(`apps/web/src/${n}`));
+    const edges = [1, 2, 3].map((i) => edge(files[0]!.id, files[i]!.id, "Imports"));
+    const m = buildSpaceModel(snap(files, edges));
+    expect(m.stars.find((s) => s.id === "apps/web/src/root.ts")!.isEntry).toBe(true);
+  });
+
+  it("flags the highest-degree star in a package as hub when degree >= 8", () => {
+    const files = Array.from({ length: 10 }, (_, i) => fileNode(`apps/web/src/f${i}.ts`));
+    const edges = Array.from({ length: 9 }, (_, i) => edge(files[i + 1]!.id, files[0]!.id, "Calls"));
+    const m = buildSpaceModel(snap(files, edges));
+    const hub = m.stars.find((s) => s.id === "apps/web/src/f0.ts")!;
+    expect(hub.isHub).toBe(true);
+    expect(m.stars.filter((s) => s.isHub)).toHaveLength(1);
+  });
+});
+
+describe("diffSpaceModel", () => {
+  it("reports added, removed, and changed stars by id", () => {
+    const before = buildSpaceModel(
+      snap([fileNode("apps/web/src/a.ts"), fileNode("apps/web/src/b.ts"), fileNode("apps/web/src/c.ts")], [])
+    );
+    const afterFiles = [fileNode("apps/web/src/a.ts"), fileNode("apps/web/src/b.ts"), fileNode("apps/web/src/d.ts")];
+    const after = buildSpaceModel(
+      snap([...afterFiles, symNode("Class", "apps/web/src/a.ts", "A")], [])
+    );
+    const d = diffSpaceModel(before, after);
+    expect(d.added.map((s) => s.id)).toEqual(["apps/web/src/d.ts"]);
+    expect(d.removed).toEqual(["apps/web/src/c.ts"]);
+    expect(d.changed.map((s) => s.id)).toEqual(["apps/web/src/a.ts"]);
+    expect(d.bundles).toEqual(after.bundles);
   });
 });
