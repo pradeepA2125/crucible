@@ -165,7 +165,34 @@ declare module "vscode" {
     ): Thenable<T | undefined>;
     function setStatusBarMessage(text: string, hideAfterTimeout?: number): Disposable;
     function registerWebviewPanelSerializer(viewType: string, serializer: WebviewPanelSerializer): Disposable;
-    function showTextDocument(uriOrDocument: Uri | TextDocument): Thenable<unknown>;
+    function showTextDocument(
+      uriOrDocument: Uri | TextDocument,
+      options?: { viewColumn?: ViewColumn }
+    ): Thenable<TextEditor>;
+  }
+
+  export class Position {
+    constructor(line: number, character: number);
+    readonly line: number;
+    readonly character: number;
+  }
+
+  export class Selection {
+    constructor(anchor: Position, active: Position);
+  }
+
+  export class Range {
+    constructor(start: Position, end: Position);
+  }
+
+  export enum TextEditorRevealType {
+    Default = 0,
+    InCenter = 2,
+  }
+
+  export interface TextEditor {
+    selection: Selection;
+    revealRange(range: Range, revealType?: TextEditorRevealType): void;
   }
 
   export namespace workspace {

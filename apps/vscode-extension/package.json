@@ -1,7 +1,7 @@
 {
   "name": "ai-editor-vscode-extension",
   "displayName": "AI Editor",
-  "description": "Agentic AI pair programmer: spec-first task planning, shadow-workspace patch review, and an inline chat controller — with a managed local runtime (no separate backend setup required).",
+  "description": "Agentic AI pair programmer: spec-first task planning, shadow-workspace patch review, and an inline chat controller \u2014 with a managed local runtime (no separate backend setup required).",
   "version": "0.2.0",
   "publisher": "ai-editor",
   "icon": "resources/icon.png",
@@ -29,6 +29,7 @@
     "onCommand:aiEditor.attachToTask",
     "onCommand:aiEditor.openChat",
     "onCommand:aiEditor.openMemoryPanel",
+    "onCommand:aiEditor.openGraphPanel",
     "onCommand:aiEditor.runSetup",
     "onCommand:aiEditor.openSettingsPanel",
     "onCommand:aiEditor.restartBackend",
@@ -64,11 +65,16 @@
       },
       {
         "command": "aiEditor.openChat",
-        "title": "AI Editor: Open Chat"
+        "title": "AI Editor: Open Chat",
+        "icon": "$(sparkle)"
       },
       {
         "command": "aiEditor.openMemoryPanel",
         "title": "AI Editor: Open Memory Inspector"
+      },
+      {
+        "command": "aiEditor.openGraphPanel",
+        "title": "AI Editor: Open Dependency Space (AXON)"
       },
       {
         "command": "aiEditor.runSetup",
@@ -100,6 +106,12 @@
         {
           "command": "aiEditor.openMemoryPanel",
           "when": "aiEditor.memoryEnabled"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "aiEditor.openChat",
+          "group": "navigation@100"
         }
       ]
     },
