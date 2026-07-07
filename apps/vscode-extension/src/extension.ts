@@ -4,6 +4,7 @@ import * as path from "node:path";
 
 import { ChatPanel } from "./chat-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
+import { GraphPanel } from "./graph-panel.js";
 import {
   AiEditorController,
   type BackendClientFactory,
@@ -156,6 +157,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (!ws) return;
       void vscode.window.showTextDocument(vscode.Uri.file(path.join(ws, relativePath)));
+    },
+    () => {
+      void vscode.commands.executeCommand("aiEditor.openGraphPanel");
     }
   );
 
@@ -421,6 +425,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         controller.memoryThreadId(),
         controller.memoryWorkspacePath()
       ).open();
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiEditor.openGraphPanel", () => {
+      const ws = controller.memoryWorkspacePath();
+      if (!ws) {
+        void vscode.window.showWarningMessage("Open a folder to view the dependency space.");
+        return;
+      }
+      new GraphPanel(context.extensionUri, ws, settings.getBackendBaseUrl()).open();
     })
   );
   context.subscriptions.push(

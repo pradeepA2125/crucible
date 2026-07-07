@@ -12,6 +12,7 @@ export default defineConfig({
       input: {
         index: resolve(__dirname, "index.html"),
         memory: resolve(__dirname, "memory.html"),
+        graph: resolve(__dirname, "graph.html"),
         setup: resolve(__dirname, "setup.html"),
         settings: resolve(__dirname, "settings.html"),
       },

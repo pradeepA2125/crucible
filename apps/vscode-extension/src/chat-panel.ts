@@ -65,6 +65,7 @@ export type ListModelsHandler = () => Promise<ComposerModelState>;
 export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
 export type OpenSettingsHandler = (section?: string) => void;
 export type OpenMemoryPanelHandler = () => void;
+export type OpenGraphPanelHandler = () => void;
 export type ListWorkspaceFilesHandler = () => Promise<string[]>;
 export type OpenFileHandler = (relativePath: string) => void;
 
@@ -110,7 +111,8 @@ export class ChatPanel {
     private readonly onOpenSettings: OpenSettingsHandler = () => {},
     private readonly onOpenMemoryPanel: OpenMemoryPanelHandler = () => {},
     private readonly onListWorkspaceFiles: ListWorkspaceFilesHandler = async () => [],
-    private readonly onOpenFile: OpenFileHandler = () => {}
+    private readonly onOpenFile: OpenFileHandler = () => {},
+    private readonly onOpenGraphPanel: OpenGraphPanelHandler = () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -304,6 +306,9 @@ export class ChatPanel {
         return;
       } else if (m["type"] === "openMemoryPanel") {
         this.onOpenMemoryPanel();
+        return;
+      } else if (m["type"] === "openGraphPanel") {
+        this.onOpenGraphPanel();
         return;
       } else {
         return;

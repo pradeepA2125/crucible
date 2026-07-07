@@ -183,6 +183,7 @@ export type WebviewMessage =
   | { type: "openSettings"; section?: string }
   // Chat-window shortcut to the standalone Memory Inspector panel/command.
   | { type: "openMemoryPanel" }
+  | { type: "openGraphPanel" }
   // @-mention composer: workspace file listing + click-to-open.
   | { type: "listWorkspaceFiles" }
   | { type: "openFile"; path: string };

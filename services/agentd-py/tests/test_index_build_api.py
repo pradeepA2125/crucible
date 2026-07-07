@@ -46,16 +46,44 @@ def test_trigger_index_build_no_semantic_index():
     assert result is None
 
 
-def test_trigger_index_build_missing_snapshot(tmp_path: Path):
-    """Returns None when snapshot file doesn't exist yet."""
+def test_trigger_index_build_missing_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Returns None when the snapshot is missing and the auto-indexer can't produce one."""
     fake_index = MagicMock()
     client = RetrievalArtifactClient(
         snapshot_path_template=str(tmp_path / "{workspace}" / "snapshot.json"),
         semantic_index=fake_index,
     )
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        client, "_attempt_build_snapshot", lambda ws, sp: attempts.append(ws) or []
+    )
     result = client.trigger_index_build(str(tmp_path / "workspace"))
     assert result is None
+    assert attempts == [str(tmp_path / "workspace")]
     fake_index.build_or_update.assert_not_called()
+
+
+def test_trigger_index_build_missing_snapshot_runs_auto_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The Build-index CTA path: a missing snapshot is auto-built, then embedded."""
+    snapshot_path = tmp_path / ".ai-editor" / "index-snapshot.json"
+    payload = {"generated_at_ms": 42, "graph": {"nodes": [], "edges": []}}
+
+    fake_index = MagicMock()
+    fake_index.build_or_update.return_value = "stats"
+    client = RetrievalArtifactClient(
+        snapshot_path_template=str(snapshot_path),
+        semantic_index=fake_index,
+    )
+
+    def fake_auto_index(ws: str, sp: Path) -> list:
+        sp.parent.mkdir(parents=True, exist_ok=True)
+        sp.write_text(json.dumps(payload), encoding="utf-8")
+        return []
+
+    monkeypatch.setattr(client, "_attempt_build_snapshot", fake_auto_index)
+    result = client.trigger_index_build(str(tmp_path))
+    assert result == "stats"
+    fake_index.build_or_update.assert_called_once_with(str(tmp_path), payload)
 
 
 def test_trigger_index_build_calls_build_or_update(tmp_path: Path):
