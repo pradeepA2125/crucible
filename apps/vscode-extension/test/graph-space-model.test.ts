@@ -121,6 +121,32 @@ describe("resolveModuleSpec via Imports edges", () => {
     const m = buildSpaceModel(snap([...files, ext], [edge(files[0]!.id, ext.id, "Imports")]));
     expect(m.stars.find((s) => s.id === "apps/web/src/a.ts")!.outDeg).toBe(0);
   });
+
+  it("resolves bare workspace-package specs to the target package's anchor file", () => {
+    const impFiles = [
+      fileNode("apps/vscode-extension/src/x.ts"),
+      fileNode("apps/vscode-extension/src/y.ts"),
+      fileNode("apps/vscode-extension/src/z.ts"),
+    ];
+    const libFiles = [
+      fileNode("apps/editor-client/src/aaa.ts"),
+      fileNode("apps/editor-client/src/index.ts"),
+      fileNode("apps/editor-client/src/domain/types.ts"),
+    ];
+    const ext = extModule("@ai-editor/editor-client", "apps/vscode-extension/src/x.ts");
+    const m = buildSpaceModel(
+      snap([...impFiles, ...libFiles, ext], [edge(impFiles[0]!.id, ext.id, "Imports")])
+    );
+    expect(m.bundles).toHaveLength(1);
+    expect(m.bundles[0]).toMatchObject({
+      fromPkg: "apps/vscode-extension",
+      toPkg: "apps/editor-client",
+      count: 1,
+    });
+    // Anchor preference: the conventional index.ts wins over the lexically-first aaa.ts.
+    expect(m.stars.find((s) => s.id === "apps/editor-client/src/index.ts")!.inDeg).toBe(1);
+    expect(m.stars.find((s) => s.id === "apps/editor-client/src/aaa.ts")!.inDeg).toBe(0);
+  });
 });
 
 describe("bundles, intraBundles, links", () => {

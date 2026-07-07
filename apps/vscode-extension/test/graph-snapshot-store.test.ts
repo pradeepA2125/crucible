@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GraphSnapshotError, GraphSnapshotStore } from "../src/graph/snapshot-store.js";
-import { edge, fileNode, snap, symNode } from "./graph-fixtures.js";
+import { edge, extModule, fileNode, snap, symNode } from "./graph-fixtures.js";
 import type { RawSnapshot } from "../src/graph/space-model.js";
 
 function storeFor(s: RawSnapshot): GraphSnapshotStore {
@@ -74,6 +74,38 @@ describe("GraphSnapshotStore", () => {
     const refIn = d.edges.find((e) => e.kind === "References")!;
     expect(refIn.dir).toBe("in");
     expect(refIn.otherFile).toBe("apps/web/src/b.ts");
+  });
+
+  it("fileDetail resolves external:module import edges (relative + bare) to workspace files", () => {
+    const imp = [
+      fileNode("apps/vscode-extension/src/x.ts"),
+      fileNode("apps/vscode-extension/src/y.ts"),
+      fileNode("apps/vscode-extension/src/z.ts"),
+    ];
+    const lib = [
+      fileNode("apps/editor-client/src/index.ts"),
+      fileNode("apps/editor-client/src/a.ts"),
+      fileNode("apps/editor-client/src/b.ts"),
+    ];
+    const extRel = extModule("./y.js", "apps/vscode-extension/src/x.ts");
+    const extBare = extModule("@ai-editor/editor-client", "apps/vscode-extension/src/x.ts");
+    const st = storeFor(
+      snap(
+        [...imp, ...lib, extRel, extBare],
+        [edge(imp[0]!.id, extRel.id, "Imports"), edge(imp[0]!.id, extBare.id, "Imports")]
+      )
+    );
+    st.load();
+    const d = st.fileDetail("apps/vscode-extension/src/x.ts");
+    const out = d.edges.filter((e) => e.dir === "out");
+    expect(out.map((e) => e.otherFile).sort()).toEqual([
+      "apps/editor-client/src/index.ts",
+      "apps/vscode-extension/src/y.ts",
+    ]);
+    expect(out.find((e) => e.otherFile === "apps/editor-client/src/index.ts")!.crossPackage).toBe(true);
+    // The resolved import is visible from the imported file's side too.
+    const din = st.fileDetail("apps/vscode-extension/src/y.ts");
+    expect(din.edges.some((e) => e.dir === "in" && e.otherFile === "apps/vscode-extension/src/x.ts")).toBe(true);
   });
 
   it("symbolDetail: unresolvable externals keep fileId null with derived name", () => {

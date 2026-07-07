@@ -99,6 +99,59 @@ export interface FileEdgeRecord {
   kind: EdgeKind;
 }
 
+/** A reusable spec resolver bound to one snapshot's file set: relative specs resolve
+ * against the importer's directory; bare specs fall back to workspace-package-anchor
+ * matching (see resolveBareSpec). Shared by the model build AND the detail queries. */
+export function buildSpecResolver(fileSet: Set<string>): (spec: string, fromFileRel: string) => string | null {
+  const anchors = buildPackageAnchors(fileSet);
+  return (spec, fromFileRel) => {
+    if (spec.startsWith(".")) return resolveModuleSpec(spec, fromFileRel, fileSet);
+    return resolveBareSpec(spec, anchors);
+  };
+}
+
+/** Bare workspace-package imports (e.g. "@ai-editor/editor-client") are how npm
+ * workspaces cross package boundaries — without this, LSP-off snapshots have ZERO
+ * cross-package bundles. Match the spec's last segment against each candidate
+ * package's last segment and land on that package's anchor file. */
+function resolveBareSpec(spec: string, anchors: Map<string, string>): string | null {
+  const lastSeg = spec.split("/").pop() ?? spec;
+  return anchors.get(lastSeg) ?? null;
+}
+
+const ANCHOR_NAMES = ["index.ts", "index.tsx", "index.js", "main.py", "__init__.py", "lib.rs", "main.rs"];
+
+/** package last-segment -> anchor file (prefers a conventional entry near the
+ * package root, falls back to the lexically first file in the package). */
+function buildPackageAnchors(fileSet: Set<string>): Map<string, string> {
+  const byPkg = new Map<string, string[]>();
+  for (const rel of fileSet) {
+    const pkg = packageCandidate(rel);
+    if (!pkg) continue;
+    const arr = byPkg.get(pkg) ?? [];
+    arr.push(rel);
+    byPkg.set(pkg, arr);
+  }
+  const anchors = new Map<string, string>();
+  for (const [pkg, files] of byPkg) {
+    files.sort();
+    let anchor: string | undefined;
+    // Prefer conventional entry names, shallower paths first.
+    const byDepth = [...files].sort((a, b) => a.split("/").length - b.split("/").length);
+    for (const f of byDepth) {
+      const base = f.slice(f.lastIndexOf("/") + 1);
+      if (ANCHOR_NAMES.includes(base)) {
+        anchor = f;
+        break;
+      }
+    }
+    anchor ??= files[0];
+    const lastSeg = pkg.split("/").pop();
+    if (anchor && lastSeg && !anchors.has(lastSeg)) anchors.set(lastSeg, anchor);
+  }
+  return anchors;
+}
+
 /** Resolve every ambient edge to a (fromFile, toFile) pair of workspace-relative paths.
  * Shared with bundling; exported for tests. */
 export function resolveFileEdges(snapData: RawSnapshot): FileEdgeRecord[] {
@@ -111,6 +164,7 @@ export function resolveFileEdges(snapData: RawSnapshot): FileEdgeRecord[] {
     nodeFile.set(n.id, rel);
     if (n.kind === "File") fileSet.add(rel);
   }
+  const resolveSpec = buildSpecResolver(fileSet);
   const out: FileEdgeRecord[] = [];
   for (const e of snapData.graph.edges) {
     if (!AMBIENT_KINDS.has(e.kind)) continue;
@@ -118,7 +172,7 @@ export function resolveFileEdges(snapData: RawSnapshot): FileEdgeRecord[] {
     if (!fromFile) continue;
     let toFile: string | null = nodeFile.get(e.to) ?? null;
     if (!toFile && e.to.startsWith("external:module:")) {
-      toFile = resolveModuleSpec(e.to.slice("external:module:".length), fromFile, fileSet);
+      toFile = resolveSpec(e.to.slice("external:module:".length), fromFile);
     }
     if (!toFile || toFile === fromFile) continue;
     out.push({ fromFile, toFile, kind: e.kind as EdgeKind });

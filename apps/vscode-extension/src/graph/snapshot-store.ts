@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import {
   buildSpaceModel,
+  buildSpecResolver,
   diffSpaceModel,
   relPath,
   type EdgeKind,
@@ -70,6 +71,7 @@ export class GraphSnapshotStore {
   private nodeById = new Map<string, RawGraphNode>();
   private fileOfNode = new Map<string, string>();
   private pkgOfFile = new Map<string, string>();
+  private resolveSpec: ((spec: string, fromFileRel: string) => string | null) | null = null;
 
   constructor(private readonly snapshotPath: string) {}
 
@@ -96,6 +98,7 @@ export class GraphSnapshotStore {
       if (!n.id.startsWith("external:")) this.fileOfNode.set(n.id, relPath(n.path, parsed.workspace_root));
     }
     this.pkgOfFile = new Map(this._model.stars.map((s) => [s.id, s.pkg]));
+    this.resolveSpec = buildSpecResolver(new Set(this._model.stars.map((s) => s.id)));
     return this._model;
   }
 
@@ -130,7 +133,12 @@ export class GraphSnapshotStore {
       if (!ALL_KINDS.has(e.kind)) continue;
       const kind = e.kind as EdgeKind;
       const fromFile = this.fileOfNode.get(e.from);
-      const toFile = this.fileOfNode.get(e.to);
+      let toFile = this.fileOfNode.get(e.to);
+      // Unresolved import targets (external:module:<spec>) resolve exactly like the
+      // model build does — otherwise a hub's info card shows zero edges on LSP-off snapshots.
+      if (!toFile && fromFile && this.resolveSpec && e.to.startsWith("external:module:")) {
+        toFile = this.resolveSpec(e.to.slice("external:module:".length), fromFile) ?? undefined;
+      }
       if (fromFile === fileId && toFile === fileId) {
         withinFileCount += 1;
       } else if (fromFile === fileId && toFile) {
