@@ -136,6 +136,11 @@ export interface SceneHandle {
   clearOverlays(): void;
   setLayers(layers: Record<EdgeKind, boolean>): void;
   flyToStar(id: string, radius?: number): void;
+  /** Ride a lit trace thread to a target star; falls back to flyTo when no thread
+   * is lit for that id. onArrive always fires (immediately on the fallback). */
+  rideToStar(id: string, onArrive?: () => void): boolean;
+  /** Ride a package-to-package beam; false (and immediate onArrive) when absent. */
+  rideBeam(fromPkg: string, toPkg: string, onArrive?: () => void): boolean;
   framePackage(pkg: string): void;
   resetCamera(): void;
   dispose(): void;

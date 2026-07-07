@@ -18,15 +18,14 @@ export function Breadcrumb({ focus, onPop, onReset }: Props) {
   }
   return (
     <div
-      className="absolute top-4 left-4 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-mono
-                 bg-[rgba(22,7,9,0.6)] border border-[rgba(251,146,60,0.22)] backdrop-blur-md"
+      className="ax-glass absolute top-4 left-4 flex items-center gap-1.5 px-3 py-2 text-[11px] font-mono"
     >
       {parts.map((p, i) => (
         <span key={`${p}-${i}`} className="flex items-center gap-1.5">
           {i > 0 && <span className="opacity-30">▸</span>}
           <button
             type="button"
-            className={i === parts.length - 1 ? "text-[#fff4ea]" : "text-[#fb923c] hover:underline"}
+            className={i === parts.length - 1 ? "text-[var(--ax-ink)]" : "text-[var(--ax-accent)] hover:underline"}
             onClick={() => (i === 0 ? onReset() : i < parts.length - 1 ? onPop() : undefined)}
           >
             {p}

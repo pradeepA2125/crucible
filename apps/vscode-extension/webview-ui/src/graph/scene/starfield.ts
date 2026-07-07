@@ -2,7 +2,7 @@
 // One THREE.Points for all stars: per-vertex size/color/flags/phase attributes,
 // shader-driven twinkle, beacon pulse, hub halo, and per-star dim factor.
 import * as THREE from "three";
-import { EMBER } from "../palette";
+import type { Palette } from "../palette";
 import { starSize } from "../scene-math";
 import { hash32, mulberry32 } from "../layout";
 import type { LayoutResult, StarRecord } from "../types";
@@ -111,7 +111,10 @@ export class Starfield {
   private fading: number[] = [];
   private pendingMorph: PendingMorph | null = null;
 
-  constructor(private readonly scene: THREE.Scene) {
+  constructor(
+    private readonly scene: THREE.Scene,
+    private readonly pal: Palette
+  ) {
     this.mat = new THREE.ShaderMaterial({
       vertexShader: STAR_VERT,
       fragmentShader: STAR_FRAG,
@@ -144,10 +147,10 @@ export class Starfield {
       if (!s) return;
       sizes[i] = starSize(s.inDeg, s.outDeg, s.isHub) * 3.4;
       const tint = s.isEntry
-        ? EMBER.beacon
+        ? this.pal.beacon
         : s.pkg
-          ? EMBER.clusterTints[(this.pkgIndex.get(s.pkg) ?? 0) % EMBER.clusterTints.length]!
-          : EMBER.star;
+          ? this.pal.clusterTints[(this.pkgIndex.get(s.pkg) ?? 0) % this.pal.clusterTints.length]!
+          : this.pal.star;
       c.set(tint);
       colors.set([c.r, c.g, c.b], i * 3);
       flags[i] = (s.isEntry ? 1 : 0) + (s.isHub ? 2 : 0);
@@ -183,12 +186,12 @@ export class Starfield {
     }
     for (const [pkg, c] of centroids) {
       if (!c.n) continue;
-      const tint = EMBER.clusterTints[(this.pkgIndex.get(pkg) ?? 0) % EMBER.clusterTints.length]!;
+      const tint = this.pal.clusterTints[(this.pkgIndex.get(pkg) ?? 0) % this.pal.clusterTints.length]!;
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({
           map: nebulaTexture(tint),
           transparent: true,
-          opacity: 0.16,
+          opacity: this.pal.nebulaAlpha * 2.9,
           depthWrite: false,
           blending: THREE.AdditiveBlending,
         })
@@ -219,7 +222,7 @@ export class Starfield {
     this.dust = new THREE.Points(
       g,
       new THREE.PointsMaterial({
-        color: EMBER.star,
+        color: this.pal.star,
         size: 1.6,
         sizeAttenuation: false,
         transparent: true,

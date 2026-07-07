@@ -4,7 +4,7 @@
 // uTime bump animates every stream. Kind-layer toggles are a one-hot dot product
 // (dot(uKindOn, aKindMask)) — no rebuilds on toggle.
 import * as THREE from "three";
-import { EMBER } from "../palette";
+import type { Palette } from "../palette";
 import { mixToCounts, particleCount } from "../scene-math";
 import { hash32, mulberry32 } from "../layout";
 import type { Bundle, EdgeKind, FileDetail, SymbolDetail } from "../types";
@@ -66,6 +66,7 @@ interface ThreadSystem {
   points: THREE.Points;
   mat: THREE.ShaderMaterial;
   kind: EdgeKind;
+  dir: "out" | "in";
   targetId: string;
   tint: string;
 }
@@ -99,6 +100,7 @@ function particleGeometry(
   count: number,
   seedKey: string,
   colorsByKind: Partial<Record<EdgeKind, number>>,
+  kindColors: Record<EdgeKind, string>,
   speedRange: [number, number],
   reverseFraction: number
 ): THREE.BufferGeometry {
@@ -119,7 +121,7 @@ function particleGeometry(
     const mag = speedRange[0] + rng() * (speedRange[1] - speedRange[0]);
     speed[i] = rng() < reverseFraction ? -mag : mag;
     const kind = kindOfParticle[i] ?? "Imports";
-    c.set(EMBER.kinds[kind]);
+    c.set(kindColors[kind]);
     color.set([c.r, c.g, c.b], i * 3);
     kindMask[i * 4 + KINDS.indexOf(kind)] = 1;
   }
@@ -139,8 +141,12 @@ export class Flows {
   private focusedFileId: string | null = null;
   private layers: Record<EdgeKind, boolean> = { Imports: true, Calls: true, Inherits: true, References: false };
   private bundleControls = new Map<string, THREE.Vector3>();
+  private bundleCurves = new Map<string, [THREE.Vector3, THREE.Vector3, THREE.Vector3]>();
 
-  constructor(private readonly scene: THREE.Scene) {}
+  constructor(
+    private readonly scene: THREE.Scene,
+    private readonly pal: Palette
+  ) {}
 
   setBundles(bundles: Bundle[], centroids: Map<string, [number, number, number]>): void {
     this.clearBeams();
@@ -160,6 +166,7 @@ export class Flows {
         .addScaledVector(outward, 190 * (0.55 + rng() * 0.5))
         .add(new THREE.Vector3(0, 90 + (rng() - 0.5) * 100, 0));
       this.bundleControls.set(`${bu.fromPkg}->${bu.toPkg}`, p1);
+      this.bundleCurves.set(`${bu.fromPkg}->${bu.toPkg}`, [p0, p1, p2]);
 
       const dominant = (Object.entries(bu.kindMix).sort((x, y) => (y[1] ?? 0) - (x[1] ?? 0))[0]?.[0] ??
         "Imports") as EdgeKind;
@@ -167,7 +174,7 @@ export class Flows {
       const line = new THREE.Line(
         lineGeo,
         new THREE.LineBasicMaterial({
-          color: EMBER.kinds[dominant],
+          color: this.pal.kinds[dominant],
           transparent: true,
           opacity: 0.1,
           blending: THREE.AdditiveBlending,
@@ -188,6 +195,7 @@ export class Flows {
           particleCount(bu.count),
           `bundleP:${bu.fromPkg}->${bu.toPkg}`,
           bu.kindMix,
+          this.pal.kinds,
           [0.05, 0.125],
           0.32
         ),
@@ -248,7 +256,7 @@ export class Flows {
     const p1 = mid.add(
       new THREE.Vector3((rng() - 0.5) * 90, 40 + (rng() - 0.5) * 60, (rng() - 0.5) * 90)
     );
-    const tint = dir === "out" ? EMBER.out : EMBER.inn;
+    const tint = dir === "out" ? this.pal.out : this.pal.inn;
     const line = new THREE.Line(
       sampleCurve(p0, p1, p2),
       new THREE.LineBasicMaterial({
@@ -269,7 +277,7 @@ export class Flows {
     });
     this.applyLayersTo(mat);
     const points = new THREE.Points(
-      particleGeometry(3, `threadP:${targetId}:${kind}:${dir}`, { [kind]: 1 }, [0.25, 0.45], 0),
+      particleGeometry(3, `threadP:${targetId}:${kind}:${dir}`, { [kind]: 1 }, this.pal.kinds, [0.25, 0.45], 0),
       mat
     );
     // Thread particles carry the direction color, not the kind color.
@@ -281,7 +289,7 @@ export class Flows {
     line.frustumCulled = false;
     line.visible = points.visible = this.layers[kind];
     this.scene.add(line, points);
-    this.threads.push({ line, points, mat, kind, targetId, tint });
+    this.threads.push({ line, points, mat, kind, dir, targetId, tint });
   }
 
   showSatellites(detail: FileDetail, center: [number, number, number]): void {
@@ -306,14 +314,14 @@ export class Flows {
     geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
     const colors = new Float32Array(n * 3);
     const kindColor: Record<string, string> = {
-      Class: EMBER.kinds.Inherits,
-      Function: EMBER.kinds.Calls,
-      Method: EMBER.kinds.Imports,
-      Interface: EMBER.beacon,
+      Class: this.pal.kinds.Inherits,
+      Function: this.pal.kinds.Calls,
+      Method: this.pal.kinds.Imports,
+      Interface: this.pal.beacon,
     };
     const c = new THREE.Color();
     symbols.forEach((s, i) => {
-      c.set(kindColor[s.kind] ?? EMBER.star);
+      c.set(kindColor[s.kind] ?? this.pal.star);
       colors.set([c.r, c.g, c.b], i * 3);
     });
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -364,7 +372,7 @@ export class Flows {
 
   labelAnchors(): { id: string; tint: string }[] {
     const out: { id: string; tint: string }[] = [];
-    if (this.focusedFileId) out.push({ id: this.focusedFileId, tint: EMBER.star });
+    if (this.focusedFileId) out.push({ id: this.focusedFileId, tint: this.pal.star });
     for (const t of this.threads) {
       if (t.line.visible) out.push({ id: t.targetId, tint: t.tint });
     }
@@ -418,6 +426,33 @@ export class Flows {
     }
     this.beams = [];
     this.bundleControls.clear();
+    this.bundleCurves.clear();
+  }
+
+  /** Points along the lit thread from the focused node to targetId (ride-the-thread).
+   * Thread curves store edge direction (in-edges run other->me), so "in" reverses. */
+  threadPathTo(targetId: string): [number, number, number][] | null {
+    const th = this.threads.find((t) => t.targetId === targetId && t.line.visible);
+    if (!th) return null;
+    const u = th.mat.uniforms;
+    const curve = new THREE.QuadraticBezierCurve3(
+      u.uP0!.value as THREE.Vector3,
+      u.uP1!.value as THREE.Vector3,
+      u.uP2!.value as THREE.Vector3
+    );
+    const pts = curve.getPoints(48).map((p) => [p.x, p.y, p.z] as [number, number, number]);
+    return th.dir === "out" ? pts : pts.reverse();
+  }
+
+  /** Points along a package-to-package beam, in either stored direction. */
+  bundlePath(fromPkg: string, toPkg: string): [number, number, number][] | null {
+    const fwd = this.bundleCurves.get(`${fromPkg}->${toPkg}`);
+    const rev = fwd ? null : this.bundleCurves.get(`${toPkg}->${fromPkg}`);
+    const tri = fwd ?? rev;
+    if (!tri) return null;
+    const curve = new THREE.QuadraticBezierCurve3(tri[0], tri[1], tri[2]);
+    const pts = curve.getPoints(64).map((p) => [p.x, p.y, p.z] as [number, number, number]);
+    return fwd ? pts : pts.reverse();
   }
 
   setLayers(layers: Record<EdgeKind, boolean>): void {

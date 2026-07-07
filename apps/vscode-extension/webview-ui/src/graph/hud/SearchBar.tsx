@@ -58,16 +58,16 @@ export function SearchBar({ stars, symbolHits, onQuerySymbols, onGoFile, onGoSym
   return (
     <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-[420px]">
       {total > 0 && (
-        <div className="mb-1.5 rounded-xl overflow-hidden bg-[rgba(22,7,9,0.85)] border border-[rgba(251,146,60,0.22)] backdrop-blur-md">
+        <div className="ax-glass mb-1.5 overflow-hidden">
           {fileHits.map((s, i) => (
             <button
               key={s.id}
               type="button"
               onClick={() => go(i)}
               className={`flex justify-between w-full px-3 py-2 text-[11px] font-mono text-left
-                          ${i === sel ? "bg-[rgba(251,146,60,0.16)]" : ""}`}
+                          ${i === sel ? "bg-[color-mix(in_srgb,var(--ax-accent)_16%,transparent)]" : ""}`}
             >
-              <span className="text-[#fff4ea]">{s.id}</span>
+              <span className="text-[var(--ax-ink)]">{s.id}</span>
               <span className="text-[9px] uppercase tracking-widest opacity-40">file</span>
             </button>
           ))}
@@ -77,9 +77,9 @@ export function SearchBar({ stars, symbolHits, onQuerySymbols, onGoFile, onGoSym
               type="button"
               onClick={() => go(fileHits.length + j)}
               className={`flex justify-between w-full px-3 py-2 text-[11px] font-mono text-left
-                          ${fileHits.length + j === sel ? "bg-[rgba(251,146,60,0.16)]" : ""}`}
+                          ${fileHits.length + j === sel ? "bg-[color-mix(in_srgb,var(--ax-accent)_16%,transparent)]" : ""}`}
             >
-              <span className="text-[#fff4ea]">{hit.name}</span>
+              <span className="text-[var(--ax-ink)]">{hit.name}</span>
               <span className="text-[9px] uppercase tracking-widest opacity-40">{hit.kind}</span>
             </button>
           ))}
@@ -105,9 +105,8 @@ export function SearchBar({ stars, symbolHits, onQuerySymbols, onGoFile, onGoSym
           if (e.key === "Escape") setQ("");
         }}
         placeholder="search files & symbols — fly to anything (⌘K)"
-        className="w-full px-4 py-3 rounded-xl text-[12px] font-mono outline-none
-                   bg-[rgba(22,7,9,0.6)] border border-[rgba(251,146,60,0.22)] backdrop-blur-md
-                   text-[#fff4ea] placeholder:opacity-35 focus:border-[rgba(251,146,60,0.5)]"
+        className="ax-glass w-full px-4 py-3 text-[12px] font-mono outline-none
+                   text-[var(--ax-ink)] placeholder:opacity-35 focus:border-[var(--ax-accent)]"
       />
     </div>
   );

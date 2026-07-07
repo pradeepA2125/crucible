@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
-import { EMBER } from "../palette";
+import type { Palette } from "../palette";
 import type {
   EdgeKind,
   FileDetail,
@@ -18,8 +18,12 @@ import { CameraRig } from "./camera";
 import { computeCentroids, Starfield } from "./starfield";
 import { Flows } from "./flows";
 
-export function createGraphScene(canvas: HTMLCanvasElement, cb: SceneCallbacks): SceneHandle {
-  return new GraphScene(canvas, cb);
+export function createGraphScene(
+  canvas: HTMLCanvasElement,
+  cb: SceneCallbacks,
+  pal: Palette
+): SceneHandle {
+  return new GraphScene(canvas, cb, pal);
 }
 
 class GraphScene implements SceneHandle {
@@ -43,19 +47,20 @@ class GraphScene implements SceneHandle {
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
-    private readonly cb: SceneCallbacks
+    private readonly cb: SceneCallbacks,
+    private readonly pal: Palette
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.scene.background = new THREE.Color(EMBER.bgBot);
-    this.scene.fog = new THREE.FogExp2(EMBER.bgBot, 0.00045);
+    this.scene.background = new THREE.Color(this.pal.bgBot);
+    this.scene.fog = new THREE.FogExp2(this.pal.bgBot, 0.00045);
     this.camera = new THREE.PerspectiveCamera(55, 1, 1, 20000);
     this.rig = new CameraRig(this.camera);
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.9, 0.7, 0.12));
-    this.starfield = new Starfield(this.scene);
-    this.flows = new Flows(this.scene);
+    this.starfield = new Starfield(this.scene, pal);
+    this.flows = new Flows(this.scene, pal);
     this.raycaster.params.Points = { threshold: 14 };
 
     // Screen-space label overlay: a sibling 2D canvas positioned over the GL one.
@@ -162,7 +167,7 @@ class GraphScene implements SceneHandle {
       const dimmed = this.focus.level >= 1 && (this.focus as { pkg?: string }).pkg !== pkg;
       ctx.globalAlpha = dimmed ? 0.25 : 0.85;
       const idx = pkgOrder.indexOf(pkg);
-      ctx.fillStyle = EMBER.clusterTints[(idx < 0 ? 0 : idx) % EMBER.clusterTints.length]!;
+      ctx.fillStyle = this.pal.clusterTints[(idx < 0 ? 0 : idx) % this.pal.clusterTints.length]!;
       ctx.fillText(pkg.toUpperCase(), px, py);
     }
     ctx.globalAlpha = 1;
@@ -244,6 +249,27 @@ class GraphScene implements SceneHandle {
   flyToStar(id: string, radius = 300): void {
     const p = this.starfield.positionOf(id);
     if (p) this.rig.flyTo(p, radius);
+  }
+
+  rideToStar(id: string, onArrive?: () => void): boolean {
+    const path = this.flows.threadPathTo(id);
+    if (!path) {
+      this.flyToStar(id, 300);
+      onArrive?.();
+      return false;
+    }
+    this.rig.followPath(path, 1.7, 280, onArrive);
+    return true;
+  }
+
+  rideBeam(fromPkg: string, toPkg: string, onArrive?: () => void): boolean {
+    const path = this.flows.bundlePath(fromPkg, toPkg);
+    if (!path) {
+      onArrive?.();
+      return false;
+    }
+    this.rig.followPath(path, 2.4, 520, onArrive);
+    return true;
   }
 
   framePackage(pkg: string): void {

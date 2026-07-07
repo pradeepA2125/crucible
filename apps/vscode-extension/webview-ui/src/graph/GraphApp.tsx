@@ -7,6 +7,8 @@ import { Legend } from "./hud/Legend";
 import { EdgeLayers } from "./hud/EdgeLayers";
 import { InfoCard } from "./hud/InfoCard";
 import { SearchBar } from "./hud/SearchBar";
+import { ViewPanel } from "./hud/ViewPanel";
+import { DEFAULT_PALETTE, isPaletteName, PALETTES, type Palette, type PaletteName } from "./palette";
 import { graphReducer, initialGraphState } from "./useGraphState";
 import type {
   GraphToWebview,
@@ -19,7 +21,7 @@ import type {
 interface Props {
   /** Injection seam: tests pass a fake; production defaults to the Three.js factory
    * (dynamically imported so jsdom tests never load WebGL code). */
-  createScene?: (canvas: HTMLCanvasElement, cb: SceneCallbacks) => SceneHandle;
+  createScene?: (canvas: HTMLCanvasElement, cb: SceneCallbacks, palette: Palette) => SceneHandle;
 }
 
 type Conn =
@@ -48,6 +50,12 @@ async function requestLayout(model: SpaceModel): Promise<LayoutResult> {
   }
 }
 
+function persistedPalette(): PaletteName {
+  const api = vscode as { getState?: () => unknown };
+  const s = api.getState?.() as { palette?: unknown } | undefined;
+  return isPaletteName(s?.palette) ? s.palette : DEFAULT_PALETTE;
+}
+
 export default function GraphApp({ createScene }: Props) {
   const [conn, setConn] = useState<Conn>({ kind: "connecting" });
   const [model, setModel] = useState<SpaceModel | null>(null);
@@ -55,14 +63,29 @@ export default function GraphApp({ createScene }: Props) {
   const [glFailed, setGlFailed] = useState(false);
   const morphRef = useRef<{ isDiff: boolean; removed: string[] }>({ isDiff: false, removed: [] });
   const [state, dispatch] = useReducer(graphReducer, undefined, initialGraphState);
+  const [paletteName, setPaletteName] = useState<PaletteName>(persistedPalette);
+  const [sceneEpoch, setSceneEpoch] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sceneRef = useRef<SceneHandle | null>(null);
   const factoryRef = useRef<Props["createScene"] | null>(createScene ?? null);
   const modelRef = useRef<SpaceModel | null>(null);
   const stateRef = useRef(state);
+  const paletteRef = useRef(paletteName);
   const lastSatPickRef = useRef<{ id: string; at: number }>({ id: "", at: 0 });
   modelRef.current = model;
   stateRef.current = state;
+
+  // Palette switch: scene colors are baked into GPU buffers, so dispose and
+  // rebuild the scene (focus resets to overview — cheap and predictable).
+  useEffect(() => {
+    if (paletteRef.current === paletteName) return;
+    paletteRef.current = paletteName;
+    (vscode as { setState?: (s: unknown) => void }).setState?.({ palette: paletteName });
+    sceneRef.current?.dispose();
+    sceneRef.current = null;
+    dispatch({ type: "reset" });
+    setSceneEpoch((e) => e + 1);
+  }, [paletteName]);
 
   // Host message bus.
   useEffect(() => {
@@ -155,6 +178,20 @@ export default function GraphApp({ createScene }: Props) {
             }
             const star = modelRef.current?.stars.find((s) => s.id === id);
             if (!star) return;
+            const focus = stateRef.current.focus;
+            const detail = stateRef.current.fileDetail;
+            // Spec: clicking a lit thread's destination rides the thread — camera
+            // travels the curve, refocus happens on arrival.
+            const isTraceTarget =
+              (focus.level === 2 || focus.level === 3) &&
+              !!detail &&
+              detail.edges.some((e) => e.otherFile === id);
+            if (isTraceTarget && sceneRef.current) {
+              sceneRef.current.rideToStar(id, () =>
+                dispatch({ type: "pickStar", fileId: id, pkg: star.pkg })
+              );
+              return;
+            }
             dispatch({ type: "pickStar", fileId: id, pkg: star.pkg });
             sceneRef.current?.flyToStar(id, 300);
           },
@@ -178,7 +215,7 @@ export default function GraphApp({ createScene }: Props) {
           onBackgroundClick: () => dispatch({ type: "pop" }),
         };
         try {
-          sceneRef.current = factoryRef.current(canvas, callbacks);
+          sceneRef.current = factoryRef.current!(canvas, callbacks, PALETTES[paletteRef.current]);
         } catch {
           // WebGL unavailable — plain-text structure fallback (spec: Failure modes).
           setGlFailed(true);
@@ -195,7 +232,7 @@ export default function GraphApp({ createScene }: Props) {
         sceneRef.current?.setSpace(model, layout);
       }
     })();
-  }, [renderModel]);
+  }, [renderModel, sceneEpoch]);
 
   // Focus -> scene: dimming, camera, detail requests.
   useEffect(() => {
@@ -241,10 +278,70 @@ export default function GraphApp({ createScene }: Props) {
       ? (model.stars.find((s) => s.id === (state.focus as { fileId: string }).fileId) ?? null)
       : null;
 
+  // Follow a connection out of the info card: ride the lit thread when there is
+  // one (refocus on arrival), otherwise fly-to + refocus immediately.
+  const goEdge = (fileId: string) => {
+    const star = modelRef.current?.stars.find((s) => s.id === fileId);
+    if (!star) return;
+    const arrive = () => dispatch({ type: "pickStar", fileId, pkg: star.pkg });
+    if (sceneRef.current) sceneRef.current.rideToStar(fileId, arrive);
+    else arrive();
+  };
+
+  const topHub = model
+    ? [...model.stars]
+        .filter((s) => s.isHub)
+        .sort((a, b) => b.inDeg + b.outDeg - (a.inDeg + a.outDeg))[0]
+    : undefined;
+  const strongestBundle = model?.bundles[0];
+  const canRideBeam =
+    state.focus.level >= 2
+      ? (state.fileDetail?.edges.length ?? 0) > 0
+      : strongestBundle !== undefined;
+
+  const rideBeam = () => {
+    if (state.focus.level >= 2) {
+      const edges = stateRef.current.fileDetail?.edges ?? [];
+      const target = edges.find((e) => e.crossPackage) ?? edges[0];
+      if (target) goEdge(target.otherFile);
+      return;
+    }
+    if (!strongestBundle) return;
+    const { fromPkg, toPkg } = strongestBundle;
+    const arrive = () => dispatch({ type: "pickPackage", pkg: toPkg });
+    if (sceneRef.current) sceneRef.current.rideBeam(fromPkg, toPkg, arrive);
+    else arrive();
+  };
+
+  const traceHub = () => {
+    if (!topHub) return;
+    dispatch({ type: "pickStar", fileId: topHub.id, pkg: topHub.pkg });
+    sceneRef.current?.flyToStar(topHub.id, 300);
+  };
+
+  const pal = PALETTES[paletteName];
+  const paletteVars = {
+    background: pal.bgBot,
+    "--ax-panel": pal.panel,
+    "--ax-border": pal.panelBorder,
+    "--ax-ink": pal.ink,
+    "--ax-ink-dim": pal.inkDim,
+    "--ax-accent": pal.accent,
+    "--ax-accent-text": pal.accentText,
+    "--ax-star": pal.star,
+    "--ax-beacon": pal.beacon,
+    "--ax-out": pal.out,
+    "--ax-in": pal.inn,
+    "--ax-k-imports": pal.kinds.Imports,
+    "--ax-k-calls": pal.kinds.Calls,
+    "--ax-k-inherits": pal.kinds.Inherits,
+    "--ax-k-references": pal.kinds.References,
+  } as React.CSSProperties;
+
   return (
-    <div className="w-screen h-screen overflow-hidden relative" style={{ background: "#070203" }}>
+    <div className="w-screen h-screen overflow-hidden relative" style={paletteVars}>
       {conn.kind === "connecting" && (
-        <div className="flex items-center justify-center h-full text-xs uppercase tracking-[0.3em] text-[var(--color-text-dim)]">
+        <div className="flex items-center justify-center h-full text-xs uppercase tracking-[0.3em] text-[var(--ax-ink-dim)]">
           mapping the space…
         </div>
       )}
@@ -277,6 +374,7 @@ export default function GraphApp({ createScene }: Props) {
       />
       {conn.kind === "ready" && !glFailed && (
         <>
+          <div className="ax-vignette" />
           <Breadcrumb
             focus={state.focus}
             onPop={() => dispatch({ type: "pop" })}
@@ -284,9 +382,8 @@ export default function GraphApp({ createScene }: Props) {
           />
           {staleAgeSec !== null && (
             <div
-              className="absolute top-16 left-4 px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-[0.15em]
-                         bg-[rgba(22,7,9,0.6)] border border-[rgba(251,146,60,0.22)] backdrop-blur-md
-                         text-[#fbbf24] opacity-80"
+              className="ax-glass absolute top-16 left-4 px-3 py-1.5 text-[10px] uppercase tracking-[0.15em]
+                         text-[var(--ax-beacon)] opacity-80"
             >
               index stale · {Math.round(staleAgeSec / 60)}m — watching for rebuild
             </div>
@@ -301,10 +398,23 @@ export default function GraphApp({ createScene }: Props) {
             <InfoCard
               star={focusedStar}
               detail={state.fileDetail}
+              symbolDetail={state.focus.level === 3 && state.focus.symbolId ? state.symbolDetail : null}
               onOpen={() => vscode.postMessage({ type: "openFile", path: focusedStar.id })}
               onDive={() => dispatch({ type: "dive" })}
+              onGoEdge={goEdge}
             />
           )}
+          <ViewPanel
+            focusLevel={state.focus.level}
+            canTraceHub={topHub !== undefined}
+            canRideBeam={canRideBeam}
+            palette={paletteName}
+            onPalette={setPaletteName}
+            onOverview={() => dispatch({ type: "reset" })}
+            onTraceHub={traceHub}
+            onRideBeam={rideBeam}
+            onEnterFile={() => dispatch({ type: "dive" })}
+          />
           <SearchBar
             stars={model?.stars ?? []}
             symbolHits={state.searchHits}

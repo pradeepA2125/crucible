@@ -6,6 +6,13 @@ const MIN_RADIUS = 70;
 const MAX_RADIUS = 4200;
 const DRIFT_RATE = 0.038;
 
+interface PathRide {
+  points: [number, number, number][];
+  t: number;
+  durationSec: number;
+  onDone: (() => void) | undefined;
+}
+
 /** Orbit camera with smoothed goals: drag = yaw/pitch, wheel = dolly, flyTo = tween.
  * All motion converges via k = 1 - exp(-SMOOTH * dt) each frame. */
 export class CameraRig {
@@ -18,10 +25,49 @@ export class CameraRig {
   gRadius = 1350;
   gTarget: [number, number, number] = [0, 0, 0];
   drift = true;
+  private ride: PathRide | null = null;
 
   constructor(private readonly camera: THREE.PerspectiveCamera) {}
 
+  /** Travel the camera target along a polyline over durationSec (ride-the-beam).
+   * The smoothed goal-chasing in update() turns the discrete points into a glide;
+   * on arrival onDone fires once. */
+  followPath(
+    points: [number, number, number][],
+    durationSec: number,
+    endRadius: number,
+    onDone?: () => void
+  ): void {
+    if (points.length < 2) return;
+    this.ride = { points, t: 0, durationSec, onDone };
+    this.drift = false;
+    this.gRadius = endRadius;
+  }
+
+  private advanceRide(dt: number): void {
+    if (!this.ride) return;
+    const r = this.ride;
+    r.t = Math.min(1, r.t + dt / r.durationSec);
+    const e = r.t * r.t * (3 - 2 * r.t); // smoothstep ease
+    const f = e * (r.points.length - 1);
+    const i = Math.min(r.points.length - 2, Math.floor(f));
+    const frac = f - i;
+    const a = r.points[i]!;
+    const b = r.points[i + 1]!;
+    this.gTarget = [
+      a[0] + (b[0] - a[0]) * frac,
+      a[1] + (b[1] - a[1]) * frac,
+      a[2] + (b[2] - a[2]) * frac,
+    ];
+    if (r.t >= 1) {
+      this.gTarget = [...r.points[r.points.length - 1]!] as [number, number, number];
+      this.ride = null;
+      r.onDone?.();
+    }
+  }
+
   update(dt: number): void {
+    this.advanceRide(dt);
     if (this.drift) this.gYaw += dt * DRIFT_RATE;
     const k = 1 - Math.exp(-SMOOTH * dt);
     this.yaw += (this.gYaw - this.yaw) * k;
@@ -79,12 +125,14 @@ export class CameraRig {
   }
 
   flyTo(target: [number, number, number], radius: number): void {
+    this.ride = null;
     this.gTarget = [...target] as [number, number, number];
     this.gRadius = radius;
     this.drift = false;
   }
 
   reset(): void {
+    this.ride = null;
     this.gTarget = [0, 0, 0];
     this.gRadius = 1350;
     this.gPitch = 0.34;

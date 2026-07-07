@@ -39,6 +39,16 @@ function fakeScene(): SceneHandle {
     clearOverlays: vi.fn(),
     setLayers: vi.fn(),
     flyToStar: vi.fn(),
+    // Fallback-shaped fake: no thread lit, so arrive fires immediately (matches
+    // the real scene's contract when nothing is traced).
+    rideToStar: vi.fn((_id: string, onArrive?: () => void) => {
+      onArrive?.();
+      return false;
+    }),
+    rideBeam: vi.fn((_f: string, _t: string, onArrive?: () => void) => {
+      onArrive?.();
+      return false;
+    }),
     framePackage: vi.fn(),
     resetCamera: vi.fn(),
     dispose: vi.fn(),
