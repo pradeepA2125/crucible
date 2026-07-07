@@ -7,6 +7,7 @@ import { Legend } from "./hud/Legend";
 import { EdgeLayers } from "./hud/EdgeLayers";
 import { InfoCard } from "./hud/InfoCard";
 import { SearchBar } from "./hud/SearchBar";
+import { ThemePanel } from "./hud/ThemePanel";
 import { ViewPanel } from "./hud/ViewPanel";
 import { DEFAULT_PALETTE, isPaletteName, PALETTES, type Palette, type PaletteName } from "./palette";
 import { graphReducer, initialGraphState } from "./useGraphState";
@@ -394,6 +395,7 @@ export default function GraphApp({ createScene }: Props) {
             focusLevel={state.focus.level}
             onToggle={(kind, on) => dispatch({ type: "setLayer", kind, on })}
           />
+          <ThemePanel palette={paletteName} onPalette={setPaletteName} />
           {focusedStar && (
             <InfoCard
               star={focusedStar}
@@ -408,8 +410,6 @@ export default function GraphApp({ createScene }: Props) {
             focusLevel={state.focus.level}
             canTraceHub={topHub !== undefined}
             canRideBeam={canRideBeam}
-            palette={paletteName}
-            onPalette={setPaletteName}
             onOverview={() => dispatch({ type: "reset" })}
             onTraceHub={traceHub}
             onRideBeam={rideBeam}

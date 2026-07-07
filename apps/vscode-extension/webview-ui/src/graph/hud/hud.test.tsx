@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Breadcrumb } from "./Breadcrumb";
 import { EdgeLayers } from "./EdgeLayers";
 import { InfoCard } from "./InfoCard";
+import { ThemePanel } from "./ThemePanel";
 import { ViewPanel } from "./ViewPanel";
 
 describe("EdgeLayers", () => {
@@ -125,8 +126,6 @@ describe("ViewPanel", () => {
         focusLevel={0}
         canTraceHub={true}
         canRideBeam={true}
-        palette="void"
-        onPalette={vi.fn()}
         onOverview={onOverview}
         onTraceHub={vi.fn()}
         onRideBeam={vi.fn()}
@@ -141,8 +140,6 @@ describe("ViewPanel", () => {
         focusLevel={2}
         canTraceHub={true}
         canRideBeam={true}
-        palette="void"
-        onPalette={vi.fn()}
         onOverview={onOverview}
         onTraceHub={vi.fn()}
         onRideBeam={vi.fn()}
@@ -153,35 +150,12 @@ describe("ViewPanel", () => {
     expect(onEnterFile).toHaveBeenCalled();
   });
 
-  it("switches themes via palette chips", () => {
-    const onPalette = vi.fn();
-    render(
-      <ViewPanel
-        focusLevel={0}
-        canTraceHub={true}
-        canRideBeam={true}
-        palette="void"
-        onPalette={onPalette}
-        onOverview={vi.fn()}
-        onTraceHub={vi.fn()}
-        onRideBeam={vi.fn()}
-        onEnterFile={vi.fn()}
-      />
-    );
-    const ember = screen.getByRole("button", { name: /ember dusk/i });
-    expect(screen.getByRole("button", { name: /void violet/i }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(ember);
-    expect(onPalette).toHaveBeenCalledWith("ember");
-  });
-
   it("disables ride/hub when unavailable", () => {
     render(
       <ViewPanel
         focusLevel={0}
         canTraceHub={false}
         canRideBeam={false}
-        palette="void"
-        onPalette={vi.fn()}
         onOverview={vi.fn()}
         onTraceHub={vi.fn()}
         onRideBeam={vi.fn()}
@@ -190,5 +164,15 @@ describe("ViewPanel", () => {
     );
     expect(screen.getByRole("button", { name: /ride a beam/i })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: /trace the hub/i })).toHaveProperty("disabled", true);
+  });
+});
+
+describe("ThemePanel", () => {
+  it("marks the active palette and reports switches", () => {
+    const onPalette = vi.fn();
+    render(<ThemePanel palette="void" onPalette={onPalette} />);
+    expect(screen.getByRole("button", { name: /void violet/i }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: /ember dusk/i }));
+    expect(onPalette).toHaveBeenCalledWith("ember");
   });
 });
