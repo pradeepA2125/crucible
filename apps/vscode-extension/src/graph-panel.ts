@@ -70,7 +70,12 @@ export class GraphPanel {
         }
       },
       buildIndex: async () => {
-        await fetch(new URL("/v1/index/build", this.backendBaseUrl), { method: "POST" });
+        // The route 422s without a JSON body — workspace_path is required.
+        await fetch(new URL("/v1/index/build", this.backendBaseUrl), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspace_path: this.workspacePath }),
+        });
         // .ai-editor/ may not have existed when the panel opened (fs.watch on a missing
         // dir throws) — re-arm so the snapshot ignites the space when the build lands.
         this.stopWatcher();

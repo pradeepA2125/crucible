@@ -178,14 +178,18 @@ class RetrievalArtifactClient:
         if self._semantic_index is None:
             return None
         snapshot_path = self._resolve_snapshot_path(workspace_path)
-        if not snapshot_path.exists():
-            return None
         if not self._build_lock.acquire(blocking=False):
             # A build is already running — coalesce. Skipping is safe: the in-flight build
             # reads the snapshot fresh, and any change after it re-triggers a build.
             return None
         try:
             self._building = True
+            if not snapshot_path.exists():
+                # The graph panel's Build-index CTA fires with no snapshot on disk —
+                # run the auto-index command first so there is something to embed.
+                self._attempt_build_snapshot(workspace_path, snapshot_path)
+                if not snapshot_path.exists():
+                    return None
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
             stats = self._semantic_index.build_or_update(workspace_path, payload)  # type: ignore[union-attr]
             snapshot_ms = int(payload.get("generated_at_ms", 0) or 0)
