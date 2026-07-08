@@ -4,7 +4,7 @@
 
 **Goal:** Auto-inject a workspace `AGENTS.md` into the chat controller's system prompt (self-updating), and expand `.ai-editor/prompts/<name>.md` snippets inline in the composer via `/name [args]`.
 
-**Architecture:** Backend half — a new mtime-cached `ProjectInstructionsLoader` reads `AGENTS.md`; `DefaultReasoningEngine` resolves its text each controller turn and appends it to the system prompt via a new `_INSTRUCTIONS_BLOCK` (mirrors the existing `_MEMORY_BLOCK` pattern), gated by a default-ON `AI_EDITOR_PROJECT_INSTRUCTIONS` kill-switch. Frontend half — pure vscode-free helpers in `prompt-files.ts`, controller methods that read the prompts dir, host plumbing in `chat-panel.ts`/`extension.ts`, and composer wiring in `InputArea.tsx` that expands a slash command *before* send.
+**Architecture:** Backend half — a new mtime-cached `ProjectInstructionsLoader` reads `AGENTS.md`; `DefaultReasoningEngine` resolves its text each controller turn and appends it to the system prompt via a new `_INSTRUCTIONS_BLOCK` (mirrors the existing `_MEMORY_BLOCK` pattern), gated by a default-ON `CRUCIBLE_PROJECT_INSTRUCTIONS` kill-switch. Frontend half — pure vscode-free helpers in `prompt-files.ts`, controller methods that read the prompts dir, host plumbing in `chat-panel.ts`/`extension.ts`, and composer wiring in `InputArea.tsx` that expands a slash command *before* send.
 
 **Tech Stack:** Python 3.13 (FastAPI/Pydantic backend, pytest), TypeScript (VS Code extension + React webview-ui, vitest).
 
@@ -14,8 +14,8 @@
 
 - **AGENTS.md is the ONLY instructions source** — no `.github/copilot-instructions.md` fallback, no nested files.
 - **Controller-only injection** — do NOT touch `format_planning_system_prompt` or the planning/task path.
-- **Instruction flag `AI_EDITOR_PROJECT_INSTRUCTIONS` defaults ON** (kill-switch); truthy set = `{1,true,yes,on}`.
-- **Size cap** `AI_EDITOR_INSTRUCTIONS_MAX_CHARS`, default `16000`; over-budget → truncate + `logger.warning`.
+- **Instruction flag `CRUCIBLE_PROJECT_INSTRUCTIONS` defaults ON** (kill-switch); truthy set = `{1,true,yes,on}`.
+- **Size cap** `CRUCIBLE_INSTRUCTIONS_MAX_CHARS`, default `16000`; over-budget → truncate + `logger.warning`.
 - **Loader is best-effort** — any IO error degrades to `None`; instructions must never break a turn.
 - **Prompt-file args:** `$ARGUMENTS` = full arg string; `$1..$N` = whitespace-split positional; unfilled positional → empty string.
 - **Prompt files are frontend-only** — no backend route, no editor-client contract change. Expansion happens *before* send so the user can edit the result.
@@ -92,7 +92,7 @@ def test_mtime_cache_serves_cached_until_changed(tmp_path: Path) -> None:
 
 
 def test_oversize_is_truncated_with_marker(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_INSTRUCTIONS_MAX_CHARS", "10")
+    monkeypatch.setenv("CRUCIBLE_INSTRUCTIONS_MAX_CHARS", "10")
     (tmp_path / "AGENTS.md").write_text("0123456789ABCDEF", encoding="utf-8")
     out = ProjectInstructionsLoader(tmp_path).load()
     assert out is not None
@@ -142,7 +142,7 @@ _DEFAULT_MAX_CHARS = 16000
 
 
 def _max_chars() -> int:
-    raw = os.getenv("AI_EDITOR_INSTRUCTIONS_MAX_CHARS", "").strip()
+    raw = os.getenv("CRUCIBLE_INSTRUCTIONS_MAX_CHARS", "").strip()
     if raw.isdigit() and int(raw) > 0:
         return int(raw)
     return _DEFAULT_MAX_CHARS
@@ -219,7 +219,7 @@ git commit -m "feat(instructions): mtime-cached ProjectInstructionsLoader for AG
 
 ---
 
-## Task 2: AI_EDITOR_PROJECT_INSTRUCTIONS flag (default ON)
+## Task 2: CRUCIBLE_PROJECT_INSTRUCTIONS flag (default ON)
 
 **Files:**
 - Modify: `services/agentd-py/agentd/chat/controller_factory.py`
@@ -236,14 +236,14 @@ from agentd.chat.controller_factory import is_project_instructions_enabled
 
 
 def test_instructions_flag_default_on(monkeypatch) -> None:
-    monkeypatch.delenv("AI_EDITOR_PROJECT_INSTRUCTIONS", raising=False)
+    monkeypatch.delenv("CRUCIBLE_PROJECT_INSTRUCTIONS", raising=False)
     assert is_project_instructions_enabled() is True
 
 
 def test_instructions_flag_explicit_off(monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "0")
+    monkeypatch.setenv("CRUCIBLE_PROJECT_INSTRUCTIONS", "0")
     assert is_project_instructions_enabled() is False
-    monkeypatch.setenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "false")
+    monkeypatch.setenv("CRUCIBLE_PROJECT_INSTRUCTIONS", "false")
     assert is_project_instructions_enabled() is False
 ```
 
@@ -260,8 +260,8 @@ In `agentd/chat/controller_factory.py`, add after `is_memory_enabled` (the modul
 def is_project_instructions_enabled() -> bool:
     """Whether a workspace AGENTS.md is injected into the controller system
     prompt. Default ON — reading the project's AGENTS.md is table-stakes parity.
-    Kill-switch only: AI_EDITOR_PROJECT_INSTRUCTIONS=0 (or false/no/off)."""
-    return os.getenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "1").strip().lower() in _TRUTHY
+    Kill-switch only: CRUCIBLE_PROJECT_INSTRUCTIONS=0 (or false/no/off)."""
+    return os.getenv("CRUCIBLE_PROJECT_INSTRUCTIONS", "1").strip().lower() in _TRUTHY
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -273,7 +273,7 @@ Expected: PASS; ruff clean.
 
 ```bash
 git add services/agentd-py/agentd/chat/controller_factory.py services/agentd-py/tests/test_project_instructions_loader.py
-git commit -m "feat(instructions): AI_EDITOR_PROJECT_INSTRUCTIONS flag (default on)"
+git commit -m "feat(instructions): CRUCIBLE_PROJECT_INSTRUCTIONS flag (default on)"
 ```
 
 ---
@@ -1044,12 +1044,12 @@ Start the backend with the controller + a workspace that has an `AGENTS.md`:
 ```bash
 cd "<repo>" && export $(cat .env | grep -v "^#" | grep "=" | sed 's/"//g' | xargs)
 printf 'Begin every reply with the literal token FOX.\n' > "$PWD/workspaces/shadow-forge-stress/AGENTS.md"
-AI_EDITOR_CHAT_CONTROLLER=1 bash scripts/stress/start-backend.sh \
+CRUCIBLE_CHAT_CONTROLLER=1 bash scripts/stress/start-backend.sh \
   --backend gemini --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none
 ```
 Open the dev host, send a chat message. **Expected:** the reply begins with `FOX`.
 Now edit `AGENTS.md` to a different token (e.g. `OWL`) mid-session and send again. **Expected:** the next reply begins with `OWL` — no backend restart (self-updating mtime cache).
-Kill-switch check: restart with `AI_EDITOR_PROJECT_INSTRUCTIONS=0`; the token is ignored.
+Kill-switch check: restart with `CRUCIBLE_PROJECT_INSTRUCTIONS=0`; the token is ignored.
 
 - [ ] **Step 5: Live smoke — prompt-file expansion**
 
@@ -1062,7 +1062,7 @@ In the composer type `/summarize src/foo.py` and press Enter. **Expected:** the 
 
 - [ ] **Step 6: Update CLAUDE.md**
 
-Add a short subsection under the chat/controller architecture notes documenting: the `instructions/loader.py` mtime-cache, the `AI_EDITOR_PROJECT_INSTRUCTIONS` (default-on) + `AI_EDITOR_INSTRUCTIONS_MAX_CHARS` env vars, controller-only injection, and the `.ai-editor/prompts/<name>.md` + `/name` composer flow (frontend-only, expand-before-send). Commit.
+Add a short subsection under the chat/controller architecture notes documenting: the `instructions/loader.py` mtime-cache, the `CRUCIBLE_PROJECT_INSTRUCTIONS` (default-on) + `CRUCIBLE_INSTRUCTIONS_MAX_CHARS` env vars, controller-only injection, and the `.ai-editor/prompts/<name>.md` + `/name` composer flow (frontend-only, expand-before-send). Commit.
 
 ```bash
 git add CLAUDE.md

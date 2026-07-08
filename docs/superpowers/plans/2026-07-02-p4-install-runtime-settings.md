@@ -14,7 +14,7 @@
 
 - Secrets: provider keys live in VS Code **SecretStorage** only; sent to the backend via spawn env or the hot-swap request body; **never persisted by the backend, never logged**.
 - MCP config writes preserve unknown keys and store `${VAR}` references **verbatim** — never resolved values.
-- MCP/skills **enable-disable state is user-local** (extension `globalState`), never written to shareable files; passed to the backend per call (`disabled` list) or per spawn (`AI_EDITOR_SKILLS_DISABLED`).
+- MCP/skills **enable-disable state is user-local** (extension `globalState`), never written to shareable files; passed to the backend per call (`disabled` list) or per spawn (`CRUCIBLE_SKILLS_DISABLED`).
 - Hot-swap applies **from the next turn**; in-flight coroutines keep their local engine refs (single-process asyncio — no locks needed).
 - Runtime install root: `~/.ai-editor/runtime/`. Per-OS targets: `darwin-arm64`, `darwin-x64`, `linux-x64`, `win32-x64`.
 - Provider set (picker parity): openai, anthropic, gemini, groq, ollama, watsonx, openrouter, huggingface, turboquant. `scripted` is dev-only, hidden.
@@ -62,7 +62,7 @@ def test_default_model_known_backends() -> None:
 
 
 def test_resolve_model_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_GEMINI_MODEL", "gemini-flash-latest")
+    monkeypatch.setenv("CRUCIBLE_GEMINI_MODEL", "gemini-flash-latest")
     assert resolve_model("gemini") == "gemini-flash-latest"
 
 
@@ -123,15 +123,15 @@ _DEFAULT_MODEL: dict[str, str] = {
 }
 
 MODEL_ENV_VAR: dict[str, str] = {
-    "anthropic": "AI_EDITOR_ANTHROPIC_MODEL",
-    "gemini": "AI_EDITOR_GEMINI_MODEL",
-    "huggingface": "AI_EDITOR_HUGGINGFACE_MODEL",
-    "groq": "AI_EDITOR_GROQ_MODEL",
-    "openrouter": "AI_EDITOR_OPENROUTER_MODEL",
-    "watsonx": "AI_EDITOR_WATSONX_MODEL",
-    "ollama": "AI_EDITOR_OLLAMA_MODEL",
-    "turboquant": "AI_EDITOR_TURBOQUANT_MODEL",
-    "openai": "AI_EDITOR_OPENAI_MODEL",
+    "anthropic": "CRUCIBLE_ANTHROPIC_MODEL",
+    "gemini": "CRUCIBLE_GEMINI_MODEL",
+    "huggingface": "CRUCIBLE_HUGGINGFACE_MODEL",
+    "groq": "CRUCIBLE_GROQ_MODEL",
+    "openrouter": "CRUCIBLE_OPENROUTER_MODEL",
+    "watsonx": "CRUCIBLE_WATSONX_MODEL",
+    "ollama": "CRUCIBLE_OLLAMA_MODEL",
+    "turboquant": "CRUCIBLE_TURBOQUANT_MODEL",
+    "openai": "CRUCIBLE_OPENAI_MODEL",
 }
 
 PROVIDER_KEY_ENV: dict[str, str] = {
@@ -182,19 +182,19 @@ def build_transport(backend: str, credentials: dict[str, str] | None = None) -> 
         from agentd.providers.anthropic_transport import AnthropicJsonTransport
         return AnthropicJsonTransport(
             api_key=env.get("ANTHROPIC_API_KEY"),
-            endpoint=env.get("AI_EDITOR_ANTHROPIC_ENDPOINT",
+            endpoint=env.get("CRUCIBLE_ANTHROPIC_ENDPOINT",
                              "https://api.anthropic.com/v1/messages"),
-            anthropic_version=env.get("AI_EDITOR_ANTHROPIC_VERSION", "2023-06-01"),
-            max_tokens=_int_env(env, "AI_EDITOR_ANTHROPIC_MAX_TOKENS", 4096),
-            timeout_sec=_float_env(env, "AI_EDITOR_ANTHROPIC_TIMEOUT_SEC", 60.0),
+            anthropic_version=env.get("CRUCIBLE_ANTHROPIC_VERSION", "2023-06-01"),
+            max_tokens=_int_env(env, "CRUCIBLE_ANTHROPIC_MAX_TOKENS", 4096),
+            timeout_sec=_float_env(env, "CRUCIBLE_ANTHROPIC_TIMEOUT_SEC", 60.0),
         )
     if backend == "gemini":
         from agentd.providers.gemini_transport import GeminiJsonTransport
         # Thinking knobs: keep main.py's semantics (level defaults high for 3.x).
-        thinking_level = env.get("AI_EDITOR_GEMINI_THINKING_LEVEL")
-        raw_budget = env.get("AI_EDITOR_GEMINI_THINKING_BUDGET")
+        thinking_level = env.get("CRUCIBLE_GEMINI_THINKING_LEVEL")
+        raw_budget = env.get("CRUCIBLE_GEMINI_THINKING_BUDGET")
         thinking_budget = int(raw_budget) if raw_budget and raw_budget.lstrip("-").isdigit() else None
-        thinking_enabled = env.get("AI_EDITOR_GEMINI_THINKING_ENABLED", "true").strip().lower() in {
+        thinking_enabled = env.get("CRUCIBLE_GEMINI_THINKING_ENABLED", "true").strip().lower() in {
             "1", "true", "yes", "on"}
         if thinking_enabled and thinking_budget is None and not thinking_level:
             thinking_level = "high"
@@ -203,36 +203,36 @@ def build_transport(backend: str, credentials: dict[str, str] | None = None) -> 
             thinking_enabled=thinking_enabled,
             thinking_budget=thinking_budget,
             thinking_level=thinking_level,
-            include_thoughts=env.get("AI_EDITOR_GEMINI_INCLUDE_THOUGHTS", "false").strip().lower()
+            include_thoughts=env.get("CRUCIBLE_GEMINI_INCLUDE_THOUGHTS", "false").strip().lower()
             in {"1", "true", "yes", "on"},
-            timeout_sec=_float_env(env, "AI_EDITOR_GEMINI_TIMEOUT_SEC", 120.0),
-            max_retries=_int_env(env, "AI_EDITOR_GEMINI_MAX_RETRIES", 4),
+            timeout_sec=_float_env(env, "CRUCIBLE_GEMINI_TIMEOUT_SEC", 120.0),
+            max_retries=_int_env(env, "CRUCIBLE_GEMINI_MAX_RETRIES", 4),
         )
     if backend == "huggingface":
         from agentd.providers.huggingface_transport import HuggingFaceJsonTransport
-        seed_raw = env.get("AI_EDITOR_HUGGINGFACE_SEED")
+        seed_raw = env.get("CRUCIBLE_HUGGINGFACE_SEED")
         return HuggingFaceJsonTransport(
             api_key=env.get("HF_TOKEN"),
-            max_new_tokens=_int_env(env, "AI_EDITOR_HUGGINGFACE_MAX_NEW_TOKENS", 4096),
+            max_new_tokens=_int_env(env, "CRUCIBLE_HUGGINGFACE_MAX_NEW_TOKENS", 4096),
             seed=int(seed_raw) if seed_raw and seed_raw.isdigit() else None,
-            timeout_sec=_float_env(env, "AI_EDITOR_HUGGINGFACE_TIMEOUT_SEC", 60.0),
+            timeout_sec=_float_env(env, "CRUCIBLE_HUGGINGFACE_TIMEOUT_SEC", 60.0),
         )
     if backend == "groq":
         from agentd.providers.groq_transport import GroqJsonTransport
         return GroqJsonTransport(
             api_key=env.get("GROQ_API_KEY"),
-            endpoint=env.get("AI_EDITOR_GROQ_ENDPOINT"),
-            max_tokens=_int_env(env, "AI_EDITOR_GROQ_MAX_TOKENS", 4096),
-            timeout_sec=_float_env(env, "AI_EDITOR_GROQ_TIMEOUT_SEC", 60.0),
-            max_retries=_int_env(env, "AI_EDITOR_GROQ_MAX_RETRIES", 4),
+            endpoint=env.get("CRUCIBLE_GROQ_ENDPOINT"),
+            max_tokens=_int_env(env, "CRUCIBLE_GROQ_MAX_TOKENS", 4096),
+            timeout_sec=_float_env(env, "CRUCIBLE_GROQ_TIMEOUT_SEC", 60.0),
+            max_retries=_int_env(env, "CRUCIBLE_GROQ_MAX_RETRIES", 4),
         )
     if backend == "openrouter":
         from agentd.providers.openrouter_transport import OpenRouterJsonTransport
         return OpenRouterJsonTransport(
             api_key=env.get("OPENROUTER_API_KEY"),
-            max_tokens=_int_env(env, "AI_EDITOR_OPENROUTER_MAX_TOKENS", 4096),
-            timeout_sec=_float_env(env, "AI_EDITOR_OPENROUTER_TIMEOUT_SEC", 120.0),
-            max_retries=_int_env(env, "AI_EDITOR_OPENROUTER_MAX_RETRIES", 4),
+            max_tokens=_int_env(env, "CRUCIBLE_OPENROUTER_MAX_TOKENS", 4096),
+            timeout_sec=_float_env(env, "CRUCIBLE_OPENROUTER_TIMEOUT_SEC", 120.0),
+            max_retries=_int_env(env, "CRUCIBLE_OPENROUTER_MAX_RETRIES", 4),
         )
     if backend == "watsonx":
         from agentd.providers.watsonx_transport import WatsonxJsonTransport
@@ -246,9 +246,9 @@ def build_transport(backend: str, credentials: dict[str, str] | None = None) -> 
         from agentd.providers.ollama_transport import OllamaJsonTransport
         return OllamaJsonTransport(
             host=env.get("OLLAMA_HOST"),
-            keep_alive=env.get("AI_EDITOR_OLLAMA_KEEP_ALIVE"),
-            timeout_sec=_float_env(env, "AI_EDITOR_OLLAMA_TIMEOUT_SEC", 600.0),
-            max_retries=_int_env(env, "AI_EDITOR_OLLAMA_MAX_RETRIES", 4),
+            keep_alive=env.get("CRUCIBLE_OLLAMA_KEEP_ALIVE"),
+            timeout_sec=_float_env(env, "CRUCIBLE_OLLAMA_TIMEOUT_SEC", 600.0),
+            max_retries=_int_env(env, "CRUCIBLE_OLLAMA_MAX_RETRIES", 4),
         )
     if backend == "turboquant":
         from agentd.providers.turboquant_transport import TurboQuantTransport
@@ -274,7 +274,7 @@ Expected: PASS (5 tests)
 Replace `main.py:116-258` (keep the `scripted` branch as-is) with:
 
 ```python
-reasoning_backend = os.getenv("AI_EDITOR_REASONING_BACKEND", "openai").strip().lower()
+reasoning_backend = os.getenv("CRUCIBLE_REASONING_BACKEND", "openai").strip().lower()
 reasoning_engine: ReasoningEngine
 if reasoning_backend == "scripted":
     reasoning_engine = ScriptedReasoningEngine(
@@ -291,7 +291,7 @@ else:
 
 Also replace the `_BACKEND_MODEL_ENVVAR` dict at `main.py:324-337` with
 `from agentd.providers.factory import MODEL_ENV_VAR` and
-`_chat_model = os.getenv(MODEL_ENV_VAR.get(reasoning_backend, "AI_EDITOR_OPENAI_MODEL"), "gpt-4o")`.
+`_chat_model = os.getenv(MODEL_ENV_VAR.get(reasoning_backend, "CRUCIBLE_OPENAI_MODEL"), "gpt-4o")`.
 Delete the now-unused transport imports at the top of `main.py`.
 
 - [x] **Step 6: Run the full backend suite**
@@ -738,7 +738,7 @@ git commit -m "feat(api): provider/model hot-swap — ProviderRuntime + PUT /v1/
 
 **Interfaces:**
 - Produces: `LockInfo` dataclass (`pid: int, port: int, started_at: float`); `write_lock(workspace, *, port, pid=None)`; `read_lock(workspace) -> LockInfo | None`; `clear_lock(workspace)`; `is_pid_alive(pid) -> bool`. Lock path: `<workspace>/.agentd/agentd.lock` (JSON). Extension (Task 10) reads/reaps the same file shape.
-- Activation: main.py writes the lock at startup **only when `AI_EDITOR_PORT` is set** (the extension always sets it; the dev script doesn't — no behavior change for the script flow).
+- Activation: main.py writes the lock at startup **only when `CRUCIBLE_PORT` is set** (the extension always sets it; the dev script doesn't — no behavior change for the script flow).
 
 - [x] **Step 1: Write the failing tests**
 
@@ -793,7 +793,7 @@ Expected: FAIL — `ModuleNotFoundError`
 """Per-workspace backend lockfile: <workspace>/.agentd/agentd.lock (JSON pid/port/
 started_at). The extension reuses a live backend and reaps stale locks — this file
 is what makes one-workspace-one-backend hold by construction. Written only when
-AI_EDITOR_PORT is set (managed spawns); the dev script flow is unaffected."""
+CRUCIBLE_PORT is set (managed spawns); the dev script flow is unaffected."""
 from __future__ import annotations
 
 import json
@@ -851,7 +851,7 @@ def is_pid_alive(pid: int) -> bool:
 `main.py` (near the `_mcp_manager` startup handlers):
 
 ```python
-_lock_port_raw = os.getenv("AI_EDITOR_PORT", "").strip()
+_lock_port_raw = os.getenv("CRUCIBLE_PORT", "").strip()
 if _lock_port_raw.isdigit():
     from agentd.runtime_lock import clear_lock, write_lock
 
@@ -875,7 +875,7 @@ Expected: PASS; no new failures.
 ```bash
 git add services/agentd-py/agentd/runtime_lock.py services/agentd-py/agentd/main.py \
         services/agentd-py/tests/test_runtime_lock.py
-git commit -m "feat(runtime): per-workspace agentd.lock written at startup when AI_EDITOR_PORT set"
+git commit -m "feat(runtime): per-workspace agentd.lock written at startup when CRUCIBLE_PORT set"
 ```
 
 ---
@@ -1262,7 +1262,7 @@ git commit -m "feat(api): MCP server management routes (list/upsert/delete/recon
 
 ---
 
-### Task 6b: `AI_EDITOR_SKILLS_DISABLED` filter (the consumer side)
+### Task 6b: `CRUCIBLE_SKILLS_DISABLED` filter (the consumer side)
 
 Task 10's spawn env and the Task 13 skill toggle emit this var — without a backend
 consumer it does nothing (dry-run finding). Filter at the catalog loader so every
@@ -1275,7 +1275,7 @@ same filtered set.
 
 **Interfaces:**
 - Produces: `load_catalog()` drops manifests whose `name` is in the comma-separated
-  `AI_EDITOR_SKILLS_DISABLED` env var (names stripped, empty entries ignored).
+  `CRUCIBLE_SKILLS_DISABLED` env var (names stripped, empty entries ignored).
   Read per call — NOT cached with the mtime signature, so a restart isn't needed
   for tests but the env is process-stable in production anyway.
 
@@ -1303,9 +1303,9 @@ def test_disabled_env_filters_catalog(
     _write_skill(tmp_path, "keep-me")
     _write_skill(tmp_path, "drop-me")
     loader = SkillCatalogLoader(tmp_path)
-    monkeypatch.setenv("AI_EDITOR_SKILLS_DISABLED", " drop-me , ,missing")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_DISABLED", " drop-me , ,missing")
     assert [m.name for m in loader.load_catalog()] == ["keep-me"]
-    monkeypatch.delenv("AI_EDITOR_SKILLS_DISABLED")
+    monkeypatch.delenv("CRUCIBLE_SKILLS_DISABLED")
     assert sorted(m.name for m in loader.load_catalog()) == ["drop-me", "keep-me"]
 ```
 
@@ -1317,7 +1317,7 @@ mtime-cached scan, so the cache stays name-agnostic):
 
 ```python
 def _disabled_names() -> frozenset[str]:
-    raw = os.getenv("AI_EDITOR_SKILLS_DISABLED", "")
+    raw = os.getenv("CRUCIBLE_SKILLS_DISABLED", "")
     return frozenset(n.strip() for n in raw.split(",") if n.strip())
 ```
 
@@ -1330,7 +1330,7 @@ Run: `cd services/agentd-py && pytest`
 
 ```bash
 git add services/agentd-py/agentd/skills/loader.py services/agentd-py/tests/test_skills_disabled_env.py
-git commit -m "feat(skills): honor AI_EDITOR_SKILLS_DISABLED in catalog discovery"
+git commit -m "feat(skills): honor CRUCIBLE_SKILLS_DISABLED in catalog discovery"
 ```
 
 ---
@@ -1935,7 +1935,7 @@ export interface BackendSettings {
   model: string;
   apiKey?: { envVar: string; value: string };   // from SecretStorage, spawn-env only
   extraEnv?: Record<string, string>;   // policies/flags from VS Code settings
-  skillsDisabled?: string[];           // → AI_EDITOR_SKILLS_DISABLED (comma-joined)
+  skillsDisabled?: string[];           // → CRUCIBLE_SKILLS_DISABLED (comma-joined)
 }
 export interface ChildHandle { pid: number; kill(): void; onExit(cb: (code: number | null) => void): void }
 export interface ProcessDeps {
@@ -1962,17 +1962,17 @@ export class BackendProcess {
 ```
 
 `buildBackendEnv` must produce (mirroring `start-backend.sh:361-392`):
-`AI_EDITOR_REASONING_BACKEND`, `AI_EDITOR_WORKSPACE_PATH`, `AI_EDITOR_PORT` (→ lockfile),
-`AI_EDITOR_DB_PATH`/`AI_EDITOR_CHAT_DB_PATH`/`AI_EDITOR_SHADOW_ROOT`/`AI_EDITOR_LOG_FILE`/
-`AI_EDITOR_ARTIFACTS_ROOT` (all under `<workspace>/.agentd/`),
-`AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH` (`<workspace>/.ai-editor/index-snapshot.json`),
-`AI_EDITOR_RIPGREP_CMD` (Task 9 `binPath(runtimeDir, "rg")`),
+`CRUCIBLE_REASONING_BACKEND`, `CRUCIBLE_WORKSPACE_PATH`, `CRUCIBLE_PORT` (→ lockfile),
+`CRUCIBLE_DB_PATH`/`CRUCIBLE_CHAT_DB_PATH`/`CRUCIBLE_SHADOW_ROOT`/`CRUCIBLE_LOG_FILE`/
+`CRUCIBLE_ARTIFACTS_ROOT` (all under `<workspace>/.agentd/`),
+`CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH` (`<workspace>/.ai-editor/index-snapshot.json`),
+`CRUCIBLE_RIPGREP_CMD` (Task 9 `binPath(runtimeDir, "rg")`),
 `<MODEL_ENV_VAR[backend]>=model`, `settings.apiKey.envVar=value` when present,
-default-on flags `AI_EDITOR_CHAT_CONTROLLER=1`, `AI_EDITOR_SKILLS_ENABLED=1`,
-`AI_EDITOR_MCP_ENABLED=1`, `AI_EDITOR_DOC_WRITE_ENABLED=1`, `AI_EDITOR_SEMANTIC_RETRIEVAL=true`,
-`AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=false`, `AI_EDITOR_SHELL_POLICY=ask`,
-`AI_EDITOR_SCOPE_POLICY=ask`, `AI_EDITOR_SCOPE_TRIGGER=any`,
-`AI_EDITOR_SKILLS_DISABLED` (comma-joined, only when non-empty) — then
+default-on flags `CRUCIBLE_CHAT_CONTROLLER=1`, `CRUCIBLE_SKILLS_ENABLED=1`,
+`CRUCIBLE_MCP_ENABLED=1`, `CRUCIBLE_DOC_WRITE_ENABLED=1`, `CRUCIBLE_SEMANTIC_RETRIEVAL=true`,
+`CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT=false`, `CRUCIBLE_SHELL_POLICY=ask`,
+`CRUCIBLE_SCOPE_POLICY=ask`, `CRUCIBLE_SCOPE_TRIGGER=any`,
+`CRUCIBLE_SKILLS_DISABLED` (comma-joined, only when non-empty) — then
 `...settings.extraEnv` last so user settings override any default. Plus inherited
 `PATH` etc. (`{ ...process.env, ...built }` — built wins).
 
@@ -1988,11 +1988,11 @@ default-on flags `AI_EDITOR_CHAT_CONTROLLER=1`, `AI_EDITOR_SKILLS_ENABLED=1`,
    poll `GET /v1/index/status` up to 120×1s until `building === false` (non-fatal timeout).
 5. Spawn the watcher: `binPath(runtimeDir, "ai-editor-indexer")` with args
    `["index", "--workspace", workspace, "--snapshot-path", "<ws>/.ai-editor/index-snapshot.json", "--watch", "true"]`
-   and env `AI_EDITOR_BACKEND_URL=http://localhost:<port>`, `AI_EDITOR_LSP_ENABLED`
+   and env `CRUCIBLE_BACKEND_URL=http://localhost:<port>`, `CRUCIBLE_LSP_ENABLED`
    `"true"` only when `<runtimeDir>/node_modules` exists, with
-   `AI_EDITOR_LSP_PY_CMD="<runtimeDir>/node_modules/.bin/pyright-langserver --stdio"` and
-   `AI_EDITOR_LSP_TS_CMD="<runtimeDir>/node_modules/.bin/typescript-language-server --stdio"`
-   (`.cmd` suffix on win32); `AI_EDITOR_LSP_RS_CMD="rust-analyzer"` (detect-only — the
+   `CRUCIBLE_LSP_PY_CMD="<runtimeDir>/node_modules/.bin/pyright-langserver --stdio"` and
+   `CRUCIBLE_LSP_TS_CMD="<runtimeDir>/node_modules/.bin/typescript-language-server --stdio"`
+   (`.cmd` suffix on win32); `CRUCIBLE_LSP_RS_CMD="rust-analyzer"` (detect-only — the
    indexer degrades gracefully when absent). Skip watcher entirely (with a log line)
    when the indexer binary is missing.
 6. Return `{ port, reused: false }`.
@@ -2039,21 +2039,21 @@ const SETTINGS = {
 describe("buildBackendEnv", () => {
   it("assembles the full spawn env", () => {
     const env = buildBackendEnv("/ws", SETTINGS, "/rt", 8123, "darwin-arm64");
-    expect(env.AI_EDITOR_REASONING_BACKEND).toBe("gemini");
-    expect(env.AI_EDITOR_WORKSPACE_PATH).toBe("/ws");
-    expect(env.AI_EDITOR_PORT).toBe("8123");
-    expect(env.AI_EDITOR_GEMINI_MODEL).toBe("gemini-flash-latest");
+    expect(env.CRUCIBLE_REASONING_BACKEND).toBe("gemini");
+    expect(env.CRUCIBLE_WORKSPACE_PATH).toBe("/ws");
+    expect(env.CRUCIBLE_PORT).toBe("8123");
+    expect(env.CRUCIBLE_GEMINI_MODEL).toBe("gemini-flash-latest");
     expect(env.GEMINI_API_KEY).toBe("sk-secret");
-    expect(env.AI_EDITOR_RIPGREP_CMD).toBe("/rt/bin/rg");
-    expect(env.AI_EDITOR_CHAT_CONTROLLER).toBe("1");
-    expect(env.AI_EDITOR_DB_PATH).toBe(join("/ws", ".agentd", "agentd.sqlite3"));
+    expect(env.CRUCIBLE_RIPGREP_CMD).toBe("/rt/bin/rg");
+    expect(env.CRUCIBLE_CHAT_CONTROLLER).toBe("1");
+    expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".agentd", "agentd.sqlite3"));
   });
   it("extraEnv overrides defaults; skillsDisabled joins", () => {
     const env = buildBackendEnv("/ws", {
-      ...SETTINGS, extraEnv: { AI_EDITOR_SHELL_POLICY: "allow_all" },
+      ...SETTINGS, extraEnv: { CRUCIBLE_SHELL_POLICY: "allow_all" },
       skillsDisabled: ["a", "b"] }, "/rt", 1);
-    expect(env.AI_EDITOR_SHELL_POLICY).toBe("allow_all");
-    expect(env.AI_EDITOR_SKILLS_DISABLED).toBe("a,b");
+    expect(env.CRUCIBLE_SHELL_POLICY).toBe("allow_all");
+    expect(env.CRUCIBLE_SKILLS_DISABLED).toBe("a,b");
   });
 });
 
@@ -2082,9 +2082,9 @@ describe("BackendProcess.start", () => {
     expect(res.reused).toBe(false);
     expect(res.port).toBe(8123);
     expect(d.spawned[0].args).toContain("agentd.main:app");
-    expect(d.spawned[0].env.AI_EDITOR_PORT).toBe("8123");
+    expect(d.spawned[0].env.CRUCIBLE_PORT).toBe("8123");
     expect(d.spawned[1].args[0]).toBe("index"); // watcher
-    expect(d.spawned[1].env.AI_EDITOR_BACKEND_URL).toBe("http://localhost:8123");
+    expect(d.spawned[1].env.CRUCIBLE_BACKEND_URL).toBe("http://localhost:8123");
   });
 
   it("throws when health never comes up", async () => {
@@ -2115,11 +2115,11 @@ import { platformKey, type PlatformKey } from "./manifest.js";
 // ... interfaces from the block above ...
 
 export const MODEL_ENV_VAR: Record<string, string> = {
-  anthropic: "AI_EDITOR_ANTHROPIC_MODEL", gemini: "AI_EDITOR_GEMINI_MODEL",
-  huggingface: "AI_EDITOR_HUGGINGFACE_MODEL", groq: "AI_EDITOR_GROQ_MODEL",
-  openrouter: "AI_EDITOR_OPENROUTER_MODEL", watsonx: "AI_EDITOR_WATSONX_MODEL",
-  ollama: "AI_EDITOR_OLLAMA_MODEL", turboquant: "AI_EDITOR_TURBOQUANT_MODEL",
-  openai: "AI_EDITOR_OPENAI_MODEL",
+  anthropic: "CRUCIBLE_ANTHROPIC_MODEL", gemini: "CRUCIBLE_GEMINI_MODEL",
+  huggingface: "CRUCIBLE_HUGGINGFACE_MODEL", groq: "CRUCIBLE_GROQ_MODEL",
+  openrouter: "CRUCIBLE_OPENROUTER_MODEL", watsonx: "CRUCIBLE_WATSONX_MODEL",
+  ollama: "CRUCIBLE_OLLAMA_MODEL", turboquant: "CRUCIBLE_TURBOQUANT_MODEL",
+  openai: "CRUCIBLE_OPENAI_MODEL",
 };
 
 export function buildBackendEnv(
@@ -2128,31 +2128,31 @@ export function buildBackendEnv(
 ): Record<string, string> {
   const agentdDir = join(workspace, ".agentd");
   const built: Record<string, string> = {
-    AI_EDITOR_REASONING_BACKEND: settings.backend,
-    AI_EDITOR_WORKSPACE_PATH: workspace,
-    AI_EDITOR_PORT: String(port),
-    AI_EDITOR_DB_PATH: join(agentdDir, "agentd.sqlite3"),
-    AI_EDITOR_CHAT_DB_PATH: join(agentdDir, "chat.sqlite3"),
-    AI_EDITOR_SHADOW_ROOT: join(agentdDir, "shadows"),
-    AI_EDITOR_LOG_FILE: join(agentdDir, "agentd.log"),
-    AI_EDITOR_ARTIFACTS_ROOT: join(agentdDir, "artifacts"),
-    AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".ai-editor", "index-snapshot.json"),
-    AI_EDITOR_RIPGREP_CMD: binPath(runtimeDir, "rg", platform),
-    AI_EDITOR_CHAT_CONTROLLER: "1",
-    AI_EDITOR_SKILLS_ENABLED: "1",
-    AI_EDITOR_MCP_ENABLED: "1",
-    AI_EDITOR_DOC_WRITE_ENABLED: "1",
-    AI_EDITOR_SEMANTIC_RETRIEVAL: "true",
-    AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT: "false",
-    AI_EDITOR_SHELL_POLICY: "ask",
-    AI_EDITOR_SCOPE_POLICY: "ask",
-    AI_EDITOR_SCOPE_TRIGGER: "any",
+    CRUCIBLE_REASONING_BACKEND: settings.backend,
+    CRUCIBLE_WORKSPACE_PATH: workspace,
+    CRUCIBLE_PORT: String(port),
+    CRUCIBLE_DB_PATH: join(agentdDir, "agentd.sqlite3"),
+    CRUCIBLE_CHAT_DB_PATH: join(agentdDir, "chat.sqlite3"),
+    CRUCIBLE_SHADOW_ROOT: join(agentdDir, "shadows"),
+    CRUCIBLE_LOG_FILE: join(agentdDir, "agentd.log"),
+    CRUCIBLE_ARTIFACTS_ROOT: join(agentdDir, "artifacts"),
+    CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".ai-editor", "index-snapshot.json"),
+    CRUCIBLE_RIPGREP_CMD: binPath(runtimeDir, "rg", platform),
+    CRUCIBLE_CHAT_CONTROLLER: "1",
+    CRUCIBLE_SKILLS_ENABLED: "1",
+    CRUCIBLE_MCP_ENABLED: "1",
+    CRUCIBLE_DOC_WRITE_ENABLED: "1",
+    CRUCIBLE_SEMANTIC_RETRIEVAL: "true",
+    CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT: "false",
+    CRUCIBLE_SHELL_POLICY: "ask",
+    CRUCIBLE_SCOPE_POLICY: "ask",
+    CRUCIBLE_SCOPE_TRIGGER: "any",
   };
   const modelVar = MODEL_ENV_VAR[settings.backend];
   if (modelVar) built[modelVar] = settings.model;
   if (settings.apiKey) built[settings.apiKey.envVar] = settings.apiKey.value;
   if (settings.skillsDisabled?.length) {
-    built.AI_EDITOR_SKILLS_DISABLED = settings.skillsDisabled.join(",");
+    built.CRUCIBLE_SKILLS_DISABLED = settings.skillsDisabled.join(",");
   }
   return { ...built, ...settings.extraEnv };
 }
@@ -2248,9 +2248,9 @@ Two more spec §5.2/§5.3 behaviors live here:
   logic makes it incremental) then restart backends.
 
 Also assemble `BackendSettings.extraEnv` here from the Task 15 VS Code settings:
-`aiEditor.policy.shell` → `AI_EDITOR_SHELL_POLICY`, `aiEditor.policy.scope` →
-`AI_EDITOR_SCOPE_POLICY`, `aiEditor.memory.enabled` → `AI_EDITOR_MEMORY_ENABLED`,
-`aiEditor.memory.reranker` → `AI_EDITOR_MEMORY_RERANKER` (only when the user set
+`aiEditor.policy.shell` → `CRUCIBLE_SHELL_POLICY`, `aiEditor.policy.scope` →
+`CRUCIBLE_SCOPE_POLICY`, `aiEditor.memory.enabled` → `CRUCIBLE_MEMORY_ENABLED`,
+`aiEditor.memory.reranker` → `CRUCIBLE_MEMORY_RERANKER` (only when the user set
 them — otherwise the Task 10 defaults stand), plus `skillsDisabled` from
 `manager.skillsDisabled()`.
 
@@ -2952,5 +2952,5 @@ On a machine/profile with **no `~/.ai-editor`** and a fresh VS Code profile
 - `npm run build && npm run test && npm run typecheck` (repo root) — green.
 - `cd services/indexer-rs && cargo test` — untouched, still green.
 - Task 17 step 4 exit smoke — performed and recorded (screenshots/notes in the PR).
-- Update `CLAUDE.md` (new backend routes, `AI_EDITOR_PORT`/lockfile, `AI_EDITOR_SKILLS_DISABLED`, managed-runtime overview + the `aiEditor.managedRuntime.enabled` kill-switch) as the final commit: `docs(claude): P4 managed runtime + settings surfaces`.
+- Update `CLAUDE.md` (new backend routes, `CRUCIBLE_PORT`/lockfile, `CRUCIBLE_SKILLS_DISABLED`, managed-runtime overview + the `aiEditor.managedRuntime.enabled` kill-switch) as the final commit: `docs(claude): P4 managed runtime + settings surfaces`.
 

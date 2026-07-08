@@ -58,8 +58,8 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             msg = "OPENROUTER_API_KEY is required for OpenRouterJsonTransport"
             raise RuntimeError(msg)
 
-        resolved_site_url = site_url or os.getenv("AI_EDITOR_OPENROUTER_SITE_URL")
-        resolved_site_name = site_name or os.getenv("AI_EDITOR_OPENROUTER_SITE_NAME")
+        resolved_site_url = site_url or os.getenv("CRUCIBLE_OPENROUTER_SITE_URL")
+        resolved_site_name = site_name or os.getenv("CRUCIBLE_OPENROUTER_SITE_NAME")
         extra_headers: dict[str, str] = {}
         if resolved_site_url:
             extra_headers["HTTP-Referer"] = resolved_site_url

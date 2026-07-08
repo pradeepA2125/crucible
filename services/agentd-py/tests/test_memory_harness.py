@@ -175,7 +175,7 @@ async def test_persistent_echo_degrades_and_keeps_prior_anchor(tmp_path):
 
 
 def test_build_memory_harness_disabled_returns_noop():
-    cfg = MemoryConfig.from_env({"AI_EDITOR_MEMORY_ENABLED": "false"})
+    cfg = MemoryConfig.from_env({"CRUCIBLE_MEMORY_ENABLED": "false"})
     assert build_memory_harness(cfg, _FakeTransport(), "m1") is NO_OP_HARNESS
 
 
@@ -183,11 +183,11 @@ def test_build_memory_harness_disabled_returns_noop():
 async def test_build_memory_harness_enabled_end_to_end(tmp_path):
     cfg = MemoryConfig.from_env(
         {
-            "AI_EDITOR_MEMORY_ENABLED": "1",
-            "AI_EDITOR_MEMORY_DB_PATH": str(tmp_path / "m.sqlite3"),
-            "AI_EDITOR_MEMORY_WINDOW_TOKENS": "100",
-            "AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC": "0.1",
-            "AI_EDITOR_MEMORY_HOT_TURNS": "2",
+            "CRUCIBLE_MEMORY_ENABLED": "1",
+            "CRUCIBLE_MEMORY_DB_PATH": str(tmp_path / "m.sqlite3"),
+            "CRUCIBLE_MEMORY_WINDOW_TOKENS": "100",
+            "CRUCIBLE_MEMORY_COMPACT_TRIGGER_FRAC": "0.1",
+            "CRUCIBLE_MEMORY_HOT_TURNS": "2",
         }
     )
     transport = _FakeTransport()

@@ -12,11 +12,11 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 ## Baseline — what's already shipped (on `main`, 2026-06-29)
 
 - **Agentic core:** spec-first task lifecycle (shadow→promote), ReAct planning + execution loops, verify-phase state machine, delta replan, cooperative abort, durable telemetry, task narrative.
-- **Reactive chat controller** (`AI_EDITOR_CHAT_CONTROLLER`): ModeGate, clarify gate, todo ledger, inline ACID edits with instant-promote.
+- **Reactive chat controller** (`CRUCIBLE_CHAT_CONTROLLER`): ModeGate, clarify gate, todo ledger, inline ACID edits with instant-promote.
 - **Retrieval:** Rust incremental indexer (tree-sitter + LSP-resolved Calls/Inherits/Implements), `query_graph` tool.
 - **Memory harness P1–P3:** compaction, cross-session recall + write path, cross-encoder reranker, and the **read-only inspector panel** (recall-trace + browser tabs) — merged + CDP-verified.
 - **Multi-provider:** anthropic/openai/gemini/groq/ollama/watsonx/openrouter.
-- **Task subsystem** exists but is **flag-gated OFF** (`AI_EDITOR_TASK_SUBSYSTEM`) — the dormant substrate Phase 5 revives.
+- **Task subsystem** exists but is **flag-gated OFF** (`CRUCIBLE_TASK_SUBSYSTEM`) — the dormant substrate Phase 5 revives.
 
 ## Parity scorecard vs Copilot agent mode (VS Code)
 
@@ -39,7 +39,7 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 1. **Adopt standards, don't invent** — agentskills.io for skills, MCP for tools.
 2. **Capability first, polish at a milestone** — P1–P3 land with minimal/headless config; P4 is the dedicated UI/settings/install pass that *surfaces and packages* them before the heavier P5 work.
 3. **Lean on existing seams** — `ToolSource`/`ToolRegistry`, controller system-prompt assembly (the gated teaching-block pattern), the memory `Embedder`/recall scorer, the dormant task path.
-4. **Flag-gate every phase** (`AI_EDITOR_*`) — ship dark, enable when proven, identical to how memory/task/controller already gate.
+4. **Flag-gate every phase** (`CRUCIBLE_*`) — ship dark, enable when proven, identical to how memory/task/controller already gate.
 5. **Each phase exits green** — TS suites + py suites + typecheck + a live smoke before it's "done."
 
 ---
@@ -70,7 +70,7 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 
 **Architecture seams:** `planning/prompts.py` + `chat/controller_prompts.py` system-prompt builders (same place `task_subsystem`/`memory` teaching blocks are gated); chat composer command parsing.
 
-**Exit criteria:** an `AGENTS.md` measurably steers a live run; `/prompt-name` expands in chat; flag `AI_EDITOR_PROJECT_INSTRUCTIONS`; tests + live smoke green.
+**Exit criteria:** an `AGENTS.md` measurably steers a live run; `/prompt-name` expands in chat; flag `CRUCIBLE_PROJECT_INSTRUCTIONS`; tests + live smoke green.
 
 **Decided:** `AGENTS.md` primary (+ `.github/copilot-instructions.md` fallback). Per-directory nested instructions deferred.
 
@@ -79,7 +79,7 @@ We do not chase Cursor/Copilot on **tab-completion, raw speed, or distribution**
 Spec: `docs/superpowers/specs/2026-06-29-project-instructions-prompt-files-design.md` · Plan: `docs/superpowers/plans/2026-06-29-project-instructions-prompt-files.md`. Implemented TDD task-by-task; documented in `CLAUDE.md` ("Project instructions (AGENTS.md) + prompt files (P1)").
 
 **What shipped:**
-- **Project instructions (backend, controller-only):** `agentd/instructions/loader.py::ProjectInstructionsLoader` — mtime-cached `<workspace>/AGENTS.md` reader (self-updates on edit with no restart; best-effort; size-capped). Injected into the **controller** system prompt via `format_controller_system_prompt(project_instructions=…)` (a new labeled block, `.replace`-safe for literal `{}`), wired through `DefaultReasoningEngine.create_controller_step` + `controller_factory`. Flags: `AI_EDITOR_PROJECT_INSTRUCTIONS` (default **ON**, kill-switch) + `AI_EDITOR_INSTRUCTIONS_MAX_CHARS` (default 16000).
+- **Project instructions (backend, controller-only):** `agentd/instructions/loader.py::ProjectInstructionsLoader` — mtime-cached `<workspace>/AGENTS.md` reader (self-updates on edit with no restart; best-effort; size-capped). Injected into the **controller** system prompt via `format_controller_system_prompt(project_instructions=…)` (a new labeled block, `.replace`-safe for literal `{}`), wired through `DefaultReasoningEngine.create_controller_step` + `controller_factory`. Flags: `CRUCIBLE_PROJECT_INSTRUCTIONS` (default **ON**, kill-switch) + `CRUCIBLE_INSTRUCTIONS_MAX_CHARS` (default 16000).
 - **Prompt files (frontend-only, expand-before-send):** `.ai-editor/prompts/<name>.md` expanded in the composer via `/name [args]` (`$ARGUMENTS` + `$1..$N`). `src/prompt-files.ts` helpers → `controller.ts listPrompts/expandPrompt` → `chat-panel.ts`/`extension.ts` plumbing → `InputArea.tsx` expand-before-send (webview mirrors `parseSlashCommand` in `webview-ui/src/slash.ts`). **No backend route / no editor-client contract change.**
 
 **Scope deviations from the original plan (intentional):**
@@ -112,7 +112,7 @@ Spec: `docs/superpowers/specs/2026-06-29-project-instructions-prompt-files-desig
 
 **Effort:** Low-Med (discovery + injection is small; relevance infra is reused).
 
-**Exit criteria:** a project `SKILL.md` is discovered, relevance-gated, and demonstrably changes agent behavior on a matching task; a skill-bundled script runs through the shell gate; flag `AI_EDITOR_SKILLS_ENABLED`; tests + live smoke green.
+**Exit criteria:** a project `SKILL.md` is discovered, relevance-gated, and demonstrably changes agent behavior on a matching task; a skill-bundled script runs through the shell gate; flag `CRUCIBLE_SKILLS_ENABLED`; tests + live smoke green.
 
 **Risks / Open Qs:** context budgeting (when to load a body, eviction) — mitigated by reusing compaction/recall budgeting; security of running skill-bundled scripts (route through the existing shell-policy gate; never auto-run без approval); precedence vs project instructions (P1).
 
@@ -120,7 +120,7 @@ Spec: `docs/superpowers/specs/2026-06-29-project-instructions-prompt-files-desig
 
 Spec: `docs/superpowers/specs/2026-06-30-agent-skills-design.md` · Plan: `docs/superpowers/plans/2026-06-30-agent-skills.md`. Documented in `CLAUDE.md` ("Agent Skills (P2, copilot-parity roadmap)").
 
-**What shipped:** `.ai-editor/skills/<name>/SKILL.md` discovery (`agentd/skills/`: loader + models + catalog + config + tool_source), a budget-guarded catalog injected into the controller system prompt, model-driven `read_skill(name)` loading a skill's body into the dynamic payload tail (`active_skills`, re-injected every iteration, compaction-resilient), and `/skill` deterministic forced-load (`forced_skills` message field seeds `active_skills` before iteration 1). Flag `AI_EDITOR_SKILLS_ENABLED`, default OFF, controller-only. `rank_skills_by_relevance` (the scale path, reuses the memory `Embedder`) is built + tested but not wired live — v1 uses order-truncation, sufficient until catalog size demands query-ranking.
+**What shipped:** `.ai-editor/skills/<name>/SKILL.md` discovery (`agentd/skills/`: loader + models + catalog + config + tool_source), a budget-guarded catalog injected into the controller system prompt, model-driven `read_skill(name)` loading a skill's body into the dynamic payload tail (`active_skills`, re-injected every iteration, compaction-resilient), and `/skill` deterministic forced-load (`forced_skills` message field seeds `active_skills` before iteration 1). Flag `CRUCIBLE_SKILLS_ENABLED`, default OFF, controller-only. `rank_skills_by_relevance` (the scale path, reuses the memory `Embedder`) is built + tested but not wired live — v1 uses order-truncation, sufficient until catalog size demands query-ranking.
 
 **2026-07-02 follow-up — closed the model-driven activation gap:** the initial live-smoke (2026-06-30) concluded model-driven `read_skill` was a "judgment gap" on local/weak models and that `/skill` forced-load was the only reliable activation path. Found + fixed the actual wiring bug behind that: the skill-check hint only ever fired on a thread's literal first-ever message (`if not history:`, but `history` seeds from the whole thread's replayed conversation) — every later message in an ongoing thread silently never got the check. Fixed via a run-scoped `decide_entry` flag. Also removed two self-inflicted prompt anti-patterns (a hardcoded example-category list mirroring the installed catalog; a competing "FIRST action MUST" claim stacked right after the skill-check's own) and added a few-shot worked example + explicit "unconditional" framing (technique borrowed from comparing against Anthropic's own Claude Skills system-prompt approach). **Model-driven `read_skill` now fires 2-for-2 live on TQP/qwen3.6:35b** (a creative-work request → `brainstorming`; a real bug report → `systematic-debugging`), no forced-load needed, each on turn 2+ of an ongoing thread — the realistic case the original test missed.
 
@@ -146,7 +146,7 @@ Spec: `docs/superpowers/specs/2026-06-30-agent-skills-design.md` · Plan: `docs/
 
 **Effort:** Med (transport + lifecycle + schema mapping is the real work).
 
-**Exit criteria:** a configured MCP server's tools are callable by the agent end-to-end (live), gated by approval; GitHub MCP demonstrably opens a PR / reads an issue; flag `AI_EDITOR_MCP_ENABLED`; tests + live smoke green.
+**Exit criteria:** a configured MCP server's tools are callable by the agent end-to-end (live), gated by approval; GitHub MCP demonstrably opens a PR / reads an issue; flag `CRUCIBLE_MCP_ENABLED`; tests + live smoke green.
 
 **Risks / Open Qs:** server lifecycle/health + timeouts (reuse provider-retry discipline); governance (which servers allowed) — minimal allowlist now, richer policy later.
 
@@ -203,7 +203,7 @@ shipped in P4-A/B remain open — tracked as regular backlog, not blocking P5.
 - Skills-in-subagent: large/irrelevant-intermediate skills (P2) execute forked, return only the result.
 - Management UI in the P4 settings surface.
 
-**Architecture seams:** the flag-gated task subsystem (`AI_EDITOR_TASK_SUBSYSTEM`) becomes the subagent executor; controller spawns/awaits subagents; persona files via the P1/P2 discovery patterns.
+**Architecture seams:** the flag-gated task subsystem (`CRUCIBLE_TASK_SUBSYSTEM`) becomes the subagent executor; controller spawns/awaits subagents; persona files via the P1/P2 discovery patterns.
 
 **Effort:** Med-High.
 

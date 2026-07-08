@@ -1224,7 +1224,7 @@ export function McpSection({ state, busy, send }: SectionProps) {
 
       {!state.mcp.enabled && (
         <p className="mb-3 text-[11px]" style={{ color: "var(--color-amber)" }}>
-          MCP is disabled (AI_EDITOR_MCP_ENABLED=0) — servers below stay dormant.
+          MCP is disabled (CRUCIBLE_MCP_ENABLED=0) — servers below stay dormant.
         </p>
       )}
 

@@ -37,10 +37,10 @@ export const PROVIDER_KEY_ENV: Record<string, string> = {
 // VS Code settings that become spawn env (only when the user explicitly set them —
 // otherwise buildBackendEnv's defaults stand).
 const SETTING_ENV_MAP: Record<string, string> = {
-  "aiEditor.policy.shell": "AI_EDITOR_SHELL_POLICY",
-  "aiEditor.policy.scope": "AI_EDITOR_SCOPE_POLICY",
-  "aiEditor.memory.enabled": "AI_EDITOR_MEMORY_ENABLED",
-  "aiEditor.memory.reranker": "AI_EDITOR_MEMORY_RERANKER",
+  "aiEditor.policy.shell": "CRUCIBLE_SHELL_POLICY",
+  "aiEditor.policy.scope": "CRUCIBLE_SCOPE_POLICY",
+  "aiEditor.memory.enabled": "CRUCIBLE_MEMORY_ENABLED",
+  "aiEditor.memory.reranker": "CRUCIBLE_MEMORY_RERANKER",
 };
 
 const MAX_RESTART_ATTEMPTS = 3;

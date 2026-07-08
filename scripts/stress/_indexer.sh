@@ -8,11 +8,11 @@
 # not multi-GB per worktree). Source differences across worktrees are handled by
 # cargo — it rebuilds only the changed crates. Concurrent builds into the shared
 # dir serialize on cargo's own lock (safe, not corrupt); identical sources never
-# thrash. Override the cache location with AI_EDITOR_INDEXER_TARGET_DIR.
+# thrash. Override the cache location with CRUCIBLE_INDEXER_TARGET_DIR.
 
 # Absolute shared cargo target dir.
 indexer_target_dir() {
-  printf '%s' "${AI_EDITOR_INDEXER_TARGET_DIR:-$HOME/.cache/ai-editor/indexer-target}"
+  printf '%s' "${CRUCIBLE_INDEXER_TARGET_DIR:-$HOME/.cache/ai-editor/indexer-target}"
 }
 
 # Absolute path to the release binary inside the shared target dir.

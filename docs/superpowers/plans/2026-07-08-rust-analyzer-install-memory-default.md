@@ -12,7 +12,7 @@
 
 - Every binary component's sha256 is computed automatically by `make_manifest.py` from staged bytes — never hand-pin a checksum.
 - The exact rust-analyzer release tag to pin in CI is chosen at implementation time (this plan uses `2026-07-06` as the concrete value to write into `release.yml`/local dev fixtures — bump it to whatever the actual latest `rust-lang/rust-analyzer` release tag is when this ships).
-- `AI_EDITOR_MEMORY_ENABLED`/`AI_EDITOR_MEMORY_RERANKER` keep kill-switch semantics: explicitly setting either to `0`/`false`/`no`/`off` must still disable it after this change.
+- `CRUCIBLE_MEMORY_ENABLED`/`CRUCIBLE_MEMORY_RERANKER` keep kill-switch semantics: explicitly setting either to `0`/`false`/`no`/`off` must still disable it after this change.
 - Follow existing test patterns exactly (table-driven fixtures in `test_fetch_tools.py`/`test_make_manifest.py`/`runtime-installer.test.ts` — extend, don't restructure).
 
 ---
@@ -500,7 +500,7 @@ git commit -m "feat(runtime): install rust-analyzer as a managed binary componen
 
 ---
 
-### Task 4: resolve `AI_EDITOR_LSP_RS_CMD` to the managed binary (`backend-process.ts`)
+### Task 4: resolve `CRUCIBLE_LSP_RS_CMD` to the managed binary (`backend-process.ts`)
 
 **Files:**
 - Modify: `apps/vscode-extension/src/runtime/backend-process.ts`
@@ -514,13 +514,13 @@ git commit -m "feat(runtime): install rust-analyzer as a managed binary componen
 Add to `apps/vscode-extension/test/runtime-backend-process.test.ts`, inside the `describe("BackendProcess.start", ...)` block (after the existing "skips the watcher when the indexer binary is missing" test):
 
 ```ts
-  it("sets AI_EDITOR_LSP_RS_CMD to the managed binary when installed", async () => {
+  it("sets CRUCIBLE_LSP_RS_CMD to the managed binary when installed", async () => {
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
     writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
     writeFileSync(join(d.runtimeDir, "bin", "rust-analyzer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
-    expect(d.spawned[1].env.AI_EDITOR_LSP_RS_CMD).toBe(join(d.runtimeDir, "bin", "rust-analyzer"));
+    expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe(join(d.runtimeDir, "bin", "rust-analyzer"));
   });
 
   it("falls back to the bare rust-analyzer command when the managed binary is absent", async () => {
@@ -528,14 +528,14 @@ Add to `apps/vscode-extension/test/runtime-backend-process.test.ts`, inside the 
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
     writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
-    expect(d.spawned[1].env.AI_EDITOR_LSP_RS_CMD).toBe("rust-analyzer");
+    expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe("rust-analyzer");
   });
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `npm run -w ai-editor-vscode-extension test -- runtime-backend-process`
-Expected: the first new test FAILS — `AI_EDITOR_LSP_RS_CMD` is currently always the literal string `"rust-analyzer"`, so `toBe(join(...))` fails; the second new test passes already (no code change needed for that direction), which is fine — it will still pass after Step 3.
+Expected: the first new test FAILS — `CRUCIBLE_LSP_RS_CMD` is currently always the literal string `"rust-analyzer"`, so `toBe(join(...))` fails; the second new test passes already (no code change needed for that direction), which is fine — it will still pass after Step 3.
 
 - [ ] **Step 3: Update `spawnWatcher`'s env construction**
 
@@ -554,14 +554,14 @@ In `apps/vscode-extension/src/runtime/backend-process.ts`, change:
     const lspInstalled = existsSync(join(this.deps.runtimeDir, "node_modules"));
     const env = {
       ...process.env,
-      AI_EDITOR_BACKEND_URL: `http://localhost:${port}`,
-      AI_EDITOR_LSP_ENABLED: lspInstalled ? "true" : "false",
+      CRUCIBLE_BACKEND_URL: `http://localhost:${port}`,
+      CRUCIBLE_LSP_ENABLED: lspInstalled ? "true" : "false",
       ...(lspInstalled
         ? {
-            AI_EDITOR_LSP_PY_CMD: `${lspBin("pyright-langserver")} --stdio`,
-            AI_EDITOR_LSP_TS_CMD: `${lspBin("typescript-language-server")} --stdio`,
+            CRUCIBLE_LSP_PY_CMD: `${lspBin("pyright-langserver")} --stdio`,
+            CRUCIBLE_LSP_TS_CMD: `${lspBin("typescript-language-server")} --stdio`,
             // Detect-only: the indexer degrades gracefully when rust-analyzer is absent.
-            AI_EDITOR_LSP_RS_CMD: "rust-analyzer",
+            CRUCIBLE_LSP_RS_CMD: "rust-analyzer",
           }
         : {}),
     } as Record<string, string>;
@@ -587,19 +587,19 @@ to:
     const rsCmd = existsSync(rustAnalyzerBin) ? rustAnalyzerBin : "rust-analyzer";
     const env = {
       ...process.env,
-      AI_EDITOR_BACKEND_URL: `http://localhost:${port}`,
-      AI_EDITOR_LSP_ENABLED: lspInstalled ? "true" : "false",
-      AI_EDITOR_LSP_RS_CMD: rsCmd,
+      CRUCIBLE_BACKEND_URL: `http://localhost:${port}`,
+      CRUCIBLE_LSP_ENABLED: lspInstalled ? "true" : "false",
+      CRUCIBLE_LSP_RS_CMD: rsCmd,
       ...(lspInstalled
         ? {
-            AI_EDITOR_LSP_PY_CMD: `${lspBin("pyright-langserver")} --stdio`,
-            AI_EDITOR_LSP_TS_CMD: `${lspBin("typescript-language-server")} --stdio`,
+            CRUCIBLE_LSP_PY_CMD: `${lspBin("pyright-langserver")} --stdio`,
+            CRUCIBLE_LSP_TS_CMD: `${lspBin("typescript-language-server")} --stdio`,
           }
         : {}),
     } as Record<string, string>;
 ```
 
-(`AI_EDITOR_LSP_RS_CMD` moves out of the `lspInstalled`-gated spread since rust-analyzer's presence is independent of the Node-based Python/TypeScript LSPs.)
+(`CRUCIBLE_LSP_RS_CMD` moves out of the `lspInstalled`-gated spread since rust-analyzer's presence is independent of the Node-based Python/TypeScript LSPs.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -610,7 +610,7 @@ Expected: PASS.
 
 ```bash
 git add apps/vscode-extension/src/runtime/backend-process.ts apps/vscode-extension/test/runtime-backend-process.test.ts
-git commit -m "feat(runtime): resolve AI_EDITOR_LSP_RS_CMD to the managed rust-analyzer binary"
+git commit -m "feat(runtime): resolve CRUCIBLE_LSP_RS_CMD to the managed rust-analyzer binary"
 ```
 
 ---
@@ -776,11 +776,11 @@ def test_from_env_defaults_enabled():
 
 
 def test_from_env_explicit_disable_still_works():
-    cfg = MemoryConfig.from_env({"AI_EDITOR_MEMORY_ENABLED": "false"})
+    cfg = MemoryConfig.from_env({"CRUCIBLE_MEMORY_ENABLED": "false"})
     assert cfg.enabled is False
 ```
 
-(`test_from_env_overrides` is unaffected — it already sets `AI_EDITOR_MEMORY_ENABLED: "1"` explicitly and asserts `True`.)
+(`test_from_env_overrides` is unaffected — it already sets `CRUCIBLE_MEMORY_ENABLED: "1"` explicitly and asserts `True`.)
 
 In `services/agentd-py/tests/test_memory_reranker.py`, replace `test_config_reranker_defaults` with:
 
@@ -793,7 +793,7 @@ def test_config_reranker_defaults():
 
 
 def test_config_reranker_explicit_disable_still_works():
-    c = MemoryConfig.from_env({"AI_EDITOR_MEMORY_RERANKER": "0"})
+    c = MemoryConfig.from_env({"CRUCIBLE_MEMORY_RERANKER": "0"})
     assert c.reranker_enabled is False
 ```
 
@@ -809,7 +809,7 @@ to:
 
 ```python
 def test_build_memory_harness_disabled_returns_noop():
-    cfg = MemoryConfig.from_env({"AI_EDITOR_MEMORY_ENABLED": "false"})
+    cfg = MemoryConfig.from_env({"CRUCIBLE_MEMORY_ENABLED": "false"})
     assert build_memory_harness(cfg, _FakeTransport(), "m1") is NO_OP_HARNESS
 ```
 
@@ -823,25 +823,25 @@ Expected: `test_from_env_defaults_enabled` FAILS (`cfg.enabled` is currently `Fa
 In `services/agentd-py/agentd/memory/config.py`, change:
 
 ```python
-            enabled=env.get("AI_EDITOR_MEMORY_ENABLED", "").lower() in _TRUTHY,
+            enabled=env.get("CRUCIBLE_MEMORY_ENABLED", "").lower() in _TRUTHY,
 ```
 
 to:
 
 ```python
-            enabled=env.get("AI_EDITOR_MEMORY_ENABLED", "true").lower() in _TRUTHY,
+            enabled=env.get("CRUCIBLE_MEMORY_ENABLED", "true").lower() in _TRUTHY,
 ```
 
 and change:
 
 ```python
-            reranker_enabled=env.get("AI_EDITOR_MEMORY_RERANKER", "").lower() in _TRUTHY,
+            reranker_enabled=env.get("CRUCIBLE_MEMORY_RERANKER", "").lower() in _TRUTHY,
 ```
 
 to:
 
 ```python
-            reranker_enabled=env.get("AI_EDITOR_MEMORY_RERANKER", "true").lower() in _TRUTHY,
+            reranker_enabled=env.get("CRUCIBLE_MEMORY_RERANKER", "true").lower() in _TRUTHY,
 ```
 
 In `services/agentd-py/agentd/chat/controller_factory.py`, update the docstring (lines 31-35) from:
@@ -849,7 +849,7 @@ In `services/agentd-py/agentd/chat/controller_factory.py`, update the docstring 
 ```python
 def is_memory_enabled() -> bool:
     """Whether the memory harness (compaction + recall/remember) is active. Default OFF;
-    opt in with AI_EDITOR_MEMORY_ENABLED=1. Gates the controller's memory tools + prompt."""
+    opt in with CRUCIBLE_MEMORY_ENABLED=1. Gates the controller's memory tools + prompt."""
     from agentd.memory.config import MemoryConfig
     return MemoryConfig.from_env(os.environ).enabled
 ```
@@ -859,7 +859,7 @@ to:
 ```python
 def is_memory_enabled() -> bool:
     """Whether the memory harness (compaction + recall/remember) is active. Default ON;
-    kill-switch via AI_EDITOR_MEMORY_ENABLED=0/false/no/off. Gates the controller's memory
+    kill-switch via CRUCIBLE_MEMORY_ENABLED=0/false/no/off. Gates the controller's memory
     tools + prompt."""
     from agentd.memory.config import MemoryConfig
     return MemoryConfig.from_env(os.environ).enabled
@@ -1025,61 +1025,61 @@ Expected: `OK`
 Change line 446 from:
 
 ```
-Self-contained module (`agentd/memory/`): `harness.py` (the only unit the loops see), `compactor.py` (token-trigger eviction + summarize), `store.py` (SQLite — `compaction_segments`, `anchored_summaries`, + P2 `memories`/sqlite-vec/FTS5), `consolidator.py` + `recall.py` + `embedder.py` + `tool_source.py` (P2), `models.py`, `config.py`. OFF by default (`AI_EDITOR_MEMORY_ENABLED`); P2 also needs a workspace scope (wired via `build_memory_harness(..., workspace_path=…)` in `main.py` + `controller_factory.py`).
+Self-contained module (`agentd/memory/`): `harness.py` (the only unit the loops see), `compactor.py` (token-trigger eviction + summarize), `store.py` (SQLite — `compaction_segments`, `anchored_summaries`, + P2 `memories`/sqlite-vec/FTS5), `consolidator.py` + `recall.py` + `embedder.py` + `tool_source.py` (P2), `models.py`, `config.py`. OFF by default (`CRUCIBLE_MEMORY_ENABLED`); P2 also needs a workspace scope (wired via `build_memory_harness(..., workspace_path=…)` in `main.py` + `controller_factory.py`).
 ```
 
 to:
 
 ```
-Self-contained module (`agentd/memory/`): `harness.py` (the only unit the loops see), `compactor.py` (token-trigger eviction + summarize), `store.py` (SQLite — `compaction_segments`, `anchored_summaries`, + P2 `memories`/sqlite-vec/FTS5), `consolidator.py` + `recall.py` + `embedder.py` + `tool_source.py` (P2), `models.py`, `config.py`. ON by default since 2026-07-08 (`AI_EDITOR_MEMORY_ENABLED`; kill-switch via `0/false/no/off`); P2 also needs a workspace scope (wired via `build_memory_harness(..., workspace_path=…)` in `main.py` + `controller_factory.py`).
+Self-contained module (`agentd/memory/`): `harness.py` (the only unit the loops see), `compactor.py` (token-trigger eviction + summarize), `store.py` (SQLite — `compaction_segments`, `anchored_summaries`, + P2 `memories`/sqlite-vec/FTS5), `consolidator.py` + `recall.py` + `embedder.py` + `tool_source.py` (P2), `models.py`, `config.py`. ON by default since 2026-07-08 (`CRUCIBLE_MEMORY_ENABLED`; kill-switch via `0/false/no/off`); P2 also needs a workspace scope (wired via `build_memory_harness(..., workspace_path=…)` in `main.py` + `controller_factory.py`).
 ```
 
 Change line 470 from:
 
 ```
-- **Reranker (`memory/reranker.py`):** local `sentence-transformers` CrossEncoder (`BAAI/bge-reranker-base`), **independent of `MEMORY_ENABLED`** (own flag `AI_EDITOR_MEMORY_RERANKER`, default OFF) and **degrade-not-raise** (model/lib absent → fused order, `available=False`). Slots into `RecallEngine` at the post-floor seam, **count-gated** (`AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES`, default 8) — reorders floor-passing candidates, never resurrects below-floor ones. `recall()` signature is **UNCHANGED**; `recall_with_trace()` does the work and `recall()` = `(await recall_with_trace(...))[0]`. Only the harness `_fill_recall` switched (every `_SpyRecall` test fake gained `recall_with_trace` in lockstep — same breakage class as P2's `prepare_turn(query=…)`).
+- **Reranker (`memory/reranker.py`):** local `sentence-transformers` CrossEncoder (`BAAI/bge-reranker-base`), **independent of `MEMORY_ENABLED`** (own flag `CRUCIBLE_MEMORY_RERANKER`, default OFF) and **degrade-not-raise** (model/lib absent → fused order, `available=False`). Slots into `RecallEngine` at the post-floor seam, **count-gated** (`CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES`, default 8) — reorders floor-passing candidates, never resurrects below-floor ones. `recall()` signature is **UNCHANGED**; `recall_with_trace()` does the work and `recall()` = `(await recall_with_trace(...))[0]`. Only the harness `_fill_recall` switched (every `_SpyRecall` test fake gained `recall_with_trace` in lockstep — same breakage class as P2's `prepare_turn(query=…)`).
 ```
 
 to:
 
 ```
-- **Reranker (`memory/reranker.py`):** local `sentence-transformers` CrossEncoder (`BAAI/bge-reranker-base`), **independent of `MEMORY_ENABLED`** (own flag `AI_EDITOR_MEMORY_RERANKER`, default ON since 2026-07-08, kill-switch via `0/false/no/off`) and **degrade-not-raise** (model/lib absent → fused order, `available=False`). Slots into `RecallEngine` at the post-floor seam, **count-gated** (`AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES`, default 8) — reorders floor-passing candidates, never resurrects below-floor ones. `recall()` signature is **UNCHANGED**; `recall_with_trace()` does the work and `recall()` = `(await recall_with_trace(...))[0]`. Only the harness `_fill_recall` switched (every `_SpyRecall` test fake gained `recall_with_trace` in lockstep — same breakage class as P2's `prepare_turn(query=…)`).
+- **Reranker (`memory/reranker.py`):** local `sentence-transformers` CrossEncoder (`BAAI/bge-reranker-base`), **independent of `MEMORY_ENABLED`** (own flag `CRUCIBLE_MEMORY_RERANKER`, default ON since 2026-07-08, kill-switch via `0/false/no/off`) and **degrade-not-raise** (model/lib absent → fused order, `available=False`). Slots into `RecallEngine` at the post-floor seam, **count-gated** (`CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES`, default 8) — reorders floor-passing candidates, never resurrects below-floor ones. `recall()` signature is **UNCHANGED**; `recall_with_trace()` does the work and `recall()` = `(await recall_with_trace(...))[0]`. Only the harness `_fill_recall` switched (every `_SpyRecall` test fake gained `recall_with_trace` in lockstep — same breakage class as P2's `prepare_turn(query=…)`).
 ```
 
 Change line 475 from:
 
 ```
-- **Phase-3 config env vars:** `AI_EDITOR_MEMORY_RERANKER` (default off), `AI_EDITOR_MEMORY_RERANKER_MODEL` (default `BAAI/bge-reranker-base`), `AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES` (default 8).
+- **Phase-3 config env vars:** `CRUCIBLE_MEMORY_RERANKER` (default off), `CRUCIBLE_MEMORY_RERANKER_MODEL` (default `BAAI/bge-reranker-base`), `CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES` (default 8).
 ```
 
 to:
 
 ```
-- **Phase-3 config env vars:** `AI_EDITOR_MEMORY_RERANKER` (default on since 2026-07-08), `AI_EDITOR_MEMORY_RERANKER_MODEL` (default `BAAI/bge-reranker-base`), `AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES` (default 8).
+- **Phase-3 config env vars:** `CRUCIBLE_MEMORY_RERANKER` (default on since 2026-07-08), `CRUCIBLE_MEMORY_RERANKER_MODEL` (default `BAAI/bge-reranker-base`), `CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES` (default 8).
 ```
 
 Change line 548 from:
 
 ```
-- `AI_EDITOR_MEMORY_ENABLED` — master switch (default OFF; truthy = `1/true/yes/on`). When off, `prepare_turn` is a byte-identical passthrough. (Phase-2 recall/consolidation additionally needs a workspace scope, which the factories pass.)
+- `CRUCIBLE_MEMORY_ENABLED` — master switch (default OFF; truthy = `1/true/yes/on`). When off, `prepare_turn` is a byte-identical passthrough. (Phase-2 recall/consolidation additionally needs a workspace scope, which the factories pass.)
 ```
 
 to:
 
 ```
-- `AI_EDITOR_MEMORY_ENABLED` — master switch, default **ON** since 2026-07-08 (truthy = `1/true/yes/on`; set to `0/false/no/off` to disable). When off, `prepare_turn` is a byte-identical passthrough. (Phase-2 recall/consolidation additionally needs a workspace scope, which the factories pass.) The managed runtime installer (`apps/vscode-extension/src/runtime/installer.ts`) installs the `ai-editor-agentd[memory]` extra (pulls in `sentence-transformers`/PyTorch, ~500MB-1GB+) specifically so this default works out of the box instead of silently degrading the embedder.
+- `CRUCIBLE_MEMORY_ENABLED` — master switch, default **ON** since 2026-07-08 (truthy = `1/true/yes/on`; set to `0/false/no/off` to disable). When off, `prepare_turn` is a byte-identical passthrough. (Phase-2 recall/consolidation additionally needs a workspace scope, which the factories pass.) The managed runtime installer (`apps/vscode-extension/src/runtime/installer.ts`) installs the `ai-editor-agentd[memory]` extra (pulls in `sentence-transformers`/PyTorch, ~500MB-1GB+) specifically so this default works out of the box instead of silently degrading the embedder.
 ```
 
 Change line 587 from:
 
 ```
-- `aiEditor.memory.enabled` / `aiEditor.memory.reranker` — booleans, default `false`. Become `AI_EDITOR_MEMORY_ENABLED` / `AI_EDITOR_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
+- `aiEditor.memory.enabled` / `aiEditor.memory.reranker` — booleans, default `false`. Become `CRUCIBLE_MEMORY_ENABLED` / `CRUCIBLE_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
 ```
 
 to:
 
 ```
-- `aiEditor.memory.enabled` / `aiEditor.memory.reranker` — booleans, default `true` since 2026-07-08. Become `AI_EDITOR_MEMORY_ENABLED` / `AI_EDITOR_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
+- `aiEditor.memory.enabled` / `aiEditor.memory.reranker` — booleans, default `true` since 2026-07-08. Become `CRUCIBLE_MEMORY_ENABLED` / `CRUCIBLE_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
 ```
 
 - [ ] **Step 4: Commit**

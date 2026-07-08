@@ -24,15 +24,15 @@ def _deps(tmp_path: Path) -> dict:
 
 
 def test_flag_on_selects_controller(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("AI_EDITOR_CHAT_CONTROLLER", "1")
+    monkeypatch.setenv("CRUCIBLE_CHAT_CONTROLLER", "1")
     assert isinstance(select_chat_handler(**_deps(tmp_path)), ChatController)
 
 
 def test_flag_off_selects_legacy_agent(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("AI_EDITOR_CHAT_CONTROLLER", "0")
+    monkeypatch.setenv("CRUCIBLE_CHAT_CONTROLLER", "0")
     assert isinstance(select_chat_handler(**_deps(tmp_path)), ChatAgent)
 
 
 def test_default_is_legacy_until_smoke_verified(monkeypatch, tmp_path: Path):
-    monkeypatch.delenv("AI_EDITOR_CHAT_CONTROLLER", raising=False)
+    monkeypatch.delenv("CRUCIBLE_CHAT_CONTROLLER", raising=False)
     assert isinstance(select_chat_handler(**_deps(tmp_path)), ChatAgent)

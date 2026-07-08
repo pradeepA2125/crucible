@@ -26,20 +26,20 @@ class MemoryConfig(BaseModel):
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> MemoryConfig:
         return cls(
-            enabled=env.get("AI_EDITOR_MEMORY_ENABLED", "true").lower() in _TRUTHY,
-            db_path=env.get("AI_EDITOR_MEMORY_DB_PATH", ".agentd/memory.sqlite3"),
-            trigger_frac=float(env.get("AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC", "0.65")),
-            hot_token_frac=float(env.get("AI_EDITOR_MEMORY_HOT_TOKEN_FRAC", "0.4")),
-            hot_turns=int(env.get("AI_EDITOR_MEMORY_HOT_TURNS", "10")),
-            window_tokens=int(env.get("AI_EDITOR_MEMORY_WINDOW_TOKENS", "128000")),
-            dedup_threshold=float(env.get("AI_EDITOR_MEMORY_DEDUP_THRESHOLD", "0.92")),
-            recall_token_budget=int(env.get("AI_EDITOR_MEMORY_RECALL_TOKEN_BUDGET", "1500")),
+            enabled=env.get("CRUCIBLE_MEMORY_ENABLED", "true").lower() in _TRUTHY,
+            db_path=env.get("CRUCIBLE_MEMORY_DB_PATH", ".agentd/memory.sqlite3"),
+            trigger_frac=float(env.get("CRUCIBLE_MEMORY_COMPACT_TRIGGER_FRAC", "0.65")),
+            hot_token_frac=float(env.get("CRUCIBLE_MEMORY_HOT_TOKEN_FRAC", "0.4")),
+            hot_turns=int(env.get("CRUCIBLE_MEMORY_HOT_TURNS", "10")),
+            window_tokens=int(env.get("CRUCIBLE_MEMORY_WINDOW_TOKENS", "128000")),
+            dedup_threshold=float(env.get("CRUCIBLE_MEMORY_DEDUP_THRESHOLD", "0.92")),
+            recall_token_budget=int(env.get("CRUCIBLE_MEMORY_RECALL_TOKEN_BUDGET", "1500")),
             weights=tuple(  # type: ignore[arg-type]
-                float(x) for x in env.get("AI_EDITOR_MEMORY_WEIGHTS", "0.5,0.3,0.2").split(",")
+                float(x) for x in env.get("CRUCIBLE_MEMORY_WEIGHTS", "0.5,0.3,0.2").split(",")
             ),
-            graph_grounding=env.get("AI_EDITOR_MEMORY_GRAPH_GROUNDING", "true").lower() in _TRUTHY,
-            embedding_model=env.get("AI_EDITOR_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
-            reranker_enabled=env.get("AI_EDITOR_MEMORY_RERANKER", "true").lower() in _TRUTHY,
-            reranker_model=env.get("AI_EDITOR_MEMORY_RERANKER_MODEL", "BAAI/bge-reranker-base"),
-            rerank_min_candidates=int(env.get("AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES", "8")),
+            graph_grounding=env.get("CRUCIBLE_MEMORY_GRAPH_GROUNDING", "true").lower() in _TRUTHY,
+            embedding_model=env.get("CRUCIBLE_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
+            reranker_enabled=env.get("CRUCIBLE_MEMORY_RERANKER", "true").lower() in _TRUTHY,
+            reranker_model=env.get("CRUCIBLE_MEMORY_RERANKER_MODEL", "BAAI/bge-reranker-base"),
+            rerank_min_candidates=int(env.get("CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES", "8")),
         )

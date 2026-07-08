@@ -11,7 +11,7 @@ from typing import Literal
 
 from agentd.domain.models import AgentToolTrace
 
-# Matches AI_EDITOR_TOOL_RESULT_MAX_CHARS' default — enough output to read what
+# Matches CRUCIBLE_TOOL_RESULT_MAX_CHARS' default — enough output to read what
 # happened without bloating the chat DB (full output lives in artifacts).
 TOOL_EVENT_MAX_OUTPUT_CHARS = 4000
 

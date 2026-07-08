@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def resolve_artifacts_base(workspace_path: str | Path | None = None) -> Path:
-    raw = os.getenv("AI_EDITOR_ARTIFACTS_ROOT")
+    raw = os.getenv("CRUCIBLE_ARTIFACTS_ROOT")
     workspace = Path(workspace_path).resolve() if workspace_path is not None else None
     if raw:
         rendered = raw

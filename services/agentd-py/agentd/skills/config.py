@@ -9,8 +9,8 @@ def _pos_int(env: str, default: int) -> int:
 
 
 def skills_catalog_max_chars() -> int:
-    return _pos_int("AI_EDITOR_SKILLS_CATALOG_MAX_CHARS", 16000)
+    return _pos_int("CRUCIBLE_SKILLS_CATALOG_MAX_CHARS", 16000)
 
 
 def skills_body_max_chars() -> int:
-    return _pos_int("AI_EDITOR_SKILLS_BODY_MAX_CHARS", 20000)
+    return _pos_int("CRUCIBLE_SKILLS_BODY_MAX_CHARS", 20000)

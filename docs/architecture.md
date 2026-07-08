@@ -24,13 +24,13 @@
   - plan/patch contracts
   - orchestrator grounding and deterministic validation
 - Optional repo/domain adapters may augment evidence labeling or critique rules:
-  - `AI_EDITOR_EVIDENCE_ADAPTER=generic|legacy_repo`
-  - `AI_EDITOR_PLANNING_ADAPTER=generic|legacy_repo`
+  - `CRUCIBLE_EVIDENCE_ADAPTER=generic|legacy_repo`
+  - `CRUCIBLE_PLANNING_ADAPTER=generic|legacy_repo`
 - Language-specific logic is isolated to explicit language adapters:
   - Python execution/parsing via `libcst`
   - TypeScript/Rust execution/parsing via tree-sitter
 - Artifact/debug output uses a configurable root:
-  - `AI_EDITOR_ARTIFACTS_ROOT`
+  - `CRUCIBLE_ARTIFACTS_ROOT`
   - default `<workspace>/.agentd/artifacts`
 
 ## Deterministic boundaries

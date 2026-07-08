@@ -187,12 +187,12 @@ back (use a generous `max_tokens` — see the profile note; a tiny cap traps the
 
 The transport profile is selected by **`TURBOQUANT_MODEL_FAMILY`** (read by
 `TurboQuantTransport.from_env()` in `agentd/providers/turboquant_transport.py`), **not** by
-`AI_EDITOR_TURBOQUANT_MODEL` (which is only the request label and is ignored by a single-model
+`CRUCIBLE_TURBOQUANT_MODEL` (which is only the request label and is ignored by a single-model
 llama-server).
 
 `.env`:
 ```bash
-AI_EDITOR_TURBOQUANT_MODEL="qwen3.6:35b-a3b-q4_K_M"   # label only (log clarity)
+CRUCIBLE_TURBOQUANT_MODEL="qwen3.6:35b-a3b-q4_K_M"   # label only (log clarity)
 TURBOQUANT_MODEL_FAMILY=qwen3                          # selects the PROFILE — required
 TURBOQUANT_THINKING_BUDGET=8192                        # >0 enables the <think> block
 ```

@@ -38,5 +38,5 @@ def test_config_reranker_defaults():
 
 
 def test_config_reranker_explicit_disable_still_works():
-    c = MemoryConfig.from_env({"AI_EDITOR_MEMORY_RERANKER": "0"})
+    c = MemoryConfig.from_env({"CRUCIBLE_MEMORY_RERANKER": "0"})
     assert c.reranker_enabled is False

@@ -57,7 +57,7 @@ async def test_step_review_flag_forces_review(tmp_path: Path) -> None:
 async def test_step_review_flag_none_keeps_env_default(tmp_path: Path, monkeypatch) -> None:
     ws = tmp_path / "ws"
     ws.mkdir()
-    monkeypatch.setenv("AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT", "true")
+    monkeypatch.setenv("CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT", "true")
     orch, store = _orch(tmp_path)
     task_id = await orch.create_task_from_chat(
         thread_id="t", goal="g", workspace_path=str(ws),

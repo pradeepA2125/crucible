@@ -32,7 +32,7 @@ The reranker *improves* recall precision; the inspector lets you *observe and ve
 
 **Integration in `RecallEngine`** (the `top-k → final-k` seam): after `_fuse` produces the scored candidate list and the **floor is applied on the fused score**, if `self._reranker is not None and self._reranker.available and len(passing) > min_candidates`, rerank the floor-passing candidates and take that order; else keep fused order. Result capped at `k`. The reranker **reorders but never resurrects** floor-rejected memories.
 
-**Flags / config:** `AI_EDITOR_MEMORY_RERANKER` (default **off**, independent of `MEMORY_ENABLED`), `AI_EDITOR_MEMORY_RERANKER_MODEL` (default `BAAI/bge-reranker-base`), `AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES` (default 8). `RecallEngine.__init__` gains `reranker: Reranker | None = None, rerank_min_candidates: int = 8`; `build_memory_harness` constructs a `Reranker` only when the flag is on.
+**Flags / config:** `CRUCIBLE_MEMORY_RERANKER` (default **off**, independent of `MEMORY_ENABLED`), `CRUCIBLE_MEMORY_RERANKER_MODEL` (default `BAAI/bge-reranker-base`), `CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES` (default 8). `RecallEngine.__init__` gains `reranker: Reranker | None = None, rerank_min_candidates: int = 8`; `build_memory_harness` constructs a `Reranker` only when the flag is on.
 
 ---
 
@@ -98,9 +98,9 @@ All three routes are read-only — they cannot affect a running turn.
 ## 7. Config (new env vars)
 
 ```
-AI_EDITOR_MEMORY_RERANKER               # default off — enable the cross-encoder reranker
-AI_EDITOR_MEMORY_RERANKER_MODEL         # default BAAI/bge-reranker-base
-AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES  # default 8 — only rerank when more candidates than this
+CRUCIBLE_MEMORY_RERANKER               # default off — enable the cross-encoder reranker
+CRUCIBLE_MEMORY_RERANKER_MODEL         # default BAAI/bge-reranker-base
+CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES  # default 8 — only rerank when more candidates than this
 ```
 
 ## 8. Open questions (carried into the plan, not blockers)

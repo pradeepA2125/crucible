@@ -1,7 +1,7 @@
 """Per-workspace backend lockfile: <workspace>/.agentd/agentd.lock (JSON pid/port/
 started_at). The extension reuses a live backend and reaps stale locks — this file
 is what makes one-workspace-one-backend hold by construction. Written only when
-AI_EDITOR_PORT is set (managed spawns); the dev script flow is unaffected."""
+CRUCIBLE_PORT is set (managed spawns); the dev script flow is unaffected."""
 from __future__ import annotations
 
 import json

@@ -1330,7 +1330,7 @@ import * as vscode from "vscode";
 import { handleGraphMessage, type GraphHostDeps, type GraphToHost } from "./graph/graph-messages.js";
 import { GraphSnapshotStore } from "./graph/snapshot-store.js";
 
-const STALE_AFTER_SEC = 900; // mirrors AI_EDITOR_RETRIEVAL_MAX_AGE_SEC default
+const STALE_AFTER_SEC = 900; // mirrors CRUCIBLE_RETRIEVAL_MAX_AGE_SEC default
 const WATCH_DEBOUNCE_MS = 400;
 
 /** AXON dependency-space panel. Loads the webview-ui `graph` Vite entry and serves

@@ -24,7 +24,7 @@ Two gaps in the chat controller's tool surface:
 | 3 | Web search ships as **MCP config defaults (approach 2B)** — zero new backend code; the P3 MCP client provides transport, gating, and remember-rules. |
 | 4 | Web tools include **both `web_search` and `web_fetch`** (the Ollama MCP server exposes both). |
 | 5 | Web tool consent = **first-use gate, then remembered** — exactly the existing `mcp_tool` gate + `McpRuleStore` "Approve & remember (this workspace)". |
-| 6 | Both features are **controller-only** and **flag/config-gated, default OFF** (`write_doc` behind `AI_EDITOR_DOC_WRITE_ENABLED`; web behind the user's `mcp.json` entry + `AI_EDITOR_MCP_ENABLED`). |
+| 6 | Both features are **controller-only** and **flag/config-gated, default OFF** (`write_doc` behind `CRUCIBLE_DOC_WRITE_ENABLED`; web behind the user's `mcp.json` entry + `CRUCIBLE_MCP_ENABLED`). |
 
 ## 3. Feature 1 — `write_doc` tool + `doc_write` gate
 
@@ -33,7 +33,7 @@ Two gaps in the chat controller's tool surface:
 `DocWriteToolSource` on the existing `ToolSource`/`AggregatingToolRegistry` seam
 (`name = "doc_write"`), registered in `ChatController._build_registry` when
 `is_doc_write_enabled()` (new resolver in `chat/controller_factory.py`,
-`AI_EDITOR_DOC_WRITE_ENABLED`, truthy = `1/true/yes/on`, default OFF).
+`CRUCIBLE_DOC_WRITE_ENABLED`, truthy = `1/true/yes/on`, default OFF).
 
 One tool:
 
@@ -69,7 +69,7 @@ Failures return `ToolOutput(is_error=True)` with an actionable message; no gate 
   future; restart-orphan clears the stale gate + breadcrumb; never mutate during await).
 - **No remember option** (every write is unique content) — hence no rule store.
 - Timeout: reuses `mcp_decision_timeout_sec()`'s pattern with its own env
-  `AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC` (default 0 = wait forever; timeout → reject).
+  `CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC` (default 0 = wait forever; timeout → reject).
 - Approve → write to the **real workspace** (`mkdir -p` parents), return success output
   naming the path and byte count. Reject → `is_error` output: "rejected by user — do not
   retry the same write; adapt or ask."

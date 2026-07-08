@@ -140,7 +140,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         </button>
 
         {/* Memory Inspector shortcut — opens the standalone panel (aiEditor.openMemoryPanel),
-            which already degrades gracefully if AI_EDITOR_MEMORY_ENABLED is off. */}
+            which already degrades gracefully if CRUCIBLE_MEMORY_ENABLED is off. */}
         <button
           type="button"
           onClick={() => vscode.postMessage({ type: "openMemoryPanel" })}

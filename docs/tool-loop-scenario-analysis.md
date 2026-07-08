@@ -551,7 +551,7 @@ it's not injected into `step_context`.
    instruct: "If retrieval warnings are present, validate file/symbol names via search before
    patching."
 
-2. **Auto-refresh on stale detection** — if `snapshot_age_sec > AI_EDITOR_RETRIEVAL_MAX_AGE_SEC`
+2. **Auto-refresh on stale detection** — if `snapshot_age_sec > CRUCIBLE_RETRIEVAL_MAX_AGE_SEC`
    AND the task has been waiting for more than N minutes, trigger a re-index before execution
    starts. Currently re-index is only triggered at task creation time.
 

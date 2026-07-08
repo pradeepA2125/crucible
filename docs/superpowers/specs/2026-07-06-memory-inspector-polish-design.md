@@ -49,7 +49,7 @@ size) as the existing header buttons.
 - `chat-panel.ts`'s `onDidReceiveMessage` gains a branch: `m.type === "openMemoryPanel"` →
   `vscode.commands.executeCommand("aiEditor.openMemoryPanel")`.
 - No new capability-flag plumbing into the webview: the command already exists
-  (`extension.ts:392`) and already degrades gracefully — if `AI_EDITOR_MEMORY_ENABLED` is off it
+  (`extension.ts:392`) and already degrades gracefully — if `CRUCIBLE_MEMORY_ENABLED` is off it
   shows an info message ("The memory inspector is disabled...") instead of opening a panel. The
   button is always visible; the existing command handles the disabled case.
 - Opens as today: a separate VS Code panel (`MemoryPanel`, its own webview/tab) — **not** inline

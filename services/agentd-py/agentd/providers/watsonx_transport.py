@@ -106,7 +106,7 @@ class WatsonxJsonTransport(ModelJsonTransport):
 
         if thinking:
             # Log thinking to a debug file for transparency
-            log_dir = os.getenv("AI_EDITOR_LOG_DIR", ".tmp/reasoning")
+            log_dir = os.getenv("CRUCIBLE_LOG_DIR", ".tmp/reasoning")
             os.makedirs(log_dir, exist_ok=True)
             with open(f"{log_dir}/watsonx_thinking.log", "a") as f:
                 f.write(f"--- MODEL: {model} ---\n{thinking}\n\n")

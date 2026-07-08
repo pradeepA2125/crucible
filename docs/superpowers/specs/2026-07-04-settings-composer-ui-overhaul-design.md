@@ -45,7 +45,7 @@ Every section is rebuilt with `CardShell` for its container(s) and `BtnPrimary`/
 Purpose: view and edit `<workspace>/AGENTS.md` from within the extension, instead of it being a file the backend silently reads with zero UI.
 
 - **Read path:** `host/settings-data.ts` gains `loadInstructions(workspacePath): { content: string; exists: boolean }`, reading the file directly via Node `fs` (vscode-free, unit-testable — same convention as `prompt-files.ts`'s `loadPromptBody`). No backend involvement; `ProjectInstructionsLoader` on the backend side already mtime-watches this same file independently, so a save here is picked up by the backend automatically on the next turn (no restart, no coordination needed).
-- **Write path:** `saveInstructions(workspacePath, content): void`, a direct `fs.writeFile`. Same size-sanity as the backend's own `AI_EDITOR_INSTRUCTIONS_MAX_CHARS` cap is *not* enforced client-side — the backend already truncates-with-warning over budget, so no duplicate validation logic is needed here.
+- **Write path:** `saveInstructions(workspacePath, content): void`, a direct `fs.writeFile`. Same size-sanity as the backend's own `CRUCIBLE_INSTRUCTIONS_MAX_CHARS` cap is *not* enforced client-side — the backend already truncates-with-warning over budget, so no duplicate validation logic is needed here.
 - **UI:** a plain textarea (monospace, full-width) inside a `CardShell`, a `BtnPrimary` "Save" button, and an empty state ("No AGENTS.md yet in this workspace" + a "Create" button that seeds an empty file) when `exists` is false.
 - **Out of scope:** no markdown preview, no diffing against the previous save, no undo history beyond VS Code's own file history — this is a plain editor, not a diff review surface.
 

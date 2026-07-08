@@ -1,6 +1,6 @@
 """Flag-select the chat handler: the new ChatController vs the legacy ChatAgent.
 
-`AI_EDITOR_CHAT_CONTROLLER` is a TEMPORARY migration flag (not a long-term setting):
+`CRUCIBLE_CHAT_CONTROLLER` is a TEMPORARY migration flag (not a long-term setting):
 ship the controller behind it, default off until smoke-verified, flip to on, then
 delete the legacy explore→classify→route pipeline at the `=0` retirement (Phase K).
 Both handlers expose the same surface: handle_message(thread_id, message, channel_id,
@@ -12,8 +12,8 @@ import logging
 import os
 from typing import Any
 
-_FLAG_ENV = "AI_EDITOR_CHAT_CONTROLLER"
-_TASK_SUBSYSTEM_ENV = "AI_EDITOR_TASK_SUBSYSTEM"
+_FLAG_ENV = "CRUCIBLE_CHAT_CONTROLLER"
+_TASK_SUBSYSTEM_ENV = "CRUCIBLE_TASK_SUBSYSTEM"
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
@@ -24,13 +24,13 @@ def is_controller_enabled() -> bool:
 def is_task_subsystem_enabled() -> bool:
     """Whether the task-based path (create_task/resume + task UI) is active. Default OFF:
     the controller handles small + large changes inline via the todo ledger. Opt in with
-    AI_EDITOR_TASK_SUBSYSTEM=1 (only coherent with AI_EDITOR_CHAT_CONTROLLER=1)."""
+    CRUCIBLE_TASK_SUBSYSTEM=1 (only coherent with CRUCIBLE_CHAT_CONTROLLER=1)."""
     return os.getenv(_TASK_SUBSYSTEM_ENV, "0").strip().lower() in _TRUTHY
 
 
 def is_memory_enabled() -> bool:
     """Whether the memory harness (compaction + recall/remember) is active. Default ON;
-    kill-switch via AI_EDITOR_MEMORY_ENABLED=0/false/no/off. Gates the controller's memory
+    kill-switch via CRUCIBLE_MEMORY_ENABLED=0/false/no/off. Gates the controller's memory
     tools + prompt."""
     from agentd.memory.config import MemoryConfig
     return MemoryConfig.from_env(os.environ).enabled
@@ -39,28 +39,28 @@ def is_memory_enabled() -> bool:
 def is_project_instructions_enabled() -> bool:
     """Whether a workspace AGENTS.md is injected into the controller system
     prompt. Default ON — reading the project's AGENTS.md is table-stakes parity.
-    Kill-switch only: AI_EDITOR_PROJECT_INSTRUCTIONS=0 (or false/no/off)."""
-    return os.getenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "1").strip().lower() in _TRUTHY
+    Kill-switch only: CRUCIBLE_PROJECT_INSTRUCTIONS=0 (or false/no/off)."""
+    return os.getenv("CRUCIBLE_PROJECT_INSTRUCTIONS", "1").strip().lower() in _TRUTHY
 
 
 def is_skills_enabled() -> bool:
     """Whether agentskills.io SKILL.md skills are discovered + offered to the
     controller (catalog + read_skill + /skill forced-load). Default OFF — new
-    capability, ship dark. Opt in with AI_EDITOR_SKILLS_ENABLED=1."""
-    return os.getenv("AI_EDITOR_SKILLS_ENABLED", "0").strip().lower() in _TRUTHY
+    capability, ship dark. Opt in with CRUCIBLE_SKILLS_ENABLED=1."""
+    return os.getenv("CRUCIBLE_SKILLS_ENABLED", "0").strip().lower() in _TRUTHY
 
 
 def is_mcp_enabled() -> bool:
     """Whether external MCP servers from .ai-editor/mcp.json are connected and
     offered to the controller. Default OFF — external tool execution, ship dark.
-    Opt in with AI_EDITOR_MCP_ENABLED=1."""
-    return os.getenv("AI_EDITOR_MCP_ENABLED", "0").strip().lower() in _TRUTHY
+    Opt in with CRUCIBLE_MCP_ENABLED=1."""
+    return os.getenv("CRUCIBLE_MCP_ENABLED", "0").strip().lower() in _TRUTHY
 
 
 def is_doc_write_enabled() -> bool:
     """Whether the controller offers write_doc (per-write-gated doc/data writes).
-    Default OFF. Opt in with AI_EDITOR_DOC_WRITE_ENABLED=1."""
-    return os.getenv("AI_EDITOR_DOC_WRITE_ENABLED", "0").strip().lower() in _TRUTHY
+    Default OFF. Opt in with CRUCIBLE_DOC_WRITE_ENABLED=1."""
+    return os.getenv("CRUCIBLE_DOC_WRITE_ENABLED", "0").strip().lower() in _TRUTHY
 
 
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
@@ -68,8 +68,8 @@ def warn_if_incoherent_flags(logger: logging.Logger) -> None:
     large_change branch has nowhere to go without create_task). Warn — do not fail."""
     if not is_task_subsystem_enabled() and not is_controller_enabled():
         logger.warning(
-            "incoherent flags: AI_EDITOR_TASK_SUBSYSTEM is off but AI_EDITOR_CHAT_CONTROLLER "
-            "is also off — large changes have no path. Set AI_EDITOR_CHAT_CONTROLLER=1."
+            "incoherent flags: CRUCIBLE_TASK_SUBSYSTEM is off but CRUCIBLE_CHAT_CONTROLLER "
+            "is also off — large changes have no path. Set CRUCIBLE_CHAT_CONTROLLER=1."
         )
 
 
@@ -101,7 +101,7 @@ def select_chat_handler(
         from agentd.reasoning.engine import DefaultReasoningEngine
 
         # Within-run compaction + cross-session memory for controller turns (no-op unless
-        # AI_EDITOR_MEMORY_ENABLED). workspace_path enables consolidation (workspace scope).
+        # CRUCIBLE_MEMORY_ENABLED). workspace_path enables consolidation (workspace scope).
         memory_harness = build_memory_harness(
             MemoryConfig.from_env(os.environ), transport, model, workspace_path=workspace_path)
         # Auto-inject the workspace AGENTS.md into the controller system prompt (default on;

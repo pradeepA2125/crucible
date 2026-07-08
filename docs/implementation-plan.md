@@ -1727,7 +1727,7 @@ This pass should cover **runtime core + ops tooling + tests + docs/benchmarks to
 
 #### 4. De-hardcode provider/runtime configuration and debug plumbing
 - Introduce a single generic artifact/debug root setting:
-  - `AI_EDITOR_ARTIFACTS_ROOT`
+  - `CRUCIBLE_ARTIFACTS_ROOT`
   - default to `<workspace>/.agentd/artifacts` or a configurable app-local default, not `/tmp/ai-editor-stress`
 - Ensure all debug dumping uses the same artifact root contract:
   - reasoning debug dumps
@@ -1775,9 +1775,9 @@ This pass should cover **runtime core + ops tooling + tests + docs/benchmarks to
 ### Public APIs / Interfaces / Types
 - No HTTP route changes required.
 - Additive internal/runtime configuration:
-  - `AI_EDITOR_PLANNING_ADAPTER=generic`
-  - `AI_EDITOR_EVIDENCE_ADAPTER=generic`
-  - `AI_EDITOR_ARTIFACTS_ROOT=<path>`
+  - `CRUCIBLE_PLANNING_ADAPTER=generic`
+  - `CRUCIBLE_EVIDENCE_ADAPTER=generic`
+  - `CRUCIBLE_ARTIFACTS_ROOT=<path>`
 - Add internal interfaces:
   - `PlanningAdapter`
   - `EvidenceAdapter`

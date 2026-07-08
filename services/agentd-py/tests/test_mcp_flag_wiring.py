@@ -1,4 +1,4 @@
-"""AI_EDITOR_MCP_ENABLED: default OFF; ON builds the manager into the controller.
+"""CRUCIBLE_MCP_ENABLED: default OFF; ON builds the manager into the controller.
 Route: POST /chat/threads/{id}/mcp-decision resolves via the handler's resolve_mcp."""
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
 def test_flag_default_off(monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_MCP_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_ENABLED", raising=False)
     assert is_mcp_enabled() is False
 
 
@@ -24,13 +24,13 @@ def test_flag_default_off(monkeypatch):
     ("0", False), ("false", False), ("", False),
 ])
 def test_flag_parsing(monkeypatch, raw, expected):
-    monkeypatch.setenv("AI_EDITOR_MCP_ENABLED", raw)
+    monkeypatch.setenv("CRUCIBLE_MCP_ENABLED", raw)
     assert is_mcp_enabled() is expected
 
 
 def _handler(tmp_path, monkeypatch):
     from agentd.chat.storage import ChatThreadStore
-    monkeypatch.setenv("AI_EDITOR_CHAT_CONTROLLER", "1")
+    monkeypatch.setenv("CRUCIBLE_CHAT_CONTROLLER", "1")
     return select_chat_handler(
         workspace_path=str(tmp_path),
         transport=object(), model="m",
@@ -39,12 +39,12 @@ def _handler(tmp_path, monkeypatch):
 
 
 def test_factory_off_no_manager(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_MCP_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_ENABLED", raising=False)
     assert _handler(tmp_path, monkeypatch)._mcp_manager is None
 
 
 def test_factory_on_builds_manager(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_MCP_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_MCP_ENABLED", "1")
     from agentd.mcp.client import McpConnectionManager
     handler = _handler(tmp_path, monkeypatch)
     assert isinstance(handler._mcp_manager, McpConnectionManager)

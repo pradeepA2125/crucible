@@ -36,21 +36,21 @@ const SETTINGS = {
 describe("buildBackendEnv", () => {
   it("assembles the full spawn env", () => {
     const env = buildBackendEnv("/ws", SETTINGS, "/rt", 8123, "darwin-arm64");
-    expect(env.AI_EDITOR_REASONING_BACKEND).toBe("gemini");
-    expect(env.AI_EDITOR_WORKSPACE_PATH).toBe("/ws");
-    expect(env.AI_EDITOR_PORT).toBe("8123");
-    expect(env.AI_EDITOR_GEMINI_MODEL).toBe("gemini-flash-latest");
+    expect(env.CRUCIBLE_REASONING_BACKEND).toBe("gemini");
+    expect(env.CRUCIBLE_WORKSPACE_PATH).toBe("/ws");
+    expect(env.CRUCIBLE_PORT).toBe("8123");
+    expect(env.CRUCIBLE_GEMINI_MODEL).toBe("gemini-flash-latest");
     expect(env.GEMINI_API_KEY).toBe("sk-secret");
-    expect(env.AI_EDITOR_RIPGREP_CMD).toBe("/rt/bin/rg");
-    expect(env.AI_EDITOR_CHAT_CONTROLLER).toBe("1");
-    expect(env.AI_EDITOR_DB_PATH).toBe(join("/ws", ".agentd", "agentd.sqlite3"));
+    expect(env.CRUCIBLE_RIPGREP_CMD).toBe("/rt/bin/rg");
+    expect(env.CRUCIBLE_CHAT_CONTROLLER).toBe("1");
+    expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".agentd", "agentd.sqlite3"));
   });
   it("extraEnv overrides defaults; skillsDisabled joins", () => {
     const env = buildBackendEnv("/ws", {
-      ...SETTINGS, extraEnv: { AI_EDITOR_SHELL_POLICY: "allow_all" },
+      ...SETTINGS, extraEnv: { CRUCIBLE_SHELL_POLICY: "allow_all" },
       skillsDisabled: ["a", "b"] }, "/rt", 1, "darwin-arm64");
-    expect(env.AI_EDITOR_SHELL_POLICY).toBe("allow_all");
-    expect(env.AI_EDITOR_SKILLS_DISABLED).toBe("a,b");
+    expect(env.CRUCIBLE_SHELL_POLICY).toBe("allow_all");
+    expect(env.CRUCIBLE_SKILLS_DISABLED).toBe("a,b");
   });
 });
 
@@ -78,9 +78,9 @@ describe("BackendProcess.start", () => {
     expect(res.reused).toBe(false);
     expect(res.port).toBe(8123);
     expect(d.spawned[0].args).toContain("agentd.main:app");
-    expect(d.spawned[0].env.AI_EDITOR_PORT).toBe("8123");
+    expect(d.spawned[0].env.CRUCIBLE_PORT).toBe("8123");
     expect(d.spawned[1].args[0]).toBe("index"); // watcher
-    expect(d.spawned[1].env.AI_EDITOR_BACKEND_URL).toBe("http://localhost:8123");
+    expect(d.spawned[1].env.CRUCIBLE_BACKEND_URL).toBe("http://localhost:8123");
   });
 
   it("skips the watcher when the indexer binary is missing", async () => {
@@ -90,13 +90,13 @@ describe("BackendProcess.start", () => {
     expect(d.spawned).toHaveLength(1); // backend only
   });
 
-  it("sets AI_EDITOR_LSP_RS_CMD to the managed binary when installed", async () => {
+  it("sets CRUCIBLE_LSP_RS_CMD to the managed binary when installed", async () => {
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
     writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
     writeFileSync(join(d.runtimeDir, "bin", "rust-analyzer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
-    expect(d.spawned[1].env.AI_EDITOR_LSP_RS_CMD).toBe(join(d.runtimeDir, "bin", "rust-analyzer"));
+    expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe(join(d.runtimeDir, "bin", "rust-analyzer"));
   });
 
   it("falls back to the bare rust-analyzer command when the managed binary is absent", async () => {
@@ -104,7 +104,7 @@ describe("BackendProcess.start", () => {
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
     writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
-    expect(d.spawned[1].env.AI_EDITOR_LSP_RS_CMD).toBe("rust-analyzer");
+    expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe("rust-analyzer");
   });
 
   it("throws when health never comes up", async () => {

@@ -18,11 +18,11 @@ path. That is a large separate feature; this spec only flag-gates the existing t
 
 ## The Flag
 
-- **Env var:** `AI_EDITOR_TASK_SUBSYSTEM` — truthy (`1`/`true`) = ON, anything else = **OFF (default)**.
-- **Read once at startup**, mirroring `AI_EDITOR_CHAT_CONTROLLER`. Single resolver in
+- **Env var:** `CRUCIBLE_TASK_SUBSYSTEM` — truthy (`1`/`true`) = ON, anything else = **OFF (default)**.
+- **Read once at startup**, mirroring `CRUCIBLE_CHAT_CONTROLLER`. Single resolver in
   `agentd/chat/controller_factory.py`: `is_task_subsystem_enabled() -> bool` (sibling to the
   existing `select_chat_handler` flag logic). One source of truth for backend + the config endpoint.
-- **Coherence constraint:** OFF requires `AI_EDITOR_CHAT_CONTROLLER=1` (the controller is the only
+- **Coherence constraint:** OFF requires `CRUCIBLE_CHAT_CONTROLLER=1` (the controller is the only
   inline-large path; the legacy `ChatAgent.large_change` branch has nowhere to go without
   `create_task`). If `task_subsystem=off` **and** `chat_controller=off`, log a **startup WARNING**
   (incoherent config) — do not hard-fail; legacy behavior is left as-is for that combo.
@@ -86,7 +86,7 @@ No hard-404 guarding in this spec.
 ## Data flow (OFF, the new default)
 
 ```
-startup: AI_EDITOR_TASK_SUBSYSTEM unset -> is_task_subsystem_enabled() = False
+startup: CRUCIBLE_TASK_SUBSYSTEM unset -> is_task_subsystem_enabled() = False
          (warn if CHAT_CONTROLLER also off)
 chat turn: format_controller_system_prompt(task_subsystem_enabled=False)
            -> propose_mode offers {edit, explain} only

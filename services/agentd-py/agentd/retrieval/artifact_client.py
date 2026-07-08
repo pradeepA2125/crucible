@@ -157,10 +157,10 @@ class RetrievalArtifactClient:
         semantic_index: object = None,
     ) -> "RetrievalArtifactClient":
         return cls(
-            snapshot_path_template=os.getenv("AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH"),
-            max_age_sec=int(os.getenv("AI_EDITOR_RETRIEVAL_MAX_AGE_SEC", "900")),
-            index_command_template=os.getenv("AI_EDITOR_INDEXER_INDEX_CMD"),
-            index_timeout_sec=int(os.getenv("AI_EDITOR_INDEXER_INDEX_TIMEOUT_SEC", "120")),
+            snapshot_path_template=os.getenv("CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH"),
+            max_age_sec=int(os.getenv("CRUCIBLE_RETRIEVAL_MAX_AGE_SEC", "900")),
+            index_command_template=os.getenv("CRUCIBLE_INDEXER_INDEX_CMD"),
+            index_timeout_sec=int(os.getenv("CRUCIBLE_INDEXER_INDEX_TIMEOUT_SEC", "120")),
             evidence_adapter=evidence_adapter,
             semantic_index=semantic_index,
         )
@@ -374,7 +374,7 @@ class RetrievalArtifactClient:
         # ~a minute and overwrites this snapshot. So the unresolved graph is a
         # brief bootstrap state, not the steady state.
         return (
-            "AI_EDITOR_LSP_ENABLED=0 "
+            "CRUCIBLE_LSP_ENABLED=0 "
             f"{shlex.quote(auto_indexer)} index "
             f"--workspace {shlex.quote(workspace)} "
             f"--snapshot-path {shlex.quote(str(snapshot_path))} "

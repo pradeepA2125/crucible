@@ -126,9 +126,9 @@ transport = GeminiJsonTransport(
     thinking_enabled=thinking_enabled,
     thinking_budget=thinking_budget,
     thinking_level=thinking_level,
-    include_thoughts=_bool_env("AI_EDITOR_GEMINI_INCLUDE_THOUGHTS", False),
-    timeout_sec=_float_env("AI_EDITOR_GEMINI_TIMEOUT_SEC", 120.0),
-    max_retries=_int_env("AI_EDITOR_GEMINI_MAX_RETRIES", 4),
+    include_thoughts=_bool_env("CRUCIBLE_GEMINI_INCLUDE_THOUGHTS", False),
+    timeout_sec=_float_env("CRUCIBLE_GEMINI_TIMEOUT_SEC", 120.0),
+    max_retries=_int_env("CRUCIBLE_GEMINI_MAX_RETRIES", 4),
     rate_limiter=rate_limiter,  # NEW
 )
 ```
@@ -137,9 +137,9 @@ transport = GeminiJsonTransport(
 ```python
 transport = OpenRouterJsonTransport(
     api_key=os.getenv("OPENROUTER_API_KEY"),
-    max_tokens=_int_env("AI_EDITOR_OPENROUTER_MAX_TOKENS", 4096),
-    timeout_sec=_float_env("AI_EDITOR_OPENROUTER_TIMEOUT_SEC", 120.0),
-    max_retries=_int_env("AI_EDITOR_OPENROUTER_MAX_RETRIES", 4),
+    max_tokens=_int_env("CRUCIBLE_OPENROUTER_MAX_TOKENS", 4096),
+    timeout_sec=_float_env("CRUCIBLE_OPENROUTER_TIMEOUT_SEC", 120.0),
+    max_retries=_int_env("CRUCIBLE_OPENROUTER_MAX_RETRIES", 4),
     rate_limiter=rate_limiter,  # NEW
 )
 ```

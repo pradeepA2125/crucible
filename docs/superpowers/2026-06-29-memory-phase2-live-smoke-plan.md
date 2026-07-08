@@ -24,15 +24,15 @@ The 80+ unit/integration tests prove the *logic* with fake embedders and stub en
 
 ```bash
 export $(cat .env | grep -v '^#' | grep '=' | sed 's/"//g' | xargs)
-export AI_EDITOR_MEMORY_ENABLED=1
-export AI_EDITOR_MEMORY_WINDOW_TOKENS=84000   # 0.65 trigger ≈ 54.6k — makes compaction fire fast
+export CRUCIBLE_MEMORY_ENABLED=1
+export CRUCIBLE_MEMORY_WINDOW_TOKENS=84000   # 0.65 trigger ≈ 54.6k — makes compaction fire fast
 bash scripts/stress/start-backend.sh --backend turboquant \
   --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none
 ```
 - Workspace: **`shadow-forge-stress`** (outside ignored-dir ancestors; ~4.3k indexed nodes).
-- Confirm `AI_EDITOR_CHAT_CONTROLLER=1` (memory requires the controller path).
+- Confirm `CRUCIBLE_CHAT_CONTROLLER=1` (memory requires the controller path).
 - DB to watch: `services/agentd-py/.agentd/memory.sqlite3` (or workspace `.agentd/memory.sqlite3` —
-  confirm which the process opens via `AI_EDITOR_MEMORY_DB_PATH`).
+  confirm which the process opens via `CRUCIBLE_MEMORY_DB_PATH`).
 
 ## Observation toolkit
 
@@ -61,7 +61,7 @@ ls workspaces/shadow-forge-stress/.agentd/artifacts/chat/<thread>/<turn>/control
   responsive immediately after boot.
 - [ ] **A4** A controller turn's `controller-turn-00.json` `system_instructions` contains the
   **MEMORY block** and `tool_definitions` include **`remember`** + **`recall`**.
-- [ ] **A5 (gate off)** Restart with `AI_EDITOR_MEMORY_ENABLED` unset → no MEMORY block, no
+- [ ] **A5 (gate off)** Restart with `CRUCIBLE_MEMORY_ENABLED` unset → no MEMORY block, no
   memory tools, `memory.sqlite3` untouched, controller behaves exactly as before.
 
 ### B. Write path — automatic consolidation triggers

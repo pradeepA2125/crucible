@@ -267,7 +267,7 @@ async def test_create_task_explore_context_derived_from_history_uncapped(tmp_pat
     separate 4000-capped accumulator."""
     # create_task is gated behind the task subsystem flag (default off) — this test
     # exercises that handoff, so opt in before the controller resolves the flag.
-    monkeypatch.setenv("AI_EDITOR_TASK_SUBSYSTEM", "1")
+    monkeypatch.setenv("CRUCIBLE_TASK_SUBSYSTEM", "1")
     # ~8 KB but well under read_file's own caps (500 lines / 100 KB): long lines, few
     # of them, so the tool returns it whole. END_MARKER sits past char 4000, so it
     # survives ONLY if history is forwarded uncapped (the old _explore_by_thread path

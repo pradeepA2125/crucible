@@ -21,7 +21,7 @@ both as a route in A and as a button in B).
 ## Environment
 
 - **Backend:** worktree `services/agentd-py` via `scripts/stress/start-backend.sh` with
-  **`AI_EDITOR_CHAT_CONTROLLER=1` exported** before launch, `--workspace <REAL ws OUTSIDE
+  **`CRUCIBLE_CHAT_CONTROLLER=1` exported** before launch, `--workspace <REAL ws OUTSIDE
   .tmp>` (graph indexing needs a non-`.tmp` ancestor; `workspaces/shadow-forge-stress`
   works). Port **:8001** (workspace `.vscode/settings.json` pins
   `aiEditor.backendBaseUrl=http://localhost:8001`). Confirm controller is active:
@@ -40,7 +40,7 @@ both as a route in A and as a button in B).
 ## Pre-flight checklist
 - [ ] `webview-ui/dist` rebuilt from THIS worktree (timestamp newer than last source edit).
 - [ ] `start-vscode-mcp.sh` EXT_PATH repointed to this worktree's `apps/vscode-extension`.
-- [ ] Backend up on :8001 with `AI_EDITOR_CHAT_CONTROLLER=1` (`/live` carries `turn_active`).
+- [ ] Backend up on :8001 with `CRUCIBLE_CHAT_CONTROLLER=1` (`/live` carries `turn_active`).
 - [ ] `shadow-forge-stress` indexed (snapshot non-zero nodes).
 - [ ] Part A run first and green: `AGENTD_BASE_URL=http://127.0.0.1:8001 python3
       scripts/verify/controller_ux_smoke.py "$PWD/workspaces/shadow-forge-stress"`.
@@ -232,7 +232,7 @@ boundary — do not skip it.
 
 **Setup:** reach an EditGate (as S4), DO NOT decide. **Restart the backend** — kill the
 uvicorn PID and relaunch the SAME `start-backend.sh` invocation (same `--workspace`, same
-`AI_EDITOR_CHAT_CONTROLLER=1`, same port :8001) so it reopens the same chat sqlite. The
+`CRUCIBLE_CHAT_CONTROLLER=1`, same port :8001) so it reopens the same chat sqlite. The
 sqlite `pending_controller_gate` persists; the in-memory `_pending_edit` waiter is gone.
 
 - [x] Across the restart, the persisted gate is verifiable headless:
@@ -323,7 +323,7 @@ _Part B per-scenario notes + screenshots:_
 - **S4–S7 — PENDING.**
 - **S8 — backend-restart orphan EditGate — PASS (backend-definitive).** Parked a real EditGate on a
   new-file edit flow (`chat-592d9d1cdd8a`, goal: create `src/season_tax.py`), captured the live
-  `start-backend.sh` env (120 vars; forced `AI_EDITOR_CHAT_CONTROLLER=1` after a lowercase system var
+  `start-backend.sh` env (120 vars; forced `CRUCIBLE_CHAT_CONTROLLER=1` after a lowercase system var
   bled into the parse), then **killed the :8001 uvicorn out-of-process and relaunched** the same
   invocation (same workspace, port, chat sqlite). `--reload` parent ignored SIGTERM → had to
   `lsof -ti:8001 | xargs kill -9`; relaunch came up in ~6s reopening the same `chat.sqlite3`.

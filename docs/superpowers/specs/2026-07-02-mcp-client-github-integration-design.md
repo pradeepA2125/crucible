@@ -97,7 +97,7 @@ gate machinery** (`PendingGate`, async future + timeout, remember-rule).
   *kind* rather than overloading `"command"`, since the UI copy needs to read "Call MCP tool:
   `server.tool(args)`" (not "Run command:") and a remember-rule keyed on `(server, tool)` rather than
   a shell-command string.
-- New `AI_EDITOR_MCP_DECISION_TIMEOUT_SEC` (mirrors `AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC`,
+- New `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` (mirrors `CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC`,
   same default-reject-on-timeout behavior) — independently tunable from the command gate.
 
 ### 3.5 Prompt teaching (`agentd/chat/controller_prompts.py`)
@@ -112,14 +112,14 @@ gate machinery** (`PendingGate`, async future + timeout, remember-rule).
   catalog before acting" triage instruction. MCP tools have no progressive-disclosure step — the
   full schema is already visible in `tools_json`, so the model calls one directly like any other
   tool. The decide_entry/few-shot compliance fight from P2 does not recur here.
-- **Budget guard:** `AI_EDITOR_MCP_TOOLS_MAX_CHARS` (order-truncated, mirrors
+- **Budget guard:** `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (order-truncated, mirrors
   `select_catalog_for_budget`) — MCP tool schemas are full JSON schemas, heavier than skills'
   one-line catalog entries, so an unbounded `tools_json` is a real risk with more than a few
   chatty servers connected.
 
 ### 3.6 Flags (`agentd/chat/controller_factory.py`)
 
-- `is_mcp_enabled()` next to `is_skills_enabled()`/`is_memory_enabled()` — `AI_EDITOR_MCP_ENABLED`,
+- `is_mcp_enabled()` next to `is_skills_enabled()`/`is_memory_enabled()` — `CRUCIBLE_MCP_ENABLED`,
   **default OFF** (truthy = `1/true/yes/on`). Off: the config loader is never built, no servers
   connect, `McpToolSource` is not registered, the prompt block never appends.
 - `select_chat_handler` builds the `McpConfigLoader`/connects servers from the frozen
@@ -167,7 +167,7 @@ rather than hard-failing.
   handshake): log a warning, exclude that server's tools, don't crash the backend.
 - **A tool call times out or the server dies mid-call:** `ToolOutput(is_error=True, ...)` with a
   clear message; the loop adapts, no crash.
-- **Approval timeout:** default-reject, per `AI_EDITOR_MCP_DECISION_TIMEOUT_SEC`.
+- **Approval timeout:** default-reject, per `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC`.
 - **Malformed/missing `.ai-editor/mcp.json`:** no servers connected, no crash — same contract as a
   missing AGENTS.md or empty skills dir.
 - **A server's `${VAR}` reference is unset:** that server fails to connect (treated the same as any
@@ -199,7 +199,7 @@ rather than hard-failing.
    approval gate renders → approve → the call executes → result lands in the transcript.
 3. Reject path: same request, reject at the gate → the loop adapts (doesn't crash, doesn't retry the
    same call silently).
-4. Kill-switch: `AI_EDITOR_MCP_ENABLED=0` → no servers connect, no MCP tools in `tools_json`, no
+4. Kill-switch: `CRUCIBLE_MCP_ENABLED=0` → no servers connect, no MCP tools in `tools_json`, no
    teaching block.
 5. A server with `enabled:false` (or absent from the file) → confirmed NOT connected, contributing
    no tools (decision 4's allowlist actually holding).
@@ -209,7 +209,7 @@ rather than hard-failing.
 - A configured, enabled MCP server's tools are discoverable and callable by the agent end-to-end
   (live), gated by the `"mcp_tool"` approval.
 - GitHub MCP demonstrably opens a PR / reads an issue via a user-authored config entry.
-- `AI_EDITOR_MCP_ENABLED` kill-switch verified (default off; on enables).
+- `CRUCIBLE_MCP_ENABLED` kill-switch verified (default off; on enables).
 - The `enabled:true` per-server allowlist is verified as an actual gate, not a no-op.
 - All Python suites + typecheck green; live smoke (1–5) passes.
 

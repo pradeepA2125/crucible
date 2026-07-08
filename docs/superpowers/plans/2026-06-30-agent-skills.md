@@ -4,13 +4,13 @@
 
 **Goal:** Discover `.ai-editor/skills/<name>/SKILL.md` skills, expose an always-on catalog to the controller, let the model pull a skill body into the dynamic tail via a `read_skill` tool (or a `/skill-name` forced-load), and run bundled scripts through the existing shell gate.
 
-**Architecture:** A mtime-cached `SkillCatalogLoader` scans + parses SKILL.md frontmatter. The catalog renders into the controller system prompt (cache-stable). A `SkillToolSource` adds `read_skill(name)`; activated bodies live in a turn-scoped `active_skills` dict that the payload builder injects into the dynamic tail each iteration. A `/v1/skills` route + a `forced_skills` message field drive deterministic explicit invocation. Everything is flag-gated (`AI_EDITOR_SKILLS_ENABLED`, default off), controller-only.
+**Architecture:** A mtime-cached `SkillCatalogLoader` scans + parses SKILL.md frontmatter. The catalog renders into the controller system prompt (cache-stable). A `SkillToolSource` adds `read_skill(name)`; activated bodies live in a turn-scoped `active_skills` dict that the payload builder injects into the dynamic tail each iteration. A `/v1/skills` route + a `forced_skills` message field drive deterministic explicit invocation. Everything is flag-gated (`CRUCIBLE_SKILLS_ENABLED`, default off), controller-only.
 
 **Tech Stack:** Python 3.13 (FastAPI, Pydantic v2, PyYAML), pytest/pytest-asyncio; TypeScript (editor-client Zod contracts, vscode-extension, React webview-ui), vitest.
 
 ## Global Constraints
 
-- **Flag default OFF:** `AI_EDITOR_SKILLS_ENABLED` truthy = `1/true/yes/on` (case-insensitive); everything else (incl. unset) = off. Mirror `is_memory_enabled` exactly.
+- **Flag default OFF:** `CRUCIBLE_SKILLS_ENABLED` truthy = `1/true/yes/on` (case-insensitive); everything else (incl. unset) = off. Mirror `is_memory_enabled` exactly.
 - **Controller-only:** never touch `planning/prompts.py` or the task path.
 - **Best-effort, degrade-not-raise:** any loader/parse/IO error skips that skill + `logger.warning`; never raises into a turn.
 - **Frozen workspace:** the loader is built from the controller's frozen `workspace_path` (factory time), never the thread's per-turn column.
@@ -20,7 +20,7 @@
 - **Run all Python tests from** `services/agentd-py` with the venv active: `source .venv/bin/activate`.
 - **TS build order:** after editing `apps/editor-client`, run `npm run -w @ai-editor/editor-client build` before the extension typecheck.
 
-**Spec §3.2 refinement (v1 cut — read before Task 2):** v1 ships the **full catalog in the cache-stable system prompt**, with an **order-truncation budget guard** (over `AI_EDITOR_SKILLS_CATALOG_MAX_CHARS` → keep the first entries that fit + a "[N more not shown]" note; still query-independent ⇒ stays cache-stable, no tail relocation). The `Embedder`-ranked selection the spec describes is delivered as a **tested pure primitive** (`rank_skills_by_relevance`) but is **not wired** into the live path in v1 — wiring it (and relocating an over-budget, query-ranked subset to the tail) is deferred until catalog size demands it. This keeps the engine uncoupled from the embedder for a path no v1 user hits, while still building the ranking the scale story needs.
+**Spec §3.2 refinement (v1 cut — read before Task 2):** v1 ships the **full catalog in the cache-stable system prompt**, with an **order-truncation budget guard** (over `CRUCIBLE_SKILLS_CATALOG_MAX_CHARS` → keep the first entries that fit + a "[N more not shown]" note; still query-independent ⇒ stays cache-stable, no tail relocation). The `Embedder`-ranked selection the spec describes is delivered as a **tested pure primitive** (`rank_skills_by_relevance`) but is **not wired** into the live path in v1 — wiring it (and relocating an over-budget, query-ranked subset to the tail) is deferred until catalog size demands it. This keeps the engine uncoupled from the embedder for a path no v1 user hits, while still building the ranking the scale story needs.
 
 ---
 
@@ -433,24 +433,24 @@ from agentd.skills.config import skills_body_max_chars, skills_catalog_max_chars
 
 
 def test_flag_default_off(monkeypatch) -> None:
-    monkeypatch.delenv("AI_EDITOR_SKILLS_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_SKILLS_ENABLED", raising=False)
     assert is_skills_enabled() is False
 
 
 def test_flag_truthy(monkeypatch) -> None:
     for v in ("1", "true", "YES", "on"):
-        monkeypatch.setenv("AI_EDITOR_SKILLS_ENABLED", v)
+        monkeypatch.setenv("CRUCIBLE_SKILLS_ENABLED", v)
         assert is_skills_enabled() is True
 
 
 def test_flag_explicit_off(monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_SKILLS_ENABLED", "0")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_ENABLED", "0")
     assert is_skills_enabled() is False
 
 
 def test_budget_defaults(monkeypatch) -> None:
-    monkeypatch.delenv("AI_EDITOR_SKILLS_CATALOG_MAX_CHARS", raising=False)
-    monkeypatch.delenv("AI_EDITOR_SKILLS_BODY_MAX_CHARS", raising=False)
+    monkeypatch.delenv("CRUCIBLE_SKILLS_CATALOG_MAX_CHARS", raising=False)
+    monkeypatch.delenv("CRUCIBLE_SKILLS_BODY_MAX_CHARS", raising=False)
     assert skills_catalog_max_chars() == 16000
     assert skills_body_max_chars() == 20000
 ```
@@ -466,7 +466,7 @@ Look at the existing `is_memory_enabled` (around `controller_factory.py:31`) to 
 
 ```python
 def is_skills_enabled() -> bool:
-    return os.environ.get("AI_EDITOR_SKILLS_ENABLED", "").strip().lower() in {
+    return os.environ.get("CRUCIBLE_SKILLS_ENABLED", "").strip().lower() in {
         "1", "true", "yes", "on",
     }
 ```
@@ -486,11 +486,11 @@ def _pos_int(env: str, default: int) -> int:
 
 
 def skills_catalog_max_chars() -> int:
-    return _pos_int("AI_EDITOR_SKILLS_CATALOG_MAX_CHARS", 16000)
+    return _pos_int("CRUCIBLE_SKILLS_CATALOG_MAX_CHARS", 16000)
 
 
 def skills_body_max_chars() -> int:
-    return _pos_int("AI_EDITOR_SKILLS_BODY_MAX_CHARS", 20000)
+    return _pos_int("CRUCIBLE_SKILLS_BODY_MAX_CHARS", 20000)
 ```
 
 - [ ] **Step 5: Run the test to verify it passes**
@@ -502,7 +502,7 @@ Expected: PASS (4 tests).
 
 ```bash
 git add services/agentd-py/agentd/chat/controller_factory.py services/agentd-py/agentd/skills/config.py services/agentd-py/tests/test_skills_config.py
-git commit -m "feat(skills): AI_EDITOR_SKILLS_ENABLED flag + budget config knobs"
+git commit -m "feat(skills): CRUCIBLE_SKILLS_ENABLED flag + budget config knobs"
 ```
 
 ---
@@ -705,7 +705,7 @@ def test_read_skill_unknown_name_is_error(tmp_path: Path) -> None:
 
 
 def test_read_skill_caps_large_body(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_SKILLS_BODY_MAX_CHARS", "50")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_BODY_MAX_CHARS", "50")
     _write_skill(tmp_path, "big", "x" * 500)
     src = SkillToolSource(SkillCatalogLoader(tmp_path), {})
     out = asyncio.run(src.execute("read_skill", {"name": "big"}))
@@ -954,7 +954,7 @@ def _write_skill(ws: Path, name: str, desc: str) -> None:
 
 
 def test_skills_route_lists_catalog(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_SKILLS_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_ENABLED", "1")
     _write_skill(tmp_path, "git-commit", "Make a commit.")
     client = TestClient(build_app())
     r = client.get("/v1/skills", params={"workspace": str(tmp_path)})
@@ -963,7 +963,7 @@ def test_skills_route_lists_catalog(tmp_path, monkeypatch) -> None:
 
 
 def test_skills_route_gated_empty_when_off(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("AI_EDITOR_SKILLS_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_SKILLS_ENABLED", raising=False)
     _write_skill(tmp_path, "x", "y")
     client = TestClient(build_app())
     r = client.get("/v1/skills", params={"workspace": str(tmp_path)})
@@ -971,7 +971,7 @@ def test_skills_route_gated_empty_when_off(tmp_path, monkeypatch) -> None:
 
 
 def test_config_exposes_skills_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_SKILLS_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_ENABLED", "1")
     client = TestClient(build_app())
     assert client.get("/v1/config").json()["skills_enabled"] is True
 ```
@@ -1293,7 +1293,7 @@ Expected: all green.
 
 - [ ] **Step 3: Document in CLAUDE.md**
 
-Add a subsection "Agent Skills (P2, copilot-parity roadmap)" near the project-instructions/prompt-files section, covering: discovery dir (`.ai-editor/skills/<name>/SKILL.md`), the always-on catalog → `read_skill` → `active_skills` tail flow, scripts via `run_command`, `/skill` forced-load via `forced_skills`, the budget guard + dormant ranking primitive, and the flags (`AI_EDITOR_SKILLS_ENABLED` default off, `*_CATALOG_MAX_CHARS`, `*_BODY_MAX_CHARS`). Mirror the depth of the existing P1 subsection.
+Add a subsection "Agent Skills (P2, copilot-parity roadmap)" near the project-instructions/prompt-files section, covering: discovery dir (`.ai-editor/skills/<name>/SKILL.md`), the always-on catalog → `read_skill` → `active_skills` tail flow, scripts via `run_command`, `/skill` forced-load via `forced_skills`, the budget guard + dormant ranking primitive, and the flags (`CRUCIBLE_SKILLS_ENABLED` default off, `*_CATALOG_MAX_CHARS`, `*_BODY_MAX_CHARS`). Mirror the depth of the existing P1 subsection.
 
 - [ ] **Step 4: Commit**
 
@@ -1306,13 +1306,13 @@ git commit -m "docs(skills): document P2 agent-skills architecture in CLAUDE.md"
 
 ### Task 12: Live smoke (manual, per spec §6)
 
-Not a code task — drive a real backend + dev host. Mirror the P1 live-smoke recipe (`scripts/stress/start-backend.sh` with `AI_EDITOR_SKILLS_ENABLED=1`, then the VS Code dev host via CDP).
+Not a code task — drive a real backend + dev host. Mirror the P1 live-smoke recipe (`scripts/stress/start-backend.sh` with `CRUCIBLE_SKILLS_ENABLED=1`, then the VS Code dev host via CDP).
 
 - [ ] **1. Model-driven activation:** drop `.ai-editor/skills/git-commit/SKILL.md` with a distinctive directive; a matching chat turn calls `read_skill` and the directive changes behavior (confirm in the controller-turn artifact).
 - [ ] **2. Script execution:** a skill body that says to run `scripts/check.sh` → the model emits `run_command` for it and it runs through the shell-policy gate.
 - [ ] **3. Forced-load:** `/git-commit` in the composer → the body is active from turn 1 (artifact shows `active_skills` populated at iteration -00) without the model choosing it.
 - [ ] **4. Self-updating:** add a second skill mid-session → the next turn's catalog includes it (no restart).
-- [ ] **5. Kill-switch:** `AI_EDITOR_SKILLS_ENABLED=0` → no catalog block, `read_skill` absent from tools, composer skills affordance gone.
+- [ ] **5. Kill-switch:** `CRUCIBLE_SKILLS_ENABLED=0` → no catalog block, `read_skill` absent from tools, composer skills affordance gone.
 
 ---
 

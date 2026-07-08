@@ -6,7 +6,7 @@
 
 ## Problem
 
-`run_command` is gated only by a static allowlist (`AI_EDITOR_SHELL_ALLOWLIST` = `pytest,npm,cargo,ruff,mypy,tsc,eslint`). This is the wrong security model:
+`run_command` is gated only by a static allowlist (`CRUCIBLE_SHELL_ALLOWLIST` = `pytest,npm,cargo,ruff,mypy,tsc,eslint`). This is the wrong security model:
 
 - **Over-permits:** an allowlisted binary accepts arbitrary arguments — `python -c "<anything>"` or `pytest --co -p evil` is full code execution.
 - **Under-permits:** legitimate commands the planner emits (e.g. `python -c "import agentd…"` import checks) are silently blocked, which destabilizes the verify phase (the model flails when its verify command can't run).
@@ -29,9 +29,9 @@ The user should be in control: unless they have granted blanket permission for a
 
 ## Policy model
 
-`AI_EDITOR_SHELL_POLICY` ∈ {`ask`, `allow_all`}, default `ask` — mirrors `AI_EDITOR_SCOPE_POLICY`. Per-task override via a `shell_policy` field on the task submission / resume payload (env/workspace default < per-task override).
+`CRUCIBLE_SHELL_POLICY` ∈ {`ask`, `allow_all`}, default `ask` — mirrors `CRUCIBLE_SCOPE_POLICY`. Per-task override via a `shell_policy` field on the task submission / resume payload (env/workspace default < per-task override).
 
-The static `AI_EDITOR_SHELL_ALLOWLIST` is **removed**. In `ask` mode every command prompts until remembered; in `allow_all` mode nothing prompts.
+The static `CRUCIBLE_SHELL_ALLOWLIST` is **removed**. In `ask` mode every command prompts until remembered; in `allow_all` mode nothing prompts.
 
 ## Gate mechanism (mirrors the scope gate)
 
@@ -96,7 +96,7 @@ The approval UI builds the rule from the user-picked scope: `exact` → `shlex.j
 ## Error handling
 
 - **Reject** → callback returns a rejected decision → `run_command` returns a tool-result error string `"Command rejected by user: <cmd>"` → the agent reads it and adapts within the step (same shape as the old allowlist rejection). No step/task kill.
-- **Timeout** `AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC` (default `0` = wait forever, like scope). On timeout → treat as reject.
+- **Timeout** `CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC` (default `0` = wait forever, like scope). On timeout → treat as reject.
 - **Backend restart mid-gate** → in-memory future lost; task orphaned at `AWAITING_COMMAND_DECISION`. Documented limitation; recoverable via resume.
 - **One pending decision per task** — the `ToolLoop` is sequential within a step, so at most one command awaits approval at a time.
 
@@ -104,9 +104,9 @@ The approval UI builds the rule from the user-picked scope: `exact` → `shlex.j
 
 Task execution `ToolLoop` only. The planning registry is read-only (no `run_command`); inline changes skip the verify phase. No gate needed elsewhere.
 
-## Removal of `AI_EDITOR_SHELL_ALLOWLIST`
+## Removal of `CRUCIBLE_SHELL_ALLOWLIST`
 
-Delete the env read in `tools/registry.py`, the `allowlist` param + check in `tools/shell.py`, and the schema mention. Remove it from `start-backend.sh`'s env block. Update `CLAUDE.md` (Key Configuration) to document `AI_EDITOR_SHELL_POLICY` in its place.
+Delete the env read in `tools/registry.py`, the `allowlist` param + check in `tools/shell.py`, and the schema mention. Remove it from `start-backend.sh`'s env block. Update `CLAUDE.md` (Key Configuration) to document `CRUCIBLE_SHELL_POLICY` in its place.
 
 ## Testing
 

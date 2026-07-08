@@ -7,7 +7,7 @@ installer (`apps/vscode-extension/src/runtime/`):
 
 1. The runtime installer auto-installs Python (`pyright`) and TypeScript
    (`typescript-language-server`) LSPs via `npm install`, but never installs
-   `rust-analyzer`. Today `AI_EDITOR_LSP_RS_CMD` defaults to the bare string
+   `rust-analyzer`. Today `CRUCIBLE_LSP_RS_CMD` defaults to the bare string
    `"rust-analyzer"` (a PATH lookup) in both `backend-process.ts` and
    `indexer-rs/src/config.rs`. If the user doesn't already have rust-analyzer
    installed system-wide, the indexer silently skips Rust `Calls`/`Inherits`
@@ -15,8 +15,8 @@ installer (`apps/vscode-extension/src/runtime/`):
    worse experience for Rust workspaces, and this repo itself has a Rust package
    at `services/indexer-rs`).
 2. The memory harness (compaction + cross-session recall/consolidation +
-   reranker) ships default-OFF (`AI_EDITOR_MEMORY_ENABLED`,
-   `AI_EDITOR_MEMORY_RERANKER`). We want new installs to get it on by default.
+   reranker) ships default-OFF (`CRUCIBLE_MEMORY_ENABLED`,
+   `CRUCIBLE_MEMORY_RERANKER`). We want new installs to get it on by default.
 
 ## Part 1 — rust-analyzer as a 4th binary-download component
 
@@ -65,7 +65,7 @@ binary, no member search needed) for `kind="rust-analyzer"` on non-Windows.
   `BIN_NAME`. The existing generic binary-component branch in `installOne`
   requires no new logic.
 - **`apps/vscode-extension/src/runtime/backend-process.ts`**: change the
-  `AI_EDITOR_LSP_RS_CMD` default from the hardcoded bare string
+  `CRUCIBLE_LSP_RS_CMD` default from the hardcoded bare string
   `"rust-analyzer"` to: use `binPath(runtimeDir, "rust-analyzer", platform)`
   when that file exists (mirrors how `PY_CMD`/`TS_CMD` already resolve to
   locally-installed npm-bin paths when `node_modules` exists), else fall back
@@ -92,7 +92,7 @@ binary, no member search needed) for `kind="rust-analyzer"` on non-Windows.
   platform) rather than a bespoke new test.
 - `installer.ts`: extend existing component-table-driven tests with a
   `rust-analyzer` case (download+checksum+chmod path); add a focused test for
-  `backend-process.ts`'s new `AI_EDITOR_LSP_RS_CMD` resolution (binary present
+  `backend-process.ts`'s new `CRUCIBLE_LSP_RS_CMD` resolution (binary present
   → local path; absent → bare command fallback).
 
 ## Part 2 — memory harness enabled by default
@@ -100,16 +100,16 @@ binary, no member search needed) for `kind="rust-analyzer"` on non-Windows.
 ### Where the default actually lives
 
 Traced end to end: `apps/vscode-extension/src/runtime/vscode-runtime.ts`'s
-`extraEnvFromSettings()` only injects `AI_EDITOR_MEMORY_ENABLED`/
-`AI_EDITOR_MEMORY_RERANKER` into the spawned backend's env when the
+`extraEnvFromSettings()` only injects `CRUCIBLE_MEMORY_ENABLED`/
+`CRUCIBLE_MEMORY_RERANKER` into the spawned backend's env when the
 corresponding VS Code setting has been **explicitly** touched by the user
 (`cfg.inspect(...)` checked for a user/workspace value, not just "differs from
 schema default"). If untouched, the env var is never set, and
 `services/agentd-py/agentd/memory/config.py` governs:
 
 ```python
-enabled=env.get("AI_EDITOR_MEMORY_ENABLED", "").lower() in _TRUTHY   # line 29
-reranker_enabled=... AI_EDITOR_MEMORY_RERANKER ...                    # line 42
+enabled=env.get("CRUCIBLE_MEMORY_ENABLED", "").lower() in _TRUTHY   # line 29
+reranker_enabled=... CRUCIBLE_MEMORY_RERANKER ...                    # line 42
 ```
 
 Both default to off (`""` → `False`) when unset. This is confirmed to be the
@@ -122,7 +122,7 @@ sufficient to change real behavior everywhere.
 
 - **`services/agentd-py/agentd/memory/config.py`**: flip the default-when-unset
   for both `enabled` (line 29) and `reranker_enabled` (line 42) from off to on.
-  The kill-switch semantics stay identical — an explicit `AI_EDITOR_MEMORY_ENABLED=0
+  The kill-switch semantics stay identical — an explicit `CRUCIBLE_MEMORY_ENABLED=0
   /false/no/off` (and same for `_RERANKER`) still disables it; only the
   unset-fallback flips.
 - **`apps/vscode-extension/package.json`**: flip the `contributes.configuration`
@@ -174,7 +174,7 @@ sufficient to change real behavior everywhere.
   CLI args, never hardcoded).
 - A one-time in-editor notice when memory turns on for an existing install —
   explicitly discussed and declined.
-- Any change to `AI_EDITOR_MEMORY_GRAPH_GROUNDING` (already on by default) or
+- Any change to `CRUCIBLE_MEMORY_GRAPH_GROUNDING` (already on by default) or
   the numeric/tuning memory env vars (unaffected by this change).
 - Extending `ComponentSpec` with a formal "extras" field — the pip target
   string stays hardcoded in `installer.ts`, consistent with today.

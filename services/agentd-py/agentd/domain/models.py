@@ -826,9 +826,9 @@ class TaskCreateRequest(BaseModel):
     mode: Literal["inline", "file_edit", "project_edit", "autonomous"] = "project_edit"
     budget: TaskBudget = Field(default_factory=TaskBudget)
     initial_explore_context: list[dict[str, object]] | None = None
-    # `None` = use AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT env default (default: true).
+    # `None` = use CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT env default (default: true).
     step_review_auto_accept: bool | None = None
-    shell_policy: ShellPolicy | None = None  # per-task override of AI_EDITOR_SHELL_POLICY
+    shell_policy: ShellPolicy | None = None  # per-task override of CRUCIBLE_SHELL_POLICY
 
 
 class TaskCreateResponse(BaseModel):

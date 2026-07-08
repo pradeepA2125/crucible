@@ -54,7 +54,7 @@ class GroqJsonTransport(ModelJsonTransport):
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
         self._reasoning_effort = reasoning_effort or os.getenv(
-            "AI_EDITOR_GROQ_REASONING_EFFORT", "high"
+            "CRUCIBLE_GROQ_REASONING_EFFORT", "high"
         )
 
         if completions_client is not None:

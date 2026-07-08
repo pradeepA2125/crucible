@@ -14,7 +14,7 @@ def _write_skill(ws: Path, name: str, desc: str) -> None:
 
 
 def test_skills_route_lists_catalog(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_SKILLS_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_ENABLED", "1")
     _write_skill(tmp_path, "git-commit", "Make a commit.")
     client = TestClient(build_app(str(tmp_path)))
     r = client.get("/v1/skills", params={"workspace": str(tmp_path)})
@@ -23,7 +23,7 @@ def test_skills_route_lists_catalog(tmp_path, monkeypatch) -> None:
 
 
 def test_skills_route_gated_empty_when_off(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("AI_EDITOR_SKILLS_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_SKILLS_ENABLED", raising=False)
     _write_skill(tmp_path, "x", "y")
     client = TestClient(build_app(str(tmp_path)))
     r = client.get("/v1/skills", params={"workspace": str(tmp_path)})
@@ -31,6 +31,6 @@ def test_skills_route_gated_empty_when_off(tmp_path, monkeypatch) -> None:
 
 
 def test_config_exposes_skills_enabled(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_SKILLS_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_ENABLED", "1")
     client = TestClient(build_app(str(tmp_path)))
     assert client.get("/v1/config").json()["skills_enabled"] is True

@@ -2,7 +2,7 @@
 """Backend HTTP smoke for the Controller UX Interaction Rules
 (docs/superpowers/specs/2026-06-17-controller-ux-interaction-rules-design.md).
 
-Drives a LIVE backend started with AI_EDITOR_CHAT_CONTROLLER=1 and asserts the
+Drives a LIVE backend started with CRUCIBLE_CHAT_CONTROLLER=1 and asserts the
 *backend-observable, behavior-deterministic* spec rules against the real routes —
 NOT unit stubs. The UI-only rules (§5 input rows, §6 ModeGate field, §7 nav-lock,
 §10 live-resume overlay) live in the companion dev-host checklist
@@ -189,7 +189,7 @@ async def test_live_idle_turn_active(client: httpx.AsyncClient, thread_id: str) 
     live = await get_live(client, thread_id)
     if "turn_active" not in live:
         record(FAIL, "§4", "/live response has no `turn_active` key — is "
-                           "AI_EDITOR_CHAT_CONTROLLER=1? (legacy ChatAgent omits it)")
+                           "CRUCIBLE_CHAT_CONTROLLER=1? (legacy ChatAgent omits it)")
         return
     if live["turn_active"] is False:
         record(PASS, "§4", "idle thread → turn_active=false (key present)")
@@ -545,7 +545,7 @@ async def main() -> int:
             await client.get(f"{BASE}/health")
         except httpx.ConnectError:
             print(f"❌ Cannot reach {BASE} — start the backend with "
-                  "AI_EDITOR_CHAT_CONTROLLER=1 first.")
+                  "CRUCIBLE_CHAT_CONTROLLER=1 first.")
             return 2
 
         # §4 idle + lifecycle, §3, §1 detachment, §11 stop run on dedicated threads so

@@ -20,9 +20,9 @@ def test_default_model_unknown_backend_raises() -> None:
 
 
 def test_resolve_model_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_GEMINI_MODEL", "gemini-flash-latest")
+    monkeypatch.setenv("CRUCIBLE_GEMINI_MODEL", "gemini-flash-latest")
     assert resolve_model("gemini") == "gemini-flash-latest"
-    monkeypatch.delenv("AI_EDITOR_GEMINI_MODEL")
+    monkeypatch.delenv("CRUCIBLE_GEMINI_MODEL")
     assert resolve_model("gemini") == "gemini-3-flash-preview"
 
 

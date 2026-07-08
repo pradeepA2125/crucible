@@ -6,7 +6,7 @@ tracks file modification times so only changed files are re-embedded.
 Requires the optional `semantic` extras:
     pip install -e ".[semantic]"   (lancedb, sentence-transformers)
 
-When AI_EDITOR_SEMANTIC_RETRIEVAL is not set or false, this module is never
+When CRUCIBLE_SEMANTIC_RETRIEVAL is not set or false, this module is never
 imported and the retrieval pipeline falls back to pure graph scoring.
 """
 from __future__ import annotations
@@ -79,7 +79,7 @@ class SemanticIndex:
     @classmethod
     def from_env(cls, workspace_path: str | Path | None = None) -> "SemanticIndex":
         import os
-        raw_path = os.getenv("AI_EDITOR_VECTOR_INDEX_PATH", ".ai-editor/vector-index")
+        raw_path = os.getenv("CRUCIBLE_VECTOR_INDEX_PATH", ".ai-editor/vector-index")
         index_path: Path
         if Path(raw_path).is_absolute():
             index_path = Path(raw_path)
@@ -89,8 +89,8 @@ class SemanticIndex:
             index_path = Path(raw_path)
         return cls(
             index_path=index_path,
-            model_name=os.getenv("AI_EDITOR_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
-            embed_batch_size=int(os.getenv("AI_EDITOR_EMBED_BATCH_SIZE", "64")),
+            model_name=os.getenv("CRUCIBLE_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
+            embed_batch_size=int(os.getenv("CRUCIBLE_EMBED_BATCH_SIZE", "64")),
         )
 
     # ── Public API ─────────────────────────────────────────────────────────

@@ -593,7 +593,7 @@ git commit -m "style(memory): migrate inspector palette onto shared design token
 - Modify: `apps/vscode-extension/src/extension.ts` (wire the new handler to `aiEditor.openMemoryPanel`)
 
 **Interfaces:**
-- Consumes: existing `aiEditor.openMemoryPanel` VS Code command (`extension.ts:392`, already gracefully degrades when `AI_EDITOR_MEMORY_ENABLED` is off).
+- Consumes: existing `aiEditor.openMemoryPanel` VS Code command (`extension.ts:392`, already gracefully degrades when `CRUCIBLE_MEMORY_ENABLED` is off).
 - Produces: `OpenMemoryPanelHandler = () => void`, a 25th constructor parameter on `ChatPanel` (after `onOpenSettings`).
 
 - [ ] **Step 1: Add a `db` icon to `Icon.tsx`**
@@ -662,7 +662,7 @@ In `apps/vscode-extension/webview-ui/src/components/ThreadView.tsx`, immediately
 
 ```tsx
         {/* Memory Inspector shortcut — opens the standalone panel (aiEditor.openMemoryPanel),
-            which already degrades gracefully if AI_EDITOR_MEMORY_ENABLED is off. */}
+            which already degrades gracefully if CRUCIBLE_MEMORY_ENABLED is off. */}
         <button
           type="button"
           onClick={() => vscode.postMessage({ type: "openMemoryPanel" })}
@@ -2372,8 +2372,8 @@ Expected: PASS — check the summary line, not the exit code of any piped comman
 
 - [ ] **Step 3: Live smoke in the dev host**
 
-Follow CLAUDE.md's "Opening the VS Code extension development host" + "Starting the backend for local testing" recipes with `AI_EDITOR_CHAT_CONTROLLER=1` and `AI_EDITOR_MEMORY_ENABLED=1` set. Verify:
-- The memory-inspector header icon opens the panel (and, with `AI_EDITOR_MEMORY_ENABLED` unset, shows the graceful info message instead).
+Follow CLAUDE.md's "Opening the VS Code extension development host" + "Starting the backend for local testing" recipes with `CRUCIBLE_CHAT_CONTROLLER=1` and `CRUCIBLE_MEMORY_ENABLED=1` set. Verify:
+- The memory-inspector header icon opens the panel (and, with `CRUCIBLE_MEMORY_ENABLED` unset, shows the graceful info message instead).
 - The memory inspector's Recall Trace / Browser tabs render on the shared dark palette (no visibly different slate tone from chat/settings).
 - Typing `/` in the composer shows a live dropdown with prompt + skill rows, badged; arrow keys + Enter insert the name without sending; a `/name args` typed blind (no dropdown navigation) still sends/expands as before.
 - Typing `@` shows a live file dropdown; selecting a file inserts `@path`; sending a message with a mention produces a response that reflects the file's content; the sent message renders `@path` as a clickable link that opens the file in the editor.

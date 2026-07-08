@@ -43,9 +43,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Seconds to hold a per-edit review gate open before auto-rejecting (0 = forever).
-# Mirrors AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC; guards against a dropped SSE client
+# Mirrors CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC; guards against a dropped SSE client
 # leaving the turn hung on a future that never resolves.
-_EDIT_DECISION_TIMEOUT_ENV = "AI_EDITOR_CHAT_EDIT_DECISION_TIMEOUT_SEC"
+_EDIT_DECISION_TIMEOUT_ENV = "CRUCIBLE_CHAT_EDIT_DECISION_TIMEOUT_SEC"
 
 
 def _explore_context_from_history(
@@ -115,7 +115,7 @@ class ChatController:
         self._task_subsystem_enabled = is_task_subsystem_enabled()
         # run_command gating for EDIT turns (DECIDE bars it entirely — see
         # controller_loop._decide_state_change_correction). Mirrors the task path's
-        # AI_EDITOR_SHELL_POLICY / AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC.
+        # CRUCIBLE_SHELL_POLICY / CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC.
         self._shell_policy = shell_policy
         self._command_decision_timeout_sec = max(0.0, command_decision_timeout_sec)
         # Per-thread controller conversation history — the cache prefix replayed as
@@ -132,7 +132,7 @@ class ChatController:
         # Per-thread held-open command-approval future (run_command gate). Fired by
         # resolve_command; same lifecycle as _pending_edit.
         self._pending_command: dict[str, asyncio.Future[CommandDecision]] = {}
-        # MCP: process-scoped connection manager (None unless AI_EDITOR_MCP_ENABLED —
+        # MCP: process-scoped connection manager (None unless CRUCIBLE_MCP_ENABLED —
         # constructed in select_chat_handler, connected in main.py's startup hook).
         self._mcp_manager = mcp_manager
         # thread_id → future for the in-flight mcp_tool gate; same lifecycle as
@@ -424,7 +424,7 @@ class ChatController:
         # message per tool result so a switch/reopen mid-turn reconstructs them.
         pills_cb = partial(self._persist_inflight_pills, thread_id, turn_id) \
             if turn_id else None
-        max_iters = int(os.environ.get("AI_EDITOR_CONTROLLER_MAX_ITERS", "500"))
+        max_iters = int(os.environ.get("CRUCIBLE_CONTROLLER_MAX_ITERS", "500"))
         try:
             outcome = await loop.run(
                 plan_context, max_iters=max_iters, seed_history=seed_history,
@@ -940,7 +940,7 @@ class ChatController:
             return
         if mode in ("create_task", "resume") and not self._task_subsystem_enabled:
             raise ValueError(
-                "task subsystem is disabled (AI_EDITOR_TASK_SUBSYSTEM=0) — only edit/explain "
+                "task subsystem is disabled (CRUCIBLE_TASK_SUBSYSTEM=0) — only edit/explain "
                 "are available; the controller handles changes inline.")
         # Friendly record of the choice — read the option label from the gate BEFORE
         # clearing it so the breadcrumb reads "▸ You chose: Edit inline now" not a raw mode.

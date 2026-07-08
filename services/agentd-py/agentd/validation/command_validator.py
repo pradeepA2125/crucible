@@ -47,13 +47,13 @@ class CommandValidator:
 
     @classmethod
     def from_env(cls) -> "CommandValidator":
-        raw = os.getenv("AI_EDITOR_VALIDATION_COMMANDS_JSON", "").strip()
+        raw = os.getenv("CRUCIBLE_VALIDATION_COMMANDS_JSON", "").strip()
         if not raw:
             return cls(configured_commands=None)
 
         payload = json.loads(raw)
         if not isinstance(payload, list):
-            msg = "AI_EDITOR_VALIDATION_COMMANDS_JSON must be a JSON array"
+            msg = "CRUCIBLE_VALIDATION_COMMANDS_JSON must be a JSON array"
             raise ValueError(msg)
 
         commands: list[ValidationCommand] = []
@@ -99,7 +99,7 @@ class CommandValidator:
                     source="validator",
                     message=(
                         "No validation commands configured or detected. "
-                        "Set AI_EDITOR_VALIDATION_COMMANDS_JSON or ensure supported project tooling exists."
+                        "Set CRUCIBLE_VALIDATION_COMMANDS_JSON or ensure supported project tooling exists."
                     ),
                     level="error",
                 )

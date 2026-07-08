@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the static `AI_EDITOR_SHELL_ALLOWLIST` with a policy-driven, per-command user-approval gate so no shell command runs without explicit (or remembered) consent unless the user opted into `allow_all`.
+**Goal:** Replace the static `CRUCIBLE_SHELL_ALLOWLIST` with a policy-driven, per-command user-approval gate so no shell command runs without explicit (or remembered) consent unless the user opted into `allow_all`.
 
 **Architecture:** Mirror the existing scope-extension gate. `run_command` calls an injected approval callback before executing; in `ask` mode the callback pauses the task (`AWAITING_COMMAND_DECISION`), broadcasts an SSE event, and awaits a future resolved by a new decision route. Approvals can be remembered per-workspace (JSON store) at a user-chosen breadth (exact / prefix / binary).
 
@@ -23,7 +23,7 @@
 - `agentd/tools/registry.py` — modify: accept `command_approval_callback`, call it in the `run_command` branch; drop allowlist.
 - `agentd/tools/shell.py` — modify: remove `allowlist` param + check.
 - `agentd/api/routes.py` — modify: `POST /tasks/{id}/command-decision`; `_in_flight_command` guard.
-- construction site (`agentd/main.py` / `agentd/chat/app_factory.py`) — modify: read `AI_EDITOR_SHELL_POLICY`, pass to orchestrator.
+- construction site (`agentd/main.py` / `agentd/chat/app_factory.py`) — modify: read `CRUCIBLE_SHELL_POLICY`, pass to orchestrator.
 
 **Client (`apps/`)**
 - `editor-client/src/contracts/task-contracts.ts` — modify: `command_approval_requested` in `StreamEvent`; `CommandDecisionSchema`; `command_card` message type.
@@ -32,7 +32,7 @@
 - `vscode-extension/src/chat-panel.ts` + `media/chat.js` — modify: render command card + scope radio.
 
 **Config/docs**
-- `.env`, `scripts/stress/start-backend.sh`, `CLAUDE.md` — remove `AI_EDITOR_SHELL_ALLOWLIST`, document `AI_EDITOR_SHELL_POLICY`.
+- `.env`, `scripts/stress/start-backend.sh`, `CLAUDE.md` — remove `CRUCIBLE_SHELL_ALLOWLIST`, document `CRUCIBLE_SHELL_POLICY`.
 
 > **Phasing:** Tasks 1–8 deliver a fully working gate testable via `curl` (no UI needed). Tasks 9–11 add the VS Code UI. Task 12 is the end-to-end integration test.
 
@@ -128,7 +128,7 @@ Add to `TaskExecutionState` (after `pending_step_review`):
 Add `shell_policy` to **both** `TaskCreateRequest` (backs `POST /v1/tasks`) and `TaskRecord` (the persisted model — the engine callback in Task 4 reads `task.shell_policy`):
 
 ```python
-    shell_policy: ShellPolicy | None = None  # per-task override of AI_EDITOR_SHELL_POLICY
+    shell_policy: ShellPolicy | None = None  # per-task override of CRUCIBLE_SHELL_POLICY
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -564,7 +564,7 @@ Expected: FAIL — callback param not accepted / not consulted.
 
 - [ ] **Step 3: Implement**
 
-In `ToolRegistry.__init__` add a parameter `command_approval_callback=None` and store `self._command_approval_callback = command_approval_callback`. Remove the `AI_EDITOR_SHELL_ALLOWLIST` env read and `self._shell_allowlist` (lines ~43–47) and the allowlist mention in the tool schema string (~line 109,116).
+In `ToolRegistry.__init__` add a parameter `command_approval_callback=None` and store `self._command_approval_callback = command_approval_callback`. Remove the `CRUCIBLE_SHELL_ALLOWLIST` env read and `self._shell_allowlist` (lines ~43–47) and the allowlist mention in the tool schema string (~line 109,116).
 
 Replace the `run_command` branch (registry.py:270–283) with:
 
@@ -736,8 +736,8 @@ git commit -m "feat(api): POST /tasks/{id}/command-decision route"
 In `agentd/main.py` (and `app_factory.py` if it builds an orchestrator), where `AgentOrchestrator(...)` is built, add:
 
 ```python
-    shell_policy=ShellPolicy(os.environ.get("AI_EDITOR_SHELL_POLICY", "ask")),
-    command_decision_timeout_sec=float(os.environ.get("AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC", "0")),
+    shell_policy=ShellPolicy(os.environ.get("CRUCIBLE_SHELL_POLICY", "ask")),
+    command_decision_timeout_sec=float(os.environ.get("CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC", "0")),
 ```
 
 (import `ShellPolicy`, `os`).
@@ -755,32 +755,32 @@ Expected: PASS (allow_all test still green; add a per-task-override variant if u
 
 ```bash
 git add services/agentd-py/agentd/main.py services/agentd-py/agentd/chat/app_factory.py services/agentd-py/agentd/api/routes.py services/agentd-py/agentd/domain/models.py
-git commit -m "feat(engine): AI_EDITOR_SHELL_POLICY env + per-task shell_policy override"
+git commit -m "feat(engine): CRUCIBLE_SHELL_POLICY env + per-task shell_policy override"
 ```
 
 ---
 
-## Task 8: Remove `AI_EDITOR_SHELL_ALLOWLIST` from config/docs
+## Task 8: Remove `CRUCIBLE_SHELL_ALLOWLIST` from config/docs
 
 **Files:**
 - Modify: `scripts/stress/start-backend.sh`, `.env`, `CLAUDE.md`
 
 - [ ] **Step 1: Remove the env line + script export**
 
-- In `.env`: delete the `AI_EDITOR_SHELL_ALLOWLIST=...` line (line 88).
-- In `scripts/stress/start-backend.sh`: remove the `export AI_EDITOR_SHELL_ALLOWLIST=...` line (search it). Add `export AI_EDITOR_SHELL_POLICY="${AI_EDITOR_SHELL_POLICY:-ask}"` in the same env block.
-- In `CLAUDE.md` "Tool loop" config section: replace the `AI_EDITOR_SHELL_ALLOWLIST` bullet with `AI_EDITOR_SHELL_POLICY` (`ask` default / `allow_all`) + `AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC` and a one-line description of the gate.
+- In `.env`: delete the `CRUCIBLE_SHELL_ALLOWLIST=...` line (line 88).
+- In `scripts/stress/start-backend.sh`: remove the `export CRUCIBLE_SHELL_ALLOWLIST=...` line (search it). Add `export CRUCIBLE_SHELL_POLICY="${CRUCIBLE_SHELL_POLICY:-ask}"` in the same env block.
+- In `CLAUDE.md` "Tool loop" config section: replace the `CRUCIBLE_SHELL_ALLOWLIST` bullet with `CRUCIBLE_SHELL_POLICY` (`ask` default / `allow_all`) + `CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC` and a one-line description of the gate.
 
 - [ ] **Step 2: Verify nothing references the removed var**
 
-Run: `cd services/agentd-py && grep -rn "AI_EDITOR_SHELL_ALLOWLIST\|_shell_allowlist\|allowlist" agentd/ | grep -v test`
+Run: `cd services/agentd-py && grep -rn "CRUCIBLE_SHELL_ALLOWLIST\|_shell_allowlist\|allowlist" agentd/ | grep -v test`
 Expected: no remaining functional references (only comments/history, if any — remove those too).
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .env scripts/stress/start-backend.sh CLAUDE.md
-git commit -m "chore: replace AI_EDITOR_SHELL_ALLOWLIST with AI_EDITOR_SHELL_POLICY"
+git commit -m "chore: replace CRUCIBLE_SHELL_ALLOWLIST with CRUCIBLE_SHELL_POLICY"
 ```
 
 > **Checkpoint:** the gate is now fully functional and testable via `curl` (submit a task in `ask` mode, watch for the `command_approval_requested` SSE event, `POST /command-decision`).

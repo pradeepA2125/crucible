@@ -400,7 +400,7 @@ class PlanningToolRegistry:
     ) -> None:
         self._real_path = real_path
         self._semantic_index = semantic_index
-        self._ripgrep_cmd = os.environ.get("AI_EDITOR_RIPGREP_CMD", "rg")
+        self._ripgrep_cmd = os.environ.get("CRUCIBLE_RIPGREP_CMD", "rg")
 
     def definitions(self) -> list[ToolDefinition]:
         tools = [
@@ -598,7 +598,7 @@ from agentd.reasoning.contracts import ReasoningEngine
 
 logger = logging.getLogger(__name__)
 
-_MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "4000"))
+_MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("CRUCIBLE_TOOL_RESULT_MAX_CHARS", "4000"))
 
 
 class PlanningBudgetExceededError(Exception):

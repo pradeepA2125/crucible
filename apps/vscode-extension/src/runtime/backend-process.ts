@@ -9,7 +9,7 @@ export interface BackendSettings {
   model: string;
   apiKey?: { envVar: string; value: string };   // from SecretStorage, spawn-env only
   extraEnv?: Record<string, string>;   // policies/flags from VS Code settings
-  skillsDisabled?: string[];           // → AI_EDITOR_SKILLS_DISABLED (comma-joined)
+  skillsDisabled?: string[];           // → CRUCIBLE_SKILLS_DISABLED (comma-joined)
 }
 export interface ChildHandle {
   pid: number;
@@ -29,11 +29,11 @@ export interface ProcessDeps {
 
 // Same table as agentd/providers/factory.py::MODEL_ENV_VAR.
 export const MODEL_ENV_VAR: Record<string, string> = {
-  anthropic: "AI_EDITOR_ANTHROPIC_MODEL", gemini: "AI_EDITOR_GEMINI_MODEL",
-  huggingface: "AI_EDITOR_HUGGINGFACE_MODEL", groq: "AI_EDITOR_GROQ_MODEL",
-  openrouter: "AI_EDITOR_OPENROUTER_MODEL", watsonx: "AI_EDITOR_WATSONX_MODEL",
-  ollama: "AI_EDITOR_OLLAMA_MODEL", turboquant: "AI_EDITOR_TURBOQUANT_MODEL",
-  openai: "AI_EDITOR_OPENAI_MODEL",
+  anthropic: "CRUCIBLE_ANTHROPIC_MODEL", gemini: "CRUCIBLE_GEMINI_MODEL",
+  huggingface: "CRUCIBLE_HUGGINGFACE_MODEL", groq: "CRUCIBLE_GROQ_MODEL",
+  openrouter: "CRUCIBLE_OPENROUTER_MODEL", watsonx: "CRUCIBLE_WATSONX_MODEL",
+  ollama: "CRUCIBLE_OLLAMA_MODEL", turboquant: "CRUCIBLE_TURBOQUANT_MODEL",
+  openai: "CRUCIBLE_OPENAI_MODEL",
 };
 
 const HEALTH_ATTEMPTS = 60;
@@ -45,31 +45,31 @@ export function buildBackendEnv(
 ): Record<string, string> {
   const agentdDir = join(workspace, ".agentd");
   const built: Record<string, string> = {
-    AI_EDITOR_REASONING_BACKEND: settings.backend,
-    AI_EDITOR_WORKSPACE_PATH: workspace,
-    AI_EDITOR_PORT: String(port),
-    AI_EDITOR_DB_PATH: join(agentdDir, "agentd.sqlite3"),
-    AI_EDITOR_CHAT_DB_PATH: join(agentdDir, "chat.sqlite3"),
-    AI_EDITOR_SHADOW_ROOT: join(agentdDir, "shadows"),
-    AI_EDITOR_LOG_FILE: join(agentdDir, "agentd.log"),
-    AI_EDITOR_ARTIFACTS_ROOT: join(agentdDir, "artifacts"),
-    AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".ai-editor", "index-snapshot.json"),
-    AI_EDITOR_RIPGREP_CMD: binPath(runtimeDir, "rg", platform),
-    AI_EDITOR_CHAT_CONTROLLER: "1",
-    AI_EDITOR_SKILLS_ENABLED: "1",
-    AI_EDITOR_MCP_ENABLED: "1",
-    AI_EDITOR_DOC_WRITE_ENABLED: "1",
-    AI_EDITOR_SEMANTIC_RETRIEVAL: "true",
-    AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT: "false",
-    AI_EDITOR_SHELL_POLICY: "ask",
-    AI_EDITOR_SCOPE_POLICY: "ask",
-    AI_EDITOR_SCOPE_TRIGGER: "any",
+    CRUCIBLE_REASONING_BACKEND: settings.backend,
+    CRUCIBLE_WORKSPACE_PATH: workspace,
+    CRUCIBLE_PORT: String(port),
+    CRUCIBLE_DB_PATH: join(agentdDir, "agentd.sqlite3"),
+    CRUCIBLE_CHAT_DB_PATH: join(agentdDir, "chat.sqlite3"),
+    CRUCIBLE_SHADOW_ROOT: join(agentdDir, "shadows"),
+    CRUCIBLE_LOG_FILE: join(agentdDir, "agentd.log"),
+    CRUCIBLE_ARTIFACTS_ROOT: join(agentdDir, "artifacts"),
+    CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".ai-editor", "index-snapshot.json"),
+    CRUCIBLE_RIPGREP_CMD: binPath(runtimeDir, "rg", platform),
+    CRUCIBLE_CHAT_CONTROLLER: "1",
+    CRUCIBLE_SKILLS_ENABLED: "1",
+    CRUCIBLE_MCP_ENABLED: "1",
+    CRUCIBLE_DOC_WRITE_ENABLED: "1",
+    CRUCIBLE_SEMANTIC_RETRIEVAL: "true",
+    CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT: "false",
+    CRUCIBLE_SHELL_POLICY: "ask",
+    CRUCIBLE_SCOPE_POLICY: "ask",
+    CRUCIBLE_SCOPE_TRIGGER: "any",
   };
   const modelVar = MODEL_ENV_VAR[settings.backend];
   if (modelVar) built[modelVar] = settings.model;
   if (settings.apiKey) built[settings.apiKey.envVar] = settings.apiKey.value;
   if (settings.skillsDisabled?.length) {
-    built.AI_EDITOR_SKILLS_DISABLED = settings.skillsDisabled.join(",");
+    built.CRUCIBLE_SKILLS_DISABLED = settings.skillsDisabled.join(",");
   }
   return { ...built, ...settings.extraEnv };
 }
@@ -182,13 +182,13 @@ export class BackendProcess {
     const rsCmd = existsSync(rustAnalyzerBin) ? rustAnalyzerBin : "rust-analyzer";
     const env = {
       ...process.env,
-      AI_EDITOR_BACKEND_URL: `http://localhost:${port}`,
-      AI_EDITOR_LSP_ENABLED: lspInstalled ? "true" : "false",
-      AI_EDITOR_LSP_RS_CMD: rsCmd,
+      CRUCIBLE_BACKEND_URL: `http://localhost:${port}`,
+      CRUCIBLE_LSP_ENABLED: lspInstalled ? "true" : "false",
+      CRUCIBLE_LSP_RS_CMD: rsCmd,
       ...(lspInstalled
         ? {
-            AI_EDITOR_LSP_PY_CMD: `${lspBin("pyright-langserver")} --stdio`,
-            AI_EDITOR_LSP_TS_CMD: `${lspBin("typescript-language-server")} --stdio`,
+            CRUCIBLE_LSP_PY_CMD: `${lspBin("pyright-langserver")} --stdio`,
+            CRUCIBLE_LSP_TS_CMD: `${lspBin("typescript-language-server")} --stdio`,
           }
         : {}),
     } as Record<string, string>;

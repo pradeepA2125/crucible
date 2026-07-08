@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Controller path only — `AI_EDITOR_CHAT_CONTROLLER=1`. The legacy `ChatAgent` clarify path is untouched.
+- Controller path only — `CRUCIBLE_CHAT_CONTROLLER=1`. The legacy `ChatAgent` clarify path is untouched.
 - Every gate `kind` MUST be added to the editor-client Zod enum in the same change, or `ThreadLiveStateSchema.parse()` throws on every 1s `/live` poll (CLAUDE.md `.min(1)`-class footgun).
 - One question, flat option list, single answer. No nesting, no multi-select.
 - Free-text "Something else…" escape is UI-appended; the model never authors it.

@@ -15,7 +15,7 @@ from agentd.runtime.artifacts import chat_turn_artifacts_root
 
 
 def test_chat_turn_artifacts_root_nests_by_thread_and_turn(tmp_path, monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_ARTIFACTS_ROOT", raising=False)
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
     root = chat_turn_artifacts_root("th1", "turn1", tmp_path)
     assert root == tmp_path / ".agentd" / "artifacts" / "chat" / "th1" / "turn1"
 
@@ -33,7 +33,7 @@ class _RecordingTransport:
 
 @pytest.mark.asyncio
 async def test_create_controller_step_dumps_exact_llm_bytes(tmp_path, monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_ARTIFACTS_ROOT", raising=False)
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
     engine = DefaultReasoningEngine(model="m", transport=_RecordingTransport())  # type: ignore[arg-type]
     await engine.create_controller_step(
         {"goal": "g", "workspace_path": str(tmp_path),
@@ -54,7 +54,7 @@ async def test_continuation_turn_numbers_from_zero_with_original_goal(tmp_path, 
     # A continuation turn replays seed_history, so `history` is non-empty on iteration 0.
     # Numbering must still start at -00 (per-turn), and original_goal comes from the first
     # user message in history — not the current `goal` (this turn's message).
-    monkeypatch.delenv("AI_EDITOR_ARTIFACTS_ROOT", raising=False)
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
     engine = DefaultReasoningEngine(model="m", transport=_RecordingTransport())  # type: ignore[arg-type]
     seed = [
         {"role": "user", "content": "what are the issues in the pipeline?"},
@@ -76,7 +76,7 @@ async def test_continuation_turn_numbers_from_zero_with_original_goal(tmp_path, 
 @pytest.mark.asyncio
 async def test_create_controller_step_no_dump_without_artifact_ids(tmp_path, monkeypatch):
     # No artifact ids in plan_context → no dump (e.g. tests / non-controller callers).
-    monkeypatch.delenv("AI_EDITOR_ARTIFACTS_ROOT", raising=False)
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
     engine = DefaultReasoningEngine(model="m", transport=_RecordingTransport())  # type: ignore[arg-type]
     await engine.create_controller_step(
         {"goal": "g", "workspace_path": str(tmp_path)},
@@ -86,7 +86,7 @@ async def test_create_controller_step_no_dump_without_artifact_ids(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_handle_message_writes_turn_trace(tmp_path, monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_ARTIFACTS_ROOT", raising=False)
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     ctrl = ChatController(

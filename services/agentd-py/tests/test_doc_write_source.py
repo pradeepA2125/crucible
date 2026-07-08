@@ -102,9 +102,9 @@ async def test_oversize_content_rejected(tmp_path: Path):
 
 
 def test_timeout_env_default_and_override(monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC", raising=False)
+    monkeypatch.delenv("CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC", raising=False)
     assert doc_write_decision_timeout_sec() == 0.0
-    monkeypatch.setenv("AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC", "3.5")
+    monkeypatch.setenv("CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC", "3.5")
     assert doc_write_decision_timeout_sec() == 3.5
 
 

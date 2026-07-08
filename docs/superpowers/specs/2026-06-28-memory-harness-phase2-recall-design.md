@@ -234,11 +234,11 @@ and anything non-durable. Without this filter a weak model spams low-value memor
 ## 7. Config (new env vars)
 
 ```
-AI_EDITOR_MEMORY_DEDUP_THRESHOLD      # default 0.92
-AI_EDITOR_MEMORY_RECALL_TOKEN_BUDGET  # default ~1500
-AI_EDITOR_MEMORY_WEIGHTS              # w_sem,w_lex,w_struct — default 0.5,0.3,0.2
-AI_EDITOR_MEMORY_GRAPH_GROUNDING      # default on
-AI_EDITOR_EMBEDDING_MODEL             # reuse existing — default BAAI/bge-small-en-v1.5
+CRUCIBLE_MEMORY_DEDUP_THRESHOLD      # default 0.92
+CRUCIBLE_MEMORY_RECALL_TOKEN_BUDGET  # default ~1500
+CRUCIBLE_MEMORY_WEIGHTS              # w_sem,w_lex,w_struct — default 0.5,0.3,0.2
+CRUCIBLE_MEMORY_GRAPH_GROUNDING      # default on
+CRUCIBLE_EMBEDDING_MODEL             # reuse existing — default BAAI/bge-small-en-v1.5
 ```
 
 ## 8. Open questions (carried into the plan, not blockers)

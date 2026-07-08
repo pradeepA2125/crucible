@@ -192,24 +192,24 @@ echo "==> Starting agentd-py (${BACKEND} backend)"
 if [[ "$BACKEND" == "gemini" ]]; then
   (
     cd "$AGENTD_DIR"
-    AI_EDITOR_REASONING_BACKEND=gemini \
-    AI_EDITOR_GEMINI_MODEL="$GEMINI_MODEL" \
-    AI_EDITOR_DB_PATH="$DB_PATH" \
-    AI_EDITOR_SHADOW_ROOT="$SHADOW_ROOT" \
-    AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH" \
-    AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT" \
-    AI_EDITOR_VALIDATION_COMMANDS_JSON='[{"stage":"syntax","name":"smoke-pass","command":"true"}]' \
+    CRUCIBLE_REASONING_BACKEND=gemini \
+    CRUCIBLE_GEMINI_MODEL="$GEMINI_MODEL" \
+    CRUCIBLE_DB_PATH="$DB_PATH" \
+    CRUCIBLE_SHADOW_ROOT="$SHADOW_ROOT" \
+    CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH" \
+    CRUCIBLE_ARTIFACTS_ROOT="$ARTIFACTS_ROOT" \
+    CRUCIBLE_VALIDATION_COMMANDS_JSON='[{"stage":"syntax","name":"smoke-pass","command":"true"}]' \
     "$AGENTD_PYTHON" -m uvicorn agentd.main:app --port "$PORT"
   ) >"$AGENTD_LOG" 2>&1 &
 else
   (
     cd "$AGENTD_DIR"
-    AI_EDITOR_REASONING_BACKEND=scripted \
-    AI_EDITOR_DB_PATH="$DB_PATH" \
-    AI_EDITOR_SHADOW_ROOT="$SHADOW_ROOT" \
-    AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH" \
-    AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT" \
-    AI_EDITOR_VALIDATION_COMMANDS_JSON='[{"stage":"syntax","name":"smoke-pass","command":"true"}]' \
+    CRUCIBLE_REASONING_BACKEND=scripted \
+    CRUCIBLE_DB_PATH="$DB_PATH" \
+    CRUCIBLE_SHADOW_ROOT="$SHADOW_ROOT" \
+    CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH" \
+    CRUCIBLE_ARTIFACTS_ROOT="$ARTIFACTS_ROOT" \
+    CRUCIBLE_VALIDATION_COMMANDS_JSON='[{"stage":"syntax","name":"smoke-pass","command":"true"}]' \
     "$AGENTD_PYTHON" -m uvicorn agentd.main:app --port "$PORT"
   ) >"$AGENTD_LOG" 2>&1 &
 fi

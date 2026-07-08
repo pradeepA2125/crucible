@@ -67,7 +67,7 @@ def test_definitions_pass_through_and_budget_truncates(monkeypatch):
     defs = [_def(f"mcp__s__t{i}", desc="x" * 200) for i in range(10)]
     src = McpToolSource(_StubManager(defs), _approve)
     assert len(src.definitions()) == 10
-    monkeypatch.setenv("AI_EDITOR_MCP_TOOLS_MAX_CHARS", "700")
+    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "700")
     kept = src.definitions()
     assert 0 < len(kept) < 10
     assert [d.name for d in kept] == [d.name for d in defs[: len(kept)]]  # order-truncation

@@ -11,10 +11,10 @@
 ## Global Constraints
 
 - **Controller-only.** Planning/task loops untouched (spec decision 6).
-- **Flag `AI_EDITOR_DOC_WRITE_ENABLED`, default OFF** (truthy = `1/true/yes/on`). Off: no tool, no teaching block.
+- **Flag `CRUCIBLE_DOC_WRITE_ENABLED`, default OFF** (truthy = `1/true/yes/on`). Off: no tool, no teaching block.
 - **Allowlist (spec decision 2):** `.md .mmd .mermaid .txt .rst .adoc .svg .json .yaml .yml .csv`, case-insensitive, FINAL suffix decides.
 - **Per-write gate, NO remember option** (every write is unique content). Approve → write to the REAL workspace. Content cap 1 MB (constant).
-- **Env:** `AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC` (default `0` = wait forever; timeout → reject).
+- **Env:** `CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC` (default `0` = wait forever; timeout → reject).
 - **Gate payload keys `{path, exists, preview}`** — identical in backend, editor-client, webview.
 - **Breadcrumb copy:** `✓ Doc written: <path>` / `✗ Doc write rejected: <path>`. **Card copy:** `Write file: <path>`.
 - **Prompt copy:** no superiority framing; the approval pause is expected behavior, not an error.
@@ -165,9 +165,9 @@ async def test_oversize_content_rejected(tmp_path: Path):
 
 
 def test_timeout_env_default_and_override(monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC", raising=False)
+    monkeypatch.delenv("CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC", raising=False)
     assert doc_write_decision_timeout_sec() == 0.0
-    monkeypatch.setenv("AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC", "3.5")
+    monkeypatch.setenv("CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC", "3.5")
     assert doc_write_decision_timeout_sec() == 3.5
 
 
@@ -216,8 +216,8 @@ ApprovalCallback = Callable[[str, bool, str], Awaitable[bool]]
 
 
 def doc_write_decision_timeout_sec() -> float:
-    """0 = wait forever (mirrors AI_EDITOR_MCP_DECISION_TIMEOUT_SEC)."""
-    raw = os.getenv("AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC", "").strip()
+    """0 = wait forever (mirrors CRUCIBLE_MCP_DECISION_TIMEOUT_SEC)."""
+    raw = os.getenv("CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC", "").strip()
     try:
         val = float(raw)
     except ValueError:
@@ -420,7 +420,7 @@ async def test_broadcasts_doc_write_requested_poke(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_timeout_rejects(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC", "0.05")
+    monkeypatch.setenv("CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC", "0.05")
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store)
@@ -450,10 +450,10 @@ async def test_registry_includes_write_doc_only_when_flag_on(tmp_path: Path, mon
     async def _cb(path, exists, preview):
         return True
 
-    monkeypatch.setenv("AI_EDITOR_DOC_WRITE_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_DOC_WRITE_ENABLED", "1")
     names = [d.name for d in ctrl._build_registry(doc_approval_cb=_cb).definitions()]
     assert "write_doc" in names
-    monkeypatch.delenv("AI_EDITOR_DOC_WRITE_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_DOC_WRITE_ENABLED", raising=False)
     names_off = [d.name for d in ctrl._build_registry(doc_approval_cb=_cb).definitions()]
     assert "write_doc" not in names_off
 ```
@@ -485,8 +485,8 @@ In `agentd/chat/controller_factory.py`, after `is_mcp_enabled` (moved here from 
 ```python
 def is_doc_write_enabled() -> bool:
     """Whether the controller offers write_doc (per-write-gated doc/data writes).
-    Default OFF. Opt in with AI_EDITOR_DOC_WRITE_ENABLED=1."""
-    return os.getenv("AI_EDITOR_DOC_WRITE_ENABLED", "0").strip().lower() in _TRUTHY
+    Default OFF. Opt in with CRUCIBLE_DOC_WRITE_ENABLED=1."""
+    return os.getenv("CRUCIBLE_DOC_WRITE_ENABLED", "0").strip().lower() in _TRUTHY
 ```
 
 In `agentd/chat/controller.py`:
@@ -600,7 +600,7 @@ git commit -m "feat(chat): doc_write approval gate in ChatController + registry 
 Create `tests/test_doc_write_wiring.py`:
 
 ```python
-"""AI_EDITOR_DOC_WRITE_ENABLED parsing; POST /doc-decision routes to resolve_doc_write;
+"""CRUCIBLE_DOC_WRITE_ENABLED parsing; POST /doc-decision routes to resolve_doc_write;
 the write_doc teaching block appends iff the tool is present in tool_definitions."""
 from __future__ import annotations
 
@@ -618,7 +618,7 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
 def test_flag_default_off(monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_DOC_WRITE_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_DOC_WRITE_ENABLED", raising=False)
     assert is_doc_write_enabled() is False
 
 
@@ -627,7 +627,7 @@ def test_flag_default_off(monkeypatch):
     ("0", False), ("false", False), ("", False),
 ])
 def test_flag_parsing(monkeypatch, raw, expected):
-    monkeypatch.setenv("AI_EDITOR_DOC_WRITE_ENABLED", raw)
+    monkeypatch.setenv("CRUCIBLE_DOC_WRITE_ENABLED", raw)
     assert is_doc_write_enabled() is expected
 
 
@@ -1120,7 +1120,7 @@ Add a new subsection AFTER the MCP client section, matching its style:
 
 One-tool lightweight write path for standalone non-executable artifacts — the alternative
 to full EDIT mode for READMEs/diagrams/data. Flag-gated, **default OFF**
-(`AI_EDITOR_DOC_WRITE_ENABLED`), **controller-only**. Spec/plan:
+(`CRUCIBLE_DOC_WRITE_ENABLED`), **controller-only**. Spec/plan:
 `docs/superpowers/specs|plans/2026-07-02-doc-write-tool-web-search-defaults*`.
 
 - **Tool (`agentd/chat/doc_write_source.py::DocWriteToolSource`):** `write_doc(path, content)`,
@@ -1132,7 +1132,7 @@ to full EDIT mode for READMEs/diagrams/data. Flag-gated, **default OFF**
   unified diff (existing file) or capped content (new file). Resolved by
   `POST /v1/chat/threads/{id}/doc-decision {approve}` — **NO remember option** (every write is
   unique content). Approve → write to the REAL workspace (mkdir parents). Timeout env
-  `AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC` (0 = wait forever; timeout → reject).
+  `CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC` (0 = wait forever; timeout → reject).
   `PendingGate.kind` gained `"doc_write"` in chat/models.py + editor-client Zod + webview
   types.ts (the three-enum footgun).
 - **Phase availability (explicit decision):** available in DECIDE **and** EDIT; in EDIT a
@@ -1145,8 +1145,8 @@ to full EDIT mode for READMEs/diagrams/data. Flag-gated, **default OFF**
 Add to the **Core** env list after the MCP vars:
 
 ```markdown
-- `AI_EDITOR_DOC_WRITE_ENABLED` — offer the `write_doc` per-write-gated docs tool to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "write_doc".
-- `AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC` — seconds to wait for the doc_write gate decision; `0` (default) = wait forever; timeout → reject.
+- `CRUCIBLE_DOC_WRITE_ENABLED` — offer the `write_doc` per-write-gated docs tool to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "write_doc".
+- `CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC` — seconds to wait for the doc_write gate decision; `0` (default) = wait forever; timeout → reject.
 ```
 
 - [ ] **Step 4: Full verification (all three stacks)**
@@ -1170,14 +1170,14 @@ git commit -m "feat(mcp): vendored Ollama web-search MCP server as shipped defau
 
 ### Task 7 (manual, not CI): live smoke on shadow-forge
 
-Human-in-the-loop (or HTTP-driven like the P3 smoke). Backend: `AI_EDITOR_CHAT_CONTROLLER=1 AI_EDITOR_MCP_ENABLED=1 AI_EDITOR_DOC_WRITE_ENABLED=1`, `OLLAMA_API_KEY` exported.
+Human-in-the-loop (or HTTP-driven like the P3 smoke). Backend: `CRUCIBLE_CHAT_CONTROLLER=1 CRUCIBLE_MCP_ENABLED=1 CRUCIBLE_DOC_WRITE_ENABLED=1`, `OLLAMA_API_KEY` exported.
 
 - [ ] 1. Add the `"web"` entry (Task 6 canonical form, absolute script path) to the smoke workspace's `.ai-editor/mcp.json`; restart backend; log shows `[mcp] connected server=web tools=2`.
 - [ ] 2. **write_doc approve:** "write a short CONTRIBUTING.md for this repo" from chat → `doc_write` gate card renders path+preview → Approve → file exists in the real workspace, `✓ Doc written` breadcrumb.
 - [ ] 3. **write_doc reject:** repeat with different content → Reject → no file change, model adapts (watch for the known repetition-attractor class; `/stop` is the escape).
 - [ ] 4. **Overwrite preview:** ask to update the same file → gate shows a unified diff, not full content.
 - [ ] 5. **web_search end-to-end:** "search the web for <current-events question> and answer with sources" → `mcp_tool` gate (`web.web_search`) → Approve & remember → answer with citations; next search runs gate-free.
-- [ ] 6. **Kill-switches:** `AI_EDITOR_DOC_WRITE_ENABLED=0` → no write_doc tool/no block; `"enabled": false` on `web` → no connect.
+- [ ] 6. **Kill-switches:** `CRUCIBLE_DOC_WRITE_ENABLED=0` → no write_doc tool/no block; `"enabled": false` on `web` → no connect.
 - [ ] 7. Reload-durability: raise a doc_write gate, reload the dev-host window → card re-renders from `/live`.
 
 ---

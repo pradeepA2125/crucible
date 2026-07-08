@@ -73,7 +73,7 @@ async def test_broadcasts_doc_write_requested_poke(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_timeout_rejects(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC", "0.05")
+    monkeypatch.setenv("CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC", "0.05")
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store)
@@ -103,9 +103,9 @@ async def test_registry_includes_write_doc_only_when_flag_on(tmp_path: Path, mon
     async def _cb(path, exists, preview):
         return True
 
-    monkeypatch.setenv("AI_EDITOR_DOC_WRITE_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_DOC_WRITE_ENABLED", "1")
     names = [d.name for d in ctrl._build_registry(doc_approval_cb=_cb).definitions()]
     assert "write_doc" in names
-    monkeypatch.delenv("AI_EDITOR_DOC_WRITE_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_DOC_WRITE_ENABLED", raising=False)
     names_off = [d.name for d in ctrl._build_registry(doc_approval_cb=_cb).definitions()]
     assert "write_doc" not in names_off

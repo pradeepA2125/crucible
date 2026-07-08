@@ -12,7 +12,7 @@
 
 - Spec: `docs/superpowers/specs/2026-06-28-memory-harness-phase2-recall-design.md`.
 - `MemoryStore` is the ONLY DB-aware unit; everyone else speaks model objects.
-- Reuse the existing embedding model — default `BAAI/bge-small-en-v1.5`, env `AI_EDITOR_EMBEDDING_MODEL` (do NOT introduce a new model id). Embedding dim = **384**.
+- Reuse the existing embedding model — default `BAAI/bge-small-en-v1.5`, env `CRUCIBLE_EMBEDDING_MODEL` (do NOT introduce a new model id). Embedding dim = **384**.
 - Embeddings are **unit-normalized** at the `Embedder`; the vec table uses default L2 distance (cosine = 1 − L2²/2 for unit vectors). No reliance on vec0 `distance_metric` flags.
 - `global` scope is NEVER written in Phase 2 (schema reserves it).
 - All new code lints clean under `ruff` (line length 100) and passes `mypy agentd/memory`.
@@ -122,13 +122,13 @@ In `services/agentd-py/agentd/memory/config.py`, add to the `MemoryConfig` class
 and to `from_env`'s `cls(...)` call add:
 
 ```python
-            dedup_threshold=float(env.get("AI_EDITOR_MEMORY_DEDUP_THRESHOLD", "0.92")),
-            recall_token_budget=int(env.get("AI_EDITOR_MEMORY_RECALL_TOKEN_BUDGET", "1500")),
+            dedup_threshold=float(env.get("CRUCIBLE_MEMORY_DEDUP_THRESHOLD", "0.92")),
+            recall_token_budget=int(env.get("CRUCIBLE_MEMORY_RECALL_TOKEN_BUDGET", "1500")),
             weights=tuple(  # type: ignore[arg-type]
-                float(x) for x in env.get("AI_EDITOR_MEMORY_WEIGHTS", "0.5,0.3,0.2").split(",")
+                float(x) for x in env.get("CRUCIBLE_MEMORY_WEIGHTS", "0.5,0.3,0.2").split(",")
             ),
-            graph_grounding=env.get("AI_EDITOR_MEMORY_GRAPH_GROUNDING", "true").lower() in _TRUTHY,
-            embedding_model=env.get("AI_EDITOR_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
+            graph_grounding=env.get("CRUCIBLE_MEMORY_GRAPH_GROUNDING", "true").lower() in _TRUTHY,
+            embedding_model=env.get("CRUCIBLE_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
 ```
 
 - [ ] **Step 5: Add the dependency group**

@@ -91,7 +91,7 @@ async def test_broadcasts_mcp_approval_requested_poke(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_timeout_rejects(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_MCP_DECISION_TIMEOUT_SEC", "0.05")
+    monkeypatch.setenv("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", "0.05")
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store)

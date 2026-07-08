@@ -34,7 +34,7 @@ This spec is **sub-project #1** of a larger decomposition. It builds the control
 
 ## 3. Architecture
 
-**New component:** `ChatController` (`chat/controller.py`). The message route selects it when `AI_EDITOR_CHAT_CONTROLLER=1`, else the legacy `ChatAgent`.
+**New component:** `ChatController` (`chat/controller.py`). The message route selects it when `CRUCIBLE_CHAT_CONTROLLER=1`, else the legacy `ChatAgent`.
 
 **One dynamic loop replaces three phases.** Exploration, answering, mode-selection, and editing are all actions the model picks per iteration until a terminal action:
 
@@ -195,7 +195,7 @@ class ToolSource(Protocol):
 
 ## 8. Migration
 
-`AI_EDITOR_CHAT_CONTROLLER` is a **temporary migration flag, not a long-term setting.**
+`CRUCIBLE_CHAT_CONTROLLER` is a **temporary migration flag, not a long-term setting.**
 - Ship the controller behind it, running parallel to the legacy `handle_message` pipeline.
 - Default `1` once smoke-verified.
 - The legacy explore→classify→route pipeline (and its dead branches) is **deleted** in a follow-up cleanup at `=0` retirement — the flag exists only to de-risk the cutover.

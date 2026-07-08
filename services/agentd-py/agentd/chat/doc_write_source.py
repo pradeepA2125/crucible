@@ -27,8 +27,8 @@ ApprovalCallback = Callable[[str, bool, str], Awaitable[bool]]
 
 
 def doc_write_decision_timeout_sec() -> float:
-    """0 = wait forever (mirrors AI_EDITOR_MCP_DECISION_TIMEOUT_SEC)."""
-    raw = os.getenv("AI_EDITOR_DOC_WRITE_DECISION_TIMEOUT_SEC", "").strip()
+    """0 = wait forever (mirrors CRUCIBLE_MCP_DECISION_TIMEOUT_SEC)."""
+    raw = os.getenv("CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC", "").strip()
     try:
         val = float(raw)
     except ValueError:

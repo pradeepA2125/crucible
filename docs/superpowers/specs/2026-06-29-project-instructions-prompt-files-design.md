@@ -23,7 +23,7 @@ Both are deliberately low-effort, high-frequency wins that plug into existing se
 | 2 | **Inject into the system prompt** (not the user-payload tail) | System-prompt instructions are followed more reliably. |
 | 3 | **Self-updating via mtime-cached loader** (no separate watcher) | `format_controller_system_prompt` is rebuilt every turn → an mtime cache gives free freshness; unchanged file → identical cached bytes (KV-cache-stable); changed file → one cache-reset on the next turn. |
 | 4 | **`AGENTS.md` is the only instructions source** | Single source of truth. No `.github/copilot-instructions.md` fallback (dropped — YAGNI). |
-| 5 | **Default ON** | "Read your AGENTS.md" is table-stakes parity. `AI_EDITOR_PROJECT_INSTRUCTIONS` exists only as a kill-switch, defaulting on. |
+| 5 | **Default ON** | "Read your AGENTS.md" is table-stakes parity. `CRUCIBLE_PROJECT_INSTRUCTIONS` exists only as a kill-switch, defaulting on. |
 | 6 | **Controller-only injection** | The planning path is dormant (task subsystem off by default); wiring it adds no live value now. Planning stays untouched. |
 | 7 | **Prompt-file args: `$ARGUMENTS` + `$1..$N`, expanded in the composer** | Mirrors Claude Code / Copilot; the user sees and can edit the expanded text before sending. |
 
@@ -38,7 +38,7 @@ Both are deliberately low-effort, high-frequency wins that plug into existing se
   - File absent → `None`.
   - File present + mtime unchanged since last read → cached string.
   - File present + mtime moved → re-read, re-cache.
-- **Size budget:** cap at `AI_EDITOR_INSTRUCTIONS_MAX_CHARS` (default `16000` ≈ ~4k tokens). Over budget → truncate at the cap with a `\n\n[... AGENTS.md truncated at N chars ...]` marker + a one-line `logger.warning`. Always-on context, so we keep it lean.
+- **Size budget:** cap at `CRUCIBLE_INSTRUCTIONS_MAX_CHARS` (default `16000` ≈ ~4k tokens). Over budget → truncate at the cap with a `\n\n[... AGENTS.md truncated at N chars ...]` marker + a one-line `logger.warning`. Always-on context, so we keep it lean.
 - **Best-effort:** any read/stat error → log + return `None`. Instructions must never break a turn (same contract as the memory harness's `prepare_turn`).
 
 **Prompt-assembly wiring** (mirrors `_MEMORY_BLOCK` exactly):
@@ -52,9 +52,9 @@ Both are deliberately low-effort, high-frequency wins that plug into existing se
   - `format_controller_system_prompt(tool_definitions, *, task_subsystem_enabled=None, memory_enabled=None, project_instructions: str | None = None)` — appends the rendered block when `project_instructions` is a non-empty string. Appended (not a placeholder), after the memory block, so the cached prefix stays stable when content is unchanged.
 - `agentd/reasoning/engine.py` (`create_controller_step`): resolves the text via the loader and threads it into `format_controller_system_prompt(...)`.
 
-**Workspace resolution (footgun guard):** the loader uses the controller's **frozen `_workspace_path`** (from `main.py` / `AI_EDITOR_WORKSPACE_PATH`) — the same path used for the shadow root and all file ops — **not** the thread's `workspace_path` column (ignored per-turn; see CLAUDE.md "controller is workspace-frozen at startup"). The loader instance is built once at controller construction (factory time, alongside the memory harness) and reused per turn; the mtime cache lives inside it.
+**Workspace resolution (footgun guard):** the loader uses the controller's **frozen `_workspace_path`** (from `main.py` / `CRUCIBLE_WORKSPACE_PATH`) — the same path used for the shadow root and all file ops — **not** the thread's `workspace_path` column (ignored per-turn; see CLAUDE.md "controller is workspace-frozen at startup"). The loader instance is built once at controller construction (factory time, alongside the memory harness) and reused per turn; the mtime cache lives inside it.
 
-**Flag** `AI_EDITOR_PROJECT_INSTRUCTIONS` — resolved in `agentd/chat/controller_factory.py` next to `is_memory_enabled` as `is_project_instructions_enabled()`. **Defaults ON** (truthy unless explicitly set to `0/false/no/off`). When off, the loader is never consulted / the block is never appended (kill-switch).
+**Flag** `CRUCIBLE_PROJECT_INSTRUCTIONS` — resolved in `agentd/chat/controller_factory.py` next to `is_memory_enabled` as `is_project_instructions_enabled()`. **Defaults ON** (truthy unless explicitly set to `0/false/no/off`). When off, the loader is never consulted / the block is never appended (kill-switch).
 
 ### 3.2 Prompt files (`/name`, frontend only)
 
@@ -106,13 +106,13 @@ Each unit is testable in isolation: the loader against a `tmp_path`, the prompt-
 1. Drop `AGENTS.md` with a distinctive directive (e.g. "prefix every reply with 🦊"); a live controller turn obeys it.
 2. **Edit AGENTS.md mid-session; the next turn reflects the change** (self-updating, no restart).
 3. Create `.ai-editor/prompts/review.md` using `$1`; `/review src/foo.py` expands inline in the composer.
-4. Kill-switch: `AI_EDITOR_PROJECT_INSTRUCTIONS=0` → the directive is ignored.
+4. Kill-switch: `CRUCIBLE_PROJECT_INSTRUCTIONS=0` → the directive is ignored.
 
 ## 7. Exit criteria
 
 - An `AGENTS.md` measurably steers a live controller run, and a mid-session edit is picked up on the next turn.
 - `/prompt-name [args]` expands inline in the composer with `$ARGUMENTS`/`$1..$N` substitution; `/` autocomplete lists available prompts.
-- `AI_EDITOR_PROJECT_INSTRUCTIONS` kill-switch verified (default on; `0` disables).
+- `CRUCIBLE_PROJECT_INSTRUCTIONS` kill-switch verified (default on; `0` disables).
 - All TS + Python suites + typecheck green; live smoke (steps 1–4) passes.
 
 ## 8. Out of scope (deferred)

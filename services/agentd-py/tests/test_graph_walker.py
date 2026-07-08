@@ -148,12 +148,12 @@ def test_registry_blast_radius_unions_neighbour_files_excluding_seeds(tmp_path: 
     snapshot = _fixture(tmp_path)  # engine.py -> state_machine.py + storage/base.py
     # Override the env so the registry reads our fixture snapshot.
     import os
-    os.environ["AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH"] = str(snapshot)
+    os.environ["CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH"] = str(snapshot)
     try:
         reg = PlanningToolRegistry(real_path=tmp_path)
         br = reg.blast_radius(["src/engine.py"])
     finally:
-        del os.environ["AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH"]
+        del os.environ["CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH"]
 
     # engine.py calls into state_machine.py and storage/base.py → both ripple.
     assert "src/state_machine.py" in br

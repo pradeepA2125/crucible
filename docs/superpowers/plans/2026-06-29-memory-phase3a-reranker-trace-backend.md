@@ -12,9 +12,9 @@
 
 - Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design.md`.
 - **`recall()` signature is UNCHANGED** (`-> list[Memory]`) — the `recall()` tool and `recall_grounded` keep calling it. Only the harness `_fill_recall` switches to `recall_with_trace`. Every `_SpyRecall` test fake gains a `recall_with_trace` (update in lockstep — same breakage class as Phase-2's `prepare_turn(query=…)`).
-- Reranker is **independent of `MEMORY_ENABLED`** (own flag `AI_EDITOR_MEMORY_RERANKER`, default off) and **degrades to fused order** if the model/lib is missing — recall never depends on it.
+- Reranker is **independent of `MEMORY_ENABLED`** (own flag `CRUCIBLE_MEMORY_RERANKER`, default off) and **degrades to fused order** if the model/lib is missing — recall never depends on it.
 - The trace `entries` cover **all** scored candidates (incl. below-floor, `injected=false`), not just the returned `k`.
-- All three routes are **read-only GETs**, gated by `is_memory_enabled()`; they self-resolve `MemoryStore(MemoryConfig.from_env(os.environ).db_path)` + workspace from `AI_EDITOR_WORKSPACE_PATH`.
+- All three routes are **read-only GETs**, gated by `is_memory_enabled()`; they self-resolve `MemoryStore(MemoryConfig.from_env(os.environ).db_path)` + workspace from `CRUCIBLE_WORKSPACE_PATH`.
 - Lints clean (`ruff`, line 100 — DON'T pipe ruff through `tail`, check the exit code); `mypy agentd/memory` clean. Tests use real `tmp_path` SQLite + injected fakes (no real model in unit tests; one `@pytest.mark.slow` smoke for the real CrossEncoder if desired).
 - Run from `services/agentd-py` with `source .venv/bin/activate`.
 
@@ -140,9 +140,9 @@ class Reranker:
 
 In `config.py`, add to `MemoryConfig` body: `reranker_enabled: bool`, `reranker_model: str`, `rerank_min_candidates: int`; and to `from_env`'s `cls(...)`:
 ```python
-            reranker_enabled=env.get("AI_EDITOR_MEMORY_RERANKER", "").lower() in _TRUTHY,
-            reranker_model=env.get("AI_EDITOR_MEMORY_RERANKER_MODEL", "BAAI/bge-reranker-base"),
-            rerank_min_candidates=int(env.get("AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES", "8")),
+            reranker_enabled=env.get("CRUCIBLE_MEMORY_RERANKER", "").lower() in _TRUTHY,
+            reranker_model=env.get("CRUCIBLE_MEMORY_RERANKER_MODEL", "BAAI/bge-reranker-base"),
+            rerank_min_candidates=int(env.get("CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES", "8")),
 ```
 
 - [ ] **Step 4: Run → PASS**
@@ -572,9 +572,9 @@ from agentd.chat.app_factory import build_app  # test-only app builder
 
 
 def _client(tmp_path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_MEMORY_ENABLED", "1")
-    monkeypatch.setenv("AI_EDITOR_MEMORY_DB_PATH", str(tmp_path / "m.sqlite3"))
-    monkeypatch.setenv("AI_EDITOR_WORKSPACE_PATH", str(tmp_path))
+    monkeypatch.setenv("CRUCIBLE_MEMORY_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_MEMORY_DB_PATH", str(tmp_path / "m.sqlite3"))
+    monkeypatch.setenv("CRUCIBLE_WORKSPACE_PATH", str(tmp_path))
     return TestClient(build_app())
 
 
@@ -641,7 +641,7 @@ Register the three routes inside `build_router` (read-only; self-resolve store +
         from agentd.runtime.artifacts import chat_turn_artifacts_root
         if not is_memory_enabled():
             return {"entries": []}
-        ws = os.getenv("AI_EDITOR_WORKSPACE_PATH", "")
+        ws = os.getenv("CRUCIBLE_WORKSPACE_PATH", "")
         base = chat_turn_artifacts_root(thread_id, "", ws).parent  # …/chat/<thread>/
         files = sorted(glob.glob(str(base / "*" / "memory-recall-*.json")),
                        key=os.path.getmtime)

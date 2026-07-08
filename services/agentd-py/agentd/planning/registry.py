@@ -10,7 +10,7 @@ from agentd.tools.registry import ToolDefinition, ToolOutput
 
 # Snapshot path env override mirrors the one used by RetrievalArtifactClient so
 # the walker reads the same file the rest of the retrieval stack reads.
-_SNAPSHOT_PATH_ENV = "AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH"
+_SNAPSHOT_PATH_ENV = "CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH"
 
 
 class PlanningToolRegistry:
@@ -27,7 +27,7 @@ class PlanningToolRegistry:
     ) -> None:
         self._real_path = real_path
         self._semantic_index = semantic_index
-        self._ripgrep_cmd = os.environ.get("AI_EDITOR_RIPGREP_CMD", "rg")
+        self._ripgrep_cmd = os.environ.get("CRUCIBLE_RIPGREP_CMD", "rg")
         self._graph_walker: GraphWalker | None = None
 
     def definitions(self) -> list[ToolDefinition]:

@@ -259,7 +259,7 @@ async def test_build_index_semantic_disabled_on_client():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/index/build", json={"workspace_path": "/tmp/ws"})
         assert resp.status_code == 503
-        assert "AI_EDITOR_SEMANTIC_RETRIEVAL" in resp.json()["detail"]
+        assert "CRUCIBLE_SEMANTIC_RETRIEVAL" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio

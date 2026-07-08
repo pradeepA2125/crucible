@@ -1,4 +1,4 @@
-"""AI_EDITOR_DOC_WRITE_ENABLED parsing; POST /doc-decision routes to resolve_doc_write;
+"""CRUCIBLE_DOC_WRITE_ENABLED parsing; POST /doc-decision routes to resolve_doc_write;
 the write_doc teaching block appends iff the tool is present in tool_definitions."""
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
 def test_flag_default_off(monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_DOC_WRITE_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_DOC_WRITE_ENABLED", raising=False)
     assert is_doc_write_enabled() is False
 
 
@@ -25,7 +25,7 @@ def test_flag_default_off(monkeypatch):
     ("0", False), ("false", False), ("", False),
 ])
 def test_flag_parsing(monkeypatch, raw, expected):
-    monkeypatch.setenv("AI_EDITOR_DOC_WRITE_ENABLED", raw)
+    monkeypatch.setenv("CRUCIBLE_DOC_WRITE_ENABLED", raw)
     assert is_doc_write_enabled() is expected
 
 

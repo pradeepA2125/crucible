@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Scope is the reactive controller only (`AI_EDITOR_CHAT_CONTROLLER=1`); within-request, no cross-turn persistence (deferred memory module).
+- Scope is the reactive controller only (`CRUCIBLE_CHAT_CONTROLLER=1`); within-request, no cross-turn persistence (deferred memory module).
 - **No response-schema change** — `write_todos` is a `tool_call`; the flat + tight `oneOf` schemas stay byte-untouched.
 - Full-list-rewrite ledger semantics (model resends the whole list each call) — no per-item id bookkeeping.
 - Statuses are exactly: `pending`, `in_progress`, `done`, `blocked`, `cancelled`. The gate's "pending" set = `pending` ∪ `in_progress` only; `done`/`blocked`/`cancelled` do NOT block submit (so a `blocked` item can never deadlock the loop).
@@ -32,7 +32,7 @@
 - **Modify** `services/agentd-py/agentd/chat/models.py` — `ChatThread.controller_todos`, `ThreadLiveState.todos`.
 - **Modify** `services/agentd-py/agentd/chat/controller_loop.py` — hold ledger, gate `submit_changes`, re-surface.
 - **Modify** `services/agentd-py/agentd/chat/controller_prompts.py` — `todo_status` tail; ledger-aware EDIT hint; `write_todos` teaching + enumerate-all + distilled policy + evidence-on-done.
-- **Modify** `services/agentd-py/agentd/chat/controller.py` — rehydrate/build ledger, wire `TodoToolSource`, persist/clear, `AI_EDITOR_CONTROLLER_MAX_ITERS`.
+- **Modify** `services/agentd-py/agentd/chat/controller.py` — rehydrate/build ledger, wire `TodoToolSource`, persist/clear, `CRUCIBLE_CONTROLLER_MAX_ITERS`.
 - **Modify** `services/agentd-py/agentd/chat/live_state.py` — `resolve_thread_live` includes `todos`.
 - **Modify** `apps/editor-client/src/contracts/task-contracts.ts` — `TodoItemSchema` + `ThreadLiveStateSchema.todos`.
 - **Modify** `apps/vscode-extension/webview-ui/src/types.ts`, `hooks/useAppState.ts`, `components/LiveSlot.tsx`; **Create** `components/messages/TodoCard.tsx`; **Modify** `apps/vscode-extension/src/controller.ts` (poll mapping + signature).
@@ -813,7 +813,7 @@ git commit -m "feat(controller): todo_status in payload tail + write_todos/enume
 
 **Interfaces:**
 - Consumes: `TodoLedger`, `TodoToolSource`, `set_/get_controller_todos`, `ControllerLoop(todo_ledger=…)`, `ScriptedReasoningEngine`.
-- Produces: per-request ledger rehydrated at `_run_loop` start, persisted on non-terminal outcomes, cleared on terminal (`submit_changes`/`answer`); `AI_EDITOR_CONTROLLER_MAX_ITERS` (default `500`) passed to `loop.run`.
+- Produces: per-request ledger rehydrated at `_run_loop` start, persisted on non-terminal outcomes, cleared on terminal (`submit_changes`/`answer`); `CRUCIBLE_CONTROLLER_MAX_ITERS` (default `500`) passed to `loop.run`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -925,7 +925,7 @@ Change the `loop = ControllerLoop(...)` construction to:
 Change the `outcome = await loop.run(` call to pass the budget knob:
 
 ```python
-        max_iters = int(os.environ.get("AI_EDITOR_CONTROLLER_MAX_ITERS", "500"))
+        max_iters = int(os.environ.get("CRUCIBLE_CONTROLLER_MAX_ITERS", "500"))
         outcome = await loop.run(
             plan_context, max_iters=max_iters, seed_history=seed_history,
             auto_accept_edits=(not is_review), edit_decision_cb=edit_cb,
@@ -960,7 +960,7 @@ Expected: PASS (all, including pre-existing)
 
 ```bash
 git add services/agentd-py/agentd/chat/controller.py services/agentd-py/tests/test_controller_todo_integration.py
-git commit -m "feat(controller): wire todo ledger into ChatController + AI_EDITOR_CONTROLLER_MAX_ITERS"
+git commit -m "feat(controller): wire todo ledger into ChatController + CRUCIBLE_CONTROLLER_MAX_ITERS"
 ```
 
 ---
@@ -1290,7 +1290,7 @@ Expected: all green across `editor-client` + `vscode-extension`.
 In `CLAUDE.md`, under the "Reactive controller" section, add:
 
 ```markdown
-- **Todo ledger (multi-feature completion):** in EDIT/DECIDE the controller can call the `write_todos` tool (a `TodoToolSource` over a per-request `TodoLedger`, `chat/todo_ledger.py` + `chat/todo_source.py`; 5 states pending/in_progress/done/blocked/cancelled, full-list-rewrite) to track a large/multi-part change. `submit_changes` is **hard-blocked** in `ControllerLoop` while any item is pending/in_progress (blocked/cancelled/done never deadlock it; not counted as malformed — only `max_iters` bounds it). The status is re-surfaced into the payload tail (`todo_status`) every iteration; persisted on `chat_threads.controller_todo_json` (request-scoped — survives DECIDE→EDIT + clarify resume; cleared on terminal); exposed via `/live` (`ThreadLiveState.todos`) and rendered as a flat read-only `TodoCard` in the live slot (**`todos` MUST be in controller.ts `lastLiveSignature`** or updates are deduped away). Discretionary (steered via propose_mode "enumerate every part" + a TODO LIST POLICY block; `done` requires evidence in `note`). `AI_EDITOR_CONTROLLER_MAX_ITERS` (default 500) is the loop cap — real within-turn limit is the context window until the memory module. NO completion backstop yet (deferred, spec §7); op-deltas/nesting/action-form/manual-approval/event-log deferred (spec §9).
+- **Todo ledger (multi-feature completion):** in EDIT/DECIDE the controller can call the `write_todos` tool (a `TodoToolSource` over a per-request `TodoLedger`, `chat/todo_ledger.py` + `chat/todo_source.py`; 5 states pending/in_progress/done/blocked/cancelled, full-list-rewrite) to track a large/multi-part change. `submit_changes` is **hard-blocked** in `ControllerLoop` while any item is pending/in_progress (blocked/cancelled/done never deadlock it; not counted as malformed — only `max_iters` bounds it). The status is re-surfaced into the payload tail (`todo_status`) every iteration; persisted on `chat_threads.controller_todo_json` (request-scoped — survives DECIDE→EDIT + clarify resume; cleared on terminal); exposed via `/live` (`ThreadLiveState.todos`) and rendered as a flat read-only `TodoCard` in the live slot (**`todos` MUST be in controller.ts `lastLiveSignature`** or updates are deduped away). Discretionary (steered via propose_mode "enumerate every part" + a TODO LIST POLICY block; `done` requires evidence in `note`). `CRUCIBLE_CONTROLLER_MAX_ITERS` (default 500) is the loop cap — real within-turn limit is the context window until the memory module. NO completion backstop yet (deferred, spec §7); op-deltas/nesting/action-form/manual-approval/event-log deferred (spec §9).
 ```
 
 - [ ] **Step 4: Commit**
@@ -1320,4 +1320,4 @@ git commit -m "docs(controller): document the todo ledger + write_todos + /live 
 
 **Placeholder scan:** No TBD/TODO/"handle edge cases". Code steps show complete code; the two controller.ts mapping spots (3e) give exact insertions + the dedup invariant, pointing at the neighboring `renderLivePlan` lines as the template (existing-code pattern, not a placeholder). ✓
 
-**Type consistency:** `TodoLedger`/`TodoItem`/`replace`/`pending`/`render`/`to_json`/`from_json`, `_STATUSES` (5), `TodoToolSource(ledger)`, `write_todos`, `set_/get_controller_todos`, `ChatThread.controller_todos`, `ThreadLiveState.todos`, `todo_ledger=` kwarg, `plan_context["todo_status"]`, `TodoItemSchema`/`LiveTodosView`/`renderLiveTodos`/`liveTodos`, `AI_EDITOR_CONTROLLER_MAX_ITERS` — used identically across tasks. The 5 statuses match across Python `_STATUSES`, the tool enum, the editor-client `z.enum`, and the webview `TodoItem` type. ✓
+**Type consistency:** `TodoLedger`/`TodoItem`/`replace`/`pending`/`render`/`to_json`/`from_json`, `_STATUSES` (5), `TodoToolSource(ledger)`, `write_todos`, `set_/get_controller_todos`, `ChatThread.controller_todos`, `ThreadLiveState.todos`, `todo_ledger=` kwarg, `plan_context["todo_status"]`, `TodoItemSchema`/`LiveTodosView`/`renderLiveTodos`/`liveTodos`, `CRUCIBLE_CONTROLLER_MAX_ITERS` — used identically across tasks. The 5 statuses match across Python `_STATUSES`, the tool enum, the editor-client `z.enum`, and the webview `TodoItem` type. ✓

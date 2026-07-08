@@ -39,8 +39,8 @@ Turn the capability stack (P1–P3 + memory + controller) into a **shippable, in
 | Health wait | curl poll loop, 60s | health-poll with progress UI |
 | Semantic index pre-warm | `POST /v1/index/build` + status poll before "ready" | same calls, surfaced in wizard/status UI; first build downloads the embedding model (~130MB) — shown as an explicit progress step, not a silent hang |
 | Indexer watcher | sibling process, LSP env, single-writer reap guard | child of `BackendProcess`; single-writer via lockfile discipline |
-| LSP servers | assumed on PATH | pyright + typescript-language-server npm-installed into the runtime dir; absolute paths passed via `AI_EDITOR_LSP_*_CMD`; rust-analyzer detected on PATH or skipped |
-| ripgrep | PATH-fix hack for Homebrew | per-OS static binary provisioned into the runtime dir; passed via `AI_EDITOR_RIPGREP_CMD` |
+| LSP servers | assumed on PATH | pyright + typescript-language-server npm-installed into the runtime dir; absolute paths passed via `CRUCIBLE_LSP_*_CMD`; rust-analyzer detected on PATH or skipped |
+| ripgrep | PATH-fix hack for Homebrew | per-OS static binary provisioned into the runtime dir; passed via `CRUCIBLE_RIPGREP_CMD` |
 | Provider key checks | per-backend fail-fast in bash | wizard "Test connection" via `POST /v1/providers/validate` |
 | Local LLM reachability | curl to ollama/TQP | detect-and-guide in wizard (link to install docs; re-check button) |
 
@@ -111,7 +111,7 @@ Custom webview, second Vite entry in `webview-ui` (the proven `MemoryPanel` patt
 - **Providers & models** — provider/model + keys + test-connection; applies via the hot-swap route. Key storage: SecretStorage only.
 - **Runtime** — installed versions (`runtime.json`), per-workspace backend status (port, pid, health), Restart / Upgrade / Open logs.
 - **MCP servers** — per the research doc: list with live status + tool counts (**`GET /v1/mcp/servers`** — merged config + `McpServerStatus`), guided add (**tier 1: QuickPick wizard** mirroring VS Code's "MCP: Add Server"; **tier 2: pane form**), remove, reconnect (**`POST /v1/mcp/servers/{name}/reconnect`**). Writes are **`POST/PATCH/DELETE /v1/mcp/servers/{name}`** doing read-modify-write on `.ai-editor/mcp.json` — preserve unknown keys, store `${VAR}` references verbatim (never resolved secrets) — then call `McpConnectionManager.reconcile(loader.load())`. **Enable/disable toggles write user-local state** (extension `globalState`), not the shareable file (presence-trust guard from the research doc); the extension passes the effective disabled set alongside reconcile-triggering calls — `reconcile(configs, disabled=…)` — so the backend never needs its own user-scoped store.
-- **Skills** — list discovered skills (existing `GET /v1/skills`), enable/disable. Same user-local storage; v1 applies it via the managed-restart path (`AI_EDITOR_SKILLS_DISABLED=<names>` in the spawn env) rather than a new live route — skills toggling is rare enough that a 5s restart is acceptable.
+- **Skills** — list discovered skills (existing `GET /v1/skills`), enable/disable. Same user-local storage; v1 applies it via the managed-restart path (`CRUCIBLE_SKILLS_DISABLED=<names>` in the spawn env) rather than a new live route — skills toggling is rare enough that a 5s restart is acceptable.
 - **Memory** — enabled / reranker / budget knobs. **Policies** — scope + shell policy. Env-backed ⇒ managed-restart path with an inline "applying — restarting backend" spinner (~5s).
 - **Advanced** — port strategy, paths, feature flags (restart path).
 

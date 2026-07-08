@@ -4,7 +4,7 @@
 
 **Goal:** Replace the chat explore→classify→route pipeline with a single dynamic agentic controller that owns its turn loop, recommends (never auto-enters) mutating modes, edits with ACID per-turn semantics, and is prefix-cache-friendly — mirroring `PlanningLoop`.
 
-**Architecture:** A `ChatController` runs one ReAct loop (`ControllerLoop`) that mirrors `PlanningLoop` bit-for-bit (append-only history, `_assistant_turn` thought-strip, malformed/dedup correction, trace, broadcast, `seed_history` replay). Actions are a flat `type`-enum schema (NOT `oneOf` — Gemini deadlocks). A DECIDE→EDIT phase state machine gates mutating actions. Edits apply to one ACID shadow per turn and instant-promote to the real workspace (`shadow==real` invariant). Tools come from a `ToolRegistry` that aggregates `ToolSource`s (Composite), with `BuiltinToolSource` the only v1 source. Shipped behind a temporary `AI_EDITOR_CHAT_CONTROLLER` flag.
+**Architecture:** A `ChatController` runs one ReAct loop (`ControllerLoop`) that mirrors `PlanningLoop` bit-for-bit (append-only history, `_assistant_turn` thought-strip, malformed/dedup correction, trace, broadcast, `seed_history` replay). Actions are a flat `type`-enum schema (NOT `oneOf` — Gemini deadlocks). A DECIDE→EDIT phase state machine gates mutating actions. Edits apply to one ACID shadow per turn and instant-promote to the real workspace (`shadow==real` invariant). Tools come from a `ToolRegistry` that aggregates `ToolSource`s (Composite), with `BuiltinToolSource` the only v1 source. Shipped behind a temporary `CRUCIBLE_CHAT_CONTROLLER` flag.
 
 **Tech Stack:** Python 3.13, FastAPI, Pydantic, pytest/pytest-asyncio. Reference the spec at `docs/superpowers/specs/2026-06-15-agentic-chat-controller-design.md` and the mirror source `agentd/planning/{loop,agent,prompts}.py` + `agentd/reasoning/engine.py::create_planning_step`.
 
@@ -24,7 +24,7 @@
 - ✅ **F** Phase F complete (F0–F4) **+ code-reviewed + fixes applied**: F0 thread-level controller gates (mode/edit) via `/live` (`pending_controller_gate` + `controller_gate_json` ALTER + `resolve_thread_live`); F1 `chat/controller.py` `ChatController.handle_message` (QA+clarify, seed caching, clarify-resume); F2 `propose_mode` Class-A gate + `resolve_mode` + `/mode-decision` streamed route; F3 per-edit held-stream gate (`_edit_decision_cb` future + timeout) + `resolve_edit` + `/edit-decision` route + loop `edit_decision_cb`; F4 clarify-resume regression + loop `retrieval_delta_cb` (append-only).
 - **F review fixes (commit `a94cc63`):** [Crit] edit branch try/except so a bad search string feeds back vs crashes the turn; [Crit] `resolve_mode` pending-`mode`-gate precondition (asyncio-atomic read→clear) kills double-create; [Imp] `run()` try/finally closes turn-shadow on ANY exit (loop body → `_iterate`); [Imp] edit-mode `RuntimeError` when no orchestrator; [Min] TODO on unbounded `_histories`. Deferred/accepted: #5 `shadow==real` cross-file invariant → **H1 test**; #6 F4 static pointer-note (documented deviation); #7 resume degraded; #9 `type: ignore` route seam → resolves in G. **Full suite 755 passed / 3 skipped / 0 failed; new chat files mypy+ruff clean.**
 
-- ✅ **G** `chat/controller_factory.py::select_chat_handler` reads `AI_EDITOR_CHAT_CONTROLLER` (default off): on → `ChatController` wrapping transport+model in `DefaultReasoningEngine`; off → legacy `ChatAgent`. `main.py` wired (was direct `ChatAgent`). 3 flag tests green.
+- ✅ **G** `chat/controller_factory.py::select_chat_handler` reads `CRUCIBLE_CHAT_CONTROLLER` (default off): on → `ChatController` wrapping transport+model in `DefaultReasoningEngine`; off → legacy `ChatAgent`. `main.py` wired (was direct `ChatAgent`). 3 flag tests green.
 - ✅ **H1** `tests/test_controller_invariants.py` — 5 spec-§9 guards (DECIDE-forbids-edit, deterministic tool-def serialization, no `use_shadow_for_reads`, no-batching via spy, `shadow==real` cross-file reject = review #5). ✅ **H2** full suite **757 passed / 3 skipped / 0 failed**; ALL new controller source files mypy+ruff clean (cleared leftover dict type-args + stale `type: ignore`s in sources/inline_apply/edit_session/controller_prompts + test E501/E702).
 
 - ✅ **H2 CODE REVIEW (user asked) — cleared "Ready to merge: Yes", 0 Critical/0 Important.** 3 Minor, all no-fix-needed: max_iters non-int fallback is dead (loop always sets int); invariant-#3 grep is an accepted cheap guard; routes `resolve_mode` `type: ignore` pre-existing+safe. Reviewer confirmed all 4 post-F-review fixes correct (shadow-close on every exit, crash-safe edit w/ consistent session, atomic mode-gate guard, malformed-counter-as-param).
@@ -37,7 +37,7 @@
 
 **Verified frontend anchors (traced this session):** `StepGate.tsx` signature `{taskId, payload}` posts `{type:"stepDecision",taskId,decision}`; `GateDispatch` is in `webview-ui/src/components/LiveSlot.tsx` (NOT messages/), switch by `kind`, keyed remount `${taskId}:${kind}:${sig(payload)}`. ChatPanel handlers are CONSTRUCTOR-INJECTED callbacks delegating to `AiEditorController` methods (extension.ts:20-40 builds them) — NOT inline in chat-panel. `HttpBackendClient.fetchJson(path,{method,body})` prepends baseUrl, checks `.ok`, returns `.json()`. `sendChatMessage`(:365) is the SSE generator template; `sendStepDecision`(:188) the plain-POST template. **All TS IDE diagnostics ("Cannot find name 'Promise/Record'", "Cannot find module './x.js'") are IDE-isolation noise — IGNORE; the real gate is `npm run -w <pkg> typecheck`/`test`/`build`.** CLAUDE.md: after editor-client change, `npm run -w @ai-editor/editor-client build` BEFORE vscode-extension typecheck (already built this session).
 
-**NEXT: J (live smoke — NEEDS THE HUMAN, interactive dev-host).** Frontend (I1+I2) + backend (A–H) all complete & green. J: flip `AI_EDITOR_CHAT_CONTROLLER=1`, launch the dev-host, run scenarios J1–J7 in plan (rebuild webview-ui dist first — already done this session). Then → **K** (delete legacy explore→classify→route at `=0` retirement).
+**NEXT: J (live smoke — NEEDS THE HUMAN, interactive dev-host).** Frontend (I1+I2) + backend (A–H) all complete & green. J: flip `CRUCIBLE_CHAT_CONTROLLER=1`, launch the dev-host, run scenarios J1–J7 in plan (rebuild webview-ui dist first — already done this session). Then → **K** (delete legacy explore→classify→route at `=0` retirement).
 - **F notes (verified this session):** ScriptedReasoningEngine `create_controller_step` CLAMPS index to last response (doesn't pop) — loops calling more times than scripted get the final response repeated. Gate template = `_pause_for_step_review` (engine.py 2058): set `pending_*` on caller's task → `transition()` (tolerate ONLY re-entrant `ValueError`) → `save` → broadcast → create future in `_pending_step_decisions` → `await` → pop in `finally`. Controller analog = `store.set_controller_gate(thread_id, gate|None)` (no task). Chat route `post_chat_message`@1114, `/step-decision`@729 (`resolve_pending_step_review` → `future.set_result`).
 
 **Run/resume commands:** `cd services/agentd-py && source .venv/bin/activate` (venv already built with `pip install -e .[dev]`). Test: `python -m pytest tests/<file> -q`. Full suite at H2.
@@ -1685,7 +1685,7 @@ In `ChatController`, provide the cb + route resolution:
 ```
 Wire `_run_loop` to pass `edit_decision_cb=lambda diff: self._edit_decision_cb(thread_id, channel_id, diff)` when `step_review is True`. Add a `POST /chat/threads/{id}/edit-decision {decision, reason?}` route (mirror `/step-decision` 729-761) that calls `_chat_agent.resolve_edit(thread_id, request)` and returns `{ok: True}` (the held-open message stream surfaces the continuation).
 
-**Hardening (client-disconnect):** if the SSE client drops while `_edit_decision_cb` awaits, the future never resolves and the turn hangs. Wrap the await with `AI_EDITOR_CHAT_EDIT_DECISION_TIMEOUT_SEC` (default `0` = wait forever, matching `AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC`); on timeout return `{"decision": "reject", "reason": "decision timed out"}` so the loop unwinds cleanly. Add a test that a timeout rejects the edit.
+**Hardening (client-disconnect):** if the SSE client drops while `_edit_decision_cb` awaits, the future never resolves and the turn hangs. Wrap the await with `CRUCIBLE_CHAT_EDIT_DECISION_TIMEOUT_SEC` (default `0` = wait forever, matching `CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC`); on timeout return `{"decision": "reject", "reason": "decision timed out"}` so the loop unwinds cleanly. Add a test that a timeout rejects the edit.
 
 - [ ] **Step 4: Run test to verify it passes** — `pytest tests/test_edit_decision.py -v` → PASS.
 
@@ -1768,7 +1768,7 @@ import os
 from agentd.chat.controller_factory import select_chat_handler
 
 def test_flag_selects_controller(monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_CHAT_CONTROLLER", "1")
+    monkeypatch.setenv("CRUCIBLE_CHAT_CONTROLLER", "1")
     assert select_chat_handler.__name__  # smoke
     # select_chat_handler(deps) returns a ChatController when flag=1, ChatAgent when 0
 ```
@@ -1777,7 +1777,7 @@ def test_flag_selects_controller(monkeypatch):
 
 - [ ] **Step 2: Run test to verify it fails** — FAIL — `controller_factory` missing.
 
-- [ ] **Step 3: Write minimal implementation** — `agentd/chat/controller_factory.py::select_chat_handler(deps) -> handler` reading `AI_EDITOR_CHAT_CONTROLLER` (default `"0"` until smoke-verified); wire it where the route constructs/uses the chat handler. Both expose `handle_message(thread_id, message, channel_id, step_review=None)`.
+- [ ] **Step 3: Write minimal implementation** — `agentd/chat/controller_factory.py::select_chat_handler(deps) -> handler` reading `CRUCIBLE_CHAT_CONTROLLER` (default `"0"` until smoke-verified); wire it where the route constructs/uses the chat handler. Both expose `handle_message(thread_id, message, channel_id, step_review=None)`.
 
 - [ ] **Step 4: Run test to verify it passes** — PASS.
 
@@ -1785,7 +1785,7 @@ def test_flag_selects_controller(monkeypatch):
 
 ```bash
 git add agentd/chat/controller_factory.py agentd/api/routes.py tests/test_chat_controller_flag.py
-git commit -m "feat(chat): AI_EDITOR_CHAT_CONTROLLER flag selects controller vs legacy"
+git commit -m "feat(chat): CRUCIBLE_CHAT_CONTROLLER flag selects controller vs legacy"
 ```
 
 ---
@@ -1988,7 +1988,7 @@ git commit -m "feat(webview): ModeGate + EditGate in LiveSlot; mode/edit decisio
 
 ## Phase J — Live dev-host smoke (no unit test substitutes this)
 
-> Drive the real dev-host per `docs/superpowers/plans/2026-06-14-tierB-narrative-smoke.md` env recipe (backend :8001, worktree extension, Playwright CDP frame-eval). Set `AI_EDITOR_CHAT_CONTROLLER=1`.
+> Drive the real dev-host per `docs/superpowers/plans/2026-06-14-tierB-narrative-smoke.md` env recipe (backend :8001, worktree extension, Playwright CDP frame-eval). Set `CRUCIBLE_CHAT_CONTROLLER=1`.
 
 - [ ] **J1** QA turn: ask a question → agent explores → `answer` renders; no mode card.
 - [ ] **J2** Edit turn: "add X to file Y" → agent emits `propose_mode` showing a **`plan_sketch`** ("here's my approach") + options → pick **Edit inline** → per-edit diff card → Accept → file changed on real ws; subsequent read in same turn sees the edit.
@@ -1997,7 +1997,7 @@ git commit -m "feat(webview): ModeGate + EditGate in LiveSlot; mode/edit decisio
 - [ ] **J4** create_task path: "big multi-file change" → `propose_mode` recommends **Plan as task** (with a sketch) → pick it → existing plan-approval flow runs unchanged (the concrete plan still goes through its own approval gate).
 - [ ] **J5** Clarify: ambiguous request → `clarify` question → answer it → loop resumes with prior context.
 - [ ] **J6** Cache check: tail `agentd.log`; confirm steady-state per-turn payload does not re-send file bodies in `retrieval_*` (bodies only in tool results). Record observation in the smoke doc.
-- [ ] **J7** Flip default: once J1–J6 pass, set `AI_EDITOR_CHAT_CONTROLLER` default to `1`; record in the smoke results log.
+- [ ] **J7** Flip default: once J1–J6 pass, set `CRUCIBLE_CHAT_CONTROLLER` default to `1`; record in the smoke results log.
 
 ---
 
@@ -2028,6 +2028,6 @@ git commit -m "feat(webview): ModeGate + EditGate in LiveSlot; mode/edit decisio
 1. **Shadow seeding for new files mid-turn** — `TurnEditSession._ensure_shadow` copies a newly-touched existing file into the lightweight shadow on second+ edits (else `apply_ops` would patch a missing file). Created-from-scratch files have no real source → `CreateFileOp` handles them. ✓ (covered by D1's multi-edit + E3's two-edit tests).
 2. **`shadow==real` after reject across rounds** — reject restores touched files from real; next edit re-seeds. The invariant test (H1 #4) must include a reject-then-edit-different-file case. **Added risk note** → H1 test 4 expanded below.
 3. **propose_mode → edit dispatch loses phase** — `resolve_mode("edit")` calls `_run_loop(phase="EDIT")`, which `enter_edit_mode()`s a *fresh* SM seeded with prior history; the agent must re-emit `edit` (it can, EDIT phase allows it). If the agent instead re-emits `propose_mode` it's blocked by the EDIT enum → malformed-correction loop. **Mitigation:** the EDIT-phase instruction explicitly says "you are now in edit mode; emit edit/submit_changes." (add to `build_controller_step_payload` instruction text).
-4. **Held-stream edit gate vs client disconnect** — if the SSE client drops while `_pending_edit` awaits, the future never resolves → the turn hangs. Mirror the task gate's behavior: add an `AI_EDITOR_CHAT_EDIT_DECISION_TIMEOUT_SEC` (default 0 = wait) and on timeout default to reject. **Added to F3 as a hardening step.**
+4. **Held-stream edit gate vs client disconnect** — if the SSE client drops while `_pending_edit` awaits, the future never resolves → the turn hangs. Mirror the task gate's behavior: add an `CRUCIBLE_CHAT_EDIT_DECISION_TIMEOUT_SEC` (default 0 = wait) and on timeout default to reject. **Added to F3 as a hardening step.**
 5. **`create_task_from_chat` explore_context empty** — controller passes `explore_context=[]`; the planner re-explores from scratch (acceptable, the controller's exploration wasn't a task). Optionally pass the controller's tool-result history as `initial_explore_context`. Noted, not required for v1.
 6. **Retrieval seed staleness across a long session** — seed is frozen at session start; deltas + live tools cover freshness (spec §6). Acceptable; compaction is the future module's job.

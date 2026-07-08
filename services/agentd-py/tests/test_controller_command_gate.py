@@ -2,7 +2,7 @@
 
 Mirrors the engine's task-path command gate (_build_command_approval_callback) on the
 controller's thread-gate machinery (the same pattern as the per-edit gate): honors
-AI_EDITOR_SHELL_POLICY (ALLOW_ALL skips; a remembered workspace rule auto-approves),
+CRUCIBLE_SHELL_POLICY (ALLOW_ALL skips; a remembered workspace rule auto-approves),
 otherwise raises a durable kind="command" gate and awaits /command-decision. Reuses
 CommandDecision / CommandRuleStore / rule_from_decision — no parallel rule logic.
 """

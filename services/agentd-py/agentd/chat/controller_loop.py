@@ -311,7 +311,7 @@ class ControllerLoop:
                 self._broadcaster.broadcast(self._channel_id, {
                     "type": "chat_agent_thinking", "payload": {"message": "Thinking…"}})
             # Memory middleware: compact the live history in place before the model call
-            # (no-op unless AI_EDITOR_MEMORY_ENABLED). history[:] keeps the same list object
+            # (no-op unless CRUCIBLE_MEMORY_ENABLED). history[:] keeps the same list object
             # partial_history() and downstream .append() calls reference.
             run_id = str(plan_context.get("run_id", "chat"))
             # Pass the current user message (goal) so recall has a query even on turn 1, when

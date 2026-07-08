@@ -4,10 +4,10 @@ from agentd.chat.app_factory import build_app
 
 
 def _client(tmp_path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_CHAT_CONTROLLER", "1")
-    monkeypatch.setenv("AI_EDITOR_MEMORY_ENABLED", "1")
-    monkeypatch.setenv("AI_EDITOR_MEMORY_DB_PATH", str(tmp_path / "m.sqlite3"))
-    monkeypatch.setenv("AI_EDITOR_WORKSPACE_PATH", str(tmp_path))
+    monkeypatch.setenv("CRUCIBLE_CHAT_CONTROLLER", "1")
+    monkeypatch.setenv("CRUCIBLE_MEMORY_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_MEMORY_DB_PATH", str(tmp_path / "m.sqlite3"))
+    monkeypatch.setenv("CRUCIBLE_WORKSPACE_PATH", str(tmp_path))
     return TestClient(build_app(str(tmp_path)))
 
 

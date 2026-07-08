@@ -17,7 +17,7 @@ _DEFAULT_MAX_CHARS = 16000
 
 
 def _max_chars() -> int:
-    raw = os.getenv("AI_EDITOR_INSTRUCTIONS_MAX_CHARS", "").strip()
+    raw = os.getenv("CRUCIBLE_INSTRUCTIONS_MAX_CHARS", "").strip()
     if raw.isdigit() and int(raw) > 0:
         return int(raw)
     return _DEFAULT_MAX_CHARS

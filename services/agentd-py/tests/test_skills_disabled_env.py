@@ -19,7 +19,7 @@ def test_disabled_env_filters_catalog(
     _write_skill(tmp_path, "keep-me")
     _write_skill(tmp_path, "drop-me")
     loader = SkillCatalogLoader(tmp_path)
-    monkeypatch.setenv("AI_EDITOR_SKILLS_DISABLED", " drop-me , ,missing")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_DISABLED", " drop-me , ,missing")
     assert [m.name for m in loader.load_catalog()] == ["keep-me"]
-    monkeypatch.delenv("AI_EDITOR_SKILLS_DISABLED")
+    monkeypatch.delenv("CRUCIBLE_SKILLS_DISABLED")
     assert sorted(m.name for m in loader.load_catalog()) == ["drop-me", "keep-me"]

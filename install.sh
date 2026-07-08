@@ -5,21 +5,21 @@
 #   curl -fsSL https://raw.githubusercontent.com/pradeepA2125/shadow-forge/main/install.sh | bash
 #
 # Downloads the .vsix attached to the latest GitHub Release and installs it
-# via `code --install-extension`. Override AI_EDITOR_INSTALL_REPO or
-# AI_EDITOR_INSTALL_CODE_BIN for a fork or a non-default editor binary
+# via `code --install-extension`. Override CRUCIBLE_INSTALL_REPO or
+# CRUCIBLE_INSTALL_CODE_BIN for a fork or a non-default editor binary
 # (code-insiders, cursor, ...).
 set -euo pipefail
 
-REPO="${AI_EDITOR_INSTALL_REPO:-pradeepA2125/shadow-forge}"
+REPO="${CRUCIBLE_INSTALL_REPO:-pradeepA2125/shadow-forge}"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
 log() { printf '==> %s\n' "$1"; }
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 
 find_code_bin() {
-  if [ -n "${AI_EDITOR_INSTALL_CODE_BIN:-}" ]; then
-    command -v "$AI_EDITOR_INSTALL_CODE_BIN" 2>/dev/null && return
-    die "AI_EDITOR_INSTALL_CODE_BIN='$AI_EDITOR_INSTALL_CODE_BIN' not found on PATH"
+  if [ -n "${CRUCIBLE_INSTALL_CODE_BIN:-}" ]; then
+    command -v "$CRUCIBLE_INSTALL_CODE_BIN" 2>/dev/null && return
+    die "CRUCIBLE_INSTALL_CODE_BIN='$CRUCIBLE_INSTALL_CODE_BIN' not found on PATH"
   fi
   for bin in code code-insiders cursor; do
     if command -v "$bin" >/dev/null 2>&1; then

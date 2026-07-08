@@ -23,15 +23,15 @@ _DEFAULT_MODEL: dict[str, str] = {
 }
 
 MODEL_ENV_VAR: dict[str, str] = {
-    "anthropic": "AI_EDITOR_ANTHROPIC_MODEL",
-    "gemini": "AI_EDITOR_GEMINI_MODEL",
-    "huggingface": "AI_EDITOR_HUGGINGFACE_MODEL",
-    "groq": "AI_EDITOR_GROQ_MODEL",
-    "openrouter": "AI_EDITOR_OPENROUTER_MODEL",
-    "watsonx": "AI_EDITOR_WATSONX_MODEL",
-    "ollama": "AI_EDITOR_OLLAMA_MODEL",
-    "turboquant": "AI_EDITOR_TURBOQUANT_MODEL",
-    "openai": "AI_EDITOR_OPENAI_MODEL",
+    "anthropic": "CRUCIBLE_ANTHROPIC_MODEL",
+    "gemini": "CRUCIBLE_GEMINI_MODEL",
+    "huggingface": "CRUCIBLE_HUGGINGFACE_MODEL",
+    "groq": "CRUCIBLE_GROQ_MODEL",
+    "openrouter": "CRUCIBLE_OPENROUTER_MODEL",
+    "watsonx": "CRUCIBLE_WATSONX_MODEL",
+    "ollama": "CRUCIBLE_OLLAMA_MODEL",
+    "turboquant": "CRUCIBLE_TURBOQUANT_MODEL",
+    "openai": "CRUCIBLE_OPENAI_MODEL",
 }
 
 PROVIDER_KEY_ENV: dict[str, str] = {
@@ -86,11 +86,11 @@ def build_transport(
         return AnthropicJsonTransport(
             api_key=env.get("ANTHROPIC_API_KEY"),
             endpoint=env.get(
-                "AI_EDITOR_ANTHROPIC_ENDPOINT", "https://api.anthropic.com/v1/messages"
+                "CRUCIBLE_ANTHROPIC_ENDPOINT", "https://api.anthropic.com/v1/messages"
             ),
-            anthropic_version=env.get("AI_EDITOR_ANTHROPIC_VERSION", "2023-06-01"),
-            max_tokens=_int_env(env, "AI_EDITOR_ANTHROPIC_MAX_TOKENS", 4096),
-            timeout_sec=_float_env(env, "AI_EDITOR_ANTHROPIC_TIMEOUT_SEC", 60.0),
+            anthropic_version=env.get("CRUCIBLE_ANTHROPIC_VERSION", "2023-06-01"),
+            max_tokens=_int_env(env, "CRUCIBLE_ANTHROPIC_MAX_TOKENS", 4096),
+            timeout_sec=_float_env(env, "CRUCIBLE_ANTHROPIC_TIMEOUT_SEC", 60.0),
         )
     if backend == "gemini":
         from agentd.providers.gemini_transport import GeminiJsonTransport
@@ -98,13 +98,13 @@ def build_transport(
         # Thinking knobs mirror main.py's semantics: thinking_level defaults to
         # "high" for Gemini 3.x when enabled and no explicit budget/level is set
         # (thinking_budget=-1 is the 2.5 dynamic-budget API; 3.x uses levels).
-        thinking_level = env.get("AI_EDITOR_GEMINI_THINKING_LEVEL")
-        raw_budget = env.get("AI_EDITOR_GEMINI_THINKING_BUDGET")
+        thinking_level = env.get("CRUCIBLE_GEMINI_THINKING_LEVEL")
+        raw_budget = env.get("CRUCIBLE_GEMINI_THINKING_BUDGET")
         thinking_budget = (
             int(raw_budget) if raw_budget and raw_budget.lstrip("-").isdigit() else None
         )
         thinking_enabled = env.get(
-            "AI_EDITOR_GEMINI_THINKING_ENABLED", "true"
+            "CRUCIBLE_GEMINI_THINKING_ENABLED", "true"
         ).strip().lower() in {"1", "true", "yes", "on"}
         if thinking_enabled and thinking_budget is None and not thinking_level:
             thinking_level = "high"
@@ -113,41 +113,41 @@ def build_transport(
             thinking_enabled=thinking_enabled,
             thinking_budget=thinking_budget,
             thinking_level=thinking_level,
-            include_thoughts=env.get("AI_EDITOR_GEMINI_INCLUDE_THOUGHTS", "false")
+            include_thoughts=env.get("CRUCIBLE_GEMINI_INCLUDE_THOUGHTS", "false")
             .strip()
             .lower()
             in {"1", "true", "yes", "on"},
-            timeout_sec=_float_env(env, "AI_EDITOR_GEMINI_TIMEOUT_SEC", 120.0),
-            max_retries=_int_env(env, "AI_EDITOR_GEMINI_MAX_RETRIES", 4),
+            timeout_sec=_float_env(env, "CRUCIBLE_GEMINI_TIMEOUT_SEC", 120.0),
+            max_retries=_int_env(env, "CRUCIBLE_GEMINI_MAX_RETRIES", 4),
         )
     if backend == "huggingface":
         from agentd.providers.huggingface_transport import HuggingFaceJsonTransport
 
-        seed_raw = env.get("AI_EDITOR_HUGGINGFACE_SEED")
+        seed_raw = env.get("CRUCIBLE_HUGGINGFACE_SEED")
         return HuggingFaceJsonTransport(
             api_key=env.get("HF_TOKEN"),
-            max_new_tokens=_int_env(env, "AI_EDITOR_HUGGINGFACE_MAX_NEW_TOKENS", 4096),
+            max_new_tokens=_int_env(env, "CRUCIBLE_HUGGINGFACE_MAX_NEW_TOKENS", 4096),
             seed=int(seed_raw) if seed_raw and seed_raw.isdigit() else None,
-            timeout_sec=_float_env(env, "AI_EDITOR_HUGGINGFACE_TIMEOUT_SEC", 60.0),
+            timeout_sec=_float_env(env, "CRUCIBLE_HUGGINGFACE_TIMEOUT_SEC", 60.0),
         )
     if backend == "groq":
         from agentd.providers.groq_transport import GroqJsonTransport
 
         return GroqJsonTransport(
             api_key=env.get("GROQ_API_KEY"),
-            endpoint=env.get("AI_EDITOR_GROQ_ENDPOINT"),
-            max_tokens=_int_env(env, "AI_EDITOR_GROQ_MAX_TOKENS", 4096),
-            timeout_sec=_float_env(env, "AI_EDITOR_GROQ_TIMEOUT_SEC", 60.0),
-            max_retries=_int_env(env, "AI_EDITOR_GROQ_MAX_RETRIES", 4),
+            endpoint=env.get("CRUCIBLE_GROQ_ENDPOINT"),
+            max_tokens=_int_env(env, "CRUCIBLE_GROQ_MAX_TOKENS", 4096),
+            timeout_sec=_float_env(env, "CRUCIBLE_GROQ_TIMEOUT_SEC", 60.0),
+            max_retries=_int_env(env, "CRUCIBLE_GROQ_MAX_RETRIES", 4),
         )
     if backend == "openrouter":
         from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 
         return OpenRouterJsonTransport(
             api_key=env.get("OPENROUTER_API_KEY"),
-            max_tokens=_int_env(env, "AI_EDITOR_OPENROUTER_MAX_TOKENS", 4096),
-            timeout_sec=_float_env(env, "AI_EDITOR_OPENROUTER_TIMEOUT_SEC", 120.0),
-            max_retries=_int_env(env, "AI_EDITOR_OPENROUTER_MAX_RETRIES", 4),
+            max_tokens=_int_env(env, "CRUCIBLE_OPENROUTER_MAX_TOKENS", 4096),
+            timeout_sec=_float_env(env, "CRUCIBLE_OPENROUTER_TIMEOUT_SEC", 120.0),
+            max_retries=_int_env(env, "CRUCIBLE_OPENROUTER_MAX_RETRIES", 4),
         )
     if backend == "watsonx":
         from agentd.providers.watsonx_transport import WatsonxJsonTransport
@@ -163,9 +163,9 @@ def build_transport(
 
         return OllamaJsonTransport(
             host=env.get("OLLAMA_HOST"),
-            keep_alive=env.get("AI_EDITOR_OLLAMA_KEEP_ALIVE"),
-            timeout_sec=_float_env(env, "AI_EDITOR_OLLAMA_TIMEOUT_SEC", 600.0),
-            max_retries=_int_env(env, "AI_EDITOR_OLLAMA_MAX_RETRIES", 4),
+            keep_alive=env.get("CRUCIBLE_OLLAMA_KEEP_ALIVE"),
+            timeout_sec=_float_env(env, "CRUCIBLE_OLLAMA_TIMEOUT_SEC", 600.0),
+            max_retries=_int_env(env, "CRUCIBLE_OLLAMA_MAX_RETRIES", 4),
         )
     if backend == "turboquant":
         from agentd.providers.turboquant_transport import TurboQuantTransport

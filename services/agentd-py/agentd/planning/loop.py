@@ -22,7 +22,7 @@ from agentd.reasoning.contracts import ReasoningEngine
 
 logger = logging.getLogger(__name__)
 
-_MAX_PLANNING_RESULT_CHARS = int(os.environ.get("AI_EDITOR_PLANNING_RESULT_MAX_CHARS", "100000"))
+_MAX_PLANNING_RESULT_CHARS = int(os.environ.get("CRUCIBLE_PLANNING_RESULT_MAX_CHARS", "100000"))
 
 
 def _assistant_turn(response: dict[str, object]) -> dict[str, object]:

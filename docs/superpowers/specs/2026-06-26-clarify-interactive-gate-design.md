@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-26
 **Status:** Approved (design); implementation pending
-**Area:** Reactive chat controller (`AI_EDITOR_CHAT_CONTROLLER=1`)
+**Area:** Reactive chat controller (`CRUCIBLE_CHAT_CONTROLLER=1`)
 
 ## Problem
 
@@ -30,7 +30,7 @@ Turn `clarify` into a live interactive card that:
 ## Non-goals
 
 - Changing `clarify` semantics in the classifier-based legacy `ChatAgent` path. This is
-  controller-only (`AI_EDITOR_CHAT_CONTROLLER=1`).
+  controller-only (`CRUCIBLE_CHAT_CONTROLLER=1`).
 - Nested/multi-question clarifies. One question, a flat option list.
 - Multi-select answers. Exactly one answer resolves the gate.
 

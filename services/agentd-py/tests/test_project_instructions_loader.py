@@ -34,7 +34,7 @@ def test_mtime_cache_serves_cached_until_changed(tmp_path: Path) -> None:
 
 
 def test_oversize_is_truncated_with_marker(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_INSTRUCTIONS_MAX_CHARS", "10")
+    monkeypatch.setenv("CRUCIBLE_INSTRUCTIONS_MAX_CHARS", "10")
     (tmp_path / "AGENTS.md").write_text("0123456789ABCDEF", encoding="utf-8")
     out = ProjectInstructionsLoader(tmp_path).load()
     assert out is not None
@@ -52,12 +52,12 @@ def test_disappearing_file_after_load_returns_none(tmp_path: Path) -> None:
 
 
 def test_instructions_flag_default_on(monkeypatch) -> None:
-    monkeypatch.delenv("AI_EDITOR_PROJECT_INSTRUCTIONS", raising=False)
+    monkeypatch.delenv("CRUCIBLE_PROJECT_INSTRUCTIONS", raising=False)
     assert is_project_instructions_enabled() is True
 
 
 def test_instructions_flag_explicit_off(monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "0")
+    monkeypatch.setenv("CRUCIBLE_PROJECT_INSTRUCTIONS", "0")
     assert is_project_instructions_enabled() is False
-    monkeypatch.setenv("AI_EDITOR_PROJECT_INSTRUCTIONS", "false")
+    monkeypatch.setenv("CRUCIBLE_PROJECT_INSTRUCTIONS", "false")
     assert is_project_instructions_enabled() is False

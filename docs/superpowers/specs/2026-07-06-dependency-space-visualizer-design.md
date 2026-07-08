@@ -165,7 +165,7 @@ its package with a toast).
 
 - **No snapshot:** empty-state screen (Ember-styled) with a **Build index** CTA
   wired to the existing index-build path; polls until the snapshot appears.
-- **Stale snapshot** (older than `AI_EDITOR_RETRIEVAL_MAX_AGE_SEC`): subtle
+- **Stale snapshot** (older than `CRUCIBLE_RETRIEVAL_MAX_AGE_SEC`): subtle
   "index stale" chip; space renders anyway.
 - **Malformed snapshot:** host returns a typed error; webview shows the empty state
   with the parse error summary. Never a blank panel.

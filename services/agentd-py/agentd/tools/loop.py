@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 _POST_PATCH_ANALYZER = AnalyzerBuilder.default()
 
-_MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("AI_EDITOR_TOOL_RESULT_MAX_CHARS", "100000"))
+_MAX_OUTPUT_INJECT_CHARS = int(os.environ.get("CRUCIBLE_TOOL_RESULT_MAX_CHARS", "100000"))
 
 
 def _assistant_turn(response: dict[str, object]) -> dict[str, object]:
@@ -366,7 +366,7 @@ class ToolLoop:
             if self._abort is not None and self._abort.is_set():
                 raise TaskAborted()
             # Memory middleware: compact the live ReAct history in place before the model
-            # call (no-op unless AI_EDITOR_MEMORY_ENABLED). step_context is separate and
+            # call (no-op unless CRUCIBLE_MEMORY_ENABLED). step_context is separate and
             # untouched — only the growing conversation `history` is compacted. run_id is
             # per-step (each step builds a fresh ToolLoop with its own history) so one step's
             # anchored summary never leaks into another step's context.

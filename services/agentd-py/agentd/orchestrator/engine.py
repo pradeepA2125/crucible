@@ -274,10 +274,10 @@ class AgentOrchestrator:
         self._inline_shadows: dict[str, dict[str, object]] = {}  # inline_task_id → meta
         self._chat_store = chat_store
         import os
-        self._tool_loop_enabled: bool = os.environ.get("AI_EDITOR_TOOL_LOOP_ENABLED", "true") not in ("0", "false", "False")
+        self._tool_loop_enabled: bool = os.environ.get("CRUCIBLE_TOOL_LOOP_ENABLED", "true") not in ("0", "false", "False")
         # 0 = wait indefinitely for the user's accept/reject (a deliberate human gate).
         self._validation_decision_timeout_sec = float(
-            os.environ.get("AI_EDITOR_VALIDATION_DECISION_TIMEOUT_SEC", "0") or 0
+            os.environ.get("CRUCIBLE_VALIDATION_DECISION_TIMEOUT_SEC", "0") or 0
         )
 
     def _register_task_control(self, task_id: str, *, step_review_auto_accept: bool) -> TaskControl:
@@ -1212,13 +1212,13 @@ class AgentOrchestrator:
             mode="project_edit",
             initial_explore_context=explore_context,
         )
-        # Honor AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT the same way POST /v1/tasks does.
+        # Honor CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT the same way POST /v1/tasks does.
         # Pre-fix this code path silently defaulted to True (TaskRecord field default),
         # so the env knob had no effect on chat-created tasks and step diffs were
         # auto-accepted regardless. Now matches the API-created behaviour.
         import os
         _env_step_review_default = os.environ.get(
-            "AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT", "true",
+            "CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT", "true",
         ).strip().lower() not in ("0", "false", "no", "off")
         # Per-message composer toggle overrides the env default when provided.
         if step_review_auto_accept is not None:
@@ -3096,9 +3096,9 @@ class AgentOrchestrator:
 
         # The validation `test_command` path has its own narrow allowlist of
         # test runners — distinct from the agent's run_command, which is now
-        # gated by the interactive command-approval gate (AI_EDITOR_SHELL_POLICY).
+        # gated by the interactive command-approval gate (CRUCIBLE_SHELL_POLICY).
         # Hardcoded because expanding the set is rare and the env-var read used
-        # to share its name with the now-removed AI_EDITOR_SHELL_ALLOWLIST.
+        # to share its name with the now-removed CRUCIBLE_SHELL_ALLOWLIST.
         allowlist = {"pytest", "npm", "cargo", "ruff", "mypy", "tsc", "eslint", "jest", "vitest"}
         if cmd not in allowlist:
             return ValidationResult(

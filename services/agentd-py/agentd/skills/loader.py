@@ -24,7 +24,7 @@ _DESC_MAX = 1024
 def _disabled_names() -> frozenset[str]:
     # Read per call, AFTER the mtime-cached scan — the cache stays name-agnostic
     # and a toggle (new env at next managed spawn) needs no cache invalidation.
-    raw = os.getenv("AI_EDITOR_SKILLS_DISABLED", "")
+    raw = os.getenv("CRUCIBLE_SKILLS_DISABLED", "")
     return frozenset(n.strip() for n in raw.split(",") if n.strip())
 
 

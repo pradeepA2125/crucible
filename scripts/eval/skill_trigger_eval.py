@@ -11,7 +11,7 @@ under-trigger fix and vice versa):
   B (trigger still fires): a bug report
     -> the FIRST tool call is read_skill with a debugging-ish skill.
 
-Needs: a running backend (AI_EDITOR_CHAT_CONTROLLER=1, SKILLS+DOC_WRITE on)
+Needs: a running backend (CRUCIBLE_CHAT_CONTROLLER=1, SKILLS+DOC_WRITE on)
 serving a workspace with the superpowers skills installed, e.g.
   bash scripts/stress/start-backend.sh --backend turboquant --port 8002 \
       --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none

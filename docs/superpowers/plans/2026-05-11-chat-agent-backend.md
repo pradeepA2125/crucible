@@ -1009,7 +1009,7 @@ In `agentd/main.py`, after instantiating `orchestrator`, add the chat wiring and
 from agentd.chat.agent import ChatAgent
 from agentd.chat.storage import ChatThreadStore
 
-chat_db_path = Path(os.getenv("AI_EDITOR_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
+chat_db_path = Path(os.getenv("CRUCIBLE_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
 chat_db_path.parent.mkdir(parents=True, exist_ok=True)
 chat_thread_store = ChatThreadStore(chat_db_path)
 

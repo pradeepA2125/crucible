@@ -4,19 +4,19 @@
 #   iwr https://raw.githubusercontent.com/pradeepA2125/shadow-forge/main/install.ps1 -useb | iex
 #
 # Downloads the .vsix attached to the latest GitHub Release and installs it
-# via `code --install-extension`. Set $env:AI_EDITOR_INSTALL_REPO or
-# $env:AI_EDITOR_INSTALL_CODE_BIN to target a fork or a non-default editor
+# via `code --install-extension`. Set $env:CRUCIBLE_INSTALL_REPO or
+# $env:CRUCIBLE_INSTALL_CODE_BIN to target a fork or a non-default editor
 # binary (code-insiders, cursor, ...).
 $ErrorActionPreference = "Stop"
 
-$Repo = if ($env:AI_EDITOR_INSTALL_REPO) { $env:AI_EDITOR_INSTALL_REPO } else { "pradeepA2125/shadow-forge" }
+$Repo = if ($env:CRUCIBLE_INSTALL_REPO) { $env:CRUCIBLE_INSTALL_REPO } else { "pradeepA2125/shadow-forge" }
 $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
 
 function Find-CodeBin {
-    if ($env:AI_EDITOR_INSTALL_CODE_BIN) {
-        $cmd = Get-Command $env:AI_EDITOR_INSTALL_CODE_BIN -ErrorAction SilentlyContinue
+    if ($env:CRUCIBLE_INSTALL_CODE_BIN) {
+        $cmd = Get-Command $env:CRUCIBLE_INSTALL_CODE_BIN -ErrorAction SilentlyContinue
         if ($cmd) { return $cmd.Source }
-        throw "AI_EDITOR_INSTALL_CODE_BIN='$($env:AI_EDITOR_INSTALL_CODE_BIN)' not found on PATH"
+        throw "CRUCIBLE_INSTALL_CODE_BIN='$($env:CRUCIBLE_INSTALL_CODE_BIN)' not found on PATH"
     }
     foreach ($bin in @("code", "code-insiders", "cursor")) {
         $cmd = Get-Command $bin -ErrorAction SilentlyContinue

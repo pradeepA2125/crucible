@@ -36,7 +36,7 @@ def test_read_skill_unknown_name_is_error(tmp_path: Path) -> None:
 
 
 def test_read_skill_caps_large_body(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("AI_EDITOR_SKILLS_BODY_MAX_CHARS", "50")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_BODY_MAX_CHARS", "50")
     _write_skill(tmp_path, "big", "x" * 500)
     src = SkillToolSource(SkillCatalogLoader(tmp_path), {})
     out = asyncio.run(src.execute("read_skill", {"name": "big"}))

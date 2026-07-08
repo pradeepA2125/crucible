@@ -11,10 +11,10 @@
 ## Global Constraints
 
 - **Controller-only.** The planning/task ReAct path is untouched (spec decision 1).
-- **Flag `AI_EDITOR_MCP_ENABLED`, default OFF** (truthy = `1/true/yes/on`). Off: no loader, no connections, no tool source, no prompt block.
+- **Flag `CRUCIBLE_MCP_ENABLED`, default OFF** (truthy = `1/true/yes/on`). Off: no loader, no connections, no tool source, no prompt block.
 - **Per-server allowlist:** an entry connects only with `"enabled": true` in `mcp.json` (spec decision 4).
 - **Naming:** `mcp__<server>__<tool>`. Server names must match `^[A-Za-z0-9][A-Za-z0-9_-]*$` and must NOT contain `__` (would break namespace parsing).
-- **Env vars:** `AI_EDITOR_MCP_ENABLED` (off) · `AI_EDITOR_MCP_DECISION_TIMEOUT_SEC` (default `0` = wait forever; timeout → reject) · `AI_EDITOR_MCP_TOOLS_MAX_CHARS` (default `16000`, order-truncation) · `AI_EDITOR_MCP_CONNECT_TIMEOUT_SEC` (default `30`) · `AI_EDITOR_MCP_CALL_TIMEOUT_SEC` (default `120`).
+- **Env vars:** `CRUCIBLE_MCP_ENABLED` (off) · `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` (default `0` = wait forever; timeout → reject) · `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (default `16000`, order-truncation) · `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` (default `30`) · `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` (default `120`).
 - **Degrade-not-raise:** a bad config file / failed server / dead session contributes zero tools or an `is_error` ToolOutput — never a crash.
 - **SDK pin: `mcp>=1.20,<2`** — use the **v1 client API** (`streamablehttp_client` returning a 3-tuple). The v2 API (`streamable_http_client`, 2-tuple, httpx-injected) is a future migration, not this plan.
 - **Async lifecycle (CRITICAL):** `main.py` calls `select_chat_handler` at module level with **no running event loop**. The manager is *constructed* there but *connects* in a FastAPI `startup` event handler. The SDK's transport/session context managers use anyio cancel scopes that must enter/exit **in the same asyncio task** — hence one dedicated `_serve` task per server; never hold these contexts across tasks with an exit stack.
@@ -176,12 +176,12 @@ def test_interpolate_env_resolves_and_raises(monkeypatch):
 
 
 def test_env_knob_defaults(monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_MCP_TOOLS_MAX_CHARS", raising=False)
-    monkeypatch.delenv("AI_EDITOR_MCP_DECISION_TIMEOUT_SEC", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", raising=False)
     assert mcp_tools_max_chars() == 16000
     assert mcp_decision_timeout_sec() == 0.0
-    monkeypatch.setenv("AI_EDITOR_MCP_TOOLS_MAX_CHARS", "500")
-    monkeypatch.setenv("AI_EDITOR_MCP_DECISION_TIMEOUT_SEC", "2.5")
+    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "500")
+    monkeypatch.setenv("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", "2.5")
     assert mcp_tools_max_chars() == 500
     assert mcp_decision_timeout_sec() == 2.5
 ```
@@ -272,20 +272,20 @@ def _nonneg_float(env: str, default: float) -> float:
 
 
 def mcp_tools_max_chars() -> int:
-    return _pos_int("AI_EDITOR_MCP_TOOLS_MAX_CHARS", 16000)
+    return _pos_int("CRUCIBLE_MCP_TOOLS_MAX_CHARS", 16000)
 
 
 def mcp_decision_timeout_sec() -> float:
-    """0 = wait forever (mirrors AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC)."""
-    return _nonneg_float("AI_EDITOR_MCP_DECISION_TIMEOUT_SEC", 0.0)
+    """0 = wait forever (mirrors CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC)."""
+    return _nonneg_float("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", 0.0)
 
 
 def mcp_connect_timeout_sec() -> float:
-    return _nonneg_float("AI_EDITOR_MCP_CONNECT_TIMEOUT_SEC", 30.0)
+    return _nonneg_float("CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC", 30.0)
 
 
 def mcp_call_timeout_sec() -> float:
-    return _nonneg_float("AI_EDITOR_MCP_CALL_TIMEOUT_SEC", 120.0)
+    return _nonneg_float("CRUCIBLE_MCP_CALL_TIMEOUT_SEC", 120.0)
 
 
 class McpMissingEnvVar(ValueError):
@@ -991,7 +991,7 @@ def test_definitions_pass_through_and_budget_truncates(monkeypatch):
     defs = [_def(f"mcp__s__t{i}", desc="x" * 200) for i in range(10)]
     src = McpToolSource(_StubManager(defs), _approve)
     assert len(src.definitions()) == 10
-    monkeypatch.setenv("AI_EDITOR_MCP_TOOLS_MAX_CHARS", "700")
+    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "700")
     kept = src.definitions()
     assert 0 < len(kept) < 10
     assert [d.name for d in kept] == [d.name for d in defs[: len(kept)]]  # order-truncation
@@ -1261,7 +1261,7 @@ async def test_broadcasts_mcp_approval_requested_poke(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_timeout_rejects(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_MCP_DECISION_TIMEOUT_SEC", "0.05")
+    monkeypatch.setenv("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", "0.05")
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store)
@@ -1336,7 +1336,7 @@ In `agentd/chat/controller.py`:
 2. `__init__` signature: add `mcp_manager: object | None = None,` after `memory_harness`; in the body add:
 
 ```python
-        # MCP: process-scoped connection manager (None unless AI_EDITOR_MCP_ENABLED —
+        # MCP: process-scoped connection manager (None unless CRUCIBLE_MCP_ENABLED —
         # constructed in select_chat_handler, connected in main.py's startup hook).
         self._mcp_manager = mcp_manager
         # thread_id → future for the in-flight mcp_tool gate; same lifecycle as
@@ -1542,7 +1542,7 @@ git commit -m "feat(mcp): controller system-prompt teaching block for external M
 Create `tests/test_mcp_flag_wiring.py`:
 
 ```python
-"""AI_EDITOR_MCP_ENABLED: default OFF; ON builds the manager into the controller.
+"""CRUCIBLE_MCP_ENABLED: default OFF; ON builds the manager into the controller.
 Route: POST /chat/threads/{id}/mcp-decision resolves via the handler's resolve_mcp."""
 from __future__ import annotations
 
@@ -1559,7 +1559,7 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
 def test_flag_default_off(monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_MCP_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_ENABLED", raising=False)
     assert is_mcp_enabled() is False
 
 
@@ -1568,13 +1568,13 @@ def test_flag_default_off(monkeypatch):
     ("0", False), ("false", False), ("", False),
 ])
 def test_flag_parsing(monkeypatch, raw, expected):
-    monkeypatch.setenv("AI_EDITOR_MCP_ENABLED", raw)
+    monkeypatch.setenv("CRUCIBLE_MCP_ENABLED", raw)
     assert is_mcp_enabled() is expected
 
 
 def _handler(tmp_path, monkeypatch):
     from agentd.chat.storage import ChatThreadStore
-    monkeypatch.setenv("AI_EDITOR_CHAT_CONTROLLER", "1")
+    monkeypatch.setenv("CRUCIBLE_CHAT_CONTROLLER", "1")
     return select_chat_handler(
         workspace_path=str(tmp_path),
         transport=object(), model="m",
@@ -1583,12 +1583,12 @@ def _handler(tmp_path, monkeypatch):
 
 
 def test_factory_off_no_manager(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_MCP_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_ENABLED", raising=False)
     assert _handler(tmp_path, monkeypatch)._mcp_manager is None
 
 
 def test_factory_on_builds_manager(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_MCP_ENABLED", "1")
+    monkeypatch.setenv("CRUCIBLE_MCP_ENABLED", "1")
     from agentd.mcp.client import McpConnectionManager
     handler = _handler(tmp_path, monkeypatch)
     assert isinstance(handler._mcp_manager, McpConnectionManager)
@@ -1638,8 +1638,8 @@ In `agentd/chat/controller_factory.py`, after `is_skills_enabled`:
 def is_mcp_enabled() -> bool:
     """Whether external MCP servers from .ai-editor/mcp.json are connected and
     offered to the controller. Default OFF — external tool execution, ship dark.
-    Opt in with AI_EDITOR_MCP_ENABLED=1."""
-    return os.getenv("AI_EDITOR_MCP_ENABLED", "0").strip().lower() in _TRUTHY
+    Opt in with CRUCIBLE_MCP_ENABLED=1."""
+    return os.getenv("CRUCIBLE_MCP_ENABLED", "0").strip().lower() in _TRUTHY
 ```
 
 In `select_chat_handler`, after the `skill_catalog_loader = ...` block:
@@ -1707,7 +1707,7 @@ Expected: new tests PASS; full suite green (a shifting failure set = pre-existin
 
 ```bash
 git add agentd/chat/controller_factory.py agentd/main.py agentd/api/routes.py tests/test_mcp_flag_wiring.py
-git commit -m "feat(mcp): AI_EDITOR_MCP_ENABLED flag, startup connect wiring, mcp-decision route"
+git commit -m "feat(mcp): CRUCIBLE_MCP_ENABLED flag, startup connect wiring, mcp-decision route"
 ```
 
 ---
@@ -2001,7 +2001,7 @@ Add after the Agent Skills section, following its exact style:
 
 External MCP tool servers (stdio + HTTP/SSE) connected from `<workspace>/.ai-editor/mcp.json`,
 tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval gate. Flag-gated,
-**default OFF** (`AI_EDITOR_MCP_ENABLED`), **controller-only**. Spec/plan:
+**default OFF** (`CRUCIBLE_MCP_ENABLED`), **controller-only**. Spec/plan:
 `docs/superpowers/specs/2026-07-02-mcp-client-github-integration-design.md` +
 `…/plans/2026-07-02-mcp-client-github-integration.md`.
 
@@ -2019,7 +2019,7 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   `McpServerStatus` is queryable. Failed server = zero tools + warning (degrade-not-raise).
 - **Tools (`agentd/mcp/tool_source.py::McpToolSource`):** dynamic `definitions()` from
   `list_tools()`, namespaced `mcp__<server>__<tool>`; schemas ride `tools_json` via the
-  existing `AggregatingToolRegistry` seam. Budget: `AI_EDITOR_MCP_TOOLS_MAX_CHARS` (default
+  existing `AggregatingToolRegistry` seam. Budget: `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (default
   16000, order-truncation). Results: text blocks flattened; non-text counted-not-rendered;
   `isError` → `ToolOutput(is_error=True)` — the loop adapts, never crashes.
 - **Gate:** every call raises `PendingGate(kind="mcp_tool", payload={server, tool, args})`
@@ -2027,15 +2027,15 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   instant-render poke). Resolved by `POST /v1/chat/threads/{id}/mcp-decision`
   `{approve, remember}`; remember persists the exact `(server, tool)` pair to
   `.ai-editor/approved-mcp-tools.json` (`McpRuleStore`) — auto-approves next time.
-  `AI_EDITOR_MCP_DECISION_TIMEOUT_SEC` (default 0 = wait forever; timeout → reject).
+  `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` (default 0 = wait forever; timeout → reject).
   **`PendingGate.kind` gained `"mcp_tool"` in BOTH `chat/models.py` AND the editor-client
   Zod enum** (the `.min(1)`-class footgun) **AND webview `types.ts`**.
 - **Prompt:** `_MCP_BLOCK` teaching block auto-appends when any tool def name starts with
   `mcp__` (detected from `tool_definitions` — no loader param). Teaches: external/side-
   effecting + the approval pause is expected, not an error.
-- **Env:** `AI_EDITOR_MCP_ENABLED` (off) · `AI_EDITOR_MCP_DECISION_TIMEOUT_SEC` (0) ·
-  `AI_EDITOR_MCP_TOOLS_MAX_CHARS` (16000) · `AI_EDITOR_MCP_CONNECT_TIMEOUT_SEC` (30) ·
-  `AI_EDITOR_MCP_CALL_TIMEOUT_SEC` (120). `/v1/config` exposes `mcp_enabled`.
+- **Env:** `CRUCIBLE_MCP_ENABLED` (off) · `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` (0) ·
+  `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (16000) · `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` (30) ·
+  `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` (120). `/v1/config` exposes `mcp_enabled`.
 - **GitHub:** proof-via-user-config (no bundled entry): an `mcp.json` entry for the official
   GitHub MCP server with a `${GITHUB_PAT}` header, verified live end-to-end.
 ```
@@ -2084,11 +2084,11 @@ Spec §7 "Live smoke" + §8 exit criteria. Human-in-the-loop; run from the repo 
 }
 ```
 Export `GITHUB_PAT` (fine-grained, repo-scoped) in the backend env — never in the file.
-- [ ] 2. Start the backend with `AI_EDITOR_MCP_ENABLED=1 AI_EDITOR_CHAT_CONTROLLER=1` via `start-backend.sh` (quote `--workspace`). Log shows `[mcp] connected server=… tools=N` for both.
+- [ ] 2. Start the backend with `CRUCIBLE_MCP_ENABLED=1 CRUCIBLE_CHAT_CONTROLLER=1` via `start-backend.sh` (quote `--workspace`). Log shows `[mcp] connected server=… tools=N` for both.
 - [ ] 3. Drive a chat request that needs GitHub ("read issue #1 of <repo> and summarize") → `mcp_tool` gate card renders → Approve → result lands in the transcript.
 - [ ] 4. Reject path: repeat, Reject at the gate → the loop adapts (no crash, no silent retry of the identical call).
 - [ ] 5. Remember path: Approve & remember → `.ai-editor/approved-mcp-tools.json` written → the same tool next turn runs without a gate.
-- [ ] 6. Kill-switch: restart with `AI_EDITOR_MCP_ENABLED=0` → no `[mcp]` connects, no `mcp__` tools in the controller artifacts' `tools_json`, no teaching block.
+- [ ] 6. Kill-switch: restart with `CRUCIBLE_MCP_ENABLED=0` → no `[mcp]` connects, no `mcp__` tools in the controller artifacts' `tools_json`, no teaching block.
 - [ ] 7. Allowlist: set `"enabled": false` on a server → NOT connected, zero tools (decision 4 holding).
 - [ ] 8. Reload-durability: raise a gate, reload the dev-host window → the card re-renders from `/live`.
 

@@ -17,7 +17,7 @@ def _ctrl(tmp_path, store):
 
 @pytest.mark.asyncio
 async def test_mode_decision_rejects_create_task_when_disabled(tmp_path, monkeypatch):
-    monkeypatch.setenv("AI_EDITOR_TASK_SUBSYSTEM", "0")
+    monkeypatch.setenv("CRUCIBLE_TASK_SUBSYSTEM", "0")
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     store.set_controller_gate(thread.thread_id, PendingGate(

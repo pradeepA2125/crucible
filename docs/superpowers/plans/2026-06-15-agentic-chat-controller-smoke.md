@@ -1,6 +1,6 @@
 # Agentic Chat Controller — Live Dev-Host Smoke (Phase J)
 
-> Drive the real VS Code dev-host (worktree extension) via Playwright MCP (CDP frame-eval) against a live backend with `AI_EDITOR_CHAT_CONTROLLER=1`. Each **Scenario** asserts observed UI behavior — **never trust a green unit test as a smoke pass.** Mark `- [x]` per assertion; record task/thread ids + screenshots.
+> Drive the real VS Code dev-host (worktree extension) via Playwright MCP (CDP frame-eval) against a live backend with `CRUCIBLE_CHAT_CONTROLLER=1`. Each **Scenario** asserts observed UI behavior — **never trust a green unit test as a smoke pass.** Mark `- [x]` per assertion; record task/thread ids + screenshots.
 
 ## What changed vs the Tier-B/narrative smoke (so old scenarios don't apply)
 
@@ -20,7 +20,7 @@ The controller **replaces** `explore → classify → route`. Therefore these ol
 
 ## Environment
 
-- **Backend:** worktree `services/agentd-py` via `scripts/stress/start-backend.sh` with **`AI_EDITOR_CHAT_CONTROLLER=1` exported** before launch, `--workspace <REAL ws OUTSIDE .tmp>` (graph indexing needs a non-`.tmp` ancestor). Port :8001 (workspace `.vscode/settings.json` pins `aiEditor.backendBaseUrl=http://localhost:8001`).
+- **Backend:** worktree `services/agentd-py` via `scripts/stress/start-backend.sh` with **`CRUCIBLE_CHAT_CONTROLLER=1` exported** before launch, `--workspace <REAL ws OUTSIDE .tmp>` (graph indexing needs a non-`.tmp` ancestor). Port :8001 (workspace `.vscode/settings.json` pins `aiEditor.backendBaseUrl=http://localhost:8001`).
 - **Dev-host:** VS Code on CDP :9335 via `scripts/playwright/start-vscode-mcp.sh` — **EXT_PATH MUST point at THIS worktree** `.../.worktrees/feat-agentic-chat-controller/apps/vscode-extension` (the committed script points at a DELETED worktree — fix before launch). **MUST rebuild `webview-ui/dist` first** (`npm run -w webview-ui build` or in `apps/vscode-extension/webview-ui/`) — dist is a gitignored artifact; stale dist = old UI (the sess.3 stale-dist trap).
 - **Driving caveat (auto-memory):** `browser_wait_for`/a11y snapshot do NOT pierce the sandboxed webview iframe — use CDP **frame-eval** (`page.frames()` → the `fake.html`/webview frame), matching `scripts/playwright/drive-chat.js`. Backend runs `--reload`: do NOT edit `agentd/*.py` while a turn is in flight (hot-reload orphans it).
 - **Cache-behavior verification (do this whenever a scenario is multi-turn — J10, J11, and any time a thread takes ≥2 turns):** never *assume* a hit or miss — actively measure it. Before driving, tail the TQP/llama-server log; per turn, capture **(1)** the slot's reused-prefix size (`n_past`) and prompt tokens *evaluated* vs *sent*, and **(2)** the turn's time-to-first-token (agentd request-duration log or wall-clock the SSE). A warm continuation reuses the prefix (large `n_past`, small eval, fast TTFT); a cold/diverged prefix re-prefills (`n_past≈0`, full eval, slow TTFT). Log these numbers next to the scenario result so a regression in prefix stability is visible, not silent.
@@ -28,7 +28,7 @@ The controller **replaces** `explore → classify → route`. Therefore these ol
 ## Pre-flight checklist
 - [ ] `webview-ui/dist` rebuilt from this worktree (timestamp newer than last source edit).
 - [ ] `start-vscode-mcp.sh` EXT_PATH repointed to this worktree's `apps/vscode-extension`.
-- [ ] Backend up on :8001 with `AI_EDITOR_CHAT_CONTROLLER=1` (confirm: `curl -s :8001/health`; confirm controller active in logs / by absence of `intent_classified`).
+- [ ] Backend up on :8001 with `CRUCIBLE_CHAT_CONTROLLER=1` (confirm: `curl -s :8001/health`; confirm controller active in logs / by absence of `intent_classified`).
 - [ ] `shadow-forge-stress` indexed (snapshot non-zero nodes).
 
 ---
@@ -99,7 +99,7 @@ The controller **replaces** `explore → classify → route`. Therefore these ol
 **Premise:** the agentd backend restarts (uvicorn `--reload` fires, or a manual kill+relaunch) but **TQP/llama-server stays up**, so its prefix KV cache survives. The rehydrated prompt head must be byte-identical so TQP reuses the cached prefix instead of re-prefilling.
 **Setup:** a thread with ≥1 explored turn already (reuse the thread from J1 or J3 — it has history + a pinned seed). Tail TQP's server log for prompt-eval/cache lines before driving.
 
-- [ ] **Restart agentd between turns** (NOT mid-turn): wait for the prior turn's `chat_done`, then either touch an `agentd/*.py` to trigger `--reload` or `kill` + relaunch `start-backend.sh` (same `AI_EDITOR_CHAT_CONTROLLER=1`, same workspace). Confirm `curl -s :8001/health` back up. **Do NOT restart TQP.**
+- [ ] **Restart agentd between turns** (NOT mid-turn): wait for the prior turn's `chat_done`, then either touch an `agentd/*.py` to trigger `--reload` or `kill` + relaunch `start-backend.sh` (same `CRUCIBLE_CHAT_CONTROLLER=1`, same workspace). Confirm `curl -s :8001/health` back up. **Do NOT restart TQP.**
 - [ ] In the SAME thread, send a follow-up ("what did you look at / change so far?"). The agent **references the prior turn** (history rehydrated from the DB → `seed_history`), not a blank re-explore — the J10 continuity, now proven across a process restart.
 - [ ] **KV reuse on TQP — detect hit vs miss with ≥1 method (ideally 2; you must actively measure, not assume):**
   - **(a) TQP/llama-server logs (most direct).** Tail the llama.cpp server log across the post-restart turn. A **hit** shows the cached prefix reused: `slot … | n_past = P` with **P large** (≈ the head length), `kv cache rm [P, end)` removing only the tail, and `prompt eval time = … (M tokens …)` with **M ≪ total prompt tokens** (M = only the new/uncached suffix). A **miss/cold** re-prefill shows `n_past ≈ 0` and M ≈ the full prompt. Record M and total for the turn just before vs just after the restart.

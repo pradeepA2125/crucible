@@ -15,7 +15,7 @@ if not _agentd_logger.handlers:
     _h_stdout.setFormatter(_fmt)
     _agentd_logger.addHandler(_h_stdout)
     # Also write to a file so logs are tailable regardless of how the server was started.
-    _log_file = Path(os.environ.get("AI_EDITOR_LOG_FILE", ".agentd/agentd.log"))
+    _log_file = Path(os.environ.get("CRUCIBLE_LOG_FILE", ".agentd/agentd.log"))
     _log_file.parent.mkdir(parents=True, exist_ok=True)
     _h_file = logging.FileHandler(_log_file)
     _h_file.setFormatter(_fmt)
@@ -39,18 +39,18 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 app = FastAPI(title="ai-editor agentd-py", version="0.1.0")
 
-database_path = Path(os.getenv("AI_EDITOR_DB_PATH", ".agentd/agentd.sqlite3")).resolve()
-shadow_root_path = Path(os.getenv("AI_EDITOR_SHADOW_ROOT", ".agentd/shadows")).resolve()
-ast_cutover_mode = os.getenv("AI_EDITOR_AST_CUTOVER_MODE", "hard").strip().lower()
+database_path = Path(os.getenv("CRUCIBLE_DB_PATH", ".agentd/agentd.sqlite3")).resolve()
+shadow_root_path = Path(os.getenv("CRUCIBLE_SHADOW_ROOT", ".agentd/shadows")).resolve()
+ast_cutover_mode = os.getenv("CRUCIBLE_AST_CUTOVER_MODE", "hard").strip().lower()
 if ast_cutover_mode != "hard":
     msg = (
-        "AI_EDITOR_AST_CUTOVER_MODE must be 'hard' for Phase 1 reliability "
+        "CRUCIBLE_AST_CUTOVER_MODE must be 'hard' for Phase 1 reliability "
         f"(received: {ast_cutover_mode!r})"
     )
     raise RuntimeError(msg)
 
 store = SQLiteTaskStore(database_path=database_path)
-raw_checkpoint_retention = os.getenv("AI_EDITOR_CHECKPOINT_RETENTION_TASKS", "20")
+raw_checkpoint_retention = os.getenv("CRUCIBLE_CHECKPOINT_RETENTION_TASKS", "20")
 try:
     checkpoint_retention_tasks = int(raw_checkpoint_retention)
 except ValueError:
@@ -94,7 +94,7 @@ def _bool_env(name: str, default: bool) -> bool:
     return default
 
 
-reasoning_backend = os.getenv("AI_EDITOR_REASONING_BACKEND", "openai").strip().lower()
+reasoning_backend = os.getenv("CRUCIBLE_REASONING_BACKEND", "openai").strip().lower()
 reasoning_engine: ReasoningEngine
 if reasoning_backend == "scripted":
     reasoning_engine = ScriptedReasoningEngine(
@@ -138,18 +138,18 @@ else:
     )
 
 validator = CommandValidator.from_env()
-evidence_adapter = build_evidence_adapter(os.getenv("AI_EDITOR_EVIDENCE_ADAPTER", "generic"))
-planning_adapter = build_planning_adapter(os.getenv("AI_EDITOR_PLANNING_ADAPTER", "generic"))
+evidence_adapter = build_evidence_adapter(os.getenv("CRUCIBLE_EVIDENCE_ADAPTER", "generic"))
+planning_adapter = build_planning_adapter(os.getenv("CRUCIBLE_PLANNING_ADAPTER", "generic"))
 
 _semantic_index: object = None
-if _bool_env("AI_EDITOR_SEMANTIC_RETRIEVAL", False):
+if _bool_env("CRUCIBLE_SEMANTIC_RETRIEVAL", False):
     try:
         from agentd.retrieval.semantic_index import SemanticIndex
         _semantic_index = SemanticIndex.from_env()
     except ImportError:
         import logging as _logging
         _logging.getLogger(__name__).warning(
-            "AI_EDITOR_SEMANTIC_RETRIEVAL=true but lancedb/sentence-transformers not installed; "
+            "CRUCIBLE_SEMANTIC_RETRIEVAL=true but lancedb/sentence-transformers not installed; "
             "falling back to graph-only retrieval. "
             "Install with: pip install 'ai-editor-agentd[semantic]'"
         )
@@ -159,7 +159,7 @@ retrieval_client = RetrievalArtifactClient.from_env(
     semantic_index=_semantic_index,
 )
 def _scope_policy_env() -> ScopePolicy:
-    raw = os.getenv("AI_EDITOR_SCOPE_POLICY", "strict").strip().lower()
+    raw = os.getenv("CRUCIBLE_SCOPE_POLICY", "strict").strip().lower()
     try:
         return ScopePolicy(raw)
     except ValueError:
@@ -167,7 +167,7 @@ def _scope_policy_env() -> ScopePolicy:
 
 
 def _scope_trigger_env() -> ScopeTrigger:
-    raw = os.getenv("AI_EDITOR_SCOPE_TRIGGER", "nearby").strip().lower()
+    raw = os.getenv("CRUCIBLE_SCOPE_TRIGGER", "nearby").strip().lower()
     try:
         return ScopeTrigger(raw)
     except ValueError:
@@ -175,7 +175,7 @@ def _scope_trigger_env() -> ScopeTrigger:
 
 
 def _shell_policy_env() -> ShellPolicy:
-    raw = os.getenv("AI_EDITOR_SHELL_POLICY", "ask").strip().lower()
+    raw = os.getenv("CRUCIBLE_SHELL_POLICY", "ask").strip().lower()
     try:
         return ShellPolicy(raw)
     except ValueError:
@@ -183,7 +183,7 @@ def _shell_policy_env() -> ShellPolicy:
 
 
 def _scope_remember_env() -> ScopeRemember:
-    raw = os.getenv("AI_EDITOR_SCOPE_REMEMBER", "task").strip().lower()
+    raw = os.getenv("CRUCIBLE_SCOPE_REMEMBER", "task").strip().lower()
     try:
         return ScopeRemember(raw)
     except ValueError:
@@ -195,18 +195,18 @@ from agentd.chat.storage import ChatThreadStore
 from agentd.memory.config import MemoryConfig
 from agentd.memory.harness import NO_OP_HARNESS, build_memory_harness
 
-_chat_db_path = Path(os.getenv("AI_EDITOR_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
+_chat_db_path = Path(os.getenv("CRUCIBLE_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
 _chat_db_path.parent.mkdir(parents=True, exist_ok=True)
 _chat_thread_store = ChatThreadStore(_chat_db_path)
 
 # workspace_path for chat — the real repo being edited; defaults to cwd if not set
-_chat_workspace_path = os.getenv("AI_EDITOR_WORKSPACE_PATH", str(Path.cwd()))
+_chat_workspace_path = os.getenv("CRUCIBLE_WORKSPACE_PATH", str(Path.cwd()))
 from agentd.providers.factory import MODEL_ENV_VAR
 
 _chat_model = os.getenv(
-    MODEL_ENV_VAR.get(reasoning_backend, "AI_EDITOR_OPENAI_MODEL"), "gpt-4o"
+    MODEL_ENV_VAR.get(reasoning_backend, "CRUCIBLE_OPENAI_MODEL"), "gpt-4o"
 )
-# Within-run compaction for task ToolLoop steps (no-op unless AI_EDITOR_MEMORY_ENABLED;
+# Within-run compaction for task ToolLoop steps (no-op unless CRUCIBLE_MEMORY_ENABLED;
 # scripted backend has no transport). Disjoint run_id namespace (task_id) from the chat
 # controller's harness — both share the one memory DB file, which sqlite handles fine.
 _task_memory_harness = (
@@ -227,20 +227,20 @@ orchestrator = AgentOrchestrator(
     workspace_manager=workspace_manager,
     retrieval_client=retrieval_client,
     planning_adapter=planning_adapter,
-    max_attempts_per_step=_int_env("AI_EDITOR_MAX_ATTEMPTS_PER_STEP", 3),
-    step_scoped_mode=_bool_env("AI_EDITOR_STEP_SCOPED_MODE", True),
-    patch_candidate_count=_int_env("AI_EDITOR_PATCH_CANDIDATE_COUNT", 3),
+    max_attempts_per_step=_int_env("CRUCIBLE_MAX_ATTEMPTS_PER_STEP", 3),
+    step_scoped_mode=_bool_env("CRUCIBLE_STEP_SCOPED_MODE", True),
+    patch_candidate_count=_int_env("CRUCIBLE_PATCH_CANDIDATE_COUNT", 3),
     scope_policy=_scope_policy_env(),
     scope_trigger=_scope_trigger_env(),
     scope_remember=_scope_remember_env(),
-    scope_timeout_sec=_float_env("AI_EDITOR_SCOPE_TIMEOUT_SEC", 600.0),
+    scope_timeout_sec=_float_env("CRUCIBLE_SCOPE_TIMEOUT_SEC", 600.0),
     shell_policy=_shell_policy_env(),
-    command_decision_timeout_sec=_float_env("AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
+    command_decision_timeout_sec=_float_env("CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
     chat_store=_chat_thread_store,
 )
 
 # scripted backend has no provider transport — both chat handlers require a real one.
-# AI_EDITOR_CHAT_CONTROLLER flag-selects the new ChatController vs the legacy ChatAgent.
+# CRUCIBLE_CHAT_CONTROLLER flag-selects the new ChatController vs the legacy ChatAgent.
 _chat_agent = select_chat_handler(
     workspace_path=_chat_workspace_path,
     transport=transport,  # defined for all real backends
@@ -250,7 +250,7 @@ _chat_agent = select_chat_handler(
     broadcaster=orchestrator.broadcaster,
     retrieval_client=retrieval_client,
     shell_policy=_shell_policy_env(),
-    command_decision_timeout_sec=_float_env("AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
+    command_decision_timeout_sec=_float_env("CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
 ) if reasoning_backend != "scripted" else None
 
 # MCP servers connect once per process at APP STARTUP, not at construction — this
@@ -262,9 +262,9 @@ if _mcp_manager is not None:
     app.router.add_event_handler("startup", _mcp_manager.start)
     app.router.add_event_handler("shutdown", _mcp_manager.shutdown)
 
-# Managed-spawn lockfile: the extension sets AI_EDITOR_PORT and reads/reaps
+# Managed-spawn lockfile: the extension sets CRUCIBLE_PORT and reads/reaps
 # <workspace>/.agentd/agentd.lock. The dev script doesn't set it — no-op there.
-_lock_port_raw = os.getenv("AI_EDITOR_PORT", "").strip()
+_lock_port_raw = os.getenv("CRUCIBLE_PORT", "").strip()
 if _lock_port_raw.isdigit():
     from agentd.runtime_lock import clear_lock, write_lock
 

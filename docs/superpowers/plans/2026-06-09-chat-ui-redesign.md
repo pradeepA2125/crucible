@@ -96,7 +96,7 @@ self.broadcaster.broadcast(task.task_id, {
 What exists (no backend change needed):
 - `patch_applied {step_id, phase, touched_files}` (`tools/loop.py:770`) → extension already appends a thinking entry; keep.
 - `patch_failed {step_id, error}` (`tools/loop.py:567,606,659`) → currently DROPPED by the controller; forward as a thinking entry (error-tinted) — extension-only change.
-- Step accept/discard breadcrumbs: `chat_breadcrumb` events + persisted `agent/text` messages with `metadata.breadcrumb` (`engine.py:1827-1829`) → already rendered as breadcrumb lines. Note: with `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=true` (default) no step breadcrumb is written — **optional** backend nicety (deferred, listed in v2): a `✓ Step completed` breadcrumb on auto-accept.
+- Step accept/discard breadcrumbs: `chat_breadcrumb` events + persisted `agent/text` messages with `metadata.breadcrumb` (`engine.py:1827-1829`) → already rendered as breadcrumb lines. Note: with `CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT=true` (default) no step breadcrumb is written — **optional** backend nicety (deferred, listed in v2): a `✓ Step completed` breadcrumb on auto-accept.
 - Step review gate: `pending_step_review {step_id, step_title, diff_entries[{path,additions,deletions,temp_path}]}` via /live ✓ (StepGate, Task 10).
 
 ### F5 — Plan card (live + transcript versions)
@@ -270,8 +270,8 @@ Copy buttons, expand/collapse (cards, pills, thinking), diff viewing, and search
 
 ### Step-review default is a UX decision (not an env knob)
 
-With `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=true` (current default) the only conscious approval on the large path is plan approval — every step lands silently and Finish is a formality (F8). Decision: **review-by-default**.
-- **v1:** `start-backend.sh` exports `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=false` (one line, parity with how scope `ask`+`any` is already forced there). Step gates surface in the live slot per F6.
+With `CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT=true` (current default) the only conscious approval on the large path is plan approval — every step lands silently and Finish is a formality (F8). Decision: **review-by-default**.
+- **v1:** `start-backend.sh` exports `CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT=false` (one line, parity with how scope `ask`+`any` is already forced there). Step gates surface in the live slot per F6.
 - **v2 (deferred):** a per-task "Review each step" toggle in the composer — requires plumbing the flag through `POST /threads/{id}/message` into `create_task_from_chat` (today the message body is just `{message}`; the extension cannot inject it).
 
 ---
@@ -1027,7 +1027,7 @@ async resumeTaskById(taskId: string, stage: "plan" | "execute"): Promise<void> {
 
 ## Task 15: Root scripts + integration smoke test
 
-- [ ] **Step 0: step-review default flip (UX decision)** — in `scripts/stress/start-backend.sh`, export `AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT=false` alongside the existing scope-policy exports, so chat-driven large tasks pause at every step gate by default (see "Step-review default is a UX decision").
+- [ ] **Step 0: step-review default flip (UX decision)** — in `scripts/stress/start-backend.sh`, export `CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT=false` alongside the existing scope-policy exports, so chat-driven large tasks pause at every step gate by default (see "Step-review default is a UX decision").
 
 - [ ] **Step 1: root package.json** — webview-ui is not a workspace; extend explicitly:
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-23
 **Status:** Approved (design); implementation plan to follow
-**Scope:** The reactive chat controller (`AI_EDITOR_CHAT_CONTROLLER=1`). Within-turn / within-request only.
+**Scope:** The reactive chat controller (`CRUCIBLE_CHAT_CONTROLLER=1`). Within-turn / within-request only.
 **Related:** `2026-06-15-agentic-chat-controller-design.md`, `2026-06-17-controller-ux-interaction-rules-design.md`
 
 **Provenance:** Synthesized against an alternative proposal, `docs/todo_memory_plan.md` ("Chat-Owned Mutable Agenda With Prompt-Level Decision Policy"). That proposal is richer on working-memory structure (recursive agenda, op-delta mutations, blocked/cancelled states, audit event log, manual-approval gate, full nested UI) but has **no deterministic completion gate** — enforcement is prompt-level, which the grounded analysis below proves is exactly what fails on weak models. This design keeps the Agenda plan's best ideas (extra states, evidence-on-done, live visibility, distilled decision policy) and welds them to a hard gate + full-list-rewrite mutation model. Decision-by-decision rationale is recorded inline.
@@ -122,7 +122,7 @@ The "turn" splits across loop runs: DECIDE `_run_loop` → `propose_mode` gate �
 - This is **not** the cross-task memory module — it is intra-request persistence only, reusing the existing column pattern.
 
 ### 4.7 Budget knob
-`max_iters` currently defaults to `32` in `ControllerLoop.run`. Add `AI_EDITOR_CONTROLLER_MAX_ITERS` (read in `controller.py`, passed to `loop.run`), default raised to **500** as a "for now" bridge so the *cap* never stops a legitimate loop. **Note:** within a turn the real binding limit is the context window (a weak local model on a large file hits it well before 500 iters); removing that ceiling is the deferred memory module's job, not this counter.
+`max_iters` currently defaults to `32` in `ControllerLoop.run`. Add `CRUCIBLE_CONTROLLER_MAX_ITERS` (read in `controller.py`, passed to `loop.run`), default raised to **500** as a "for now" bridge so the *cap* never stops a legitimate loop. **Note:** within a turn the real binding limit is the context window (a weak local model on a large file hits it well before 500 iters); removing that ceiling is the deferred memory module's job, not this counter.
 
 ### 4.8 Live exposure (`/live`) — adopted from the Agenda plan
 The original Ledger draft made the list invisible to the user. Surface it the same way gates/plan already are (Class-A render-from-`/live`, regardless of an active task):

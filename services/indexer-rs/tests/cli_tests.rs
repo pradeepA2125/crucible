@@ -38,7 +38,7 @@ fn index_command_writes_full_snapshot_artifact() {
         .arg(&snapshot_path)
         .arg("--watch")
         .arg("0")
-        .env("AI_EDITOR_LSP_ENABLED", "0")
+        .env("CRUCIBLE_LSP_ENABLED", "0")
         .status()
         .expect("execute index command");
 

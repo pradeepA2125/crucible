@@ -37,20 +37,20 @@ def _nonneg_float(env: str, default: float) -> float:
 
 
 def mcp_tools_max_chars() -> int:
-    return _pos_int("AI_EDITOR_MCP_TOOLS_MAX_CHARS", 16000)
+    return _pos_int("CRUCIBLE_MCP_TOOLS_MAX_CHARS", 16000)
 
 
 def mcp_decision_timeout_sec() -> float:
-    """0 = wait forever (mirrors AI_EDITOR_COMMAND_DECISION_TIMEOUT_SEC)."""
-    return _nonneg_float("AI_EDITOR_MCP_DECISION_TIMEOUT_SEC", 0.0)
+    """0 = wait forever (mirrors CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC)."""
+    return _nonneg_float("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", 0.0)
 
 
 def mcp_connect_timeout_sec() -> float:
-    return _nonneg_float("AI_EDITOR_MCP_CONNECT_TIMEOUT_SEC", 30.0)
+    return _nonneg_float("CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC", 30.0)
 
 
 def mcp_call_timeout_sec() -> float:
-    return _nonneg_float("AI_EDITOR_MCP_CALL_TIMEOUT_SEC", 120.0)
+    return _nonneg_float("CRUCIBLE_MCP_CALL_TIMEOUT_SEC", 120.0)
 
 
 class McpMissingEnvVar(ValueError):

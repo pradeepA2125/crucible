@@ -37,7 +37,7 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 ### Two-Stage Retrieval Architecture
 - [x] **Semantic search**: LanceDB + `BAAI/bge-small-en-v1.5`, delta indexing (mtime-based, only re-embeds changed files)
 - [x] **Hybrid scoring**: 0.35 × graph + 0.65 × semantic with segment-aware path matching (fixes cross-repo file bias, e.g. `pydantic-core/` vs `pydantic/`)
-- [x] **Cold-start elimination**: `POST /v1/index/build` + `GET /v1/index/status` pre-warm API; `start-backend.sh` waits for index ready before printing "backend ready"; Rust indexer notifies backend after every snapshot write via `AI_EDITOR_BACKEND_URL`
+- [x] **Cold-start elimination**: `POST /v1/index/build` + `GET /v1/index/status` pre-warm API; `start-backend.sh` waits for index ready before printing "backend ready"; Rust indexer notifies backend after every snapshot write via `CRUCIBLE_BACKEND_URL`
 - [ ] ~~**Cross-Encoder Reranker**~~: Skipped — MS MARCO models don't understand code syntax; graph signals already capture structural relevance; ripgrep + LLM reranker deferred as low ROI
 - [ ] ~~**Ripgrep exact-match layer**~~: Deferred — low incremental impact given hybrid scoring quality
 - [ ] ~~**`REGENERATING_PLAN` status**~~: Deferred — low user-facing impact
@@ -105,7 +105,7 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 
 ### Shell / Terminal Tool ✅ Done
 - [x] **`run_command`**: agent runs shell commands in shadow workspace; stdout/stderr/exit code injected into context
-- [x] Command allowlist policy: `AI_EDITOR_SHELL_ALLOWLIST` (default: pytest, npm, cargo, ruff, mypy, tsc, eslint)
+- [x] Command allowlist policy: `CRUCIBLE_SHELL_ALLOWLIST` (default: pytest, npm, cargo, ruff, mypy, tsc, eslint)
 - [x] **`find_binary`**: probes `.venv/bin`, `node_modules/.bin`, PATH; emits `AGENT SHOULD: setup_env` hint on miss
 - [x] **`setup_env`**: installs dependencies from manifest (uv, pip, npm ci, yarn, pnpm, go mod, rustup); reads patched shadow manifest
 - [x] **`init_workspace`**: scaffolds minimal valid manifest for bare workspaces (Python/Node/Rust/Go)

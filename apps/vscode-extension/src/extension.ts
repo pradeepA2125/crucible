@@ -363,7 +363,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("aiEditor.startTask", async () => {
       if (!taskSubsystemEnabled) {
         void vscode.window.showInformationMessage(
-          "The task path is disabled (AI_EDITOR_TASK_SUBSYSTEM=0). Use the chat to make changes inline.");
+          "The task path is disabled (CRUCIBLE_TASK_SUBSYSTEM=0). Use the chat to make changes inline.");
         return;
       }
       await controller.startTask();
@@ -416,7 +416,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("aiEditor.openMemoryPanel", () => {
       if (!memoryEnabled) {
         void vscode.window.showInformationMessage(
-          "The memory inspector is disabled (AI_EDITOR_MEMORY_ENABLED=0).");
+          "The memory inspector is disabled (CRUCIBLE_MEMORY_ENABLED=0).");
         return;
       }
       new MemoryPanel(

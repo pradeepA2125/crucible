@@ -407,7 +407,7 @@ def build_router(
 
         if not is_memory_enabled():
             return {"entries": []}
-        ws = os.getenv("AI_EDITOR_WORKSPACE_PATH", "")
+        ws = os.getenv("CRUCIBLE_WORKSPACE_PATH", "")
         # turn_id="" is a no-op path join, so this is already …/chat/<thread>/ — the turn_id
         # dirs are the glob's `*` level. (Taking .parent here drops to …/chat/ and the glob
         # then probes one level too shallow, matching nothing.)
@@ -474,9 +474,9 @@ def build_router(
     async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
         import asyncio
         task_id = f"task-{uuid4()}"
-        # Per-task override > AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT env > default True.
+        # Per-task override > CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT env > default True.
         _env_step_review_default = os.environ.get(
-            "AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT", "true",
+            "CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT", "true",
         ).strip().lower() not in ("0", "false", "no", "off")
         step_review = (
             request.step_review_auto_accept
@@ -1230,7 +1230,7 @@ def build_router(
         if not workspace_path:
             raise HTTPException(400, "workspace_path is required")
         if retrieval_client is None or not retrieval_client.semantic_enabled():
-            raise HTTPException(503, "Semantic retrieval is not enabled (set AI_EDITOR_SEMANTIC_RETRIEVAL=true)")
+            raise HTTPException(503, "Semantic retrieval is not enabled (set CRUCIBLE_SEMANTIC_RETRIEVAL=true)")
 
         async def _build() -> None:
             loop = _asyncio.get_event_loop()

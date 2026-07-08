@@ -42,7 +42,7 @@ done
 export PATH
 
 # Auto-source .env — check this dir first, then the main worktree root (git common dir).
-if [[ -z "${_AI_EDITOR_ENV_LOADED:-}" ]]; then
+if [[ -z "${_CRUCIBLE_ENV_LOADED:-}" ]]; then
   _env_file=""
   if [[ -f "$ROOT/.env" ]]; then
     _env_file="$ROOT/.env"
@@ -64,7 +64,7 @@ if [[ -z "${_AI_EDITOR_ENV_LOADED:-}" ]]; then
     # shellcheck source=/dev/null
     source "$_env_file"
     set +a
-    export _AI_EDITOR_ENV_LOADED=1
+    export _CRUCIBLE_ENV_LOADED=1
     echo "==> sourced env from $_env_file"
   fi
 fi
@@ -193,15 +193,15 @@ resolve_backend() {
 resolve_default_model() {
   case "$1" in
     scripted) printf 'scripted' ;;
-    gemini) printf '%s' "${AI_EDITOR_GEMINI_MODEL:-gemini-3-flash-preview}" ;;
-    groq) printf '%s' "${AI_EDITOR_GROQ_MODEL:-openai/gpt-oss-120b}" ;;
-    openrouter) printf '%s' "${AI_EDITOR_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}" ;;
-    watsonx) printf '%s' "${AI_EDITOR_WATSONX_MODEL:-ibm/granite-3-8b-instruct}" ;;
-    openai) printf '%s' "${AI_EDITOR_OPENAI_MODEL:-gpt-5}" ;;
-    anthropic) printf '%s' "${AI_EDITOR_ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}" ;;
-    huggingface) printf '%s' "${AI_EDITOR_HUGGINGFACE_MODEL:-deepseek-ai/DeepSeek-R1:fastest}" ;;
-    ollama) printf '%s' "${AI_EDITOR_OLLAMA_MODEL:-glm-4.7-flash:latest}" ;;
-    turboquant) printf '%s' "${AI_EDITOR_TURBOQUANT_MODEL:-qwen3.6:35b-a3b-q4_K_M}" ;;
+    gemini) printf '%s' "${CRUCIBLE_GEMINI_MODEL:-gemini-3-flash-preview}" ;;
+    groq) printf '%s' "${CRUCIBLE_GROQ_MODEL:-openai/gpt-oss-120b}" ;;
+    openrouter) printf '%s' "${CRUCIBLE_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}" ;;
+    watsonx) printf '%s' "${CRUCIBLE_WATSONX_MODEL:-ibm/granite-3-8b-instruct}" ;;
+    openai) printf '%s' "${CRUCIBLE_OPENAI_MODEL:-gpt-5}" ;;
+    anthropic) printf '%s' "${CRUCIBLE_ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}" ;;
+    huggingface) printf '%s' "${CRUCIBLE_HUGGINGFACE_MODEL:-deepseek-ai/DeepSeek-R1:fastest}" ;;
+    ollama) printf '%s' "${CRUCIBLE_OLLAMA_MODEL:-glm-4.7-flash:latest}" ;;
+    turboquant) printf '%s' "${CRUCIBLE_TURBOQUANT_MODEL:-qwen3.6:35b-a3b-q4_K_M}" ;;
     *)
       echo "Unsupported backend: $1" >&2
       exit 1
@@ -218,8 +218,8 @@ resolve_validation_commands() {
       printf '[{"stage":"syntax","name":"smoke-pass","command":"true"}]'
       ;;
     full)
-      if [[ -n "${AI_EDITOR_VALIDATION_COMMANDS_JSON:-}" ]]; then
-        printf '%s' "$AI_EDITOR_VALIDATION_COMMANDS_JSON"
+      if [[ -n "${CRUCIBLE_VALIDATION_COMMANDS_JSON:-}" ]]; then
+        printf '%s' "$CRUCIBLE_VALIDATION_COMMANDS_JSON"
       else
         # Let CommandValidator auto-detect project commands instead of bypassing
         # validation with a no-op command.
@@ -227,8 +227,8 @@ resolve_validation_commands() {
       fi
       ;;
     strict)
-      if [[ -n "${AI_EDITOR_VALIDATION_COMMANDS_JSON:-}" ]]; then
-        printf '%s' "$AI_EDITOR_VALIDATION_COMMANDS_JSON"
+      if [[ -n "${CRUCIBLE_VALIDATION_COMMANDS_JSON:-}" ]]; then
+        printf '%s' "$CRUCIBLE_VALIDATION_COMMANDS_JSON"
       else
         printf '__STRICT_MISSING__'
       fi
@@ -266,7 +266,7 @@ SHADOW_ROOT="$WORKSPACE/.agentd/shadows"
 VALIDATION_COMMANDS_JSON="$(resolve_validation_commands)"
 
 if [[ "$VALIDATION_COMMANDS_JSON" == "__STRICT_MISSING__" ]]; then
-  echo "strict validation profile requires AI_EDITOR_VALIDATION_COMMANDS_JSON to be set" >&2
+  echo "strict validation profile requires CRUCIBLE_VALIDATION_COMMANDS_JSON to be set" >&2
   exit 1
 fi
 
@@ -360,68 +360,68 @@ echo "uvicorn_log=$LOG_FILE"
 # pre-warming the semantic index (guaranteeing no cold-start on the first task).
 (
   cd "$AGENTD_DIR"
-  export AI_EDITOR_REASONING_BACKEND="$BACKEND"
-  export AI_EDITOR_WORKSPACE_PATH="$WORKSPACE"
-  export AI_EDITOR_DB_PATH="$DB_PATH"
-  export AI_EDITOR_CHAT_DB_PATH="$CHAT_DB_PATH"
-  export AI_EDITOR_SHADOW_ROOT="$SHADOW_ROOT"
-  export AI_EDITOR_LOG_FILE="$BACKEND_LOG_FILE"
-  export AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH"
-  export AI_EDITOR_ARTIFACTS_ROOT="$ARTIFACTS_ROOT"
-  export AI_EDITOR_SHELL_POLICY="${AI_EDITOR_SHELL_POLICY:-ask}"
+  export CRUCIBLE_REASONING_BACKEND="$BACKEND"
+  export CRUCIBLE_WORKSPACE_PATH="$WORKSPACE"
+  export CRUCIBLE_DB_PATH="$DB_PATH"
+  export CRUCIBLE_CHAT_DB_PATH="$CHAT_DB_PATH"
+  export CRUCIBLE_SHADOW_ROOT="$SHADOW_ROOT"
+  export CRUCIBLE_LOG_FILE="$BACKEND_LOG_FILE"
+  export CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH"
+  export CRUCIBLE_ARTIFACTS_ROOT="$ARTIFACTS_ROOT"
+  export CRUCIBLE_SHELL_POLICY="${CRUCIBLE_SHELL_POLICY:-ask}"
   # Default-on feature flags (2026-07-02): reactive controller + its tool surface
   # (skills catalog, MCP servers from .ai-editor/mcp.json, gated write_doc).
   # Override any of these via env to opt out.
-  export AI_EDITOR_CHAT_CONTROLLER="${AI_EDITOR_CHAT_CONTROLLER:-1}"
-  export AI_EDITOR_SKILLS_ENABLED="${AI_EDITOR_SKILLS_ENABLED:-1}"
-  export AI_EDITOR_MCP_ENABLED="${AI_EDITOR_MCP_ENABLED:-1}"
-  export AI_EDITOR_DOC_WRITE_ENABLED="${AI_EDITOR_DOC_WRITE_ENABLED:-1}"
-  export AI_EDITOR_SEMANTIC_RETRIEVAL="${AI_EDITOR_SEMANTIC_RETRIEVAL:-true}"
+  export CRUCIBLE_CHAT_CONTROLLER="${CRUCIBLE_CHAT_CONTROLLER:-1}"
+  export CRUCIBLE_SKILLS_ENABLED="${CRUCIBLE_SKILLS_ENABLED:-1}"
+  export CRUCIBLE_MCP_ENABLED="${CRUCIBLE_MCP_ENABLED:-1}"
+  export CRUCIBLE_DOC_WRITE_ENABLED="${CRUCIBLE_DOC_WRITE_ENABLED:-1}"
+  export CRUCIBLE_SEMANTIC_RETRIEVAL="${CRUCIBLE_SEMANTIC_RETRIEVAL:-true}"
   # UX decision (chat UI redesign): the step gate is the conscious approval moment
   # on the large path — review every step by default. Override via env to opt out.
-  export AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT="${AI_EDITOR_STEP_REVIEW_AUTO_ACCEPT:-false}"
+  export CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT="${CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT:-false}"
   if [[ "$VALIDATION_COMMANDS_JSON" == "__AUTO_DETECT__" ]]; then
-    unset AI_EDITOR_VALIDATION_COMMANDS_JSON
+    unset CRUCIBLE_VALIDATION_COMMANDS_JSON
   else
-    export AI_EDITOR_VALIDATION_COMMANDS_JSON="$VALIDATION_COMMANDS_JSON"
+    export CRUCIBLE_VALIDATION_COMMANDS_JSON="$VALIDATION_COMMANDS_JSON"
   fi
 
-  [[ -n "$SCOPE_POLICY" ]]      && export AI_EDITOR_SCOPE_POLICY="$SCOPE_POLICY"
-  [[ -n "$SCOPE_TRIGGER" ]]     && export AI_EDITOR_SCOPE_TRIGGER="$SCOPE_TRIGGER"
-  [[ -n "$SCOPE_REMEMBER" ]]    && export AI_EDITOR_SCOPE_REMEMBER="$SCOPE_REMEMBER"
-  [[ -n "$SCOPE_TIMEOUT_SEC" ]] && export AI_EDITOR_SCOPE_TIMEOUT_SEC="$SCOPE_TIMEOUT_SEC"
+  [[ -n "$SCOPE_POLICY" ]]      && export CRUCIBLE_SCOPE_POLICY="$SCOPE_POLICY"
+  [[ -n "$SCOPE_TRIGGER" ]]     && export CRUCIBLE_SCOPE_TRIGGER="$SCOPE_TRIGGER"
+  [[ -n "$SCOPE_REMEMBER" ]]    && export CRUCIBLE_SCOPE_REMEMBER="$SCOPE_REMEMBER"
+  [[ -n "$SCOPE_TIMEOUT_SEC" ]] && export CRUCIBLE_SCOPE_TIMEOUT_SEC="$SCOPE_TIMEOUT_SEC"
 
   case "$BACKEND" in
     gemini)
-      export AI_EDITOR_GEMINI_MODEL="$MODEL"
+      export CRUCIBLE_GEMINI_MODEL="$MODEL"
       ;;
     groq)
-      export AI_EDITOR_GROQ_MODEL="$MODEL"
+      export CRUCIBLE_GROQ_MODEL="$MODEL"
       ;;
     openrouter)
-      export AI_EDITOR_OPENROUTER_MODEL="$MODEL"
+      export CRUCIBLE_OPENROUTER_MODEL="$MODEL"
       ;;
     watsonx)
-      export AI_EDITOR_WATSONX_MODEL="$MODEL"
+      export CRUCIBLE_WATSONX_MODEL="$MODEL"
       export WATSONX_URL="${WATSONX_URL:-https://us-south.ml.cloud.ibm.com}"
       ;;
     openai)
-      export AI_EDITOR_OPENAI_MODEL="$MODEL"
+      export CRUCIBLE_OPENAI_MODEL="$MODEL"
       ;;
     anthropic)
-      export AI_EDITOR_ANTHROPIC_MODEL="$MODEL"
+      export CRUCIBLE_ANTHROPIC_MODEL="$MODEL"
       ;;
     huggingface)
-      export AI_EDITOR_HUGGINGFACE_MODEL="$MODEL"
+      export CRUCIBLE_HUGGINGFACE_MODEL="$MODEL"
       ;;
     ollama)
-      export AI_EDITOR_OLLAMA_MODEL="$MODEL"
+      export CRUCIBLE_OLLAMA_MODEL="$MODEL"
       [[ -n "${OLLAMA_HOST:-}" ]] && export OLLAMA_HOST="$OLLAMA_HOST"
       ;;
     turboquant)
-      export AI_EDITOR_TURBOQUANT_MODEL="$MODEL"
+      export CRUCIBLE_TURBOQUANT_MODEL="$MODEL"
       export TURBOQUANT_HOST="${TURBOQUANT_HOST:-http://localhost:11435}"
-      export AI_EDITOR_TURBOQUANT_TIMEOUT_SEC="$TURBOQUANT_TIMEOUT_SEC"
+      export CRUCIBLE_TURBOQUANT_TIMEOUT_SEC="$TURBOQUANT_TIMEOUT_SEC"
       ;;
     scripted)
       ;;
@@ -453,7 +453,7 @@ echo "==> backend healthy"
 
 # Pre-warm the semantic index synchronously — no task can be submitted until
 # this completes, so the first task is guaranteed to have a warm index.
-if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
+if [[ "${CRUCIBLE_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
   _build_url="http://localhost:${PORT}/v1/index/build"
   _status_url="http://localhost:${PORT}/v1/index/status"
   echo "==> semantic index pre-warm: triggering build for $WORKSPACE ..."
@@ -477,7 +477,7 @@ if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
 fi
 
 # Self-updating index: launch the incremental indexer watcher. It re-indexes changed source
-# files → rewrites the snapshot (atomic) → notifies the backend via AI_EDITOR_BACKEND_URL, which
+# files → rewrites the snapshot (atomic) → notifies the backend via CRUCIBLE_BACKEND_URL, which
 # delta-re-embeds.
 #
 # LSP ON here: the watcher is where Calls/Implements/Inherits edges get resolved to workspace
@@ -495,14 +495,14 @@ fi
 # cache (cargo no-ops when warm); pass --skip-indexer-build to bypass.
 _INDEXER_BIN="$(indexer_bin_path)"
 _WATCHER_PID=""
-if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
+if [[ "${CRUCIBLE_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
   if [[ "$SKIP_INDEXER_BUILD" == "1" ]]; then
     echo "==> indexer build skipped (--skip-indexer-build); using $_INDEXER_BIN if present"
   elif ! ensure_indexer_binary "$ROOT/services/indexer-rs" >/dev/null; then
     echo "==> indexer: could not ensure binary — watcher will be skipped (graph retrieval off; vector retrieval still works)" >&2
   fi
 fi
-if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_BIN" ]]; then
+if [[ "${CRUCIBLE_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_BIN" ]]; then
   # Single-writer guard: reap any existing indexer watcher on THIS snapshot before launching ours.
   # Two watchers racing the same snapshot file clobber each other — the loser overwrites the
   # winner's LSP-resolved Calls/Inherits edges back to unresolved `external:` placeholders, which
@@ -521,19 +521,19 @@ if [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_
     kill $_STALE_WATCHERS 2>/dev/null || true
     sleep 1
   fi
-  AI_EDITOR_BACKEND_URL="http://localhost:${PORT}" \
-    AI_EDITOR_LSP_ENABLED="${AI_EDITOR_LSP_ENABLED:-true}" \
-    AI_EDITOR_LSP_PY_CMD="${AI_EDITOR_LSP_PY_CMD:-pyright-langserver --stdio}" \
-    AI_EDITOR_LSP_TS_CMD="${AI_EDITOR_LSP_TS_CMD:-typescript-language-server --stdio}" \
-    AI_EDITOR_LSP_RS_CMD="${AI_EDITOR_LSP_RS_CMD:-rust-analyzer}" \
-    AI_EDITOR_LSP_STARTUP_TIMEOUT_MS="${AI_EDITOR_LSP_STARTUP_TIMEOUT_MS:-180000}" \
-    AI_EDITOR_LSP_REQUEST_TIMEOUT_MS="${AI_EDITOR_LSP_REQUEST_TIMEOUT_MS:-20000}" \
+  CRUCIBLE_BACKEND_URL="http://localhost:${PORT}" \
+    CRUCIBLE_LSP_ENABLED="${CRUCIBLE_LSP_ENABLED:-true}" \
+    CRUCIBLE_LSP_PY_CMD="${CRUCIBLE_LSP_PY_CMD:-pyright-langserver --stdio}" \
+    CRUCIBLE_LSP_TS_CMD="${CRUCIBLE_LSP_TS_CMD:-typescript-language-server --stdio}" \
+    CRUCIBLE_LSP_RS_CMD="${CRUCIBLE_LSP_RS_CMD:-rust-analyzer}" \
+    CRUCIBLE_LSP_STARTUP_TIMEOUT_MS="${CRUCIBLE_LSP_STARTUP_TIMEOUT_MS:-180000}" \
+    CRUCIBLE_LSP_REQUEST_TIMEOUT_MS="${CRUCIBLE_LSP_REQUEST_TIMEOUT_MS:-20000}" \
     RUST_LOG="${RUST_LOG:-ai_editor_indexer::resolver=info,ai_editor_indexer::lsp=info,ai_editor_indexer::service=info}" \
     "$_INDEXER_BIN" index --workspace "$WORKSPACE" --snapshot-path "$SNAPSHOT_PATH" --watch true \
     >> "$LOG_DIR/indexer-watch.log" 2>&1 &
   _WATCHER_PID=$!
   echo "==> indexer watch started (self-updating index, LSP-resolved edges): pid=$_WATCHER_PID log=$LOG_DIR/indexer-watch.log"
-elif [[ "${AI_EDITOR_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
+elif [[ "${CRUCIBLE_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
   echo "==> indexer watch NOT started — binary unavailable at $_INDEXER_BIN (build failed, or --skip-indexer-build with no prebuilt binary). Graph retrieval is disabled; vector retrieval still works." >&2
 fi
 

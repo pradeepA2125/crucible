@@ -91,11 +91,11 @@ def test_interpolate_env_resolves_and_raises(monkeypatch):
 
 
 def test_env_knob_defaults(monkeypatch):
-    monkeypatch.delenv("AI_EDITOR_MCP_TOOLS_MAX_CHARS", raising=False)
-    monkeypatch.delenv("AI_EDITOR_MCP_DECISION_TIMEOUT_SEC", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", raising=False)
     assert mcp_tools_max_chars() == 16000
     assert mcp_decision_timeout_sec() == 0.0
-    monkeypatch.setenv("AI_EDITOR_MCP_TOOLS_MAX_CHARS", "500")
-    monkeypatch.setenv("AI_EDITOR_MCP_DECISION_TIMEOUT_SEC", "2.5")
+    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "500")
+    monkeypatch.setenv("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", "2.5")
     assert mcp_tools_max_chars() == 500
     assert mcp_decision_timeout_sec() == 2.5

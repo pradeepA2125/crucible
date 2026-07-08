@@ -62,7 +62,7 @@ async def search_code(
         return ToolOutput(output="Error: search timed out after 15s", is_error=True)
     except FileNotFoundError:
         return ToolOutput(
-            output=f"Error: ripgrep not found at '{ripgrep_cmd}'. Install ripgrep or set AI_EDITOR_RIPGREP_CMD.",
+            output=f"Error: ripgrep not found at '{ripgrep_cmd}'. Install ripgrep or set CRUCIBLE_RIPGREP_CMD.",
             is_error=True,
         )
     except Exception as exc:

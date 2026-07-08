@@ -599,9 +599,9 @@ def __init__(
     self._shadow_root = shadow_root
     self._real_workspace_path = real_workspace_path   # NEW
     self._semantic_index = semantic_index
-    self._ripgrep_cmd = os.environ.get("AI_EDITOR_RIPGREP_CMD", "rg")
+    self._ripgrep_cmd = os.environ.get("CRUCIBLE_RIPGREP_CMD", "rg")
     allowlist_raw = os.environ.get(
-        "AI_EDITOR_SHELL_ALLOWLIST",
+        "CRUCIBLE_SHELL_ALLOWLIST",
         "pytest,npm,cargo,ruff,mypy,tsc,eslint,jest,vitest",
     )
     self._shell_allowlist = {c.strip() for c in allowlist_raw.split(",") if c.strip()}

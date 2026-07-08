@@ -84,9 +84,9 @@ cargo run -- query --snapshot-path /path/to/repo/.ai-editor/index-snapshot.json 
 - Stale/corrupt/missing artifacts emit warning diagnostics and do not fail task orchestration.
 
 Key env vars:
-- `AI_EDITOR_RETRIEVAL_SNAPSHOT_PATH` (default: `<workspace>/.ai-editor/index-snapshot.json`)
-- `AI_EDITOR_RETRIEVAL_MAX_AGE_SEC` (default: `900`)
-- `AI_EDITOR_INDEXER_INDEX_CMD` (optional command template with `{workspace}` and `{snapshot_path}`)
+- `CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH` (default: `<workspace>/.ai-editor/index-snapshot.json`)
+- `CRUCIBLE_RETRIEVAL_MAX_AGE_SEC` (default: `900`)
+- `CRUCIBLE_INDEXER_INDEX_CMD` (optional command template with `{workspace}` and `{snapshot_path}`)
 
 ## Current focus
 - [x] Pivot stack boundaries (TS client, Python orchestrator, Rust indexer)

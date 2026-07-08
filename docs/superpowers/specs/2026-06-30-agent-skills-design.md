@@ -34,7 +34,7 @@ opencode native, opencode-agent-skills plugin) — see §10 for the evidence tha
 | 4 | **`read_skill(name)` tool loads the body into the dynamic context tail** | Universal real-impl pattern (`use_skill`/`skill`). Tail placement (not a system-prompt rebuild) is KV-safe (finding #13) and lets the body survive compaction via per-iteration re-injection. |
 | 5 | **Scripts run via the existing `run_command`** (with a worked example) | We already have `run_command` behind the shell-policy gate, and `.ai-editor/skills/` is inside the workspace — so the body cites `scripts/foo.py` and the model shells it through the existing gate. (The plugin's dedicated `run_skill_script` exists only because an opencode plugin has no shell tool — not our situation.) |
 | 6 | **`/skill-name` = backend forced-load** | Deterministic explicit invocation (matters for weak local models; maps to the standard's `disable-model-invocation`). Seeds the turn's `active_skills` so the body is pre-loaded into the tail without relying on the model choosing to activate it. |
-| 7 | **Default OFF** (`AI_EDITOR_SKILLS_ENABLED`) | New capability — ship dark, enable when proven (cross-cutting principle 4). Unlike P1's always-on instructions (which were table-stakes). |
+| 7 | **Default OFF** (`CRUCIBLE_SKILLS_ENABLED`) | New capability — ship dark, enable when proven (cross-cutting principle 4). Unlike P1's always-on instructions (which were table-stakes). |
 | 8 | **Controller-only injection** | The planning/task path is dormant (task subsystem off by default); the controller is the live path. Same scope call as P1. |
 
 ## 3. Architecture
@@ -72,7 +72,7 @@ opencode native, opencode-agent-skills plugin) — see §10 for the evidence tha
 - **Cache stability:** the catalog is mtime-stable across turns (changes only when the skills dir
   changes), exactly like the AGENTS.md block — so the system-prompt prefix stays KV-cache-stable.
 - **Budget gate (dormant scale path):** if the rendered catalog exceeds
-  `AI_EDITOR_SKILLS_CATALOG_MAX_CHARS` (default high enough that v1 ships full), rank manifests by
+  `CRUCIBLE_SKILLS_CATALOG_MAX_CHARS` (default high enough that v1 ships full), rank manifests by
   `Embedder` cosine(turn-query, description) and **relocate the ranked subset to the dynamic payload
   tail** (query-dependent ⇒ must not sit in the cached system prompt — finding #13). v1 paths never
   trip this; the ranking code is wired + unit-tested but off by default.
@@ -84,7 +84,7 @@ opencode native, opencode-agent-skills plugin) — see §10 for the evidence tha
 
 - Exposes one read-only tool **`read_skill(name)`**. `execute`:
   - Resolves `name` against the catalog. Unknown → `ToolOutput(is_error=True, "no skill named ...")`.
-  - Reads the resolved `SKILL.md` body (size-capped at `AI_EDITOR_SKILLS_BODY_MAX_CHARS`, default
+  - Reads the resolved `SKILL.md` body (size-capped at `CRUCIBLE_SKILLS_BODY_MAX_CHARS`, default
     `20000`; over-cap truncates with a marker).
   - **Adds `name` to the turn's `active_skills` set** and returns the body as the tool result.
 - Registered in `ChatController._build_registry` (one `sources.append(SkillToolSource(...))` when the
@@ -120,7 +120,7 @@ opencode native, opencode-agent-skills plugin) — see §10 for the evidence tha
 
 ### 3.5 Flags (`agentd/chat/controller_factory.py`)
 
-- `is_skills_enabled()` next to `is_memory_enabled` — `AI_EDITOR_SKILLS_ENABLED`, **default OFF**
+- `is_skills_enabled()` next to `is_memory_enabled` — `CRUCIBLE_SKILLS_ENABLED`, **default OFF**
   (truthy = `1/true/yes/on`). When off: the loader is never built, the catalog block never appends,
   `SkillToolSource` is not registered, `/v1/skills` returns gated-empty, and the composer hides the
   skills affordance (via a `aiEditor.skillsEnabled` `when`-context fed from `/v1/config`, mirroring
@@ -187,7 +187,7 @@ manifests + a fake embedder; the route with the in-memory app; the composer with
    through the shell-policy gate.
 3. `/git-commit` forced-load → the body is active from turn start without the model choosing it.
 4. Add a second skill mid-session → the next turn's catalog includes it (self-updating, no restart).
-5. Kill-switch: `AI_EDITOR_SKILLS_ENABLED=0` → no catalog, `read_skill` absent, composer affordance gone.
+5. Kill-switch: `CRUCIBLE_SKILLS_ENABLED=0` → no catalog, `read_skill` absent, composer affordance gone.
 
 ## 7. Exit criteria
 
@@ -196,7 +196,7 @@ manifests + a fake embedder; the route with the in-memory app; the composer with
 - `/skill-name` deterministically pre-loads a skill (forced-load); `/` autocomplete lists prompts +
   skills with the collision rule.
 - A mid-session skill add is picked up on the next turn (self-updating).
-- `AI_EDITOR_SKILLS_ENABLED` kill-switch verified (default off; on enables).
+- `CRUCIBLE_SKILLS_ENABLED` kill-switch verified (default off; on enables).
 - All TS + Python suites + typecheck green; live smoke (1–5) passes.
 
 ## 8. Out of scope (deferred)

@@ -12,19 +12,19 @@ def test_from_env_defaults_enabled():
 
 
 def test_from_env_explicit_disable_still_works():
-    cfg = MemoryConfig.from_env({"AI_EDITOR_MEMORY_ENABLED": "false"})
+    cfg = MemoryConfig.from_env({"CRUCIBLE_MEMORY_ENABLED": "false"})
     assert cfg.enabled is False
 
 
 def test_from_env_overrides():
     cfg = MemoryConfig.from_env(
         {
-            "AI_EDITOR_MEMORY_ENABLED": "1",
-            "AI_EDITOR_MEMORY_DB_PATH": "/tmp/m.sqlite3",
-            "AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC": "0.5",
-            "AI_EDITOR_MEMORY_HOT_TOKEN_FRAC": "0.25",
-            "AI_EDITOR_MEMORY_HOT_TURNS": "4",
-            "AI_EDITOR_MEMORY_WINDOW_TOKENS": "8000",
+            "CRUCIBLE_MEMORY_ENABLED": "1",
+            "CRUCIBLE_MEMORY_DB_PATH": "/tmp/m.sqlite3",
+            "CRUCIBLE_MEMORY_COMPACT_TRIGGER_FRAC": "0.5",
+            "CRUCIBLE_MEMORY_HOT_TOKEN_FRAC": "0.25",
+            "CRUCIBLE_MEMORY_HOT_TURNS": "4",
+            "CRUCIBLE_MEMORY_WINDOW_TOKENS": "8000",
         }
     )
     assert cfg.enabled is True
