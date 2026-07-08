@@ -121,7 +121,13 @@ export class RuntimeInstaller {
       const uv = binPath(this.deps.runtimeDir, "uv", this.platform);
       const venv = await this.deps.exec(uv, ["venv", join(this.deps.runtimeDir, "venv"), "--python", "3.12"]);
       if (venv.code !== 0) throw new Error(`uv venv failed: ${venv.stderr.slice(0, 400)}`);
-      const target = spec.urls?.any ?? `ai-editor-agentd==${spec.version}`;
+      // [memory] pulls in sentence-transformers/numpy (and PyTorch, transitively) so the
+      // memory harness (on by default — see agentd/memory/config.py) works out of the box
+      // instead of silently degrading its embedder. PEP 508 direct-reference syntax
+      // ("name[extra] @ url") is required to combine an extras marker with a URL install.
+      const target = spec.urls?.any
+        ? `ai-editor-agentd[memory] @ ${spec.urls.any}`
+        : `ai-editor-agentd[memory]==${spec.version}`;
       const pip = await this.deps.exec(
         uv, ["pip", "install", "--python", venvPython(this.deps.runtimeDir, this.platform), target]);
       if (pip.code !== 0) throw new Error(`uv pip install failed: ${pip.stderr.slice(0, 400)}`);

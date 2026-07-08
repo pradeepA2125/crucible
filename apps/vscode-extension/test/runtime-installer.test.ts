@@ -71,6 +71,24 @@ describe("RuntimeInstaller", () => {
     expect(lsps.detail).toMatch(/degraded/i);
   });
 
+  it("agentd install requests the [memory] extra via the bare-version fallback", async () => {
+    const d = deps();
+    await new RuntimeInstaller(d).installAll();
+    const pipCall = d.calls.find((call) => call.includes("pip"));
+    expect(pipCall).toBeDefined();
+    expect(pipCall![pipCall!.length - 1]).toBe("ai-editor-agentd[memory]==0.1.0");
+  });
+
+  it("agentd install wraps a manifest wheel URL with the [memory] extra as a PEP 508 direct reference", async () => {
+    const d = deps();
+    d.manifest.components.agentd = { version: "0.3.0", urls: { any: "https://example.com/pkg.whl" } };
+    await new RuntimeInstaller(d).installAll();
+    const pipCall = d.calls.find((call) => call.includes("pip"));
+    expect(pipCall).toBeDefined();
+    expect(pipCall![pipCall!.length - 1]).toBe(
+      "ai-editor-agentd[memory] @ https://example.com/pkg.whl");
+  });
+
   it("resume: matching install-state version skips the download", async () => {
     const d = deps();
     await new RuntimeInstaller(d).installAll();
