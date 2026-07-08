@@ -89,8 +89,12 @@ def build_gopls_binaries(
         goos, goarch = _GOPLS_TARGETS[platform]
         dest = out_dir / gopls_artifact_name(platform)
         env = {**os.environ, "GOOS": goos, "GOARCH": goarch, "CGO_ENABLED": "0"}
+        
+        # Debug: list work_dir before build
+        work_contents = sorted([p.name for p in work_dir.iterdir()])
+        
         result = run_cmd(
-            ["go", "build", "-o", str(dest), "golang.org/x/tools/gopls"],
+            ["go", "build", "-v", "-o", str(dest), "golang.org/x/tools/gopls"],
             cwd=work_dir, check=False, capture_output=True, text=True,
             env=env,
         )
@@ -99,17 +103,23 @@ def build_gopls_binaries(
                 f"go build failed for {platform} (GOOS={goos} GOARCH={goarch}):\n"
                 f"stdout: {result.stdout}\nstderr: {result.stderr}"
             )
+        
+        # Debug: check dest and out_dir after build
+        out_dir_contents = sorted([p.name for p in out_dir.iterdir()]) if out_dir.exists() else []
+        
         if not dest.exists():
-            # Debug: check work_dir contents and go.mod status
             go_mod_path = work_dir / "go.mod"
             go_sum_path = work_dir / "go.sum"
             go_mod_exists = go_mod_path.exists()
             go_sum_exists = go_sum_path.exists()
             raise FileNotFoundError(
                 f"go build succeeded but output file not created: {dest}\n"
-                f"(GOOS={goos} GOARCH={goarch}, CGO_ENABLED=0, env keys: {list(env.keys())})\n"
-                f"stdout: {result.stdout}\nstderr: {result.stderr}\n"
-                f"work_dir: {work_dir}\ngo.mod exists: {go_mod_exists}\ngo.sum exists: {go_sum_exists}"
+                f"(GOOS={goos} GOARCH={goarch}, CGO_ENABLED=0)\n"
+                f"stdout:\n{result.stdout}\n"
+                f"stderr:\n{result.stderr}\n"
+                f"work_dir: {work_dir}\nwork_dir contents: {work_contents}\n"
+                f"out_dir: {out_dir}\nout_dir contents: {out_dir_contents}\n"
+                f"go.mod exists: {go_mod_exists}\ngo.sum exists: {go_sum_exists}"
             )
         if platform != "win32-x64":
             dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
