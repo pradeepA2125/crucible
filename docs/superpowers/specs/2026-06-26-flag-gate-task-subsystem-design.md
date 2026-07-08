@@ -67,8 +67,8 @@ No hard-404 guarding in this spec.
   (sub-decision B, approved — a capabilities endpoint over a VS Code setting, which could desync from
   the backend). Reads the same resolver(s).
 - **Extension:** fetch `/v1/config` on activation; set a `when`-context key
-  `aiEditor.taskSubsystemEnabled`. Gate on it:
-  - `aiEditor.startTask` command registration / command-palette visibility.
+  `crucible.taskSubsystemEnabled`. Gate on it:
+  - `crucible.startTask` command registration / command-palette visibility.
   - `task_card` rendering (`MessageRow.tsx`, `controller.ts` task_card handling) — belt-and-suspenders,
     since the controller emits no `task_card` when OFF.
   - Review-panel entry points tied to the task flow.

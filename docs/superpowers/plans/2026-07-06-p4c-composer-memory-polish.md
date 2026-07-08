@@ -590,10 +590,10 @@ git commit -m "style(memory): migrate inspector palette onto shared design token
 - Modify: `apps/vscode-extension/webview-ui/src/components/ThreadView.tsx` (new header button)
 - Modify: `apps/vscode-extension/webview-ui/src/components/ThreadView.test.tsx` (new test)
 - Modify: `apps/vscode-extension/src/chat-panel.ts` (new handler type + routing branch + constructor param)
-- Modify: `apps/vscode-extension/src/extension.ts` (wire the new handler to `aiEditor.openMemoryPanel`)
+- Modify: `apps/vscode-extension/src/extension.ts` (wire the new handler to `crucible.openMemoryPanel`)
 
 **Interfaces:**
-- Consumes: existing `aiEditor.openMemoryPanel` VS Code command (`extension.ts:392`, already gracefully degrades when `CRUCIBLE_MEMORY_ENABLED` is off).
+- Consumes: existing `crucible.openMemoryPanel` VS Code command (`extension.ts:392`, already gracefully degrades when `CRUCIBLE_MEMORY_ENABLED` is off).
 - Produces: `OpenMemoryPanelHandler = () => void`, a 25th constructor parameter on `ChatPanel` (after `onOpenSettings`).
 
 - [ ] **Step 1: Add a `db` icon to `Icon.tsx`**
@@ -661,7 +661,7 @@ Expected: FAIL — no button with accessible name "memory inspector" exists yet.
 In `apps/vscode-extension/webview-ui/src/components/ThreadView.tsx`, immediately after the closing `</button>` of the ☰ settings-menu button (before the "Back button" comment), insert:
 
 ```tsx
-        {/* Memory Inspector shortcut — opens the standalone panel (aiEditor.openMemoryPanel),
+        {/* Memory Inspector shortcut — opens the standalone panel (crucible.openMemoryPanel),
             which already degrades gracefully if CRUCIBLE_MEMORY_ENABLED is off. */}
         <button
           type="button"
@@ -726,14 +726,14 @@ Add a routing branch right after the existing `openSettings` branch in `register
 
 - [ ] **Step 8: Wire `extension.ts`**
 
-In `apps/vscode-extension/src/extension.ts`, add a 34th argument to the `new ChatPanel(...)` call, right after the existing `onOpenSettings` closure (the one ending `void vscode.commands.executeCommand("aiEditor.openSettingsPanel", section);`):
+In `apps/vscode-extension/src/extension.ts`, add a 34th argument to the `new ChatPanel(...)` call, right after the existing `onOpenSettings` closure (the one ending `void vscode.commands.executeCommand("crucible.openSettingsPanel", section);`):
 
 ```ts
     (section?: string) => {
-      void vscode.commands.executeCommand("aiEditor.openSettingsPanel", section);
+      void vscode.commands.executeCommand("crucible.openSettingsPanel", section);
     },
     () => {
-      void vscode.commands.executeCommand("aiEditor.openMemoryPanel");
+      void vscode.commands.executeCommand("crucible.openMemoryPanel");
     }
   );
 ```
@@ -1408,7 +1408,7 @@ Add two more arguments to the `new ChatPanel(...)` call, after the `openMemoryPa
 
 ```ts
     () => {
-      void vscode.commands.executeCommand("aiEditor.openMemoryPanel");
+      void vscode.commands.executeCommand("crucible.openMemoryPanel");
     },
     async () => {
       const ws = vscode.workspace.workspaceFolders?.[0]?.uri;

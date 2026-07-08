@@ -31,7 +31,7 @@ export function RuntimeSection({ state, busy, send }: SectionProps) {
               ))}
             </ul>
           ) : (
-            <p className="text-[11px] text-text-3">Runtime not installed — run "AI Editor: Run Setup".</p>
+            <p className="text-[11px] text-text-3">Runtime not installed — run "Crucible: Run Setup".</p>
           )}
           <BtnGhost className="self-start" disabled={busy} onClick={() => send({ type: "settings/restartBackend" })}>
             Restart backend

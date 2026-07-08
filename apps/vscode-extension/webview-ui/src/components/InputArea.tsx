@@ -331,7 +331,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
             onOpenSettings ? onOpenSettings() : vscode.postMessage({ type: "openSettings" })
           }
           aria-label="Open settings"
-          title="AI Editor settings"
+          title="Crucible settings"
           className="flex h-6 w-6 items-center justify-center rounded-[7px] cursor-pointer text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text"
         >
           <Icon name="gear" size={12} />

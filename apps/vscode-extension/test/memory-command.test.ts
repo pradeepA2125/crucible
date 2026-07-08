@@ -11,19 +11,19 @@ describe("memory command contributions", () => {
 
   test("contributes the openMemoryPanel command", () => {
     const cmd = pkg.contributes.commands.find(
-      (c: { command: string }) => c.command === "aiEditor.openMemoryPanel"
+      (c: { command: string }) => c.command === "crucible.openMemoryPanel"
     );
     expect(cmd).toBeTruthy();
   });
 
-  test("command palette gates openMemoryPanel by aiEditor.memoryEnabled", () => {
+  test("command palette gates openMemoryPanel by crucible.memoryEnabled", () => {
     const menu = pkg.contributes.menus.commandPalette.find(
-      (m: { command: string }) => m.command === "aiEditor.openMemoryPanel"
+      (m: { command: string }) => m.command === "crucible.openMemoryPanel"
     );
-    expect(menu?.when).toBe("aiEditor.memoryEnabled");
+    expect(menu?.when).toBe("crucible.memoryEnabled");
   });
 
   test("activates on the openMemoryPanel command", () => {
-    expect(pkg.activationEvents).toContain("onCommand:aiEditor.openMemoryPanel");
+    expect(pkg.activationEvents).toContain("onCommand:crucible.openMemoryPanel");
   });
 });

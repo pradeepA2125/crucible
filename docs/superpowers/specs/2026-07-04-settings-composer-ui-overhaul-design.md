@@ -58,7 +58,7 @@ Same `Step` union (`welcome | install | provider | done`) and same linear flow �
 `InputArea.tsx`'s footer row gains two new elements at the **left** of the existing row (abort buttons / spacer / Review-each-step checkbox / ⌘↵ hint / Send button all stay, unchanged, to the right):
 
 - **Model dropdown** — shows the current `backend`/`model` (fetched once via the existing settings data source). The popover lists only providers that already have a stored API key (i.e. already validated once via Settings) — picking one calls the existing `PUT /v1/config/provider` route directly, applying from the next turn per the route's documented "no restart" hot-swap semantics. A provider with no stored key is **not** offered in this list; picking a brand-new provider (with its key entry + validation) stays a Settings-panel action, reached via the gear icon. This avoids the composer ever attempting a hot-swap that's guaranteed to fail validation.
-- **Gear icon** — a plain icon button that runs the existing `aiEditor.openSettingsPanel` command. No new backend surface; this is a shortcut, not a new settings mechanism.
+- **Gear icon** — a plain icon button that runs the existing `crucible.openSettingsPanel` command. No new backend surface; this is a shortcut, not a new settings mechanism.
 
 ## 7. Deferred (recorded, not designed here)
 

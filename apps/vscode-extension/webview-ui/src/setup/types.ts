@@ -37,7 +37,7 @@ export const PROVIDERS: ProviderInfo[] = [
 
 export const COMPONENT_LABELS: Record<string, string> = {
   uv: "uv (Python manager)",
-  agentd: "AI Editor backend",
+  agentd: "Crucible backend",
   indexer: "Code indexer",
   ripgrep: "ripgrep",
   lsps: "Language servers",

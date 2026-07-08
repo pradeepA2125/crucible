@@ -178,7 +178,7 @@ PlanningAgent.generate_plan()  ← agentic loop replaces both above
 Planning agent emits markdown → task transitions to `AWAITING_PLAN_APPROVAL` → user reviews in VS Code panel → approves.
 
 **Gate 2 — JSON plan review** (optional, VS Code flag):  
-After markdown approval, `create_plan()` generates the executable JSON plan. If `aiEditor.jsonPlanReviewMode = true`, VS Code asks "Review JSON plan?" — user can inspect individual steps and trigger delta step edits (user-initiated, pre-execution) before confirming. If flag is off (default), JSON is generated and execution starts automatically.
+After markdown approval, `create_plan()` generates the executable JSON plan. If `crucible.jsonPlanReviewMode = true`, VS Code asks "Review JSON plan?" — user can inspect individual steps and trigger delta step edits (user-initiated, pre-execution) before confirming. If flag is off (default), JSON is generated and execution starts automatically.
 
 Gate 2 is handled entirely in the VS Code extension. The backend state machine is unchanged: `AWAITING_PLAN_APPROVAL` → `PLANNED` → `EXECUTING`.
 
@@ -516,7 +516,7 @@ async def _apply_revision(self, task, revision, shadow_path) -> None:
 
 | Setting | Type | Default | Effect |
 |---|---|---|---|
-| `aiEditor.jsonPlanReviewMode` | boolean | `false` | Show JSON plan before execution; allow delta edits |
+| `crucible.jsonPlanReviewMode` | boolean | `false` | Show JSON plan before execution; allow delta edits |
 
 Delta replan is always automatic — no user gate. The `delta_replan_applied` SSE event keeps the activity log visible without blocking execution.
 
@@ -574,7 +574,7 @@ Delta replan is always automatic — no user gate. The `delta_replan_applied` SS
 7. **`_next_incomplete_step()` drives the loop**: Confirm step loop re-executes reverted steps without any explicit restart signal.
 8. **Max delta replans guard**: Set `max_delta_replans = 1`, trigger two delta replans. Confirm second triggers `FAILED` with clear diagnostic.
 9. **Automatic delta replan**: Confirm delta replan fires inline without user intervention. `delta_replan_applied` SSE event appears in the activity log with `revised_steps` and `summary`.
-10. **`aiEditor.jsonPlanReviewMode = true`**: Confirm VS Code shows JSON plan after markdown approval, allows step edits, then starts execution on confirm.
+10. **`crucible.jsonPlanReviewMode = true`**: Confirm VS Code shows JSON plan after markdown approval, allows step edits, then starts execution on confirm.
 11. **Deleted code paths removed**: Confirm `critique_markdown_plan`, `_validate_plan_grounding`, `critique_json_plan` loop are gone. All tests still pass.
 12. **`ScriptedReasoningEngine`**: Confirm `create_planning_step()` stub added; existing tests unaffected.
 13. **One-step-per-file validation**: Submit a task whose goal naturally touches one file in two steps. Confirm `PlanningLoop` catches the collision, re-invokes the agent with the error, and the second plan consolidates the file into one step.

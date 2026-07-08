@@ -304,7 +304,7 @@ fi
 cat <<'EOF'
 
 Manual UI check for polling warning regression:
-1. In Extension Host run "AI Editor: Start Task".
+1. In Extension Host run "Crucible: Start Task".
 2. Keep the review panel open while task polls.
 3. PASS if no warning toast appears containing:
    "Polling failed ... invalid_type ... expected string"

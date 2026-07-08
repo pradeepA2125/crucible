@@ -60,7 +60,7 @@ Same 4-step flow. Adds a **StepRail** across the top: four numbered dots joined 
 
 Footer row gains, at the far left: **[✦ model-name ▾] [⚙]**.
 - The model chip is a ghost pill (surface-2, hairline border, 10.5px mono-ish model name truncated to 18 chars). Click opens a **popover above the composer** (`bottom-full`, `anim-rise`): one row per available provider — provider label (9.5px, text-3, uppercase) over model name (11px), active row marked with an accent check. While a swap is in flight the chosen row shows a mini spinner; on failure a red error line renders inside the popover (popover stays open). Footer row of the popover: "Provider settings…" ghost action → opens the Settings panel.
-- The gear is a 24px icon button (text-3 → text on hover, surface-2 hover tint) that runs `aiEditor.openSettingsPanel`.
+- The gear is a 24px icon button (text-3 → text on hover, surface-2 hover tint) that runs `crucible.openSettingsPanel`.
 
 ### 0.4 Motion system (added to `index.css`, used everywhere)
 
@@ -1354,7 +1354,7 @@ const state: SettingsState = {
     { name: "brainstorming", description: "Explore ideas", enabled: true },
     { name: "systematic-debugging", description: "Debug carefully", enabled: false },
   ],
-  envFlags: { "aiEditor.policy.shell": "ask" },
+  envFlags: { "crucible.policy.shell": "ask" },
   restartRequired: false,
 };
 
@@ -1374,7 +1374,7 @@ describe("PoliciesSection", () => {
     const send = vi.fn();
     render(<PoliciesSection state={state} busy={false} send={send} />);
     fireEvent.change(screen.getByLabelText("Shell command policy"), { target: { value: "allow_all" } });
-    expect(send).toHaveBeenCalledWith({ type: "settings/setEnvFlag", key: "aiEditor.policy.shell", value: "allow_all" });
+    expect(send).toHaveBeenCalledWith({ type: "settings/setEnvFlag", key: "crucible.policy.shell", value: "allow_all" });
   });
 });
 
@@ -1527,7 +1527,7 @@ export function RuntimeSection({ state, busy, send }: SectionProps) {
               ))}
             </ul>
           ) : (
-            <p className="text-[11px] text-text-3">Runtime not installed — run "AI Editor: Run Setup".</p>
+            <p className="text-[11px] text-text-3">Runtime not installed — run "Crucible: Run Setup".</p>
           )}
           <BtnGhost className="self-start" disabled={busy} onClick={() => send({ type: "settings/restartBackend" })}>
             Restart backend
@@ -2534,7 +2534,7 @@ Check `src/setup-data.ts` exports `ProviderInfo` and `PROVIDERS`; if `ProviderIn
 ```ts
   /** Stored API key for a backend, if the user ever validated one. */
   async getProviderKey(backend: string): Promise<string | undefined> {
-    return (await this.context.secrets.get(`aiEditor.providerKey.${backend}`)) ?? undefined;
+    return (await this.context.secrets.get(`crucible.providerKey.${backend}`)) ?? undefined;
   }
 ```
 
@@ -2611,7 +2611,7 @@ and message cases before the final `else`:
       return { current, options: buildModelOptions(current, keyed, PROVIDERS) };
     },
     () => {
-      void vscode.commands.executeCommand("aiEditor.openSettingsPanel");
+      void vscode.commands.executeCommand("crucible.openSettingsPanel");
     }
 ```
 
@@ -2953,14 +2953,14 @@ code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/sh
 ```
 
 Checklist:
-1. `aiEditor.openSettingsPanel` → lands on Overview; cards stagger in; hover lifts.
+1. `crucible.openSettingsPanel` → lands on Overview; cards stagger in; hover lifts.
 2. Click through all 7 nav items — indicator slides, content pane animates, no console errors.
 3. Provider: save & validate → "✓ Saved" chip; Active line updates.
 4. MCP: status dots correct; toggle a server (switch animates, reconnect fires); add + remove a dummy server.
 5. Skills: search filters; toggling flips the restart banner in (slide-down).
 6. Instructions: empty state → Create → type → Save → send a chat message and confirm the backend picked the rules up (no restart).
 7. Runtime: versions render; Restart backend works.
-8. Setup wizard (`aiEditor.runSetup`): StepRail advances, install rows animate, done step reachable.
+8. Setup wizard (`crucible.runSetup`): StepRail advances, install rows animate, done step reachable.
 9. Composer: chip shows current model; swap to another keyed provider; next chat turn uses it (check `.agentd` log for the new model); swap error (bogus key) renders in-popover; gear opens Settings.
 10. Toggle macOS "Reduce motion" and confirm the UI is instant but functional.
 

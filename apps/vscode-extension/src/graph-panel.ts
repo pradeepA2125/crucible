@@ -30,7 +30,7 @@ export class GraphPanel {
       this.panel.reveal(vscode.ViewColumn.Two);
       return;
     }
-    this.panel = vscode.window.createWebviewPanel("aiEditorGraph", "AXON: Dependency Space", vscode.ViewColumn.Two, {
+    this.panel = vscode.window.createWebviewPanel("crucibleGraph", "AXON: Dependency Space", vscode.ViewColumn.Two, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist")],

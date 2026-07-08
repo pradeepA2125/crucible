@@ -65,7 +65,7 @@ The reranker *improves* recall precision; the inspector lets you *observe and ve
 
 ## 4. Webview panel (extension)
 
-Dedicated **`memory-panel.ts`** webview (mirrors `review-panel.ts`; *not* folded into the chat view), opened by command **`aiEditor.openMemoryPanel`** (registered in `extension.ts`, gated by an `aiEditor.memoryEnabled` `when`-context fed from `GET /v1/config`, mirroring `taskSubsystemEnabled`). `controller.ts` gains read-only fetchers wrapping the three client methods.
+Dedicated **`memory-panel.ts`** webview (mirrors `review-panel.ts`; *not* folded into the chat view), opened by command **`crucible.openMemoryPanel`** (registered in `extension.ts`, gated by an `crucible.memoryEnabled` `when`-context fed from `GET /v1/config`, mirroring `taskSubsystemEnabled`). `controller.ts` gains read-only fetchers wrapping the three client methods.
 
 - **Recall trace tab (layout A):** turn-summary line (query · scope · candidate count · `reranked ✓/✗` · floor · k); per recalled memory a row with **five labeled signal bars** (semantic / lexical / structural / importance / recency — full words), `fused`, `rerank` with an **▲/▼ rank-change arrow**, and an **injected / below-floor** badge (below-floor rows greyed).
 - **Browser tab (layout A):** filter bar (scope ▾ / kind ▾ / ☑ include retired) + live·retired count; list (kind badge · importance · snippet; retired greyed/struck) → detail pane (full content, entity chips, metadata incl. A+link seq span, **supersede-chain timeline**).

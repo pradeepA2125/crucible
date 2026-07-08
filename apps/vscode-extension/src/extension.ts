@@ -31,7 +31,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const settings = new VscodeSettingsProvider();
   const sessionStore = new VscodeSessionStore(context.workspaceState);
 
-  const runtimeOutput = vscode.window.createOutputChannel("AI Editor Runtime");
+  const runtimeOutput = vscode.window.createOutputChannel("Crucible Runtime");
   context.subscriptions.push(runtimeOutput);
   const runtimeManager = new RuntimeManager(context, runtimeOutput);
   context.subscriptions.push({
@@ -44,7 +44,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // an explicit backendBaseUrl (the dev flow) or turned the manager off.
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
   const managedRuntimeActive =
-    vscode.workspace.getConfiguration("aiEditor").get<boolean>("managedRuntime.enabled", true) &&
+    vscode.workspace.getConfiguration("crucible").get<boolean>("managedRuntime.enabled", true) &&
     !isBackendBaseUrlUserSet() &&
     workspaceFolder !== null;
   let managedBackendStarted = false;
@@ -59,7 +59,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ) {
       void vscode.window
         .showInformationMessage(
-          `AI Editor runtime ${bundled.releaseTag} is available (installed: ${installed.releaseTag}). Install now?`,
+          `Crucible runtime ${bundled.releaseTag} is available (installed: ${installed.releaseTag}). Install now?`,
           "Install",
         )
         .then(async (choice: string | undefined) => {
@@ -138,10 +138,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return composerModelState();
     },
     (section?: string) => {
-      void vscode.commands.executeCommand("aiEditor.openSettingsPanel", section);
+      void vscode.commands.executeCommand("crucible.openSettingsPanel", section);
     },
     () => {
-      void vscode.commands.executeCommand("aiEditor.openMemoryPanel");
+      void vscode.commands.executeCommand("crucible.openMemoryPanel");
     },
     async () => {
       const ws = vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -159,7 +159,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showTextDocument(vscode.Uri.file(path.join(ws, relativePath)));
     },
     () => {
-      void vscode.commands.executeCommand("aiEditor.openGraphPanel");
+      void vscode.commands.executeCommand("crucible.openGraphPanel");
     }
   );
 
@@ -167,7 +167,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     getWorkspacePath: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
     promptForGoal: () =>
       vscode.window.showInputBox({
-        prompt: "Describe what you want AI Editor to do",
+        prompt: "Describe what you want Crucible to do",
         placeHolder: "Example: Refactor auth middleware to support refresh tokens",
         ignoreFocusOut: true,
       }),
@@ -192,7 +192,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         .showInformationMessage(message, "Run Setup")
         .then((choice: string | undefined) => {
           if (choice === "Run Setup") {
-            void vscode.commands.executeCommand("aiEditor.runSetup");
+            void vscode.commands.executeCommand("crucible.runSetup");
           }
         });
     },
@@ -353,14 +353,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // backend unreachable at activation — leave hidden.
   }
   await vscode.commands.executeCommand(
-    "setContext", "aiEditor.taskSubsystemEnabled", taskSubsystemEnabled);
+    "setContext", "crucible.taskSubsystemEnabled", taskSubsystemEnabled);
   await vscode.commands.executeCommand(
-    "setContext", "aiEditor.memoryEnabled", memoryEnabled);
+    "setContext", "crucible.memoryEnabled", memoryEnabled);
   await vscode.commands.executeCommand(
-    "setContext", "aiEditor.skillsEnabled", skillsEnabled);
+    "setContext", "crucible.skillsEnabled", skillsEnabled);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.startTask", async () => {
+    vscode.commands.registerCommand("crucible.startTask", async () => {
       if (!taskSubsystemEnabled) {
         void vscode.window.showInformationMessage(
           "The task path is disabled (CRUCIBLE_TASK_SUBSYSTEM=0). Use the chat to make changes inline.");
@@ -370,31 +370,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.openReviewPanel", () => {
+    vscode.commands.registerCommand("crucible.openReviewPanel", () => {
       controller.openReviewPanel();
     })
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.acceptPatch", () => controller.acceptPatch())
+    vscode.commands.registerCommand("crucible.acceptPatch", () => controller.acceptPatch())
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.rejectPatch", () => controller.rejectPatch())
+    vscode.commands.registerCommand("crucible.rejectPatch", () => controller.rejectPatch())
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.refreshTask", () => controller.refreshTask())
+    vscode.commands.registerCommand("crucible.refreshTask", () => controller.refreshTask())
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.attachToTask", async () => {
+    vscode.commands.registerCommand("crucible.attachToTask", async () => {
       await controller.attachToTask();
     })
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.openChat", () => {
+    vscode.commands.registerCommand("crucible.openChat", () => {
       void controller.openChat();
     })
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.restartBackend", async () => {
+    vscode.commands.registerCommand("crucible.restartBackend", async () => {
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (!folder) {
         void vscode.window.showWarningMessage("Open a folder to restart its backend.");
@@ -405,7 +405,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const url = runtimeManager.backendUrl(folder);
         if (url) settings.setManagedBackendUrl(url);
         void vscode.window.showInformationMessage(
-          `AI Editor backend restarted (${url ?? "unknown"}).`);
+          `Crucible backend restarted (${url ?? "unknown"}).`);
       } catch (err) {
         void vscode.window.showErrorMessage(
           `Restart failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -413,7 +413,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.openMemoryPanel", () => {
+    vscode.commands.registerCommand("crucible.openMemoryPanel", () => {
       if (!memoryEnabled) {
         void vscode.window.showInformationMessage(
           "The memory inspector is disabled (CRUCIBLE_MEMORY_ENABLED=0).");
@@ -428,7 +428,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.openGraphPanel", () => {
+    vscode.commands.registerCommand("crucible.openGraphPanel", () => {
       const ws = controller.memoryWorkspacePath();
       if (!ws) {
         void vscode.window.showWarningMessage("Open a folder to view the dependency space.");
@@ -438,7 +438,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.runSetup", () => {
+    vscode.commands.registerCommand("crucible.runSetup", () => {
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (!folder) {
         void vscode.window.showWarningMessage("Open a folder to run setup.");
@@ -454,11 +454,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   let settingsPanel: SettingsPanel | null = null;
   context.subscriptions.push(
     vscode.commands.registerCommand(
-      "aiEditor.openSettingsPanel",
+      "crucible.openSettingsPanel",
       (sectionArg?: unknown) => {
         const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (!folder) {
-          void vscode.window.showWarningMessage("Open a folder to view AI Editor settings.");
+          void vscode.window.showWarningMessage("Open a folder to view Crucible settings.");
           return;
         }
         if (!settingsPanel) {
@@ -475,7 +475,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     )
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.mcpAddServer", async () => {
+    vscode.commands.registerCommand("crucible.mcpAddServer", async () => {
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (!folder) {
         void vscode.window.showWarningMessage("Open a folder to add an MCP server.");
@@ -484,7 +484,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const url = runtimeManager.backendUrl(folder);
       if (!url) {
         void vscode.window.showWarningMessage(
-          "Backend not started yet — run \"AI Editor: Run Setup\" or restart the backend.");
+          "Backend not started yet — run \"Crucible: Run Setup\" or restart the backend.");
         return;
       }
       const transportPick = await vscode.window.showQuickPick(
@@ -540,7 +540,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.mcpListServers", async () => {
+    vscode.commands.registerCommand("crucible.mcpListServers", async () => {
       const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (!folder) {
         void vscode.window.showWarningMessage("Open a folder to list MCP servers.");
@@ -549,7 +549,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const url = runtimeManager.backendUrl(folder);
       if (!url) {
         void vscode.window.showWarningMessage(
-          "Backend not started yet — run \"AI Editor: Run Setup\" or restart the backend.");
+          "Backend not started yet — run \"Crucible: Run Setup\" or restart the backend.");
         return;
       }
       const client = clientFactory(url);
@@ -615,7 +615,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Re-attach message handler when VS Code restores the chat panel after a
   // host restart (without this, the panel is visible but Send does nothing).
   context.subscriptions.push(
-    vscode.window.registerWebviewPanelSerializer("aiEditorChat", {
+    vscode.window.registerWebviewPanelSerializer("crucibleChat", {
       deserializeWebviewPanel(restoredPanel: vscode.WebviewPanel) {
         chatPanel.reattach(restoredPanel);
         // Reload thread list + active thread messages after panel is restored.
@@ -635,8 +635,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (!healthy) {
     void vscode.window.showWarningMessage(
       managedRuntimeActive && !runtimeManager.isInstalled()
-        ? "AI Editor runtime is not installed yet. Run \"AI Editor: Run Setup\" to install it."
-        : `AI Editor backend is not reachable at ${backendBaseUrl}. Start agentd-py, then run \"AI Editor: Start Task\".`
+        ? "Crucible runtime is not installed yet. Run \"Crucible: Run Setup\" to install it."
+        : `Crucible backend is not reachable at ${backendBaseUrl}. Start agentd-py, then run \"Crucible: Start Task\".`
     );
   }
 

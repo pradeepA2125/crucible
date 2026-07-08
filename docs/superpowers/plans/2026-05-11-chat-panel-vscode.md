@@ -40,7 +40,7 @@ The following issues were identified in a codebase review before implementation 
 | `apps/editor-client/src/client/http-backend-client.ts` | Modify | Implement `listChatThreads()`, `createChatThread()`, `getChatThread()`, `sendChatMessage()`, `streamPatchEvents()` |
 | `apps/editor-client/test/http-backend-client.test.ts` | Modify | Tests for new chat methods (fetchFn pattern) |
 | `apps/vscode-extension/src/chat-panel.ts` | Create | `ChatPanel` WebView — renders thread, handles user input, wires newChat/switchThread |
-| `apps/vscode-extension/src/extension.ts` | Modify | Register `aiEditor.openChat` command; wire all 9 new `ControllerUI` chat methods |
+| `apps/vscode-extension/src/extension.ts` | Modify | Register `crucible.openChat` command; wire all 9 new `ControllerUI` chat methods |
 | `apps/vscode-extension/src/controller.ts` | Modify | Add `openChat()`, `sendChatMessage()`, `handlePlanCardAction()`, `streamTaskIntoChatThread()` |
 | `apps/vscode-extension/test/controller.test.ts` | Modify | Extend stub + add chat tests |
 
@@ -488,7 +488,7 @@ export class ChatPanel {
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
-      "aiEditorChat",
+      "crucibleChat",
       "AI Editor Chat",
       vscode.ViewColumn.Beside,
       { enableScripts: true, retainContextWhenHidden: true }
@@ -1142,7 +1142,7 @@ Key corrections from review:
 import { ChatPanel } from "./chat-panel.js";
 ```
 
-- [ ] **Step 2: Wire `ChatPanel` and the `aiEditor.openChat` command in `activate()`**
+- [ ] **Step 2: Wire `ChatPanel` and the `crucible.openChat` command in `activate()`**
 
 After the `panel` (`ReviewPanel`) construction and before the `ui` object, add:
 
@@ -1227,13 +1227,13 @@ const ui: ControllerUI = {
 };
 ```
 
-- [ ] **Step 4: Register `aiEditor.openChat` command**
+- [ ] **Step 4: Register `crucible.openChat` command**
 
 After the existing command registrations:
 
 ```typescript
 context.subscriptions.push(
-  vscode.commands.registerCommand("aiEditor.openChat", async () => {
+  vscode.commands.registerCommand("crucible.openChat", async () => {
     await controller.openChat();
   })
 );
@@ -1245,8 +1245,8 @@ In `apps/vscode-extension/package.json` under `contributes.commands`:
 
 ```json
 {
-  "command": "aiEditor.openChat",
-  "title": "AI Editor: Open Chat"
+  "command": "crucible.openChat",
+  "title": "Crucible: Open Chat"
 }
 ```
 
@@ -1286,7 +1286,7 @@ npm run build
 code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/shadow-forge-stress"
 ```
 
-- [ ] Run `AI Editor: Open Chat` from command palette (`Cmd+Shift+P`)
+- [ ] Run `Crucible: Open Chat` from command palette (`Cmd+Shift+P`)
 
 Expected: chat panel opens in a side column, "+ New Chat" button visible
 

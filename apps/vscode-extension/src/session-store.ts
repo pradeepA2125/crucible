@@ -1,11 +1,11 @@
 import type { TaskSessionState } from "./types.js";
 
 export const SESSION_KEYS = {
-  activeTaskId: "aiEditor.activeTaskId",
-  backendBaseUrl: "aiEditor.backendBaseUrl",
-  lastKnownStatus: "aiEditor.lastKnownStatus",
-  workspacePath: "aiEditor.workspacePath",
-  updatedAt: "aiEditor.updatedAt",
+  activeTaskId: "crucible.activeTaskId",
+  backendBaseUrl: "crucible.backendBaseUrl",
+  lastKnownStatus: "crucible.lastKnownStatus",
+  workspacePath: "crucible.workspacePath",
+  updatedAt: "crucible.updatedAt",
 } as const;
 
 export interface SessionStore {

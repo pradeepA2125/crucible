@@ -143,8 +143,8 @@ export class ChatPanel {
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
-      "aiEditorChat",
-      "AI Editor Chat",
+      "crucibleChat",
+      "Crucible Chat",
       vscode.ViewColumn.Two,
       {
         enableScripts: true,

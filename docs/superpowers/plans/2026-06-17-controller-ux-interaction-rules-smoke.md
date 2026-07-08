@@ -24,7 +24,7 @@ both as a route in A and as a button in B).
   **`CRUCIBLE_CHAT_CONTROLLER=1` exported** before launch, `--workspace <REAL ws OUTSIDE
   .tmp>` (graph indexing needs a non-`.tmp` ancestor; `workspaces/shadow-forge-stress`
   works). Port **:8001** (workspace `.vscode/settings.json` pins
-  `aiEditor.backendBaseUrl=http://localhost:8001`). Confirm controller is active:
+  `crucible.backendBaseUrl=http://localhost:8001`). Confirm controller is active:
   `curl -s :8001/health` AND a `/live` payload contains a `turn_active` key
   (legacy `ChatAgent` omits it).
 - **Dev-host:** VS Code on CDP :9335 via `scripts/playwright/start-vscode-mcp.sh` —

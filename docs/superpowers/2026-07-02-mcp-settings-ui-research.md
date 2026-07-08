@@ -109,8 +109,8 @@ Backend (small — the P3 loader already does the hard part):
 - Optional: `POST /v1/mcp/servers/{name}/reconnect` (manual retry, VS Code/Claude Code both have it).
 
 Frontend (two tiers, can ship separately):
-- **Tier 1 (cheap, VS Code-native):** `AI Editor: Add MCP Server` command — QuickPick wizard
-  (transport → command/URL → name → env var names) posting to the write API; `AI Editor: List MCP
+- **Tier 1 (cheap, VS Code-native):** `Crucible: Add MCP Server` command — QuickPick wizard
+  (transport → command/URL → name → env var names) posting to the write API; `Crucible: List MCP
   Servers` QuickPick with enable/disable/remove/reconnect. Mirrors "MCP: Add Server" exactly; no
   webview work.
 - **Tier 2 (the pane):** an MCP section in a settings webview — server list with status dots,

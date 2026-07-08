@@ -26,8 +26,8 @@ export class SetupPanel {
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
-      "aiEditorSetup",
-      "AI Editor Setup",
+      "crucibleSetup",
+      "Crucible Setup",
       vscode.ViewColumn.One,
       {
         enableScripts: true,

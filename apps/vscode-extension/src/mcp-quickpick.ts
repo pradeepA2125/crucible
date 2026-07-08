@@ -1,5 +1,5 @@
 // Pure MCP entry-assembly helper for the tier-1 QuickPick commands
-// (aiEditor.mcpAddServer / aiEditor.mcpListServers, wired in extension.ts).
+// (crucible.mcpAddServer / crucible.mcpListServers, wired in extension.ts).
 // vscode-free so it's unit-testable.
 
 export interface McpEntryInput {

@@ -20,8 +20,8 @@ export class MemoryPanel {
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
-      "aiEditorMemory",
-      "AI Editor: Memory",
+      "crucibleMemory",
+      "Crucible: Memory",
       vscode.ViewColumn.Two,
       {
         enableScripts: true,

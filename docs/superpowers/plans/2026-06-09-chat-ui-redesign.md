@@ -1015,7 +1015,7 @@ async resumeTaskById(taskId: string, stage: "plan" | "execute"): Promise<void> {
 
 - [ ] **Step 1: controller.ts removals** — `updatePanel` + `showStepReview` from `ControllerUI`; `pushPanel()`/`buildViewModel()`/`patchEvents` and **all nine `pushPanel()` call sites** (initialize, startTask, attachToTask, providePlanFeedback, resumeTask×1, pullLatestTask, startPolling.onUpdate, openReviewPanel); the `step_review_requested` branch in `startStream` (live gate covers it); keep `buildReviewFileEntries` (still used by `openDiffForFile`). `openReviewPanel()` → `this.ui.openChatPanel()`.
 
-- [ ] **Step 2: extension.ts removals** — `ReviewPanel` import + instantiation; `updatePanel`/`showStepReview` from the `ui` object; `panel.show()` in `startTask`/`attachToTask`/`openReviewPanel` command handlers (repoint `aiEditor.openReviewPanel` to open chat for muscle-memory compat, and remove it from `package.json` `contributes.commands` + `activationEvents` in a follow-up if desired); `panel.dispose()`.
+- [ ] **Step 2: extension.ts removals** — `ReviewPanel` import + instantiation; `updatePanel`/`showStepReview` from the `ui` object; `panel.show()` in `startTask`/`attachToTask`/`openReviewPanel` command handlers (repoint `crucible.openReviewPanel` to open chat for muscle-memory compat, and remove it from `package.json` `contributes.commands` + `activationEvents` in a follow-up if desired); `panel.dispose()`.
 
 - [ ] **Step 3: test stubs** — `test/controller.test.ts` lines ~186/~201: remove `updatePanel`/`showStepReview`, add the new UI members (appendToolEvent, appendToolResult, renderLiveReview, clearLiveReview, renderLiveError, clearLiveError).
 

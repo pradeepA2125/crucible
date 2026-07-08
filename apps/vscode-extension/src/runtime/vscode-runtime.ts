@@ -37,10 +37,10 @@ export const PROVIDER_KEY_ENV: Record<string, string> = {
 // VS Code settings that become spawn env (only when the user explicitly set them —
 // otherwise buildBackendEnv's defaults stand).
 const SETTING_ENV_MAP: Record<string, string> = {
-  "aiEditor.policy.shell": "CRUCIBLE_SHELL_POLICY",
-  "aiEditor.policy.scope": "CRUCIBLE_SCOPE_POLICY",
-  "aiEditor.memory.enabled": "CRUCIBLE_MEMORY_ENABLED",
-  "aiEditor.memory.reranker": "CRUCIBLE_MEMORY_RERANKER",
+  "crucible.policy.shell": "CRUCIBLE_SHELL_POLICY",
+  "crucible.policy.scope": "CRUCIBLE_SCOPE_POLICY",
+  "crucible.memory.enabled": "CRUCIBLE_MEMORY_ENABLED",
+  "crucible.memory.reranker": "CRUCIBLE_MEMORY_RERANKER",
 };
 
 const MAX_RESTART_ATTEMPTS = 3;
@@ -95,7 +95,7 @@ export class RuntimeManager {
   ) {
     this.runtimeDir = join(homedir(), ".ai-editor", "runtime");
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-    this.statusBar.command = "aiEditor.openSettingsPanel";
+    this.statusBar.command = "crucible.openSettingsPanel";
     context.subscriptions.push(this.statusBar);
   }
 
@@ -144,8 +144,8 @@ export class RuntimeManager {
   }
 
   async getProviderSettings(): Promise<BackendSettings | undefined> {
-    const backend = this.context.globalState.get<string>("aiEditor.provider.backend");
-    const model = this.context.globalState.get<string>("aiEditor.provider.model");
+    const backend = this.context.globalState.get<string>("crucible.provider.backend");
+    const model = this.context.globalState.get<string>("crucible.provider.model");
     if (!backend || !model) return undefined;
     const settings: BackendSettings = {
       backend,
@@ -155,15 +155,15 @@ export class RuntimeManager {
     };
     const envVar = PROVIDER_KEY_ENV[backend];
     if (envVar) {
-      const value = await this.context.secrets.get(`aiEditor.providerKey.${backend}`);
+      const value = await this.context.secrets.get(`crucible.providerKey.${backend}`);
       if (value) settings.apiKey = { envVar, value };
     }
     return settings;
   }
 
   async saveProvider(backend: string, model: string, apiKey?: string): Promise<void> {
-    await this.context.globalState.update("aiEditor.provider.backend", backend);
-    await this.context.globalState.update("aiEditor.provider.model", model);
+    await this.context.globalState.update("crucible.provider.backend", backend);
+    await this.context.globalState.update("crucible.provider.model", model);
     if (apiKey) {
       await this.storeProviderKey(backend, apiKey);
     }
@@ -172,12 +172,12 @@ export class RuntimeManager {
   /** Secret-only write (settings panel's hot-swap path stores the key separately
    * from the backend/model prefs — see SettingsPanel.buildDeps' setProvider wrapper). */
   async storeProviderKey(backend: string, key: string): Promise<void> {
-    await this.context.secrets.store(`aiEditor.providerKey.${backend}`, key);
+    await this.context.secrets.store(`crucible.providerKey.${backend}`, key);
   }
 
   /** Stored API key for a backend, if the user ever validated one (composer model menu). */
   async getProviderKey(backend: string): Promise<string | undefined> {
-    return (await this.context.secrets.get(`aiEditor.providerKey.${backend}`)) ?? undefined;
+    return (await this.context.secrets.get(`crucible.providerKey.${backend}`)) ?? undefined;
   }
 
   private extraEnvFromSettings(): Record<string, string> {
@@ -198,9 +198,9 @@ export class RuntimeManager {
   async startForWorkspace(workspace: string): Promise<{ port: number; reused: boolean }> {
     const settings = await this.getProviderSettings();
     if (!settings) {
-      throw new Error("No provider configured — run \"AI Editor: Run Setup\" first.");
+      throw new Error("No provider configured — run \"Crucible: Run Setup\" first.");
     }
-    this.statusBar.text = "$(rocket) AI Editor: starting…";
+    this.statusBar.text = "$(rocket) Crucible: starting…";
     this.statusBar.show();
     const proc = this.processes.get(workspace) ?? new BackendProcess(this.processDeps());
     this.processes.set(workspace, proc);
@@ -208,7 +208,7 @@ export class RuntimeManager {
       const result = await proc.start(workspace, settings);
       this.ports.set(workspace, result.port);
       this.lastStartedAt.set(workspace, Date.now());
-      this.statusBar.text = `$(check) AI Editor :${result.port}`;
+      this.statusBar.text = `$(check) Crucible :${result.port}`;
       this.watchCrash(workspace, proc);
       return result;
     } catch (err) {
@@ -244,10 +244,10 @@ export class RuntimeManager {
   }
 
   private markFailed(detail: string): void {
-    this.statusBar.text = "$(error) AI Editor failed";
+    this.statusBar.text = "$(error) Crucible failed";
     this.statusBar.show();
     void vscode.window
-      .showErrorMessage(`AI Editor backend failed: ${detail}`, "Open logs")
+      .showErrorMessage(`Crucible backend failed: ${detail}`, "Open logs")
       .then((choice: string | undefined) => {
         if (choice === "Open logs") this.output.show();
       });
@@ -271,21 +271,21 @@ export class RuntimeManager {
   }
 
   mcpDisabled(): string[] {
-    return this.context.globalState.get<string[]>("aiEditor.mcpDisabledServers", []);
+    return this.context.globalState.get<string[]>("crucible.mcpDisabledServers", []);
   }
 
   setMcpDisabled(names: string[]): Promise<void> {
     return Promise.resolve(
-      this.context.globalState.update("aiEditor.mcpDisabledServers", names));
+      this.context.globalState.update("crucible.mcpDisabledServers", names));
   }
 
   skillsDisabled(): string[] {
-    return this.context.globalState.get<string[]>("aiEditor.skillsDisabled", []);
+    return this.context.globalState.get<string[]>("crucible.skillsDisabled", []);
   }
 
   setSkillsDisabled(names: string[]): Promise<void> {
     return Promise.resolve(
-      this.context.globalState.update("aiEditor.skillsDisabled", names));
+      this.context.globalState.update("crucible.skillsDisabled", names));
   }
 
   async dispose(): Promise<void> {

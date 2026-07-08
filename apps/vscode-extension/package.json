@@ -1,9 +1,9 @@
 {
   "name": "crucible-vscode-extension",
-  "displayName": "AI Editor",
+  "displayName": "Crucible",
   "description": "Agentic AI pair programmer: spec-first task planning, shadow-workspace patch review, and an inline chat controller \u2014 with a managed local runtime (no separate backend setup required).",
   "version": "0.3.0",
-  "publisher": "ai-editor",
+  "publisher": "crucible-editor",
   "icon": "resources/icon.png",
   "categories": [
     "AI",
@@ -21,109 +21,109 @@
   },
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:aiEditor.startTask",
-    "onCommand:aiEditor.openReviewPanel",
-    "onCommand:aiEditor.acceptPatch",
-    "onCommand:aiEditor.rejectPatch",
-    "onCommand:aiEditor.refreshTask",
-    "onCommand:aiEditor.attachToTask",
-    "onCommand:aiEditor.openChat",
-    "onCommand:aiEditor.openMemoryPanel",
-    "onCommand:aiEditor.openGraphPanel",
-    "onCommand:aiEditor.runSetup",
-    "onCommand:aiEditor.openSettingsPanel",
-    "onCommand:aiEditor.restartBackend",
-    "onCommand:aiEditor.mcpAddServer",
-    "onCommand:aiEditor.mcpListServers",
-    "onWebviewPanel:aiEditorChat"
+    "onCommand:crucible.startTask",
+    "onCommand:crucible.openReviewPanel",
+    "onCommand:crucible.acceptPatch",
+    "onCommand:crucible.rejectPatch",
+    "onCommand:crucible.refreshTask",
+    "onCommand:crucible.attachToTask",
+    "onCommand:crucible.openChat",
+    "onCommand:crucible.openMemoryPanel",
+    "onCommand:crucible.openGraphPanel",
+    "onCommand:crucible.runSetup",
+    "onCommand:crucible.openSettingsPanel",
+    "onCommand:crucible.restartBackend",
+    "onCommand:crucible.mcpAddServer",
+    "onCommand:crucible.mcpListServers",
+    "onWebviewPanel:crucibleChat"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "aiEditor.startTask",
-        "title": "AI Editor: Start Task"
+        "command": "crucible.startTask",
+        "title": "Crucible: Start Task"
       },
       {
-        "command": "aiEditor.openReviewPanel",
-        "title": "AI Editor: Open Review (Chat)"
+        "command": "crucible.openReviewPanel",
+        "title": "Crucible: Open Review (Chat)"
       },
       {
-        "command": "aiEditor.acceptPatch",
-        "title": "AI Editor: Accept Patch"
+        "command": "crucible.acceptPatch",
+        "title": "Crucible: Accept Patch"
       },
       {
-        "command": "aiEditor.rejectPatch",
-        "title": "AI Editor: Reject Patch"
+        "command": "crucible.rejectPatch",
+        "title": "Crucible: Reject Patch"
       },
       {
-        "command": "aiEditor.refreshTask",
-        "title": "AI Editor: Refresh Task"
+        "command": "crucible.refreshTask",
+        "title": "Crucible: Refresh Task"
       },
       {
-        "command": "aiEditor.attachToTask",
-        "title": "AI Editor: Attach to Task"
+        "command": "crucible.attachToTask",
+        "title": "Crucible: Attach to Task"
       },
       {
-        "command": "aiEditor.openChat",
-        "title": "AI Editor: Open Chat",
+        "command": "crucible.openChat",
+        "title": "Crucible: Open Chat",
         "icon": "$(sparkle)"
       },
       {
-        "command": "aiEditor.openMemoryPanel",
-        "title": "AI Editor: Open Memory Inspector"
+        "command": "crucible.openMemoryPanel",
+        "title": "Crucible: Open Memory Inspector"
       },
       {
-        "command": "aiEditor.openGraphPanel",
-        "title": "AI Editor: Open Dependency Space (AXON)"
+        "command": "crucible.openGraphPanel",
+        "title": "Crucible: Open Dependency Space (AXON)"
       },
       {
-        "command": "aiEditor.runSetup",
-        "title": "AI Editor: Run Setup"
+        "command": "crucible.runSetup",
+        "title": "Crucible: Run Setup"
       },
       {
-        "command": "aiEditor.openSettingsPanel",
-        "title": "AI Editor: Open Settings"
+        "command": "crucible.openSettingsPanel",
+        "title": "Crucible: Open Settings"
       },
       {
-        "command": "aiEditor.restartBackend",
-        "title": "AI Editor: Restart Backend"
+        "command": "crucible.restartBackend",
+        "title": "Crucible: Restart Backend"
       },
       {
-        "command": "aiEditor.mcpAddServer",
-        "title": "AI Editor: Add MCP Server"
+        "command": "crucible.mcpAddServer",
+        "title": "Crucible: Add MCP Server"
       },
       {
-        "command": "aiEditor.mcpListServers",
-        "title": "AI Editor: List MCP Servers"
+        "command": "crucible.mcpListServers",
+        "title": "Crucible: List MCP Servers"
       }
     ],
     "menus": {
       "commandPalette": [
         {
-          "command": "aiEditor.startTask",
-          "when": "aiEditor.taskSubsystemEnabled"
+          "command": "crucible.startTask",
+          "when": "crucible.taskSubsystemEnabled"
         },
         {
-          "command": "aiEditor.openMemoryPanel",
-          "when": "aiEditor.memoryEnabled"
+          "command": "crucible.openMemoryPanel",
+          "when": "crucible.memoryEnabled"
         }
       ],
       "editor/title": [
         {
-          "command": "aiEditor.openChat",
+          "command": "crucible.openChat",
           "group": "navigation@100"
         }
       ]
     },
     "configuration": {
-      "title": "AI Editor",
+      "title": "Crucible",
       "properties": {
-        "aiEditor.backendBaseUrl": {
+        "crucible.backendBaseUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8000",
           "description": "Leave default for the managed backend; set explicitly to attach to a dev backend (e.g. one started via start-backend.sh)."
         },
-        "aiEditor.defaultMode": {
+        "crucible.defaultMode": {
           "type": "string",
           "default": "project_edit",
           "enum": [
@@ -134,18 +134,18 @@
           ],
           "description": "Default orchestration mode for submitted tasks."
         },
-        "aiEditor.pollIntervalMs": {
+        "crucible.pollIntervalMs": {
           "type": "number",
           "default": 1000,
           "minimum": 250,
           "description": "Polling interval used while a task is running."
         },
-        "aiEditor.managedRuntime.enabled": {
+        "crucible.managedRuntime.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Provision and spawn the AI Editor runtime (backend, indexer, ripgrep, language servers) automatically per workspace. Disable to fall back to the pure dev flow (start-backend.sh + an explicit aiEditor.backendBaseUrl)."
+          "description": "Provision and spawn the Crucible runtime (backend, indexer, ripgrep, language servers) automatically per workspace. Disable to fall back to the pure dev flow (start-backend.sh + an explicit crucible.backendBaseUrl)."
         },
-        "aiEditor.policy.shell": {
+        "crucible.policy.shell": {
           "type": "string",
           "default": "ask",
           "enum": [
@@ -154,7 +154,7 @@
           ],
           "description": "Shell command policy for the execution agent's run_command tool. 'ask' surfaces an approval card for every command; 'allow_all' skips the gate."
         },
-        "aiEditor.policy.scope": {
+        "crucible.policy.scope": {
           "type": "string",
           "default": "ask",
           "enum": [
@@ -164,15 +164,15 @@
           ],
           "description": "Scope-extension policy for out-of-plan file writes. 'ask' pauses for approval; 'strict' auto-rejects; 'auto' silently approves and audit-logs."
         },
-        "aiEditor.memory.enabled": {
+        "crucible.memory.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Enable the cross-session memory harness (compaction, recall, consolidation). Requires a managed restart to take effect."
         },
-        "aiEditor.memory.reranker": {
+        "crucible.memory.reranker": {
           "type": "boolean",
           "default": true,
-          "description": "Enable the cross-encoder reranker for memory recall (requires aiEditor.memory.enabled). Requires a managed restart to take effect."
+          "description": "Enable the cross-encoder reranker for memory recall (requires crucible.memory.enabled). Requires a managed restart to take effect."
         }
       }
     }

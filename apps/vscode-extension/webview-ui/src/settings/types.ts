@@ -65,8 +65,8 @@ export const PROVIDERS: ProviderInfo[] = [
 
 // Env-flag settings the panel round-trips (spec §6.2 Policies + Memory sections).
 export const ENV_FLAG_OPTIONS: { key: string; label: string; options: string[] }[] = [
-  { key: "aiEditor.policy.shell", label: "Shell command policy", options: ["ask", "allow_all"] },
-  { key: "aiEditor.policy.scope", label: "Scope-extension policy", options: ["ask", "strict", "auto"] },
-  { key: "aiEditor.memory.enabled", label: "Memory harness", options: ["false", "true"] },
-  { key: "aiEditor.memory.reranker", label: "Memory reranker", options: ["false", "true"] },
+  { key: "crucible.policy.shell", label: "Shell command policy", options: ["ask", "allow_all"] },
+  { key: "crucible.policy.scope", label: "Scope-extension policy", options: ["ask", "strict", "auto"] },
+  { key: "crucible.memory.enabled", label: "Memory harness", options: ["false", "true"] },
+  { key: "crucible.memory.reranker", label: "Memory reranker", options: ["false", "true"] },
 ];

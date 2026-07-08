@@ -168,7 +168,7 @@ export class AiEditorController {
   async startTask(): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath();
     if (!workspacePath) {
-      this.ui.showError("Open a workspace folder before starting an AI Editor task.");
+      this.ui.showError("Open a workspace folder before starting a Crucible task.");
       return;
     }
 
@@ -213,7 +213,7 @@ export class AiEditorController {
     await this.sessionStore.save(this.session);
     this.startPolling();
     this.startStream(submission.taskId);
-    this.ui.showInfo(`Started AI Editor task ${submission.taskId}`);
+    this.ui.showInfo(`Started Crucible task ${submission.taskId}`);
   }
 
   openReviewPanel(): void {
@@ -537,7 +537,7 @@ export class AiEditorController {
       }
     } catch {
       this.ui.promptSetup(
-        "AI Editor isn't set up yet — install the runtime and pick a model provider.",
+        "Crucible isn't set up yet — install the runtime and pick a model provider.",
       );
       return;
     }

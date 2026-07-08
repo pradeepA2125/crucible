@@ -139,7 +139,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           <Icon name="menu" size={14} />
         </button>
 
-        {/* Memory Inspector shortcut — opens the standalone panel (aiEditor.openMemoryPanel),
+        {/* Memory Inspector shortcut — opens the standalone panel (crucible.openMemoryPanel),
             which already degrades gracefully if CRUCIBLE_MEMORY_ENABLED is off. */}
         <button
           type="button"
@@ -165,7 +165,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           <Icon name="db" size={14} />
         </button>
 
-        {/* AXON dependency space — 3D knowledge-graph panel (aiEditor.openGraphPanel);
+        {/* AXON dependency space — 3D knowledge-graph panel (crucible.openGraphPanel);
             degrades to an empty state when no index snapshot exists. */}
         <button
           type="button"

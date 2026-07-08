@@ -97,7 +97,7 @@ Everything else stays env-at-spawn; the extension owns restarts.
 
 ### 6.1 First-run wizard
 
-Webview flow, auto-opens on activation when `~/.ai-editor/runtime/` is absent; re-runnable via `AI Editor: Run Setup`.
+Webview flow, auto-opens on activation when `~/.ai-editor/runtime/` is absent; re-runnable via `Crucible: Run Setup`.
 
 1. **Welcome** — what will be installed, where, disk estimate.
 2. **Install** — live per-component checklist (uv → agentd → indexer → ripgrep → LSPs): spinner → ✓/✗, per-component retry, "Open logs" on failure. Node-absent shows LSP row as skipped-with-consequence, not error.

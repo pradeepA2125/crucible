@@ -9,7 +9,7 @@ const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 export class VscodeSettingsProvider implements SettingsProvider {
   // Set by the managed runtime once its backend is up. An explicitly user-set
-  // aiEditor.backendBaseUrl (the dev flow) always wins over this.
+  // crucible.backendBaseUrl (the dev flow) always wins over this.
   private managedBackendUrl: string | null = null;
 
   setManagedBackendUrl(url: string | null): void {
@@ -21,14 +21,14 @@ export class VscodeSettingsProvider implements SettingsProvider {
       return this.managedBackendUrl;
     }
     return vscode.workspace
-      .getConfiguration("aiEditor")
+      .getConfiguration("crucible")
       .get<string>("backendBaseUrl", DEFAULT_BACKEND_BASE_URL)
       .trim();
   }
 
   getDefaultMode(): TaskMode {
     const configured = vscode.workspace
-      .getConfiguration("aiEditor")
+      .getConfiguration("crucible")
       .get<TaskMode>("defaultMode", DEFAULT_MODE);
 
     if (configured === "inline" || configured === "file_edit" || configured === "project_edit" || configured === "autonomous") {
@@ -40,7 +40,7 @@ export class VscodeSettingsProvider implements SettingsProvider {
 
   getPollIntervalMs(): number {
     const configured = vscode.workspace
-      .getConfiguration("aiEditor")
+      .getConfiguration("crucible")
       .get<number>("pollIntervalMs", DEFAULT_POLL_INTERVAL_MS);
 
     if (!Number.isFinite(configured)) {
@@ -52,7 +52,7 @@ export class VscodeSettingsProvider implements SettingsProvider {
 }
 
 export function isBackendBaseUrlUserSet(): boolean {
-  const info = vscode.workspace.getConfiguration("aiEditor").inspect<string>("backendBaseUrl");
+  const info = vscode.workspace.getConfiguration("crucible").inspect<string>("backendBaseUrl");
   return (
     info !== undefined &&
     (info.globalValue !== undefined ||

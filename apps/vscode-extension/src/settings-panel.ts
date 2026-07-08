@@ -23,7 +23,7 @@ export class SettingsPanel {
     private readonly workspacePath: string,
     private readonly clientFactory: BackendClientFactory,
     // Resolves the backend URL the same way the chat controller does — honors an
-    // explicit `aiEditor.backendBaseUrl` (dev-attach flow), falling back to the
+    // explicit `crucible.backendBaseUrl` (dev-attach flow), falling back to the
     // managed backend. runtimeManager.backendUrl() alone only knows the managed
     // port, so the panel could never reach a dev backend without this.
     private readonly resolveBackendUrl: () => string,
@@ -38,8 +38,8 @@ export class SettingsPanel {
     }
     this.pendingSection = section ?? null;
     this.panel = vscode.window.createWebviewPanel(
-      "aiEditorSettings",
-      "AI Editor Settings",
+      "crucibleSettings",
+      "Crucible Settings",
       vscode.ViewColumn.One,
       {
         enableScripts: true,

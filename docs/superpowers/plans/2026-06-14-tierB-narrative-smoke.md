@@ -5,7 +5,7 @@
 ## Environment
 
 - **Backend:** worktree `services/agentd-py` via `scripts/stress/start-backend.sh --backend turboquant --workspace <REAL ws OUTSIDE .tmp>` (graph indexing needs a non-`.tmp` ancestor — CLAUDE.md gotcha). Port :8001.
-- **Dev-host:** VS Code on CDP :9335 (`scripts/playwright/start-vscode-mcp.sh` starts it + the Playwright MCP), second window with the **worktree** `--extensionDevelopmentPath` + same `--user-data-dir`, `aiEditor.backendBaseUrl=http://localhost:8001`.
+- **Dev-host:** VS Code on CDP :9335 (`scripts/playwright/start-vscode-mcp.sh` starts it + the Playwright MCP), second window with the **worktree** `--extensionDevelopmentPath` + same `--user-data-dir`, `crucible.backendBaseUrl=http://localhost:8001`.
 - **Caveats (auto-memory):** `browser_wait_for` does NOT pierce webview iframes — use `browser_snapshot` + grep. Backend runs `--reload`: do NOT edit `agentd/*.py` while a task is in flight (hot-reload orphans it). Classifier under-scopes 2-existing-file goals to `small_change` — **include a NEW file in every goal to force `large_change`**.
 
 ## Target → Run coverage map

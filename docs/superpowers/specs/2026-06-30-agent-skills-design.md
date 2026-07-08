@@ -123,7 +123,7 @@ opencode native, opencode-agent-skills plugin) — see §10 for the evidence tha
 - `is_skills_enabled()` next to `is_memory_enabled` — `CRUCIBLE_SKILLS_ENABLED`, **default OFF**
   (truthy = `1/true/yes/on`). When off: the loader is never built, the catalog block never appends,
   `SkillToolSource` is not registered, `/v1/skills` returns gated-empty, and the composer hides the
-  skills affordance (via a `aiEditor.skillsEnabled` `when`-context fed from `/v1/config`, mirroring
+  skills affordance (via a `crucible.skillsEnabled` `when`-context fed from `/v1/config`, mirroring
   `memoryEnabled`/`taskSubsystemEnabled`).
 - `select_chat_handler` builds the `SkillCatalogLoader` from the frozen `workspace_path` when enabled
   (same place the memory harness + instructions loader are wired).

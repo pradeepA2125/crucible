@@ -12,7 +12,7 @@ separate Vite entry at `memory.html`) predates the design-system pass done for c
 hardcodes its own slate hex palette (`#0b1220`, `#1e293b`, `#2563eb`, ...) instead of the shared
 `--color-*` custom properties and `.surface-card`/`.menu-item` primitives now used everywhere else
 in the webview. There is also no way to open the memory inspector from the chat window today — only
-via the VS Code command palette (`aiEditor.openMemoryPanel`) or the status bar.
+via the VS Code command palette (`crucible.openMemoryPanel`) or the status bar.
 
 This is two small, independent, contained pieces of work.
 
@@ -47,7 +47,7 @@ size) as the existing header buttons.
 
 - Click → `vscode.postMessage({type: "openMemoryPanel"})`.
 - `chat-panel.ts`'s `onDidReceiveMessage` gains a branch: `m.type === "openMemoryPanel"` →
-  `vscode.commands.executeCommand("aiEditor.openMemoryPanel")`.
+  `vscode.commands.executeCommand("crucible.openMemoryPanel")`.
 - No new capability-flag plumbing into the webview: the command already exists
   (`extension.ts:392`) and already degrades gracefully — if `CRUCIBLE_MEMORY_ENABLED` is off it
   shows an info message ("The memory inspector is disabled...") instead of opening a panel. The

@@ -59,7 +59,7 @@ function relativeTime(createdAt: string, now: Date): string {
  * HistoryView — left-panel thread list with day groups and search.
  *
  * The panel shows:
- *  - Header: logo, "AI Editor" title, "+ New Chat" button
+ *  - Header: logo, "Crucible" title, "+ New Chat" button
  *  - Search: client-side title filter
  *  - Thread list: grouped by creation day, with relative time per row
  *
@@ -111,7 +111,7 @@ export function HistoryView({ threads, activeThreadId, navLocked, onSelect, onNe
           className="font-semibold flex-1 min-w-0 truncate"
           style={{ fontSize: 13 }}
         >
-          AI Editor
+          Crucible
         </span>
 
         {/* + New Chat */}

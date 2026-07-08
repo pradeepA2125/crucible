@@ -13,7 +13,7 @@ const state: SettingsState = {
     { name: "brainstorming", description: "Explore ideas", enabled: true },
     { name: "systematic-debugging", description: "Debug carefully", enabled: false },
   ],
-  envFlags: { "aiEditor.policy.shell": "ask" },
+  envFlags: { "crucible.policy.shell": "ask" },
   restartRequired: false,
 };
 
@@ -33,7 +33,7 @@ describe("PoliciesSection", () => {
     const send = vi.fn();
     render(<PoliciesSection state={state} busy={false} send={send} />);
     fireEvent.change(screen.getByLabelText("Shell command policy"), { target: { value: "allow_all" } });
-    expect(send).toHaveBeenCalledWith({ type: "settings/setEnvFlag", key: "aiEditor.policy.shell", value: "allow_all" });
+    expect(send).toHaveBeenCalledWith({ type: "settings/setEnvFlag", key: "crucible.policy.shell", value: "allow_all" });
   });
 });
 

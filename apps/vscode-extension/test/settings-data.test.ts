@@ -54,7 +54,7 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
     },
     storeSecret: async () => {},
     keyEnvVar: () => "X_KEY",
-    readEnvFlags: () => ({ "aiEditor.policy.shell": "ask" }),
+    readEnvFlags: () => ({ "crucible.policy.shell": "ask" }),
     updateSetting: async () => {},
     readInstructions: () => ({ content: "", exists: false }),
     writeInstructions: () => {},

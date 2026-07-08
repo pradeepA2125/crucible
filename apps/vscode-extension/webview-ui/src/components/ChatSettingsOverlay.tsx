@@ -37,7 +37,7 @@ export function ChatSettingsOverlay({ section, onClose }: Props) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="AI Editor settings"
+        aria-label="Crucible settings"
         className="surface-card anim-pop flex h-[85%] max-h-[720px] w-full max-w-[720px] flex-col overflow-hidden"
       >
         {/* Titlebar — a faint violet accent wash for a touch of warmth. */}

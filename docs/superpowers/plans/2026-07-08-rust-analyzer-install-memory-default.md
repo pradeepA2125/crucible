@@ -988,30 +988,30 @@ No automated test — this is a JSON schema default (not independently unit-test
 In `apps/vscode-extension/package.json`, change:
 
 ```json
-        "aiEditor.memory.enabled": {
+        "crucible.memory.enabled": {
           "type": "boolean",
           "default": false,
           "description": "Enable the cross-session memory harness (compaction, recall, consolidation). Requires a managed restart to take effect."
         },
-        "aiEditor.memory.reranker": {
+        "crucible.memory.reranker": {
           "type": "boolean",
           "default": false,
-          "description": "Enable the cross-encoder reranker for memory recall (requires aiEditor.memory.enabled). Requires a managed restart to take effect."
+          "description": "Enable the cross-encoder reranker for memory recall (requires crucible.memory.enabled). Requires a managed restart to take effect."
         }
 ```
 
 to:
 
 ```json
-        "aiEditor.memory.enabled": {
+        "crucible.memory.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Enable the cross-session memory harness (compaction, recall, consolidation). Requires a managed restart to take effect."
         },
-        "aiEditor.memory.reranker": {
+        "crucible.memory.reranker": {
           "type": "boolean",
           "default": true,
-          "description": "Enable the cross-encoder reranker for memory recall (requires aiEditor.memory.enabled). Requires a managed restart to take effect."
+          "description": "Enable the cross-encoder reranker for memory recall (requires crucible.memory.enabled). Requires a managed restart to take effect."
         }
 ```
 
@@ -1073,13 +1073,13 @@ to:
 Change line 587 from:
 
 ```
-- `aiEditor.memory.enabled` / `aiEditor.memory.reranker` — booleans, default `false`. Become `CRUCIBLE_MEMORY_ENABLED` / `CRUCIBLE_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
+- `crucible.memory.enabled` / `crucible.memory.reranker` — booleans, default `false`. Become `CRUCIBLE_MEMORY_ENABLED` / `CRUCIBLE_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
 ```
 
 to:
 
 ```
-- `aiEditor.memory.enabled` / `aiEditor.memory.reranker` — booleans, default `true` since 2026-07-08. Become `CRUCIBLE_MEMORY_ENABLED` / `CRUCIBLE_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
+- `crucible.memory.enabled` / `crucible.memory.reranker` — booleans, default `true` since 2026-07-08. Become `CRUCIBLE_MEMORY_ENABLED` / `CRUCIBLE_MEMORY_RERANKER`; a change flags `restartRequired` in the settings panel.
 ```
 
 - [ ] **Step 4: Commit**

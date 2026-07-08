@@ -47,7 +47,7 @@ Follows the MemoryPanel pattern exactly:
 - **Host, vscode wiring:** `apps/vscode-extension/src/graph-panel.ts` — panel class
   (CSP/asset rewrite mirroring `chat-panel.ts`), message routing, snapshot mtime
   watcher, `showTextDocument` for open-file.
-- **Entry points:** command `aiEditor.openGraphPanel` + an icon button in the chat
+- **Entry points:** command `crucible.openGraphPanel` + an icon button in the chat
   header (`ThreadView.tsx`, alongside the memory `db` icon).
 - **New dependency:** `three` (+ its postprocessing pass) in `webview-ui` (~650KB
   added to this panel's bundle only — separate Vite entry, chat bundle unaffected).

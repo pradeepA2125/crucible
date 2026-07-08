@@ -143,7 +143,7 @@ export default function SetupApp() {
               <Icon name="spark" size={20} />
             </span>
             <div>
-              <h1 className="text-base font-semibold text-text">AI Editor Setup</h1>
+              <h1 className="text-base font-semibold text-text">Crucible Setup</h1>
               <p className="text-xs text-text-3">Provision the local runtime, pick a model provider, start chatting.</p>
             </div>
           </div>

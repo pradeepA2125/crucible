@@ -333,8 +333,8 @@ describe("App — view routing", () => {
       );
     });
 
-    // HistoryView shows "AI Editor" title.
-    expect(screen.getByText("AI Editor")).toBeTruthy();
+    // HistoryView shows "Crucible" title.
+    expect(screen.getByText("Crucible")).toBeTruthy();
     // And our thread title.
     expect(screen.getByText("Hello thread")).toBeTruthy();
   });
@@ -367,7 +367,7 @@ describe("App — view routing", () => {
 
     // After navigation, ThreadView renders with the thread title in the header.
     // ThreadView header shows the thread title.
-    expect(screen.queryByText("AI Editor")).toBeNull(); // HistoryView header gone
+    expect(screen.queryByText("Crucible")).toBeNull(); // HistoryView header gone
     // "Hello thread" now appears as the ThreadView header title.
     expect(screen.getByText("Hello thread")).toBeTruthy();
   });

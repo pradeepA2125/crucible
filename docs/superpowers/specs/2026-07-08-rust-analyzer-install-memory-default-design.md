@@ -126,7 +126,7 @@ sufficient to change real behavior everywhere.
   /false/no/off` (and same for `_RERANKER`) still disables it; only the
   unset-fallback flips.
 - **`apps/vscode-extension/package.json`**: flip the `contributes.configuration`
-  schema defaults for `aiEditor.memory.enabled` and `aiEditor.memory.reranker`
+  schema defaults for `crucible.memory.enabled` and `crucible.memory.reranker`
   from `false` to `true`. This has no behavioral effect on its own (per the
   explicit-only-override wiring above) — it exists purely so the Settings
   panel doesn't show both toggles "off" while the engine actually runs with

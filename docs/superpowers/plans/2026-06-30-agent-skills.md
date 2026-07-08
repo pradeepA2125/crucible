@@ -1254,7 +1254,7 @@ In the `InputArea` component, when the user selects a `/` suggestion, call `reso
 
 - `controller.ts`: add `async listSkills(): Promise<{name,string}[]>` delegating to `client.listSkills(this.workspacePath)`; expose `skillsEnabled` from the `/v1/config` fetch (mirror `memoryEnabled`/`taskSubsystemEnabled`).
 - `chat-panel.ts`: on a `listSkills` webview message, call `controller.listSkills()` and `postMessage({ type: "skillList", skills })`. Gate the affordance behind `skillsEnabled`.
-- `extension.ts`: register the `aiEditor.skillsEnabled` `when`-context key from `/v1/config` (mirror the `memoryEnabled` registration).
+- `extension.ts`: register the `crucible.skillsEnabled` `when`-context key from `/v1/config` (mirror the `memoryEnabled` registration).
 
 - [ ] **Step 6: Run composer test + extension typecheck + builds**
 

@@ -1306,7 +1306,7 @@ git commit -m "feat(graph): webview message protocol + handleGraphMessage"
 
 **Files:**
 - Create: `apps/vscode-extension/src/graph-panel.ts`
-- Modify: `apps/vscode-extension/src/extension.ts` (register `aiEditor.openGraphPanel`)
+- Modify: `apps/vscode-extension/src/extension.ts` (register `crucible.openGraphPanel`)
 - Modify: `apps/vscode-extension/src/chat-panel.ts` (route `openGraphPanel` webview message — add an `onOpenGraphPanel` callback parameter exactly where `onOpenMemoryPanel` is declared/passed)
 - Modify: `apps/vscode-extension/package.json` (command + activationEvent)
 - Modify: `apps/vscode-extension/webview-ui/src/components/Icon.tsx` (add `"orbit"` icon)
@@ -1316,7 +1316,7 @@ git commit -m "feat(graph): webview message protocol + handleGraphMessage"
 
 **Interfaces:**
 - Consumes: `GraphSnapshotStore`, `handleGraphMessage`, `GraphHostDeps`, `GraphToHost`.
-- Produces: `new GraphPanel(extensionUri, workspacePath, backendBaseUrl).open()`; command id `aiEditor.openGraphPanel`; webview→host chat message `{type:"openGraphPanel"}`.
+- Produces: `new GraphPanel(extensionUri, workspacePath, backendBaseUrl).open()`; command id `crucible.openGraphPanel`; webview→host chat message `{type:"openGraphPanel"}`.
 
 - [ ] **Step 1: Write GraphPanel**
 
@@ -1356,7 +1356,7 @@ export class GraphPanel {
       this.panel.reveal(vscode.ViewColumn.Two);
       return;
     }
-    this.panel = vscode.window.createWebviewPanel("aiEditorGraph", "AXON: Dependency Space", vscode.ViewColumn.Two, {
+    this.panel = vscode.window.createWebviewPanel("crucibleGraph", "AXON: Dependency Space", vscode.ViewColumn.Two, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist")],
@@ -1468,11 +1468,11 @@ If `vscode.Position` / `vscode.Selection` / `vscode.Range` / `TextEditorRevealTy
 
 - [ ] **Step 2: Register the command in extension.ts**
 
-Next to the `aiEditor.openMemoryPanel` registration (~line 412):
+Next to the `crucible.openMemoryPanel` registration (~line 412):
 
 ```typescript
   context.subscriptions.push(
-    vscode.commands.registerCommand("aiEditor.openGraphPanel", () => {
+    vscode.commands.registerCommand("crucible.openGraphPanel", () => {
       const ws = controller.memoryWorkspacePath();
       if (!ws) {
         void vscode.window.showWarningMessage("Open a folder to view the dependency space.");
@@ -1483,14 +1483,14 @@ Next to the `aiEditor.openMemoryPanel` registration (~line 412):
   );
 ```
 
-Add `import { GraphPanel } from "./graph-panel.js";` at the top. In `chat-panel.ts`, mirror the `openMemoryPanel` route: add an `onOpenGraphPanel: () => void` constructor field beside `onOpenMemoryPanel` and the branch `else if (m["type"] === "openGraphPanel") { this.onOpenGraphPanel(); return; }`; in `extension.ts`, pass `() => { void vscode.commands.executeCommand("aiEditor.openGraphPanel"); }` where the ChatPanel is constructed (beside the existing onOpenMemoryPanel argument).
+Add `import { GraphPanel } from "./graph-panel.js";` at the top. In `chat-panel.ts`, mirror the `openMemoryPanel` route: add an `onOpenGraphPanel: () => void` constructor field beside `onOpenMemoryPanel` and the branch `else if (m["type"] === "openGraphPanel") { this.onOpenGraphPanel(); return; }`; in `extension.ts`, pass `() => { void vscode.commands.executeCommand("crucible.openGraphPanel"); }` where the ChatPanel is constructed (beside the existing onOpenMemoryPanel argument).
 
 - [ ] **Step 3: package.json contributes**
 
-In `apps/vscode-extension/package.json`: add `"onCommand:aiEditor.openGraphPanel"` to `activationEvents`; add to `contributes.commands`:
+In `apps/vscode-extension/package.json`: add `"onCommand:crucible.openGraphPanel"` to `activationEvents`; add to `contributes.commands`:
 
 ```json
-{ "command": "aiEditor.openGraphPanel", "title": "AI Editor: Open Dependency Space (AXON)" }
+{ "command": "crucible.openGraphPanel", "title": "Crucible: Open Dependency Space (AXON)" }
 ```
 
 No `when`-context gating — the panel degrades to its empty state without a snapshot.
@@ -2875,7 +2875,7 @@ Expected: PASS; build emits `dist/graph.html` + a graph asset chunk containing t
 ```bash
 npm run build
 code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/shadow-forge-stress"
-# In the dev host: Cmd+Shift+P -> "AI Editor: Open Dependency Space (AXON)"
+# In the dev host: Cmd+Shift+P -> "Crucible: Open Dependency Space (AXON)"
 ```
 
 Verify against the motion study: stars render with twinkle + package tints, entry beacons pulse, nebulae glow at package centroids, bloom on, drag orbits, scroll dollies, clicking a star logs the pick (info card comes in Task 12). Iterate shader constants until it matches the Ember Dusk prototype's feel. **This step is done only when the space is visibly beautiful, not merely functional.**

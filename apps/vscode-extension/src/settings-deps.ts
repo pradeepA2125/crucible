@@ -7,10 +7,10 @@ import type { SettingsDeps } from "./settings-data.js";
 import { loadInstructions, saveInstructions } from "./instructions-file.js";
 
 const ENV_FLAG_KEYS = [
-  "aiEditor.policy.shell",
-  "aiEditor.policy.scope",
-  "aiEditor.memory.enabled",
-  "aiEditor.memory.reranker",
+  "crucible.policy.shell",
+  "crucible.policy.scope",
+  "crucible.memory.enabled",
+  "crucible.memory.reranker",
 ];
 
 export interface SettingsDepsOptions {
@@ -18,7 +18,7 @@ export interface SettingsDepsOptions {
   workspacePath: string;
   clientFactory: BackendClientFactory;
   // Resolves the backend URL the same way the chat controller does — honors an
-  // explicit `aiEditor.backendBaseUrl` (dev-attach), else the managed backend.
+  // explicit `crucible.backendBaseUrl` (dev-attach), else the managed backend.
   resolveBackendUrl: () => string;
 }
 
@@ -34,7 +34,7 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
     const url = opts.resolveBackendUrl().trim();
     if (!url) {
       throw new Error(
-        'Backend not started yet — run "AI Editor: Run Setup" or restart the backend.',
+        'Backend not started yet — run "Crucible: Run Setup" or restart the backend.',
       );
     }
     return opts.clientFactory(url);
