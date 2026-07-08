@@ -278,7 +278,7 @@ Also update `createChatThread`'s parse call in the same file if it reuses `ChatT
 
 - [ ] **Step 7: Rebuild editor-client (extension types off dist)**
 
-Run: `cd "$(git rev-parse --show-toplevel)" && npm run -w @ai-editor/editor-client build && npm run -w @ai-editor/editor-client test`
+Run: `cd "$(git rev-parse --show-toplevel)" && npm run -w @crucible/editor-client build && npm run -w @crucible/editor-client test`
 Expected: build OK, 23+ tests PASS
 
 - [ ] **Step 8: Webview type + HistoryView render**
@@ -1274,7 +1274,7 @@ Append to the existing InputArea/views test file (find which file covers InputAr
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-npm run -w @ai-editor/editor-client build && npm run build && npm run typecheck && npm run test
+npm run -w @crucible/editor-client build && npm run build && npm run typecheck && npm run test
 cd services/agentd-py && python -m pytest -q
 ```
 Expected: TS all green; pytest shows only the known pre-existing failures (gemini/groq transports + `@requires_live_snapshot` graph-walker).

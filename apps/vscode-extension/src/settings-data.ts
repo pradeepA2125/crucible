@@ -1,4 +1,4 @@
-import type { McpServerList, McpServerView } from "@ai-editor/editor-client";
+import type { McpServerList, McpServerView } from "@crucible/editor-client";
 
 import type { SettingsSectionId } from "./settings-sections.js";
 

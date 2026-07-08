@@ -724,9 +724,9 @@ git commit -m "feat(chat): persist task_narrative as transcript message + surfac
 - Test: `apps/editor-client/test/http-backend-client.test.ts`
 
 - [ ] **Step 1: Write the failing test** — mirror the Tier B `getThreadLiveState maps failure_summary` test: a `/live` response with `task_narrative: {outcome, headline, points}` maps to `live.taskNarrative.headline`. Add to `apps/editor-client/test/http-backend-client.test.ts`.
-- [ ] **Step 2: Run** `npm run -w @ai-editor/editor-client test` → FAIL.
+- [ ] **Step 2: Run** `npm run -w @crucible/editor-client test` → FAIL.
 - [ ] **Step 3: Implement.** Add `TaskNarrativeSchema` (`outcome`, `headline`, `points: z.array(z.string()).default([])`) + `taskNarrative: TaskNarrativeSchema.nullable().optional()` on `TaskViewSchema`/`TaskResultSchema`/`ThreadLiveStateSchema`. Add a `private toTaskNarrative(raw)` mapper (mirror `toRunSummary` — snake→camel, `outcome`/`headline`/`points`) and wire it into `toTaskView`/`toTaskResult`/`getThreadLiveState`.
-- [ ] **Step 4: Build + test:** `npm run -w @ai-editor/editor-client build && npm run -w @ai-editor/editor-client test` → PASS. (Build BEFORE extension typecheck.)
+- [ ] **Step 4: Build + test:** `npm run -w @crucible/editor-client build && npm run -w @crucible/editor-client test` → PASS. (Build BEFORE extension typecheck.)
 - [ ] **Step 5: Commit** `feat(contracts): TaskNarrative on TaskView/TaskResult/ThreadLiveState`.
 
 ### Task 9: Extension controller forwards the narrative to the cards

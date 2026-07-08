@@ -1,4 +1,4 @@
-import type { TaskStatus } from "@ai-editor/editor-client";
+import type { TaskStatus } from "@crucible/editor-client";
 
 export type TaskMode = "inline" | "file_edit" | "project_edit" | "autonomous";
 

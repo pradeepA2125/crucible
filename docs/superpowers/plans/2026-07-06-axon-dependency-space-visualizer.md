@@ -190,7 +190,7 @@ describe("buildSpaceModel — packages & orphans", () => {
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-space-model.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-space-model.test.ts`
 Expected: FAIL — cannot resolve `../src/graph/space-model.js`.
 
 - [ ] **Step 4: Write the implementation**
@@ -411,7 +411,7 @@ export function buildSpaceModel(snapData: RawSnapshot): SpaceModel {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-space-model.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-space-model.test.ts`
 Expected: PASS (all tests in both describes).
 
 - [ ] **Step 6: Commit**
@@ -508,7 +508,7 @@ describe("bundles, intraBundles, links", () => {
 
 - [ ] **Step 2: Run to verify the new tests fail**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-space-model.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-space-model.test.ts`
 Expected: FAIL — resolveModuleSpec tests (outDeg 0 ≠ 1) and bundles tests (empty arrays).
 
 - [ ] **Step 3: Implement**
@@ -592,7 +592,7 @@ And populate the model literal: `bundles: [...bundleMap.values()].sort((a, b) =>
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-space-model.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-space-model.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -663,7 +663,7 @@ Add `diffSpaceModel` to the import from `../src/graph/space-model.js`.
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-space-model.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-space-model.test.ts`
 Expected: FAIL — `isEntry` false / `diffSpaceModel` not exported.
 
 - [ ] **Step 3: Implement**
@@ -738,7 +738,7 @@ export function diffSpaceModel(prev: SpaceModel, next: SpaceModel): SpaceDiff {
 
 - [ ] **Step 4: Run the full extension suite**
 
-Run: `npm run -w ai-editor-vscode-extension test`
+Run: `npm run -w crucible-vscode-extension test`
 Expected: PASS — all existing tests still green plus the new ones.
 
 - [ ] **Step 5: Commit**
@@ -892,7 +892,7 @@ describe("GraphSnapshotStore", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-snapshot-store.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-snapshot-store.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
@@ -1087,7 +1087,7 @@ export class GraphSnapshotStore {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-snapshot-store.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-snapshot-store.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1211,7 +1211,7 @@ describe("handleGraphMessage", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-messages.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-messages.test.ts`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
@@ -1290,7 +1290,7 @@ export async function handleGraphMessage(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npm run -w ai-editor-vscode-extension test -- test/graph-messages.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- test/graph-messages.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1442,7 +1442,7 @@ export class GraphPanel {
       return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>AXON</title></head>
 <body style="background:#070203;color:#ccc;font-family:sans-serif;padding:2em">
   <p>Graph webview build is missing.</p>
-  <pre>Run: npm run -w ai-editor-vscode-extension build</pre>
+  <pre>Run: npm run -w crucible-vscode-extension build</pre>
   <p style="color:#888">${errMsg}</p>
 </body></html>`;
     }
@@ -1524,7 +1524,7 @@ it("posts openGraphPanel when the Dependency Space header button is clicked", ()
 
 - [ ] **Step 5: Typecheck + full test suites**
 
-Run: `npm run -w ai-editor-vscode-extension typecheck && npm run -w ai-editor-vscode-extension test && cd apps/vscode-extension/webview-ui && npx vitest run && cd -`
+Run: `npm run -w crucible-vscode-extension typecheck && npm run -w crucible-vscode-extension test && cd apps/vscode-extension/webview-ui && npx vitest run && cd -`
 Expected: PASS all.
 
 - [ ] **Step 6: Commit**
@@ -3706,7 +3706,7 @@ git commit -m "feat(graph): live snapshot morph, stale chip, monster-repo dir LO
 
 ```bash
 npm run build && npm run typecheck && npm run test
-npm run -w ai-editor-vscode-extension test
+npm run -w crucible-vscode-extension test
 cd apps/vscode-extension/webview-ui && npx vitest run && npm run build && cd -
 ```
 Expected: all PASS. Confirm `dist/assets/index.js` (chat bundle) byte size is within noise of main — three.js must only appear in the graph chunk.

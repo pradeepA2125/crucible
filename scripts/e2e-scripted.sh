@@ -143,7 +143,7 @@ if [[ "$SKIP_CLIENT_TESTS" != "1" ]]; then
   echo "==> Running editor-client tests (includes polling regression coverage)"
   (
     cd "$ROOT"
-    npm run -w @ai-editor/editor-client test
+    npm run -w @crucible/editor-client test
   )
 fi
 
@@ -151,8 +151,8 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
   echo "==> Building editor-client and vscode-extension artifacts"
   (
     cd "$ROOT"
-    npm run -w @ai-editor/editor-client build
-    npm run -w ai-editor-vscode-extension build
+    npm run -w @crucible/editor-client build
+    npm run -w crucible-vscode-extension build
   )
 fi
 

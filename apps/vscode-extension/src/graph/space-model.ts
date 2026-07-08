@@ -110,7 +110,7 @@ export function buildSpecResolver(fileSet: Set<string>): (spec: string, fromFile
   };
 }
 
-/** Bare workspace-package imports (e.g. "@ai-editor/editor-client") are how npm
+/** Bare workspace-package imports (e.g. "@crucible/editor-client") are how npm
  * workspaces cross package boundaries — without this, LSP-off snapshots have ZERO
  * cross-package bundles. Match the spec's last segment against each candidate
  * package's last segment and land on that package's anchor file. */

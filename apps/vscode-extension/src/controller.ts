@@ -12,7 +12,7 @@ import type {
   TaskSubmission,
   TaskView,
   ThreadLiveState,
-} from "@ai-editor/editor-client";
+} from "@crucible/editor-client";
 
 import * as path from "path";
 import type { MemoryDataSource } from "./memory-data.js";

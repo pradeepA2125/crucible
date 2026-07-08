@@ -19,7 +19,7 @@
 - **Breadcrumb copy:** `✓ Doc written: <path>` / `✗ Doc write rejected: <path>`. **Card copy:** `Write file: <path>`.
 - **Prompt copy:** no superiority framing; the approval pause is expected behavior, not an error.
 - **Python env:** `cd services/agentd-py && source .venv/bin/activate` before pytest. Never pipe pytest.
-- **TS build order:** after `apps/editor-client` changes run `npm run -w @ai-editor/editor-client build` BEFORE extension typecheck.
+- **TS build order:** after `apps/editor-client` changes run `npm run -w @crucible/editor-client build` BEFORE extension typecheck.
 - **Commits:** `type(scope): description`. Do NOT push.
 
 ## File Structure
@@ -782,7 +782,7 @@ describe("doc_write gate contract", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/editor-client test`
+Run: `npm run -w @crucible/editor-client test`
 Expected: FAIL — invalid enum value
 
 - [ ] **Step 3: Implement**
@@ -822,8 +822,8 @@ Expected: FAIL — invalid enum value
 - [ ] **Step 4: Test + build**
 
 ```bash
-npm run -w @ai-editor/editor-client test
-npm run -w @ai-editor/editor-client build
+npm run -w @crucible/editor-client test
+npm run -w @crucible/editor-client build
 ```
 Expected: tests PASS; build clean (REQUIRED before Task 5's typecheck).
 
@@ -975,7 +975,7 @@ import { DocWriteGate } from "./messages/gates/DocWriteGate";
 
 `src/controller.ts`:
 1. `LiveGateView.kind` union: append `| "doc_write"`.
-2. Import `DocWriteDecision` from `@ai-editor/editor-client` next to `McpToolDecision`.
+2. Import `DocWriteDecision` from `@crucible/editor-client` next to `McpToolDecision`.
 3. BOTH SSE handlers, after their `mcp_approval_requested` branches:
    ```typescript
         } else if (event.type === "doc_write_requested") {

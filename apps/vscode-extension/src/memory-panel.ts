@@ -49,7 +49,7 @@ export class MemoryPanel {
       return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Memory</title></head>
 <body style="background:#1e1e1e;color:#ccc;font-family:sans-serif;padding:2em">
   <p>Memory webview build is missing.</p>
-  <pre>Run: npm run -w ai-editor-vscode-extension build</pre>
+  <pre>Run: npm run -w crucible-vscode-extension build</pre>
   <p style="color:#888">${errMsg}</p>
 </body></html>`;
     }

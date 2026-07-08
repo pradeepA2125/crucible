@@ -22,8 +22,8 @@
 - **All colors come from the existing `index.css` tokens** (`--color-accent`, `--color-surface-*`, etc.). Never hardcode a hex in a component.
 - **Every animation must respect `prefers-reduced-motion`** (global kill switch added in Task 1).
 - **Webview bundles never import the extension's `src/`** — mirror types locally (existing convention).
-- **Build order:** after `editor-client` changes run `npm run -w @ai-editor/editor-client build` first (not needed here — no contract changes), and **always rebuild `webview-ui` (`npm run -w ai-editor-vscode-extension build`) before a dev-host smoke** — stale `dist/` is a known footgun.
-- **Workspace-scoped test commands:** webview tests run from `apps/vscode-extension/webview-ui` (`npx vitest run <file>`), extension host tests via `npm run -w ai-editor-vscode-extension test -- <file>`.
+- **Build order:** after `editor-client` changes run `npm run -w @crucible/editor-client build` first (not needed here — no contract changes), and **always rebuild `webview-ui` (`npm run -w crucible-vscode-extension build`) before a dev-host smoke** — stale `dist/` is a known footgun.
+- **Workspace-scoped test commands:** webview tests run from `apps/vscode-extension/webview-ui` (`npx vitest run <file>`), extension host tests via `npm run -w crucible-vscode-extension test -- <file>`.
 - Commit format: `type(scope): description`.
 
 ---
@@ -1629,7 +1629,7 @@ describe("instructions messages", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `npm run -w ai-editor-vscode-extension test -- instructions-file settings-data`
+Run: `npm run -w crucible-vscode-extension test -- instructions-file settings-data`
 Expected: FAIL — module/type errors.
 
 - [ ] **Step 3: Implement**
@@ -1704,7 +1704,7 @@ with the import `import { loadInstructions, saveInstructions } from "./instructi
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npm run -w ai-editor-vscode-extension test -- instructions-file settings-data && npm run -w ai-editor-vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension test -- instructions-file settings-data && npm run -w crucible-vscode-extension typecheck`
 Expected: PASS, clean typecheck.
 
 - [ ] **Step 5: Commit**
@@ -2487,7 +2487,7 @@ describe("buildModelOptions", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm run -w ai-editor-vscode-extension test -- composer-models`
+Run: `npm run -w crucible-vscode-extension test -- composer-models`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement `composer-models.ts`**
@@ -2619,7 +2619,7 @@ Extract the duplicated snapshot block into a local `async function composerModel
 
 - [ ] **Step 5: Run tests + typecheck**
 
-Run: `npm run -w ai-editor-vscode-extension test -- composer-models && npm run -w ai-editor-vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension test -- composer-models && npm run -w crucible-vscode-extension typecheck`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -2941,7 +2941,7 @@ git commit -m "feat(webview): composer model-swap popover and settings gear"
 ```bash
 npm run build                      # all TS workspaces (also rebuilds webview-ui dist)
 npm run typecheck
-npm run -w ai-editor-vscode-extension test
+npm run -w crucible-vscode-extension test
 cd "apps/vscode-extension/webview-ui" && npx vitest run
 ```
 Expected: everything green. (Reminder: `webview-ui/dist` MUST be rebuilt or the dev host serves the old UI.)

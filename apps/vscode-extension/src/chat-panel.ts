@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
-import type { ChatMessage, ChatThreadSummary, CommandDecision, DocWriteDecision, McpToolDecision } from "@ai-editor/editor-client";
+import type { ChatMessage, ChatThreadSummary, CommandDecision, DocWriteDecision, McpToolDecision } from "@crucible/editor-client";
 import type { LiveGateView, LivePlanView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
 
@@ -452,7 +452,7 @@ export class ChatPanel {
 <head><meta charset="UTF-8"><title>Chat</title></head>
 <body style="background:#1e1e1e;color:#ccc;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;margin:0">
   <p style="font-size:1.1em">Chat webview build is missing.</p>
-  <pre style="font-family:monospace;background:#2d2d2d;padding:0.5em 1em;border-radius:4px">Run: npm run -w ai-editor-vscode-extension build</pre>
+  <pre style="font-family:monospace;background:#2d2d2d;padding:0.5em 1em;border-radius:4px">Run: npm run -w crucible-vscode-extension build</pre>
   <p style="font-size:0.8em;color:#888">${errMsg}</p>
 </body>
 </html>`;

@@ -1069,7 +1069,7 @@ Then inside `ThreadLiveStateSchema`, after the `taskNarrative: ...` line (~line 
 Run: `cd services/agentd-py && source .venv/bin/activate && pytest tests/test_controller_todo_live.py -v`
 Expected: PASS (3 passed)
 
-Run: `npm run -w @ai-editor/editor-client build && npm run -w @ai-editor/editor-client test`
+Run: `npm run -w @crucible/editor-client build && npm run -w @crucible/editor-client test`
 Expected: build OK; tests PASS.
 
 - [ ] **Step 5: Commit**

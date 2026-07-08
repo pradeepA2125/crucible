@@ -1,4 +1,4 @@
-# ai-editor-vscode-extension
+# crucible-vscode-extension
 
 VS Code MVP extension for AI Editor task review loop.
 

@@ -740,7 +740,7 @@ In `apps/vscode-extension/src/extension.ts`, add a 34th argument to the `new Cha
 
 - [ ] **Step 9: Typecheck the extension**
 
-Run: `npm run -w ai-editor-vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension typecheck`
 Expected: PASS
 
 - [ ] **Step 10: Run the extension test suite**
@@ -1432,7 +1432,7 @@ Add two more arguments to the `new ChatPanel(...)` call, after the `openMemoryPa
 
 - [ ] **Step 4: Typecheck**
 
-Run: `npm run -w ai-editor-vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension typecheck`
 Expected: PASS
 
 - [ ] **Step 5: Run the extension test suite**
@@ -1847,7 +1847,7 @@ Expected: PASS
 
 - [ ] **Step 10: Build editor-client (vscode-extension typechecks against its compiled output)**
 
-Run: `npm run -w @ai-editor/editor-client build`
+Run: `npm run -w @crucible/editor-client build`
 Expected: PASS
 
 - [ ] **Step 11: Extend `controller.ts`'s `sendChatMessage`**
@@ -1944,7 +1944,7 @@ In `extension.ts`, update the `ChatPanel` constructor's first argument:
 
 - [ ] **Step 13: Typecheck everything**
 
-Run: `npm run -w @ai-editor/editor-client build && npm run -w ai-editor-vscode-extension typecheck`
+Run: `npm run -w @crucible/editor-client build && npm run -w crucible-vscode-extension typecheck`
 Expected: PASS
 
 - [ ] **Step 14: Run the extension test suite**

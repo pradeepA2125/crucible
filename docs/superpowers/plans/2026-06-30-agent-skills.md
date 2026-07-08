@@ -18,7 +18,7 @@
 - **Single dir, standard format:** discover only `<workspace>/.ai-editor/skills/*/SKILL.md`; parse standard agentskills.io frontmatter (`name`, `description` required; rest forward-compat ignored).
 - **Names:** skill `name` ≤64 chars; a `name` ≠ parent folder is a `logger.warning`, not a rejection.
 - **Run all Python tests from** `services/agentd-py` with the venv active: `source .venv/bin/activate`.
-- **TS build order:** after editing `apps/editor-client`, run `npm run -w @ai-editor/editor-client build` before the extension typecheck.
+- **TS build order:** after editing `apps/editor-client`, run `npm run -w @crucible/editor-client build` before the extension typecheck.
 
 **Spec §3.2 refinement (v1 cut — read before Task 2):** v1 ships the **full catalog in the cache-stable system prompt**, with an **order-truncation budget guard** (over `CRUCIBLE_SKILLS_CATALOG_MAX_CHARS` → keep the first entries that fit + a "[N more not shown]" note; still query-independent ⇒ stays cache-stable, no tail relocation). The `Embedder`-ranked selection the spec describes is delivered as a **tested pure primitive** (`rank_skills_by_relevance`) but is **not wired** into the live path in v1 — wiring it (and relocating an over-budget, query-ranked subset to the tail) is deferred until catalog size demands it. This keeps the engine uncoupled from the embedder for a path no v1 user hits, while still building the ranking the scale story needs.
 
@@ -1117,7 +1117,7 @@ describe("skills", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm run -w @ai-editor/editor-client test -- http-backend-client`
+Run: `npm run -w @crucible/editor-client test -- http-backend-client`
 Expected: FAIL — `listSkills` not a function / `forced_skills` undefined.
 
 - [ ] **Step 3: Add the Zod type + interface (task-contracts.ts)**
@@ -1160,7 +1160,7 @@ Add the method:
 
 - [ ] **Step 5: Run the test + build**
 
-Run: `npm run -w @ai-editor/editor-client test -- http-backend-client && npm run -w @ai-editor/editor-client build`
+Run: `npm run -w @crucible/editor-client test -- http-backend-client && npm run -w @crucible/editor-client build`
 Expected: PASS + clean build (required before the extension typecheck).
 
 - [ ] **Step 6: Commit**
@@ -1260,7 +1260,7 @@ In the `InputArea` component, when the user selects a `/` suggestion, call `reso
 
 Run:
 ```bash
-npm run -w @ai-editor/editor-client build
+npm run -w @crucible/editor-client build
 npm run -w @ai-editor/vscode-extension test -- InputArea
 npm run -w @ai-editor/vscode-extension typecheck
 npm run build

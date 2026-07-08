@@ -1,4 +1,4 @@
-import type { TaskStatus, TaskView } from "@ai-editor/editor-client";
+import type { TaskStatus, TaskView } from "@crucible/editor-client";
 
 const STOP_STATUSES: ReadonlySet<TaskStatus> = new Set([
   "READY_FOR_REVIEW",

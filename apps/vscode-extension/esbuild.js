@@ -1,5 +1,5 @@
 // Bundles src/extension.ts + everything it imports (including the workspace
-// dependency @ai-editor/editor-client and its own dependency zod) into a single
+// dependency @crucible/editor-client and its own dependency zod) into a single
 // self-contained dist/extension.js. This exists so `vsce package --no-dependencies`
 // (required in this npm-workspaces monorepo — vsce's default dependency-bundling
 // crashes trying to zip files that sit at the monorepo root, see

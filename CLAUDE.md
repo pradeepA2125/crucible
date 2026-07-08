@@ -24,9 +24,9 @@ npm run typecheck    # tsc --noEmit across all workspaces
 
 ### TypeScript (workspace-scoped)
 ```bash
-npm run -w @ai-editor/editor-client test
-npm run -w ai-editor-vscode-extension test
-npm run -w ai-editor-vscode-extension typecheck
+npm run -w @crucible/editor-client test
+npm run -w crucible-vscode-extension test
+npm run -w crucible-vscode-extension typecheck
 ```
 
 ### Python backend
@@ -159,7 +159,7 @@ Concurrency guards: `_in_flight_feedback` and `_in_flight_resume` are closure-sc
 - `vscode-extension/src/extension.ts` — VS Code activation, command registration, wires controller to UI
 - `vscode-extension/src/review-panel.ts` — WebView panel for task review
 
-**Build order**: `vscode-extension` types off `editor-client`'s compiled `dist/index.d.ts`, not source. After changing `editor-client`, run `npm run -w @ai-editor/editor-client build` before running `vscode-extension` typecheck — otherwise you'll get stale-type errors that don't exist in source.
+**Build order**: `vscode-extension` types off `editor-client`'s compiled `dist/index.d.ts`, not source. After changing `editor-client`, run `npm run -w @crucible/editor-client build` before running `vscode-extension` typecheck — otherwise you'll get stale-type errors that don't exist in source.
 
 ### Chat interface
 Routes registered when `chat_agent` is non-None in `build_router()`:
@@ -354,7 +354,7 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
   InputBox(env vars) → `upsertMcpServer`; `aiEditor.mcpListServers` → QuickPick of
   servers (state dot + tool count) → Enable/Disable/Reconnect/Remove.
 - **GOTCHA — npm package renamed.** `apps/vscode-extension/package.json`'s `name` moved
-  from `@ai-editor/vscode-extension` to **`ai-editor-vscode-extension`**: `vsce` rejects
+  from `@ai-editor/vscode-extension` to **`crucible-vscode-extension`**: `vsce` rejects
   `@`/`/` in the extension identity (only surfaced once Task 15 added real marketplace
   fields and ran `vsce ls --tree`). Every `npm run -w @ai-editor/vscode-extension ...`
   reference in this repo's live docs/scripts was updated — use the new unscoped name

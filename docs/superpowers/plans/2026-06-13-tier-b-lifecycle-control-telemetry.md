@@ -929,9 +929,9 @@ git commit -m "feat: dynamic review pref via /review-pref + live control read; a
 - Test: `apps/editor-client/test/` (add cases mirroring existing schema tests)
 
 - [ ] **Step 1: Write failing schema tests** for: `failureSummary`/`runSummary` on the task/live shapes; client methods `abortTask(taskId, {revert})`, `setReviewPref(taskId, {autoAccept})`. Mirror an existing test in `apps/editor-client/test/schemas.test.ts`.
-- [ ] **Step 2: Run** `npm run -w @ai-editor/editor-client test` → FAIL.
+- [ ] **Step 2: Run** `npm run -w @crucible/editor-client test` → FAIL.
 - [ ] **Step 3: Add Zod fields** (`failure_summary`, `run_summary` — snake_case on wire, camel in mapped client types per `http-backend-client.ts` convention) and the two client methods (`POST /v1/tasks/{id}/abort`, `/review-pref`).
-- [ ] **Step 4: Build + test**: `npm run -w @ai-editor/editor-client build && npm run -w @ai-editor/editor-client test` → PASS. (Build BEFORE extension typecheck — build-order rule.)
+- [ ] **Step 4: Build + test**: `npm run -w @crucible/editor-client build && npm run -w @crucible/editor-client test` → PASS. (Build BEFORE extension typecheck — build-order rule.)
 - [ ] **Step 5: Commit** `feat(contracts): failure/run summary + abort/review-pref client methods`.
 
 ### Task 13: Extension controller — abort (keep/revert), review-pref, durable cards

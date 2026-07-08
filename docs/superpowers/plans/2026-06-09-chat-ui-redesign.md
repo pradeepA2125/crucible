@@ -671,7 +671,7 @@ Use the loop's actual index/collection variables; count the steps the loop itera
 ### Task 5b — Contracts
 
 - [ ] `task-contracts.ts` `StreamEvent`: add `args?: Record<string, unknown>` to `planning_tool_call`; add `| { type: "explore_tool_result"; payload: { tool: string; output: string; is_error: boolean } }`; add `| { type: "step_started"; payload: { step_id: string; step_title: string; step_index: number; total_steps: number } }`.
-- [ ] `npm run -w @ai-editor/editor-client build && npm run -w @ai-editor/editor-client test` (extension types off compiled dist — build BEFORE extension typecheck).
+- [ ] `npm run -w @crucible/editor-client build && npm run -w @crucible/editor-client test` (extension types off compiled dist — build BEFORE extension typecheck).
 - [ ] Commit — `feat(contracts): explore_tool_result, step_started, planning_tool_call args`
 
 ### Task 5c — Extension forwarding
@@ -1032,7 +1032,7 @@ async resumeTaskById(taskId: string, stage: "plan" | "execute"): Promise<void> {
 - [ ] **Step 1: root package.json** — webview-ui is not a workspace; extend explicitly:
 
 ```json
-"test": "npm run -w @ai-editor/editor-client test && npm run -w @ai-editor/vscode-extension test && npm --prefix apps/vscode-extension/webview-ui test",
+"test": "npm run -w @crucible/editor-client test && npm run -w @ai-editor/vscode-extension test && npm --prefix apps/vscode-extension/webview-ui test",
 "typecheck": "<existing> && npm --prefix apps/vscode-extension/webview-ui run typecheck"
 ```
 

@@ -7,7 +7,7 @@ import type {
   TaskResult,
   TaskSubmission,
   ThreadLiveState,
-} from "@ai-editor/editor-client";
+} from "@crucible/editor-client";
 import { promises as fsp } from "fs";
 import * as fs from "fs";
 import * as os from "os";

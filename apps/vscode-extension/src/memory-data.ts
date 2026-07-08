@@ -1,4 +1,4 @@
-import type { RecallTrace, MemoryView } from "@ai-editor/editor-client";
+import type { RecallTrace, MemoryView } from "@crucible/editor-client";
 
 // vscode-free so it's unit-testable (the extension's vitest runs in a node env with no
 // vscode module). MemoryPanel (memory-panel.ts) consumes handleMemoryMessage from here.

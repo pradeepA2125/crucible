@@ -872,7 +872,7 @@ Concretely, locate the `onSetReviewPref` argument in the `new ChatPanel(` call a
 
 - [ ] **Step 4: Run typecheck to verify the wiring compiles**
 
-Run: `npm run -w @ai-editor/editor-client build && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `npm run -w @crucible/editor-client build && npm run -w @ai-editor/vscode-extension typecheck`
 Expected: PASS — no arity/type errors on the `new ChatPanel(...)` call. (If the call site relied on a trailing `onReady`, confirm it still lands in the last position.)
 
 - [ ] **Step 5: Run the extension test suite**

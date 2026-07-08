@@ -133,7 +133,7 @@ describe("resolveModuleSpec via Imports edges", () => {
       fileNode("apps/editor-client/src/index.ts"),
       fileNode("apps/editor-client/src/domain/types.ts"),
     ];
-    const ext = extModule("@ai-editor/editor-client", "apps/vscode-extension/src/x.ts");
+    const ext = extModule("@crucible/editor-client", "apps/vscode-extension/src/x.ts");
     const m = buildSpaceModel(
       snap([...impFiles, ...libFiles, ext], [edge(impFiles[0]!.id, ext.id, "Imports")])
     );

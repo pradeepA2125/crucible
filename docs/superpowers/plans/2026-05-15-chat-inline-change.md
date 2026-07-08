@@ -2120,7 +2120,7 @@ test("discardInlineChange DELETEs to discard endpoint and maps response", async 
 - [ ] **Step 4: Run TypeScript tests**
 
 ```bash
-npm run -w @ai-editor/editor-client test
+npm run -w @crucible/editor-client test
 ```
 
 Expected: all pass including 2 new tests

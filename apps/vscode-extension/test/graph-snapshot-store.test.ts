@@ -88,7 +88,7 @@ describe("GraphSnapshotStore", () => {
       fileNode("apps/editor-client/src/b.ts"),
     ];
     const extRel = extModule("./y.js", "apps/vscode-extension/src/x.ts");
-    const extBare = extModule("@ai-editor/editor-client", "apps/vscode-extension/src/x.ts");
+    const extBare = extModule("@crucible/editor-client", "apps/vscode-extension/src/x.ts");
     const st = storeFor(
       snap(
         [...imp, ...lib, extRel, extBare],

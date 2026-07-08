@@ -20,7 +20,7 @@
 - **Async lifecycle (CRITICAL):** `main.py` calls `select_chat_handler` at module level with **no running event loop**. The manager is *constructed* there but *connects* in a FastAPI `startup` event handler. The SDK's transport/session context managers use anyio cancel scopes that must enter/exit **in the same asyncio task** — hence one dedicated `_serve` task per server; never hold these contexts across tasks with an exit stack.
 - **Prompt copy:** no superiority framing — state what MCP tools are and when they shine; never rank them against other tools.
 - **Python env:** `cd services/agentd-py && source .venv/bin/activate` before any pytest. Never pipe pytest (masks exit code).
-- **TS build order:** after any `apps/editor-client` change, `npm run -w @ai-editor/editor-client build` **before** `npm run -w @ai-editor/vscode-extension typecheck`.
+- **TS build order:** after any `apps/editor-client` change, `npm run -w @crucible/editor-client build` **before** `npm run -w @ai-editor/vscode-extension typecheck`.
 - **Commits:** `type(scope): description`, one logical change each. Do NOT push.
 
 ## File Structure
@@ -1741,7 +1741,7 @@ describe("mcp_tool gate contract", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/editor-client test`
+Run: `npm run -w @crucible/editor-client test`
 Expected: FAIL — invalid enum value
 
 - [ ] **Step 3: Implement**
@@ -1778,8 +1778,8 @@ Expected: FAIL — invalid enum value
 - [ ] **Step 4: Test + build**
 
 ```bash
-npm run -w @ai-editor/editor-client test
-npm run -w @ai-editor/editor-client build
+npm run -w @crucible/editor-client test
+npm run -w @crucible/editor-client build
 ```
 Expected: tests PASS; build clean (build is REQUIRED before Task 9's typecheck).
 
@@ -1926,7 +1926,7 @@ import { McpGate } from "./messages/gates/McpGate";
 
 `src/controller.ts`:
 1. Line 90 union: append `| "mcp_tool"` to the `kind` union in the extension's own `LiveGateView`.
-2. Import `McpToolDecision` from `@ai-editor/editor-client` alongside `CommandDecision`.
+2. Import `McpToolDecision` from `@crucible/editor-client` alongside `CommandDecision`.
 3. Chat SSE handler (~line 797, after the `command_approval_requested` branch):
    ```typescript
         } else if (event.type === "mcp_approval_requested") {

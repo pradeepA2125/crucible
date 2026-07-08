@@ -996,7 +996,7 @@ In `http-backend-client.ts` `getThreadLiveState`, add to the parsed object:
 
 - [ ] **Step 5: Run test + build**
 
-Run: `cd apps/editor-client && npx vitest run -t "turnActive" && npm run -w @ai-editor/editor-client build`
+Run: `cd apps/editor-client && npx vitest run -t "turnActive" && npm run -w @crucible/editor-client build`
 Expected: tests PASS; build succeeds (the extension types off the compiled `dist`, so this build is required before Phase D typecheck).
 
 - [ ] **Step 6: Commit**
@@ -1099,7 +1099,7 @@ In `http-backend-client.ts`, after `postModeDecision`:
 
 - [ ] **Step 5: Run test + build**
 
-Run: `cd apps/editor-client && npx vitest run -t "stopChatTurn" && npm run -w @ai-editor/editor-client build`
+Run: `cd apps/editor-client && npx vitest run -t "stopChatTurn" && npm run -w @crucible/editor-client build`
 Expected: PASS; build succeeds.
 
 - [ ] **Step 6: Commit**
@@ -1425,7 +1425,7 @@ If nav controls read `inputAvailability(state).disabled` (or `state.turnActive`)
 
 - [ ] **Step 5: Typecheck**
 
-Run: `cd /Users/pradeepkumar/projects/AI\ editor/.worktrees/feat-agentic-chat-controller && npm run -w @ai-editor/editor-client build && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `cd /Users/pradeepkumar/projects/AI\ editor/.worktrees/feat-agentic-chat-controller && npm run -w @crucible/editor-client build && npm run -w @ai-editor/vscode-extension typecheck`
 Expected: clean (no stale-type errors — editor-client was rebuilt in B1/B2).
 
 - [ ] **Step 6: Commit**

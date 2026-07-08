@@ -15,7 +15,7 @@
 - One question, flat option list, single answer. No nesting, no multi-select.
 - Free-text "Something else…" escape is UI-appended; the model never authors it.
 - Backward compatible: a clarify with zero `options` renders a free-text-only card.
-- After editing `editor-client`, run `npm run -w @ai-editor/editor-client build` before `vscode-extension` typecheck (it types off `dist`, not source).
+- After editing `editor-client`, run `npm run -w @crucible/editor-client build` before `vscode-extension` typecheck (it types off `dist`, not source).
 - Webview-ui tests/typecheck run **inside** `apps/vscode-extension/webview-ui` (jsdom config); running from repo root gives `document is not defined`.
 - Commit message footer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
 
@@ -551,7 +551,7 @@ def test_clarify_decision_route_resolves_gate(tmp_path):
 
 Run:
 ```bash
-npm run -w @ai-editor/editor-client build
+npm run -w @crucible/editor-client build
 cd services/agentd-py && pytest tests/test_controller_clarify_gate.py -v && cd -
 ```
 Expected: editor-client builds clean; pytest PASS.
@@ -792,7 +792,7 @@ Expected: PASS
 
 Run:
 ```bash
-npm run -w @ai-editor/editor-client build
+npm run -w @crucible/editor-client build
 cd apps/vscode-extension/webview-ui && npx tsc --noEmit && npx vitest run && cd -
 npm run -w @ai-editor/vscode-extension typecheck
 cd apps/vscode-extension/webview-ui && npm run build && cd -

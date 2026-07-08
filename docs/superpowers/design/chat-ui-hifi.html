@@ -858,7 +858,7 @@ body {
             </div>
 
             <div class="stream-line">
-              <span>Running <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-2)">npm run -w @ai-editor/editor-client build</span> to verify the contract compiles</span>
+              <span>Running <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-2)">npm run -w @crucible/editor-client build</span> to verify the contract compiles</span>
               <span class="caret"></span>
             </div>
 
@@ -925,7 +925,7 @@ body {
               <div class="step">
                 <div class="step-badge">3</div>
                 <div class="step-title">Rebuild editor-client so the extension picks up new types</div>
-                <div class="step-desc">Run <code>npm run -w @ai-editor/editor-client build</code> — the extension types off compiled dist, not source.</div>
+                <div class="step-desc">Run <code>npm run -w @crucible/editor-client build</code> — the extension types off compiled dist, not source.</div>
               </div>
               <div class="step">
                 <div class="step-badge">4</div>
@@ -954,7 +954,7 @@ body {
             <span class="cttl">Run command?</span>
             <span class="csub">step 3 · verify phase</span>
           </div>
-          <div class="cmdblock"><span class="ps">$</span> npm run -w @ai-editor/editor-client build</div>
+          <div class="cmdblock"><span class="ps">$</span> npm run -w @crucible/editor-client build</div>
           <div class="radios">
             <div class="radio sel" data-radio><span class="rdot"></span>Exact command only</div>
             <div class="radio" data-radio><span class="rdot"></span>Any <code>npm run</code> command</div>
@@ -1082,7 +1082,7 @@ body {
             <summary><svg class="tw" width="10" height="10"><use href="#i-chev-r"/></svg>Rebuild editor-client — VerifyPhaseExhausted</summary>
             <div class="err-trace">
               VerifyPhaseExhausted: 5 consecutive patch retries failed.<br>
-              <span class="dim">Last error:</span> Cannot find module '@ai-editor/editor-client'<br>
+              <span class="dim">Last error:</span> Cannot find module '@crucible/editor-client'<br>
               <span class="dim">Check:</span> apps/editor-client/tsconfig.json
             </div>
           </details>

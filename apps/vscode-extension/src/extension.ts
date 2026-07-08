@@ -1,4 +1,4 @@
-import { HttpBackendClient } from "@ai-editor/editor-client";
+import { HttpBackendClient } from "@crucible/editor-client";
 import * as vscode from "vscode";
 import * as path from "node:path";
 

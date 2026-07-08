@@ -235,7 +235,7 @@ Append to the existing `describe("HttpBackendClient", ...)` block in `apps/edito
 
 ```bash
 cd "/Users/pradeepkumar/projects/AI editor/.worktrees/feat-agentic-planning"
-npm run -w @ai-editor/editor-client test
+npm run -w @crucible/editor-client test
 ```
 Expected: `Property 'listChatThreads' does not exist on type 'HttpBackendClient'`
 
@@ -432,8 +432,8 @@ import {
 - [ ] **Step 5: Run tests to confirm they pass**
 
 ```bash
-npm run -w @ai-editor/editor-client test
-npm run -w @ai-editor/editor-client typecheck
+npm run -w @crucible/editor-client test
+npm run -w @crucible/editor-client typecheck
 ```
 Expected: all pass, no type errors
 
@@ -461,7 +461,7 @@ Key corrections from review:
 
 ```typescript
 import * as vscode from "vscode";
-import type { ChatMessage } from "@ai-editor/editor-client";
+import type { ChatMessage } from "@crucible/editor-client";
 
 export type ChatMessageHandler = (message: string) => Promise<void>;
 export type PlanCardActionHandler = (
@@ -912,7 +912,7 @@ import type {
   // ... existing imports ...
   ChatMessage,
   ChatThreadSummary,
-} from "@ai-editor/editor-client";
+} from "@crucible/editor-client";
 ```
 
 - [ ] **Step 4: Add chat state and methods to `AiEditorController`**

@@ -19,7 +19,7 @@
 - Runtime install root: `~/.ai-editor/runtime/`. Per-OS targets: `darwin-arm64`, `darwin-x64`, `linux-x64`, `win32-x64`.
 - Provider set (picker parity): openai, anthropic, gemini, groq, ollama, watsonx, openrouter, huggingface, turboquant. `scripted` is dev-only, hidden.
 - `start-backend.sh` and the `.env` dev flow remain untouched.
-- Python: run `pytest` plain (never `-q` — `addopts` already sets it); TS: `npm run build && npm run test && npm run typecheck` from repo root. After editor-client changes run `npm run -w @ai-editor/editor-client build` before extension typecheck.
+- Python: run `pytest` plain (never `-q` — `addopts` already sets it); TS: `npm run build && npm run test && npm run typecheck` from repo root. After editor-client changes run `npm run -w @crucible/editor-client build` before extension typecheck.
 - Commit format `type(scope): description`, one logical change per commit.
 
 ---
@@ -1451,7 +1451,7 @@ describe("settings client methods", () => {
 
 - [x] **Step 2: Run tests to verify they fail**
 
-Run: `npm run -w @ai-editor/editor-client test`
+Run: `npm run -w @crucible/editor-client test`
 Expected: FAIL — methods don't exist
 
 - [x] **Step 3: Implement schemas + methods**
@@ -1477,7 +1477,7 @@ private static mapMcpList(raw: unknown): McpServerList {
 
 - [x] **Step 4: Run tests, build, typecheck**
 
-Run: `npm run -w @ai-editor/editor-client test && npm run -w @ai-editor/editor-client build && npm run typecheck`
+Run: `npm run -w @crucible/editor-client test && npm run -w @crucible/editor-client build && npm run typecheck`
 Expected: PASS / clean. (Build before extension typecheck — the extension types off `dist/index.d.ts`.)
 
 - [x] **Step 5: Commit**
@@ -1553,7 +1553,7 @@ describe("checksums", () => {
 
 - [x] **Step 2: Run to verify failure**
 
-Run: `npm run -w ai-editor-vscode-extension test`
+Run: `npm run -w crucible-vscode-extension test`
 Expected: FAIL — module not found
 
 - [x] **Step 3: Implement**
@@ -1609,7 +1609,7 @@ export function verifyChecksum(data: Buffer, expectedHex: string): void {
 
 - [x] **Step 4: Run tests to verify pass, commit**
 
-Run: `npm run -w ai-editor-vscode-extension test`
+Run: `npm run -w crucible-vscode-extension test`
 
 ```bash
 git add apps/vscode-extension/src/runtime
@@ -1762,7 +1762,7 @@ describe("venvPython", () => {
 
 - [x] **Step 2: Run to verify failure**
 
-Run: `npm run -w ai-editor-vscode-extension test`
+Run: `npm run -w crucible-vscode-extension test`
 Expected: FAIL — module not found
 
 - [x] **Step 3: Implement `installer.ts`**
@@ -1910,7 +1910,7 @@ export class RuntimeInstaller {
 
 - [x] **Step 4: Run tests to verify pass, commit**
 
-Run: `npm run -w ai-editor-vscode-extension test && npm run -w ai-editor-vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension test && npm run -w crucible-vscode-extension typecheck`
 
 ```bash
 git add apps/vscode-extension/src/runtime
@@ -2097,7 +2097,7 @@ describe("BackendProcess.start", () => {
 
 - [x] **Step 2: Run to verify failure**
 
-Run: `npm run -w ai-editor-vscode-extension test`
+Run: `npm run -w crucible-vscode-extension test`
 Expected: FAIL — module not found
 
 - [x] **Step 3: Implement `backend-process.ts`**
@@ -2164,7 +2164,7 @@ is `{ ...process.env, ...buildBackendEnv(...) } as Record<string, string>`. Keep
 
 - [x] **Step 4: Run tests to verify pass, commit**
 
-Run: `npm run -w ai-editor-vscode-extension test && npm run -w ai-editor-vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension test && npm run -w crucible-vscode-extension typecheck`
 
 ```bash
 git add apps/vscode-extension/src/runtime
@@ -2385,7 +2385,7 @@ describe("createSetupHandler", () => {
 
 - [x] **Step 2: Run to verify failure, then implement `setup-data.ts`**
 
-Run: `npm run -w ai-editor-vscode-extension test` → FAIL. Implement the handler as a
+Run: `npm run -w crucible-vscode-extension test` → FAIL. Implement the handler as a
 plain switch over `msg.type` calling deps and posting the mapped results (every
 deps call in try/catch → `setup/error`).
 

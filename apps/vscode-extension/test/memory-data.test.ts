@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { handleMemoryMessage, type MemoryDataSource } from "../src/memory-data.js";
-import type { RecallTrace, MemoryView } from "@ai-editor/editor-client";
+import type { RecallTrace, MemoryView } from "@crucible/editor-client";
 
 function fakeTrace(): RecallTrace {
   return { query: "q", scopeKind: "workspace", scopeId: "/ws", k: 8, floor: 0.15, reranked: false, entries: [] };

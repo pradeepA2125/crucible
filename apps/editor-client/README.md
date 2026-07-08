@@ -1,4 +1,4 @@
-# @ai-editor/editor-client
+# @crucible/editor-client
 
 TypeScript package for editor-facing contracts and backend transport.
 

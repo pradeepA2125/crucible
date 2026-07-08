@@ -814,7 +814,7 @@ describe("CommandDecisionSchema", () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `npm run -w @ai-editor/editor-client test -- command-decision`
+Run: `npm run -w @crucible/editor-client test -- command-decision`
 Expected: FAIL — `CommandDecisionSchema` not exported.
 
 - [ ] **Step 3: Implement**
@@ -859,9 +859,9 @@ Add to `BackendTaskClient` interface and `HttpBackendClient` (http-backend-clien
 
 - [ ] **Step 4: Run to verify it passes; build**
 
-Run: `npm run -w @ai-editor/editor-client test -- command-decision`
+Run: `npm run -w @crucible/editor-client test -- command-decision`
 Expected: PASS.
-Run: `npm run -w @ai-editor/editor-client build`
+Run: `npm run -w @crucible/editor-client build`
 Expected: build succeeds (so the extension typechecks against fresh `dist`).
 
 - [ ] **Step 5: Commit**

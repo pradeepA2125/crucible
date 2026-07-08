@@ -449,7 +449,7 @@ The "node absent skips lsps..." and "resume: matching install-state version..." 
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm run -w ai-editor-vscode-extension test -- runtime-installer`
+Run: `npm run -w crucible-vscode-extension test -- runtime-installer`
 Expected: FAIL — `result.components.map(...)` has 6 entries but the assertion (before Step 3) expects 5, and `bin/rust-analyzer` doesn't exist since `"rust-analyzer"` isn't in `ORDER`/`BIN_NAME` yet.
 
 - [ ] **Step 3: Add rust-analyzer to the ComponentId union and the installer**
@@ -488,7 +488,7 @@ No other change to `installer.ts` is needed for this task — the existing gener
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npm run -w ai-editor-vscode-extension test -- runtime-installer`
+Run: `npm run -w crucible-vscode-extension test -- runtime-installer`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -534,7 +534,7 @@ Add to `apps/vscode-extension/test/runtime-backend-process.test.ts`, inside the 
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `npm run -w ai-editor-vscode-extension test -- runtime-backend-process`
+Run: `npm run -w crucible-vscode-extension test -- runtime-backend-process`
 Expected: the first new test FAILS — `CRUCIBLE_LSP_RS_CMD` is currently always the literal string `"rust-analyzer"`, so `toBe(join(...))` fails; the second new test passes already (no code change needed for that direction), which is fine — it will still pass after Step 3.
 
 - [ ] **Step 3: Update `spawnWatcher`'s env construction**
@@ -603,7 +603,7 @@ to:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npm run -w ai-editor-vscode-extension test -- runtime-backend-process`
+Run: `npm run -w crucible-vscode-extension test -- runtime-backend-process`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -918,7 +918,7 @@ Add to `apps/vscode-extension/test/runtime-installer.test.ts`, inside the `descr
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `npm run -w ai-editor-vscode-extension test -- runtime-installer`
+Run: `npm run -w crucible-vscode-extension test -- runtime-installer`
 Expected: both new tests FAIL — today's target is `ai-editor-agentd==0.1.0` (no extra) for the first, and the raw URL with no `[memory]` wrapping for the second.
 
 - [ ] **Step 3: Update the agentd install target construction**
@@ -961,7 +961,7 @@ to:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npm run -w ai-editor-vscode-extension test -- runtime-installer`
+Run: `npm run -w crucible-vscode-extension test -- runtime-installer`
 Expected: PASS (including the Task 3 test, which uses the URL-less `agentd: { version: "0.1.0" }` fixture entry and so exercises the `==` branch — unaffected by this change's behavior, just now expects `[memory]` in the string, which is not asserted there so it stays green).
 
 - [ ] **Step 5: Commit**
