@@ -101,7 +101,7 @@ export default function Features() {
   return (
     <section id="features" className="relative py-28 sm:py-36">
       <div className="mx-auto max-w-6xl px-5 sm:px-8">
-        <SectionHeading index="03" eyebrow="what's in the forge">
+        <SectionHeading index="03" eyebrow="what's in the crucible">
           Built like an editor. <br />
           Behaves like a <Em>careful colleague.</Em>
         </SectionHeading>

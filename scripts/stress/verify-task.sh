@@ -14,7 +14,7 @@ WORKSPACE="$ROOT"
 TASK_ID=""
 LOG_FILE=""
 MAX_FILES="999"
-OUT_DIR="${TMPDIR:-/tmp}/ai-editor-verify"
+OUT_DIR="${TMPDIR:-/tmp}/crucible-verify"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

@@ -29,7 +29,7 @@ The controller **replaces** `explore → classify → route`. Therefore these ol
 - [ ] `webview-ui/dist` rebuilt from this worktree (timestamp newer than last source edit).
 - [ ] `start-vscode-mcp.sh` EXT_PATH repointed to this worktree's `apps/vscode-extension`.
 - [ ] Backend up on :8001 with `CRUCIBLE_CHAT_CONTROLLER=1` (confirm: `curl -s :8001/health`; confirm controller active in logs / by absence of `intent_classified`).
-- [ ] `shadow-forge-stress` indexed (snapshot non-zero nodes).
+- [ ] `crucible-stress` indexed (snapshot non-zero nodes).
 
 ---
 
@@ -119,7 +119,7 @@ Secondary (best-effort): J2, J6, J8, J10, J11.
 
 ### 2026-06-15 — Phase J session 1 (tqp/qwen3.6 :11435, controller flag ON, backend :8001, worktree ext dev-host CDP :9335)
 
-**Env notes:** TQP = llama-server (llama.cpp) on :11435 serving qwen3.6:35b-a3b (OpenAI-compatible `/v1/...`, NOT ollama `/api/tags`). `start-vscode-mcp.sh` EXT_PATH was stale (dead worktree) — repointed to this worktree. Extension `dist/extension.js` + `webview-ui/dist` must be BUILT (`npm run -w @ai-editor/vscode-extension build`) before launch; the dev-host needs a window reload after a build. **webview-ui has its OWN node_modules** (separate `npm install`). Command palette: `fill` overwrites the auto `>` prefix → must type `>Command`. The a11y `browser_snapshot` DOES pierce the webview iframes now (refs usable for `browser_click`); `browser_evaluate` (main-frame only) does NOT reach the cross-origin webview DOM.
+**Env notes:** TQP = llama-server (llama.cpp) on :11435 serving qwen3.6:35b-a3b (OpenAI-compatible `/v1/...`, NOT ollama `/api/tags`). `start-vscode-mcp.sh` EXT_PATH was stale (dead worktree) — repointed to this worktree. Extension `dist/extension.js` + `webview-ui/dist` must be BUILT (`npm run -w crucible-vscode-extension build`) before launch; the dev-host needs a window reload after a build. **webview-ui has its OWN node_modules** (separate `npm install`). Command palette: `fill` overwrites the auto `>` prefix → must type `>Command`. The a11y `browser_snapshot` DOES pierce the webview iframes now (refs usable for `browser_click`); `browser_evaluate` (main-frame only) does NOT reach the cross-origin webview DOM.
 
 **VERIFIED working live:**
 - Controller active (no `intent_classified`/classifier in path). QA `answer` grounded (cited `PlanningLoop` `loop.py:70`).

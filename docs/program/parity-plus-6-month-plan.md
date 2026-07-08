@@ -1,4 +1,4 @@
-# AI Editor 6-Month Parity+ Program (Reliability First)
+# Crucible 6-Month Parity+ Program (Reliability First)
 
 Updated: March 12, 2026
 

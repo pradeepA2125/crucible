@@ -61,8 +61,8 @@ export default function Nav({ onOpenPalette }: { onOpenPalette: () => void }) {
         <a href="#top" className="flex items-center gap-2.5">
           <LogoGlyph className="w-7 h-7" />
           <span className="text-[15px] tracking-tight">
-            <span className="font-semibold">shadow</span>
-            <span className="font-serif italic text-accent-ink text-[17px]">forge</span>
+            <span className="font-semibold">cru</span>
+            <span className="font-serif italic text-accent-ink text-[17px]">cible</span>
           </span>
         </a>
 

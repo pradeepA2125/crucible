@@ -1,4 +1,4 @@
-"""Drive the REAL running :8000 backend (TQP model, shadow-forge-stress workspace) with an
+"""Drive the REAL running :8000 backend (TQP model, crucible-stress workspace) with an
 ambiguous task to coax a real clarify, then poll /live for the clarify gate.
 
 The bait: both src/tax.py and src/taxutil.py define with_tax(), so a request to modify
@@ -13,7 +13,7 @@ import time
 import urllib.request
 
 BASE = "http://localhost:8000"
-WS = "/Users/pradeepkumar/projects/AI editor/workspaces/shadow-forge-stress"
+WS = "/Users/pradeepkumar/projects/AI editor/workspaces/crucible-stress"
 PROMPT = ("There are two tax modules in src/ that both define a with_tax function: src/tax.py "
           "and src/taxutil.py. I want to add an upper-bound rate check to with_tax, but only in "
           "the one we actually use in production. I'm not sure which that is — do NOT guess or "

@@ -736,9 +736,9 @@ git commit -m "feat(chat): persist task_narrative as transcript message + surfac
 - Modify: `apps/vscode-extension/test/controller.test.ts`
 
 - [ ] **Step 1: Write failing controller tests** (stub client): a `READY_FOR_REVIEW` live state with `taskNarrative` → `renderLiveReview` receives `narrative.headline`/`points`; a `FAILED` live state with `taskNarrative` → `renderLiveError` receives it. Add `taskNarrative` to the stub `getThreadLiveState` responses.
-- [ ] **Step 2: Run** `npm run -w @ai-editor/vscode-extension test` → FAIL.
+- [ ] **Step 2: Run** `npm run -w crucible-vscode-extension test` → FAIL.
 - [ ] **Step 3: Implement.** Add `narrative?: { headline: string; points: string[] }` to `LiveReviewView` and `LiveErrorView` (extension `controller.ts` `ControllerUI` types AND the webview `types.ts` copies — keep them in sync). In `pollThreadLiveState`, pass `narrative: live.taskNarrative ? { headline, points } : undefined` into the `renderLiveReview` and `renderLiveError` payloads.
-- [ ] **Step 4: typecheck + test** `npm run -w @ai-editor/vscode-extension typecheck && npm run -w @ai-editor/vscode-extension test` → PASS.
+- [ ] **Step 4: typecheck + test** `npm run -w crucible-vscode-extension typecheck && npm run -w crucible-vscode-extension test` → PASS.
 - [ ] **Step 5: Commit** `feat(extension): forward task_narrative into Review/Error live cards`.
 
 ### Task 10: webview ReviewCard + ErrorCard render the narrative

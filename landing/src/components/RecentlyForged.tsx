@@ -48,7 +48,7 @@ export default function RecentlyForged() {
   return (
     <section id="fresh" className="relative py-28 sm:py-36">
       <div className="mx-auto max-w-6xl px-5 sm:px-8">
-        <SectionHeading index="04" eyebrow="fresh from the forge">
+        <SectionHeading index="04" eyebrow="fresh from the crucible">
           Shipping in the open, <Em>weekly.</Em>
         </SectionHeading>
 

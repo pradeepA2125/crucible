@@ -433,7 +433,7 @@ git commit -m "feat(graph): SpaceModel core — snapshot filtering, file rollups
 - Consumes: Task 1's types and `resolveFileEdges`.
 - Produces: `resolveModuleSpec(spec, fromFileRel, fileSet): string | null` fully implemented; `SpaceModel.bundles`, `.intraBundles`, `.links` populated. Later tasks rely on: `Bundle.kindMix` proportions summing to `count`, `FileLink` having `a < b`.
 
-Why this matters: in LSP-off snapshots most `Imports` edges point at `external:module:<relative spec>` (verified: 2,459 of 5,928 edges in shadow-forge-stress). Resolving relative specs recovers the import skeleton — without this, beams between packages barely exist on tree-sitter-only snapshots.
+Why this matters: in LSP-off snapshots most `Imports` edges point at `external:module:<relative spec>` (verified: 2,459 of 5,928 edges in crucible-stress). Resolving relative specs recovers the import skeleton — without this, beams between packages barely exist on tree-sitter-only snapshots.
 
 - [ ] **Step 1: Append the failing tests**
 
@@ -2874,7 +2874,7 @@ Expected: PASS; build emits `dist/graph.html` + a graph asset chunk containing t
 
 ```bash
 npm run build
-code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/shadow-forge-stress"
+code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/crucible-stress"
 # In the dev host: Cmd+Shift+P -> "Crucible: Open Dependency Space (AXON)"
 ```
 
@@ -3687,7 +3687,7 @@ export function aggregateToDirs(model: SpaceModel): SpaceModel {
 
 - [ ] **Step 5: Run all suites** — `npx vitest run src/graph` → PASS.
 
-- [ ] **Step 6: VISUAL CHECKPOINT** — dev host on `shadow-forge-stress`: `touch` a tracked file to trigger the indexer watcher (or edit a file); when the snapshot rewrites, the space morphs — no camera jump, no focus loss; new file ignites.
+- [ ] **Step 6: VISUAL CHECKPOINT** — dev host on `crucible-stress`: `touch` a tracked file to trigger the indexer watcher (or edit a file); when the snapshot rewrites, the space morphs — no camera jump, no focus loss; new file ignites.
 
 - [ ] **Step 7: Commit**
 
@@ -3719,7 +3719,7 @@ Write a throwaway script (run with `npx tsx` from `apps/vscode-extension/` to si
 // /tmp/axon-spot-check.ts
 import { GraphSnapshotStore } from "./src/graph/snapshot-store.js";
 const st = new GraphSnapshotStore(
-  `${process.env.HOME}/projects/AI editor/workspaces/shadow-forge-stress/.crucible/index-snapshot.json`
+  `${process.env.HOME}/projects/AI editor/workspaces/crucible-stress/.crucible/index-snapshot.json`
 );
 const m = st.load();
 console.log("stars", m.stars.length, "packages", m.packages.map((p) => p.id), "bundles", m.bundles.length);
@@ -3729,7 +3729,7 @@ Expected: ~314 stars, packages resembling `apps/*`+`services/*`, ≥1 bundle, �
 
 - [ ] **Step 3: Live smoke (CDP recipe, per memory `smoke_controller_cdp_driving_recipe`)**
 
-Dev host against `workspaces/shadow-forge-stress`:
+Dev host against `workspaces/crucible-stress`:
 1. Open panel via the chat-header orbit button AND via the command palette.
 2. Space renders ≥300 stars at 60fps (check with the FPS meter in DevTools performance overlay); beams flow.
 3. Click a star → dim + threads + info card; **Open in editor** lands on the exact file.

@@ -893,7 +893,7 @@ it("posts a command decision from a command_card action", async () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- controller`
+Run: `npm run -w crucible-vscode-extension test -- controller`
 Expected: FAIL — method/handler missing.
 
 - [ ] **Step 3: Implement**
@@ -910,7 +910,7 @@ Add `sendCommandDecision` to the controller's `BackendTaskClient` stub type in t
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- controller`
+Run: `npm run -w crucible-vscode-extension test -- controller`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**

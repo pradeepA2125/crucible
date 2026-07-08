@@ -2213,7 +2213,7 @@ Key decisions (all mechanical):
   (throw on `!res.ok`); `exec` = promisified `child_process.execFile` (never `shell: true`);
   `hasNode` = `execFile("node", ["--version"])` succeeding.
 - Real `ProcessDeps`: `spawn` = `child_process.spawn(cmd, args, { env, stdio: ["ignore", "pipe", "pipe"] })`
-  with stdout/stderr piped to the shared `vscode.OutputChannel` ("AI Editor Runtime");
+  with stdout/stderr piped to the shared `vscode.OutputChannel` ("Crucible Runtime");
   `fetchJson` = global fetch + `res.ok` check; `pickPort` = `net.createServer` listen-on-0 trick;
   `isPidAlive` = `process.kill(pid, 0)` in try/catch.
 - Secrets: `context.secrets.store("crucible.providerKey." + backend, key)`; provider
@@ -2405,7 +2405,7 @@ Message plumbing mirrors `src/memory/vscodeApi.tsx`.
 - [x] **Step 4: Implement `setup-panel.ts` + wire vite/extension**
 
 Copy `src/memory-panel.ts`, with exactly these deltas: entry `setup.html`,
-viewType `crucible.setup`, title `"AI Editor Setup"`, message handler =
+viewType `crucible.setup`, title `"Crucible Setup"`, message handler =
 `createSetupHandler` bridged to `RuntimeManager` + a short-lived
 `HttpBackendClient` built from `manager.backendUrl(workspace)` for `validate`.
 `saveAndStart` = `manager.saveProvider(...)` → `manager.startForWorkspace(...)` →
@@ -2612,7 +2612,7 @@ restart-required banner), **MCP servers** (status-dot list + toggle + Reconnect 
 Remove + an Add form: name / transport select / command-or-url / env-var-name
 rows → assembles the entry object with `"enabled": true` and `${VAR}` references),
 **Skills** (toggle list). `settings-panel.ts` = `memory-panel.ts` deltas: entry
-`settings.html`, viewType `crucible.settings`, title `"AI Editor Settings"`.
+`settings.html`, viewType `crucible.settings`, title `"Crucible Settings"`.
 Wire `crucible.openSettingsPanel`. Add the vite input.
 
 - [x] **Step 4: Build, run all suites, commit**

@@ -1,4 +1,4 @@
-# AI Editor
+# Crucible
 
 Production-grade AI editor foundation with a polyglot architecture.
 
@@ -26,12 +26,12 @@ No Marketplace listing yet — install straight from the latest GitHub Release:
 
 **macOS / Linux**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pradeepA2125/shadow-forge/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/pradeepA2125/crucible/main/install.sh | bash
 ```
 
 **Windows (PowerShell)**
 ```powershell
-iwr https://raw.githubusercontent.com/pradeepA2125/shadow-forge/main/install.ps1 -useb | iex
+iwr https://raw.githubusercontent.com/pradeepA2125/crucible/main/install.ps1 -useb | iex
 ```
 
 Both scripts download the `.vsix` attached to the latest release and run
@@ -41,7 +41,7 @@ PATH". After install, open any folder and the setup wizard walks through provisi
 managed backend runtime.
 
 Prefer to inspect before running? Download the script and read it first, or grab the `.vsix`
-directly from the [Releases page](https://github.com/pradeepA2125/shadow-forge/releases) and
+directly from the [Releases page](https://github.com/pradeepA2125/crucible/releases) and
 run `code --install-extension path/to/file.vsix` yourself.
 
 ## Quick start

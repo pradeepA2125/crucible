@@ -1425,7 +1425,7 @@ If nav controls read `inputAvailability(state).disabled` (or `state.turnActive`)
 
 - [ ] **Step 5: Typecheck**
 
-Run: `cd /Users/pradeepkumar/projects/AI\ editor/.worktrees/feat-agentic-chat-controller && npm run -w @crucible/editor-client build && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `cd /Users/pradeepkumar/projects/AI\ editor/.worktrees/feat-agentic-chat-controller && npm run -w @crucible/editor-client build && npm run -w crucible-vscode-extension typecheck`
 Expected: clean (no stale-type errors — editor-client was rebuilt in B1/B2).
 
 - [ ] **Step 6: Commit**
@@ -1524,7 +1524,7 @@ Reset `_liveResumeThreadId = null` in `switchChatThread` and `newChatThread` (be
 
 - [ ] **Step 3: Typecheck + extension tests**
 
-Run: `cd /Users/pradeepkumar/projects/AI\ editor/.worktrees/feat-agentic-chat-controller && npm run -w @ai-editor/vscode-extension typecheck && npm run -w @ai-editor/vscode-extension test`
+Run: `cd /Users/pradeepkumar/projects/AI\ editor/.worktrees/feat-agentic-chat-controller && npm run -w crucible-vscode-extension typecheck && npm run -w crucible-vscode-extension test`
 Expected: clean typecheck; tests PASS (update any `ControllerUI` stub that lacks the new `sendLiveStatus` signature).
 
 - [ ] **Step 4: Commit**

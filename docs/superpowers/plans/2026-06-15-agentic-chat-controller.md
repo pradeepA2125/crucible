@@ -1918,7 +1918,7 @@ it("renders sketch + options and posts modeDecision (taskId carries the threadId
 });
 ```
 
-- [ ] **Step 2: Run** `npm run -w @ai-editor/vscode-extension test ModeGate` → FAIL (component missing).
+- [ ] **Step 2: Run** `npm run -w crucible-vscode-extension test ModeGate` → FAIL (component missing).
 
 - [ ] **Step 3: Write `ModeGate.tsx`** (signature matches the other gates: `{ taskId, payload }`; `taskId` carries the thread id):
 
@@ -1979,7 +1979,7 @@ export function ModeGate({ taskId, payload }: Props) {
 - [ ] **Step 5: Run + commit**
 
 ```bash
-npm run -w @ai-editor/vscode-extension test ModeGate && npm run build
+npm run -w crucible-vscode-extension test ModeGate && npm run build
 git add apps/vscode-extension/webview-ui/src apps/vscode-extension/src/chat-panel.ts
 git commit -m "feat(webview): ModeGate + EditGate in LiveSlot; mode/edit decision wiring"
 ```

@@ -170,7 +170,7 @@ feature, owns writing real defaults into user workspaces).
   (render, approve/reject postMessage, one-shot guard).
 
 **Feature 2:** config + vendored script only — covered by existing P3 suites; verification
-is a live smoke on shadow-forge (`uv` present, key exported): search turn → gate →
+is a live smoke on crucible (`uv` present, key exported): search turn → gate →
 approve & remember → answer with citations; second turn gate-free.
 
 ## 7. Exit criteria
@@ -178,6 +178,6 @@ approve & remember → answer with citations; second turn gate-free.
 1. `write_doc` from a DECIDE turn writes an approved `.md` to the real workspace with a
    rendered gate card, breadcrumb, and transcript record; reject leaves no file.
 2. Flag off → no tool, no teaching block, no route behavior change.
-3. `mcp__web__web_search` answers a current-events question end-to-end on shadow-forge
+3. `mcp__web__web_search` answers a current-events question end-to-end on crucible
    through the existing MCP gate, with remember working across turns.
 4. All three stacks green (`pytest`, editor-client, extension + webview).

@@ -63,7 +63,7 @@ export default function OpenSource() {
               <div className="flex items-center gap-3">
                 <GitHubIcon className="w-5 h-5 text-ink-2" />
                 <span className="font-mono text-[15px] text-ink">
-                  pradeepA2125/<span className="text-accent-ink">shadow-forge</span>
+                  pradeepA2125/<span className="text-accent-ink">crucible</span>
                 </span>
               </div>
               <p className="mt-4 text-[14.5px] text-ink-3 leading-relaxed">

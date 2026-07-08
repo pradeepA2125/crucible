@@ -353,12 +353,11 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
   chains QuickPick(transport) → InputBox(command/URL) → InputBox(name) →
   InputBox(env vars) → `upsertMcpServer`; `crucible.mcpListServers` → QuickPick of
   servers (state dot + tool count) → Enable/Disable/Reconnect/Remove.
-- **GOTCHA — npm package renamed.** `apps/vscode-extension/package.json`'s `name` moved
-  from `@ai-editor/vscode-extension` to **`crucible-vscode-extension`**: `vsce` rejects
-  `@`/`/` in the extension identity (only surfaced once Task 15 added real marketplace
-  fields and ran `vsce ls --tree`). Every `npm run -w @ai-editor/vscode-extension ...`
-  reference in this repo's live docs/scripts was updated — use the new unscoped name
-  going forward. `apps/vscode-extension/.vscodeignore` was added at the same time
+- **GOTCHA — npm package must stay unscoped.** `apps/vscode-extension/package.json`'s
+  `name` was once scoped (`@`-prefixed) and had to move to the unscoped
+  **`crucible-vscode-extension`**: `vsce` rejects `@`/`/` in the extension identity
+  (only surfaced once Task 15 added real marketplace fields and ran `vsce ls --tree`).
+  All `npm run -w ...` invocations use the unscoped name. `apps/vscode-extension/.vscodeignore` was added at the same time
   (previously absent — without it `vsce package` would bundle `src/`, `test/`,
   `webview-ui/src/`, etc.). `publisher`/`icon`/`repository`/`categories` are placeholder
   marketplace fields (real branding is a later phase).
@@ -481,7 +480,7 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `graph_neighbor_files` (in the planner payload via `RetrievalContext.as_prompt_payload()`): files reached from the goal's matched/semantic seeds by one structural hop, surfaced as an initial reading list
 - Stale/missing snapshots emit warning diagnostics but never block orchestration
 - Both `PlanningToolRegistry` and `ToolRegistry` also give the agent live access to the workspace during their loops (not just the snapshot)
-- **Gotcha — ignored ANCESTOR dirs silently disable indexing for a whole workspace.** `is_ignored_path` (`indexer-rs/src/service.rs`) matches its `IGNORED_DIRS` (`.git`, `node_modules`, `.venv`, `target`, `dist`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.crucible/state`, `.crucible`, `.tmp`) against components of the **full absolute path**, not the path relative to the workspace root. So if `--workspace` points *under* a dir with one of those names — e.g. a stress/smoke workspace at `.../.tmp/smoke-xxx` — **every file is filtered**: the watcher starts, LSP warms up, but the snapshot stays at 0 nodes and file-change events are ignored. The watcher is fine; the workspace location is the problem. Put real workspaces outside ignored-named ancestors (e.g. `workspaces/…`, like `shadow-forge-stress` → 4328 nodes), not under `.tmp/`. (The within-workspace ignore of these dir names IS intentional — only the ancestor match is the footgun.)
+- **Gotcha — ignored ANCESTOR dirs silently disable indexing for a whole workspace.** `is_ignored_path` (`indexer-rs/src/service.rs`) matches its `IGNORED_DIRS` (`.git`, `node_modules`, `.venv`, `target`, `dist`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.crucible/state`, `.crucible`, `.tmp`) against components of the **full absolute path**, not the path relative to the workspace root. So if `--workspace` points *under* a dir with one of those names — e.g. a stress/smoke workspace at `.../.tmp/smoke-xxx` — **every file is filtered**: the watcher starts, LSP warms up, but the snapshot stays at 0 nodes and file-change events are ignored. The watcher is fine; the workspace location is the problem. Put real workspaces outside ignored-named ancestors (e.g. `workspaces/…`, like `crucible-stress` → 4328 nodes), not under `.tmp/`. (The within-workspace ignore of these dir names IS intentional — only the ancestor match is the footgun.)
 
 #### Symbol-graph edge resolution (LSP)
 - The Rust parser emits `Calls`/`Inherits` edges to `external:<kind>:<name>` placeholders, then a resolver stage (`indexer-rs/src/resolver.rs`) queries the LSP (`textDocument/definition` + `implementation`) and rewrites them to workspace symbol nodes. `Implements` edges fan out from concrete impls to a Protocol/ABC/interface declaration. Python call bodies are walked for call sites; Python class bases and TS `extends`/`implements` are resolved to workspace classes via `definition`.
@@ -610,7 +609,7 @@ Always use `start-backend.sh` rather than running uvicorn directly — it sets a
 export $(cat .env | grep -v "^#" | grep "=" | sed 's/"//g' | xargs)
 bash scripts/stress/start-backend.sh \
   --backend gemini \
-  --workspace "$PWD/workspaces/shadow-forge-stress" \
+  --workspace "$PWD/workspaces/crucible-stress" \
   --validation-profile none   # use 'full' when testing validation
 
 # Verify it's up
@@ -626,7 +625,7 @@ tail -f .tmp/stress-*/logs/agentd.log | grep -v "GET /v1/tasks"   # filter out p
 ### Opening the VS Code extension development host
 
 ```bash
-code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/shadow-forge-stress"
+code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/crucible-stress"
 ```
 
 After any TypeScript change: `npm run build` then reload the extension host window (`Cmd+Shift+P` → Developer: Reload Window).
@@ -648,7 +647,7 @@ python scripts/verify/02_feedback.py '<feedback text>'
 python scripts/verify/03_finalize.py
 ```
 
-Task ID is persisted to `/tmp/ai-editor-verify-state/current_task_id.txt` between stages.
+Task ID is persisted to `/tmp/crucible-verify-state/current_task_id.txt` between stages.
 
 ### Inspecting a task mid-flight
 
@@ -740,7 +739,7 @@ Every task writes debug artifacts to `<workspace>/.crucible/state/artifacts/<tas
 **Quick command to inspect the latest task's artifacts:**
 
 ```bash
-TASK_ID=$(cat /tmp/ai-editor-verify-state/current_task_id.txt)
+TASK_ID=$(cat /tmp/crucible-verify-state/current_task_id.txt)
 ARTIFACTS="<workspace>/.crucible/state/artifacts/$TASK_ID"
 
 ls $ARTIFACTS

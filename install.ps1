@@ -1,7 +1,7 @@
-# One-shot installer for the AI Editor VS Code extension, straight from GitHub
+# One-shot installer for the Crucible VS Code extension, straight from GitHub
 # Releases -- no Marketplace/Open VSX publish required.
 #
-#   iwr https://raw.githubusercontent.com/pradeepA2125/shadow-forge/main/install.ps1 -useb | iex
+#   iwr https://raw.githubusercontent.com/pradeepA2125/crucible/main/install.ps1 -useb | iex
 #
 # Downloads the .vsix attached to the latest GitHub Release and installs it
 # via `code --install-extension`. Set $env:CRUCIBLE_INSTALL_REPO or
@@ -9,7 +9,7 @@
 # binary (code-insiders, cursor, ...).
 $ErrorActionPreference = "Stop"
 
-$Repo = if ($env:CRUCIBLE_INSTALL_REPO) { $env:CRUCIBLE_INSTALL_REPO } else { "pradeepA2125/shadow-forge" }
+$Repo = if ($env:CRUCIBLE_INSTALL_REPO) { $env:CRUCIBLE_INSTALL_REPO } else { "pradeepA2125/crucible" }
 $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
 
 function Find-CodeBin {
@@ -29,7 +29,7 @@ $CodeBin = Find-CodeBin
 Write-Host "==> using editor CLI: $CodeBin"
 
 Write-Host "==> looking up latest release of $Repo"
-$Release = Invoke-RestMethod -Uri $ApiUrl -Headers @{ "User-Agent" = "ai-editor-installer" }
+$Release = Invoke-RestMethod -Uri $ApiUrl -Headers @{ "User-Agent" = "crucible-installer" }
 
 $Asset = $Release.assets | Where-Object { $_.name -like "*.vsix" } | Select-Object -First 1
 if (-not $Asset) { throw "latest release has no .vsix asset attached" }
@@ -47,7 +47,7 @@ try {
     Write-Host "==> installing into $CodeBin"
     & $CodeBin --install-extension $VsixPath --force
 
-    Write-Host "==> done. Open (or reload) VS Code, open a folder, and the AI Editor setup wizard will guide you through the rest."
+    Write-Host "==> done. Open (or reload) VS Code, open a folder, and the Crucible setup wizard will guide you through the rest."
 } finally {
     Remove-Item -Recurse -Force $WorkDir -ErrorAction SilentlyContinue
 }

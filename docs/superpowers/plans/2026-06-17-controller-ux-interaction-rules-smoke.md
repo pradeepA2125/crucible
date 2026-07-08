@@ -22,14 +22,14 @@ both as a route in A and as a button in B).
 
 - **Backend:** worktree `services/agentd-py` via `scripts/stress/start-backend.sh` with
   **`CRUCIBLE_CHAT_CONTROLLER=1` exported** before launch, `--workspace <REAL ws OUTSIDE
-  .tmp>` (graph indexing needs a non-`.tmp` ancestor; `workspaces/shadow-forge-stress`
+  .tmp>` (graph indexing needs a non-`.tmp` ancestor; `workspaces/crucible-stress`
   works). Port **:8001** (workspace `.vscode/settings.json` pins
   `crucible.backendBaseUrl=http://localhost:8001`). Confirm controller is active:
   `curl -s :8001/health` AND a `/live` payload contains a `turn_active` key
   (legacy `ChatAgent` omits it).
 - **Dev-host:** VS Code on CDP :9335 via `scripts/playwright/start-vscode-mcp.sh` —
   **EXT_PATH MUST point at THIS worktree** `.../.worktrees/feat-agentic-chat-controller/apps/vscode-extension`.
-  **MUST rebuild `webview-ui/dist` first** (`npm run -w @ai-editor/vscode-extension build`,
+  **MUST rebuild `webview-ui/dist` first** (`npm run -w crucible-vscode-extension build`,
   or in `apps/vscode-extension/webview-ui/`) — `dist` is a gitignored artifact; stale dist =
   old UI (the recurring stale-dist trap).
 - **Driving caveat (auto-memory):** `browser_wait_for`/a11y snapshots do NOT pierce the
@@ -41,9 +41,9 @@ both as a route in A and as a button in B).
 - [ ] `webview-ui/dist` rebuilt from THIS worktree (timestamp newer than last source edit).
 - [ ] `start-vscode-mcp.sh` EXT_PATH repointed to this worktree's `apps/vscode-extension`.
 - [ ] Backend up on :8001 with `CRUCIBLE_CHAT_CONTROLLER=1` (`/live` carries `turn_active`).
-- [ ] `shadow-forge-stress` indexed (snapshot non-zero nodes).
+- [ ] `crucible-stress` indexed (snapshot non-zero nodes).
 - [ ] Part A run first and green: `AGENTD_BASE_URL=http://127.0.0.1:8001 python3
-      scripts/verify/controller_ux_smoke.py "$PWD/workspaces/shadow-forge-stress"`.
+      scripts/verify/controller_ux_smoke.py "$PWD/workspaces/crucible-stress"`.
 
 ---
 
@@ -54,7 +54,7 @@ gate-clear check when the model doesn't raise a gate on the probe message.
 
 ```bash
 export AGENTD_BASE_URL=http://127.0.0.1:8001
-python3 scripts/verify/controller_ux_smoke.py "$PWD/workspaces/shadow-forge-stress"
+python3 scripts/verify/controller_ux_smoke.py "$PWD/workspaces/crucible-stress"
 ```
 
 - [ ] §4 idle thread → `turn_active=false` (key present → controller flag confirmed)

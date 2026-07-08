@@ -4,12 +4,12 @@ Updated: March 12, 2026
 
 ## Program Projects
 Create six Linear projects:
-1. `AI Editor Phase 0 - Eval Harness`
-2. `AI Editor Phase 1 - Patch Engine v2`
-3. `AI Editor Phase 2 - Planner/Critic v2`
-4. `AI Editor Phase 3 - Core Parity Surface`
-5. `AI Editor Phase 4 - Workflow Layer`
-6. `AI Editor Phase 5 - Differentiation`
+1. `Crucible Phase 0 - Eval Harness`
+2. `Crucible Phase 1 - Patch Engine v2`
+3. `Crucible Phase 2 - Planner/Critic v2`
+4. `Crucible Phase 3 - Core Parity Surface`
+5. `Crucible Phase 4 - Workflow Layer`
+6. `Crucible Phase 5 - Differentiation`
 
 Import seed:
 - `docs/program/linear-backlog-seed.csv`

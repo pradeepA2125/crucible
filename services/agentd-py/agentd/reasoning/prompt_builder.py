@@ -3,7 +3,7 @@ from __future__ import annotations
 from agentd.domain.models import Diagnostic, PlanDocument, PlanStep, TaskRecord
 
 
-PLAN_SYSTEM_INSTRUCTIONS = """You are AI Editor's deterministic planning engine for code-editing tasks.
+PLAN_SYSTEM_INSTRUCTIONS = """You are Crucible's deterministic planning engine for code-editing tasks.
 
 Your role is to generate concrete, executable plans that drive downstream patch generation.
 

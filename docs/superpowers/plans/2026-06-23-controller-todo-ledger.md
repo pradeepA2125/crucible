@@ -1130,7 +1130,7 @@ describe("TodoCard", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- TodoCard` (or the webview-ui vitest runner used by the project)
+Run: `npm run -w crucible-vscode-extension test -- TodoCard` (or the webview-ui vitest runner used by the project)
 Expected: FAIL — cannot resolve `../components/messages/TodoCard`.
 
 - [ ] **Step 3a: Create the `TodoCard` component**
@@ -1255,7 +1255,7 @@ In `apps/vscode-extension/src/controller.ts`, in `pollThreadLiveState` (~line 15
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- TodoCard`
+Run: `npm run -w crucible-vscode-extension test -- TodoCard`
 Expected: PASS (2 passed).
 
 Run: `npm run build && npm run typecheck`

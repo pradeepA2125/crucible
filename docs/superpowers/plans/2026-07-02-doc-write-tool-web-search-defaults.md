@@ -894,7 +894,7 @@ describe("DocWriteGate", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/vscode-extension webview:test`
+Run: `npm run -w crucible-vscode-extension webview:test`
 Expected: FAIL — cannot resolve `DocWriteGate`
 
 - [ ] **Step 3: Implement webview side**
@@ -1168,7 +1168,7 @@ git commit -m "feat(mcp): vendored Ollama web-search MCP server as shipped defau
 
 ---
 
-### Task 7 (manual, not CI): live smoke on shadow-forge
+### Task 7 (manual, not CI): live smoke on crucible
 
 Human-in-the-loop (or HTTP-driven like the P3 smoke). Backend: `CRUCIBLE_CHAT_CONTROLLER=1 CRUCIBLE_MCP_ENABLED=1 CRUCIBLE_DOC_WRITE_ENABLED=1`, `OLLAMA_API_KEY` exported.
 

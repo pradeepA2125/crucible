@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# One-shot installer for the AI Editor VS Code extension, straight from GitHub
+# One-shot installer for the Crucible VS Code extension, straight from GitHub
 # Releases — no Marketplace/Open VSX publish required.
 #
-#   curl -fsSL https://raw.githubusercontent.com/pradeepA2125/shadow-forge/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/pradeepA2125/crucible/main/install.sh | bash
 #
 # Downloads the .vsix attached to the latest GitHub Release and installs it
 # via `code --install-extension`. Override CRUCIBLE_INSTALL_REPO or
@@ -10,7 +10,7 @@
 # (code-insiders, cursor, ...).
 set -euo pipefail
 
-REPO="${CRUCIBLE_INSTALL_REPO:-pradeepA2125/shadow-forge}"
+REPO="${CRUCIBLE_INSTALL_REPO:-pradeepA2125/crucible}"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
 log() { printf '==> %s\n' "$1"; }
@@ -54,4 +54,4 @@ curl -fsSL "$VSIX_URL" -o "$VSIX_PATH" || die "download failed"
 log "installing into $CODE_BIN"
 "$CODE_BIN" --install-extension "$VSIX_PATH" --force
 
-log "done. Open (or reload) VS Code, open a folder, and the AI Editor setup wizard will guide you through the rest."
+log "done. Open (or reload) VS Code, open a folder, and the Crucible setup wizard will guide you through the rest."

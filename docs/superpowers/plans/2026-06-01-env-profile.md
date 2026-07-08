@@ -2210,7 +2210,7 @@ git commit -m "feat(env-profile): API routes + end-to-end integration tests"
 
 - [ ] `pytest -q` is fully green
 - [ ] New file count: 6 source + 6 test
-- [ ] Manual smoke: start backend pointed at `workspaces/shadow-forge-stress`; first task on a fresh workspace builds the profile in <30s; subsequent tasks reuse it; `cat workspaces/shadow-forge-stress/.crucible/state/env_profile.json` shows the expected ecosystems
+- [ ] Manual smoke: start backend pointed at `workspaces/crucible-stress`; first task on a fresh workspace builds the profile in <30s; subsequent tasks reuse it; `cat workspaces/crucible-stress/.crucible/state/env_profile.json` shows the expected ecosystems
 - [ ] No new task status (`PREPARING_ENV` not introduced)
 - [ ] No env state machine module exists
 - [ ] `read_env_profile` appears in both `explore` and `verify` phase tool listings

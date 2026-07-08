@@ -1,6 +1,6 @@
-# Shadow Forge — landing page
+# Crucible — landing page
 
-Marketing/landing site for the Shadow Forge open-source AI code editor.
+Marketing/landing site for the Crucible open-source AI code editor.
 Standalone Vite app, deliberately **outside** the npm workspace (`apps/*`) so it
 never affects the monorepo build.
 
@@ -11,7 +11,7 @@ never affects the monorepo build.
 - Framer Motion (scroll reveals, palette, transitions)
 - Three.js via React Three Fiber + drei (hero "dependency space")
 
-## Design direction — "VOID / FORGE"
+## Design direction — "VOID / CRUCIBLE"
 
 The hero renders the workspace as a **dependency space** — code as a galaxy:
 package clusters as nebulae, an

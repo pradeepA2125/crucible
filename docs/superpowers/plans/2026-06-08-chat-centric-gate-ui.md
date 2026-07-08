@@ -177,7 +177,7 @@ def resolve_live_state(thread_id, active_task_id, get_task):
 - [ ] Manual visual check via the run skill / extension host; iterate until clean.
 - [ ] commit.
 
-- [ ] **Phase 2 gate:** `npm run -w @crucible/editor-client build`, `npm run -w @ai-editor/vscode-extension typecheck`, vitest green; manual UI smoke.
+- [ ] **Phase 2 gate:** `npm run -w @crucible/editor-client build`, `npm run -w crucible-vscode-extension typecheck`, vitest green; manual UI smoke.
 
 ---
 

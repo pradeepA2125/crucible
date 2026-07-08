@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Based on thorough analysis of AI Editor's architecture, competitor research, and Git diff format standards, this plan outlines concrete enhancements to maintain AI Editor's architectural superiority while adding industry-standard capabilities.
+Based on thorough analysis of Crucible's architecture, competitor research, and Git diff format standards, this plan outlines concrete enhancements to maintain Crucible's architectural superiority while adding industry-standard capabilities.
 
 **Core Principle**: Keep CST/AST patching as the primary approach, add complementary capabilities for specific use cases.
 
@@ -1195,7 +1195,7 @@ Based on industry research, the following steps ensure smooth adoption:
 
 ## Conclusion
 
-This enhanced implementation plan maintains AI Editor's architectural advantages (CST/AST patching, deterministic orchestration, shadow workspace) while adding industry-standard capabilities based on thorough competitive research:
+This enhanced implementation plan maintains Crucible's architectural advantages (CST/AST patching, deterministic orchestration, shadow workspace) while adding industry-standard capabilities based on thorough competitive research:
 
 **Key Additions from Extra Research:**
 1. **Search/Replace (Fast Apply)**: O(N) text replacement for large files, inspired by Void IDE
@@ -1292,7 +1292,7 @@ The right next move is to treat Stage 0.5 as the canonical flow and stabilize th
 3. Submit approval (`feedback: null`) -> task resumes and reaches `READY_FOR_REVIEW` or a diagnosable failure.
 4. Invalid feedback call while not awaiting approval -> `400`.
 5. Existing orchestrator regression tests still pass after being updated to the new two-step lifecycle.
-6. Manual 3-stage verification scripts succeed end-to-end on `workspaces/shadow-forge-stress`.
+6. Manual 3-stage verification scripts succeed end-to-end on `workspaces/crucible-stress`.
 
 ### Assumptions and Defaults
 - Stage 0.5 is now the default flow for non-scripted task execution.
@@ -1711,7 +1711,7 @@ This pass should cover **runtime core + ops tooling + tests + docs/benchmarks to
     - verification drift
     - unsupported NEW claims without evidence or create intent
 - Artifacts:
-  - replace hardcoded `/tmp/ai-editor-stress` usage with configurable task-artifact root
+  - replace hardcoded `/tmp/crucible-stress` usage with configurable task-artifact root
   - same artifact structure, but generic path policy
 
 #### 3. Keep language specificity, but only in language adapters
@@ -1728,7 +1728,7 @@ This pass should cover **runtime core + ops tooling + tests + docs/benchmarks to
 #### 4. De-hardcode provider/runtime configuration and debug plumbing
 - Introduce a single generic artifact/debug root setting:
   - `CRUCIBLE_ARTIFACTS_ROOT`
-  - default to `<workspace>/.crucible/state/artifacts` or a configurable app-local default, not `/tmp/ai-editor-stress`
+  - default to `<workspace>/.crucible/state/artifacts` or a configurable app-local default, not `/tmp/crucible-stress`
 - Ensure all debug dumping uses the same artifact root contract:
   - reasoning debug dumps
   - orchestrator plan/patch artifacts
@@ -1741,7 +1741,7 @@ This pass should cover **runtime core + ops tooling + tests + docs/benchmarks to
 
 #### 5. De-hardcode ops scripts and verification harness
 - Generalize stress/e2e scripts so they do not assume:
-  - `shadow-forge-stress`
+  - `crucible-stress`
   - one workspace path
   - one repo layout
   - one provider family
@@ -1762,7 +1762,7 @@ This pass should cover **runtime core + ops tooling + tests + docs/benchmarks to
   - replace repo-specific paths in runtime tests with synthetic neutral fixtures unless the test is intentionally adapter-specific
   - isolate any `agentd-py`-specific tests under adapter-specific or repo-specific test modules
 - Benchmarks:
-  - move `shadow-forge-stress` and similar entries into a labeled example corpus, not the default benchmark baseline
+  - move `crucible-stress` and similar entries into a labeled example corpus, not the default benchmark baseline
   - define a generic benchmark schema where repo-specific corpora are one dataset, not the default worldview
 - Docs:
   - update architecture docs to distinguish:
@@ -1800,11 +1800,11 @@ This pass should cover **runtime core + ops tooling + tests + docs/benchmarks to
 
 3. **Ops and tooling**
 - Stress and verify scripts run against two different workspaces without editing the script bodies.
-- Artifact/debug outputs land under configurable root paths, not fixed `/tmp/ai-editor-stress`.
+- Artifact/debug outputs land under configurable root paths, not fixed `/tmp/crucible-stress`.
 
 4. **Docs and benchmarks**
 - Benchmark corpus separates generic baselines from repo-specific examples.
-- Docs no longer imply `shadow-forge` is the canonical product shape.
+- Docs no longer imply `crucible` is the canonical product shape.
 
 ### Assumptions and Defaults
 - Default mode after this refactor is fully generic:

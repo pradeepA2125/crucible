@@ -2303,7 +2303,7 @@ Return JSX (state logic above it unchanged):
               <Icon name="spark" size={20} />
             </span>
             <div>
-              <h1 className="text-base font-semibold text-text">AI Editor Setup</h1>
+              <h1 className="text-base font-semibold text-text">Crucible Setup</h1>
               <p className="text-xs text-text-3">Provision the local runtime, pick a model provider, start chatting.</p>
             </div>
           </div>
@@ -2902,7 +2902,7 @@ In `InputArea.tsx`, import `ModelMenu` and add at the START of the footer row (b
           type="button"
           onClick={() => vscode.postMessage({ type: "openSettings" })}
           aria-label="Open settings"
-          title="AI Editor settings"
+          title="Crucible settings"
           className="flex h-6 w-6 items-center justify-center rounded-[7px] cursor-pointer text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text"
         >
           <Icon name="gear" size={12} />
@@ -2949,7 +2949,7 @@ Expected: everything green. (Reminder: `webview-ui/dist` MUST be rebuilt or the 
 - [ ] **Step 2: Live smoke (dev host)** — start the backend per CLAUDE.md, then:
 
 ```bash
-code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/shadow-forge-stress"
+code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/crucible-stress"
 ```
 
 Checklist:

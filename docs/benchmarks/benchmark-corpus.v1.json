@@ -44,9 +44,9 @@
       ]
     },
     {
-      "task_id": "oss-shadow-forge-stress",
-      "goal": "Example corpus task for shadow-forge-stress",
-      "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/shadow-forge-stress",
+      "task_id": "oss-crucible-stress",
+      "goal": "Example corpus task for crucible-stress",
+      "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/crucible-stress",
       "source": "oss",
       "dataset": "example",
       "language": "unknown",

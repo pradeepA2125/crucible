@@ -1,8 +1,8 @@
-# Competitive Analysis: AI Editor vs. Market Leaders
+# Competitive Analysis: Crucible vs. Market Leaders
 
 ## Executive Summary
 
-AI Editor has a **superior architectural foundation** compared to Cursor, Windsurf, Cline, and Void. The system's CST/AST-based patching, deterministic orchestration, and graph-based retrieval position it ahead of competitors who rely on fragile text-based edits and ad-hoc context management.
+Crucible has a **superior architectural foundation** compared to Cursor, Windsurf, Cline, and Void. The system's CST/AST-based patching, deterministic orchestration, and graph-based retrieval position it ahead of competitors who rely on fragile text-based edits and ad-hoc context management.
 
 **Key Differentiators:**
 - ✅ **Structural patching** (CST/AST) vs. competitors' text-based diffs
@@ -20,7 +20,7 @@ AI Editor has a **superior architectural foundation** compared to Cursor, Windsu
 
 ## 1. Indexing & Retrieval Comparison
 
-### Current AI Editor Implementation
+### Current Crucible Implementation
 
 **Architecture** ([`artifact_client.py`](services/agentd-py/agentd/retrieval/artifact_client.py:26-65)):
 ```python
@@ -57,11 +57,11 @@ class RetrievalContext:
 | **Codex CLI** | FAISS vector DB (200-400 line chunks) | Embedding similarity search | OpenAI-quality embeddings | Requires local FAISS, chunking overhead |
 | **Cline** | None (text search via ripgrep) | Keyword/regex matching | Fast, simple | Misses conceptual relationships |
 | **Void IDE** | None (filesystem awareness) | Agent-driven search | Privacy-focused, local control | Limited context depth |
-| **AI Editor** | Tree-sitter + LSP graph | Keyword + graph traversal | Structural relationships, LSP diagnostics | No semantic embeddings |
+| **Crucible** | Tree-sitter + LSP graph | Keyword + graph traversal | Structural relationships, LSP diagnostics | No semantic embeddings |
 
 ### Gap Analysis
 
-**AI Editor Advantages:**
+**Crucible Advantages:**
 - ✅ **Graph-based retrieval** understands code structure (imports, calls, inheritance)
 - ✅ **LSP integration** provides real-time diagnostics
 - ✅ **Incremental indexing** with filesystem watching
@@ -83,7 +83,7 @@ Implement **Phase 5 Retrieval v2** ([`roadmap.md:40`](docs/roadmap.md:40)) with:
 
 ## 2. Code Editing (Patching) Comparison
 
-### Current AI Editor Implementation
+### Current Crucible Implementation
 
 **V2 Operations** ([`models.py:142-170`](services/agentd-py/agentd/domain/models.py:142-170)):
 ```python
@@ -114,11 +114,11 @@ class InsertAfterNodeOpV2:  # CST/AST-based insertion
 | **Codex CLI** | Triple-asterisk format (`@@` anchors) | Unified diff merger | GPT-4.1 trained on format | Manual anchor specification |
 | **Void IDE** | Fast Apply (search/replace) or Slow Apply (full rewrite) | Dual-mode executor | Scales to 1000-line files | Search/replace fragility |
 | **Cline** | File edit tools | Direct file I/O | Simple | No structural awareness |
-| **AI Editor** | CST/AST node operations | libcst/tree-sitter transformers | **Structural safety, anchor stability** | No streaming apply yet |
+| **Crucible** | CST/AST node operations | libcst/tree-sitter transformers | **Structural safety, anchor stability** | No streaming apply yet |
 
 ### Gap Analysis
 
-**AI Editor Advantages:**
+**Crucible Advantages:**
 - ✅ **CST/AST patching** eliminates anchor drift and syntax errors
 - ✅ **Preflight validation** catches conflicts before applying
 - ✅ **Transactional rollback** ensures safe experimentation
@@ -146,7 +146,7 @@ Extend V2 with **hybrid operations**:
 
 ## 3. Planning & Agent Workflows Comparison
 
-### Current AI Editor Implementation
+### Current Crucible Implementation
 
 **Orchestration** ([`engine.py`](services/agentd-py/agentd/orchestrator/engine.py)):
 - **State machine**: `QUEUED → CONTEXT_READY → AWAITING_PLAN_APPROVAL → PLANNED → EXECUTING → VALIDATING → VALIDATED → READY_FOR_REVIEW → SUCCEEDED`
@@ -169,11 +169,11 @@ Extend V2 with **hybrid operations**:
 | **Windsurf Cascade** | AI Flows (up to 20 tool invocations) | User-approved action plan | Transparent, adaptable | Requires user approval |
 | **Cline** | Plan Mode (read-only) → Act Mode (edit) | Explicit mode separation | Clear mental model | Manual mode switching |
 | **Codex App** | Multi-agent orchestration | Parallel agents across branches | Scales to large projects | Complex coordination |
-| **AI Editor** | Deterministic state machine | Sequential step execution | **Predictable, transactional** | No parallel execution |
+| **Crucible** | Deterministic state machine | Sequential step execution | **Predictable, transactional** | No parallel execution |
 
 ### Gap Analysis
 
-**AI Editor Advantages:**
+**Crucible Advantages:**
 - ✅ **Deterministic orchestration** with clear state transitions
 - ✅ **Transactional checkpoints** for rollback
 - ✅ **Budget enforcement** prevents runaway costs
@@ -196,7 +196,7 @@ Implement **Phase 4 Workflow Layer** ([`roadmap.md:33-36`](docs/roadmap.md:33-36
 
 ## 4. Architecture Patterns & Trade-offs
 
-### AI Editor's Design Philosophy
+### Crucible's Design Philosophy
 
 **Core Principles** ([`architecture.md:21-26`](docs/architecture.md:21-26)):
 1. **Deterministic boundaries**: Model output never executed directly
@@ -227,7 +227,7 @@ Implement **Phase 4 Workflow Layer** ([`roadmap.md:33-36`](docs/roadmap.md:33-36
 - **Pros**: Parallel execution, specialized agents
 - **Cons**: Complex coordination, higher costs
 
-### AI Editor's Competitive Position
+### Crucible's Competitive Position
 
 **Strengths:**
 1. **Structural patching** (CST/AST) > text-based diffs
@@ -363,7 +363,7 @@ class ToolPolicy(BaseModel):
 
 ## 7. Conclusion
 
-**AI Editor's architectural foundation is superior to competitors.** The CST/AST patching, graph-based retrieval, and deterministic orchestration solve fundamental problems that plague text-based editors (anchor drift, syntax errors, unpredictable behavior).
+**Crucible's architectural foundation is superior to competitors.** The CST/AST patching, graph-based retrieval, and deterministic orchestration solve fundamental problems that plague text-based editors (anchor drift, syntax errors, unpredictable behavior).
 
 **Strategic focus should be:**
 1. **Complete Phase 1** - Prove CST/AST superiority with 70% failure reduction

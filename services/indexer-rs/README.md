@@ -1,6 +1,6 @@
 # indexer-rs
 
-Rust indexing service for AI Editor.
+Rust indexing service for Crucible.
 
 ## Responsibilities
 - Incremental filesystem watching

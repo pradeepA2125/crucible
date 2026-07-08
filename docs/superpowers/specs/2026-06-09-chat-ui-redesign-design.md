@@ -105,7 +105,7 @@ The `webview-ui` package is built with Vite. The extension's build step runs `vi
 Shown on first open and whenever the user navigates back from a thread.
 
 **Layout (top → bottom):**
-1. Header bar — "AI Editor" title left, `+ New Chat` button right (purple-outlined)
+1. Header bar — "Crucible" title left, `+ New Chat` button right (purple-outlined)
 2. Search input — full width, `⌕` icon, placeholder "Search chats…"
 3. Scrollable list — items grouped by day label (Today / Yesterday / Last week / older)
 
@@ -256,7 +256,7 @@ Triggered when backend reports execution failure.
 
 ## What the Review Panel Becomes
 
-The existing "AI Editor Review" webview panel (in `review-panel.ts`) is retired. Its only non-redundant feature — viewing Plan JSON and Patch JSON — moves to a future debug mode (v2 roadmap). The Accept/Reject functionality is fully covered by the inline DiffCard.
+The existing "Crucible Review" webview panel (in `review-panel.ts`) is retired. Its only non-redundant feature — viewing Plan JSON and Patch JSON — moves to a future debug mode (v2 roadmap). The Accept/Reject functionality is fully covered by the inline DiffCard.
 
 `review-panel.ts` is deleted. The command registrations in `extension.ts` that open it are removed.
 

@@ -44,7 +44,7 @@ from agentd.storage.sqlite_store import SQLiteTaskStore
 from agentd.validation.command_validator import CommandValidator
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
-app = FastAPI(title="ai-editor agentd-py", version="0.1.0")
+app = FastAPI(title="crucible agentd-py", version="0.1.0")
 
 database_path = Path(os.getenv("CRUCIBLE_DB_PATH", ".crucible/state/agentd.sqlite3")).resolve()
 shadow_root_path = Path(os.getenv("CRUCIBLE_SHADOW_ROOT", ".crucible/state/shadows")).resolve()

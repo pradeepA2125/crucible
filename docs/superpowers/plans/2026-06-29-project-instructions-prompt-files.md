@@ -21,7 +21,7 @@
 - **Prompt files are frontend-only** — no backend route, no editor-client contract change. Expansion happens *before* send so the user can edit the result.
 - **`controller.ts` stays vscode-free** (node `fs` is allowed; the `vscode` module is not).
 - **All commits** end with the `Co-Authored-By: Claude Opus 4.8` + `Claude-Session:` trailers (see CLAUDE.md). One logical change per commit.
-- **Per-task green bar:** Python tasks run `ruff check . && mypy agentd && pytest <touched>`; TS tasks run `npm run -w @ai-editor/vscode-extension typecheck` + the relevant vitest.
+- **Per-task green bar:** Python tasks run `ruff check . && mypy agentd && pytest <touched>`; TS tasks run `npm run -w crucible-vscode-extension typecheck` + the relevant vitest.
 
 ---
 
@@ -640,7 +640,7 @@ describe("listPromptNames / loadPromptBody", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- src/prompt-files.test.ts`
+Run: `npm run -w crucible-vscode-extension test -- src/prompt-files.test.ts`
 Expected: FAIL — cannot find module `./prompt-files`.
 
 - [ ] **Step 3: Implement the helpers**
@@ -697,7 +697,7 @@ export async function loadPromptBody(promptsDir: string, name: string): Promise<
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- src/prompt-files.test.ts && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension test -- src/prompt-files.test.ts && npm run -w crucible-vscode-extension typecheck`
 Expected: all PASS; typecheck clean.
 
 - [ ] **Step 5: Commit**
@@ -750,7 +750,7 @@ it("lists and expands prompt files from the workspace", async () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- src/controller.test.ts -t "prompt files"`
+Run: `npm run -w crucible-vscode-extension test -- src/controller.test.ts -t "prompt files"`
 Expected: FAIL — `controller.listPrompts is not a function`.
 
 - [ ] **Step 3: Implement the methods**
@@ -788,7 +788,7 @@ Add the methods next to `memoryWorkspacePath()`:
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- src/controller.test.ts -t "prompt files" && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension test -- src/controller.test.ts -t "prompt files" && npm run -w crucible-vscode-extension typecheck`
 Expected: PASS; typecheck clean.
 
 - [ ] **Step 5: Commit**
@@ -872,12 +872,12 @@ Concretely, locate the `onSetReviewPref` argument in the `new ChatPanel(` call a
 
 - [ ] **Step 4: Run typecheck to verify the wiring compiles**
 
-Run: `npm run -w @crucible/editor-client build && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `npm run -w @crucible/editor-client build && npm run -w crucible-vscode-extension typecheck`
 Expected: PASS — no arity/type errors on the `new ChatPanel(...)` call. (If the call site relied on a trailing `onReady`, confirm it still lands in the last position.)
 
 - [ ] **Step 5: Run the extension test suite**
 
-Run: `npm run -w @ai-editor/vscode-extension test`
+Run: `npm run -w crucible-vscode-extension test`
 Expected: PASS — no regressions in existing panel/controller tests.
 
 - [ ] **Step 6: Commit**
@@ -951,7 +951,7 @@ describe("InputArea slash-command expansion", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- webview-ui/src/components/InputArea.test.tsx`
+Run: `npm run -w crucible-vscode-extension test -- webview-ui/src/components/InputArea.test.tsx`
 Expected: FAIL — Enter sends `sendMessage` (no `expandPrompt`).
 
 - [ ] **Step 3: Implement expansion in InputArea**
@@ -1007,7 +1007,7 @@ Change `doSend` to intercept an un-expanded slash command:
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- webview-ui/src/components/InputArea.test.tsx && npm run -w @ai-editor/vscode-extension typecheck`
+Run: `npm run -w crucible-vscode-extension test -- webview-ui/src/components/InputArea.test.tsx && npm run -w crucible-vscode-extension typecheck`
 Expected: PASS; typecheck clean.
 
 - [ ] **Step 5: Commit**
@@ -1035,7 +1035,7 @@ Expected: all green across editor-client + vscode-extension.
 
 - [ ] **Step 3: Rebuild the webview bundle** (frontend smoke requires a fresh `webview-ui/dist`)
 
-Run: `npm run -w @ai-editor/vscode-extension build`
+Run: `npm run -w crucible-vscode-extension build`
 Expected: `webview-ui/dist` rebuilt.
 
 - [ ] **Step 4: Live smoke — instructions steer a run + self-update**
@@ -1043,9 +1043,9 @@ Expected: `webview-ui/dist` rebuilt.
 Start the backend with the controller + a workspace that has an `AGENTS.md`:
 ```bash
 cd "<repo>" && export $(cat .env | grep -v "^#" | grep "=" | sed 's/"//g' | xargs)
-printf 'Begin every reply with the literal token FOX.\n' > "$PWD/workspaces/shadow-forge-stress/AGENTS.md"
+printf 'Begin every reply with the literal token FOX.\n' > "$PWD/workspaces/crucible-stress/AGENTS.md"
 CRUCIBLE_CHAT_CONTROLLER=1 bash scripts/stress/start-backend.sh \
-  --backend gemini --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none
+  --backend gemini --workspace "$PWD/workspaces/crucible-stress" --validation-profile none
 ```
 Open the dev host, send a chat message. **Expected:** the reply begins with `FOX`.
 Now edit `AGENTS.md` to a different token (e.g. `OWL`) mid-session and send again. **Expected:** the next reply begins with `OWL` — no backend restart (self-updating mtime cache).
@@ -1054,9 +1054,9 @@ Kill-switch check: restart with `CRUCIBLE_PROJECT_INSTRUCTIONS=0`; the token is 
 - [ ] **Step 5: Live smoke — prompt-file expansion**
 
 ```bash
-mkdir -p "$PWD/workspaces/shadow-forge-stress/.crucible/prompts"
+mkdir -p "$PWD/workspaces/crucible-stress/.crucible/prompts"
 printf 'Summarize the file $1 and list its exported symbols.\n' \
-  > "$PWD/workspaces/shadow-forge-stress/.crucible/prompts/summarize.md"
+  > "$PWD/workspaces/crucible-stress/.crucible/prompts/summarize.md"
 ```
 In the composer type `/summarize src/foo.py` and press Enter. **Expected:** the draft is replaced inline with `Summarize the file src/foo.py and list its exported symbols.`; pressing Enter again sends it.
 

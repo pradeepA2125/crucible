@@ -20,7 +20,7 @@
 - **Async lifecycle (CRITICAL):** `main.py` calls `select_chat_handler` at module level with **no running event loop**. The manager is *constructed* there but *connects* in a FastAPI `startup` event handler. The SDK's transport/session context managers use anyio cancel scopes that must enter/exit **in the same asyncio task** — hence one dedicated `_serve` task per server; never hold these contexts across tasks with an exit stack.
 - **Prompt copy:** no superiority framing — state what MCP tools are and when they shine; never rank them against other tools.
 - **Python env:** `cd services/agentd-py && source .venv/bin/activate` before any pytest. Never pipe pytest (masks exit code).
-- **TS build order:** after any `apps/editor-client` change, `npm run -w @crucible/editor-client build` **before** `npm run -w @ai-editor/vscode-extension typecheck`.
+- **TS build order:** after any `apps/editor-client` change, `npm run -w @crucible/editor-client build` **before** `npm run -w crucible-vscode-extension typecheck`.
 - **Commits:** `type(scope): description`, one logical change each. Do NOT push.
 
 ## File Structure
@@ -1842,7 +1842,7 @@ describe("McpGate", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `npm run -w @ai-editor/vscode-extension test`
+Run: `npm run -w crucible-vscode-extension test`
 Expected: FAIL — cannot resolve `McpGate`
 
 - [ ] **Step 3: Implement webview side**
@@ -1972,7 +1972,7 @@ import { McpGate } from "./messages/gates/McpGate";
 
 ```bash
 npm run build
-npm run -w @ai-editor/vscode-extension test
+npm run -w crucible-vscode-extension test
 npm run typecheck
 ```
 Expected: all green. (If the webview has a separate Vite build script for `webview-ui/dist`, run it too — grep `apps/vscode-extension/package.json` scripts; a stale `webview-ui/dist` is the documented frontend-smoke footgun.)

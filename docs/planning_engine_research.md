@@ -15,18 +15,18 @@
 - **File-system or knowledge-base memory** for persistent context【91†L1-L4】【90†L53-L60】.  
 LangChain’s “Deep Agents” article explicitly lists these components【91†L1-L4】.  For example, Claude Code uses a hidden to-do list tool to structure plans, spawns sub-agents per feature, and treats files (and docs) as memory【91†L1-L4】【90†L53-L60】. In research, agents often operate in a **plan→act→observe→revise** loop with explicit memory storage (e.g. writing intermediate results to files)【90†L93-L102】.
 
-# Analysis: Shadow-Forge vs. These Patterns
+# Analysis: Crucible vs. These Patterns
 
-Shadow-Forge currently uses a **structured Pydantic plan object**. This means plans are **rigidly defined and executed**. In contrast, the above systems treat planning more fluidly:
+Crucible currently uses a **structured Pydantic plan object**. This means plans are **rigidly defined and executed**. In contrast, the above systems treat planning more fluidly:
 
-- **Free-form plan editing:** Cursor/Windsurf let the user edit the plan text (Markdown to-dos). Shadow-Forge’s strict schema doesn’t allow on-the-fly modifications beyond what’s coded.  
-- **Clarifying questions:** Cursor explicitly *asks clarifying questions*. Shadow-Forge’s agent might lack this spontaneous Q&A step.  
-- **Task decompositions:** Codex and deep agents often *spawn sub-agents* or threads for sub-tasks. Shadow-Forge has one linear agent pipeline.  
-- **Memory persistence:** Windsurf and Cline use saved spec/docs as memory across sessions. Shadow-Forge would benefit from a similar memory or task-tracking mechanism.
+- **Free-form plan editing:** Cursor/Windsurf let the user edit the plan text (Markdown to-dos). Crucible’s strict schema doesn’t allow on-the-fly modifications beyond what’s coded.  
+- **Clarifying questions:** Cursor explicitly *asks clarifying questions*. Crucible’s agent might lack this spontaneous Q&A step.  
+- **Task decompositions:** Codex and deep agents often *spawn sub-agents* or threads for sub-tasks. Crucible has one linear agent pipeline.  
+- **Memory persistence:** Windsurf and Cline use saved spec/docs as memory across sessions. Crucible would benefit from a similar memory or task-tracking mechanism.
 
-In sum, Shadow-Forge’s planning is **highly structured but not as flexible**. Industry systems suggest a hybrid approach: start with free-form planning (to capture user intent and ask clarifications), then translate to structured steps for execution.
+In sum, Crucible’s planning is **highly structured but not as flexible**. Industry systems suggest a hybrid approach: start with free-form planning (to capture user intent and ask clarifications), then translate to structured steps for execution.
 
-# Proposed Architecture for Shadow-Forge
+# Proposed Architecture for Crucible
 
 1. **Exploration & Questioning:** Before finalizing a plan, allow the agent to perform open-ended exploration of the codebase. Use LLM queries and retrieval to summarize relevant files and pose clarifying questions. (E.g. “Should we support OAuth only via GitHub or other providers?”) Log these Q&A in the plan.
 
@@ -74,7 +74,7 @@ prior_plan = agentd.load_memory("plan_AddOAuth.md")
 agentd.include_in_prompt(prior_plan)
 ```
 
-# Migrating Shadow-Forge
+# Migrating Crucible
 
 1. **Extend Plan Model:** Update Pydantic models to allow optional free-text or markdown fields for tasks. Possibly use a template for tasks (id, goal, targets, etc.).
 2. **New Plan Step Type:** Add a “PLAN” step that performs the outline phase. Instruct the LLM to output a markdown spec during this step.

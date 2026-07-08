@@ -1145,11 +1145,11 @@ Live check of the production summarizer adapter (the one path unit tests don't c
 export $(cat .env | grep -v "^#" | grep "=" | sed 's/"//g' | xargs)
 CRUCIBLE_MEMORY_ENABLED=1 CRUCIBLE_MEMORY_WINDOW_TOKENS=4000 CRUCIBLE_MEMORY_HOT_TURNS=4 \
 CRUCIBLE_MEMORY_HOT_TOKEN_FRAC=0.4 \
-  bash scripts/stress/start-backend.sh --backend gemini --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none
+  bash scripts/stress/start-backend.sh --backend gemini --workspace "$PWD/workspaces/crucible-stress" --validation-profile none
 # Drive a long chat turn; confirm compaction fires in logs and the DB fills:
-sqlite3 workspaces/shadow-forge-stress/.crucible/state/memory.sqlite3 \
+sqlite3 workspaces/crucible-stress/.crucible/state/memory.sqlite3 \
   "SELECT run_id, version, length(summary_md) FROM anchored_summaries;"
-sqlite3 workspaces/shadow-forge-stress/.crucible/state/memory.sqlite3 \
+sqlite3 workspaces/crucible-stress/.crucible/state/memory.sqlite3 \
   "SELECT run_id, count(*) FROM compaction_segments GROUP BY run_id;"
 ```
 Expected: ≥1 `anchored_summaries` row (`version >= 1`); `compaction_segments` populated; the turn completes coherently on the compacted history.

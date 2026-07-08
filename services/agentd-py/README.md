@@ -1,6 +1,6 @@
 # agentd-py
 
-Python orchestration backend for AI Editor.
+Python orchestration backend for Crucible.
 
 ## Responsibilities
 - Deterministic task lifecycle orchestration

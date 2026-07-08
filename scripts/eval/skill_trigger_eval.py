@@ -14,11 +14,11 @@ under-trigger fix and vice versa):
 Needs: a running backend (CRUCIBLE_CHAT_CONTROLLER=1, SKILLS+DOC_WRITE on)
 serving a workspace with the superpowers skills installed, e.g.
   bash scripts/stress/start-backend.sh --backend turboquant --port 8002 \
-      --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none
+      --workspace "$PWD/workspaces/crucible-stress" --validation-profile none
 Run (venv has httpx):
   python scripts/eval/skill_trigger_eval.py \
       --base-url http://localhost:8002 \
-      --workspace "$PWD/workspaces/shadow-forge-stress"
+      --workspace "$PWD/workspaces/crucible-stress"
 Exit code 0 = both directions pass. Not CI — it drives a live LLM.
 """
 

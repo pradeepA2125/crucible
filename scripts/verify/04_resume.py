@@ -22,7 +22,7 @@ import time
 BASE_URL = os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8000")
 POLL_INTERVAL = 2.0
 TIMEOUT_SEC = 120.0
-STATE_DIR = os.getenv("CRUCIBLE_VERIFY_STATE_DIR", os.path.join("/tmp", "ai-editor-verify-state"))
+STATE_DIR = os.getenv("CRUCIBLE_VERIFY_STATE_DIR", os.path.join("/tmp", "crucible-verify-state"))
 TASK_ID_PATH = os.path.join(STATE_DIR, "current_task_id.txt")
 
 

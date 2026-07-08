@@ -3,10 +3,10 @@
 Updated: March 12, 2026
 
 ## Top-Level Pages
-1. `AI Editor 6-Month Strategy (PRD)`
-2. `AI Editor Architecture Program`
-3. `AI Editor Decision Log (ADR)`
-4. `AI Editor Benchmark and Competitor Review`
+1. `Crucible 6-Month Strategy (PRD)`
+2. `Crucible Architecture Program`
+3. `Crucible Decision Log (ADR)`
+4. `Crucible Benchmark and Competitor Review`
 
 ## Page Templates
 

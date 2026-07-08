@@ -17,7 +17,7 @@ real edge list.
 trace, open-in-editor). Later phases can grow analysis features (metrics overlays,
 history playback). This spec covers v1 only.
 
-**Test workspace:** `workspaces/shadow-forge-stress` (4,328 indexed nodes). The AI
+**Test workspace:** `workspaces/crucible-stress` (4,328 indexed nodes). The AI
 editor monorepo itself (61,730 nodes / 94,697 edges) is the stress reference.
 
 ## Design language
@@ -190,7 +190,7 @@ its package with a toast).
   refresh with one added file moves only local neighborhood.
 - **Component (webview vitest):** HUD components — breadcrumb stack, info card,
   search results, edge-layer toggles (References disabled at L0/L1).
-- **Live smoke (CDP recipe):** against `shadow-forge-stress` — panel opens, stars
+- **Live smoke (CDP recipe):** against `crucible-stress` — panel opens, stars
   render, click star → info card → Open in editor lands on the file, search warps,
   snapshot touch triggers morph.
 

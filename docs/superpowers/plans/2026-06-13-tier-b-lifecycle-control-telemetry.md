@@ -940,9 +940,9 @@ git commit -m "feat: dynamic review pref via /review-pref + live control read; a
 - Modify: `apps/vscode-extension/src/controller.ts`, `src/chat-panel.ts`, `test/controller.test.ts`
 
 - [ ] **Step 1: Write failing controller tests** (stub `ControllerUI`): Stop during execution posts `abortTask(taskId, {revert})` for both choices; review checkbox toggle posts `setReviewPref`; `pollThreadLiveState` forwards `failure_summary`→`renderLiveError(detail)` and `run_summary`→`renderLiveReview`.
-- [ ] **Step 2: Run** `npm run -w @ai-editor/vscode-extension test` → FAIL.
+- [ ] **Step 2: Run** `npm run -w crucible-vscode-extension test` → FAIL.
 - [ ] **Step 3: Implement**: `abortActiveTask(revert)`, `setReviewPref(autoAccept)`; in `pollThreadLiveState`, read `live.failure_summary`/`live.run_summary` and pass to `renderLiveError`/`renderLiveReview` (replacing ephemeral `runDeviations`/`lastStepStarted` as source-of-truth, keep as live supplement). New ChatPanel inbound branches `abortTask`, `setReviewPref`.
-- [ ] **Step 4: typecheck + test** `npm run -w @ai-editor/vscode-extension typecheck && npm run -w @ai-editor/vscode-extension test` → PASS.
+- [ ] **Step 4: typecheck + test** `npm run -w crucible-vscode-extension typecheck && npm run -w crucible-vscode-extension test` → PASS.
 - [ ] **Step 5: Commit** `feat(extension): abort keep/revert, review-pref, durable error/review cards`.
 
 ### Task 14: webview-ui — Stop keep/revert, ReviewCard Finish/Discard, ErrorCard durable, dynamic checkbox

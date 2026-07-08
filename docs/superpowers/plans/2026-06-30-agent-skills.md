@@ -1214,7 +1214,7 @@ describe("slash suggestions", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm run -w @ai-editor/vscode-extension test -- InputArea`
+Run: `npm run -w crucible-vscode-extension test -- InputArea`
 Expected: FAIL — `mergeSlashSuggestions`/`resolveSlashSelection` not exported.
 
 - [ ] **Step 3: Implement the pure helpers (InputArea.tsx)**
@@ -1261,8 +1261,8 @@ In the `InputArea` component, when the user selects a `/` suggestion, call `reso
 Run:
 ```bash
 npm run -w @crucible/editor-client build
-npm run -w @ai-editor/vscode-extension test -- InputArea
-npm run -w @ai-editor/vscode-extension typecheck
+npm run -w crucible-vscode-extension test -- InputArea
+npm run -w crucible-vscode-extension typecheck
 npm run build
 ```
 Expected: PASS + clean typecheck/build.

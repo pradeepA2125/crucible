@@ -28,7 +28,7 @@ import pytest
 from agentd.retrieval.graph_walker import GraphWalker
 
 _LIVE_WORKSPACE = Path(
-    "/Users/pradeepkumar/projects/AI editor/workspaces/shadow-forge-stress"
+    "/Users/pradeepkumar/projects/AI editor/workspaces/crucible-stress"
 )
 _LIVE_SNAPSHOT = _LIVE_WORKSPACE / ".crucible" / "index-snapshot.json"
 

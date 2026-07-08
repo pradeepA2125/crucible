@@ -86,7 +86,7 @@ export default function Hero({ onOpenPalette }: { onOpenPalette: () => void }) {
           {...rise(0.55)}
           className="mt-8 max-w-xl text-lg text-ink-2 leading-relaxed"
         >
-          Shadow Forge is an AI code editor that explores your repo, proposes
+          Crucible is an AI code editor that explores your repo, proposes
           before it acts, and edits an isolated{" "}
           <span className="text-ink">shadow workspace</span> — your code only
           changes when you hit accept.

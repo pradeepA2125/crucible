@@ -1084,7 +1084,7 @@ git commit -m "feat(chat): API routes — GET/POST /v1/chat/threads, GET /v1/cha
 - [ ] Start backend and confirm chat endpoints respond
 
 ```bash
-bash scripts/stress/start-backend.sh --backend gemini --workspace "$PWD/workspaces/shadow-forge-stress"
+bash scripts/stress/start-backend.sh --backend gemini --workspace "$PWD/workspaces/crucible-stress"
 
 # List threads (empty at start)
 curl -s "http://localhost:8000/v1/chat/threads?workspace=/path/to/ws" | python3 -m json.tool

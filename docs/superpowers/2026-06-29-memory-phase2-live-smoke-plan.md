@@ -27,9 +27,9 @@ export $(cat .env | grep -v '^#' | grep '=' | sed 's/"//g' | xargs)
 export CRUCIBLE_MEMORY_ENABLED=1
 export CRUCIBLE_MEMORY_WINDOW_TOKENS=84000   # 0.65 trigger ≈ 54.6k — makes compaction fire fast
 bash scripts/stress/start-backend.sh --backend turboquant \
-  --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none
+  --workspace "$PWD/workspaces/crucible-stress" --validation-profile none
 ```
-- Workspace: **`shadow-forge-stress`** (outside ignored-dir ancestors; ~4.3k indexed nodes).
+- Workspace: **`crucible-stress`** (outside ignored-dir ancestors; ~4.3k indexed nodes).
 - Confirm `CRUCIBLE_CHAT_CONTROLLER=1` (memory requires the controller path).
 - DB to watch: `services/agentd-py/.crucible/state/memory.sqlite3` (or workspace `.crucible/state/memory.sqlite3` —
   confirm which the process opens via `CRUCIBLE_MEMORY_DB_PATH`).
@@ -47,7 +47,7 @@ sqlite3 .crucible/state/memory.sqlite3 "SELECT count(*) FROM vec_memories; SELEC
 # logs
 tail -f .tmp/stress-*/logs/agentd.log | grep -iE "\[memory\]|compacted|consolidat|recall|sqlite-vec"
 # per-turn artifacts (recalled_memories should appear in user_payload TAIL)
-ls workspaces/shadow-forge-stress/.crucible/state/artifacts/chat/<thread>/<turn>/controller-turn-*.json
+ls workspaces/crucible-stress/.crucible/state/artifacts/chat/<thread>/<turn>/controller-turn-*.json
 ```
 
 ---

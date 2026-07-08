@@ -726,7 +726,7 @@ def function_c():
                         file="test.py",
                         diff="""@@ -1,2 +1,3 @@
  # Module header
-+# Author: AI Editor
++# Author: Crucible
  import os
 @@ -4,2 +5,3 @@
  def function_a():
@@ -746,7 +746,7 @@ def function_c():
             assert result.touched_files == ["test.py"]
             
             content = test_file.read_text()
-            assert "# Author: AI Editor" in content
+            assert "# Author: Crucible" in content
             assert "# Implementation A" in content
             assert "# Implementation C" in content
 

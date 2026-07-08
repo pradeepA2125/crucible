@@ -857,7 +857,7 @@ export function LiveSlot({ liveGate, livePlan, liveReview, liveError }: Props) {
 - [ ] **Step 2: HistoryView.tsx** — Rev 1 structure restyled per frame 1 (`.hrow`, `.hgroup`, `.search`):
   - Day-group labels (Today / Yesterday / This week / older) computed from `createdAt`; relative timestamp line per row (`tabular-nums`).
   - Active row: surface bg + inset 2px violet left bar (`shadow-[inset_2px_0_0_var(--color-accent)]`); hover lifts chevron color/translate.
-  - Header: gradient violet logo tile (`i-spark`) + "AI Editor" + `+ New Chat` violet-outline button.
+  - Header: gradient violet logo tile (`i-spark`) + "Crucible" + `+ New Chat` violet-outline button.
   - Search filters client-side (keep Rev 1 logic), `i-search` icon, focus ring accent.
   - **Deferred to v2 (needs backend):** message counts and Running/Review/Done status chips shown in the mockup — `ChatThreadSummary` doesn't carry them and per-thread /live polling for the list is too chatty. Note it; don't fake it.
 
@@ -1032,7 +1032,7 @@ async resumeTaskById(taskId: string, stage: "plan" | "execute"): Promise<void> {
 - [ ] **Step 1: root package.json** — webview-ui is not a workspace; extend explicitly:
 
 ```json
-"test": "npm run -w @crucible/editor-client test && npm run -w @ai-editor/vscode-extension test && npm --prefix apps/vscode-extension/webview-ui test",
+"test": "npm run -w @crucible/editor-client test && npm run -w crucible-vscode-extension test && npm --prefix apps/vscode-extension/webview-ui test",
 "typecheck": "<existing> && npm --prefix apps/vscode-extension/webview-ui run typecheck"
 ```
 
@@ -1043,7 +1043,7 @@ async resumeTaskById(taskId: string, stage: "plan" | "execute"): Promise<void> {
 - [ ] **Step 3: dev-host smoke test** (backend running via `start-backend.sh`):
 
 ```bash
-code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/shadow-forge-stress"
+code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/crucible-stress"
 ```
 
 Walk the full matrix:

@@ -12,7 +12,7 @@
 
 # Absolute shared cargo target dir.
 indexer_target_dir() {
-  printf '%s' "${CRUCIBLE_INDEXER_TARGET_DIR:-$HOME/.cache/ai-editor/indexer-target}"
+  printf '%s' "${CRUCIBLE_INDEXER_TARGET_DIR:-$HOME/.cache/crucible/indexer-target}"
 }
 
 # Absolute path to the release binary inside the shared target dir.

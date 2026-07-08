@@ -9,14 +9,14 @@ Usage:
 Defaults:
   workspace: repository root
   base-url:  http://127.0.0.1:8000
-  out-dir:   ${TMPDIR:-/tmp}/ai-editor-runs
+  out-dir:   ${TMPDIR:-/tmp}/crucible-runs
 USAGE
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKSPACE="$ROOT"
 BASE_URL="http://127.0.0.1:8000"
-OUT_DIR="${TMPDIR:-/tmp}/ai-editor-runs"
+OUT_DIR="${TMPDIR:-/tmp}/crucible-runs"
 GOAL=""
 AUTO_ACCEPT="0"
 

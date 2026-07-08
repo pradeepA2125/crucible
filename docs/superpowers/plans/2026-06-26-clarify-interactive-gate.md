@@ -794,7 +794,7 @@ Run:
 ```bash
 npm run -w @crucible/editor-client build
 cd apps/vscode-extension/webview-ui && npx tsc --noEmit && npx vitest run && cd -
-npm run -w @ai-editor/vscode-extension typecheck
+npm run -w crucible-vscode-extension typecheck
 cd apps/vscode-extension/webview-ui && npm run build && cd -
 ```
 Expected: all clean; webview-ui suite green; fresh `dist/` written.

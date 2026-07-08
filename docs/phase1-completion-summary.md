@@ -7,7 +7,7 @@
 
 ## Overview
 
-Phase 1 of the AI Editor implementation plan has been successfully completed. All planned features for enhanced patch operations have been implemented, tested, and integrated into the codebase.
+Phase 1 of the Crucible implementation plan has been successfully completed. All planned features for enhanced patch operations have been implemented, tested, and integrated into the codebase.
 
 ## Implemented Features
 

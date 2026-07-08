@@ -489,7 +489,7 @@ export class ChatPanel {
     }
     this.panel = vscode.window.createWebviewPanel(
       "crucibleChat",
-      "AI Editor Chat",
+      "Crucible Chat",
       vscode.ViewColumn.Beside,
       { enableScripts: true, retainContextWhenHidden: true }
     );
@@ -729,7 +729,7 @@ export class ChatPanel {
 - [ ] **Step 2: Verify it compiles**
 
 ```bash
-npm run -w @ai-editor/vscode-extension typecheck
+npm run -w crucible-vscode-extension typecheck
 ```
 Expected: no errors in `chat-panel.ts`
 
@@ -882,7 +882,7 @@ describe("AiEditorController — chat", () => {
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-npm run -w @ai-editor/vscode-extension test
+npm run -w crucible-vscode-extension test
 ```
 Expected: `Property 'sendChatMessage' does not exist on type 'AiEditorController'` and type errors on missing `ControllerUI` methods
 
@@ -1111,8 +1111,8 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
 - [ ] **Step 6: Run tests**
 
 ```bash
-npm run -w @ai-editor/vscode-extension test
-npm run -w @ai-editor/vscode-extension typecheck
+npm run -w crucible-vscode-extension test
+npm run -w crucible-vscode-extension typecheck
 ```
 Expected: all pass
 
@@ -1164,7 +1164,7 @@ const ui: ControllerUI = {
   getWorkspacePath: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
   promptForGoal: () =>
     vscode.window.showInputBox({
-      prompt: "Describe what you want AI Editor to do",
+      prompt: "Describe what you want Crucible to do",
       placeHolder: "Example: Refactor auth middleware to support refresh tokens",
       ignoreFocusOut: true,
     }),
@@ -1283,7 +1283,7 @@ git commit -m "feat(chat): wire ChatPanel into extension — openChat command, f
 
 ```bash
 npm run build
-code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/shadow-forge-stress"
+code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/crucible-stress"
 ```
 
 - [ ] Run `Crucible: Open Chat` from command palette (`Cmd+Shift+P`)

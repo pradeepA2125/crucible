@@ -40,7 +40,7 @@ class ShadowWorkspaceManager:
         ignore_patterns: Sequence[str] | None = None,
         checkpoint_retention_tasks: int = 20,
     ) -> None:
-        self._root_path = (root_path or Path(tempfile.gettempdir()) / "ai-editor-shadow").resolve()
+        self._root_path = (root_path or Path(tempfile.gettempdir()) / "crucible-shadow").resolve()
         self._ignore_patterns = tuple(ignore_patterns or DEFAULT_IGNORE_PATTERNS)
         self._checkpoint_retention_tasks = max(1, checkpoint_retention_tasks)
         self._root_path.mkdir(parents=True, exist_ok=True)

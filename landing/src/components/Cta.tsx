@@ -9,7 +9,7 @@ export function Cta() {
       <div className="relative mx-auto max-w-3xl px-5 sm:px-8 text-center">
         <Reveal>
           <h2 className="text-5xl sm:text-6xl lg:text-7xl font-medium tracking-tight leading-[1.02]">
-            Fork the <Em>forge.</Em>
+            Fork the <Em>crucible.</Em>
           </h2>
         </Reveal>
         <Reveal delay={0.12}>
@@ -30,7 +30,7 @@ export function Cta() {
                 className="btn-glow inline-flex items-center gap-2.5 rounded-xl px-7 py-3.5 text-[15px] font-medium text-white"
               >
                 <GitHubIcon className="w-4.5 h-4.5" />
-                shadow-forge on GitHub
+                crucible on GitHub
               </a>
             </div>
             <p className="font-mono text-[11px] text-ink-4 tracking-wide">
@@ -50,7 +50,7 @@ export function Footer() {
         <div className="flex items-center gap-2.5">
           <LogoGlyph className="w-5 h-5" />
           <span className="font-mono text-xs text-ink-4">
-            shadow-forge — an open-source AI code editor
+            crucible — an open-source AI code editor
           </span>
         </div>
         <div className="flex items-center gap-6 font-mono text-xs text-ink-4">

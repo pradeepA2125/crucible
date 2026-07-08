@@ -93,11 +93,11 @@
 
 ## Results log
 
-### 2026-06-14 — env set up + Run A executed (worktree build, turboquant/qwen3.6, :8001, shadow-forge-stress)
+### 2026-06-14 — env set up + Run A executed (worktree build, turboquant/qwen3.6, :8001, crucible-stress)
 Driving via Playwright **CDP frame-eval** (`page.frames()` → `fake.html` webview frame) — the a11y snapshot can't pierce the sandboxed webview; this matches the repo's `drive-chat.js`.
 
 **Verified live (worktree extension + worktree backend):**
-- Env: worktree `EXT_PATH` dev-host on :9335 + worktree agentd-py backend on :8001 (Tier B routes present), real indexed `shadow-forge-stress`.
+- Env: worktree `EXT_PATH` dev-host on :9335 + worktree agentd-py backend on :8001 (Tier B routes present), real indexed `crucible-stress`.
 - Tier A history enrichment chips (Review/Running/Failed) + counts + dates render.
 - Composer **"Review each step"** toggle present and **stays enabled during EXECUTING** (Tier B dynamic checkbox).
 - Full `large_change` pipeline: explore → classify → **plan card (Implement/Give feedback)** → approve → execution **work-bar timer** + `✓ Plan approved` breadcrumb → **step gates (Accept)** + **command gates (Allow once, shell-policy=ask)** + step diff records ("Changes ready / Applied") → READY_FOR_REVIEW.
@@ -138,7 +138,7 @@ Driving via Playwright **CDP frame-eval** (`page.frames()` → `fake.html` webvi
 
 ### 2026-06-14 (sess.3) — re-smoke of the `8bcaa87` fixes (4 of 5 verified live) + stale-dist finding
 
-**🐞 BIG smoke-found finding — the dev-host was running a STALE `webview-ui/dist`.** The dist was built `Jun 14 01:56`, but the `8bcaa87` frontend fixes (InputArea/ErrorCard) landed `12:42`/committed `12:48`. So the FIRST re-smoke attempt showed the OLD UI: the aborted ErrorCard still offered **Resume**, and the composer had both Send+Stop. **`8bcaa87`'s "all webview tests green" never reflected the running dev-host UI** — the dist is a gitignored build artifact and wasn't rebuilt. Fix: `npm run -w @ai-editor/vscode-extension webview:build` (or `webview:build`) BEFORE smoking, then Reload Window. (Operational note, not a code bug — but it's why frontend fixes must be re-smoked after a rebuild, never trusted from unit green.)
+**🐞 BIG smoke-found finding — the dev-host was running a STALE `webview-ui/dist`.** The dist was built `Jun 14 01:56`, but the `8bcaa87` frontend fixes (InputArea/ErrorCard) landed `12:42`/committed `12:48`. So the FIRST re-smoke attempt showed the OLD UI: the aborted ErrorCard still offered **Resume**, and the composer had both Send+Stop. **`8bcaa87`'s "all webview tests green" never reflected the running dev-host UI** — the dist is a gitignored build artifact and wasn't rebuilt. Fix: `npm run -w crucible-vscode-extension webview:build` (or `webview:build`) BEFORE smoking, then Reload Window. (Operational note, not a code bug — but it's why frontend fixes must be re-smoked after a rebuild, never trusted from unit green.)
 
 **Verified live AFTER the rebuild (backend :8001 — workspace `.vscode/settings.json` pins it; turboquant/qwen3.6):**
 - **Scenario 1 — inline new-file 0-diff (`8bcaa87`): ✅ VERIFIED.** Goal "Create a new file src/greeting.py with hello(name)" classified `small_change` → inline → diff card **"Changes ready +2 −0 1 file"** (non-empty; old bug was +0 −0 0 files). Discarded cleanly.

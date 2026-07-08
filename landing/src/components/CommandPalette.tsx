@@ -32,7 +32,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
       { id: "shadow", group: "fly to", label: "The shadow workspace", run: jump("#shadow") },
       { id: "lifecycle", group: "fly to", label: "The reactive loop", run: jump("#lifecycle") },
       { id: "features", group: "fly to", label: "Features", run: jump("#features") },
-      { id: "fresh", group: "fly to", label: "Recently forged", run: jump("#fresh") },
+      { id: "fresh", group: "fly to", label: "Recently cast", run: jump("#fresh") },
       { id: "opensource", group: "fly to", label: "Open source", run: jump("#opensource") },
       { id: "install", group: "fly to", label: "Install", run: jump("#install") },
     ];
