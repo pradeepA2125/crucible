@@ -71,6 +71,13 @@ def build_gopls_binaries(
     out_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    # Check Go version first
+    version_result = run_cmd(
+        ["go", "version"],
+        check=False, capture_output=True, text=True,
+    )
+    print(f"Go version: {version_result.stdout}")
+
     run_cmd(
         ["go", "mod", "init", "gopls-build-shim"],
         cwd=work_dir, check=True, capture_output=True, text=True,
@@ -93,8 +100,9 @@ def build_gopls_binaries(
         # Debug: list work_dir before build
         work_contents = sorted([p.name for p in work_dir.iterdir()])
         
+        # Use -x to trace commands, -v for verbose output
         result = run_cmd(
-            ["go", "build", "-v", "-o", str(dest), "golang.org/x/tools/gopls"],
+            ["go", "build", "-x", "-v", "-o", str(dest), "golang.org/x/tools/gopls"],
             cwd=work_dir, check=False, capture_output=True, text=True,
             env=env,
         )
