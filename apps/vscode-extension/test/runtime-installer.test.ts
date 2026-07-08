@@ -17,6 +17,7 @@ function manifest(): RuntimeManifest {
       agentd: { version: "0.1.0" },
       indexer: { version: "0.1.0", urls: { "darwin-arm64": "https://r/ix" }, sha256: { "darwin-arm64": sha } },
       ripgrep: { version: "14.1.0", urls: { "darwin-arm64": "https://r/rg" }, sha256: { "darwin-arm64": sha } },
+      "rust-analyzer": { version: "2026-07-06", urls: { "darwin-arm64": "https://r/ra" }, sha256: { "darwin-arm64": sha } },
       lsps: { version: "1", npmPackages: ["pyright@1.1.400", "typescript-language-server@4.3.3"] },
     },
   };
@@ -37,13 +38,14 @@ function deps(overrides: Partial<InstallerDeps> = {}): InstallerDeps & { calls: 
 }
 
 describe("RuntimeInstaller", () => {
-  it("happy path installs all five components and writes runtime.json", async () => {
+  it("happy path installs all six components and writes runtime.json", async () => {
     const d = deps();
     const result = await new RuntimeInstaller(d).installAll();
     expect(result.ok).toBe(true);
     expect(result.components.map((c) => c.status)).toEqual(
-      ["done", "done", "done", "done", "done"]);
+      ["done", "done", "done", "done", "done", "done"]);
     expect(existsSync(join(d.runtimeDir, "bin", "uv"))).toBe(true);
+    expect(existsSync(join(d.runtimeDir, "bin", "rust-analyzer"))).toBe(true);
     expect(d.calls.some(([c, a]) => c.endsWith("uv") && a === "venv")).toBe(true);
     const state = JSON.parse(readFileSync(join(d.runtimeDir, "runtime.json"), "utf8"));
     expect(state.releaseTag).toBe("v0.1.0");

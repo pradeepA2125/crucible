@@ -23,9 +23,9 @@ export interface ComponentProgress { id: ComponentId; status: ComponentStatus; d
 export interface InstallResult { ok: boolean; components: ComponentProgress[] }
 
 // Order matters: agentd needs uv on disk first.
-const ORDER: ComponentId[] = ["uv", "agentd", "indexer", "ripgrep", "lsps"];
+const ORDER: ComponentId[] = ["uv", "agentd", "indexer", "ripgrep", "rust-analyzer", "lsps"];
 const BIN_NAME: Partial<Record<ComponentId, string>> = {
-  uv: "uv", indexer: "ai-editor-indexer", ripgrep: "rg",
+  uv: "uv", indexer: "ai-editor-indexer", ripgrep: "rg", "rust-analyzer": "rust-analyzer",
 };
 
 export function binPath(runtimeDir: string, name: string, platform: PlatformKey = platformKey()): string {

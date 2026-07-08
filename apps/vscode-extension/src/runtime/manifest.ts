@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 
 export type PlatformKey = "darwin-arm64" | "darwin-x64" | "linux-x64" | "win32-x64";
-export type ComponentId = "uv" | "agentd" | "indexer" | "ripgrep" | "lsps";
+export type ComponentId = "uv" | "agentd" | "indexer" | "ripgrep" | "rust-analyzer" | "lsps";
 
 export interface ComponentSpec {
   version: string;
