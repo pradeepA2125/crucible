@@ -127,7 +127,7 @@ Key env vars:
 - Edge cases: Unicode, special characters, complex indentation, CRLF line endings
 - Error handling: Invalid operations, missing files, malformed diffs
 
-**Next**: Run Phase 1 gate report (`ai-editor-eval phase1-gate-report`) to validate 70% failure reduction target
+**Next**: Run Phase 1 gate report (`crucible-eval phase1-gate-report`) to validate 70% failure reduction target
 
 ### Roadmap
 - [x] **Phase 0**: Eval harness and deterministic replay bundles

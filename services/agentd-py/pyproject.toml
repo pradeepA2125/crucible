@@ -1,5 +1,5 @@
 [project]
-name = "ai-editor-agentd"
+name = "crucible-agentd"
 version = "0.2.0"
 description = "Python orchestration backend for AI Editor"
 readme = "README.md"
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ai-editor-eval = "agentd.eval.cli:main"
+crucible-eval = "agentd.eval.cli:main"
 
 [project.optional-dependencies]
 semantic = [

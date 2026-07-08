@@ -1657,7 +1657,7 @@ Layout under `runtimeDir`: `bin/uv[.exe]`, `bin/ai-editor-indexer[.exe]`, `bin/r
 
 Component behaviors (order matters — agentd needs uv):
 1. **uv**: download platform url → verify → write `bin/uv`, chmod 0o755. Skip when state version matches and file exists.
-2. **agentd**: `exec(uv, ["venv", "<runtimeDir>/venv", "--python", "3.12"])` then `exec(uv, ["pip", "install", "--python", venvPython(dir), "ai-editor-agentd==<version>"])` — the release wheel is on PyPI-or-release-URL; when `urls.any` is set, install that URL instead of the pinned name.
+2. **agentd**: `exec(uv, ["venv", "<runtimeDir>/venv", "--python", "3.12"])` then `exec(uv, ["pip", "install", "--python", venvPython(dir), "crucible-agentd==<version>"])` — the release wheel is on PyPI-or-release-URL; when `urls.any` is set, install that URL instead of the pinned name.
 3. **indexer** / **ripgrep**: download → verify → write `bin/<name>`, chmod.
 4. **lsps**: if `!hasNode()` → status `skipped`, detail `"Node.js not found — code-graph edges degraded"`; else `exec("npm", ["install", "--prefix", runtimeDir, ...npmPackages])`.
 
@@ -1888,7 +1888,7 @@ export class RuntimeInstaller {
       const uv = binPath(this.deps.runtimeDir, "uv", this.platform);
       const venv = await this.deps.exec(uv, ["venv", join(this.deps.runtimeDir, "venv"), "--python", "3.12"]);
       if (venv.code !== 0) throw new Error(`uv venv failed: ${venv.stderr.slice(0, 400)}`);
-      const target = spec.urls?.any ?? `ai-editor-agentd==${spec.version}`;
+      const target = spec.urls?.any ?? `crucible-agentd==${spec.version}`;
       const pip = await this.deps.exec(
         uv, ["pip", "install", "--python", venvPython(this.deps.runtimeDir, this.platform), target]);
       if (pip.code !== 0) throw new Error(`uv pip install failed: ${pip.stderr.slice(0, 400)}`);
@@ -2725,7 +2725,7 @@ git commit -m "chore(extension): commands, configuration, and marketplace manife
 - Test: `scripts/release/test_make_manifest.py` (run by path: `cd services/agentd-py && pytest ../../scripts/release/test_make_manifest.py`)
 
 **Interfaces:**
-- Produces: `build_manifest(release_tag: str, dist_dir: Path, url_base: str) -> dict` scanning `dist_dir` for the conventional artifact names below and emitting the Task 8 `RuntimeManifest` JSON shape (camelCase keys). CLI: `python scripts/release/make_manifest.py --release-tag vX --dist DIR --url-base URL --out manifest.json`. Artifact naming convention (CI produces exactly these): `ai-editor-indexer-<platform>[.exe]`, `rg-<platform>[.exe]`, `uv-<platform>[.exe]` with `<platform>` ∈ the four keys; `ai_editor_agentd-<ver>-py3-none-any.whl`. Versions: binaries from `--component-version name=ver` repeatable flags; agentd version parsed from the wheel filename; `lsps` pinned via `--lsp-packages "pyright@X,typescript-language-server@Y"`.
+- Produces: `build_manifest(release_tag: str, dist_dir: Path, url_base: str) -> dict` scanning `dist_dir` for the conventional artifact names below and emitting the Task 8 `RuntimeManifest` JSON shape (camelCase keys). CLI: `python scripts/release/make_manifest.py --release-tag vX --dist DIR --url-base URL --out manifest.json`. Artifact naming convention (CI produces exactly these): `ai-editor-indexer-<platform>[.exe]`, `rg-<platform>[.exe]`, `uv-<platform>[.exe]` with `<platform>` ∈ the four keys; `crucible_agentd-<ver>-py3-none-any.whl`. Versions: binaries from `--component-version name=ver` repeatable flags; agentd version parsed from the wheel filename; `lsps` pinned via `--lsp-packages "pyright@X,typescript-language-server@Y"`.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -2751,7 +2751,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     _touch(tmp_path, "ai-editor-indexer-win32-x64.exe")
     _touch(tmp_path, "rg-win32-x64.exe")
     _touch(tmp_path, "uv-win32-x64.exe")
-    _touch(tmp_path, "ai_editor_agentd-0.2.0-py3-none-any.whl")
+    _touch(tmp_path, "crucible_agentd-0.2.0-py3-none-any.whl")
 
     m = build_manifest(
         "v0.2.0", tmp_path, "https://gh/rel/v0.2.0",
@@ -2765,7 +2765,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     assert ix["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
     agentd = m["components"]["agentd"]
     assert agentd["version"] == "0.2.0"
-    assert agentd["urls"]["any"].endswith("ai_editor_agentd-0.2.0-py3-none-any.whl")
+    assert agentd["urls"]["any"].endswith("crucible_agentd-0.2.0-py3-none-any.whl")
     assert m["components"]["lsps"]["npmPackages"] == [
         "pyright@1.1.400", "typescript-language-server@4.3.3"]
 

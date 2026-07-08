@@ -6,7 +6,7 @@ Artifact naming convention (CI produces exactly these):
   ai-editor-indexer-<platform>[.exe]
   rg-<platform>[.exe]
   uv-<platform>[.exe]
-  ai_editor_agentd-<version>-py3-none-any.whl
+  crucible_agentd-<version>-py3-none-any.whl
 
 <platform> is one of: darwin-arm64, darwin-x64, linux-x64, win32-x64.
 """
@@ -28,7 +28,7 @@ _BINARY_COMPONENTS = (
     ("rust-analyzer", "rust-analyzer"),
 )
 
-_WHEEL_RE = re.compile(r"^ai_editor_agentd-(?P<version>.+)-py3-none-any\.whl$")
+_WHEEL_RE = re.compile(r"^crucible_agentd-(?P<version>.+)-py3-none-any\.whl$")
 
 
 def _artifact_name(prefix: str, platform: str) -> str:
@@ -40,10 +40,10 @@ def _sha256_file(path: Path) -> str:
 
 
 def _find_wheel(dist_dir: Path) -> Path:
-    for path in sorted(dist_dir.glob("ai_editor_agentd-*-py3-none-any.whl")):
+    for path in sorted(dist_dir.glob("crucible_agentd-*-py3-none-any.whl")):
         return path
     raise FileNotFoundError(
-        f"no ai_editor_agentd-*-py3-none-any.whl found in {dist_dir}")
+        f"no crucible_agentd-*-py3-none-any.whl found in {dist_dir}")
 
 
 def build_manifest(

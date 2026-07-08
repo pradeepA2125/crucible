@@ -92,27 +92,27 @@ export CRUCIBLE_GROQ_MODEL=openai/gpt-oss-120b
 ## Phase 0 evaluation commands
 ```bash
 # 1) Seed/freeze benchmark corpus manifest
-ai-editor-eval init-corpus-manifest \
+crucible-eval init-corpus-manifest \
   --workspace-root /path/to/workspaces \
   --output /path/to/repo/docs/benchmarks/benchmark-corpus.v1.json \
   --freeze
 
 # 2) Export deterministic replay bundle for a task from SQLite
-ai-editor-eval export-bundle \
+crucible-eval export-bundle \
   --db-path /path/to/repo/services/agentd-py/.agentd/agentd.sqlite3 \
   --task-id task-123 \
   --output /tmp/benchmarks/bundle.task-123.json
 
 # 3) Replay/verify deterministic bundle fingerprint
-ai-editor-eval replay-bundle \
+crucible-eval replay-bundle \
   --bundle /tmp/benchmarks/bundle.task-123.json
 
 # 4) Produce score + weekly report from bundles directory
-ai-editor-eval score --bundles-root /tmp/benchmarks
-ai-editor-eval weekly-report --bundles-root /tmp/benchmarks
+crucible-eval score --bundles-root /tmp/benchmarks
+crucible-eval weekly-report --bundles-root /tmp/benchmarks
 
 # 5) Phase 1 reliability gate (baseline vs current)
-ai-editor-eval phase1-gate-report \
+crucible-eval phase1-gate-report \
   --baseline-bundles-root /tmp/benchmarks/baseline \
   --bundles-root /tmp/benchmarks/current
 ```

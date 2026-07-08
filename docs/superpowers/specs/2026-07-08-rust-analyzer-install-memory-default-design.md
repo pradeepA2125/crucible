@@ -132,8 +132,8 @@ sufficient to change real behavior everywhere.
   panel doesn't show both toggles "off" while the engine actually runs with
   memory on, which would otherwise be a UI lie.
 - **`apps/vscode-extension/src/runtime/installer.ts`**: the `agentd` install
-  step's pip-install target changes from `ai-editor-agentd==<version>` to
-  `ai-editor-agentd[memory]==<version>`, so `sentence-transformers`/`numpy`
+  step's pip-install target changes from `crucible-agentd==<version>` to
+  `crucible-agentd[memory]==<version>`, so `sentence-transformers`/`numpy`
   (and PyTorch, transitively) actually land. Without this, the flag would be
   on but the embedder would silently degrade (Phase 1 compaction — LLM-only —
   would work; Phase 2 recall/consolidation would silently no-op). This is a

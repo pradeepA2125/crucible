@@ -113,7 +113,7 @@ def _cmd_phase1_gate_report(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ai-editor-eval")
+    parser = argparse.ArgumentParser(prog="crucible-eval")
     sub = parser.add_subparsers(dest="command", required=True)
 
     manifest = sub.add_parser("init-corpus-manifest")

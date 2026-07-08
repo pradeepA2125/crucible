@@ -237,7 +237,7 @@ class SemanticIndex:
             except ImportError as exc:
                 raise RuntimeError(
                     "sentence-transformers is required for semantic retrieval. "
-                    "Install with: pip install 'ai-editor-agentd[semantic]'"
+                    "Install with: pip install 'crucible-agentd[semantic]'"
                 ) from exc
         return self._model
 
@@ -253,7 +253,7 @@ class SemanticIndex:
         except ImportError as exc:
             raise RuntimeError(
                 "lancedb is required for semantic retrieval. "
-                "Install with: pip install 'ai-editor-agentd[semantic]'"
+                "Install with: pip install 'crucible-agentd[semantic]'"
             ) from exc
 
         index_path.mkdir(parents=True, exist_ok=True)

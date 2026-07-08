@@ -157,7 +157,7 @@ unidiff = "^0.7.5"  # Unified diff parsing library
 ### 1. Benchmark Validation
 **Task:** Run Phase 1 implementation against failure corpus  
 **Goal:** Validate 70% reduction in syntax/indent/anchor-drift failures  
-**Command:** `ai-editor-eval phase1-gate-report`
+**Command:** `crucible-eval phase1-gate-report`
 
 ### 2. Fallback Strategy (Optional)
 **Section:** 1.5 in implementation plan  

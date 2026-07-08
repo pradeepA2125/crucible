@@ -27,7 +27,7 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 
 **Remaining**
 - [ ] Benchmark validation: confirm 70% reduction in syntax/indent/anchor-drift failures
-- [ ] Run `ai-editor-eval phase1-gate-report`
+- [ ] Run `crucible-eval phase1-gate-report`
 
 ---
 

@@ -306,7 +306,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     _touch(tmp_path, "rg-win32-x64.exe")
     _touch(tmp_path, "uv-win32-x64.exe")
     _touch(tmp_path, "rust-analyzer-win32-x64.exe")
-    _touch(tmp_path, "ai_editor_agentd-0.2.0-py3-none-any.whl")
+    _touch(tmp_path, "crucible_agentd-0.2.0-py3-none-any.whl")
 
     m = build_manifest(
         "v0.2.0", tmp_path, "https://gh/rel/v0.2.0",
@@ -328,7 +328,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     assert ra["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
     agentd = m["components"]["agentd"]
     assert agentd["version"] == "0.2.0"
-    assert agentd["urls"]["any"].endswith("ai_editor_agentd-0.2.0-py3-none-any.whl")
+    assert agentd["urls"]["any"].endswith("crucible_agentd-0.2.0-py3-none-any.whl")
     assert m["components"]["lsps"]["npmPackages"] == [
         "pyright@1.1.400", "typescript-language-server@4.3.3"]
 ```
@@ -902,7 +902,7 @@ Add to `apps/vscode-extension/test/runtime-installer.test.ts`, inside the `descr
     await new RuntimeInstaller(d).installAll();
     const pipCall = d.calls.find((call) => call.includes("pip"));
     expect(pipCall).toBeDefined();
-    expect(pipCall![pipCall!.length - 1]).toBe("ai-editor-agentd[memory]==0.1.0");
+    expect(pipCall![pipCall!.length - 1]).toBe("crucible-agentd[memory]==0.1.0");
   });
 
   it("agentd install wraps a manifest wheel URL with the [memory] extra as a PEP 508 direct reference", async () => {
@@ -912,14 +912,14 @@ Add to `apps/vscode-extension/test/runtime-installer.test.ts`, inside the `descr
     const pipCall = d.calls.find((call) => call.includes("pip"));
     expect(pipCall).toBeDefined();
     expect(pipCall![pipCall!.length - 1]).toBe(
-      "ai-editor-agentd[memory] @ https://example.com/pkg.whl");
+      "crucible-agentd[memory] @ https://example.com/pkg.whl");
   });
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `npm run -w crucible-vscode-extension test -- runtime-installer`
-Expected: both new tests FAIL — today's target is `ai-editor-agentd==0.1.0` (no extra) for the first, and the raw URL with no `[memory]` wrapping for the second.
+Expected: both new tests FAIL — today's target is `crucible-agentd==0.1.0` (no extra) for the first, and the raw URL with no `[memory]` wrapping for the second.
 
 - [ ] **Step 3: Update the agentd install target construction**
 
@@ -930,7 +930,7 @@ In `apps/vscode-extension/src/runtime/installer.ts`, inside `installOne`'s `agen
       const uv = binPath(this.deps.runtimeDir, "uv", this.platform);
       const venv = await this.deps.exec(uv, ["venv", join(this.deps.runtimeDir, "venv"), "--python", "3.12"]);
       if (venv.code !== 0) throw new Error(`uv venv failed: ${venv.stderr.slice(0, 400)}`);
-      const target = spec.urls?.any ?? `ai-editor-agentd==${spec.version}`;
+      const target = spec.urls?.any ?? `crucible-agentd==${spec.version}`;
       const pip = await this.deps.exec(
         uv, ["pip", "install", "--python", venvPython(this.deps.runtimeDir, this.platform), target]);
       if (pip.code !== 0) throw new Error(`uv pip install failed: ${pip.stderr.slice(0, 400)}`);
@@ -950,8 +950,8 @@ to:
       // instead of silently degrading its embedder. PEP 508 direct-reference syntax
       // ("name[extra] @ url") is required to combine an extras marker with a URL install.
       const target = spec.urls?.any
-        ? `ai-editor-agentd[memory] @ ${spec.urls.any}`
-        : `ai-editor-agentd[memory]==${spec.version}`;
+        ? `crucible-agentd[memory] @ ${spec.urls.any}`
+        : `crucible-agentd[memory]==${spec.version}`;
       const pip = await this.deps.exec(
         uv, ["pip", "install", "--python", venvPython(this.deps.runtimeDir, this.platform), target]);
       if (pip.code !== 0) throw new Error(`uv pip install failed: ${pip.stderr.slice(0, 400)}`);
@@ -1067,7 +1067,7 @@ Change line 548 from:
 to:
 
 ```
-- `CRUCIBLE_MEMORY_ENABLED` — master switch, default **ON** since 2026-07-08 (truthy = `1/true/yes/on`; set to `0/false/no/off` to disable). When off, `prepare_turn` is a byte-identical passthrough. (Phase-2 recall/consolidation additionally needs a workspace scope, which the factories pass.) The managed runtime installer (`apps/vscode-extension/src/runtime/installer.ts`) installs the `ai-editor-agentd[memory]` extra (pulls in `sentence-transformers`/PyTorch, ~500MB-1GB+) specifically so this default works out of the box instead of silently degrading the embedder.
+- `CRUCIBLE_MEMORY_ENABLED` — master switch, default **ON** since 2026-07-08 (truthy = `1/true/yes/on`; set to `0/false/no/off` to disable). When off, `prepare_turn` is a byte-identical passthrough. (Phase-2 recall/consolidation additionally needs a workspace scope, which the factories pass.) The managed runtime installer (`apps/vscode-extension/src/runtime/installer.ts`) installs the `crucible-agentd[memory]` extra (pulls in `sentence-transformers`/PyTorch, ~500MB-1GB+) specifically so this default works out of the box instead of silently degrading the embedder.
 ```
 
 Change line 587 from:

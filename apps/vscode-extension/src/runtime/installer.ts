@@ -126,8 +126,8 @@ export class RuntimeInstaller {
       // instead of silently degrading its embedder. PEP 508 direct-reference syntax
       // ("name[extra] @ url") is required to combine an extras marker with a URL install.
       const target = spec.urls?.any
-        ? `ai-editor-agentd[memory] @ ${spec.urls.any}`
-        : `ai-editor-agentd[memory]==${spec.version}`;
+        ? `crucible-agentd[memory] @ ${spec.urls.any}`
+        : `crucible-agentd[memory]==${spec.version}`;
       const pip = await this.deps.exec(
         uv, ["pip", "install", "--python", venvPython(this.deps.runtimeDir, this.platform), target]);
       if (pip.code !== 0) throw new Error(`uv pip install failed: ${pip.stderr.slice(0, 400)}`);

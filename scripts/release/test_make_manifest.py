@@ -20,7 +20,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     _touch(tmp_path, "rg-win32-x64.exe")
     _touch(tmp_path, "uv-win32-x64.exe")
     _touch(tmp_path, "rust-analyzer-win32-x64.exe")
-    _touch(tmp_path, "ai_editor_agentd-0.2.0-py3-none-any.whl")
+    _touch(tmp_path, "crucible_agentd-0.2.0-py3-none-any.whl")
 
     m = build_manifest(
         "v0.2.0", tmp_path, "https://gh/rel/v0.2.0",
@@ -42,7 +42,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     assert ra["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
     agentd = m["components"]["agentd"]
     assert agentd["version"] == "0.2.0"
-    assert agentd["urls"]["any"].endswith("ai_editor_agentd-0.2.0-py3-none-any.whl")
+    assert agentd["urls"]["any"].endswith("crucible_agentd-0.2.0-py3-none-any.whl")
     assert m["components"]["lsps"]["npmPackages"] == [
         "pyright@1.1.400", "typescript-language-server@4.3.3"]
 

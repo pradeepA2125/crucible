@@ -151,7 +151,7 @@ if _bool_env("CRUCIBLE_SEMANTIC_RETRIEVAL", False):
         _logging.getLogger(__name__).warning(
             "CRUCIBLE_SEMANTIC_RETRIEVAL=true but lancedb/sentence-transformers not installed; "
             "falling back to graph-only retrieval. "
-            "Install with: pip install 'ai-editor-agentd[semantic]'"
+            "Install with: pip install 'crucible-agentd[semantic]'"
         )
 
 retrieval_client = RetrievalArtifactClient.from_env(
