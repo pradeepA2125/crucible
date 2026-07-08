@@ -1805,7 +1805,7 @@ git commit -m "feat(mcp): editor-client contracts — mcp_tool gate kind, decisi
 
 **Interfaces:**
 - Consumes: `postChatMcpDecision` + `McpToolDecision` (Task 8), gate payload `{server, tool, args}` (Task 5).
-- Produces: webview message `{ type: "mcpDecision", threadId, approve, remember }`; `AiEditorController.handleMcpDecisionFromChat(threadId, decision)`.
+- Produces: webview message `{ type: "mcpDecision", threadId, approve, remember }`; `CrucibleController.handleMcpDecisionFromChat(threadId, decision)`.
 
 - [ ] **Step 1: Write the failing webview test**
 

@@ -15,7 +15,7 @@ import * as path from "path";
 import { describe, expect, test } from "vitest";
 
 import {
-  AiEditorController,
+  CrucibleController,
   type ControllerUI,
   type LiveGateView,
   type LivePlanView,
@@ -254,7 +254,7 @@ function createSettings(): SettingsProvider {
   };
 }
 
-describe("AiEditorController", () => {
+describe("CrucibleController", () => {
   test("startTask submits expected workspace path and mode", async () => {
     const state: StubBackendState = {
       submitPayloads: [],
@@ -267,7 +267,7 @@ describe("AiEditorController", () => {
     const backend = createStubBackend(state);
     const store = new MemorySessionStore();
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend,
       store,
       createSettings(),
@@ -308,7 +308,7 @@ describe("AiEditorController", () => {
       updatedAt: "2026-03-03T00:00:00.000Z",
     };
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend,
       store,
       createSettings(),
@@ -354,7 +354,7 @@ describe("AiEditorController", () => {
       },
     };
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend,
       store,
       createSettings(),
@@ -393,7 +393,7 @@ describe("AiEditorController", () => {
       updatedAt: "2026-03-03T00:00:00.000Z",
     };
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend,
       store,
       createSettings(),
@@ -448,7 +448,7 @@ describe("AiEditorController", () => {
     };
 
     const store = new MemorySessionStore();
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend,
       store,
       createSettings(),
@@ -477,7 +477,7 @@ describe("AiEditorController", () => {
 
 });
 
-describe("AiEditorController — chat", () => {
+describe("CrucibleController — chat", () => {
   test("sendChatMessage appends user message and streams agent response", async () => {
     const appendedMessages: Array<{ role: string; content: string }> = [];
     const chunks: string[] = [];
@@ -510,7 +510,7 @@ describe("AiEditorController — chat", () => {
     };
 
     const store = new MemorySessionStore();
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => chatBackend,
       store,
       createSettings(),
@@ -554,7 +554,7 @@ describe("AiEditorController — chat", () => {
     };
 
     const store = new MemorySessionStore();
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => chatBackend,
       store,
       createSettings(),
@@ -603,7 +603,7 @@ describe("AiEditorController — chat", () => {
     };
 
     const store = new MemorySessionStore();
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => chatBackend,
       store,
       createSettings(),
@@ -642,7 +642,7 @@ describe("AiEditorController — chat", () => {
     };
 
     const store = new MemorySessionStore();
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => editBackend,
       store,
       createSettings(),
@@ -660,7 +660,7 @@ describe("AiEditorController — chat", () => {
   });
 });
 
-describe("AiEditorController — tool-event pairing & orphan handling", () => {
+describe("CrucibleController — tool-event pairing & orphan handling", () => {
   test("results pair with their matching source; orphan result after finally-clear is dropped", async () => {
     // IDs assigned by forwardToolCall, keyed by source, so we can verify cross-source pairing.
     const toolEventIds: number[] = [];
@@ -693,7 +693,7 @@ describe("AiEditorController — tool-event pairing & orphan handling", () => {
     };
 
     const store = new MemorySessionStore();
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => turn1Backend, store, createSettings(),
       createUi({
         appendToolEvent: (e) => { toolEventIds.push(e.id); },
@@ -721,7 +721,7 @@ describe("AiEditorController — tool-event pairing & orphan handling", () => {
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
       },
     };
-    const controller2 = new AiEditorController(
+    const controller2 = new CrucibleController(
       () => turn2Backend, store, createSettings(),
       createUi({
         appendToolResult: (id) => { strayResultIds.push(id); },
@@ -739,7 +739,7 @@ describe("AiEditorController — tool-event pairing & orphan handling", () => {
   });
 });
 
-describe("AiEditorController — abort handling", () => {
+describe("CrucibleController — abort handling", () => {
   test("AbortError is swallowed; non-abort error re-enables input and is surfaced via showError", async () => {
     let inputEnabledFinalValue: boolean | undefined;
     const errors: string[] = [];
@@ -764,7 +764,7 @@ describe("AiEditorController — abort handling", () => {
       },
     };
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => abortBackend, new MemorySessionStore(), createSettings(),
       createUi({
         showError: (msg) => errors.push(msg),
@@ -792,7 +792,7 @@ describe("AiEditorController — abort handling", () => {
       },
     };
     let finalEnabled2: boolean | undefined;
-    const controller2 = new AiEditorController(
+    const controller2 = new CrucibleController(
       () => nonAbortBackend, new MemorySessionStore(), createSettings(),
       createUi({
         setChatInputEnabled: (enabled) => { finalEnabled2 = enabled; },
@@ -807,7 +807,7 @@ describe("AiEditorController — abort handling", () => {
   });
 });
 
-describe("AiEditorController — deviation capture", () => {
+describe("CrucibleController — deviation capture", () => {
   test("scope breadcrumb is captured; accepted-step breadcrumb is not", async () => {
     const taskId = "task-dev-1";
 
@@ -829,7 +829,7 @@ describe("AiEditorController — deviation capture", () => {
       },
     };
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => breadcrumbBackend, new MemorySessionStore(), createSettings(),
       createUi(),
       { openDiff: async () => {} },
@@ -844,7 +844,7 @@ describe("AiEditorController — deviation capture", () => {
   });
 });
 
-describe("AiEditorController — resume streaming", () => {
+describe("CrucibleController — resume streaming", () => {
   const resumeBackend = (
     onStream: (taskId: string) => void,
     events: Array<{ type: string; payload: Record<string, unknown> }>,
@@ -876,7 +876,7 @@ describe("AiEditorController — resume streaming", () => {
       updateWorkbar: (info) => workbars.push(info as { stepIndex?: number } | null),
       appendChatMessage: (m) => messages.push(m),
     });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async () => {} },
       () => "2026-06-13T00:00:00.000Z"
@@ -896,7 +896,7 @@ describe("AiEditorController — resume streaming", () => {
     const backend = resumeBackend((id) => streamed.push(id), [
       { type: "done", payload: {} },
     ]);
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async () => {} },
       () => "2026-06-13T00:00:00.000Z"
@@ -909,7 +909,7 @@ describe("AiEditorController — resume streaming", () => {
   });
 });
 
-describe("AiEditorController — command-decision", () => {
+describe("CrucibleController — command-decision", () => {
   test("handleCommandDecisionFromChat posts the decision to the backend", async () => {
     const sent: Array<{ taskId: string; decision: CommandDecision }> = [];
     const backend: BackendTaskClient = {
@@ -930,7 +930,7 @@ describe("AiEditorController — command-decision", () => {
       backendBaseUrl: "http://127.0.0.1:8000",
       updatedAt: "2026-05-28T00:00:00.000Z",
     };
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend,
       store,
       createSettings(),
@@ -972,7 +972,7 @@ describe("AiEditorController — command-decision", () => {
         chatSent.push({ threadId, decision });
       },
     };
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z"
@@ -1013,7 +1013,7 @@ describe("AiEditorController — command-decision", () => {
       stopChatTurn: async () => ({ ok: true }),
     };
     const ui = createUi({ appendChatMessage: (m) => messages.push(m) });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z"
@@ -1042,7 +1042,7 @@ describe("AiEditorController — command-decision", () => {
       stopChatTurn: async () => ({ ok: false }),
     };
     const ui = createUi({ appendChatMessage: (m) => messages.push(m) });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z"
@@ -1076,7 +1076,7 @@ describe("AiEditorController — command-decision", () => {
       clearLivePlan: () => { planClears += 1; },
     });
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z"
@@ -1129,7 +1129,7 @@ describe("AiEditorController — command-decision", () => {
     const ui = createUi({
       sendLiveStatus: (_status, turnActive) => { turnActives.push(turnActive); },
     });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z"
@@ -1176,7 +1176,7 @@ describe("AiEditorController — command-decision", () => {
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
       },
     };
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1215,7 +1215,7 @@ describe("AiEditorController — command-decision", () => {
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
       },
     };
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1250,7 +1250,7 @@ describe("AiEditorController — command-decision", () => {
     const planRenders: LivePlanView[] = [];
     const ui = createUi({ renderLivePlan: (plan) => { planRenders.push(plan); } });
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z"
@@ -1304,7 +1304,7 @@ describe("AiEditorController — command-decision", () => {
       sendLiveStatus: (status) => { liveStatuses.push(status); },
     });
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => reviewBackend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1343,7 +1343,7 @@ describe("AiEditorController — command-decision", () => {
       clearLiveError: () => { errorClears += 1; },
     });
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => failedBackend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1364,7 +1364,7 @@ describe("AiEditorController — command-decision", () => {
       ...failedBackend,
       getThreadLiveState: async () => ({ activeTaskId: null, status: null, pendingGate: null, plan: null, turnActive: false }),
     };
-    const controller2 = new AiEditorController(
+    const controller2 = new CrucibleController(
       () => okBackend, new MemorySessionStore(), createSettings(),
       createUi({ clearLiveError: () => { errorClears2 += 1; } }),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
@@ -1393,7 +1393,7 @@ describe("AiEditorController — command-decision", () => {
       },
     };
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => happyBackend, new MemorySessionStore(), createSettings(),
       createUi({ showInfo: (m) => { infos.push(m); } }),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
@@ -1409,7 +1409,7 @@ describe("AiEditorController — command-decision", () => {
       ...happyBackend,
       acceptPatch: async () => { throw Object.assign(new Error("conflict"), { status: 409 }); },
     };
-    const controller2 = new AiEditorController(
+    const controller2 = new CrucibleController(
       () => conflictBackend, new MemorySessionStore(), createSettings(),
       createUi({ showError: (m) => { errors.push(m); } }),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
@@ -1430,7 +1430,7 @@ describe("AiEditorController — command-decision", () => {
       liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, plan: null, turnActive: false },
     };
     const backend = createStubBackend(state);
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1449,7 +1449,7 @@ describe("AiEditorController — command-decision", () => {
       liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, plan: null, turnActive: false },
     };
     const backend = createStubBackend(state);
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1484,7 +1484,7 @@ describe("AiEditorController — command-decision", () => {
       } as TaskResult),
     };
     const ui = createUi({ renderLiveReview: (r) => { reviewRendered = r; } });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1518,7 +1518,7 @@ describe("AiEditorController — command-decision", () => {
     };
     const reviews: Array<Parameters<ControllerUI["renderLiveReview"]>[0]> = [];
     const ui = createUi({ renderLiveReview: (r) => { reviews.push(r); } });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1558,7 +1558,7 @@ describe("AiEditorController — command-decision", () => {
       } as TaskResult),
     };
     const ui = createUi({ renderLiveReview: (r) => { reviewRendered = r; } });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1584,7 +1584,7 @@ describe("AiEditorController — command-decision", () => {
       }),
     };
     const ui = createUi({ renderLiveError: (e) => { errorRendered = e; } });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1612,7 +1612,7 @@ describe("AiEditorController — command-decision", () => {
       }),
     };
     const ui = createUi({ renderLiveError: (e) => { errorRendered = e; } });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1632,7 +1632,7 @@ describe("AiEditorController — command-decision", () => {
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
     };
     const backend = createStubBackend(state);
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(),
       createUi({ showInfo: (m) => { infos.push(m); } }),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
@@ -1664,7 +1664,7 @@ describe("AiEditorController — command-decision", () => {
       },
     };
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => slowBackend, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1688,7 +1688,7 @@ describe("AiEditorController — command-decision", () => {
         return NULL_LIVE_STATE;
       },
     };
-    const controller2 = new AiEditorController(
+    const controller2 = new CrucibleController(
       () => slowBackend2, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1728,7 +1728,7 @@ describe("AiEditorController — command-decision", () => {
       },
     };
 
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => retryBackend, new MemorySessionStore(), createSettings(), createUi(),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
@@ -1756,7 +1756,7 @@ describe("AiEditorController — command-decision", () => {
       getResultCalls: [],
       planFeedbackCalls: [],
     };
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => createStubBackend(state),
       new MemorySessionStore(),
       createSettings(),
@@ -1776,7 +1776,7 @@ describe("AiEditorController — command-decision", () => {
   });
 });
 
-describe("AiEditorController.openChat — setup routing (first-run gap)", () => {
+describe("CrucibleController.openChat — setup routing (first-run gap)", () => {
   const emptyState = (): StubBackendState => ({
     submitPayloads: [],
     getTaskCalls: [],
@@ -1796,7 +1796,7 @@ describe("AiEditorController.openChat — setup routing (first-run gap)", () => 
         chatOpened = true;
       },
     });
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => backend,
       new MemorySessionStore(),
       createSettings(),

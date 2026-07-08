@@ -4,7 +4,7 @@
 
 **Goal:** Build the VS Code chat panel WebView, plan card UI with "Implement Plan" button, and inline diff card for small changes — wiring the frontend to the `ChatAgent` backend from Plan 1.
 
-**Architecture:** A new `ChatPanel` class (mirrors `ReviewPanel` pattern) owns the sidebar WebView. The `AiEditorController` grows chat methods. The editor client adds `sendChatMessage()`, `listChatThreads()`, `getChatThread()`, and `streamPatchEvents()`. Plan cards and diff cards are special message types rendered inline in the conversation thread.
+**Architecture:** A new `ChatPanel` class (mirrors `ReviewPanel` pattern) owns the sidebar WebView. The `CrucibleController` grows chat methods. The editor client adds `sendChatMessage()`, `listChatThreads()`, `getChatThread()`, and `streamPatchEvents()`. Plan cards and diff cards are special message types rendered inline in the conversation thread.
 
 **Tech Stack:** TypeScript, VS Code WebView API, existing `HttpBackendClient` + Zod contract pattern, SSE streaming from `sendChatMessage()`.
 
@@ -18,7 +18,7 @@ The following issues were identified in a codebase review before implementation 
 
 1. **`streamPatch` API mismatch** — existing `streamPatch` is callback-based; a new `streamPatchEvents(taskId): AsyncIterable<PatchStreamEvent>` method is added alongside it (does not replace it).
 2. **`task.result?.modifiedFiles` → `task.modifiedFiles`** — `getTask()` returns `TaskView` with `modifiedFiles` directly on it; no `.result` wrapper.
-3. **`this.client` / `this.workspacePath` don't exist in `AiEditorController`** — replaced throughout with `this.createClient(this.settings.getBackendBaseUrl())` and `this.ui.getWorkspacePath() ?? ""`.
+3. **`this.client` / `this.workspacePath` don't exist in `CrucibleController`** — replaced throughout with `this.createClient(this.settings.getBackendBaseUrl())` and `this.ui.getWorkspacePath() ?? ""`.
 4. **`this.chatClient!` typo** — same fix as #3.
 5. **Tests used MSW** — no MSW in project; all tests use `fetchFn` mock pattern with inline `Response` / `ReadableStream`.
 6. **`BackendTaskClient` stub in `controller.test.ts` must be extended** with all new chat methods or typecheck fails.
@@ -760,7 +760,7 @@ Key corrections from review:
 Add to `apps/vscode-extension/test/controller.test.ts` after the closing brace of the main `describe` block:
 
 ```typescript
-describe("AiEditorController — chat", () => {
+describe("CrucibleController — chat", () => {
   test("sendChatMessage appends user message and streams agent response", async () => {
     const appendedMessages: Array<{ role: string; content: string }> = [];
     const chunks: string[] = [];
@@ -793,7 +793,7 @@ describe("AiEditorController — chat", () => {
     };
 
     const store = new MemorySessionStore();
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => chatBackend,
       store,
       createSettings(),
@@ -849,7 +849,7 @@ describe("AiEditorController — chat", () => {
     };
 
     const store = new MemorySessionStore();
-    const controller = new AiEditorController(
+    const controller = new CrucibleController(
       () => chatBackend,
       store,
       createSettings(),
@@ -884,7 +884,7 @@ describe("AiEditorController — chat", () => {
 ```bash
 npm run -w crucible-vscode-extension test
 ```
-Expected: `Property 'sendChatMessage' does not exist on type 'AiEditorController'` and type errors on missing `ControllerUI` methods
+Expected: `Property 'sendChatMessage' does not exist on type 'CrucibleController'` and type errors on missing `ControllerUI` methods
 
 - [ ] **Step 3: Add new `ControllerUI` methods**
 
@@ -915,7 +915,7 @@ import type {
 } from "@crucible/editor-client";
 ```
 
-- [ ] **Step 4: Add chat state and methods to `AiEditorController`**
+- [ ] **Step 4: Add chat state and methods to `CrucibleController`**
 
 Add private field after existing fields:
 

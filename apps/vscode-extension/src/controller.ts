@@ -117,7 +117,7 @@ export interface DiffService {
 
 export type BackendClientFactory = (baseUrl: string) => BackendTaskClient;
 
-export class AiEditorController {
+export class CrucibleController {
   private session: TaskSessionState | null = null;
   private latestTask: TaskView | null = null;
   private latestResult: TaskResult | null = null;

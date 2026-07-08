@@ -2127,7 +2127,7 @@ Expected: all pass including 2 new tests
 
 - [ ] **Step 5: Add `diff_ready` / `task_card` handling to `controller.ts`**
 
-In `apps/vscode-extension/src/controller.ts`, add `applyInlineChange` and `discardInlineChange` methods to `AiEditorController`:
+In `apps/vscode-extension/src/controller.ts`, add `applyInlineChange` and `discardInlineChange` methods to `CrucibleController`:
 
 ```typescript
 async applyInlineChange(taskId: string): Promise<void> {

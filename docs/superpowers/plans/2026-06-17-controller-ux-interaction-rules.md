@@ -1441,7 +1441,7 @@ git commit -m "feat(extension): plumb turnActive into webview AppState; nav-lock
 
 **Files:**
 - Modify: `apps/vscode-extension/src/controller.ts:1140-1142` (`stopActiveTurn`) and `switchChatThread`/mount + `pollThreadLiveState`
-- Test: extend the extension controller test suite if present (`grep -rl "AiEditorController" src/**/*.test.ts`).
+- Test: extend the extension controller test suite if present (`grep -rl "CrucibleController" src/**/*.test.ts`).
 
 - [ ] **Step 1: Stop posts `/stop`**
 

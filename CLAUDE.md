@@ -155,7 +155,7 @@ Concurrency guards: `_in_flight_feedback` and `_in_flight_resume` are closure-sc
 - `editor-client/src/contracts/task-contracts.ts` — canonical Zod schemas + `BackendTaskClient` interface + `StreamEvent` discriminated union (covers both task SSE and chat SSE events); source of truth for all API shapes
 - `editor-client/src/client/http-backend-client.ts` — `HttpBackendClient`: snake_case↔camelCase mapping, all API calls
 - `editor-client/src/domain/` — `types.ts`, `schemas.ts`, `task-state.ts`
-- `vscode-extension/src/controller.ts` — `AiEditorController`: orchestrates all user actions; pure business logic, no VS Code API dependencies
+- `vscode-extension/src/controller.ts` — `CrucibleController`: orchestrates all user actions; pure business logic, no VS Code API dependencies
 - `vscode-extension/src/extension.ts` — VS Code activation, command registration, wires controller to UI
 - `vscode-extension/src/review-panel.ts` — WebView panel for task review
 

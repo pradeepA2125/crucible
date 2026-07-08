@@ -204,7 +204,7 @@ metadata: { taskId: string }
 
 ---
 
-#### `AiEditorController.applyInlineChange(taskId)` / `discardInlineChange(taskId)`
+#### `CrucibleController.applyInlineChange(taskId)` / `discardInlineChange(taskId)`
 
 - **Apply:** `POST /v1/chat/inline-changes/{taskId}/promote` → writes temp files to real workspace, updates `ChatThread.touched_files`, adds "Changes applied to N files" agent message to thread
 - **Discard:** `DELETE /v1/chat/inline-changes/{taskId}` → deletes temp dir, adds "Change discarded" agent message to thread

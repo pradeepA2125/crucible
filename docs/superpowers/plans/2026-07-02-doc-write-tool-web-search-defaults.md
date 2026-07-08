@@ -849,7 +849,7 @@ git commit -m "feat(chat): editor-client contracts — doc_write gate kind, deci
 
 **Interfaces:**
 - Consumes: `postChatDocDecision` + `DocWriteDecision` (Task 4), gate payload `{path, exists, preview}` (Task 2).
-- Produces: webview message `{ type: "docDecision", threadId, approve }`; `AiEditorController.handleDocDecisionFromChat(threadId, decision)`.
+- Produces: webview message `{ type: "docDecision", threadId, approve }`; `CrucibleController.handleDocDecisionFromChat(threadId, decision)`.
 
 - [ ] **Step 1: Write the failing webview tests**
 

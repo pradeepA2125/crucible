@@ -6,7 +6,7 @@ import { ChatPanel } from "./chat-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
 import { GraphPanel } from "./graph-panel.js";
 import {
-  AiEditorController,
+  CrucibleController,
   type BackendClientFactory,
   type ControllerUI,
 } from "./controller.js";
@@ -82,7 +82,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   }
 
-  let controller: AiEditorController;
+  let controller: CrucibleController;
 
   // Composer model quick-swap: the current provider + the set of providers with a
   // stored key (offered for hot-swap). Rebuilt after every swap.
@@ -334,7 +334,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
   );
 
-  controller = new AiEditorController(clientFactory, sessionStore, settings, ui, {
+  controller = new CrucibleController(clientFactory, sessionStore, settings, ui, {
     openDiff: openReviewDiff,
   });
 

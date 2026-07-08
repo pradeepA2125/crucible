@@ -2447,7 +2447,7 @@ git commit -m "feat(webview): setup wizard reskin — StepRail progress, CardShe
   - Webview→host messages: `{ type: "listModels" }`, `{ type: "setModel"; backend: string; model: string }`, `{ type: "openSettings" }`.
   - Host→webview replies: `{ type: "modelList"; current: { backend; model } | null; options: ModelOption[] }`, `{ type: "modelSwapError"; message: string }`.
   - `RuntimeManager.getProviderKey(backend: string): Promise<string | undefined>`
-  - `AiEditorController.configClient(): BackendTaskClient` (public; body: `return this.createClient(this.settings.getBackendBaseUrl())` — same session-independent pattern as the private `memoryClient()`).
+  - `CrucibleController.configClient(): BackendTaskClient` (public; body: `return this.createClient(this.settings.getBackendBaseUrl())` — same session-independent pattern as the private `memoryClient()`).
 
 - [ ] **Step 1: Write the failing test**
 

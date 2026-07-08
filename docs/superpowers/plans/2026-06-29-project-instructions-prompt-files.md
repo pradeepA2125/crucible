@@ -717,14 +717,14 @@ git commit -m "feat(prompt-files): vscode-free substitute/parse/list/load helper
 
 **Interfaces:**
 - Consumes: `listPromptNames`, `loadPromptBody`, `substitutePrompt` (Task 5); `this.memoryWorkspacePath()` (existing, returns the workspace path or "").
-- Produces on `AiEditorController`:
+- Produces on `CrucibleController`:
   - `listPrompts(): Promise<string[]>`
   - `expandPrompt(name: string, args: string): Promise<{ found: boolean; text: string }>`
 
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
-// append to the existing controller test file (mirror its setup of AiEditorController
+// append to the existing controller test file (mirror its setup of CrucibleController
 // with a stub ControllerUI whose getWorkspacePath() returns a real tmp dir).
 import { promises as fsp } from "fs";
 import * as os from "os";
@@ -746,7 +746,7 @@ it("lists and expands prompt files from the workspace", async () => {
 });
 ```
 
-> NOTE: reuse the existing test's controller-construction helper. If none exists, construct `AiEditorController` exactly as the other tests in that file do, with a stub `ControllerUI` returning `ws` from `getWorkspacePath()`. The two new methods depend only on `memoryWorkspacePath()`, so no backend/session setup is needed.
+> NOTE: reuse the existing test's controller-construction helper. If none exists, construct `CrucibleController` exactly as the other tests in that file do, with a stub `ControllerUI` returning `ws` from `getWorkspacePath()`. The two new methods depend only on `memoryWorkspacePath()`, so no backend/session setup is needed.
 
 - [ ] **Step 2: Run to verify failure**
 
