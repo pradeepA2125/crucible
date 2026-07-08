@@ -60,9 +60,9 @@ export default function Nav({ onOpenPalette }: { onOpenPalette: () => void }) {
       <nav className="mx-auto max-w-6xl px-5 sm:px-8 h-16 flex items-center justify-between">
         <a href="#top" className="flex items-center gap-2.5">
           <LogoGlyph className="w-7 h-7" />
-          <span className="text-[15px] tracking-tight">
-            <span className="font-semibold">cru</span>
-            <span className="font-serif italic text-accent-ink text-[17px]">cible</span>
+          <span className="text-[17px] tracking-tight">
+            <span className="font-semibold text-ink">cru</span>
+            <span className="font-serif italic text-accent-ink text-[19px]">cible</span>
           </span>
         </a>
 

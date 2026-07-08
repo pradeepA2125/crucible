@@ -69,7 +69,7 @@ export default function Hero({ onOpenPalette }: { onOpenPalette: () => void }) {
         <motion.div {...rise(0.25)} className="flex">
           <span className="inline-flex items-center gap-2 rounded-full border border-accent/25 bg-accent/8 px-4 py-1.5 font-mono text-[11px] tracking-[0.22em] uppercase text-accent-ink backdrop-blur-sm">
             <span className="w-1.5 h-1.5 rounded-full bg-green animate-pulse" />
-            open source · bring your own model
+            crucible · open source · bring your own model
           </span>
         </motion.div>
 
@@ -86,7 +86,8 @@ export default function Hero({ onOpenPalette }: { onOpenPalette: () => void }) {
           {...rise(0.55)}
           className="mt-8 max-w-xl text-lg text-ink-2 leading-relaxed"
         >
-          Crucible is an AI code editor that explores your repo, proposes
+          <span className="text-ink font-semibold">Crucible</span> is an AI
+          code editor that explores your repo, proposes
           before it acts, and edits an isolated{" "}
           <span className="text-ink">shadow workspace</span> — your code only
           changes when you hit accept.
