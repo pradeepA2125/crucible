@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Every binary component's sha256 is computed automatically by `make_manifest.py` from staged bytes — never hand-pin a checksum.
-- The exact rust-analyzer release tag to pin in CI is chosen at implementation time (this plan uses `2026-06-30` as the concrete value to write into `release.yml`/local dev fixtures — bump it to whatever the actual latest `rust-lang/rust-analyzer` release tag is when this ships).
+- The exact rust-analyzer release tag to pin in CI is chosen at implementation time (this plan uses `2026-07-06` as the concrete value to write into `release.yml`/local dev fixtures — bump it to whatever the actual latest `rust-lang/rust-analyzer` release tag is when this ships).
 - `AI_EDITOR_MEMORY_ENABLED`/`AI_EDITOR_MEMORY_RERANKER` keep kill-switch semantics: explicitly setting either to `0`/`false`/`no`/`off` must still disable it after this change.
 - Follow existing test patterns exactly (table-driven fixtures in `test_fetch_tools.py`/`test_make_manifest.py`/`runtime-installer.test.ts` — extend, don't restructure).
 
@@ -74,9 +74,9 @@ def test_rust_analyzer_asset_name_and_url_conventions() -> None:
     assert rust_analyzer_asset_name("linux-x64") == "rust-analyzer-x86_64-unknown-linux-gnu.gz"
     assert rust_analyzer_asset_name("darwin-arm64") == "rust-analyzer-aarch64-apple-darwin.gz"
     assert rust_analyzer_asset_name("win32-x64") == "rust-analyzer-x86_64-pc-windows-msvc.zip"
-    assert rust_analyzer_download_url("2026-06-30", "darwin-arm64") == (
+    assert rust_analyzer_download_url("2026-07-06", "darwin-arm64") == (
         "https://github.com/rust-lang/rust-analyzer/releases/download/"
-        "2026-06-30/rust-analyzer-aarch64-apple-darwin.gz")
+        "2026-07-06/rust-analyzer-aarch64-apple-darwin.gz")
 
 
 def test_uv_and_ripgrep_staging_still_use_tar_gz_on_posix() -> None:
@@ -236,7 +236,7 @@ def main() -> None:
     parser.add_argument("--rg", required=True, help="ripgrep release tag, e.g. 14.1.1")
     parser.add_argument(
         "--rust-analyzer", required=True,
-        help="rust-analyzer release tag, e.g. 2026-06-30")
+        help="rust-analyzer release tag, e.g. 2026-07-06")
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
 
@@ -312,7 +312,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
         "v0.2.0", tmp_path, "https://gh/rel/v0.2.0",
         component_versions={
             "indexer": "0.2.0", "ripgrep": "14.1.0", "uv": "0.5.0",
-            "rust-analyzer": "2026-06-30",
+            "rust-analyzer": "2026-07-06",
         },
         lsp_packages=["pyright@1.1.400", "typescript-language-server@4.3.3"],
     )
@@ -322,7 +322,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     assert ix["urls"]["win32-x64"].endswith(".exe")
     assert ix["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
     ra = m["components"]["rust-analyzer"]
-    assert ra["version"] == "2026-06-30"
+    assert ra["version"] == "2026-07-06"
     assert ra["urls"]["darwin-arm64"] == "https://gh/rel/v0.2.0/rust-analyzer-darwin-arm64"
     assert ra["urls"]["win32-x64"].endswith(".exe")
     assert ra["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
@@ -405,7 +405,7 @@ function manifest(): RuntimeManifest {
       agentd: { version: "0.1.0" },
       indexer: { version: "0.1.0", urls: { "darwin-arm64": "https://r/ix" }, sha256: { "darwin-arm64": sha } },
       ripgrep: { version: "14.1.0", urls: { "darwin-arm64": "https://r/rg" }, sha256: { "darwin-arm64": sha } },
-      "rust-analyzer": { version: "2026-06-30", urls: { "darwin-arm64": "https://r/ra" }, sha256: { "darwin-arm64": sha } },
+      "rust-analyzer": { version: "2026-07-06", urls: { "darwin-arm64": "https://r/ra" }, sha256: { "darwin-arm64": sha } },
       lsps: { version: "1", npmPackages: ["pyright@1.1.400", "typescript-language-server@4.3.3"] },
     },
   };
@@ -653,7 +653,7 @@ to:
     # this job's env.
     needs: test
     runs-on: ubuntu-latest
-    env: { UV_VERSION: "0.5.24", RG_VERSION: "14.1.1", RUST_ANALYZER_VERSION: "2026-06-30" }
+    env: { UV_VERSION: "0.5.24", RG_VERSION: "14.1.1", RUST_ANALYZER_VERSION: "2026-07-06" }
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/release/fetch_tools.py --uv "$UV_VERSION" --rg "$RG_VERSION" --rust-analyzer "$RUST_ANALYZER_VERSION" --out dist/
@@ -683,7 +683,7 @@ to:
             --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
             --component-version indexer=${GITHUB_REF_NAME#v} \
             --component-version ripgrep=14.1.1 --component-version uv=0.5.24 \
-            --component-version rust-analyzer=2026-06-30 \
+            --component-version rust-analyzer=2026-07-06 \
             --lsp-packages "pyright@1.1.400,typescript-language-server@4.3.3" \
             --out dist-artifacts/manifest.json
 ```
@@ -722,7 +722,7 @@ to:
     "agentd": { "version": "0.0.0" },
     "indexer": { "version": "0.0.0", "urls": {}, "sha256": {} },
     "ripgrep": { "version": "14.1.1", "urls": {}, "sha256": {} },
-    "rust-analyzer": { "version": "2026-06-30", "urls": {}, "sha256": {} },
+    "rust-analyzer": { "version": "2026-07-06", "urls": {}, "sha256": {} },
     "lsps": {
       "version": "1",
       "npmPackages": ["pyright@1.1.400", "typescript-language-server@4.3.3"]
