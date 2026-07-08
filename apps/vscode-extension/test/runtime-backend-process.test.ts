@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest";
 import { BackendProcess, buildBackendEnv, type ProcessDeps } from "../src/runtime/backend-process.js";
 
 function deps(overrides: Partial<ProcessDeps> = {}) {
-  const spawned: { cmd: string; args: string[]; env: Record<string, string> }[] = [];
+  const spawned: { cmd: string; args: string[]; env: Record<string, string>; cwd?: string }[] = [];
   const d: ProcessDeps & { spawned: typeof spawned } = {
     runtimeDir: mkdtempSync(join(tmpdir(), "rt-")),
     spawn: (cmd, args, opts) => {
-      spawned.push({ cmd, args, env: opts.env });
+      spawned.push({ cmd, args, env: opts.env, cwd: opts.cwd });
       return { pid: 4242, kill: () => {}, onExit: () => {} };
     },
     fetchJson: async () => ({ status: "ok", building: false }),
@@ -45,6 +45,16 @@ describe("buildBackendEnv", () => {
     expect(env.CRUCIBLE_CHAT_CONTROLLER).toBe("1");
     expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".crucible/state", "agentd.sqlite3"));
   });
+  it("sets every relative-path default the backend reads, absolute and workspace-rooted", () => {
+    // Regression: CRUCIBLE_MEMORY_DB_PATH was never set here, so it fell back to
+    // MemoryConfig's relative default (.crucible/state/memory.sqlite3), resolved
+    // against whatever cwd the extension host happened to have — not the
+    // workspace — and crashed with "Read-only file system" on activation.
+    const env = buildBackendEnv("/ws", SETTINGS, "/rt", 8123, "darwin-arm64");
+    expect(env.CRUCIBLE_MEMORY_DB_PATH).toBe(join("/ws", ".crucible/state", "memory.sqlite3"));
+    expect(env.CRUCIBLE_VECTOR_INDEX_PATH).toBe(join("/ws", ".crucible", "vector-index"));
+    expect(env.CRUCIBLE_LOG_DIR).toBe(join("/ws", ".tmp", "reasoning"));
+  });
   it("extraEnv overrides defaults; skillsDisabled joins", () => {
     const env = buildBackendEnv("/ws", {
       ...SETTINGS, extraEnv: { CRUCIBLE_SHELL_POLICY: "allow_all" },
@@ -79,8 +89,14 @@ describe("BackendProcess.start", () => {
     expect(res.port).toBe(8123);
     expect(d.spawned[0].args).toContain("agentd.main:app");
     expect(d.spawned[0].env.CRUCIBLE_PORT).toBe("8123");
+    // Regression: without an explicit cwd, Node defaults to the calling process's
+    // cwd (the VS Code extension host's, not the workspace) — any relative-path
+    // default the backend reads then resolves against the wrong, possibly
+    // read-only, directory.
+    expect(d.spawned[0].cwd).toBe(w);
     expect(d.spawned[1].args[0]).toBe("index"); // watcher
     expect(d.spawned[1].env.CRUCIBLE_BACKEND_URL).toBe("http://localhost:8123");
+    expect(d.spawned[1].cwd).toBe(w);
   });
 
   it("skips the watcher when the indexer binary is missing", async () => {

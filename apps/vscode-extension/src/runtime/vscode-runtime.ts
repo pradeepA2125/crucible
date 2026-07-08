@@ -305,6 +305,7 @@ export class RuntimeManager {
       spawn: (cmd, args, opts) => {
         const child = spawn(cmd, args, {
           env: opts.env,
+          cwd: opts.cwd,
           stdio: ["ignore", "pipe", "pipe"],
         });
         child.stdout?.on("data", (chunk: Buffer) =>

@@ -18,7 +18,7 @@ export interface ChildHandle {
 }
 export interface ProcessDeps {
   runtimeDir: string;
-  spawn(cmd: string, args: string[], opts: { env: Record<string, string> }): ChildHandle;
+  spawn(cmd: string, args: string[], opts: { env: Record<string, string>; cwd?: string }): ChildHandle;
   fetchJson(url: string, init?: { method?: string; body?: string }): Promise<unknown>; // throws on non-2xx
   pickPort(): Promise<number>;
   sleep(ms: number): Promise<void>;
@@ -54,6 +54,9 @@ export function buildBackendEnv(
     CRUCIBLE_LOG_FILE: join(agentdDir, "agentd.log"),
     CRUCIBLE_ARTIFACTS_ROOT: join(agentdDir, "artifacts"),
     CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".crucible", "index-snapshot.json"),
+    CRUCIBLE_MEMORY_DB_PATH: join(agentdDir, "memory.sqlite3"),
+    CRUCIBLE_VECTOR_INDEX_PATH: join(workspace, ".crucible", "vector-index"),
+    CRUCIBLE_LOG_DIR: join(workspace, ".tmp", "reasoning"),
     CRUCIBLE_RIPGREP_CMD: binPath(runtimeDir, "rg", platform),
     CRUCIBLE_CHAT_CONTROLLER: "1",
     CRUCIBLE_SKILLS_ENABLED: "1",
@@ -129,7 +132,7 @@ export class BackendProcess {
     this.backend = this.deps.spawn(
       venvPython(this.deps.runtimeDir, this.platform),
       ["-m", "uvicorn", "agentd.main:app", "--port", String(port)],
-      { env },
+      { env, cwd: workspace },
     );
     this._port = port;
 
@@ -197,7 +200,7 @@ export class BackendProcess {
       "--workspace", workspace,
       "--snapshot-path", join(workspace, ".crucible", "index-snapshot.json"),
       "--watch", "true",
-    ], { env });
+    ], { env, cwd: workspace });
   }
 
   async stop(): Promise<void> {
