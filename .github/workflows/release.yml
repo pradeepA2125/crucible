@@ -71,7 +71,7 @@ jobs:
       UV_VERSION: "0.5.24"
       RG_VERSION: "14.1.1"
       RUST_ANALYZER_VERSION: "2026-07-06"
-      GOPLS_VERSION: "v0.22.0"
+      GOPLS_VERSION: "v0.20.0"
       # jdtls (Java LSP) requires Java 21+ — its own launcher enforces this
       # (verified against a real installed jdtls) — so the bundled JRE is
       # pinned to feature version 21, not whatever LTS happens to be newest.
@@ -121,7 +121,7 @@ jobs:
             --component-version indexer=${GITHUB_REF_NAME#v} \
             --component-version ripgrep=14.1.1 --component-version uv=0.5.24 \
             --component-version rust-analyzer=2026-07-06 \
-            --component-version gopls=v0.22.0 \
+            --component-version gopls=v0.20.0 \
             --component-version jre=21.0.11+10 \
             --component-version jdtls=1.61.0-202607070104 \
             --lsp-packages "pyright@1.1.400,typescript-language-server@4.3.3" \
