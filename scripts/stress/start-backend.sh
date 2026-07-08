@@ -513,7 +513,7 @@ if [[ "${CRUCIBLE_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_B
   # (the normal clean-env case) `grep` matches nothing → exits 1 → pipefail fails the
   # pipeline → set -e aborts the script BEFORE the watcher launches, leaving the backend
   # orphaned and graph retrieval off. Tolerate the empty match explicitly.
-  _STALE_WATCHERS="$(pgrep -af 'ai-editor-indexer index' 2>/dev/null \
+  _STALE_WATCHERS="$(pgrep -af 'crucible-indexer index' 2>/dev/null \
     | grep -F -- "--snapshot-path $SNAPSHOT_PATH" | awk '{print $1}' || true)"
   if [[ -n "$_STALE_WATCHERS" ]]; then
     echo "==> reaping stale indexer watcher(s) on this snapshot: $(echo "$_STALE_WATCHERS" | tr '\n' ' ')"
@@ -528,7 +528,7 @@ if [[ "${CRUCIBLE_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_B
     CRUCIBLE_LSP_RS_CMD="${CRUCIBLE_LSP_RS_CMD:-rust-analyzer}" \
     CRUCIBLE_LSP_STARTUP_TIMEOUT_MS="${CRUCIBLE_LSP_STARTUP_TIMEOUT_MS:-180000}" \
     CRUCIBLE_LSP_REQUEST_TIMEOUT_MS="${CRUCIBLE_LSP_REQUEST_TIMEOUT_MS:-20000}" \
-    RUST_LOG="${RUST_LOG:-ai_editor_indexer::resolver=info,ai_editor_indexer::lsp=info,ai_editor_indexer::service=info}" \
+    RUST_LOG="${RUST_LOG:-crucible_indexer::resolver=info,crucible_indexer::lsp=info,crucible_indexer::service=info}" \
     "$_INDEXER_BIN" index --workspace "$WORKSPACE" --snapshot-path "$SNAPSHOT_PATH" --watch true \
     >> "$LOG_DIR/indexer-watch.log" 2>&1 &
   _WATCHER_PID=$!

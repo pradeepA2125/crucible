@@ -166,7 +166,7 @@ export class BackendProcess {
   }
 
   private spawnWatcher(workspace: string, port: number): void {
-    const indexer = binPath(this.deps.runtimeDir, "ai-editor-indexer", this.platform);
+    const indexer = binPath(this.deps.runtimeDir, "crucible-indexer", this.platform);
     if (!existsSync(indexer)) {
       this.deps.log("[runtime] indexer binary missing — watcher not started");
       return;

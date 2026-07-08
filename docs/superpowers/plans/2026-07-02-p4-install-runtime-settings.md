@@ -1649,7 +1649,7 @@ export function venvPython(runtimeDir: string, platform?: PlatformKey): string;
 export function binPath(runtimeDir: string, name: string, platform?: PlatformKey): string;
 ```
 
-Layout under `runtimeDir`: `bin/uv[.exe]`, `bin/ai-editor-indexer[.exe]`, `bin/rg[.exe]`,
+Layout under `runtimeDir`: `bin/uv[.exe]`, `bin/crucible-indexer[.exe]`, `bin/rg[.exe]`,
 `venv/` (created by uv), `node_modules/` (LSPs), `install-state.json`
 (`Record<ComponentId, string>` — installed version per component, the resume seam),
 `runtime.json` (`{ releaseTag, components: Record<ComponentId, string> }` written when
@@ -1792,7 +1792,7 @@ export interface InstallResult { ok: boolean; components: ComponentProgress[] }
 
 const ORDER: ComponentId[] = ["uv", "agentd", "indexer", "ripgrep", "lsps"];
 const BIN_NAME: Partial<Record<ComponentId, string>> = {
-  uv: "uv", indexer: "ai-editor-indexer", ripgrep: "rg",
+  uv: "uv", indexer: "crucible-indexer", ripgrep: "rg",
 };
 
 export function binPath(runtimeDir: string, name: string, platform: PlatformKey = platformKey()): string {
@@ -1986,7 +1986,7 @@ default-on flags `CRUCIBLE_CHAT_CONTROLLER=1`, `CRUCIBLE_SKILLS_ENABLED=1`,
    `Error("backend did not become healthy within 60s — see logs")`.
 4. Fire `POST /v1/index/build` with `{workspace_path}` (non-fatal on error; log), then
    poll `GET /v1/index/status` up to 120×1s until `building === false` (non-fatal timeout).
-5. Spawn the watcher: `binPath(runtimeDir, "ai-editor-indexer")` with args
+5. Spawn the watcher: `binPath(runtimeDir, "crucible-indexer")` with args
    `["index", "--workspace", workspace, "--snapshot-path", "<ws>/.ai-editor/index-snapshot.json", "--watch", "true"]`
    and env `CRUCIBLE_BACKEND_URL=http://localhost:<port>`, `CRUCIBLE_LSP_ENABLED`
    `"true"` only when `<runtimeDir>/node_modules` exists, with
@@ -2077,7 +2077,7 @@ describe("BackendProcess.start", () => {
     const d = deps();
     writeFileSync(join(d.runtimeDir, "bin-marker"), ""); // ensure runtimeDir exists
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
-    writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     const res = await new BackendProcess(d).start(w, SETTINGS);
     expect(res.reused).toBe(false);
     expect(res.port).toBe(8123);
@@ -2725,7 +2725,7 @@ git commit -m "chore(extension): commands, configuration, and marketplace manife
 - Test: `scripts/release/test_make_manifest.py` (run by path: `cd services/agentd-py && pytest ../../scripts/release/test_make_manifest.py`)
 
 **Interfaces:**
-- Produces: `build_manifest(release_tag: str, dist_dir: Path, url_base: str) -> dict` scanning `dist_dir` for the conventional artifact names below and emitting the Task 8 `RuntimeManifest` JSON shape (camelCase keys). CLI: `python scripts/release/make_manifest.py --release-tag vX --dist DIR --url-base URL --out manifest.json`. Artifact naming convention (CI produces exactly these): `ai-editor-indexer-<platform>[.exe]`, `rg-<platform>[.exe]`, `uv-<platform>[.exe]` with `<platform>` ∈ the four keys; `crucible_agentd-<ver>-py3-none-any.whl`. Versions: binaries from `--component-version name=ver` repeatable flags; agentd version parsed from the wheel filename; `lsps` pinned via `--lsp-packages "pyright@X,typescript-language-server@Y"`.
+- Produces: `build_manifest(release_tag: str, dist_dir: Path, url_base: str) -> dict` scanning `dist_dir` for the conventional artifact names below and emitting the Task 8 `RuntimeManifest` JSON shape (camelCase keys). CLI: `python scripts/release/make_manifest.py --release-tag vX --dist DIR --url-base URL --out manifest.json`. Artifact naming convention (CI produces exactly these): `crucible-indexer-<platform>[.exe]`, `rg-<platform>[.exe]`, `uv-<platform>[.exe]` with `<platform>` ∈ the four keys; `crucible_agentd-<ver>-py3-none-any.whl`. Versions: binaries from `--component-version name=ver` repeatable flags; agentd version parsed from the wheel filename; `lsps` pinned via `--lsp-packages "pyright@X,typescript-language-server@Y"`.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -2745,10 +2745,10 @@ def _touch(d: Path, name: str, content: bytes = b"bin") -> None:
 
 def test_build_manifest_shape(tmp_path: Path) -> None:
     for plat in ("darwin-arm64", "darwin-x64", "linux-x64"):
-        _touch(tmp_path, f"ai-editor-indexer-{plat}")
+        _touch(tmp_path, f"crucible-indexer-{plat}")
         _touch(tmp_path, f"rg-{plat}")
         _touch(tmp_path, f"uv-{plat}")
-    _touch(tmp_path, "ai-editor-indexer-win32-x64.exe")
+    _touch(tmp_path, "crucible-indexer-win32-x64.exe")
     _touch(tmp_path, "rg-win32-x64.exe")
     _touch(tmp_path, "uv-win32-x64.exe")
     _touch(tmp_path, "crucible_agentd-0.2.0-py3-none-any.whl")
@@ -2760,7 +2760,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     )
     assert m["manifestVersion"] == 1 and m["releaseTag"] == "v0.2.0"
     ix = m["components"]["indexer"]
-    assert ix["urls"]["darwin-arm64"] == "https://gh/rel/v0.2.0/ai-editor-indexer-darwin-arm64"
+    assert ix["urls"]["darwin-arm64"] == "https://gh/rel/v0.2.0/crucible-indexer-darwin-arm64"
     assert ix["urls"]["win32-x64"].endswith(".exe")
     assert ix["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
     agentd = m["components"]["agentd"]
@@ -2771,7 +2771,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
 
 
 def test_missing_platform_artifact_raises(tmp_path: Path) -> None:
-    _touch(tmp_path, "ai-editor-indexer-darwin-arm64")
+    _touch(tmp_path, "crucible-indexer-darwin-arm64")
     import pytest
     with pytest.raises(FileNotFoundError, match="rg-darwin-arm64"):
         build_manifest("v1", tmp_path, "u",
@@ -2845,13 +2845,13 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp services/indexer-rs/target/release/ai-editor-indexer \
-             dist/ai-editor-indexer-${{ matrix.platform }}
+          cp services/indexer-rs/target/release/crucible-indexer \
+             dist/crucible-indexer-${{ matrix.platform }}
       - name: stage binary (windows)
         if: runner.os == 'Windows'
         run: |
           mkdir dist
-          copy services\indexer-rs\target\release\ai-editor-indexer.exe dist\ai-editor-indexer-${{ matrix.platform }}.exe
+          copy services\indexer-rs\target\release\crucible-indexer.exe dist\crucible-indexer-${{ matrix.platform }}.exe
       - uses: actions/upload-artifact@v4
         with: { name: "indexer-${{ matrix.platform }}", path: dist/ }
 

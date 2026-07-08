@@ -17,7 +17,7 @@ indexer_target_dir() {
 
 # Absolute path to the release binary inside the shared target dir.
 indexer_bin_path() {
-  printf '%s/release/ai-editor-indexer' "$(indexer_target_dir)"
+  printf '%s/release/crucible-indexer' "$(indexer_target_dir)"
 }
 
 # ensure_indexer_binary <indexer_src_dir>

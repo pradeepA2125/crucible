@@ -363,7 +363,7 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
   `webview-ui/src/`, etc.). `publisher`/`icon`/`repository`/`categories` are placeholder
   marketplace fields (real branding is a later phase).
 - **Release pipeline:** `scripts/release/make_manifest.py::build_manifest` scans a dist
-  dir for conventionally-named artifacts (`ai-editor-indexer-<platform>[.exe]`,
+  dir for conventionally-named artifacts (`crucible-indexer-<platform>[.exe]`,
   `rg-<platform>[.exe]`, `uv-<platform>[.exe]`, `crucible_agentd-<ver>-py3-none-any.whl`),
   sha256-hashes each, and emits the `RuntimeManifest` JSON (platform-outer iteration order
   so a missing-artifact `FileNotFoundError` names a stable first offender).

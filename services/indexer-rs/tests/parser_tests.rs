@@ -1,5 +1,5 @@
-use ai_editor_indexer::graph::{EdgeKind, SymbolGraph, SymbolKind};
-use ai_editor_indexer::parser::{LanguageParser, TreeSitterParser};
+use crucible_indexer::graph::{EdgeKind, SymbolGraph, SymbolKind};
+use crucible_indexer::parser::{LanguageParser, TreeSitterParser};
 use std::path::Path;
 
 #[test]

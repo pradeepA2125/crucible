@@ -3,7 +3,7 @@ conventionally-named release artifacts. Used by the release CI (Task 17) and run
 standalone for local dry-runs.
 
 Artifact naming convention (CI produces exactly these):
-  ai-editor-indexer-<platform>[.exe]
+  crucible-indexer-<platform>[.exe]
   rg-<platform>[.exe]
   uv-<platform>[.exe]
   crucible_agentd-<version>-py3-none-any.whl
@@ -22,7 +22,7 @@ PLATFORMS = ("darwin-arm64", "darwin-x64", "linux-x64", "win32-x64")
 
 # (component id, artifact basename prefix)
 _BINARY_COMPONENTS = (
-    ("indexer", "ai-editor-indexer"),
+    ("indexer", "crucible-indexer"),
     ("ripgrep", "rg"),
     ("uv", "uv"),
     ("rust-analyzer", "rust-analyzer"),

@@ -1,5 +1,5 @@
-use ai_editor_indexer::graph::GraphQueryResponse;
-use ai_editor_indexer::service::IndexSnapshot;
+use crucible_indexer::graph::GraphQueryResponse;
+use crucible_indexer::service::IndexSnapshot;
 use serde_json::json;
 use std::path::PathBuf;
 use std::process::Command;
@@ -11,7 +11,7 @@ fn temp_workspace(prefix: &str) -> PathBuf {
         .map(|value| value.as_nanos())
         .unwrap_or(0);
     let path = std::env::temp_dir().join(format!(
-        "ai-editor-indexer-{prefix}-{}-{unique}",
+        "crucible-indexer-{prefix}-{}-{unique}",
         std::process::id()
     ));
     std::fs::create_dir_all(&path).expect("create temp workspace");
@@ -30,7 +30,7 @@ fn index_command_writes_full_snapshot_artifact() {
     .expect("write source file");
 
     let snapshot_path = workspace.join(".ai-editor/index-snapshot.json");
-    let status = Command::new(env!("CARGO_BIN_EXE_ai-editor-indexer"))
+    let status = Command::new(env!("CARGO_BIN_EXE_crucible-indexer"))
         .arg("index")
         .arg("--workspace")
         .arg(&workspace)
@@ -92,7 +92,7 @@ fn query_command_returns_deterministic_graph_payload() {
     )
     .expect("write snapshot");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ai-editor-indexer"))
+    let output = Command::new(env!("CARGO_BIN_EXE_crucible-indexer"))
         .arg("query")
         .arg("--snapshot-path")
         .arg(&snapshot_path)

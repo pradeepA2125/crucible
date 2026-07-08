@@ -73,7 +73,7 @@ describe("BackendProcess.start", () => {
       JSON.stringify({ pid: 999, port: 8200, started_at: 1 }));
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
-    writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     const res = await new BackendProcess(d).start(w, SETTINGS);
     expect(res.reused).toBe(false);
     expect(res.port).toBe(8123);
@@ -93,7 +93,7 @@ describe("BackendProcess.start", () => {
   it("sets CRUCIBLE_LSP_RS_CMD to the managed binary when installed", async () => {
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
-    writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     writeFileSync(join(d.runtimeDir, "bin", "rust-analyzer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
     expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe(join(d.runtimeDir, "bin", "rust-analyzer"));
@@ -102,7 +102,7 @@ describe("BackendProcess.start", () => {
   it("falls back to the bare rust-analyzer command when the managed binary is absent", async () => {
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
-    writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
     expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe("rust-analyzer");
   });

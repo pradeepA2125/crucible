@@ -1,5 +1,5 @@
 [package]
-name = "ai-editor-indexer"
+name = "crucible-indexer"
 version = "0.1.0"
 edition = "2021"
 description = "Rust indexing service for AI Editor"

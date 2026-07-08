@@ -1,6 +1,6 @@
-use ai_editor_indexer::graph::{EdgeKind, SymbolEdge, SymbolKind, SymbolNode};
-use ai_editor_indexer::lsp::LspDiagnostic;
-use ai_editor_indexer::service::{GraphSnapshot, IndexSnapshot, SnapshotStats};
+use crucible_indexer::graph::{EdgeKind, SymbolEdge, SymbolKind, SymbolNode};
+use crucible_indexer::lsp::LspDiagnostic;
+use crucible_indexer::service::{GraphSnapshot, IndexSnapshot, SnapshotStats};
 
 #[test]
 fn snapshot_roundtrip_preserves_full_graph_payload() {

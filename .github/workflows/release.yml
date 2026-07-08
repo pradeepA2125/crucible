@@ -45,19 +45,19 @@ jobs:
         if: runner.os != 'Windows' && matrix.target == ''
         run: |
           mkdir -p dist
-          cp services/indexer-rs/target/release/ai-editor-indexer \
-             dist/ai-editor-indexer-${{ matrix.platform }}
+          cp services/indexer-rs/target/release/crucible-indexer \
+             dist/crucible-indexer-${{ matrix.platform }}
       - name: stage binary (posix, cross-compiled)
         if: runner.os != 'Windows' && matrix.target != ''
         run: |
           mkdir -p dist
-          cp services/indexer-rs/target/${{ matrix.target }}/release/ai-editor-indexer \
-             dist/ai-editor-indexer-${{ matrix.platform }}
+          cp services/indexer-rs/target/${{ matrix.target }}/release/crucible-indexer \
+             dist/crucible-indexer-${{ matrix.platform }}
       - name: stage binary (windows)
         if: runner.os == 'Windows'
         run: |
           mkdir dist
-          copy services\indexer-rs\target\release\ai-editor-indexer.exe dist\ai-editor-indexer-${{ matrix.platform }}.exe
+          copy services\indexer-rs\target\release\crucible-indexer.exe dist\crucible-indexer-${{ matrix.platform }}.exe
       - uses: actions/upload-artifact@v4
         with: { name: "indexer-${{ matrix.platform }}", path: dist/ }
 

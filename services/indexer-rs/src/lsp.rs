@@ -1519,7 +1519,7 @@ mod tests {
         }
 
         let root = std::env::temp_dir().join(format!(
-            "ai-editor-indexer-lsp-test-{}",
+            "crucible-indexer-lsp-test-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -1611,7 +1611,7 @@ while True:
         }
 
         let root = std::env::temp_dir().join(format!(
-            "ai-editor-indexer-lsp-timeout-{}",
+            "crucible-indexer-lsp-timeout-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);

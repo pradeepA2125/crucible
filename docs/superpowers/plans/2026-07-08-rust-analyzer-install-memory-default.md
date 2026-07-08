@@ -298,11 +298,11 @@ Replace `scripts/release/test_make_manifest.py`'s `test_build_manifest_shape` fu
 ```python
 def test_build_manifest_shape(tmp_path: Path) -> None:
     for plat in ("darwin-arm64", "darwin-x64", "linux-x64"):
-        _touch(tmp_path, f"ai-editor-indexer-{plat}")
+        _touch(tmp_path, f"crucible-indexer-{plat}")
         _touch(tmp_path, f"rg-{plat}")
         _touch(tmp_path, f"uv-{plat}")
         _touch(tmp_path, f"rust-analyzer-{plat}")
-    _touch(tmp_path, "ai-editor-indexer-win32-x64.exe")
+    _touch(tmp_path, "crucible-indexer-win32-x64.exe")
     _touch(tmp_path, "rg-win32-x64.exe")
     _touch(tmp_path, "uv-win32-x64.exe")
     _touch(tmp_path, "rust-analyzer-win32-x64.exe")
@@ -318,7 +318,7 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     )
     assert m["manifestVersion"] == 1 and m["releaseTag"] == "v0.2.0"
     ix = m["components"]["indexer"]
-    assert ix["urls"]["darwin-arm64"] == "https://gh/rel/v0.2.0/ai-editor-indexer-darwin-arm64"
+    assert ix["urls"]["darwin-arm64"] == "https://gh/rel/v0.2.0/crucible-indexer-darwin-arm64"
     assert ix["urls"]["win32-x64"].endswith(".exe")
     assert ix["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
     ra = m["components"]["rust-analyzer"]
@@ -346,7 +346,7 @@ In `scripts/release/make_manifest.py`, change:
 
 ```python
 _BINARY_COMPONENTS = (
-    ("indexer", "ai-editor-indexer"),
+    ("indexer", "crucible-indexer"),
     ("ripgrep", "rg"),
     ("uv", "uv"),
 )
@@ -356,7 +356,7 @@ to:
 
 ```python
 _BINARY_COMPONENTS = (
-    ("indexer", "ai-editor-indexer"),
+    ("indexer", "crucible-indexer"),
     ("ripgrep", "rg"),
     ("uv", "uv"),
     ("rust-analyzer", "rust-analyzer"),
@@ -471,7 +471,7 @@ In `apps/vscode-extension/src/runtime/installer.ts`, change:
 ```ts
 const ORDER: ComponentId[] = ["uv", "agentd", "indexer", "ripgrep", "lsps"];
 const BIN_NAME: Partial<Record<ComponentId, string>> = {
-  uv: "uv", indexer: "ai-editor-indexer", ripgrep: "rg",
+  uv: "uv", indexer: "crucible-indexer", ripgrep: "rg",
 };
 ```
 
@@ -480,7 +480,7 @@ to:
 ```ts
 const ORDER: ComponentId[] = ["uv", "agentd", "indexer", "ripgrep", "rust-analyzer", "lsps"];
 const BIN_NAME: Partial<Record<ComponentId, string>> = {
-  uv: "uv", indexer: "ai-editor-indexer", ripgrep: "rg", "rust-analyzer": "rust-analyzer",
+  uv: "uv", indexer: "crucible-indexer", ripgrep: "rg", "rust-analyzer": "rust-analyzer",
 };
 ```
 
@@ -517,7 +517,7 @@ Add to `apps/vscode-extension/test/runtime-backend-process.test.ts`, inside the 
   it("sets CRUCIBLE_LSP_RS_CMD to the managed binary when installed", async () => {
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
-    writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     writeFileSync(join(d.runtimeDir, "bin", "rust-analyzer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
     expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe(join(d.runtimeDir, "bin", "rust-analyzer"));
@@ -526,7 +526,7 @@ Add to `apps/vscode-extension/test/runtime-backend-process.test.ts`, inside the 
   it("falls back to the bare rust-analyzer command when the managed binary is absent", async () => {
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
-    writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
     expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe("rust-analyzer");
   });
@@ -543,7 +543,7 @@ In `apps/vscode-extension/src/runtime/backend-process.ts`, change:
 
 ```ts
   private spawnWatcher(workspace: string, port: number): void {
-    const indexer = binPath(this.deps.runtimeDir, "ai-editor-indexer", this.platform);
+    const indexer = binPath(this.deps.runtimeDir, "crucible-indexer", this.platform);
     if (!existsSync(indexer)) {
       this.deps.log("[runtime] indexer binary missing — watcher not started");
       return;
@@ -571,7 +571,7 @@ to:
 
 ```ts
   private spawnWatcher(workspace: string, port: number): void {
-    const indexer = binPath(this.deps.runtimeDir, "ai-editor-indexer", this.platform);
+    const indexer = binPath(this.deps.runtimeDir, "crucible-indexer", this.platform);
     if (!existsSync(indexer)) {
       this.deps.log("[runtime] indexer binary missing — watcher not started");
       return;

@@ -5,11 +5,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use ai_editor_indexer::graph::{
+use crucible_indexer::graph::{
     EdgeKind, PlaceholderEdge, SymbolEdge, SymbolGraph, SymbolKind, SymbolNode,
 };
-use ai_editor_indexer::lsp::LspLocation;
-use ai_editor_indexer::resolver::{resolve_inner, CallSiteOracle};
+use crucible_indexer::lsp::LspLocation;
+use crucible_indexer::resolver::{resolve_inner, CallSiteOracle};
 
 #[derive(Default)]
 struct StubOracle {

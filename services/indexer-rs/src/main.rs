@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
-use ai_editor_indexer::config::IndexerConfig;
-use ai_editor_indexer::graph::{EdgeKind, GraphQueryMode, GraphQueryRequest, SymbolGraph};
-use ai_editor_indexer::service::{IndexerService, IndexSnapshot};
+use crucible_indexer::config::IndexerConfig;
+use crucible_indexer::graph::{EdgeKind, GraphQueryMode, GraphQueryRequest, SymbolGraph};
+use crucible_indexer::service::{IndexerService, IndexSnapshot};
 use std::path::PathBuf;
 
 #[tokio::main]

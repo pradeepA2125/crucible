@@ -17,7 +17,7 @@ Each scenario takes the form:
 
 If the live snapshot isn't present (e.g. CI), each test is skipped — the
 data they validate is workspace-specific and can't be embedded in fixtures
-without freezing it. Re-run after a fresh `ai-editor-indexer index` pass.
+without freezing it. Re-run after a fresh `crucible-indexer index` pass.
 """
 from __future__ import annotations
 

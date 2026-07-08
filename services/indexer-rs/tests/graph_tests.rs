@@ -1,4 +1,4 @@
-use ai_editor_indexer::graph::{
+use crucible_indexer::graph::{
     EdgeKind, GraphQueryMode, GraphQueryRequest, SymbolEdge, SymbolGraph, SymbolKind, SymbolNode,
 };
 

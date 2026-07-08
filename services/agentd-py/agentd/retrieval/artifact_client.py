@@ -360,7 +360,7 @@ class RetrievalArtifactClient:
                 snapshot_path=str(snapshot_path),
             )
 
-        auto_indexer = shutil.which("ai-editor-indexer")
+        auto_indexer = shutil.which("crucible-indexer")
         if not auto_indexer:
             return None
 
