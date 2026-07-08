@@ -32,6 +32,11 @@ def test_rerank_degrades_to_input_order():
 
 def test_config_reranker_defaults():
     c = MemoryConfig.from_env({})
-    assert c.reranker_enabled is False
+    assert c.reranker_enabled is True
     assert c.reranker_model == "BAAI/bge-reranker-base"
     assert c.rerank_min_candidates == 8
+
+
+def test_config_reranker_explicit_disable_still_works():
+    c = MemoryConfig.from_env({"AI_EDITOR_MEMORY_RERANKER": "0"})
+    assert c.reranker_enabled is False

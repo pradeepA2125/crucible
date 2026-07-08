@@ -29,8 +29,9 @@ def is_task_subsystem_enabled() -> bool:
 
 
 def is_memory_enabled() -> bool:
-    """Whether the memory harness (compaction + recall/remember) is active. Default OFF;
-    opt in with AI_EDITOR_MEMORY_ENABLED=1. Gates the controller's memory tools + prompt."""
+    """Whether the memory harness (compaction + recall/remember) is active. Default ON;
+    kill-switch via AI_EDITOR_MEMORY_ENABLED=0/false/no/off. Gates the controller's memory
+    tools + prompt."""
     from agentd.memory.config import MemoryConfig
     return MemoryConfig.from_env(os.environ).enabled
 

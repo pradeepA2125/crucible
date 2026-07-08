@@ -175,7 +175,7 @@ async def test_persistent_echo_degrades_and_keeps_prior_anchor(tmp_path):
 
 
 def test_build_memory_harness_disabled_returns_noop():
-    cfg = MemoryConfig.from_env({})  # disabled
+    cfg = MemoryConfig.from_env({"AI_EDITOR_MEMORY_ENABLED": "false"})
     assert build_memory_harness(cfg, _FakeTransport(), "m1") is NO_OP_HARNESS
 
 

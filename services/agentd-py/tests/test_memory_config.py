@@ -1,14 +1,19 @@
 from agentd.memory.config import MemoryConfig
 
 
-def test_from_env_defaults_disabled():
+def test_from_env_defaults_enabled():
     cfg = MemoryConfig.from_env({})
-    assert cfg.enabled is False
+    assert cfg.enabled is True
     assert cfg.db_path.endswith("memory.sqlite3")
     assert cfg.trigger_frac == 0.65
     assert cfg.hot_token_frac == 0.4
     assert cfg.hot_turns == 10
     assert cfg.window_tokens == 128000
+
+
+def test_from_env_explicit_disable_still_works():
+    cfg = MemoryConfig.from_env({"AI_EDITOR_MEMORY_ENABLED": "false"})
+    assert cfg.enabled is False
 
 
 def test_from_env_overrides():

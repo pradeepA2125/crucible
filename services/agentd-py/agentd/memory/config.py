@@ -26,7 +26,7 @@ class MemoryConfig(BaseModel):
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> MemoryConfig:
         return cls(
-            enabled=env.get("AI_EDITOR_MEMORY_ENABLED", "").lower() in _TRUTHY,
+            enabled=env.get("AI_EDITOR_MEMORY_ENABLED", "true").lower() in _TRUTHY,
             db_path=env.get("AI_EDITOR_MEMORY_DB_PATH", ".agentd/memory.sqlite3"),
             trigger_frac=float(env.get("AI_EDITOR_MEMORY_COMPACT_TRIGGER_FRAC", "0.65")),
             hot_token_frac=float(env.get("AI_EDITOR_MEMORY_HOT_TOKEN_FRAC", "0.4")),
@@ -39,7 +39,7 @@ class MemoryConfig(BaseModel):
             ),
             graph_grounding=env.get("AI_EDITOR_MEMORY_GRAPH_GROUNDING", "true").lower() in _TRUTHY,
             embedding_model=env.get("AI_EDITOR_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
-            reranker_enabled=env.get("AI_EDITOR_MEMORY_RERANKER", "").lower() in _TRUTHY,
+            reranker_enabled=env.get("AI_EDITOR_MEMORY_RERANKER", "true").lower() in _TRUTHY,
             reranker_model=env.get("AI_EDITOR_MEMORY_RERANKER_MODEL", "BAAI/bge-reranker-base"),
             rerank_min_candidates=int(env.get("AI_EDITOR_MEMORY_RERANK_MIN_CANDIDATES", "8")),
         )
