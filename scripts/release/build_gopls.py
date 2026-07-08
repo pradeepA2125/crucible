@@ -84,11 +84,20 @@ def build_gopls_binaries(
     for platform in PLATFORMS:
         goos, goarch = _GOPLS_TARGETS[platform]
         dest = out_dir / gopls_artifact_name(platform)
-        run_cmd(
+        result = run_cmd(
             ["go", "build", "-o", str(dest), "golang.org/x/tools/gopls"],
-            cwd=work_dir, check=True, capture_output=True, text=True,
+            cwd=work_dir, check=False, capture_output=True, text=True,
             env={**os.environ, "GOOS": goos, "GOARCH": goarch},
         )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"go build failed for {platform}:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+        if not dest.exists():
+            raise FileNotFoundError(
+                f"go build succeeded but output file not created: {dest}\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
         if platform != "win32-x64":
             dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         written.append(dest)
