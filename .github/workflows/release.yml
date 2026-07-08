@@ -62,14 +62,15 @@ jobs:
         with: { name: "indexer-${{ matrix.platform }}", path: dist/ }
 
   fetch-tools:
-    # uv + ripgrep: download official release binaries per platform, restage
-    # under our naming convention. Pinned versions live in this job's env.
+    # uv + ripgrep + rust-analyzer: download official release binaries per
+    # platform, restage under our naming convention. Pinned versions live in
+    # this job's env.
     needs: test
     runs-on: ubuntu-latest
-    env: { UV_VERSION: "0.5.24", RG_VERSION: "14.1.1" }
+    env: { UV_VERSION: "0.5.24", RG_VERSION: "14.1.1", RUST_ANALYZER_VERSION: "2026-07-06" }
     steps:
       - uses: actions/checkout@v4
-      - run: python3 scripts/release/fetch_tools.py --uv "$UV_VERSION" --rg "$RG_VERSION" --out dist/
+      - run: python3 scripts/release/fetch_tools.py --uv "$UV_VERSION" --rg "$RG_VERSION" --rust-analyzer "$RUST_ANALYZER_VERSION" --out dist/
       - uses: actions/upload-artifact@v4
         with: { name: tools, path: dist/ }
 
@@ -94,6 +95,7 @@ jobs:
             --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
             --component-version indexer=${GITHUB_REF_NAME#v} \
             --component-version ripgrep=14.1.1 --component-version uv=0.5.24 \
+            --component-version rust-analyzer=2026-07-06 \
             --lsp-packages "pyright@1.1.400,typescript-language-server@4.3.3" \
             --out dist-artifacts/manifest.json
       - run: |
