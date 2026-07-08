@@ -100,9 +100,17 @@ def build_gopls_binaries(
         # Debug: list work_dir before build
         work_contents = sorted([p.name for p in work_dir.iterdir()])
         
-        # Use -x to trace commands, -v for verbose output
+        # Force internal linker to avoid external linker (clang) cross-compile issues.
+        # Go 1.26.0 on Linux tries to use clang for darwin cross-compilation, which fails
+        # because clang on Linux doesn't support darwin targets. Force internal linker instead.
         result = run_cmd(
-            ["go", "build", "-x", "-v", "-o", str(dest), "golang.org/x/tools/gopls"],
+            [
+                "go", "build",
+                "-ldflags=-linkmode=internal",
+                "-x", "-v",
+                "-o", str(dest),
+                "golang.org/x/tools/gopls"
+            ],
             cwd=work_dir, check=False, capture_output=True, text=True,
             env=env,
         )
