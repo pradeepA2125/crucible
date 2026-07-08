@@ -166,12 +166,12 @@
         },
         "aiEditor.memory.enabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Enable the cross-session memory harness (compaction, recall, consolidation). Requires a managed restart to take effect."
         },
         "aiEditor.memory.reranker": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Enable the cross-encoder reranker for memory recall (requires aiEditor.memory.enabled). Requires a managed restart to take effect."
         }
       }
