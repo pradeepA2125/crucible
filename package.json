@@ -1,7 +1,7 @@
 {
   "name": "crucible",
   "private": true,
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Production-grade AI editor monorepo",
   "workspaces": [
     "apps/*"
