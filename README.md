@@ -73,8 +73,8 @@ uvicorn agentd.main:app --reload --port 8000
 ### Rust indexer
 ```bash
 cd services/indexer-rs
-cargo run -- index --workspace /path/to/repo --snapshot-path /path/to/repo/.ai-editor/index-snapshot.json --watch 0
-cargo run -- query --snapshot-path /path/to/repo/.ai-editor/index-snapshot.json --mode symbol_name --value build --depth 2 --limit 200
+cargo run -- index --workspace /path/to/repo --snapshot-path /path/to/repo/.crucible/index-snapshot.json --watch 0
+cargo run -- query --snapshot-path /path/to/repo/.crucible/index-snapshot.json --mode symbol_name --value build --depth 2 --limit 200
 ```
 
 ## Retrieval core (artifact-first)
@@ -84,7 +84,7 @@ cargo run -- query --snapshot-path /path/to/repo/.ai-editor/index-snapshot.json 
 - Stale/corrupt/missing artifacts emit warning diagnostics and do not fail task orchestration.
 
 Key env vars:
-- `CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH` (default: `<workspace>/.ai-editor/index-snapshot.json`)
+- `CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH` (default: `<workspace>/.crucible/index-snapshot.json`)
 - `CRUCIBLE_RETRIEVAL_MAX_AGE_SEC` (default: `900`)
 - `CRUCIBLE_INDEXER_INDEX_CMD` (optional command template with `{workspace}` and `{snapshot_path}`)
 

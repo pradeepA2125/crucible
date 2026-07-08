@@ -10,7 +10,7 @@ from pathlib import Path
 
 class McpRuleStore:
     def __init__(self, workspace_path: str | Path) -> None:
-        self._path = Path(workspace_path) / ".ai-editor" / "approved-mcp-tools.json"
+        self._path = Path(workspace_path) / ".crucible" / "approved-mcp-tools.json"
 
     def load(self) -> list[dict[str, str]]:
         if not self._path.exists():

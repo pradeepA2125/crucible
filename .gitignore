@@ -20,6 +20,7 @@ workspaces/
 apps/vscode-extension/tmp-review-files-*/
 generated.txt
 .worktrees/
+.crucible/
 .ai-editor/
 aider-references/
 # Runtime SQLite databases

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a workspace-level env profile that lives at `<workspace>/.agentd/env_profile.json`, is built once via deterministic probe + one LLM `draft_conventions` call, is read by the agent through a new `read_env_profile` tool, and auto-reinstalls on mid-task manifest edits — with no env state machine.
+**Goal:** Build a workspace-level env profile that lives at `<workspace>/.crucible/state/env_profile.json`, is built once via deterministic probe + one LLM `draft_conventions` call, is read by the agent through a new `read_env_profile` tool, and auto-reinstalls on mid-task manifest edits — with no env state machine.
 
 **Architecture:** Profile is built lazily on first task per workspace; persisted as JSON; refreshed when stale (age > 30d) or via explicit API. `PatchEngine` sets `task.execution_state.pending_install_for_scope` when a manifest is written; `ToolLoop` consumes the flag to run the ecosystem's `install_command` before the next `run_command`. No new task status; no env SM.
 
@@ -152,7 +152,7 @@ class EnvEcosystemEntry(BaseModel):
 
 
 class EnvProfile(BaseModel):
-    """Workspace-level env conventions persisted at <workspace>/.agentd/env_profile.json."""
+    """Workspace-level env conventions persisted at <workspace>/.crucible/state/env_profile.json."""
     workspace_root: str
     built_at: datetime
     bootstrap_needed: bool = False           # probe found nothing usable; agent falls back to find_binary/init_workspace
@@ -343,7 +343,7 @@ _EXCLUDE_DIRS = frozenset({
     ".git", ".venv", "venv", ".env", "node_modules",
     "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache",
     "target", "dist", "build", ".tox", ".nox",
-    ".agentd", ".ai-editor", ".worktrees", ".tmp",
+    ".crucible/state", ".crucible", ".worktrees", ".tmp",
 })
 
 # Walk no deeper than this many directory levels under workspace_root.
@@ -573,7 +573,7 @@ def test_write_then_read_roundtrip(tmp_path: Path):
 def test_write_creates_agentd_dir_if_missing(tmp_path: Path):
     store = EnvProfileStore()
     store.write(tmp_path, _make_profile(tmp_path))
-    assert (tmp_path / ".agentd" / "env_profile.json").is_file()
+    assert (tmp_path / ".crucible/state" / "env_profile.json").is_file()
 
 
 def test_is_stale_returns_true_when_missing(tmp_path: Path):
@@ -592,14 +592,14 @@ def test_is_stale_returns_true_for_old_profile(tmp_path: Path):
     old = datetime.now(timezone.utc) - timedelta(days=31)
     store.write(tmp_path, _make_profile(tmp_path, built_at=old))
     # Also backdate file mtime so the disk-check matches.
-    pth = tmp_path / ".agentd" / "env_profile.json"
+    pth = tmp_path / ".crucible/state" / "env_profile.json"
     os.utime(pth, (old.timestamp(), old.timestamp()))
     assert store.is_stale(tmp_path) is True
 
 
 def test_read_returns_none_on_corrupted_json(tmp_path: Path):
-    (tmp_path / ".agentd").mkdir()
-    (tmp_path / ".agentd" / "env_profile.json").write_text("{not valid json")
+    (tmp_path / ".crucible/state").mkdir()
+    (tmp_path / ".crucible/state" / "env_profile.json").write_text("{not valid json")
     store = EnvProfileStore()
     assert store.read(tmp_path) is None
 ```
@@ -617,7 +617,7 @@ Expected: ImportError on `agentd.env.profile_store`.
 Create `services/agentd-py/agentd/env/profile_store.py`:
 
 ```python
-"""Persist EnvProfile as JSON at <workspace>/.agentd/env_profile.json."""
+"""Persist EnvProfile as JSON at <workspace>/.crucible/state/env_profile.json."""
 from __future__ import annotations
 
 import json
@@ -626,7 +626,7 @@ from pathlib import Path
 
 from agentd.domain.models import EnvProfile
 
-_PROFILE_REL_PATH = Path(".agentd") / "env_profile.json"
+_PROFILE_REL_PATH = Path(".crucible/state") / "env_profile.json"
 
 
 class EnvProfileStore:
@@ -2210,7 +2210,7 @@ git commit -m "feat(env-profile): API routes + end-to-end integration tests"
 
 - [ ] `pytest -q` is fully green
 - [ ] New file count: 6 source + 6 test
-- [ ] Manual smoke: start backend pointed at `workspaces/shadow-forge-stress`; first task on a fresh workspace builds the profile in <30s; subsequent tasks reuse it; `cat workspaces/shadow-forge-stress/.agentd/env_profile.json` shows the expected ecosystems
+- [ ] Manual smoke: start backend pointed at `workspaces/shadow-forge-stress`; first task on a fresh workspace builds the profile in <30s; subsequent tasks reuse it; `cat workspaces/shadow-forge-stress/.crucible/state/env_profile.json` shows the expected ecosystems
 - [ ] No new task status (`PREPARING_ENV` not introduced)
 - [ ] No env state machine module exists
 - [ ] `read_env_profile` appears in both `explore` and `verify` phase tool listings
@@ -2220,5 +2220,5 @@ git commit -m "feat(env-profile): API routes + end-to-end integration tests"
 
 - **Backend reload hazard**: editing `agentd/` files while a task is running will trigger uvicorn `--reload` and kill the in-flight coroutine, which may mark a child task `FAILED` after a DB revert. Stop the backend before editing; restart after.
 - **TQP qwen3.6 timing**: `draft_conventions` is a single structured call. With the rich payload (manifest text + tree + diagnostics), expect 30-60s on local TQP for a polyglot workspace. Cache mitigates this — only first task pays the cost.
-- **Test isolation**: each test gets a fresh `tmp_path`. `EnvProfileStore` writes to `<tmp_path>/.agentd/env_profile.json` — no cross-test bleed.
+- **Test isolation**: each test gets a fresh `tmp_path`. `EnvProfileStore` writes to `<tmp_path>/.crucible/state/env_profile.json` — no cross-test bleed.
 - **Direct interpreter path is the convention**: the teaching block and the schema field name (`interpreter_or_runner`) lock this in. Do NOT introduce a `source venv/bin/activate` path anywhere — it doesn't persist across tool calls.

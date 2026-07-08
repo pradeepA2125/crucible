@@ -4,7 +4,7 @@ from agentd.skills.loader import SkillCatalogLoader
 
 
 def _write_skill(root: Path, name: str, description: str, body: str = "Do the thing.") -> None:
-    d = root / ".ai-editor" / "skills" / name
+    d = root / ".crucible" / "skills" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: {description}\n---\n{body}\n", encoding="utf-8"
@@ -17,7 +17,7 @@ def test_loads_valid_skills_sorted_by_name(tmp_path: Path) -> None:
     cat = SkillCatalogLoader(tmp_path).load_catalog()
     assert [m.name for m in cat] == ["alpha", "git-commit"]
     assert cat[1].description == "Make a conventional commit. Use for commits."
-    assert cat[1].body_path == tmp_path / ".ai-editor/skills/git-commit/SKILL.md"
+    assert cat[1].body_path == tmp_path / ".crucible/skills/git-commit/SKILL.md"
 
 
 def test_absent_dir_returns_empty(tmp_path: Path) -> None:
@@ -25,7 +25,7 @@ def test_absent_dir_returns_empty(tmp_path: Path) -> None:
 
 
 def test_skips_skill_missing_required_field(tmp_path: Path, caplog) -> None:
-    d = tmp_path / ".ai-editor/skills/broken"
+    d = tmp_path / ".crucible/skills/broken"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text("---\nname: broken\n---\nno description\n", encoding="utf-8")
     _write_skill(tmp_path, "good", "Valid one.")
@@ -34,7 +34,7 @@ def test_skips_skill_missing_required_field(tmp_path: Path, caplog) -> None:
 
 
 def test_name_mismatch_warns_but_keeps(tmp_path: Path, caplog) -> None:
-    d = tmp_path / ".ai-editor/skills/folder-name"
+    d = tmp_path / ".crucible/skills/folder-name"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text(
         "---\nname: other-name\ndescription: Mismatch.\n---\nbody\n", encoding="utf-8"
@@ -55,13 +55,13 @@ def test_mtime_cache_returns_same_objects_until_changed(tmp_path: Path) -> None:
     import os
     import time
     time.sleep(0.01)
-    os.utime(tmp_path / ".ai-editor/skills", None)  # bump dir mtime
+    os.utime(tmp_path / ".crucible/skills", None)  # bump dir mtime
     second = loader.load_catalog()
     assert [m.name for m in second] == ["a", "b"]
 
 
 def test_bad_yaml_is_skipped(tmp_path: Path) -> None:
-    d = tmp_path / ".ai-editor/skills/bad"
+    d = tmp_path / ".crucible/skills/bad"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text("---\nname: [unterminated\n---\nbody\n", encoding="utf-8")
     _write_skill(tmp_path, "ok", "Fine.")

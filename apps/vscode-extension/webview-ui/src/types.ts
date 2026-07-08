@@ -171,10 +171,10 @@ export type WebviewMessage =
   | { type: "abortTask"; revert: boolean }
   // Tier B: live-mutable "Review each step" preference for the running task
   | { type: "setReviewPref"; autoAccept: boolean }
-  // P1: prompt-file (.ai-editor/prompts/<name>.md) listing + expand-before-send
+  // P1: prompt-file (.crucible/prompts/<name>.md) listing + expand-before-send
   | { type: "listPrompts" }
   | { type: "expandPrompt"; name: string; args: string }
-  // P2: skill (.ai-editor/skills/<name>/SKILL.md) catalog for /skill forced-load
+  // P2: skill (.crucible/skills/<name>/SKILL.md) catalog for /skill forced-load
   | { type: "listSkills" }
   // Composer model quick-swap (ModelMenu) + settings shortcut.
   | { type: "listModels" }

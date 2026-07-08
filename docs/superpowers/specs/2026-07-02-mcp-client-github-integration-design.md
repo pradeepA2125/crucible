@@ -27,7 +27,7 @@ gate machinery** (`PendingGate`, async future + timeout, remember-rule).
 |---|----------|-----------|
 | 1 | **Controller-only** (mirrors P1/P2) | The planning/task ReAct path is flag-gated OFF by default with no live consumer today; scoping there now is speculative surface area for a dormant path. |
 | 2 | **Both stdio and HTTP/SSE transports in v1** | Matches the roadmap scope as written, even though stdio covers the large majority of real-world servers (including GitHub's official one). |
-| 3 | **Bespoke `.ai-editor/mcp.json`**, not the ecosystem `.mcp.json` convention | Matches the precedent P2 actually set (it deviated from its own roadmap text and shipped `.ai-editor/skills/` only in v1, deferring ecosystem dirs as "a trivial later add"). Reading `.mcp.json` directly is a low-effort follow-up if wanted. |
+| 3 | **Bespoke `.crucible/mcp.json`**, not the ecosystem `.mcp.json` convention | Matches the precedent P2 actually set (it deviated from its own roadmap text and shipped `.crucible/skills/` only in v1, deferring ecosystem dirs as "a trivial later add"). Reading `.mcp.json` directly is a low-effort follow-up if wanted. |
 | 4 | **Explicit per-server allowlist beyond config presence** — each entry needs `"enabled": true` | P1/P2 both use "master flag on ⇒ everything discovered is trusted" (no per-item toggle until P4). MCP servers execute arbitrary tool calls against real external services — a materially larger blast radius than a skill's static markdown or an instructions file — so simply being *listed* in a config file isn't treated as sufficient trust on its own. |
 | 5 | **GitHub is proof-via-user-config, not a bundled default** | Keeps P3 scoped to "build a generic, spec-compliant MCP client." No GitHub-specific code ships; we verify a user-authored entry for the official GitHub MCP server works end-to-end. A bundled one-click default is P4 settings-pane territory. |
 | 6 | **Official `mcp` Python SDK**, not a hand-rolled client | Matches actual codebase precedent: `openai`/`anthropic`/`google-genai`/`groq`/`ibm-watsonx-ai` are all official SDKs as **hard** dependencies in `pyproject.toml` (not optional extras) — hand-rolled HTTP is only used where no SDK exists (TurboQuant, a local server with none). MCP's bidirectional JSON-RPC protocol (capability negotiation, subprocess lifecycle, SSE reconnect) is meaningfully more complex than a REST chat-completions call — the class of complexity where reimplementing correctly costs far more than the dependency. |
@@ -39,7 +39,7 @@ gate machinery** (`PendingGate`, async future + timeout, remember-rule).
 ### 3.1 Config (`agentd/mcp/config.py`)
 
 - **New module `agentd/mcp/`** (mirrors `agentd/skills/`'s module shape).
-- `McpConfigLoader` — mtime-cached reader for `<workspace>/.ai-editor/mcp.json` (same caching
+- `McpConfigLoader` — mtime-cached reader for `<workspace>/.crucible/mcp.json` (same caching
   discipline as `SkillCatalogLoader`/`ProjectInstructionsLoader`: self-updates on edit, no restart,
   best-effort — a malformed file degrades to "no servers," never crashes a turn).
 - Each server entry: standard MCP shape (`command`/`args`/`env` for stdio; `url`/`headers` for HTTP)
@@ -72,7 +72,7 @@ gate machinery** (`PendingGate`, async future + timeout, remember-rule).
   `reconcile(loader.load())` once at factory time), and keep a queryable per-server
   `status: connected | failed(reason) | disabled` — not connect-once logic baked into factory
   wiring. Rationale: the P4 settings UI (see
-  `docs/superpowers/2026-07-02-mcp-settings-ui-research.md`) edits `.ai-editor/mcp.json` at
+  `docs/superpowers/2026-07-02-mcp-settings-ui-research.md`) edits `.crucible/mcp.json` at
   runtime and expects servers to connect/disconnect without a backend restart, and every surveyed
   product exposes per-server status in its UI. v1 still only *calls* reconcile once — the seam
   costs nothing now and avoids a P4 refactor of subprocess-lifecycle code.
@@ -130,7 +130,7 @@ gate machinery** (`PendingGate`, async future + timeout, remember-rule).
 
 | Unit | Responsibility | Depends on |
 |------|----------------|------------|
-| `mcp/config.py::McpConfigLoader` | mtime-cached scan + parse `.ai-editor/mcp.json`, `${VAR}` interpolation, `enabled` filter | filesystem only |
+| `mcp/config.py::McpConfigLoader` | mtime-cached scan + parse `.crucible/mcp.json`, `${VAR}` interpolation, `enabled` filter | filesystem only |
 | `mcp/models.py::McpServerConfig` | `{name, transport, command/args/env or url/headers, enabled}` | — |
 | `mcp/client.py` | wraps `mcp` SDK `ClientSession` per enabled server; connect/list_tools/call_tool | official `mcp` SDK, config |
 | `mcp/tool_source.py::McpToolSource` | dynamic `definitions()` from connected sessions; namespaced `owns()`/`execute()`; routes through the approval gate | client, approval gate callback |
@@ -168,7 +168,7 @@ rather than hard-failing.
 - **A tool call times out or the server dies mid-call:** `ToolOutput(is_error=True, ...)` with a
   clear message; the loop adapts, no crash.
 - **Approval timeout:** default-reject, per `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC`.
-- **Malformed/missing `.ai-editor/mcp.json`:** no servers connected, no crash — same contract as a
+- **Malformed/missing `.crucible/mcp.json`:** no servers connected, no crash — same contract as a
   missing AGENTS.md or empty skills dir.
 - **A server's `${VAR}` reference is unset:** that server fails to connect (treated the same as any
   other connect failure) with a warning naming the missing variable, rather than connecting with a
@@ -193,7 +193,7 @@ rather than hard-failing.
   protocol, not just the stub.
 
 **Live smoke (manual, not CI):**
-1. Configure the official GitHub MCP server in `.ai-editor/mcp.json` with a real token, `enabled:true`
+1. Configure the official GitHub MCP server in `.crucible/mcp.json` with a real token, `enabled:true`
    → tools appear in the catalog, connect succeeds.
 2. Drive a real request that calls a GitHub tool (read an issue / open a PR) → the `"mcp_tool"`
    approval gate renders → approve → the call executes → result lands in the transcript.
@@ -215,7 +215,7 @@ rather than hard-failing.
 
 ## 9. Out of scope (deferred)
 
-- **Ecosystem `.mcp.json` discovery** — bespoke `.ai-editor/mcp.json` only in v1 (decision 3); reading
+- **Ecosystem `.mcp.json` discovery** — bespoke `.crucible/mcp.json` only in v1 (decision 3); reading
   the cross-tool convention is a low-effort later add if wanted.
 - **Bundled/one-click GitHub default** — proof-via-user-config only in v1 (decision 5); a shipped
   default entry is P4 settings-pane territory.

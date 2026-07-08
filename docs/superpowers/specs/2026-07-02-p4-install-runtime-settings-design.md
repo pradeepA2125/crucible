@@ -60,7 +60,7 @@ New extension module `src/runtime/` — vscode-free core (unit-testable) + thin 
 
 ### 5.1 RuntimeInstaller
 
-Provisions everything into `~/.ai-editor/runtime/`:
+Provisions everything into `~/.crucible/runtime/`:
 
 - **uv** — static binary downloaded if absent (or reused from PATH when version-compatible).
 - **agentd** — `uv tool install` (or `uv venv` + `uv pip install`) from the pinned GitHub Release artifact; uv supplies the managed Python — no system Python required.
@@ -77,7 +77,7 @@ One per workspace folder:
 - Spawns agentd on a **dynamic port**; env assembled from settings + SecretStorage (keys injected at spawn, never written to disk/logs).
 - Health-polled; crash → restart with backoff; logs captured to an output channel + file.
 - Runs the **semantic index pre-warm** and launches the **indexer watcher** (LSP env pointing at the runtime-dir servers; `RUST_LOG` defaults as in the script).
-- **Lockfile:** agentd writes `<workspace>/.agentd/agentd.lock` (pid + port + started_at). The extension reuses a live backend, reaps stale locks, and refuses to double-spawn — killing the three-backends-one-DB split-brain class by construction. The same discipline covers the watcher (single writer per snapshot).
+- **Lockfile:** agentd writes `<workspace>/.crucible/state/agentd.lock` (pid + port + started_at). The extension reuses a live backend, reaps stale locks, and refuses to double-spawn — killing the three-backends-one-DB split-brain class by construction. The same discipline covers the watcher (single writer per snapshot).
 - Disposed on deactivate (backend + watcher; no orphans).
 
 ### 5.3 RuntimeState
@@ -97,7 +97,7 @@ Everything else stays env-at-spawn; the extension owns restarts.
 
 ### 6.1 First-run wizard
 
-Webview flow, auto-opens on activation when `~/.ai-editor/runtime/` is absent; re-runnable via `Crucible: Run Setup`.
+Webview flow, auto-opens on activation when `~/.crucible/runtime/` is absent; re-runnable via `Crucible: Run Setup`.
 
 1. **Welcome** — what will be installed, where, disk estimate.
 2. **Install** — live per-component checklist (uv → agentd → indexer → ripgrep → LSPs): spinner → ✓/✗, per-component retry, "Open logs" on failure. Node-absent shows LSP row as skipped-with-consequence, not error.
@@ -110,12 +110,12 @@ Custom webview, second Vite entry in `webview-ui` (the proven `MemoryPanel` patt
 
 - **Providers & models** — provider/model + keys + test-connection; applies via the hot-swap route. Key storage: SecretStorage only.
 - **Runtime** — installed versions (`runtime.json`), per-workspace backend status (port, pid, health), Restart / Upgrade / Open logs.
-- **MCP servers** — per the research doc: list with live status + tool counts (**`GET /v1/mcp/servers`** — merged config + `McpServerStatus`), guided add (**tier 1: QuickPick wizard** mirroring VS Code's "MCP: Add Server"; **tier 2: pane form**), remove, reconnect (**`POST /v1/mcp/servers/{name}/reconnect`**). Writes are **`POST/PATCH/DELETE /v1/mcp/servers/{name}`** doing read-modify-write on `.ai-editor/mcp.json` — preserve unknown keys, store `${VAR}` references verbatim (never resolved secrets) — then call `McpConnectionManager.reconcile(loader.load())`. **Enable/disable toggles write user-local state** (extension `globalState`), not the shareable file (presence-trust guard from the research doc); the extension passes the effective disabled set alongside reconcile-triggering calls — `reconcile(configs, disabled=…)` — so the backend never needs its own user-scoped store.
+- **MCP servers** — per the research doc: list with live status + tool counts (**`GET /v1/mcp/servers`** — merged config + `McpServerStatus`), guided add (**tier 1: QuickPick wizard** mirroring VS Code's "MCP: Add Server"; **tier 2: pane form**), remove, reconnect (**`POST /v1/mcp/servers/{name}/reconnect`**). Writes are **`POST/PATCH/DELETE /v1/mcp/servers/{name}`** doing read-modify-write on `.crucible/mcp.json` — preserve unknown keys, store `${VAR}` references verbatim (never resolved secrets) — then call `McpConnectionManager.reconcile(loader.load())`. **Enable/disable toggles write user-local state** (extension `globalState`), not the shareable file (presence-trust guard from the research doc); the extension passes the effective disabled set alongside reconcile-triggering calls — `reconcile(configs, disabled=…)` — so the backend never needs its own user-scoped store.
 - **Skills** — list discovered skills (existing `GET /v1/skills`), enable/disable. Same user-local storage; v1 applies it via the managed-restart path (`CRUCIBLE_SKILLS_DISABLED=<names>` in the spawn env) rather than a new live route — skills toggling is rare enough that a 5s restart is acceptable.
 - **Memory** — enabled / reranker / budget knobs. **Policies** — scope + shell policy. Env-backed ⇒ managed-restart path with an inline "applying — restarting backend" spinner (~5s).
 - **Advanced** — port strategy, paths, feature flags (restart path).
 
-Settings storage split: **secrets → SecretStorage**; **user prefs → VS Code settings/globalState**; **workspace-shared config → `.ai-editor/` files** (mcp.json, prompts, skills). The backend reads env at spawn + the two live routes (provider hot-swap, MCP reconcile).
+Settings storage split: **secrets → SecretStorage**; **user prefs → VS Code settings/globalState**; **workspace-shared config → `.crucible/` files** (mcp.json, prompts, skills). The backend reads env at spawn + the two live routes (provider hot-swap, MCP reconcile).
 
 ## 7. Release pipeline
 
@@ -140,7 +140,7 @@ Marketplace packaging (icon, README, listing copy, categories) is in scope for t
 
 - **Unit (TS):** `RuntimeInstaller` core with mocked downloads/checksums (happy path, resume, checksum-fail, node-absent); `BackendProcess` lifecycle with a fake process + lockfile scenarios (reuse live, reap stale, no double-spawn).
 - **Unit (py):** route tests for `/v1/providers/validate` (per-provider stub transports), `PUT /v1/config/provider` (swap next-turn semantics, invalid target, in-flight guard), MCP write routes (RMW preserves unknown keys; never writes resolved secrets; reconcile invoked), lockfile write.
-- **Live smoke (the roadmap's exit criterion):** a clean machine — fresh VS Code profile, no `~/.ai-editor` — goes zero → working chat turn via wizard alone; settings pane round-trips provider/model (hot-swap observed live), an MCP add via the pane connects without restart, a policy change applies via managed restart.
+- **Live smoke (the roadmap's exit criterion):** a clean machine — fresh VS Code profile, no `~/.crucible` — goes zero → working chat turn via wizard alone; settings pane round-trips provider/model (hot-swap observed live), an MCP add via the pane connects without restart, a policy change applies via managed restart.
 - CI runs the per-OS install path at least for the download/verify layer (matrix on the four targets).
 
 ## 10. Deferred to C (recorded, not designed here)

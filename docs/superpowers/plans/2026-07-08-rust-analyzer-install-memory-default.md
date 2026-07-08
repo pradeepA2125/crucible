@@ -907,7 +907,7 @@ Add to `apps/vscode-extension/test/runtime-installer.test.ts`, inside the `descr
 
   it("agentd install wraps a manifest wheel URL with the [memory] extra as a PEP 508 direct reference", async () => {
     const d = deps();
-    d.manifest.components.agentd = { version: "0.3.0", urls: { any: "https://example.com/pkg.whl" } };
+    d.manifest.components.crucible/state = { version: "0.3.0", urls: { any: "https://example.com/pkg.whl" } };
     await new RuntimeInstaller(d).installAll();
     const pipCall = d.calls.find((call) => call.includes("pip"));
     expect(pipCall).toBeDefined();

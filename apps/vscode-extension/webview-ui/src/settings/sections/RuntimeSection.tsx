@@ -9,7 +9,7 @@ export function RuntimeSection({ state, busy, send }: SectionProps) {
     <div>
       <SectionHeader
         title="Runtime"
-        description="The managed runtime installed under ~/.ai-editor/runtime."
+        description="The managed runtime installed under ~/.crucible/runtime."
       />
       <CardShell
         icon="chip"

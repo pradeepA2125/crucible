@@ -42,7 +42,7 @@
 - [ ] **T-N1** ReviewCard shows a **narrative headline + bullet points** describing the change (names discount.py / tax.py).
 - [ ] **Reload Window** (Cmd+Shift+P → Developer: Reload Window) → reopen chat → ReviewCard **still** shows run_summary + narrative (durable, not extension-memory).
 - [ ] **T-B4** Click **Finish** → status SUCCEEDED; `src/discount.py`, `src/tax.py`, `tests/test_pricing.py` exist in the real workspace; `✓ Task finished` breadcrumb.
-- [ ] **T-N6** Inspect `<ws>/.agentd/artifacts/<task>/…` or the task record `run_events`: per-step `note`s are detailed accounts (not one-liners); narrative `points` are distilled from them.
+- [ ] **T-N6** Inspect `<ws>/.crucible/state/artifacts/<task>/…` or the task record `run_events`: per-step `note`s are detailed accounts (not one-liners); narrative `points` are distilled from them.
 - [ ] **T-N5** Send follow-up: "what did you just change?" → agent's reply references the prior task (narrative in history/recent_task), not a blank explore.
 
 ## Run B — Stop & revert + narrative aborted + no-clobber

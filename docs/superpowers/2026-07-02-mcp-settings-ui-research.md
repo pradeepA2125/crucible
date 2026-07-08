@@ -17,7 +17,7 @@ VS Code's "MCP: Add Server" flow writes `mcp.json`; Cursor's deeplink approval d
 The file stays the source of truth — editable by hand, committable, diffable — and the UI is an
 affordance layered on top.
 
-This is exactly the architecture our P3 design already has: `.ai-editor/mcp.json` +
+This is exactly the architecture our P3 design already has: `.crucible/mcp.json` +
 `McpConfigLoader` (mtime-cached, self-updating without restart). **A P4 settings UI that
 read-modify-writes that file gets live config reload for free.** The backend delta for P4 is small
 (see §4).
@@ -103,7 +103,7 @@ read-modify-writes that file gets live config reload for free.** The backend del
 Backend (small — the P3 loader already does the hard part):
 - `GET /v1/mcp/servers` — merged view: config entries + live connection status + tool counts
   (the `/mcp`-panel data). Gated by `is_mcp_enabled()` like the memory routes.
-- `POST/PATCH/DELETE /v1/mcp/servers/{name}` — read-modify-write `.ai-editor/mcp.json`
+- `POST/PATCH/DELETE /v1/mcp/servers/{name}` — read-modify-write `.crucible/mcp.json`
   (preserve unknown keys; never write resolved secrets — store `${VAR}` references verbatim).
   The mtime cache picks the change up; **the client manager must reconcile sessions** (see §5).
 - Optional: `POST /v1/mcp/servers/{name}/reconnect` (manual retry, VS Code/Claude Code both have it).
@@ -128,7 +128,7 @@ Frontend (two tiers, can ship separately):
    method** — eager-connect at factory time is just `reconcile(initial)`; P4's write-API calls
    `reconcile(loader.load())` after a write. Baking connect-once into factory wiring instead
    forces a P4 refactor of subprocess lifecycle code.
-2. **`enabled: true` inside a shareable file is presence-trust in disguise.** If `.ai-editor/mcp.json`
+2. **`enabled: true` inside a shareable file is presence-trust in disguise.** If `.crucible/mcp.json`
    is ever committed, a cloned repo arrives with `enabled: true` already set — decision 4's
    allowlist gates nothing. Claude Code and VS Code both keep the *approval/enablement* bit
    per-user, outside the shared file. v1 can keep `enabled` as-is (file is bespoke, likely

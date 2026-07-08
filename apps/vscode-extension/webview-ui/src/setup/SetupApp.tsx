@@ -161,7 +161,7 @@ export default function SetupApp() {
               ))}
             </ul>
             <p className="px-3 pb-3 text-[11px] text-text-3">
-              Everything lands in <code>~/.ai-editor/runtime</code> — nothing touches your system Python or PATH.
+              Everything lands in <code>~/.crucible/runtime</code> — nothing touches your system Python or PATH.
             </p>
           </CardShell>
           <BtnPrimary className="self-start" icon="bolt" onClick={startInstall}>

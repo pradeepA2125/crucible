@@ -33,7 +33,7 @@ _EXCLUDE_DIRS = frozenset({
     ".git", ".venv", "venv", ".env", "node_modules",
     "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache",
     "target", "dist", "build", ".tox", ".nox",
-    ".agentd", ".ai-editor", ".worktrees", ".tmp",
+    ".crucible/state", ".crucible", ".worktrees", ".tmp",
 })
 
 _MAX_DEPTH = 3

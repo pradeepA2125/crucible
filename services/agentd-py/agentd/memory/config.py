@@ -27,7 +27,7 @@ class MemoryConfig(BaseModel):
     def from_env(cls, env: Mapping[str, str]) -> MemoryConfig:
         return cls(
             enabled=env.get("CRUCIBLE_MEMORY_ENABLED", "true").lower() in _TRUTHY,
-            db_path=env.get("CRUCIBLE_MEMORY_DB_PATH", ".agentd/memory.sqlite3"),
+            db_path=env.get("CRUCIBLE_MEMORY_DB_PATH", ".crucible/state/memory.sqlite3"),
             trigger_frac=float(env.get("CRUCIBLE_MEMORY_COMPACT_TRIGGER_FRAC", "0.65")),
             hot_token_frac=float(env.get("CRUCIBLE_MEMORY_HOT_TOKEN_FRAC", "0.4")),
             hot_turns=int(env.get("CRUCIBLE_MEMORY_HOT_TURNS", "10")),

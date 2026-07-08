@@ -6,7 +6,7 @@ from agentd.skills.tool_source import SkillToolSource
 
 
 def _write_skill(root: Path, name: str, body: str) -> None:
-    d = root / ".ai-editor" / "skills" / name
+    d = root / ".crucible" / "skills" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: A skill.\n---\n{body}\n", encoding="utf-8"

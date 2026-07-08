@@ -17,7 +17,7 @@ from agentd.runtime.artifacts import chat_turn_artifacts_root
 def test_chat_turn_artifacts_root_nests_by_thread_and_turn(tmp_path, monkeypatch):
     monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
     root = chat_turn_artifacts_root("th1", "turn1", tmp_path)
-    assert root == tmp_path / ".agentd" / "artifacts" / "chat" / "th1" / "turn1"
+    assert root == tmp_path / ".crucible/state" / "artifacts" / "chat" / "th1" / "turn1"
 
 
 class _RecordingTransport:
@@ -81,7 +81,7 @@ async def test_create_controller_step_no_dump_without_artifact_ids(tmp_path, mon
     await engine.create_controller_step(
         {"goal": "g", "workspace_path": str(tmp_path)},
         history=[], tool_definitions=[], phase="DECIDE")
-    assert not (tmp_path / ".agentd" / "artifacts" / "chat").exists()
+    assert not (tmp_path / ".crucible/state" / "artifacts" / "chat").exists()
 
 
 @pytest.mark.asyncio
@@ -98,7 +98,7 @@ async def test_handle_message_writes_turn_trace(tmp_path, monkeypatch):
         retrieval_client=None)
     await ctrl.handle_message(thread.thread_id, "hi", channel_id="c1")
 
-    thread_dir = tmp_path / ".agentd" / "artifacts" / "chat" / thread.thread_id
+    thread_dir = tmp_path / ".crucible/state" / "artifacts" / "chat" / thread.thread_id
     traces = list(thread_dir.glob("*/turn-trace.json"))
     assert len(traces) == 1, f"expected one turn-trace, found {traces}"
     data = json.loads(traces[0].read_text())

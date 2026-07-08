@@ -58,7 +58,7 @@ impl IndexerConfig {
         let snapshot_output_path = env::var("CRUCIBLE_INDEX_SNAPSHOT_PATH")
             .ok()
             .map(PathBuf::from)
-            .unwrap_or_else(|| workspace_root.join(".ai-editor/index-snapshot.json"));
+            .unwrap_or_else(|| workspace_root.join(".crucible/index-snapshot.json"));
 
         // When set, the indexer POSTs to POST /v1/index/build after every snapshot write
         // so the Python-side semantic index stays warm without any task-time cold start.

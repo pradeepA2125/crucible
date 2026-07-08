@@ -43,7 +43,7 @@ export function buildBackendEnv(
   workspace: string, settings: BackendSettings, runtimeDir: string, port: number,
   platform: PlatformKey = platformKey(),
 ): Record<string, string> {
-  const agentdDir = join(workspace, ".agentd");
+  const agentdDir = join(workspace, ".crucible/state");
   const built: Record<string, string> = {
     CRUCIBLE_REASONING_BACKEND: settings.backend,
     CRUCIBLE_WORKSPACE_PATH: workspace,
@@ -53,7 +53,7 @@ export function buildBackendEnv(
     CRUCIBLE_SHADOW_ROOT: join(agentdDir, "shadows"),
     CRUCIBLE_LOG_FILE: join(agentdDir, "agentd.log"),
     CRUCIBLE_ARTIFACTS_ROOT: join(agentdDir, "artifacts"),
-    CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".ai-editor", "index-snapshot.json"),
+    CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".crucible", "index-snapshot.json"),
     CRUCIBLE_RIPGREP_CMD: binPath(runtimeDir, "rg", platform),
     CRUCIBLE_CHAT_CONTROLLER: "1",
     CRUCIBLE_SKILLS_ENABLED: "1",
@@ -79,7 +79,7 @@ interface LockInfo { pid: number; port: number; started_at: number }
 function readLock(workspace: string): LockInfo | null {
   try {
     const raw = JSON.parse(
-      readFileSync(join(workspace, ".agentd", "agentd.lock"), "utf8"));
+      readFileSync(join(workspace, ".crucible/state", "agentd.lock"), "utf8"));
     if (typeof raw.pid !== "number" || typeof raw.port !== "number") return null;
     return raw as LockInfo;
   } catch {
@@ -116,7 +116,7 @@ export class BackendProcess {
       return { port: lock.port, reused: true };
     }
     if (lock) {
-      try { unlinkSync(join(workspace, ".agentd", "agentd.lock")); } catch { /* gone already */ }
+      try { unlinkSync(join(workspace, ".crucible/state", "agentd.lock")); } catch { /* gone already */ }
       this.deps.log(`[runtime] reaped stale lock (pid=${lock.pid})`);
     }
 
@@ -195,7 +195,7 @@ export class BackendProcess {
     this.watcher = this.deps.spawn(indexer, [
       "index",
       "--workspace", workspace,
-      "--snapshot-path", join(workspace, ".ai-editor", "index-snapshot.json"),
+      "--snapshot-path", join(workspace, ".crucible", "index-snapshot.json"),
       "--watch", "true",
     ], { env });
   }

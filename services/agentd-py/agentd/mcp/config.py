@@ -1,4 +1,4 @@
-"""Config for the MCP client: .ai-editor/mcp.json loader + env knobs.
+"""Config for the MCP client: .crucible/mcp.json loader + env knobs.
 
 Loader mirrors ProjectInstructionsLoader's mtime-cache discipline: cheap NOOP
 until the file changes, so a config edit self-updates without a restart;
@@ -73,7 +73,7 @@ def interpolate_env(mapping: dict[str, str]) -> dict[str, str]:
 
 class McpConfigLoader:
     def __init__(self, workspace_path: str | Path) -> None:
-        self._path = Path(workspace_path) / ".ai-editor" / "mcp.json"
+        self._path = Path(workspace_path) / ".crucible" / "mcp.json"
         self._sig: tuple[int, int] | None = None
         self._cached: list[McpServerConfig] = []
 

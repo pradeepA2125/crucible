@@ -1745,8 +1745,8 @@ describe("AiEditorController — command-decision", () => {
 
   test("prompt files: lists and expands from the workspace", async () => {
     const ws = await fsp.mkdtemp(path.join(os.tmpdir(), "ctl-prompts-"));
-    await fsp.mkdir(path.join(ws, ".ai-editor", "prompts"), { recursive: true });
-    await fsp.writeFile(path.join(ws, ".ai-editor", "prompts", "review.md"), "Review $1", "utf8");
+    await fsp.mkdir(path.join(ws, ".crucible", "prompts"), { recursive: true });
+    await fsp.writeFile(path.join(ws, ".crucible", "prompts", "review.md"), "Review $1", "utf8");
 
     const state: StubBackendState = {
       submitPayloads: [],

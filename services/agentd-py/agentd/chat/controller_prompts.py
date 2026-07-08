@@ -454,7 +454,7 @@ planning, or exploring:
 The args object MUST contain "name". If a skill's instructions are already present
 in your payload (active_skills), follow them directly — do NOT call read_skill again.
 A skill may bundle helper scripts under its scripts/ folder — run them with
-run_command, e.g. run_command(command="python .ai-editor/skills/<name>/scripts/<file>.py").
+run_command, e.g. run_command(command="python .crucible/skills/<name>/scripts/<file>.py").
 """
 
 

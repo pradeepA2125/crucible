@@ -46,7 +46,7 @@ The reranker *improves* recall precision; the inspector lets you *observe and ve
 
 **The trace `entries` cover *all* scored candidates, not just the returned `k`** — including below-floor ones (`injected=false`), so the inspector can show "✗ below floor" rows (and a "0 candidates" trace exposes the empty-query/FTS5 failure class directly). The returned `memories` are the injected subset; the trace is the full picture.
 
-**Persistence:** `TurnPreparation` gains `recall_trace: RecallTrace | None` (filled by `_fill_recall`). The **controller loop** writes it to `<workspace>/.agentd/artifacts/chat/<thread>/<turn>/memory-recall-NN.json` (same turn dir as `controller-turn-NN.json` — the loop owns thread_id/turn_id/workspace). Best-effort: a write failure never breaks the turn. The task loop (dormant) skips persistence. NN = the recall count within the turn (recall runs once per turn, cached, so typically `00`).
+**Persistence:** `TurnPreparation` gains `recall_trace: RecallTrace | None` (filled by `_fill_recall`). The **controller loop** writes it to `<workspace>/.crucible/state/artifacts/chat/<thread>/<turn>/memory-recall-NN.json` (same turn dir as `controller-turn-NN.json` — the loop owns thread_id/turn_id/workspace). Best-effort: a write failure never breaks the turn. The task loop (dormant) skips persistence. NN = the recall count within the turn (recall runs once per turn, cached, so typically `00`).
 
 ---
 

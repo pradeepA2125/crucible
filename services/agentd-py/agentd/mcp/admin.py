@@ -1,4 +1,4 @@
-"""Read-modify-write helpers over .ai-editor/mcp.json for the settings UI routes.
+"""Read-modify-write helpers over .crucible/mcp.json for the settings UI routes.
 The file stays the source of truth (guided-writer pattern — see
 docs/superpowers/2026-07-02-mcp-settings-ui-research.md §1). Unknown keys are
 preserved; ${VAR} references are stored verbatim, never resolved."""

@@ -119,7 +119,7 @@ recall, no cross-session memory. Standalone value; ships alone.
 
 ## P1 data model
 
-`MemoryStore` owns a new DB (`CRUCIBLE_MEMORY_DB_PATH`, default `.agentd/memory.sqlite3` — separate
+`MemoryStore` owns a new DB (`CRUCIBLE_MEMORY_DB_PATH`, default `.crucible/state/memory.sqlite3` — separate
 file, same pattern as chat DB). **Phase 1 creates only these two tables.**
 
 **`compaction_segments`** — evicted raw history (lossless on disk; recoverable in Phase 2):
@@ -407,7 +407,7 @@ the rough approach. None are committed designs — each gets its own brainstorm 
   (`semantic/lexical/structural/recency/scope`) and the harness knows what it injected. Expose via
   `GET /v1/memory/inspect?thread_id=…&turn_id=…` (last recall set + scores) and
   `GET /v1/memory?scope=…` (browse). Persist a per-turn recall trace under the artifacts path
-  (`.agentd/artifacts/.../memory-recall-NN.json`) — mirrors `controller-turn-NN.json`.
+  (`.crucible/state/artifacts/.../memory-recall-NN.json`) — mirrors `controller-turn-NN.json`.
 - **Approach:** a webview panel — **Recalled this turn** (injected items + score breakdown, so
   weight-tuning is observable) and **Memory browser** (filter by scope/kind/validity; superseded
   chains; manual forget/edit, overlapping 3.2).
@@ -426,7 +426,7 @@ validates 3.1) → 3.2 + 3.3 curation (shared CRUD). Each gets its own brainstor
 ```
 # Phase 1
 CRUCIBLE_MEMORY_ENABLED               # master kill switch (default off — land dark)
-CRUCIBLE_MEMORY_DB_PATH               # default .agentd/memory.sqlite3
+CRUCIBLE_MEMORY_DB_PATH               # default .crucible/state/memory.sqlite3
 CRUCIBLE_MEMORY_COMPACT_TRIGGER_FRAC  # default 0.65 — compact when est. tokens cross this × window
 CRUCIBLE_MEMORY_HOT_TOKEN_FRAC        # default 0.4  — primary token bound on the hot set (< trigger_frac)
 CRUCIBLE_MEMORY_HOT_TURNS             # default 10   — secondary max-count cap on the hot set

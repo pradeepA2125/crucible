@@ -123,7 +123,7 @@ RUN_ID="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="${E2E_ROOT}/${RUN_ID}"
 mkdir -p "$RUN_DIR"
 
-SNAPSHOT_PATH="${WORKSPACE}/.ai-editor/index-snapshot.json"
+SNAPSHOT_PATH="${WORKSPACE}/.crucible/index-snapshot.json"
 DB_PATH="${RUN_DIR}/agentd.sqlite3"
 SHADOW_ROOT="${RUN_DIR}/shadows"
 AGENTD_LOG="${RUN_DIR}/agentd.log"

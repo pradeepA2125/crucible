@@ -288,7 +288,7 @@ def _tokenize(s: str) -> list[str]:
 
 class CommandRuleStore:
     def __init__(self, workspace_path: str | Path) -> None:
-        self._path = Path(workspace_path) / ".ai-editor" / "approved-commands.json"
+        self._path = Path(workspace_path) / ".crucible" / "approved-commands.json"
 
     def load(self) -> list[CommandRule]:
         if not self._path.exists():

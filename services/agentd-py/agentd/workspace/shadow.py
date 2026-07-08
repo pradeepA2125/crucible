@@ -11,8 +11,8 @@ from agentd.domain.models import TaskRecord
 
 DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
     ".git",
-    ".agentd",
-    ".ai-editor",
+    ".crucible/state",
+    ".crucible",
     ".tmp",
     "node_modules",
     ".venv",

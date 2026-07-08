@@ -15,7 +15,7 @@ Rust indexing service for AI Editor.
 - `CRUCIBLE_LSP_RS_CMD="rust-analyzer"`
 - `CRUCIBLE_LSP_STARTUP_TIMEOUT_MS=3000`
 - `CRUCIBLE_LSP_REQUEST_TIMEOUT_MS=3000`
-- `CRUCIBLE_INDEX_SNAPSHOT_PATH=<workspace>/.ai-editor/index-snapshot.json`
+- `CRUCIBLE_INDEX_SNAPSHOT_PATH=<workspace>/.crucible/index-snapshot.json`
 
 ## Run (after toolchain/deps)
 ```bash

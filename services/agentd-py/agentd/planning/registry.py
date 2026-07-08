@@ -309,7 +309,7 @@ class PlanningToolRegistry:
 
     def _snapshot_path(self) -> Path | None:
         override = os.environ.get(_SNAPSHOT_PATH_ENV)
-        candidate = Path(override) if override else self._real_path / ".ai-editor" / "index-snapshot.json"
+        candidate = Path(override) if override else self._real_path / ".crucible" / "index-snapshot.json"
         return candidate if candidate.exists() else None
 
 

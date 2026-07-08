@@ -15,7 +15,7 @@ On a multi-feature request, the reactive controller does **one feature, emits `s
 
 ### Grounded root cause (validated against thread `chat-58a5e144cf5a`, workspace `3d-game-test`)
 
-The transcript + controller artifacts (`.agentd/artifacts/chat/<thread>/<turn>/controller-turn-*.json`) prove a precise behavioral law:
+The transcript + controller artifacts (`.crucible/state/artifacts/chat/<thread>/<turn>/controller-turn-*.json`) prove a precise behavioral law:
 
 > **The model executes exactly the scope `plan_sketch` defines, then emits `submit_changes`. Every EDIT turn, without exception.**
 

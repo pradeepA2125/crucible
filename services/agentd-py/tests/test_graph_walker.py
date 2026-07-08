@@ -22,7 +22,7 @@ def _write_snapshot(path: Path, nodes: list[dict], edges: list[dict]) -> None:
 
 
 def _fixture(workspace: Path) -> Path:
-    snapshot = workspace / ".ai-editor" / "index-snapshot.json"
+    snapshot = workspace / ".crucible" / "index-snapshot.json"
     workspace.mkdir(parents=True, exist_ok=True)
     eng = workspace / "src/engine.py"
     sm = workspace / "src/state_machine.py"
@@ -245,7 +245,7 @@ def test_missing_snapshot_first_load_raises_filenotfound(tmp_path: Path) -> None
     """Caller has nothing to fall back to — propagate so the tool layer can
     translate to a clear 'run the indexer' message rather than silently
     returning an empty graph."""
-    walker = GraphWalker(tmp_path / ".ai-editor" / "index-snapshot.json", tmp_path)
+    walker = GraphWalker(tmp_path / ".crucible" / "index-snapshot.json", tmp_path)
     with pytest.raises(FileNotFoundError):
         walker.query("anything", depth=1, limit=10)
 
@@ -254,7 +254,7 @@ def test_corrupt_snapshot_first_load_raises_typed_error(tmp_path: Path) -> None:
     """Garbled JSON on first load must surface as `GraphWalkerSnapshotError`,
     NOT a raw `json.JSONDecodeError` that the tool registry doesn't know how
     to handle. Without this, the planning loop would crash."""
-    snapshot = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot.parent.mkdir(parents=True, exist_ok=True)
     snapshot.write_text("{ this isn't json at all", encoding="utf-8")
     walker = GraphWalker(snapshot, tmp_path)

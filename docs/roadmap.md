@@ -176,7 +176,7 @@ Program baseline: 24-week parity+ roadmap targeting Cursor/Windsurf core parity 
 **Status**: Planned. Differentiation layer beyond Cursor/Claude Code parity.
 
 ### Rules & Memory
-- [ ] Project-level rules file (`.ai-editor/rules.md`) — always injected into planning context
+- [ ] Project-level rules file (`.crucible/rules.md`) — always injected into planning context
 - [ ] User-level memory: agent learns and persists preferences, conventions, recurring patterns
 - [ ] Memory scoped per workspace; exportable and auditable
 

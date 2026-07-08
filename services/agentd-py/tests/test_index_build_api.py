@@ -65,7 +65,7 @@ def test_trigger_index_build_missing_snapshot(tmp_path: Path, monkeypatch: pytes
 
 def test_trigger_index_build_missing_snapshot_runs_auto_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The Build-index CTA path: a missing snapshot is auto-built, then embedded."""
-    snapshot_path = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot_path = tmp_path / ".crucible" / "index-snapshot.json"
     payload = {"generated_at_ms": 42, "graph": {"nodes": [], "edges": []}}
 
     fake_index = MagicMock()
@@ -88,7 +88,7 @@ def test_trigger_index_build_missing_snapshot_runs_auto_index(tmp_path: Path, mo
 
 def test_trigger_index_build_calls_build_or_update(tmp_path: Path):
     """Calls build_or_update with parsed snapshot payload and returns stats."""
-    snapshot_path = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot_path = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot_path.parent.mkdir(parents=True)
     payload = {"schema_version": 1, "generated_at_ms": 1000, "graph": {"nodes": [], "edges": []}}
     snapshot_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -98,7 +98,7 @@ def test_trigger_index_build_calls_build_or_update(tmp_path: Path):
     fake_index.build_or_update.return_value = fake_stats
 
     client = RetrievalArtifactClient(
-        snapshot_path_template=str(tmp_path / ".ai-editor" / "index-snapshot.json"),
+        snapshot_path_template=str(tmp_path / ".crucible" / "index-snapshot.json"),
         semantic_index=fake_index,
     )
     result = client.trigger_index_build(str(tmp_path))
@@ -109,7 +109,7 @@ def test_trigger_index_build_calls_build_or_update(tmp_path: Path):
 
 def test_trigger_index_build_updates_last_indexed_ms(tmp_path: Path):
     """_last_indexed_snapshot_ms is updated so load_context skips a redundant rebuild."""
-    snapshot_path = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot_path = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot_path.parent.mkdir(parents=True)
     payload = {"generated_at_ms": 9999, "graph": {"nodes": [], "edges": []}}
     snapshot_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -118,7 +118,7 @@ def test_trigger_index_build_updates_last_indexed_ms(tmp_path: Path):
     fake_index.build_or_update.return_value = None
 
     client = RetrievalArtifactClient(
-        snapshot_path_template=str(tmp_path / ".ai-editor" / "index-snapshot.json"),
+        snapshot_path_template=str(tmp_path / ".crucible" / "index-snapshot.json"),
         semantic_index=fake_index,
     )
     assert client._last_indexed_snapshot_ms == 0
@@ -128,7 +128,7 @@ def test_trigger_index_build_updates_last_indexed_ms(tmp_path: Path):
 
 def test_trigger_index_build_building_flag_cleared_on_success(tmp_path: Path):
     """_building is False after a successful build."""
-    snapshot_path = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot_path = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot_path.parent.mkdir(parents=True)
     snapshot_path.write_text(json.dumps({"generated_at_ms": 1}), encoding="utf-8")
 
@@ -145,7 +145,7 @@ def test_trigger_index_build_building_flag_cleared_on_success(tmp_path: Path):
 
 def test_trigger_index_build_building_flag_cleared_on_exception(tmp_path: Path):
     """_building is False even when build_or_update raises (finally block)."""
-    snapshot_path = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot_path = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot_path.parent.mkdir(parents=True)
     snapshot_path.write_text(json.dumps({"generated_at_ms": 1}), encoding="utf-8")
 
@@ -177,7 +177,7 @@ def test_index_status_semantic_enabled():
 
 def test_trigger_index_build_swallows_exception(tmp_path: Path):
     """Exceptions from build_or_update are caught and None is returned (non-fatal)."""
-    snapshot_path = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot_path = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot_path.parent.mkdir(parents=True)
     snapshot_path.write_text(json.dumps({"generated_at_ms": 1}), encoding="utf-8")
 
@@ -185,7 +185,7 @@ def test_trigger_index_build_swallows_exception(tmp_path: Path):
     fake_index.build_or_update.side_effect = RuntimeError("embedding model unavailable")
 
     client = RetrievalArtifactClient(
-        snapshot_path_template=str(tmp_path / ".ai-editor" / "index-snapshot.json"),
+        snapshot_path_template=str(tmp_path / ".crucible" / "index-snapshot.json"),
         semantic_index=fake_index,
     )
     result = client.trigger_index_build(str(tmp_path))
@@ -308,7 +308,7 @@ async def test_build_index_fires_trigger_in_background():
 
 
 def _make_snapshot(tmp_path: Path, generated_at_ms: int = 1000) -> Path:
-    snapshot_path = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot_path = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot_path.parent.mkdir(parents=True)
     snapshot_path.write_text(
         json.dumps({"generated_at_ms": generated_at_ms, "graph": {"nodes": [], "edges": []}}),

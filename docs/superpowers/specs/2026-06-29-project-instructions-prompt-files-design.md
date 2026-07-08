@@ -11,7 +11,7 @@
 Two Copilot-parity features that share one theme — *project-level configuration the agent honors automatically*:
 
 1. **Project instructions** — auto-inject a workspace `AGENTS.md` into the chat controller's system prompt on every turn, self-updating when the file changes.
-2. **Prompt files** — reusable `.ai-editor/prompts/<name>.md` snippets expanded inline in the composer via `/name [args]`.
+2. **Prompt files** — reusable `.crucible/prompts/<name>.md` snippets expanded inline in the composer via `/name [args]`.
 
 Both are deliberately low-effort, high-frequency wins that plug into existing seams: the controller system-prompt assembly (the gated teaching-block pattern) and the VS Code extension composer.
 
@@ -60,16 +60,16 @@ Both are deliberately low-effort, high-frequency wins that plug into existing se
 
 Entirely within the VS Code extension + React composer — **no backend involvement, no backend flag** (inert until a prompt file exists and `/` is typed).
 
-- **Storage:** `<workspace>/.ai-editor/prompts/<name>.md`. The markdown body is the prompt text. (Frontmatter / description metadata deferred to a later phase.)
-- **Discovery:** the extension host lists `.ai-editor/prompts/*.md`; the basenames (sans `.md`) power composer `/` autocomplete suggestions.
+- **Storage:** `<workspace>/.crucible/prompts/<name>.md`. The markdown body is the prompt text. (Frontmatter / description metadata deferred to a later phase.)
+- **Discovery:** the extension host lists `.crucible/prompts/*.md`; the basenames (sans `.md`) power composer `/` autocomplete suggestions.
 - **Expansion flow** (expansion happens *before* send, so the user can edit the result):
   1. Composer detects a leading `/name [args]`; expansion is triggered by an explicit affordance — selecting the entry from `/` autocomplete, or pressing Tab/Enter on the completed command — **not** by sending. (Send of an unexpanded `/name` is treated as "expand, don't send yet.")
   2. Webview posts `{ type: "expandPrompt", name, args }` to the extension host.
-  3. Host reads `.ai-editor/prompts/<name>.md`, substitutes:
+  3. Host reads `.crucible/prompts/<name>.md`, substitutes:
      - `$ARGUMENTS` → the full argument string after `/name`.
      - `$1, $2, … $N` → whitespace-split positional args (`$1` = first token, etc.); unfilled positionals → empty string.
   4. Host returns the expanded text; the composer **replaces its content inline** so the user sees and can edit it before sending. The message is then sent as ordinary text — the backend never sees `/name`.
-- **Unknown `/name`:** no expansion; leave the text as typed + a soft toast ("No prompt 'name' in .ai-editor/prompts").
+- **Unknown `/name`:** no expansion; leave the text as typed + a soft toast ("No prompt 'name' in .crucible/prompts").
 
 ## 4. Components & boundaries
 
@@ -105,7 +105,7 @@ Each unit is testable in isolation: the loader against a `tmp_path`, the prompt-
 **Live smoke:**
 1. Drop `AGENTS.md` with a distinctive directive (e.g. "prefix every reply with 🦊"); a live controller turn obeys it.
 2. **Edit AGENTS.md mid-session; the next turn reflects the change** (self-updating, no restart).
-3. Create `.ai-editor/prompts/review.md` using `$1`; `/review src/foo.py` expands inline in the composer.
+3. Create `.crucible/prompts/review.md` using `$1`; `/review src/foo.py` expands inline in the composer.
 4. Kill-switch: `CRUCIBLE_PROJECT_INSTRUCTIONS=0` → the directive is ignored.
 
 ## 7. Exit criteria

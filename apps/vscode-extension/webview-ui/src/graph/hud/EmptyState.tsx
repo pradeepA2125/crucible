@@ -13,7 +13,7 @@ export function EmptyState({ reason, message, building, onBuild }: Props) {
       </div>
       <p className="text-sm text-[var(--ax-ink-dim)] max-w-md">
         {reason === "missing"
-          ? "The dependency space renders from .ai-editor/index-snapshot.json — build the index to ignite it."
+          ? "The dependency space renders from .crucible/index-snapshot.json — build the index to ignite it."
           : message}
       </p>
       <button

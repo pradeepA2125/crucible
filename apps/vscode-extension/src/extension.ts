@@ -148,7 +148,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!ws) return [];
       const uris: vscode.Uri[] = await vscode.workspace.findFiles(
         "**/*",
-        "{**/node_modules/**,**/.git/**,**/dist/**,**/target/**,**/__pycache__/**,**/.venv/**,**/.agentd/**,**/.ai-editor/**}",
+        "{**/node_modules/**,**/.git/**,**/dist/**,**/target/**,**/__pycache__/**,**/.venv/**,**/.crucible/state/**,**/.crucible/**}",
         5000
       );
       return uris.map((u) => vscode.workspace.asRelativePath(u, false));

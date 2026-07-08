@@ -20,7 +20,7 @@ const ENTRIES: Entry[] = [
   {
     date: "jul '26",
     title: "MCP client",
-    body: "Connect any MCP tool server, stdio or HTTP, from .ai-editor/mcp.json or the settings panel. Every call pauses at an approval card — remembered per workspace if you say so.",
+    body: "Connect any MCP tool server, stdio or HTTP, from .crucible/mcp.json or the settings panel. Every call pauses at an approval card — remembered per workspace if you say so.",
   },
   {
     date: "jul '26",
@@ -40,7 +40,7 @@ const ENTRIES: Entry[] = [
   {
     date: "jun '26",
     title: "Prompt files",
-    body: "Reusable .ai-editor/prompts snippets that expand inline with /name — $ARGUMENTS and positional placeholders, reviewed in the composer before anything sends.",
+    body: "Reusable .crucible/prompts snippets that expand inline with /name — $ARGUMENTS and positional placeholders, reviewed in the composer before anything sends.",
   },
 ];
 

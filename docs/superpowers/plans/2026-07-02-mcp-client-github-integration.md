@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Connect external MCP tool servers (stdio + HTTP/SSE) to the chat controller, their tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval gate, configured via `<workspace>/.ai-editor/mcp.json`.
+**Goal:** Connect external MCP tool servers (stdio + HTTP/SSE) to the chat controller, their tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval gate, configured via `<workspace>/.crucible/mcp.json`.
 
 **Architecture:** New `agentd/mcp/` module (mirrors `agentd/skills/`): mtime-cached config loader → `McpConnectionManager` (one background asyncio task per server holding the SDK's async-context-manager session open; `reconcile()` seam for the future P4 settings UI) → `McpToolSource` on the existing `ToolSource`/`AggregatingToolRegistry` composite → a new `"mcp_tool"` `PendingGate` kind mirroring the controller's command gate. Spec: `docs/superpowers/specs/2026-07-02-mcp-client-github-integration-design.md`.
 
@@ -29,7 +29,7 @@
 |---|---|
 | `services/agentd-py/agentd/mcp/__init__.py` | empty package marker |
 | `services/agentd-py/agentd/mcp/models.py` | `McpServerConfig`, `McpServerStatus` |
-| `services/agentd-py/agentd/mcp/config.py` | `McpConfigLoader` (mtime-cached `.ai-editor/mcp.json`), `interpolate_env`, env knobs |
+| `services/agentd-py/agentd/mcp/config.py` | `McpConfigLoader` (mtime-cached `.crucible/mcp.json`), `interpolate_env`, env knobs |
 | `services/agentd-py/agentd/mcp/client.py` | `McpConnectionManager` — per-server serve tasks, `reconcile()`, `call_tool()`, statuses |
 | `services/agentd-py/agentd/mcp/rules.py` | `McpRuleStore` — remembered `(server, tool)` approvals |
 | `services/agentd-py/agentd/mcp/tool_source.py` | `McpToolSource` — namespacing, budget guard, approval, result flattening |
@@ -83,7 +83,7 @@ In `pyproject.toml`, change the dependencies list entry `"pyyaml>=6.0"` to:
 Create `tests/test_mcp_config.py`:
 
 ```python
-"""McpConfigLoader: mtime-cached .ai-editor/mcp.json reader (mirrors the
+"""McpConfigLoader: mtime-cached .crucible/mcp.json reader (mirrors the
 ProjectInstructionsLoader cache discipline) + ${VAR} interpolation helpers."""
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ from agentd.mcp.config import (
 
 
 def _write(tmp_path: Path, payload: dict) -> Path:
-    p = tmp_path / ".ai-editor" / "mcp.json"
+    p = tmp_path / ".crucible" / "mcp.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(payload), encoding="utf-8")
     return p
@@ -113,7 +113,7 @@ def test_missing_file_returns_empty(tmp_path: Path):
 
 
 def test_malformed_json_returns_empty(tmp_path: Path):
-    p = tmp_path / ".ai-editor" / "mcp.json"
+    p = tmp_path / ".crucible" / "mcp.json"
     p.parent.mkdir(parents=True)
     p.write_text("{not json", encoding="utf-8")
     assert McpConfigLoader(str(tmp_path)).load() == []
@@ -206,7 +206,7 @@ from pydantic import BaseModel, Field
 
 
 class McpServerConfig(BaseModel):
-    """One enabled server entry from .ai-editor/mcp.json. `env`/`headers` values may
+    """One enabled server entry from .crucible/mcp.json. `env`/`headers` values may
     contain ${VAR} references — resolved at connect time (never stored resolved)."""
     name: str
     transport: Literal["stdio", "http", "sse"]
@@ -233,7 +233,7 @@ class McpServerStatus(BaseModel):
 Create `agentd/mcp/config.py`:
 
 ```python
-"""Config for the MCP client: .ai-editor/mcp.json loader + env knobs.
+"""Config for the MCP client: .crucible/mcp.json loader + env knobs.
 
 Loader mirrors ProjectInstructionsLoader's mtime-cache discipline: cheap NOOP
 until the file changes, so a config edit self-updates without a restart;
@@ -308,7 +308,7 @@ def interpolate_env(mapping: dict[str, str]) -> dict[str, str]:
 
 class McpConfigLoader:
     def __init__(self, workspace_path: str | Path) -> None:
-        self._path = Path(workspace_path) / ".ai-editor" / "mcp.json"
+        self._path = Path(workspace_path) / ".crucible" / "mcp.json"
         self._sig: tuple[int, int] | None = None
         self._cached: list[McpServerConfig] = []
 
@@ -380,7 +380,7 @@ Expected: all PASS
 
 ```bash
 git add pyproject.toml agentd/mcp tests/test_mcp_config.py
-git commit -m "feat(mcp): config models + mtime-cached .ai-editor/mcp.json loader"
+git commit -m "feat(mcp): config models + mtime-cached .crucible/mcp.json loader"
 ```
 
 ---
@@ -806,7 +806,7 @@ git commit -m "feat(mcp): connection manager with per-server serve tasks + recon
 - Test: `services/agentd-py/tests/test_mcp_rules.py`
 
 **Interfaces:**
-- Produces: `McpRuleStore(workspace_path)` with `matches(server, tool) -> bool` and `add(server, tool) -> None`, persisted at `<workspace>/.ai-editor/approved-mcp-tools.json`.
+- Produces: `McpRuleStore(workspace_path)` with `matches(server, tool) -> bool` and `add(server, tool) -> None`, persisted at `<workspace>/.crucible/approved-mcp-tools.json`.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -841,7 +841,7 @@ def test_add_is_idempotent(tmp_path: Path):
 
 
 def test_corrupt_file_degrades_to_empty(tmp_path: Path):
-    p = tmp_path / ".ai-editor" / "approved-mcp-tools.json"
+    p = tmp_path / ".crucible" / "approved-mcp-tools.json"
     p.parent.mkdir(parents=True)
     p.write_text("{nope", encoding="utf-8")
     assert McpRuleStore(str(tmp_path)).matches("a", "b") is False
@@ -869,7 +869,7 @@ from pathlib import Path
 
 class McpRuleStore:
     def __init__(self, workspace_path: str | Path) -> None:
-        self._path = Path(workspace_path) / ".ai-editor" / "approved-mcp-tools.json"
+        self._path = Path(workspace_path) / ".crucible" / "approved-mcp-tools.json"
 
     def load(self) -> list[dict[str, str]]:
         if not self._path.exists():
@@ -1636,7 +1636,7 @@ In `agentd/chat/controller_factory.py`, after `is_skills_enabled`:
 
 ```python
 def is_mcp_enabled() -> bool:
-    """Whether external MCP servers from .ai-editor/mcp.json are connected and
+    """Whether external MCP servers from .crucible/mcp.json are connected and
     offered to the controller. Default OFF — external tool execution, ship dark.
     Opt in with CRUCIBLE_MCP_ENABLED=1."""
     return os.getenv("CRUCIBLE_MCP_ENABLED", "0").strip().lower() in _TRUTHY
@@ -1999,13 +1999,13 @@ Add after the Agent Skills section, following its exact style:
 ```markdown
 #### MCP client (P3, copilot-parity roadmap)
 
-External MCP tool servers (stdio + HTTP/SSE) connected from `<workspace>/.ai-editor/mcp.json`,
+External MCP tool servers (stdio + HTTP/SSE) connected from `<workspace>/.crucible/mcp.json`,
 tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval gate. Flag-gated,
 **default OFF** (`CRUCIBLE_MCP_ENABLED`), **controller-only**. Spec/plan:
 `docs/superpowers/specs/2026-07-02-mcp-client-github-integration-design.md` +
 `…/plans/2026-07-02-mcp-client-github-integration.md`.
 
-- **Config (`agentd/mcp/config.py::McpConfigLoader`):** mtime-cached `.ai-editor/mcp.json`
+- **Config (`agentd/mcp/config.py::McpConfigLoader`):** mtime-cached `.crucible/mcp.json`
   (`{"mcpServers": {name: {command/args/env | type+url/headers, "enabled": true}}}`). An entry
   connects ONLY with explicit `"enabled": true` (allowlist beyond presence). `${VAR}` in
   env/headers resolves against the process environment at connect time; a missing var fails
@@ -2026,7 +2026,7 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   (Class-A: renders from `/live`, survives reload; `mcp_approval_requested` SSE is only the
   instant-render poke). Resolved by `POST /v1/chat/threads/{id}/mcp-decision`
   `{approve, remember}`; remember persists the exact `(server, tool)` pair to
-  `.ai-editor/approved-mcp-tools.json` (`McpRuleStore`) — auto-approves next time.
+  `.crucible/approved-mcp-tools.json` (`McpRuleStore`) — auto-approves next time.
   `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` (default 0 = wait forever; timeout → reject).
   **`PendingGate.kind` gained `"mcp_tool"` in BOTH `chat/models.py` AND the editor-client
   Zod enum** (the `.min(1)`-class footgun) **AND webview `types.ts`**.
@@ -2065,7 +2065,7 @@ git commit -m "docs(mcp): document P3 MCP client architecture in CLAUDE.md"
 
 Spec §7 "Live smoke" + §8 exit criteria. Human-in-the-loop; run from the repo root.
 
-- [ ] 1. In a test workspace, write `.ai-editor/mcp.json`:
+- [ ] 1. In a test workspace, write `.crucible/mcp.json`:
 ```json
 {
   "mcpServers": {
@@ -2087,7 +2087,7 @@ Export `GITHUB_PAT` (fine-grained, repo-scoped) in the backend env — never in 
 - [ ] 2. Start the backend with `CRUCIBLE_MCP_ENABLED=1 CRUCIBLE_CHAT_CONTROLLER=1` via `start-backend.sh` (quote `--workspace`). Log shows `[mcp] connected server=… tools=N` for both.
 - [ ] 3. Drive a chat request that needs GitHub ("read issue #1 of <repo> and summarize") → `mcp_tool` gate card renders → Approve → result lands in the transcript.
 - [ ] 4. Reject path: repeat, Reject at the gate → the loop adapts (no crash, no silent retry of the identical call).
-- [ ] 5. Remember path: Approve & remember → `.ai-editor/approved-mcp-tools.json` written → the same tool next turn runs without a gate.
+- [ ] 5. Remember path: Approve & remember → `.crucible/approved-mcp-tools.json` written → the same tool next turn runs without a gate.
 - [ ] 6. Kill-switch: restart with `CRUCIBLE_MCP_ENABLED=0` → no `[mcp]` connects, no `mcp__` tools in the controller artifacts' `tools_json`, no teaching block.
 - [ ] 7. Allowlist: set `"enabled": false` on a server → NOT connected, zero tools (decision 4 holding).
 - [ ] 8. Reload-durability: raise a gate, reload the dev-host window → the card re-renders from `/live`.

@@ -9,7 +9,7 @@ def test_resolve_artifacts_base_defaults_to_workspace_local_path(tmp_path: Path,
     monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
     workspace = tmp_path / "repo"
     workspace.mkdir()
-    assert resolve_artifacts_base(workspace) == workspace / ".agentd" / "artifacts"
+    assert resolve_artifacts_base(workspace) == workspace / ".crucible/state" / "artifacts"
 
 
 def test_resolve_artifacts_base_honors_env_template(tmp_path: Path, monkeypatch) -> None:

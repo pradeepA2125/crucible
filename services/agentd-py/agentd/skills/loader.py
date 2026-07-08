@@ -1,4 +1,4 @@
-"""mtime-cached discovery + frontmatter parse for `.ai-editor/skills/*/SKILL.md`.
+"""mtime-cached discovery + frontmatter parse for `.crucible/skills/*/SKILL.md`.
 
 Mirrors instructions/loader.py: a cheap NOOP when the skills dir has not moved,
 a single re-scan when it has. Best-effort — a malformed skill is skipped with a
@@ -29,7 +29,7 @@ def _disabled_names() -> frozenset[str]:
 
 
 class SkillCatalogLoader:
-    SKILLS_SUBDIR = Path(".ai-editor") / "skills"
+    SKILLS_SUBDIR = Path(".crucible") / "skills"
 
     def __init__(self, workspace_path: Path | str) -> None:
         self._root = Path(workspace_path) / self.SKILLS_SUBDIR

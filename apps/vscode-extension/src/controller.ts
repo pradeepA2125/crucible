@@ -244,10 +244,10 @@ export class AiEditorController {
   }
 
   private promptsDir(): string {
-    return path.join(this.memoryWorkspacePath(), ".ai-editor", "prompts");
+    return path.join(this.memoryWorkspacePath(), ".crucible", "prompts");
   }
 
-  /** Names of available `.ai-editor/prompts/*.md` for composer `/` autocomplete. */
+  /** Names of available `.crucible/prompts/*.md` for composer `/` autocomplete. */
   async listPrompts(): Promise<string[]> {
     const ws = this.memoryWorkspacePath();
     if (!ws) return [];
@@ -263,7 +263,7 @@ export class AiEditorController {
     return { found: true, text: substitutePrompt(body, args) };
   }
 
-  /** Skill catalog (.ai-editor/skills/<name>/SKILL.md) for the composer's /skill forced-load. */
+  /** Skill catalog (.crucible/skills/<name>/SKILL.md) for the composer's /skill forced-load. */
   async listSkills(): Promise<{ name: string; description: string }[]> {
     const ws = this.memoryWorkspacePath();
     if (!ws) return [];

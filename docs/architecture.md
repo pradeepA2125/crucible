@@ -31,7 +31,7 @@
   - TypeScript/Rust execution/parsing via tree-sitter
 - Artifact/debug output uses a configurable root:
   - `CRUCIBLE_ARTIFACTS_ROOT`
-  - default `<workspace>/.agentd/artifacts`
+  - default `<workspace>/.crucible/state/artifacts`
 
 ## Deterministic boundaries
 - Model output is never executed directly.
@@ -53,7 +53,7 @@
 `QUEUED -> CONTEXT_READY -> AWAITING_PLAN_APPROVAL -> PLANNED -> EXECUTING -> VALIDATING -> VALIDATED -> READY_FOR_REVIEW -> PROMOTING -> SUCCEEDED|FAILED|ABORTED`
 
 ## Retrieval artifact flow
-1. `indexer-rs index` writes `<workspace>/.ai-editor/index-snapshot.json` with schema/version metadata, full graph, diagnostics, and stats.
+1. `indexer-rs index` writes `<workspace>/.crucible/index-snapshot.json` with schema/version metadata, full graph, diagnostics, and stats.
 2. `agentd-py` loads snapshot artifact once after shadow workspace preparation.
 3. If artifact is missing, `agentd-py` tries a single auto-index command and retries artifact load once.
 4. Stale/corrupt/missing artifacts emit warning diagnostics; task execution continues with empty retrieval context when needed.

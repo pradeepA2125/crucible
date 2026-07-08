@@ -58,8 +58,8 @@ Review lifecycle states are explicit:
 - `CRUCIBLE_MAX_ATTEMPTS_PER_STEP`: optional, default `3`
 - `CRUCIBLE_PATCH_CANDIDATE_COUNT`: optional, default `3`
 - `CRUCIBLE_CHECKPOINT_RETENTION_TASKS`: optional, default `20`
-- `CRUCIBLE_DB_PATH`: optional SQLite path, default `.agentd/agentd.sqlite3`
-- `CRUCIBLE_SHADOW_ROOT`: optional shadow root, default `.agentd/shadows`
+- `CRUCIBLE_DB_PATH`: optional SQLite path, default `.crucible/state/agentd.sqlite3`
+- `CRUCIBLE_SHADOW_ROOT`: optional shadow root, default `.crucible/state/shadows`
 
 AST patching dependencies:
 - Python AST/CST patching requires `libcst` (installed by default dependencies).
@@ -99,7 +99,7 @@ crucible-eval init-corpus-manifest \
 
 # 2) Export deterministic replay bundle for a task from SQLite
 crucible-eval export-bundle \
-  --db-path /path/to/repo/services/agentd-py/.agentd/agentd.sqlite3 \
+  --db-path /path/to/repo/services/agentd-py/.crucible/state/agentd.sqlite3 \
   --task-id task-123 \
   --output /tmp/benchmarks/bundle.task-123.json
 

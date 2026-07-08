@@ -66,7 +66,7 @@ def test_put_writes_file_connects_and_lists(tmp_path: Path) -> None:
     assert body["enabled"] is True
     (web,) = [s for s in body["servers"] if s["name"] == "web"]
     assert web["state"] == "connected" and web["tool_count"] == 1
-    raw = json.loads((tmp_path / ".ai-editor" / "mcp.json").read_text())
+    raw = json.loads((tmp_path / ".crucible" / "mcp.json").read_text())
     assert raw["mcpServers"]["web"]["command"] == "uv"
 
 

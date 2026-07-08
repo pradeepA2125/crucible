@@ -76,7 +76,7 @@ def _live(client: httpx.Client, base_url: str, thread_id: str) -> tuple[bool, st
 
 def _tool_sequence(workspace: str, thread_id: str) -> list[tuple[str, str]]:
     """(action_type, tool) per iteration from the thread's controller artifacts."""
-    base = os.path.join(workspace, ".agentd", "artifacts", "chat", thread_id)
+    base = os.path.join(workspace, ".crucible/state", "artifacts", "chat", thread_id)
     files = sorted(glob.glob(os.path.join(base, "*", "controller-turn-*.json")),
                    key=os.path.getmtime)
     seq: list[tuple[str, str]] = []

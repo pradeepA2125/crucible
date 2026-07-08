@@ -1218,7 +1218,7 @@ export function McpSection({ state, busy, send }: SectionProps) {
     <div>
       <SectionHeader
         title="MCP Servers"
-        description="External tool servers from .ai-editor/mcp.json. Every tool call is approval-gated in chat."
+        description="External tool servers from .crucible/mcp.json. Every tool call is approval-gated in chat."
         search={{ value: filter, onChange: setFilter }}
       />
 
@@ -1417,7 +1417,7 @@ export function SkillsSection({ state, send }: SectionProps) {
     <div>
       <SectionHeader
         title="Skills"
-        description="SKILL.md folders discovered in .ai-editor/skills. Disabling a skill hides it from the agent (requires a backend restart)."
+        description="SKILL.md folders discovered in .crucible/skills. Disabling a skill hides it from the agent (requires a backend restart)."
         search={{ value: filter, onChange: setFilter }}
       />
       <CardShell icon="bolt" title="Workspace skills" trailing={<span className="text-[10px] text-text-3">{state.skills.length}</span>}>
@@ -1505,7 +1505,7 @@ export function RuntimeSection({ state, busy, send }: SectionProps) {
     <div>
       <SectionHeader
         title="Runtime"
-        description="The managed runtime installed under ~/.ai-editor/runtime."
+        description="The managed runtime installed under ~/.crucible/runtime."
       />
       <CardShell
         icon="chip"
@@ -2321,7 +2321,7 @@ Return JSX (state logic above it unchanged):
               ))}
             </ul>
             <p className="px-3 pb-3 text-[11px] text-text-3">
-              Everything lands in <code>~/.ai-editor/runtime</code> — nothing touches your system Python or PATH.
+              Everything lands in <code>~/.crucible/runtime</code> — nothing touches your system Python or PATH.
             </p>
           </CardShell>
           <BtnPrimary className="self-start" icon="bolt" onClick={startInstall}>
@@ -2961,7 +2961,7 @@ Checklist:
 6. Instructions: empty state → Create → type → Save → send a chat message and confirm the backend picked the rules up (no restart).
 7. Runtime: versions render; Restart backend works.
 8. Setup wizard (`crucible.runSetup`): StepRail advances, install rows animate, done step reachable.
-9. Composer: chip shows current model; swap to another keyed provider; next chat turn uses it (check `.agentd` log for the new model); swap error (bogus key) renders in-popover; gear opens Settings.
+9. Composer: chip shows current model; swap to another keyed provider; next chat turn uses it (check `.crucible/state` log for the new model); swap error (bogus key) renders in-popover; gear opens Settings.
 10. Toggle macOS "Reduce motion" and confirm the UI is instant but functional.
 
 - [ ] **Step 3: Commit any smoke fixes, then final commit**

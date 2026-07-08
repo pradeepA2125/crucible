@@ -47,7 +47,7 @@ def build_app(
             return {"intent": "qa", "rationale": "test", "likely_targets": []}
 
     store = InMemoryTaskStore()
-    ws_manager = ShadowWorkspaceManager(Path(workspace_path) / ".agentd" / "shadows")
+    ws_manager = ShadowWorkspaceManager(Path(workspace_path) / ".crucible/state" / "shadows")
     chat_store = ChatThreadStore(Path(workspace_path) / "chat.db")
     scripted_engine = ScriptedReasoningEngine(
         plan={"analysis": "", "steps": []},

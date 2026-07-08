@@ -79,7 +79,7 @@ class SemanticIndex:
     @classmethod
     def from_env(cls, workspace_path: str | Path | None = None) -> "SemanticIndex":
         import os
-        raw_path = os.getenv("CRUCIBLE_VECTOR_INDEX_PATH", ".ai-editor/vector-index")
+        raw_path = os.getenv("CRUCIBLE_VECTOR_INDEX_PATH", ".crucible/vector-index")
         index_path: Path
         if Path(raw_path).is_absolute():
             index_path = Path(raw_path)

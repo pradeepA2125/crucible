@@ -142,7 +142,7 @@ servers); documented as one-liners next to the canonical entry. No Python provid
 
 ### 4.4 Example file
 
-`.ai-editor/mcp.json.example` snippets live in CLAUDE.md docs (the P4 installer, not this
+`.crucible/mcp.json.example` snippets live in CLAUDE.md docs (the P4 installer, not this
 feature, owns writing real defaults into user workspaces).
 
 ## 5. Error handling

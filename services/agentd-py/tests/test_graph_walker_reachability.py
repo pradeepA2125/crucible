@@ -30,7 +30,7 @@ from agentd.retrieval.graph_walker import GraphWalker
 _LIVE_WORKSPACE = Path(
     "/Users/pradeepkumar/projects/AI editor/workspaces/shadow-forge-stress"
 )
-_LIVE_SNAPSHOT = _LIVE_WORKSPACE / ".ai-editor" / "index-snapshot.json"
+_LIVE_SNAPSHOT = _LIVE_WORKSPACE / ".crucible" / "index-snapshot.json"
 
 requires_live_snapshot = pytest.mark.skipif(
     not _LIVE_SNAPSHOT.exists(),

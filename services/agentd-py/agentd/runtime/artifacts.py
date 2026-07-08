@@ -13,8 +13,8 @@ def resolve_artifacts_base(workspace_path: str | Path | None = None) -> Path:
             rendered = raw.format(workspace=str(workspace))
         return Path(rendered).expanduser().resolve()
     if workspace is not None:
-        return (workspace / ".agentd" / "artifacts").resolve()
-    return Path(".agentd/artifacts").resolve()
+        return (workspace / ".crucible/state" / "artifacts").resolve()
+    return Path(".crucible/state/artifacts").resolve()
 
 
 def task_artifacts_root(task_id: str, workspace_path: str | Path | None = None) -> Path:

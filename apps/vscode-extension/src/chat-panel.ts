@@ -42,7 +42,7 @@ export type StopTurnHandler = () => void;
 export type AbortTaskHandler = (revert: boolean) => Promise<void>;
 // Tier B: live-mutable "Review each step" preference for the running task.
 export type SetReviewPrefHandler = (autoAccept: boolean) => Promise<void>;
-// P1: prompt-file expansion in the composer (.ai-editor/prompts/<name>.md).
+// P1: prompt-file expansion in the composer (.crucible/prompts/<name>.md).
 export type ListPromptsHandler = () => Promise<string[]>;
 export type ExpandPromptHandler = (
   name: string,

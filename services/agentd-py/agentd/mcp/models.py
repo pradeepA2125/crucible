@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class McpServerConfig(BaseModel):
-    """One enabled server entry from .ai-editor/mcp.json. `env`/`headers` values may
+    """One enabled server entry from .crucible/mcp.json. `env`/`headers` values may
     contain ${VAR} references — resolved at connect time (never stored resolved)."""
     name: str
     transport: Literal["stdio", "http", "sse"]

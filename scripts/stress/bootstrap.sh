@@ -8,7 +8,7 @@ Usage:
 
 Defaults:
   workspace: repository root
-  snapshot:  <workspace>/.ai-editor/index-snapshot.json
+  snapshot:  <workspace>/.crucible/index-snapshot.json
 USAGE
 }
 
@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$SNAPSHOT_PATH" ]]; then
-  SNAPSHOT_PATH="$WORKSPACE/.ai-editor/index-snapshot.json"
+  SNAPSHOT_PATH="$WORKSPACE/.crucible/index-snapshot.json"
 fi
 
 for cmd in npm python3 cargo; do

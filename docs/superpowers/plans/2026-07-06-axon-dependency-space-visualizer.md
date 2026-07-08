@@ -1347,7 +1347,7 @@ export class GraphPanel {
     private readonly workspacePath: string,
     private readonly backendBaseUrl: string
   ) {
-    this.snapshotPath = path.join(workspacePath, ".ai-editor", "index-snapshot.json");
+    this.snapshotPath = path.join(workspacePath, ".crucible", "index-snapshot.json");
     this.store = new GraphSnapshotStore(this.snapshotPath);
   }
 
@@ -1397,7 +1397,7 @@ export class GraphPanel {
       },
       buildIndex: async () => {
         await fetch(new URL("/v1/index/build", this.backendBaseUrl), { method: "POST" });
-        // .ai-editor/ may not have existed when the panel opened (fs.watch on a missing
+        // .crucible/ may not have existed when the panel opened (fs.watch on a missing
         // dir throws) — re-arm so the snapshot ignites the space when the build lands.
         this.stopWatcher();
         this.startWatcher();
@@ -1756,7 +1756,7 @@ export function EmptyState({ reason, message, building, onBuild }: Props) {
       </div>
       <p className="text-sm text-[var(--color-text-dim)] max-w-md">
         {reason === "missing"
-          ? "The dependency space renders from .ai-editor/index-snapshot.json — build the index to ignite it."
+          ? "The dependency space renders from .crucible/index-snapshot.json — build the index to ignite it."
           : message}
       </p>
       <button
@@ -3719,7 +3719,7 @@ Write a throwaway script (run with `npx tsx` from `apps/vscode-extension/` to si
 // /tmp/axon-spot-check.ts
 import { GraphSnapshotStore } from "./src/graph/snapshot-store.js";
 const st = new GraphSnapshotStore(
-  `${process.env.HOME}/projects/AI editor/workspaces/shadow-forge-stress/.ai-editor/index-snapshot.json`
+  `${process.env.HOME}/projects/AI editor/workspaces/shadow-forge-stress/.crucible/index-snapshot.json`
 );
 const m = st.load();
 console.log("stars", m.stars.length, "packages", m.packages.map((p) => p.id), "bundles", m.bundles.length);
@@ -3737,7 +3737,7 @@ Dev host against `workspaces/shadow-forge-stress`:
 5. `⌘K` search `client` → Enter → warp + focus.
 6. Esc ×3 unwinds L2→L1→L0; breadcrumb tracks.
 7. Edit a file in the workspace → snapshot rewrite → morph without camera/focus loss.
-8. Delete `.ai-editor/index-snapshot.json` → reopen panel → EmptyState with working **Build index** CTA.
+8. Delete `.crucible/index-snapshot.json` → reopen panel → EmptyState with working **Build index** CTA.
 
 - [ ] **Step 4: Final commit + docs touch**
 

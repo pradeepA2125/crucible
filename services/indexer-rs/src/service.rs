@@ -188,9 +188,9 @@ impl IndexerService {
 
     async fn handle_watch_event(&mut self, event: Event) -> Result<()> {
         // Track whether the event actually moved the graph forward. If every
-        // path was filtered (ignored dir like `.ai-editor`, unsupported
+        // path was filtered (ignored dir like `.crucible`, unsupported
         // extension, or per-path debounce skip), persist_snapshot must NOT run
-        // — otherwise our own snapshot write under `.ai-editor` would re-trigger
+        // — otherwise our own snapshot write under `.crucible` would re-trigger
         // a watch event, get filtered, and still rewrite the snapshot, looping
         // forever and flooding the backend with `/v1/index/build` POSTs.
         let mut processed_any = false;
@@ -401,7 +401,7 @@ fn is_supported_source_path(path: &Path) -> bool {
 }
 
 fn is_ignored_path(path: &Path) -> bool {
-    const IGNORED_DIRS: [&str; 11] = [
+    const IGNORED_DIRS: [&str; 12] = [
         ".git",
         "node_modules",
         ".venv",
@@ -412,6 +412,7 @@ fn is_ignored_path(path: &Path) -> bool {
         ".mypy_cache",
         ".agentd",
         ".ai-editor",
+        ".crucible",
         ".tmp",
     ];
     path.components().any(|component| {

@@ -26,7 +26,7 @@ def test_add_is_idempotent(tmp_path: Path):
 
 
 def test_corrupt_file_degrades_to_empty(tmp_path: Path):
-    p = tmp_path / ".ai-editor" / "approved-mcp-tools.json"
+    p = tmp_path / ".crucible" / "approved-mcp-tools.json"
     p.parent.mkdir(parents=True)
     p.write_text("{nope", encoding="utf-8")
     assert McpRuleStore(str(tmp_path)).matches("a", "b") is False

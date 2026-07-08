@@ -16,7 +16,7 @@ export function SkillsSection({ state, send }: SectionProps) {
     <div>
       <SectionHeader
         title="Skills"
-        description="SKILL.md folders discovered in .ai-editor/skills. Disabling a skill hides it from the agent (requires a backend restart)."
+        description="SKILL.md folders discovered in .crucible/skills. Disabling a skill hides it from the agent (requires a backend restart)."
         search={{ value: filter, onChange: setFilter }}
       />
       <CardShell

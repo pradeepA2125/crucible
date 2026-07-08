@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Auto-inject a workspace `AGENTS.md` into the chat controller's system prompt (self-updating), and expand `.ai-editor/prompts/<name>.md` snippets inline in the composer via `/name [args]`.
+**Goal:** Auto-inject a workspace `AGENTS.md` into the chat controller's system prompt (self-updating), and expand `.crucible/prompts/<name>.md` snippets inline in the composer via `/name [args]`.
 
 **Architecture:** Backend half — a new mtime-cached `ProjectInstructionsLoader` reads `AGENTS.md`; `DefaultReasoningEngine` resolves its text each controller turn and appends it to the system prompt via a new `_INSTRUCTIONS_BLOCK` (mirrors the existing `_MEMORY_BLOCK` pattern), gated by a default-ON `CRUCIBLE_PROJECT_INSTRUCTIONS` kill-switch. Frontend half — pure vscode-free helpers in `prompt-files.ts`, controller methods that read the prompts dir, host plumbing in `chat-panel.ts`/`extension.ts`, and composer wiring in `InputArea.tsx` that expands a slash command *before* send.
 
@@ -647,7 +647,7 @@ Expected: FAIL — cannot find module `./prompt-files`.
 
 ```typescript
 // src/prompt-files.ts
-// vscode-free helpers for .ai-editor/prompts/<name>.md. Pure substitution +
+// vscode-free helpers for .crucible/prompts/<name>.md. Pure substitution +
 // node-fs reads; no `vscode` import so this stays unit-testable in vitest.
 import { promises as fsp } from "fs";
 import * as path from "path";
@@ -732,8 +732,8 @@ import * as path from "path";
 
 it("lists and expands prompt files from the workspace", async () => {
   const ws = await fsp.mkdtemp(path.join(os.tmpdir(), "ctl-prompts-"));
-  await fsp.mkdir(path.join(ws, ".ai-editor", "prompts"), { recursive: true });
-  await fsp.writeFile(path.join(ws, ".ai-editor", "prompts", "review.md"), "Review $1", "utf8");
+  await fsp.mkdir(path.join(ws, ".crucible", "prompts"), { recursive: true });
+  await fsp.writeFile(path.join(ws, ".crucible", "prompts", "review.md"), "Review $1", "utf8");
   // Build the controller with a stub UI whose getWorkspacePath() returns `ws`.
   const controller = makeControllerWithWorkspace(ws); // helper in the existing test file
   expect(await controller.listPrompts()).toEqual(["review"]);
@@ -766,10 +766,10 @@ Add the methods next to `memoryWorkspacePath()`:
 
 ```typescript
   private promptsDir(): string {
-    return path.join(this.memoryWorkspacePath(), ".ai-editor", "prompts");
+    return path.join(this.memoryWorkspacePath(), ".crucible", "prompts");
   }
 
-  /** Names of available `.ai-editor/prompts/*.md` for composer `/` autocomplete. */
+  /** Names of available `.crucible/prompts/*.md` for composer `/` autocomplete. */
   async listPrompts(): Promise<string[]> {
     const ws = this.memoryWorkspacePath();
     if (!ws) return [];
@@ -1054,15 +1054,15 @@ Kill-switch check: restart with `CRUCIBLE_PROJECT_INSTRUCTIONS=0`; the token is 
 - [ ] **Step 5: Live smoke — prompt-file expansion**
 
 ```bash
-mkdir -p "$PWD/workspaces/shadow-forge-stress/.ai-editor/prompts"
+mkdir -p "$PWD/workspaces/shadow-forge-stress/.crucible/prompts"
 printf 'Summarize the file $1 and list its exported symbols.\n' \
-  > "$PWD/workspaces/shadow-forge-stress/.ai-editor/prompts/summarize.md"
+  > "$PWD/workspaces/shadow-forge-stress/.crucible/prompts/summarize.md"
 ```
 In the composer type `/summarize src/foo.py` and press Enter. **Expected:** the draft is replaced inline with `Summarize the file src/foo.py and list its exported symbols.`; pressing Enter again sends it.
 
 - [ ] **Step 6: Update CLAUDE.md**
 
-Add a short subsection under the chat/controller architecture notes documenting: the `instructions/loader.py` mtime-cache, the `CRUCIBLE_PROJECT_INSTRUCTIONS` (default-on) + `CRUCIBLE_INSTRUCTIONS_MAX_CHARS` env vars, controller-only injection, and the `.ai-editor/prompts/<name>.md` + `/name` composer flow (frontend-only, expand-before-send). Commit.
+Add a short subsection under the chat/controller architecture notes documenting: the `instructions/loader.py` mtime-cache, the `CRUCIBLE_PROJECT_INSTRUCTIONS` (default-on) + `CRUCIBLE_INSTRUCTIONS_MAX_CHARS` env vars, controller-only injection, and the `.crucible/prompts/<name>.md` + `/name` composer flow (frontend-only, expand-before-send). Commit.
 
 ```bash
 git add CLAUDE.md

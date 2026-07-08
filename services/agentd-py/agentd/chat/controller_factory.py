@@ -51,7 +51,7 @@ def is_skills_enabled() -> bool:
 
 
 def is_mcp_enabled() -> bool:
-    """Whether external MCP servers from .ai-editor/mcp.json are connected and
+    """Whether external MCP servers from .crucible/mcp.json are connected and
     offered to the controller. Default OFF — external tool execution, ship dark.
     Opt in with CRUCIBLE_MCP_ENABLED=1."""
     return os.getenv("CRUCIBLE_MCP_ENABLED", "0").strip().lower() in _TRUTHY

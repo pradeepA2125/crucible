@@ -101,7 +101,7 @@ const STAGES: Stage[] = [
     label: "Edit in shadow",
     blurb:
       "Edits run in an isolated shadow session with a live todo ledger for multi-part work — finishing is hard-blocked until every item is done.",
-    file: ".agentd shadow · session-4f21",
+    file: ".crucible/state shadow · session-4f21",
     status: "editing · shadow only",
     statusClass: "text-amber bg-amber/10 border-amber/30",
     lines: [

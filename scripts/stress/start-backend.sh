@@ -14,11 +14,11 @@ Defaults:
   out-dir:      <repo>/.tmp/stress-<timestamp>  (uvicorn stdout log only)
   backend:      auto-detected from available provider keys
   model:        provider-specific default
-  artifacts:    <workspace>/.agentd/artifacts
-  db:           <workspace>/.agentd/agentd.sqlite3
-  chat_db:      <workspace>/.agentd/chat.sqlite3
-  log_file:     <workspace>/.agentd/agentd.log
-  shadow_root:  <workspace>/.agentd/shadows
+  artifacts:    <workspace>/.crucible/state/artifacts
+  db:           <workspace>/.crucible/state/agentd.sqlite3
+  chat_db:      <workspace>/.crucible/state/chat.sqlite3
+  log_file:     <workspace>/.crucible/state/agentd.log
+  shadow_root:  <workspace>/.crucible/state/shadows
 USAGE
 }
 
@@ -248,21 +248,21 @@ if [[ -z "$LOG_DIR" ]]; then
   LOG_DIR="$OUT_DIR/logs"
 fi
 if [[ -z "$ARTIFACTS_ROOT" ]]; then
-  ARTIFACTS_ROOT="$WORKSPACE/.agentd/artifacts"
+  ARTIFACTS_ROOT="$WORKSPACE/.crucible/state/artifacts"
 fi
 
-mkdir -p "$OUT_DIR" "$LOG_DIR" "$WORKSPACE/.agentd" "$ARTIFACTS_ROOT"
+mkdir -p "$OUT_DIR" "$LOG_DIR" "$WORKSPACE/.crucible/state" "$ARTIFACTS_ROOT"
 # NOTE: do NOT place --workspace under a dir named like an indexer IGNORED_DIR
 # (.tmp, target, dist, .git, node_modules, .venv, …). is_ignored_path in
 # indexer-rs/src/service.rs matches those names anywhere in the ABSOLUTE path, so
 # an ignored ANCESTOR silently filters every file: the watcher runs but the graph
 # snapshot stays at 0 nodes (vector retrieval still works). Use workspaces/… etc.
-SNAPSHOT_PATH="$WORKSPACE/.ai-editor/index-snapshot.json"
+SNAPSHOT_PATH="$WORKSPACE/.crucible/index-snapshot.json"
 LOG_FILE="$LOG_DIR/agentd.log"             # uvicorn stdout (tee'd)
-BACKEND_LOG_FILE="$WORKSPACE/.agentd/agentd.log"   # structured backend log
-CHAT_DB_PATH="$WORKSPACE/.agentd/chat.sqlite3"
-DB_PATH="$WORKSPACE/.agentd/agentd.sqlite3"
-SHADOW_ROOT="$WORKSPACE/.agentd/shadows"
+BACKEND_LOG_FILE="$WORKSPACE/.crucible/state/agentd.log"   # structured backend log
+CHAT_DB_PATH="$WORKSPACE/.crucible/state/chat.sqlite3"
+DB_PATH="$WORKSPACE/.crucible/state/agentd.sqlite3"
+SHADOW_ROOT="$WORKSPACE/.crucible/state/shadows"
 VALIDATION_COMMANDS_JSON="$(resolve_validation_commands)"
 
 if [[ "$VALIDATION_COMMANDS_JSON" == "__STRICT_MISSING__" ]]; then
@@ -370,7 +370,7 @@ echo "uvicorn_log=$LOG_FILE"
   export CRUCIBLE_ARTIFACTS_ROOT="$ARTIFACTS_ROOT"
   export CRUCIBLE_SHELL_POLICY="${CRUCIBLE_SHELL_POLICY:-ask}"
   # Default-on feature flags (2026-07-02): reactive controller + its tool surface
-  # (skills catalog, MCP servers from .ai-editor/mcp.json, gated write_doc).
+  # (skills catalog, MCP servers from .crucible/mcp.json, gated write_doc).
   # Override any of these via env to opt out.
   export CRUCIBLE_CHAT_CONTROLLER="${CRUCIBLE_CHAT_CONTROLLER:-1}"
   export CRUCIBLE_SKILLS_ENABLED="${CRUCIBLE_SKILLS_ENABLED:-1}"

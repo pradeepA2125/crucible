@@ -31,23 +31,23 @@ bash scripts/stress/start-backend.sh --backend turboquant \
 ```
 - Workspace: **`shadow-forge-stress`** (outside ignored-dir ancestors; ~4.3k indexed nodes).
 - Confirm `CRUCIBLE_CHAT_CONTROLLER=1` (memory requires the controller path).
-- DB to watch: `services/agentd-py/.agentd/memory.sqlite3` (or workspace `.agentd/memory.sqlite3` —
+- DB to watch: `services/agentd-py/.crucible/state/memory.sqlite3` (or workspace `.crucible/state/memory.sqlite3` —
   confirm which the process opens via `CRUCIBLE_MEMORY_DB_PATH`).
 
 ## Observation toolkit
 
 ```bash
 # memories written
-sqlite3 .agentd/memory.sqlite3 "SELECT kind, importance, substr(content,1,80), entities,
+sqlite3 .crucible/state/memory.sqlite3 "SELECT kind, importance, substr(content,1,80), entities,
   source_kind, source_seq_lo, source_seq_hi FROM memories WHERE valid_to IS NULL;"
 # supersede chains
-sqlite3 .agentd/memory.sqlite3 "SELECT id, valid_to, superseded_by FROM memories WHERE valid_to IS NOT NULL;"
+sqlite3 .crucible/state/memory.sqlite3 "SELECT id, valid_to, superseded_by FROM memories WHERE valid_to IS NOT NULL;"
 # vec + fts populated
-sqlite3 .agentd/memory.sqlite3 "SELECT count(*) FROM vec_memories; SELECT count(*) FROM memories_fts;"
+sqlite3 .crucible/state/memory.sqlite3 "SELECT count(*) FROM vec_memories; SELECT count(*) FROM memories_fts;"
 # logs
 tail -f .tmp/stress-*/logs/agentd.log | grep -iE "\[memory\]|compacted|consolidat|recall|sqlite-vec"
 # per-turn artifacts (recalled_memories should appear in user_payload TAIL)
-ls workspaces/shadow-forge-stress/.agentd/artifacts/chat/<thread>/<turn>/controller-turn-*.json
+ls workspaces/shadow-forge-stress/.crucible/state/artifacts/chat/<thread>/<turn>/controller-turn-*.json
 ```
 
 ---

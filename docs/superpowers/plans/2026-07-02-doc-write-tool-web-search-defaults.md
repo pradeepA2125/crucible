@@ -1104,7 +1104,7 @@ Append to the **MCP client (P3)** section's bullet list:
 ```markdown
 - **Shipped web-search default (2026-07-02):** `resources/mcp-servers/ollama-web-search.py`
   (vendored first-party `ollama-python` example, PEP-723 deps, run via `uv run`) exposes
-  `web_search`/`web_fetch` from Ollama's hosted API. Canonical `.ai-editor/mcp.json` entry —
+  `web_search`/`web_fetch` from Ollama's hosted API. Canonical `.crucible/mcp.json` entry —
   the P4 installer will write it as a default:
   `"web": {"command": "uv", "args": ["run", "<repo>/resources/mcp-servers/ollama-web-search.py"], "env": {"OLLAMA_API_KEY": "${OLLAMA_API_KEY}"}, "enabled": true}`.
   Key: free, https://ollama.com/settings/keys, exported in the backend env. Missing key →
@@ -1172,7 +1172,7 @@ git commit -m "feat(mcp): vendored Ollama web-search MCP server as shipped defau
 
 Human-in-the-loop (or HTTP-driven like the P3 smoke). Backend: `CRUCIBLE_CHAT_CONTROLLER=1 CRUCIBLE_MCP_ENABLED=1 CRUCIBLE_DOC_WRITE_ENABLED=1`, `OLLAMA_API_KEY` exported.
 
-- [ ] 1. Add the `"web"` entry (Task 6 canonical form, absolute script path) to the smoke workspace's `.ai-editor/mcp.json`; restart backend; log shows `[mcp] connected server=web tools=2`.
+- [ ] 1. Add the `"web"` entry (Task 6 canonical form, absolute script path) to the smoke workspace's `.crucible/mcp.json`; restart backend; log shows `[mcp] connected server=web tools=2`.
 - [ ] 2. **write_doc approve:** "write a short CONTRIBUTING.md for this repo" from chat → `doc_write` gate card renders path+preview → Approve → file exists in the real workspace, `✓ Doc written` breadcrumb.
 - [ ] 3. **write_doc reject:** repeat with different content → Reject → no file change, model adapts (watch for the known repetition-attractor class; `/stop` is the escape).
 - [ ] 4. **Overwrite preview:** ask to update the same file → gate shows a unified diff, not full content.

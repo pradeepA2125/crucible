@@ -43,7 +43,7 @@ describe("buildBackendEnv", () => {
     expect(env.GEMINI_API_KEY).toBe("sk-secret");
     expect(env.CRUCIBLE_RIPGREP_CMD).toBe("/rt/bin/rg");
     expect(env.CRUCIBLE_CHAT_CONTROLLER).toBe("1");
-    expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".agentd", "agentd.sqlite3"));
+    expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".crucible/state", "agentd.sqlite3"));
   });
   it("extraEnv overrides defaults; skillsDisabled joins", () => {
     const env = buildBackendEnv("/ws", {
@@ -57,8 +57,8 @@ describe("buildBackendEnv", () => {
 describe("BackendProcess.start", () => {
   it("reuses a live locked backend without spawning", async () => {
     const w = ws();
-    mkdirSync(join(w, ".agentd"));
-    writeFileSync(join(w, ".agentd", "agentd.lock"),
+    mkdirSync(join(w, ".crucible/state"), { recursive: true });
+    writeFileSync(join(w, ".crucible/state", "agentd.lock"),
       JSON.stringify({ pid: 999, port: 8200, started_at: 1 }));
     const d = deps({ isPidAlive: () => true });
     const res = await new BackendProcess(d).start(w, SETTINGS);
@@ -68,8 +68,8 @@ describe("BackendProcess.start", () => {
 
   it("reaps a stale lock and spawns backend + watcher", async () => {
     const w = ws();
-    mkdirSync(join(w, ".agentd"));
-    writeFileSync(join(w, ".agentd", "agentd.lock"),
+    mkdirSync(join(w, ".crucible/state"), { recursive: true });
+    writeFileSync(join(w, ".crucible/state", "agentd.lock"),
       JSON.stringify({ pid: 999, port: 8200, started_at: 1 }));
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });

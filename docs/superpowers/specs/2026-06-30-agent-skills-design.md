@@ -28,11 +28,11 @@ opencode native, opencode-agent-skills plugin) — see §10 for the evidence tha
 
 | # | Decision | Rationale |
 |---|----------|-----------|
-| 1 | **Single `.ai-editor/skills/<name>/SKILL.md` dir** for v1 | Simplest discovery, consistent with P1's `.ai-editor/prompts/`. Files keep the **standard SKILL.md format** so they stay portable; ecosystem dirs (`.claude/skills`, `~/.agents/skills`) are a trivial later add (append to a dir list). |
+| 1 | **Single `.crucible/skills/<name>/SKILL.md` dir** for v1 | Simplest discovery, consistent with P1's `.crucible/prompts/`. Files keep the **standard SKILL.md format** so they stay portable; ecosystem dirs (`.claude/skills`, `~/.agents/skills`) are a trivial later add (append to a dir list). |
 | 2 | **Model-driven progressive disclosure** | The standard (and every real impl) always loads the name+description **catalog**, then lets the model decide to load a body. No embedding needed for the common case; a cosine threshold is a worse relevance judge than the model. |
 | 3 | **Budget-gated catalog ranking is the dormant scale path** | Real impls cap the catalog (Codex: 8000 chars). Under budget → show all (v1). Over budget → rank descriptions by `Embedder` cosine vs the turn query, show top entries. Wired-but-dormant; the seam P3's MCP Tool-RAG reuses. |
 | 4 | **`read_skill(name)` tool loads the body into the dynamic context tail** | Universal real-impl pattern (`use_skill`/`skill`). Tail placement (not a system-prompt rebuild) is KV-safe (finding #13) and lets the body survive compaction via per-iteration re-injection. |
-| 5 | **Scripts run via the existing `run_command`** (with a worked example) | We already have `run_command` behind the shell-policy gate, and `.ai-editor/skills/` is inside the workspace — so the body cites `scripts/foo.py` and the model shells it through the existing gate. (The plugin's dedicated `run_skill_script` exists only because an opencode plugin has no shell tool — not our situation.) |
+| 5 | **Scripts run via the existing `run_command`** (with a worked example) | We already have `run_command` behind the shell-policy gate, and `.crucible/skills/` is inside the workspace — so the body cites `scripts/foo.py` and the model shells it through the existing gate. (The plugin's dedicated `run_skill_script` exists only because an opencode plugin has no shell tool — not our situation.) |
 | 6 | **`/skill-name` = backend forced-load** | Deterministic explicit invocation (matters for weak local models; maps to the standard's `disable-model-invocation`). Seeds the turn's `active_skills` so the body is pre-loaded into the tail without relying on the model choosing to activate it. |
 | 7 | **Default OFF** (`CRUCIBLE_SKILLS_ENABLED`) | New capability — ship dark, enable when proven (cross-cutting principle 4). Unlike P1's always-on instructions (which were table-stakes). |
 | 8 | **Controller-only injection** | The planning/task path is dormant (task subsystem off by default); the controller is the live path. Same scope call as P1. |
@@ -44,7 +44,7 @@ opencode native, opencode-agent-skills plugin) — see §10 for the evidence tha
 **New module `agentd/skills/loader.py` — `SkillCatalogLoader`** (modeled on
 `instructions/loader.py` + `retrieval/graph_walker.py`):
 
-- Constructed with the controller's **frozen `workspace_path`**. Scans `<workspace>/.ai-editor/skills/*/SKILL.md`.
+- Constructed with the controller's **frozen `workspace_path`**. Scans `<workspace>/.crucible/skills/*/SKILL.md`.
 - **mtime-cached, thread-safe.** Re-scans only when the skills dir's mtime moves (a skill added/edited
   self-updates on the next turn — no restart), else returns the cached catalog. Same discipline as
   `ProjectInstructionsLoader`.
@@ -65,7 +65,7 @@ opencode native, opencode-agent-skills plugin) — see §10 for the evidence tha
 - New `_SKILLS_BLOCK_TEMPLATE` rendered as an `<available-skills>` section (one line per skill:
   `- <name>: <description>`), plus a short teaching paragraph: when to call `read_skill(name)`, and a
   **worked `run_command` example** for bundled scripts
-  (`python .ai-editor/skills/<name>/scripts/<file>.py`).
+  (`python .crucible/skills/<name>/scripts/<file>.py`).
 - `format_controller_system_prompt(..., skills_catalog: list[SkillManifest] | None = None)` — appends
   the block when the catalog is non-empty. **Appended, not a placeholder** (cache-stable prefix), after
   the memory + instructions blocks. Uses `.replace` (skill descriptions may contain literal `{}`).
@@ -181,7 +181,7 @@ manifests + a fake embedder; the route with the in-memory app; the composer with
 - `skillsEnabled` `when`-context hides the affordance when off.
 
 **Live smoke:**
-1. Drop `.ai-editor/skills/git-commit/SKILL.md` with a distinctive directive; ask a matching question →
+1. Drop `.crucible/skills/git-commit/SKILL.md` with a distinctive directive; ask a matching question →
    the model calls `read_skill` and the directive demonstrably changes behavior.
 2. A skill whose body says to run `scripts/check.sh` → the model emits `run_command` for it and it runs
    through the shell-policy gate.

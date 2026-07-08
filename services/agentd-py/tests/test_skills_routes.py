@@ -6,7 +6,7 @@ from agentd.chat.app_factory import build_app
 
 
 def _write_skill(ws: Path, name: str, desc: str) -> None:
-    d = ws / ".ai-editor" / "skills" / name
+    d = ws / ".crucible" / "skills" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: {desc}\n---\nbody\n", encoding="utf-8"

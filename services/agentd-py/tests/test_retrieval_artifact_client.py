@@ -70,7 +70,7 @@ def test_load_context_from_valid_snapshot(tmp_path: Path) -> None:
         "def build_auth(token: str) -> str:\n    return validate_token(token)\n\n\ndef validate_token(token: str) -> str:\n    return token.strip()\n",
         encoding="utf-8",
     )
-    snapshot_path = workspace / ".ai-editor/index-snapshot.json"
+    snapshot_path = workspace / ".crucible/index-snapshot.json"
     _write_snapshot(snapshot_path, _snapshot_payload(int(time.time() * 1000)))
 
     client = RetrievalArtifactClient()
@@ -93,7 +93,7 @@ def test_load_context_from_valid_snapshot(tmp_path: Path) -> None:
 def test_stale_snapshot_warns_but_returns_context(tmp_path: Path) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir(parents=True)
-    snapshot_path = workspace / ".ai-editor/index-snapshot.json"
+    snapshot_path = workspace / ".crucible/index-snapshot.json"
     old_ms = int((time.time() - 600) * 1000)
     _write_snapshot(snapshot_path, _snapshot_payload(old_ms))
 
@@ -140,7 +140,7 @@ def test_auto_index_failure_warns_and_continues(tmp_path: Path) -> None:
 def test_corrupt_snapshot_warns_and_returns_empty_context(tmp_path: Path) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir(parents=True)
-    snapshot_path = workspace / ".ai-editor/index-snapshot.json"
+    snapshot_path = workspace / ".crucible/index-snapshot.json"
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     snapshot_path.write_text("{bad-json", encoding="utf-8")
 
@@ -154,7 +154,7 @@ def test_corrupt_snapshot_warns_and_returns_empty_context(tmp_path: Path) -> Non
 def test_context_filters_shadow_paths_and_normalizes_to_repo_relative(tmp_path: Path) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir(parents=True)
-    snapshot_path = workspace / ".ai-editor/index-snapshot.json"
+    snapshot_path = workspace / ".crucible/index-snapshot.json"
     payload = _snapshot_payload(int(time.time() * 1000))
     payload["workspace_root"] = str(workspace)
     payload["graph"] = {
@@ -163,7 +163,7 @@ def test_context_filters_shadow_paths_and_normalizes_to_repo_relative(tmp_path: 
                 "id": "file:shadow",
                 "path": str(
                     workspace
-                    / ".agentd/shadows/task-1/services/agentd-py/agentd/api/tasks.py"
+                    / ".crucible/state/shadows/task-1/services/agentd-py/agentd/api/tasks.py"
                 ),
                 "name": "tasks.py",
                 "kind": "File",
@@ -185,7 +185,7 @@ def test_context_filters_shadow_paths_and_normalizes_to_repo_relative(tmp_path: 
     }
     payload["diagnostics"] = [
         {
-            "file": str(workspace / ".agentd/shadows/task-1/bad.py"),
+            "file": str(workspace / ".crucible/state/shadows/task-1/bad.py"),
             "line": 1,
             "column": 1,
             "message": "bad shadow diagnostic",
@@ -205,7 +205,7 @@ def test_context_filters_shadow_paths_and_normalizes_to_repo_relative(tmp_path: 
     assert warnings == []
     assert "services/agentd-py/agentd/api/routes.py" in context.related_files
     assert all(not path.startswith("/") for path in context.related_files)
-    assert all(".agentd/shadows" not in path for path in context.related_files)
+    assert all(".crucible/state/shadows" not in path for path in context.related_files)
     assert context.diagnostics_excerpt == [
         "services/agentd-py/agentd/api/routes.py:12: route warning"
     ]
@@ -214,7 +214,7 @@ def test_context_filters_shadow_paths_and_normalizes_to_repo_relative(tmp_path: 
 def test_load_context_ranks_by_goal_terms_without_repo_specific_bias(tmp_path: Path) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir(parents=True)
-    snapshot_path = workspace / ".ai-editor/index-snapshot.json"
+    snapshot_path = workspace / ".crucible/index-snapshot.json"
     payload = _snapshot_payload(int(time.time() * 1000))
     payload["workspace_root"] = str(workspace)
     payload["graph"] = {
@@ -264,7 +264,7 @@ def test_graph_neighbor_files_includes_imports_reached_via_semantic_seed(
     file→file import edges never participated in neighbour expansion."""
     workspace = tmp_path / "repo"
     workspace.mkdir(parents=True)
-    snapshot_path = workspace / ".ai-editor/index-snapshot.json"
+    snapshot_path = workspace / ".crucible/index-snapshot.json"
     abs_engine = str(workspace / "src/engine.py")
     abs_state_machine = str(workspace / "src/state_machine.py")
     abs_unrelated = str(workspace / "src/unrelated.py")

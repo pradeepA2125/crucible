@@ -2969,7 +2969,7 @@ class AgentOrchestrator:
         # Strip compiler/linter line:col numbers so shifted lines still match
         msg = re.sub(r"(?m)(:\d+){1,2}(?=:|\s|$)", "", msg)
         # Strip absolute paths that embed shadow task UUIDs
-        msg = re.sub(r"/[^\s]*/\.agentd/shadows/[^\s/]+", "<shadow>", msg)
+        msg = re.sub(r"/[^\s]*/\.crucible/state/shadows/[^\s/]+", "<shadow>", msg)
         return msg
 
     def _filter_baseline_errors(
@@ -3896,8 +3896,8 @@ class AgentOrchestrator:
             "tmp",
             "out",
             "coverage",
-            ".agentd",
-            ".ai-editor",
+            ".crucible/state",
+            ".crucible",
         }
         indexed: list[str] = []
         for root, dirs, files in os.walk(workspace_path):

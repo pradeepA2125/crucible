@@ -1009,7 +1009,7 @@ In `agentd/main.py`, after instantiating `orchestrator`, add the chat wiring and
 from agentd.chat.agent import ChatAgent
 from agentd.chat.storage import ChatThreadStore
 
-chat_db_path = Path(os.getenv("CRUCIBLE_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
+chat_db_path = Path(os.getenv("CRUCIBLE_CHAT_DB_PATH", ".crucible/state/chat.sqlite3")).resolve()
 chat_db_path.parent.mkdir(parents=True, exist_ok=True)
 chat_thread_store = ChatThreadStore(chat_db_path)
 
@@ -1038,7 +1038,7 @@ def build_app(workspace_path: str) -> FastAPI:
     from agentd.workspace.shadow import ShadowWorkspaceManager
 
     _store = InMemoryTaskStore()
-    _ws_manager = ShadowWorkspaceManager(Path(workspace_path) / ".agentd" / "shadows")
+    _ws_manager = ShadowWorkspaceManager(Path(workspace_path) / ".crucible/state" / "shadows")
     _chat_store = ChatThreadStore(Path(workspace_path) / "chat.db")
 
     class _NullTransport:

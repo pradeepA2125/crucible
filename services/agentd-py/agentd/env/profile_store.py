@@ -1,4 +1,4 @@
-"""Persist EnvProfile as JSON at <workspace>/.agentd/env_profile.json."""
+"""Persist EnvProfile as JSON at <workspace>/.crucible/state/env_profile.json."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agentd.domain.models import EnvProfile
 
-_PROFILE_REL_PATH = Path(".agentd") / "env_profile.json"
+_PROFILE_REL_PATH = Path(".crucible/state") / "env_profile.json"
 
 
 class EnvProfileStore:

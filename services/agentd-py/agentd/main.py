@@ -5,6 +5,13 @@ import os
 import sys
 from pathlib import Path
 
+from agentd.workspace_migration import migrate_legacy_dirs
+
+# Legacy-dir migration must run before anything below creates state dirs
+# (the log-file mkdir just under here would otherwise pre-create the new
+# state root and permanently strand the legacy dirs' contents).
+migrate_legacy_dirs(Path(os.getenv("CRUCIBLE_WORKSPACE_PATH", str(Path.cwd()))))
+
 # Attach handlers to the agentd logger directly so --reload doesn't suppress
 # them (basicConfig is a no-op when uvicorn already owns the root logger).
 _agentd_logger = logging.getLogger("agentd")
@@ -15,7 +22,7 @@ if not _agentd_logger.handlers:
     _h_stdout.setFormatter(_fmt)
     _agentd_logger.addHandler(_h_stdout)
     # Also write to a file so logs are tailable regardless of how the server was started.
-    _log_file = Path(os.environ.get("CRUCIBLE_LOG_FILE", ".agentd/agentd.log"))
+    _log_file = Path(os.environ.get("CRUCIBLE_LOG_FILE", ".crucible/state/agentd.log"))
     _log_file.parent.mkdir(parents=True, exist_ok=True)
     _h_file = logging.FileHandler(_log_file)
     _h_file.setFormatter(_fmt)
@@ -39,8 +46,8 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 app = FastAPI(title="ai-editor agentd-py", version="0.1.0")
 
-database_path = Path(os.getenv("CRUCIBLE_DB_PATH", ".agentd/agentd.sqlite3")).resolve()
-shadow_root_path = Path(os.getenv("CRUCIBLE_SHADOW_ROOT", ".agentd/shadows")).resolve()
+database_path = Path(os.getenv("CRUCIBLE_DB_PATH", ".crucible/state/agentd.sqlite3")).resolve()
+shadow_root_path = Path(os.getenv("CRUCIBLE_SHADOW_ROOT", ".crucible/state/shadows")).resolve()
 ast_cutover_mode = os.getenv("CRUCIBLE_AST_CUTOVER_MODE", "hard").strip().lower()
 if ast_cutover_mode != "hard":
     msg = (
@@ -195,7 +202,7 @@ from agentd.chat.storage import ChatThreadStore
 from agentd.memory.config import MemoryConfig
 from agentd.memory.harness import NO_OP_HARNESS, build_memory_harness
 
-_chat_db_path = Path(os.getenv("CRUCIBLE_CHAT_DB_PATH", ".agentd/chat.sqlite3")).resolve()
+_chat_db_path = Path(os.getenv("CRUCIBLE_CHAT_DB_PATH", ".crucible/state/chat.sqlite3")).resolve()
 _chat_db_path.parent.mkdir(parents=True, exist_ok=True)
 _chat_thread_store = ChatThreadStore(_chat_db_path)
 
@@ -263,7 +270,7 @@ if _mcp_manager is not None:
     app.router.add_event_handler("shutdown", _mcp_manager.shutdown)
 
 # Managed-spawn lockfile: the extension sets CRUCIBLE_PORT and reads/reaps
-# <workspace>/.agentd/agentd.lock. The dev script doesn't set it — no-op there.
+# <workspace>/.crucible/state/agentd.lock. The dev script doesn't set it — no-op there.
 _lock_port_raw = os.getenv("CRUCIBLE_PORT", "").strip()
 if _lock_port_raw.isdigit():
     from agentd.runtime_lock import clear_lock, write_lock

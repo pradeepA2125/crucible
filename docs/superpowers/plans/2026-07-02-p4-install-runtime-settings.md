@@ -16,7 +16,7 @@
 - MCP config writes preserve unknown keys and store `${VAR}` references **verbatim** — never resolved values.
 - MCP/skills **enable-disable state is user-local** (extension `globalState`), never written to shareable files; passed to the backend per call (`disabled` list) or per spawn (`CRUCIBLE_SKILLS_DISABLED`).
 - Hot-swap applies **from the next turn**; in-flight coroutines keep their local engine refs (single-process asyncio — no locks needed).
-- Runtime install root: `~/.ai-editor/runtime/`. Per-OS targets: `darwin-arm64`, `darwin-x64`, `linux-x64`, `win32-x64`.
+- Runtime install root: `~/.crucible/runtime/`. Per-OS targets: `darwin-arm64`, `darwin-x64`, `linux-x64`, `win32-x64`.
 - Provider set (picker parity): openai, anthropic, gemini, groq, ollama, watsonx, openrouter, huggingface, turboquant. `scripted` is dev-only, hidden.
 - `start-backend.sh` and the `.env` dev flow remain untouched.
 - Python: run `pytest` plain (never `-q` — `addopts` already sets it); TS: `npm run build && npm run test && npm run typecheck` from repo root. After editor-client changes run `npm run -w @crucible/editor-client build` before extension typecheck.
@@ -737,7 +737,7 @@ git commit -m "feat(api): provider/model hot-swap — ProviderRuntime + PUT /v1/
 - Test: `services/agentd-py/tests/test_runtime_lock.py`
 
 **Interfaces:**
-- Produces: `LockInfo` dataclass (`pid: int, port: int, started_at: float`); `write_lock(workspace, *, port, pid=None)`; `read_lock(workspace) -> LockInfo | None`; `clear_lock(workspace)`; `is_pid_alive(pid) -> bool`. Lock path: `<workspace>/.agentd/agentd.lock` (JSON). Extension (Task 10) reads/reaps the same file shape.
+- Produces: `LockInfo` dataclass (`pid: int, port: int, started_at: float`); `write_lock(workspace, *, port, pid=None)`; `read_lock(workspace) -> LockInfo | None`; `clear_lock(workspace)`; `is_pid_alive(pid) -> bool`. Lock path: `<workspace>/.crucible/state/agentd.lock` (JSON). Extension (Task 10) reads/reaps the same file shape.
 - Activation: main.py writes the lock at startup **only when `CRUCIBLE_PORT` is set** (the extension always sets it; the dev script doesn't — no behavior change for the script flow).
 
 - [x] **Step 1: Write the failing tests**
@@ -758,14 +758,14 @@ def test_write_then_read_roundtrip(tmp_path: Path) -> None:
     lock = read_lock(tmp_path)
     assert isinstance(lock, LockInfo)
     assert lock.port == 8123 and lock.pid == os.getpid() and lock.started_at > 0
-    raw = json.loads((tmp_path / ".agentd" / "agentd.lock").read_text())
+    raw = json.loads((tmp_path / ".crucible/state" / "agentd.lock").read_text())
     assert set(raw) == {"pid", "port", "started_at"}
 
 
 def test_read_missing_or_corrupt_returns_none(tmp_path: Path) -> None:
     assert read_lock(tmp_path) is None
-    (tmp_path / ".agentd").mkdir()
-    (tmp_path / ".agentd" / "agentd.lock").write_text("{not json")
+    (tmp_path / ".crucible/state").mkdir()
+    (tmp_path / ".crucible/state" / "agentd.lock").write_text("{not json")
     assert read_lock(tmp_path) is None
 
 
@@ -790,7 +790,7 @@ Expected: FAIL — `ModuleNotFoundError`
 
 ```python
 # services/agentd-py/agentd/runtime_lock.py
-"""Per-workspace backend lockfile: <workspace>/.agentd/agentd.lock (JSON pid/port/
+"""Per-workspace backend lockfile: <workspace>/.crucible/state/agentd.lock (JSON pid/port/
 started_at). The extension reuses a live backend and reaps stale locks — this file
 is what makes one-workspace-one-backend hold by construction. Written only when
 CRUCIBLE_PORT is set (managed spawns); the dev script flow is unaffected."""
@@ -811,7 +811,7 @@ class LockInfo:
 
 
 def _lock_path(workspace: str | Path) -> Path:
-    return Path(workspace) / ".agentd" / "agentd.lock"
+    return Path(workspace) / ".crucible/state" / "agentd.lock"
 
 
 def write_lock(workspace: str | Path, *, port: int, pid: int | None = None) -> None:
@@ -919,7 +919,7 @@ def _seed(path: Path) -> None:
 
 
 def test_upsert_preserves_unknown_keys_and_var_refs(tmp_path: Path) -> None:
-    cfg = tmp_path / ".ai-editor" / "mcp.json"
+    cfg = tmp_path / ".crucible" / "mcp.json"
     _seed(cfg)
     upsert_server(cfg, "gh", {"type": "http", "url": "https://x",
                               "headers": {"Authorization": "${GITHUB_PAT}"},
@@ -932,7 +932,7 @@ def test_upsert_preserves_unknown_keys_and_var_refs(tmp_path: Path) -> None:
 
 
 def test_upsert_creates_file_and_rejects_bad_name(tmp_path: Path) -> None:
-    cfg = tmp_path / ".ai-editor" / "mcp.json"
+    cfg = tmp_path / ".crucible" / "mcp.json"
     upsert_server(cfg, "a1", {"command": "x", "enabled": True})
     assert "a1" in read_raw_servers(cfg)
     with pytest.raises(ValueError):
@@ -940,7 +940,7 @@ def test_upsert_creates_file_and_rejects_bad_name(tmp_path: Path) -> None:
 
 
 def test_remove_server(tmp_path: Path) -> None:
-    cfg = tmp_path / ".ai-editor" / "mcp.json"
+    cfg = tmp_path / ".crucible" / "mcp.json"
     _seed(cfg)
     assert remove_server(cfg, "web") is True
     assert remove_server(cfg, "web") is False
@@ -961,7 +961,7 @@ async def _stub_factory(cfg):
 
 @pytest.mark.asyncio
 async def test_reconcile_disabled_filters_and_reconnect(tmp_path: Path) -> None:
-    cfg_path = tmp_path / ".ai-editor" / "mcp.json"
+    cfg_path = tmp_path / ".crucible" / "mcp.json"
     _seed(cfg_path)
     upsert_server(cfg_path, "gh", {"type": "http", "url": "https://x", "enabled": True})
     loader = McpConfigLoader(tmp_path)
@@ -984,7 +984,7 @@ Expected: FAIL — `ModuleNotFoundError: agentd.mcp.admin`
 
 ```python
 # services/agentd-py/agentd/mcp/admin.py
-"""Read-modify-write helpers over .ai-editor/mcp.json for the settings UI routes.
+"""Read-modify-write helpers over .crucible/mcp.json for the settings UI routes.
 The file stays the source of truth (guided-writer pattern — see
 docs/superpowers/2026-07-02-mcp-settings-ui-research.md §1). Unknown keys are
 preserved; ${VAR} references are stored verbatim, never resolved."""
@@ -1147,7 +1147,7 @@ def test_put_writes_file_connects_and_lists(tmp_path: Path) -> None:
     assert body["enabled"] is True
     (web,) = [s for s in body["servers"] if s["name"] == "web"]
     assert web["state"] == "connected" and web["tool_count"] == 1
-    raw = json.loads((tmp_path / ".ai-editor" / "mcp.json").read_text())
+    raw = json.loads((tmp_path / ".crucible" / "mcp.json").read_text())
     assert raw["mcpServers"]["web"]["command"] == "uv"
 
 
@@ -1291,7 +1291,7 @@ from agentd.skills.loader import SkillCatalogLoader
 
 
 def _write_skill(ws: Path, name: str) -> None:
-    d = ws / ".ai-editor" / "skills" / name
+    d = ws / ".crucible" / "skills" / name
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: d\n---\nbody\n", encoding="utf-8")
@@ -1728,7 +1728,7 @@ describe("RuntimeInstaller", () => {
     expect(result.ok).toBe(false);
     expect(byId.uv.status).toBe("failed");
     expect(byId.uv.detail).toMatch(/checksum/i);
-    expect(byId.agentd.status).toBe("failed");
+    expect(byId.crucible/state.status).toBe("failed");
     expect(byId.indexer.status).toBe("done"); // independent components still run
   });
 
@@ -1926,7 +1926,7 @@ git commit -m "feat(runtime): RuntimeInstaller — provision uv/agentd/indexer/r
 - Test: `apps/vscode-extension/test/runtime-backend-process.test.ts`
 
 **Interfaces:**
-- Consumes: `binPath`/`venvPython` (Task 9); lockfile JSON shape from Task 4 (`{pid, port, started_at}` at `<workspace>/.agentd/agentd.lock`).
+- Consumes: `binPath`/`venvPython` (Task 9); lockfile JSON shape from Task 4 (`{pid, port, started_at}` at `<workspace>/.crucible/state/agentd.lock`).
 - Produces:
 
 ```ts
@@ -1964,8 +1964,8 @@ export class BackendProcess {
 `buildBackendEnv` must produce (mirroring `start-backend.sh:361-392`):
 `CRUCIBLE_REASONING_BACKEND`, `CRUCIBLE_WORKSPACE_PATH`, `CRUCIBLE_PORT` (→ lockfile),
 `CRUCIBLE_DB_PATH`/`CRUCIBLE_CHAT_DB_PATH`/`CRUCIBLE_SHADOW_ROOT`/`CRUCIBLE_LOG_FILE`/
-`CRUCIBLE_ARTIFACTS_ROOT` (all under `<workspace>/.agentd/`),
-`CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH` (`<workspace>/.ai-editor/index-snapshot.json`),
+`CRUCIBLE_ARTIFACTS_ROOT` (all under `<workspace>/.crucible/state/`),
+`CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH` (`<workspace>/.crucible/index-snapshot.json`),
 `CRUCIBLE_RIPGREP_CMD` (Task 9 `binPath(runtimeDir, "rg")`),
 `<MODEL_ENV_VAR[backend]>=model`, `settings.apiKey.envVar=value` when present,
 default-on flags `CRUCIBLE_CHAT_CONTROLLER=1`, `CRUCIBLE_SKILLS_ENABLED=1`,
@@ -1977,7 +1977,7 @@ default-on flags `CRUCIBLE_CHAT_CONTROLLER=1`, `CRUCIBLE_SKILLS_ENABLED=1`,
 `PATH` etc. (`{ ...process.env, ...built }` — built wins).
 
 `start()` logic:
-1. Read `<workspace>/.agentd/agentd.lock`; if parseable AND `isPidAlive(pid)` AND
+1. Read `<workspace>/.crucible/state/agentd.lock`; if parseable AND `isPidAlive(pid)` AND
    `GET http://localhost:<port>/health` succeeds → `{ port, reused: true }` (no watcher spawn — a live managed backend already has one).
 2. Otherwise delete the stale lock, `pickPort()`, spawn
    `venvPython(runtimeDir)` with args `["-m", "uvicorn", "agentd.main:app", "--port", String(port)]`
@@ -1987,7 +1987,7 @@ default-on flags `CRUCIBLE_CHAT_CONTROLLER=1`, `CRUCIBLE_SKILLS_ENABLED=1`,
 4. Fire `POST /v1/index/build` with `{workspace_path}` (non-fatal on error; log), then
    poll `GET /v1/index/status` up to 120×1s until `building === false` (non-fatal timeout).
 5. Spawn the watcher: `binPath(runtimeDir, "crucible-indexer")` with args
-   `["index", "--workspace", workspace, "--snapshot-path", "<ws>/.ai-editor/index-snapshot.json", "--watch", "true"]`
+   `["index", "--workspace", workspace, "--snapshot-path", "<ws>/.crucible/index-snapshot.json", "--watch", "true"]`
    and env `CRUCIBLE_BACKEND_URL=http://localhost:<port>`, `CRUCIBLE_LSP_ENABLED`
    `"true"` only when `<runtimeDir>/node_modules` exists, with
    `CRUCIBLE_LSP_PY_CMD="<runtimeDir>/node_modules/.bin/pyright-langserver --stdio"` and
@@ -2046,7 +2046,7 @@ describe("buildBackendEnv", () => {
     expect(env.GEMINI_API_KEY).toBe("sk-secret");
     expect(env.CRUCIBLE_RIPGREP_CMD).toBe("/rt/bin/rg");
     expect(env.CRUCIBLE_CHAT_CONTROLLER).toBe("1");
-    expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".agentd", "agentd.sqlite3"));
+    expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".crucible/state", "agentd.sqlite3"));
   });
   it("extraEnv overrides defaults; skillsDisabled joins", () => {
     const env = buildBackendEnv("/ws", {
@@ -2060,8 +2060,8 @@ describe("buildBackendEnv", () => {
 describe("BackendProcess.start", () => {
   it("reuses a live locked backend without spawning", async () => {
     const w = ws();
-    mkdirSync(join(w, ".agentd"));
-    writeFileSync(join(w, ".agentd", "agentd.lock"),
+    mkdirSync(join(w, ".crucible/state"));
+    writeFileSync(join(w, ".crucible/state", "agentd.lock"),
       JSON.stringify({ pid: 999, port: 8200, started_at: 1 }));
     const d = deps({ isPidAlive: () => true });
     const res = await new BackendProcess(d).start(w, SETTINGS);
@@ -2071,8 +2071,8 @@ describe("BackendProcess.start", () => {
 
   it("reaps a stale lock and spawns backend + watcher", async () => {
     const w = ws();
-    mkdirSync(join(w, ".agentd"));
-    writeFileSync(join(w, ".agentd", "agentd.lock"),
+    mkdirSync(join(w, ".crucible/state"));
+    writeFileSync(join(w, ".crucible/state", "agentd.lock"),
       JSON.stringify({ pid: 999, port: 8200, started_at: 1 }));
     const d = deps();
     writeFileSync(join(d.runtimeDir, "bin-marker"), ""); // ensure runtimeDir exists
@@ -2126,7 +2126,7 @@ export function buildBackendEnv(
   workspace: string, settings: BackendSettings, runtimeDir: string, port: number,
   platform: PlatformKey = platformKey(),
 ): Record<string, string> {
-  const agentdDir = join(workspace, ".agentd");
+  const agentdDir = join(workspace, ".crucible/state");
   const built: Record<string, string> = {
     CRUCIBLE_REASONING_BACKEND: settings.backend,
     CRUCIBLE_WORKSPACE_PATH: workspace,
@@ -2136,7 +2136,7 @@ export function buildBackendEnv(
     CRUCIBLE_SHADOW_ROOT: join(agentdDir, "shadows"),
     CRUCIBLE_LOG_FILE: join(agentdDir, "agentd.log"),
     CRUCIBLE_ARTIFACTS_ROOT: join(agentdDir, "artifacts"),
-    CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".ai-editor", "index-snapshot.json"),
+    CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH: join(workspace, ".crucible", "index-snapshot.json"),
     CRUCIBLE_RIPGREP_CMD: binPath(runtimeDir, "rg", platform),
     CRUCIBLE_CHAT_CONTROLLER: "1",
     CRUCIBLE_SKILLS_ENABLED: "1",
@@ -2189,7 +2189,7 @@ Task 17 live smoke. Everything testable stayed in Tasks 8-10.
 ```ts
 export class RuntimeManager {
   constructor(context: vscode.ExtensionContext, output: vscode.OutputChannel);
-  readonly runtimeDir: string;                       // ~/.ai-editor/runtime
+  readonly runtimeDir: string;                       // ~/.crucible/runtime
   isInstalled(): boolean;                            // runtime.json exists
   install(onProgress: (p: ComponentProgress) => void): Promise<InstallResult>;
   async getProviderSettings(): Promise<BackendSettings | undefined>;  // globalState + SecretStorage
@@ -2208,7 +2208,7 @@ export class RuntimeManager {
 - [x] **Step 1: Implement `vscode-runtime.ts`**
 
 Key decisions (all mechanical):
-- `runtimeDir = join(os.homedir(), ".ai-editor", "runtime")`.
+- `runtimeDir = join(os.homedir(), ".crucible", "runtime")`.
 - Real `InstallerDeps`: `download` = `Buffer.from(await (await fetch(url)).arrayBuffer())`
   (throw on `!res.ok`); `exec` = promisified `child_process.execFile` (never `shell: true`);
   `hasNode` = `execFile("node", ["--version"])` succeeding.
@@ -2930,7 +2930,7 @@ git commit -m "ci(release): tag-triggered pipeline — per-OS binaries, wheel, V
 
 - [ ] **Step 4: Exit smoke (the roadmap's exit criterion — run before calling P4 done)**
 
-On a machine/profile with **no `~/.ai-editor`** and a fresh VS Code profile
+On a machine/profile with **no `~/.crucible`** and a fresh VS Code profile
 (`code --profile p4-smoke`):
 1. Install the VSIX (from a local `vsce package` or the tagged release).
 2. Open an empty folder → wizard auto-opens → Install completes (LSP row may be

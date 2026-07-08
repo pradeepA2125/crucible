@@ -1,4 +1,4 @@
-// vscode-free helpers for .ai-editor/prompts/<name>.md. Pure substitution +
+// vscode-free helpers for .crucible/prompts/<name>.md. Pure substitution +
 // node-fs reads; no `vscode` import so this stays unit-testable in vitest.
 import { promises as fsp } from "fs";
 import * as path from "path";

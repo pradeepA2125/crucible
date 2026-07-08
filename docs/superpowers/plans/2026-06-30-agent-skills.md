@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Discover `.ai-editor/skills/<name>/SKILL.md` skills, expose an always-on catalog to the controller, let the model pull a skill body into the dynamic tail via a `read_skill` tool (or a `/skill-name` forced-load), and run bundled scripts through the existing shell gate.
+**Goal:** Discover `.crucible/skills/<name>/SKILL.md` skills, expose an always-on catalog to the controller, let the model pull a skill body into the dynamic tail via a `read_skill` tool (or a `/skill-name` forced-load), and run bundled scripts through the existing shell gate.
 
 **Architecture:** A mtime-cached `SkillCatalogLoader` scans + parses SKILL.md frontmatter. The catalog renders into the controller system prompt (cache-stable). A `SkillToolSource` adds `read_skill(name)`; activated bodies live in a turn-scoped `active_skills` dict that the payload builder injects into the dynamic tail each iteration. A `/v1/skills` route + a `forced_skills` message field drive deterministic explicit invocation. Everything is flag-gated (`CRUCIBLE_SKILLS_ENABLED`, default off), controller-only.
 
@@ -15,7 +15,7 @@
 - **Best-effort, degrade-not-raise:** any loader/parse/IO error skips that skill + `logger.warning`; never raises into a turn.
 - **Frozen workspace:** the loader is built from the controller's frozen `workspace_path` (factory time), never the thread's per-turn column.
 - **KV-cache discipline:** the catalog block is appended to the system prompt (cache-stable, mtime-driven); per-turn-varying skill bodies ride the **dynamic tail** of the user payload (finding #13), never the cached head.
-- **Single dir, standard format:** discover only `<workspace>/.ai-editor/skills/*/SKILL.md`; parse standard agentskills.io frontmatter (`name`, `description` required; rest forward-compat ignored).
+- **Single dir, standard format:** discover only `<workspace>/.crucible/skills/*/SKILL.md`; parse standard agentskills.io frontmatter (`name`, `description` required; rest forward-compat ignored).
 - **Names:** skill `name` ≤64 chars; a `name` ≠ parent folder is a `logger.warning`, not a rejection.
 - **Run all Python tests from** `services/agentd-py` with the venv active: `source .venv/bin/activate`.
 - **TS build order:** after editing `apps/editor-client`, run `npm run -w @crucible/editor-client build` before the extension typecheck.
@@ -56,7 +56,7 @@ from agentd.skills.loader import SkillCatalogLoader
 
 
 def _write_skill(root: Path, name: str, description: str, body: str = "Do the thing.") -> None:
-    d = root / ".ai-editor" / "skills" / name
+    d = root / ".crucible" / "skills" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: {description}\n---\n{body}\n", encoding="utf-8"
@@ -69,7 +69,7 @@ def test_loads_valid_skills_sorted_by_name(tmp_path: Path) -> None:
     cat = SkillCatalogLoader(tmp_path).load_catalog()
     assert [m.name for m in cat] == ["alpha", "git-commit"]
     assert cat[1].description == "Make a conventional commit. Use for commits."
-    assert cat[1].body_path == tmp_path / ".ai-editor/skills/git-commit/SKILL.md"
+    assert cat[1].body_path == tmp_path / ".crucible/skills/git-commit/SKILL.md"
 
 
 def test_absent_dir_returns_empty(tmp_path: Path) -> None:
@@ -77,7 +77,7 @@ def test_absent_dir_returns_empty(tmp_path: Path) -> None:
 
 
 def test_skips_skill_missing_required_field(tmp_path: Path, caplog) -> None:
-    d = tmp_path / ".ai-editor/skills/broken"
+    d = tmp_path / ".crucible/skills/broken"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text("---\nname: broken\n---\nno description\n", encoding="utf-8")
     _write_skill(tmp_path, "good", "Valid one.")
@@ -86,7 +86,7 @@ def test_skips_skill_missing_required_field(tmp_path: Path, caplog) -> None:
 
 
 def test_name_mismatch_warns_but_keeps(tmp_path: Path, caplog) -> None:
-    d = tmp_path / ".ai-editor/skills/folder-name"
+    d = tmp_path / ".crucible/skills/folder-name"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text(
         "---\nname: other-name\ndescription: Mismatch.\n---\nbody\n", encoding="utf-8"
@@ -106,13 +106,13 @@ def test_mtime_cache_returns_same_objects_until_changed(tmp_path: Path) -> None:
     _write_skill(tmp_path, "b", "B.")
     import os, time
     time.sleep(0.01)
-    os.utime(tmp_path / ".ai-editor/skills", None)  # bump dir mtime
+    os.utime(tmp_path / ".crucible/skills", None)  # bump dir mtime
     second = loader.load_catalog()
     assert [m.name for m in second] == ["a", "b"]
 
 
 def test_bad_yaml_is_skipped(tmp_path: Path) -> None:
-    d = tmp_path / ".ai-editor/skills/bad"
+    d = tmp_path / ".crucible/skills/bad"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text("---\nname: [unterminated\n---\nbody\n", encoding="utf-8")
     _write_skill(tmp_path, "ok", "Fine.")
@@ -152,7 +152,7 @@ class SkillManifest:
 
 ```python
 # services/agentd-py/agentd/skills/loader.py
-"""mtime-cached discovery + frontmatter parse for `.ai-editor/skills/*/SKILL.md`.
+"""mtime-cached discovery + frontmatter parse for `.crucible/skills/*/SKILL.md`.
 
 Mirrors instructions/loader.py: a cheap NOOP when the skills dir has not moved,
 a single re-scan when it has. Best-effort — a malformed skill is skipped with a
@@ -175,7 +175,7 @@ _DESC_MAX = 1024
 
 
 class SkillCatalogLoader:
-    SKILLS_SUBDIR = Path(".ai-editor") / "skills"
+    SKILLS_SUBDIR = Path(".crucible") / "skills"
 
     def __init__(self, workspace_path: Path | str) -> None:
         self._root = Path(workspace_path) / self.SKILLS_SUBDIR
@@ -566,7 +566,7 @@ AVAILABLE SKILLS (specialized playbooks for this workspace):
 Each line is a skill's name + when to use it. When a skill is relevant to the
 current task, call read_skill(name) to load its full instructions into context.
 A skill may bundle helper scripts under its scripts/ folder — run them with
-run_command, e.g. run_command(command="python .ai-editor/skills/<name>/scripts/<file>.py").
+run_command, e.g. run_command(command="python .crucible/skills/<name>/scripts/<file>.py").
 """
 ```
 
@@ -675,7 +675,7 @@ from agentd.skills.tool_source import SkillToolSource
 
 
 def _write_skill(root: Path, name: str, body: str) -> None:
-    d = root / ".ai-editor" / "skills" / name
+    d = root / ".crucible" / "skills" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: A skill.\n---\n{body}\n", encoding="utf-8"
@@ -947,7 +947,7 @@ from agentd.chat.app_factory import build_app  # existing test app factory
 
 
 def _write_skill(ws: Path, name: str, desc: str) -> None:
-    d = ws / ".ai-editor" / "skills" / name
+    d = ws / ".crucible" / "skills" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {desc}\n---\nbody\n",
                                 encoding="utf-8")
@@ -1293,7 +1293,7 @@ Expected: all green.
 
 - [ ] **Step 3: Document in CLAUDE.md**
 
-Add a subsection "Agent Skills (P2, copilot-parity roadmap)" near the project-instructions/prompt-files section, covering: discovery dir (`.ai-editor/skills/<name>/SKILL.md`), the always-on catalog → `read_skill` → `active_skills` tail flow, scripts via `run_command`, `/skill` forced-load via `forced_skills`, the budget guard + dormant ranking primitive, and the flags (`CRUCIBLE_SKILLS_ENABLED` default off, `*_CATALOG_MAX_CHARS`, `*_BODY_MAX_CHARS`). Mirror the depth of the existing P1 subsection.
+Add a subsection "Agent Skills (P2, copilot-parity roadmap)" near the project-instructions/prompt-files section, covering: discovery dir (`.crucible/skills/<name>/SKILL.md`), the always-on catalog → `read_skill` → `active_skills` tail flow, scripts via `run_command`, `/skill` forced-load via `forced_skills`, the budget guard + dormant ranking primitive, and the flags (`CRUCIBLE_SKILLS_ENABLED` default off, `*_CATALOG_MAX_CHARS`, `*_BODY_MAX_CHARS`). Mirror the depth of the existing P1 subsection.
 
 - [ ] **Step 4: Commit**
 
@@ -1308,7 +1308,7 @@ git commit -m "docs(skills): document P2 agent-skills architecture in CLAUDE.md"
 
 Not a code task — drive a real backend + dev host. Mirror the P1 live-smoke recipe (`scripts/stress/start-backend.sh` with `CRUCIBLE_SKILLS_ENABLED=1`, then the VS Code dev host via CDP).
 
-- [ ] **1. Model-driven activation:** drop `.ai-editor/skills/git-commit/SKILL.md` with a distinctive directive; a matching chat turn calls `read_skill` and the directive changes behavior (confirm in the controller-turn artifact).
+- [ ] **1. Model-driven activation:** drop `.crucible/skills/git-commit/SKILL.md` with a distinctive directive; a matching chat turn calls `read_skill` and the directive changes behavior (confirm in the controller-turn artifact).
 - [ ] **2. Script execution:** a skill body that says to run `scripts/check.sh` → the model emits `run_command` for it and it runs through the shell-policy gate.
 - [ ] **3. Forced-load:** `/git-commit` in the composer → the body is active from turn 1 (artifact shows `active_skills` populated at iteration -00) without the model choosing it.
 - [ ] **4. Self-updating:** add a second skill mid-session → the next turn's catalog includes it (no restart).

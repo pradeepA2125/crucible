@@ -14,7 +14,7 @@
 - Strict typing: no `any`, explicit return types. Mirror existing `agentd/` style. All imports at top.
 - The harness is **best-effort**: no compaction/store failure may propagate out of a loop iteration. On any internal failure, leave history untouched (or hard-truncate) and continue.
 - Master kill switch `CRUCIBLE_MEMORY_ENABLED` (default **off**). When off, `MemoryHarness` is a no-op pass-through and both loops behave byte-identically to today.
-- New DB path env `CRUCIBLE_MEMORY_DB_PATH` (default `.agentd/memory.sqlite3`). Separate file from task/chat DBs. Phase 1 creates only `compaction_segments` + `anchored_summaries`.
+- New DB path env `CRUCIBLE_MEMORY_DB_PATH` (default `.crucible/state/memory.sqlite3`). Separate file from task/chat DBs. Phase 1 creates only `compaction_segments` + `anchored_summaries`.
 - **Hot set is token-bounded, not count-bounded.** Keep newest turns that fit `MEMORY_HOT_TOKEN_FRAC × window` (default 0.4), capped at `MEMORY_HOT_TURNS` (default 10). `hot_frac (0.4) < trigger_frac (0.65)` guarantees eviction frees space once triggered. Always keep ≥1 turn; if the single newest turn alone exceeds the hot budget, truncate its in-window copy (head + `…[truncated]…` + tail) and persist the full original as a segment. This is what handles "history ≤ hot_turns but already over budget" and "one giant turn > window".
 - **Hot set is lossless at turn boundaries.** A logical turn = a user/assistant message + its following continuation messages (`tool_result`, `tool`). `_select_hot` keeps only *whole* turns: if the budget boundary falls inside a turn, the partial remainder is pushed to eviction (it survives via the summary), so hot never contains a dangling `tool_result` without its action. Enforced by trimming leading continuation messages so hot begins at a turn start.
 - **No `tier` (warm/cold) label is written.** Tiering is a Phase-2 read-time concern; Phase 1 persists evicted turns as plain segments.
@@ -151,7 +151,7 @@ class MemoryConfig(BaseModel):
     def from_env(cls, env: Mapping[str, str]) -> "MemoryConfig":
         return cls(
             enabled=env.get("CRUCIBLE_MEMORY_ENABLED", "").lower() in _TRUTHY,
-            db_path=env.get("CRUCIBLE_MEMORY_DB_PATH", ".agentd/memory.sqlite3"),
+            db_path=env.get("CRUCIBLE_MEMORY_DB_PATH", ".crucible/state/memory.sqlite3"),
             trigger_frac=float(env.get("CRUCIBLE_MEMORY_COMPACT_TRIGGER_FRAC", "0.65")),
             hot_token_frac=float(env.get("CRUCIBLE_MEMORY_HOT_TOKEN_FRAC", "0.4")),
             hot_turns=int(env.get("CRUCIBLE_MEMORY_HOT_TURNS", "10")),
@@ -1147,9 +1147,9 @@ CRUCIBLE_MEMORY_ENABLED=1 CRUCIBLE_MEMORY_WINDOW_TOKENS=4000 CRUCIBLE_MEMORY_HOT
 CRUCIBLE_MEMORY_HOT_TOKEN_FRAC=0.4 \
   bash scripts/stress/start-backend.sh --backend gemini --workspace "$PWD/workspaces/shadow-forge-stress" --validation-profile none
 # Drive a long chat turn; confirm compaction fires in logs and the DB fills:
-sqlite3 workspaces/shadow-forge-stress/.agentd/memory.sqlite3 \
+sqlite3 workspaces/shadow-forge-stress/.crucible/state/memory.sqlite3 \
   "SELECT run_id, version, length(summary_md) FROM anchored_summaries;"
-sqlite3 workspaces/shadow-forge-stress/.agentd/memory.sqlite3 \
+sqlite3 workspaces/shadow-forge-stress/.crucible/state/memory.sqlite3 \
   "SELECT run_id, count(*) FROM compaction_segments GROUP BY run_id;"
 ```
 Expected: ≥1 `anchored_summaries` row (`version >= 1`); `compaction_segments` populated; the turn completes coherently on the compacted history.

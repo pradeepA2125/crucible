@@ -29,7 +29,7 @@ fn index_command_writes_full_snapshot_artifact() {
     )
     .expect("write source file");
 
-    let snapshot_path = workspace.join(".ai-editor/index-snapshot.json");
+    let snapshot_path = workspace.join(".crucible/index-snapshot.json");
     let status = Command::new(env!("CARGO_BIN_EXE_crucible-indexer"))
         .arg("index")
         .arg("--workspace")
@@ -63,7 +63,7 @@ fn index_command_writes_full_snapshot_artifact() {
 #[test]
 fn query_command_returns_deterministic_graph_payload() {
     let workspace = temp_workspace("query");
-    let snapshot_path = workspace.join(".ai-editor/index-snapshot.json");
+    let snapshot_path = workspace.join(".crucible/index-snapshot.json");
     if let Some(parent) = snapshot_path.parent() {
         std::fs::create_dir_all(parent).expect("create snapshot dir");
     }

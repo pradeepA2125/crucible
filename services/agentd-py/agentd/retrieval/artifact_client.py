@@ -121,8 +121,8 @@ class RetrievalArtifactClient:
         ".mypy_cache",
         "target",
         "dist",
-        ".agentd",
-        ".ai-editor",
+        ".crucible/state",
+        ".crucible",
         ".tmp",
     }
 
@@ -289,10 +289,10 @@ class RetrievalArtifactClient:
         if self._snapshot_path_template:
             rendered = self._snapshot_path_template.format(
                 workspace=str(workspace),
-                snapshot_path=str(workspace / ".ai-editor/index-snapshot.json"),
+                snapshot_path=str(workspace / ".crucible/index-snapshot.json"),
             )
             return Path(rendered).expanduser().resolve()
-        return (workspace / ".ai-editor/index-snapshot.json").resolve()
+        return (workspace / ".crucible/index-snapshot.json").resolve()
 
     def _attempt_build_snapshot(self, workspace_path: str, snapshot_path: Path) -> list[Diagnostic]:
         command = self._render_index_command(workspace_path, snapshot_path)

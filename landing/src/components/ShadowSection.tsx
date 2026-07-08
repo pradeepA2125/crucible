@@ -55,7 +55,7 @@ function ShadowCard() {
     <div className="relative w-full rounded-[14px] border border-accent/35 bg-surface-2/70 backdrop-blur-sm p-5 shadow-[0_0_60px_-18px_rgba(167,139,250,0.45)]">
       <div className="flex items-center justify-between mb-4">
         <span className="font-mono text-xs text-accent-ink">
-          .agentd/shadows/session-4f21
+          .crucible/state/shadows/session-4f21
         </span>
         <span className="rounded-full bg-accent/12 border border-accent/30 px-2.5 py-1 font-mono text-[10px] tracking-wider text-accent-ink uppercase">
           shadow

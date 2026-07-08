@@ -8,7 +8,7 @@
 
 Replace the ad-hoc env-discovery scattered across the verify phase with a single
 **workspace-level env profile** built once on workspace registration (or first
-task on a workspace) and persisted at `<workspace>/.agentd/env_profile.json`.
+task on a workspace) and persisted at `<workspace>/.crucible/state/env_profile.json`.
 The agent reads it via a new `read_env_profile` tool to learn the package
 manager, interpreter path, test command, and install command per ecosystem.
 Mid-task manifest edits trigger an automatic re-install before the next
@@ -82,7 +82,7 @@ Workspace registered, or profile > 30 days old, or explicit refresh
 EnvProfileBuilder.build() — ONE-TIME
    probe (deterministic) → draft_conventions (single LLM call) → write JSON
                                               ↓
-                          <workspace>/.agentd/env_profile.json
+                          <workspace>/.crucible/state/env_profile.json
                                               ↓
                                      persists across all tasks
 
@@ -123,7 +123,7 @@ Task lifecycle (unchanged):
 | Module | Role |
 |---|---|
 | `agentd/env/profile_builder.py` — `EnvProfileBuilder.build(workspace_root) → EnvProfile` | Deterministic probe + one LLM `draft_conventions` call → returns profile object. |
-| `agentd/env/profile_store.py` — `EnvProfileStore` | `read(workspace) → EnvProfile \| None`, `write(workspace, profile)`, `is_stale(workspace) → bool`. JSON at `<workspace>/.agentd/env_profile.json`. |
+| `agentd/env/profile_store.py` — `EnvProfileStore` | `read(workspace) → EnvProfile \| None`, `write(workspace, profile)`, `is_stale(workspace) → bool`. JSON at `<workspace>/.crucible/state/env_profile.json`. |
 | `agentd/tools/env_profile.py` — `read_env_profile` tool | Returns profile JSON to agent. Available in explore and verify phases. |
 | `agentd/reasoning/env_prompts.py` — `DRAFT_CONVENTIONS_*` | System prompt, payload builder, response schema for the single LLM call. |
 
@@ -206,7 +206,7 @@ call, write empty profile + diagnostics.
 ```
 ToolLoop iteration
   → agent emits tool_call(read_env_profile, {})
-  → EnvProfileTool reads <workspace>/.agentd/env_profile.json
+  → EnvProfileTool reads <workspace>/.crucible/state/env_profile.json
   → agent now knows interpreter_or_runner = "services/agentd-py/.venv/bin/python"
                        test_command       = "pytest"
                        install_command    = "uv sync"
@@ -270,7 +270,7 @@ Reuses the existing task SSE channel.
 | Unit — `EnvProfileBuilder` | `ScriptedReasoningEngine` returning canned `draft_conventions` output. Asserts ecosystems get correct PM/test-cmd. Includes "malformed response → bootstrap_needed" path. |
 | Unit — `EnvProfileTool` | Tool returns profile JSON; returns "not built yet" message when absent. |
 | Integration — auto-sync | `tmp_path` workspace, python pyproject. Scripted engine emits a patch that touches `pyproject.toml`, then a `run_command`. Assert `setup_env` ran with the profile's `install_command` and `cwd` between them. Verify flag cleared after. |
-| Integration — lazy build on first task | New workspace, no `.agentd/env_profile.json`. Submit a task with scripted plan + reasoner. Assert profile written before first step ran; assert `env_profile_built` SSE event fired. |
+| Integration — lazy build on first task | New workspace, no `.crucible/state/env_profile.json`. Submit a task with scripted plan + reasoner. Assert profile written before first step ran; assert `env_profile_built` SSE event fired. |
 | Regression | Existing verify SM, plan loop, orchestrator tests stay green. Only new code paths are exercised. |
 
 ## Open questions / future work

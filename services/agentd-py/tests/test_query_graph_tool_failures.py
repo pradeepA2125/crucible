@@ -21,7 +21,7 @@ def _write_corrupt(snapshot: Path) -> None:
 
 
 def test_planning_registry_corrupt_snapshot_returns_error_output(tmp_path: Path) -> None:
-    snapshot = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot = tmp_path / ".crucible" / "index-snapshot.json"
     _write_corrupt(snapshot)
     reg = PlanningToolRegistry(real_path=tmp_path)
 
@@ -46,7 +46,7 @@ def test_planning_registry_missing_snapshot_returns_error_output(tmp_path: Path)
 
 def test_planning_registry_blank_node_returns_error_output(tmp_path: Path) -> None:
     # Need an existing (valid) snapshot so query_graph is registered.
-    snapshot = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot.parent.mkdir(parents=True, exist_ok=True)
     snapshot.write_text(
         json.dumps({
@@ -66,7 +66,7 @@ def test_planning_registry_blank_node_returns_error_output(tmp_path: Path) -> No
 
 
 def test_planning_registry_bad_depth_does_not_crash(tmp_path: Path) -> None:
-    snapshot = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot = tmp_path / ".crucible" / "index-snapshot.json"
     snapshot.parent.mkdir(parents=True, exist_ok=True)
     snapshot.write_text(
         json.dumps({
@@ -90,7 +90,7 @@ def test_planning_registry_bad_depth_does_not_crash(tmp_path: Path) -> None:
 
 
 def test_execution_registry_corrupt_snapshot_returns_error_output(tmp_path: Path) -> None:
-    snapshot = tmp_path / ".ai-editor" / "index-snapshot.json"
+    snapshot = tmp_path / ".crucible" / "index-snapshot.json"
     _write_corrupt(snapshot)
     shadow = tmp_path / "shadow"
     shadow.mkdir()

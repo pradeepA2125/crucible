@@ -1265,7 +1265,7 @@ fn discover_cargo_manifests(workspace_root: &Path) -> Vec<PathBuf> {
         "node_modules", ".venv", "venv", ".git", "target",
         "__pycache__", "dist", "build", ".next",
         ".mypy_cache", ".pytest_cache", ".ruff_cache",
-        ".agentd", ".ai-editor", ".tmp", ".worktrees",
+        ".crucible/state", ".crucible", ".tmp", ".worktrees",
     ];
 
     let mut found: Vec<PathBuf> = Vec::new();

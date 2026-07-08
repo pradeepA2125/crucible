@@ -21,6 +21,7 @@ import {
   type InstallerDeps,
   type InstallResult,
 } from "./installer.js";
+import { migrateLegacyRuntimeRoot } from "./legacy-migration.js";
 import type { RuntimeManifest } from "./manifest.js";
 
 // Same table as agentd/providers/factory.py::PROVIDER_KEY_ENV (local providers absent).
@@ -93,7 +94,7 @@ export class RuntimeManager {
     private readonly context: vscode.ExtensionContext,
     private readonly output: vscode.OutputChannel,
   ) {
-    this.runtimeDir = join(homedir(), ".ai-editor", "runtime");
+    this.runtimeDir = migrateLegacyRuntimeRoot(homedir());
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
     this.statusBar.command = "crucible.openSettingsPanel";
     context.subscriptions.push(this.statusBar);

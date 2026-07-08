@@ -21,7 +21,7 @@ export class GraphPanel {
     private readonly workspacePath: string,
     private readonly backendBaseUrl: string
   ) {
-    this.snapshotPath = path.join(workspacePath, ".ai-editor", "index-snapshot.json");
+    this.snapshotPath = path.join(workspacePath, ".crucible", "index-snapshot.json");
     this.store = new GraphSnapshotStore(this.snapshotPath);
   }
 
@@ -76,7 +76,7 @@ export class GraphPanel {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ workspace_path: this.workspacePath }),
         });
-        // .ai-editor/ may not have existed when the panel opened (fs.watch on a missing
+        // .crucible/ may not have existed when the panel opened (fs.watch on a missing
         // dir throws) — re-arm so the snapshot ignites the space when the build lands.
         this.stopWatcher();
         this.startWatcher();

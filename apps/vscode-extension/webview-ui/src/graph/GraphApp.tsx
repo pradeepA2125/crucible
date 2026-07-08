@@ -127,7 +127,7 @@ export default function GraphApp({ createScene }: Props) {
   }, []);
 
   // While waiting on an index build, poll — the host watcher may not have armed
-  // if .ai-editor/ didn't exist when the panel opened.
+  // if .crucible/ didn't exist when the panel opened.
   useEffect(() => {
     if (conn.kind !== "empty" || !conn.building) return;
     const t = setInterval(() => vscode.postMessage({ type: "refresh" }), 3000);

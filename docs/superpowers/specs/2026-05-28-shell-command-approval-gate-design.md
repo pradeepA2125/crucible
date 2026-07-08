@@ -58,7 +58,7 @@ On resume: pop the future, clear `pending_command_request`, `transition(EXECUTIN
 
 ## Persistence — `CommandRuleStore`
 
-Per-workspace JSON at `<workspace>/.ai-editor/approved-commands.json`:
+Per-workspace JSON at `<workspace>/.crucible/approved-commands.json`:
 
 ```json
 [{"type": "prefix", "value": "python -c", "added_at": "2026-05-28T…Z"}]

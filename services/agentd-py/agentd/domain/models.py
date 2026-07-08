@@ -259,7 +259,7 @@ class EnvEcosystemEntry(BaseModel):
 
 
 class EnvProfile(BaseModel):
-    """Workspace-level env conventions persisted at <workspace>/.agentd/env_profile.json."""
+    """Workspace-level env conventions persisted at <workspace>/.crucible/state/env_profile.json."""
 
     workspace_root: str
     built_at: datetime

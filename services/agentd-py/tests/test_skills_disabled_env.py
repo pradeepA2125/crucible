@@ -6,7 +6,7 @@ from agentd.skills.loader import SkillCatalogLoader
 
 
 def _write_skill(ws: Path, name: str) -> None:
-    d = ws / ".ai-editor" / "skills" / name
+    d = ws / ".crucible" / "skills" / name
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text(
         f"---\nname: {name}\ndescription: d\n---\nbody\n", encoding="utf-8"

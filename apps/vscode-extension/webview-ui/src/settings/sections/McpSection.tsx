@@ -42,7 +42,7 @@ export function McpSection({ state, busy, send }: SectionProps) {
     <div>
       <SectionHeader
         title="MCP Servers"
-        description="External tool servers from .ai-editor/mcp.json. Every tool call is approval-gated in chat."
+        description="External tool servers from .crucible/mcp.json. Every tool call is approval-gated in chat."
         search={{ value: filter, onChange: setFilter }}
       />
 

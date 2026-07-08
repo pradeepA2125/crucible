@@ -1,4 +1,4 @@
-"""McpConfigLoader: mtime-cached .ai-editor/mcp.json reader (mirrors the
+"""McpConfigLoader: mtime-cached .crucible/mcp.json reader (mirrors the
 ProjectInstructionsLoader cache discipline) + ${VAR} interpolation helpers."""
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from agentd.mcp.config import (
 
 
 def _write(tmp_path: Path, payload: dict) -> Path:
-    p = tmp_path / ".ai-editor" / "mcp.json"
+    p = tmp_path / ".crucible" / "mcp.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(payload), encoding="utf-8")
     return p
@@ -28,7 +28,7 @@ def test_missing_file_returns_empty(tmp_path: Path):
 
 
 def test_malformed_json_returns_empty(tmp_path: Path):
-    p = tmp_path / ".ai-editor" / "mcp.json"
+    p = tmp_path / ".crucible" / "mcp.json"
     p.parent.mkdir(parents=True)
     p.write_text("{not json", encoding="utf-8")
     assert McpConfigLoader(str(tmp_path)).load() == []

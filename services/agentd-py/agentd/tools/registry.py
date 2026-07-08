@@ -299,7 +299,7 @@ class ToolRegistry:
         override = os.environ.get("CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH")
         candidate = (
             Path(override) if override
-            else self._real_workspace_path / ".ai-editor" / "index-snapshot.json"
+            else self._real_workspace_path / ".crucible" / "index-snapshot.json"
         )
         return candidate.exists()
 
@@ -441,7 +441,7 @@ class ToolRegistry:
         override = os.environ.get("CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH")
         snapshot = (
             Path(override) if override
-            else self._real_workspace_path / ".ai-editor" / "index-snapshot.json"
+            else self._real_workspace_path / ".crucible" / "index-snapshot.json"
         )
         if not snapshot.exists():
             return ToolOutput(

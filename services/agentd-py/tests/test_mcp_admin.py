@@ -30,7 +30,7 @@ def _seed(path: Path) -> None:
 
 
 def test_upsert_preserves_unknown_keys_and_var_refs(tmp_path: Path) -> None:
-    cfg = tmp_path / ".ai-editor" / "mcp.json"
+    cfg = tmp_path / ".crucible" / "mcp.json"
     _seed(cfg)
     upsert_server(
         cfg,
@@ -50,7 +50,7 @@ def test_upsert_preserves_unknown_keys_and_var_refs(tmp_path: Path) -> None:
 
 
 def test_upsert_creates_file_and_rejects_bad_name(tmp_path: Path) -> None:
-    cfg = tmp_path / ".ai-editor" / "mcp.json"
+    cfg = tmp_path / ".crucible" / "mcp.json"
     upsert_server(cfg, "a1", {"command": "x", "enabled": True})
     assert "a1" in read_raw_servers(cfg)
     with pytest.raises(ValueError):
@@ -58,7 +58,7 @@ def test_upsert_creates_file_and_rejects_bad_name(tmp_path: Path) -> None:
 
 
 def test_remove_server(tmp_path: Path) -> None:
-    cfg = tmp_path / ".ai-editor" / "mcp.json"
+    cfg = tmp_path / ".crucible" / "mcp.json"
     _seed(cfg)
     assert remove_server(cfg, "web") is True
     assert remove_server(cfg, "web") is False
@@ -80,7 +80,7 @@ async def _stub_factory(cfg):
 
 @pytest.mark.asyncio
 async def test_reconcile_disabled_filters_and_reconnect(tmp_path: Path) -> None:
-    cfg_path = tmp_path / ".ai-editor" / "mcp.json"
+    cfg_path = tmp_path / ".crucible" / "mcp.json"
     _seed(cfg_path)
     upsert_server(cfg_path, "gh", {"type": "http", "url": "https://x", "enabled": True})
     loader = McpConfigLoader(tmp_path)

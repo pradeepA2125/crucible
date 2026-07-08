@@ -36,7 +36,7 @@ def resolve_workspace_bin(root: Path, name: str) -> Path | None:
 # Dirs never worth walking when locating a package inside the shadow.
 _WALK_SKIP_DIRS = {
     ".venv", "venv", "node_modules", "target", "dist", "build",
-    ".tox", ".mypy_cache", ".pytest_cache", "__pycache__", ".agentd", ".git",
+    ".tox", ".mypy_cache", ".pytest_cache", "__pycache__", ".crucible/state", ".git",
 }
 
 

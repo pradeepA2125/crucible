@@ -1728,7 +1728,7 @@ This pass should cover **runtime core + ops tooling + tests + docs/benchmarks to
 #### 4. De-hardcode provider/runtime configuration and debug plumbing
 - Introduce a single generic artifact/debug root setting:
   - `CRUCIBLE_ARTIFACTS_ROOT`
-  - default to `<workspace>/.agentd/artifacts` or a configurable app-local default, not `/tmp/ai-editor-stress`
+  - default to `<workspace>/.crucible/state/artifacts` or a configurable app-local default, not `/tmp/ai-editor-stress`
 - Ensure all debug dumping uses the same artifact root contract:
   - reasoning debug dumps
   - orchestrator plan/patch artifacts

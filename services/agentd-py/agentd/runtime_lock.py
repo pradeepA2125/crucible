@@ -1,4 +1,4 @@
-"""Per-workspace backend lockfile: <workspace>/.agentd/agentd.lock (JSON pid/port/
+"""Per-workspace backend lockfile: <workspace>/.crucible/state/agentd.lock (JSON pid/port/
 started_at). The extension reuses a live backend and reaps stale locks — this file
 is what makes one-workspace-one-backend hold by construction. Written only when
 CRUCIBLE_PORT is set (managed spawns); the dev script flow is unaffected."""
@@ -19,7 +19,7 @@ class LockInfo:
 
 
 def _lock_path(workspace: str | Path) -> Path:
-    return Path(workspace) / ".agentd" / "agentd.lock"
+    return Path(workspace) / ".crucible/state" / "agentd.lock"
 
 
 def write_lock(workspace: str | Path, *, port: int, pid: int | None = None) -> None:
