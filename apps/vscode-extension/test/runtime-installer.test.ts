@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { RuntimeInstaller, venvPython, type InstallerDeps } from "../src/runtime/installer.js";
 import { sha256Hex, type RuntimeManifest } from "../src/runtime/manifest.js";
@@ -97,6 +97,58 @@ describe("RuntimeInstaller", () => {
     const result = await new RuntimeInstaller(d2).installAll();
     expect(result.ok).toBe(true);
     expect(downloads).toBe(0);
+  });
+
+  it("a hollow venv (state recorded, python binary present, package not importable) is reinstalled, not silently marked done", async () => {
+    const d = deps();
+    // Simulate a prior interrupted install: install-state.json + a venv/bin/python
+    // exist on disk (the two things the old check looked for), but nothing is
+    // actually importable inside that venv — the pip install never completed.
+    writeFileSync(join(d.runtimeDir, "install-state.json"), JSON.stringify({ agentd: "0.1.0" }));
+    const pyPath = venvPython(d.runtimeDir, d.platform);
+    mkdirSync(dirname(pyPath), { recursive: true });
+    writeFileSync(pyPath, "");
+
+    let importCheckRan = false;
+    const d2: InstallerDeps & { calls: string[][] } = {
+      ...d,
+      exec: async (cmd, args) => {
+        d.calls.push([cmd, ...args]);
+        if (cmd === pyPath && args.includes("import uvicorn")) {
+          importCheckRan = true;
+          return { code: 1, stdout: "", stderr: "ModuleNotFoundError: No module named 'uvicorn'" };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    const result = await new RuntimeInstaller(d2).installAll();
+    const agentd = result.components.find((c) => c.id === "agentd")!;
+    expect(importCheckRan).toBe(true);
+    expect(agentd.status).toBe("done"); // reinstall attempted and (per the mock) succeeded
+    expect(agentd.detail).not.toBe("already installed");
+    const pipCall = d2.calls.find((call) => call.includes("pip"));
+    expect(pipCall).toBeDefined(); // the real pip install actually ran this time
+  });
+
+  it("a genuinely working venv (import succeeds) is still treated as already installed", async () => {
+    const d = deps();
+    writeFileSync(join(d.runtimeDir, "install-state.json"), JSON.stringify({ agentd: "0.1.0" }));
+    const pyPath = venvPython(d.runtimeDir, d.platform);
+    mkdirSync(dirname(pyPath), { recursive: true });
+    writeFileSync(pyPath, "");
+
+    const d2: InstallerDeps & { calls: string[][] } = {
+      ...d,
+      exec: async (cmd, args) => {
+        d.calls.push([cmd, ...args]);
+        return { code: 0, stdout: "", stderr: "" }; // import check + everything else succeeds
+      },
+    };
+
+    await new RuntimeInstaller(d2).installAll();
+    const pipCall = d2.calls.find((call) => call.includes("pip"));
+    expect(pipCall).toBeUndefined(); // no reinstall needed
   });
 });
 

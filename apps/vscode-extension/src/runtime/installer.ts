@@ -72,7 +72,7 @@ export class RuntimeInstaller {
       try {
         if (id === "agentd" && !uvOk) {
           progress = { id, status: "failed", detail: "uv unavailable" };
-        } else if (state[id] === spec.version && this.artifactPresent(id)) {
+        } else if (state[id] === spec.version && (await this.artifactPresent(id))) {
           progress = { id, status: "done", detail: "already installed" };
         } else {
           progress = await this.installOne(id);
@@ -99,10 +99,21 @@ export class RuntimeInstaller {
     return { ok, components: results };
   }
 
-  private artifactPresent(id: ComponentId): boolean {
+  private async artifactPresent(id: ComponentId): Promise<boolean> {
     const bin = BIN_NAME[id];
     if (bin) return existsSync(binPath(this.deps.runtimeDir, bin, this.platform));
-    if (id === "agentd") return existsSync(venvPython(this.deps.runtimeDir, this.platform));
+    if (id === "agentd") {
+      const py = venvPython(this.deps.runtimeDir, this.platform);
+      if (!existsSync(py)) return false;
+      // A prior install can leave the venv shell + a stale install-state.json
+      // entry behind without ever completing `uv pip install` (interrupted
+      // network, laptop sleep, ...). Confirm the package actually imports
+      // before trusting the recorded version — otherwise a hollow venv looks
+      // "already installed" forever and the backend fails at startup with
+      // "No module named uvicorn".
+      const check = await this.deps.exec(py, ["-c", "import uvicorn"]);
+      return check.code === 0;
+    }
     return existsSync(join(this.deps.runtimeDir, "node_modules"));
   }
 
