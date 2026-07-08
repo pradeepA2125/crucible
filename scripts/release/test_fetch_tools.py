@@ -1,3 +1,4 @@
+import gzip
 import io
 import sys
 import tarfile
@@ -10,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fetch_tools import (  # noqa: E402
     ripgrep_asset_name,
     ripgrep_download_url,
+    rust_analyzer_asset_name,
+    rust_analyzer_download_url,
     stage,
     uv_asset_name,
     uv_download_url,
@@ -66,3 +69,34 @@ def test_asset_name_and_url_conventions() -> None:
     assert ripgrep_download_url("14.1.1", "win32-x64") == (
         "https://github.com/BurntSushi/ripgrep/releases/download/"
         "14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip")
+
+
+def test_stage_extracts_rust_analyzer_from_plain_gzip() -> None:
+    archive = gzip.compress(b"rust-analyzer-binary-bytes")
+    assert stage(archive, "rust-analyzer", "linux-x64") == b"rust-analyzer-binary-bytes"
+
+
+def test_stage_extracts_rust_analyzer_darwin_from_plain_gzip() -> None:
+    archive = gzip.compress(b"macos-binary-bytes")
+    assert stage(archive, "rust-analyzer", "darwin-arm64") == b"macos-binary-bytes"
+
+
+def test_stage_extracts_rust_analyzer_windows_exe_from_zip() -> None:
+    archive = _zip_with("rust-analyzer.exe", b"exe-bytes")
+    assert stage(archive, "rust-analyzer", "win32-x64") == b"exe-bytes"
+
+
+def test_rust_analyzer_asset_name_and_url_conventions() -> None:
+    assert rust_analyzer_asset_name("linux-x64") == "rust-analyzer-x86_64-unknown-linux-gnu.gz"
+    assert rust_analyzer_asset_name("darwin-arm64") == "rust-analyzer-aarch64-apple-darwin.gz"
+    assert rust_analyzer_asset_name("win32-x64") == "rust-analyzer-x86_64-pc-windows-msvc.zip"
+    assert rust_analyzer_download_url("2026-07-06", "darwin-arm64") == (
+        "https://github.com/rust-lang/rust-analyzer/releases/download/"
+        "2026-07-06/rust-analyzer-aarch64-apple-darwin.gz")
+
+
+def test_uv_and_ripgrep_staging_still_use_tar_gz_on_posix() -> None:
+    # Regression guard: the _archive_ext(kind, platform) refactor must not
+    # change uv/ripgrep's existing tar.gz behavior on non-Windows.
+    archive = _tar_gz_with("uv-x86_64-apple-darwin/uv", b"uv-bytes")
+    assert stage(archive, "uv", "darwin-x64") == b"uv-bytes"
