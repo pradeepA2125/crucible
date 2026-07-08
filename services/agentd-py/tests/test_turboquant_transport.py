@@ -24,7 +24,7 @@ from agentd.planning.prompts import (
     format_planning_system_prompt,
 )
 from agentd.planning.registry import PlanningToolRegistry
-from agentd.providers.turboquant_transport import DEVSTRAL, TurboQuantTransport
+from agentd.providers.turboquant_transport import DEVSTRAL, QWEN3, TurboQuantTransport
 
 
 # ── SSE helpers ────────────────────────────────────────────────────────────────
@@ -460,6 +460,37 @@ def test_honors_turboquant_host_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TURBOQUANT_HOST", "http://gpu-box:11435/")
     t = TurboQuantTransport(profile=DEVSTRAL, http_client=_FakeStreamClient([]))
     assert t._host == "http://gpu-box:11435"
+
+
+def test_from_env_infers_qwen3_family_from_model_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: from_env() used to hardcode the devstral profile whenever
+    # TURBOQUANT_MODEL_FAMILY was unset, even when CRUCIBLE_TURBOQUANT_MODEL
+    # pointed at a qwen model — so picking a qwen model never activated the
+    # qwen3 sampling/thinking-template profile.
+    monkeypatch.delenv("TURBOQUANT_MODEL_FAMILY", raising=False)
+    monkeypatch.setenv("CRUCIBLE_TURBOQUANT_MODEL", "qwen3.6:35b-a3b-q4_K_M")
+    t = TurboQuantTransport.from_env()
+    assert t._profile == QWEN3
+
+
+def test_from_env_infers_devstral_family_from_model_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TURBOQUANT_MODEL_FAMILY", raising=False)
+    monkeypatch.setenv("CRUCIBLE_TURBOQUANT_MODEL", "devstral-small-2:24b-q4_k_xl")
+    t = TurboQuantTransport.from_env()
+    assert t._profile == DEVSTRAL
+
+
+def test_from_env_explicit_family_env_wins_over_model_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TURBOQUANT_MODEL_FAMILY", "devstral")
+    monkeypatch.setenv("CRUCIBLE_TURBOQUANT_MODEL", "qwen3.6:35b-a3b-q4_K_M")
+    t = TurboQuantTransport.from_env()
+    assert t._profile == DEVSTRAL
 
 
 # ── Tests using real prompt builders ─────────────────────────────────────────

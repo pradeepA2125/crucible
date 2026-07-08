@@ -18,7 +18,7 @@ _DEFAULT_MODEL: dict[str, str] = {
     "openrouter": "stepfun/step-3.5-flash:free",
     "watsonx": "ibm/granite-3-8b-instruct",
     "ollama": "glm-4.7-flash:latest",
-    "turboquant": "devstral-small-2:24b-q4_k_xl",
+    "turboquant": "qwen3.6:35b-a3b-q4_K_M",
     "openai": "gpt-5",
 }
 

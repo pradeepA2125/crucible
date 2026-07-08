@@ -141,6 +141,16 @@ PROFILES: dict[str, ModelProfile] = {
 }
 
 
+def _infer_family(model: str) -> str:
+    """Best-effort family guess from the model name, used only when
+    TURBOQUANT_MODEL_FAMILY is not set explicitly. Keeps the sampling/thinking-
+    template profile in sync with whichever model string is configured (e.g. via
+    CRUCIBLE_TURBOQUANT_MODEL) instead of silently defaulting to devstral for a
+    qwen model — a real footgun the runtime setup wizard hit in practice.
+    """
+    return "qwen3" if "qwen" in model.lower() else "devstral"
+
+
 # ---------------------------------------------------------------------------
 # Transport
 # ---------------------------------------------------------------------------
@@ -195,7 +205,10 @@ class TurboQuantTransport(ModelJsonTransport):
     def from_env(cls) -> "TurboQuantTransport":
         """Build from environment variables.
 
-        TURBOQUANT_MODEL_FAMILY  — profile to use (default: devstral)
+        TURBOQUANT_MODEL_FAMILY  — profile to use (default: inferred from
+                                    CRUCIBLE_TURBOQUANT_MODEL / the resolved model
+                                    name — "qwen3" if it contains "qwen", else
+                                    "devstral")
         TURBOQUANT_TEMPERATURE   — override profile temperature
         TURBOQUANT_TOP_P         — override profile top_p
         TURBOQUANT_TOP_K         — override profile top_k
@@ -205,7 +218,14 @@ class TurboQuantTransport(ModelJsonTransport):
         TURBOQUANT_MAX_TOKENS    — total output token budget (default 8192)
         TURBOQUANT_HOST          — server URL (default http://localhost:11435)
         """
-        family = os.environ.get("TURBOQUANT_MODEL_FAMILY", "devstral").lower()
+        from agentd.providers.factory import default_model
+
+        family_override = os.environ.get("TURBOQUANT_MODEL_FAMILY")
+        if family_override:
+            family = family_override.lower()
+        else:
+            model = os.environ.get("CRUCIBLE_TURBOQUANT_MODEL") or default_model("turboquant")
+            family = _infer_family(model)
         if family not in PROFILES:
             raise ValueError(
                 f"Unknown TURBOQUANT_MODEL_FAMILY={family!r}. "

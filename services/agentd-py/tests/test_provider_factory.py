@@ -11,7 +11,7 @@ from agentd.providers.factory import (
 def test_default_model_known_backends() -> None:
     assert default_model("gemini") == "gemini-3-flash-preview"
     assert default_model("openai") == "gpt-5"
-    assert default_model("turboquant") == "devstral-small-2:24b-q4_k_xl"
+    assert default_model("turboquant") == "qwen3.6:35b-a3b-q4_K_M"
 
 
 def test_default_model_unknown_backend_raises() -> None:

@@ -32,7 +32,7 @@ export const PROVIDERS: ProviderInfo[] = [
   { id: "watsonx", label: "IBM watsonx", local: false, keyEnvVar: "WATSONX_API_KEY", defaultModel: "ibm/granite-3-8b-instruct" },
   { id: "openrouter", label: "OpenRouter", local: false, keyEnvVar: "OPENROUTER_API_KEY", defaultModel: "stepfun/step-3.5-flash:free" },
   { id: "huggingface", label: "Hugging Face", local: false, keyEnvVar: "HF_TOKEN", defaultModel: "deepseek-ai/DeepSeek-R1:fastest" },
-  { id: "turboquant", label: "TurboQuant (local)", local: true, defaultModel: "devstral-small-2:24b-q4_k_xl" },
+  { id: "turboquant", label: "TurboQuant (local)", local: true, defaultModel: "qwen3.6:35b-a3b-q4_K_M" },
 ];
 
 export const COMPONENT_LABELS: Record<string, string> = {
