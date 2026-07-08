@@ -2,12 +2,18 @@
 import { createHash } from "node:crypto";
 
 export type PlatformKey = "darwin-arm64" | "darwin-x64" | "linux-x64" | "win32-x64";
-export type ComponentId = "uv" | "agentd" | "indexer" | "ripgrep" | "rust-analyzer" | "lsps";
+export type ComponentId =
+  | "uv" | "agentd" | "indexer" | "ripgrep" | "rust-analyzer" | "gopls" | "lsps"
+  | "jre" | "jdtls";
 
 export interface ComponentSpec {
   version: string;
   // binary components: per-platform url+sha256. agentd: single wheel url+sha256
-  // under the "any" key. lsps: npm package specs, no url.
+  // under the "any" key. lsps: npm package specs, no url. jre: per-platform
+  // archive (tar.gz posix / zip windows) url+sha256, extracted not written
+  // straight to bin/. jdtls: single "any" archive (tar.gz) — its distribution
+  // is platform-independent (one shared jar tree; the platform-specific bits
+  // are OS-named subdirectories selected at spawn time, not separate builds).
   urls?: Partial<Record<PlatformKey | "any", string>>;
   sha256?: Partial<Record<PlatformKey | "any", string>>;
   npmPackages?: string[];

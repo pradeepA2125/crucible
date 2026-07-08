@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
 
+import { extractArchive } from "./archive.js";
 import {
   BackendProcess,
   type BackendSettings,
@@ -137,6 +138,7 @@ export class RuntimeManager {
       },
       exec: (cmd, args, opts) => execCollecting(cmd, args, opts?.cwd),
       hasNode: async () => (await execCollecting("node", ["--version"])).code === 0,
+      extract: extractArchive,
     };
     return new RuntimeInstaller(deps).installAll((p) => {
       this.output.appendLine(`[install] ${p.id}: ${p.status}${p.detail ? ` — ${p.detail}` : ""}`);

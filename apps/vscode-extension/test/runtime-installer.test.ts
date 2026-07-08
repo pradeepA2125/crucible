@@ -18,9 +18,26 @@ function manifest(): RuntimeManifest {
       indexer: { version: "0.1.0", urls: { "darwin-arm64": "https://r/ix" }, sha256: { "darwin-arm64": sha } },
       ripgrep: { version: "14.1.0", urls: { "darwin-arm64": "https://r/rg" }, sha256: { "darwin-arm64": sha } },
       "rust-analyzer": { version: "2026-07-06", urls: { "darwin-arm64": "https://r/ra" }, sha256: { "darwin-arm64": sha } },
+      gopls: { version: "v0.22.0", urls: { "darwin-arm64": "https://r/gopls" }, sha256: { "darwin-arm64": sha } },
+      jre: { version: "17.0.19+10", urls: { "darwin-arm64": "https://r/jre" }, sha256: { "darwin-arm64": sha } },
+      jdtls: { version: "1.61.0", urls: { any: "https://r/jdtls" }, sha256: { any: sha } },
       lsps: { version: "1", npmPackages: ["pyright@1.1.400", "typescript-language-server@4.3.3"] },
     },
   };
+}
+
+// Fakes the effect of a real extraction well enough for artifactPresent's
+// findJavaExecutable/findEquinoxLauncher checks: write the marker file each
+// looks for, keyed on destDir's basename since the fake has no other way to
+// know which component it's extracting for.
+async function fakeExtract(_archive: Buffer, destDir: string): Promise<void> {
+  if (destDir.endsWith("jre")) {
+    mkdirSync(join(destDir, "bin"), { recursive: true });
+    writeFileSync(join(destDir, "bin", "java"), "");
+  } else if (destDir.endsWith("jdtls")) {
+    mkdirSync(join(destDir, "plugins"), { recursive: true });
+    writeFileSync(join(destDir, "plugins", "org.eclipse.equinox.launcher_1.0.0.jar"), "");
+  }
 }
 
 function deps(overrides: Partial<InstallerDeps> = {}): InstallerDeps & { calls: string[][] } {
@@ -31,6 +48,7 @@ function deps(overrides: Partial<InstallerDeps> = {}): InstallerDeps & { calls: 
     download: async () => BIN,
     exec: async (cmd, args) => { calls.push([cmd, ...args]); return { code: 0, stdout: "", stderr: "" }; },
     hasNode: async () => true,
+    extract: fakeExtract,
     platform: "darwin-arm64",
     calls,
     ...overrides,
@@ -38,17 +56,38 @@ function deps(overrides: Partial<InstallerDeps> = {}): InstallerDeps & { calls: 
 }
 
 describe("RuntimeInstaller", () => {
-  it("happy path installs all six components and writes runtime.json", async () => {
+  it("happy path installs all nine components and writes runtime.json", async () => {
     const d = deps();
     const result = await new RuntimeInstaller(d).installAll();
     expect(result.ok).toBe(true);
     expect(result.components.map((c) => c.status)).toEqual(
-      ["done", "done", "done", "done", "done", "done"]);
+      ["done", "done", "done", "done", "done", "done", "done", "done", "done"]);
     expect(existsSync(join(d.runtimeDir, "bin", "uv"))).toBe(true);
     expect(existsSync(join(d.runtimeDir, "bin", "rust-analyzer"))).toBe(true);
+    expect(existsSync(join(d.runtimeDir, "bin", "gopls"))).toBe(true);
+    expect(existsSync(join(d.runtimeDir, "jre", "bin", "java"))).toBe(true);
+    expect(existsSync(join(d.runtimeDir, "jdtls", "plugins", "org.eclipse.equinox.launcher_1.0.0.jar"))).toBe(true);
     expect(d.calls.some(([c, a]) => c.endsWith("uv") && a === "venv")).toBe(true);
     const state = JSON.parse(readFileSync(join(d.runtimeDir, "runtime.json"), "utf8"));
     expect(state.releaseTag).toBe("v0.1.0");
+  });
+
+  it("jre install fails cleanly when the manifest has no artifact for this platform", async () => {
+    const d = deps();
+    d.manifest.components.jre = { version: "17.0.19+10" }; // no urls/sha256
+    const result = await new RuntimeInstaller(d).installAll();
+    const jre = result.components.find((c) => c.id === "jre")!;
+    expect(jre.status).toBe("failed");
+    expect(jre.detail).toMatch(/no darwin-arm64 artifact/i);
+  });
+
+  it("jdtls install fails cleanly when the manifest has no 'any' artifact", async () => {
+    const d = deps();
+    d.manifest.components.jdtls = { version: "1.61.0" }; // no urls/sha256
+    const result = await new RuntimeInstaller(d).installAll();
+    const jdtls = result.components.find((c) => c.id === "jdtls")!;
+    expect(jdtls.status).toBe("failed");
+    expect(jdtls.detail).toMatch(/no jdtls artifact/i);
   });
 
   it("checksum mismatch fails that component, uv failure cascades to agentd only", async () => {
@@ -71,22 +110,22 @@ describe("RuntimeInstaller", () => {
     expect(lsps.detail).toMatch(/degraded/i);
   });
 
-  it("agentd install requests the [memory] extra via the bare-version fallback", async () => {
+  it("agentd install requests the [memory,semantic] extras via the bare-version fallback", async () => {
     const d = deps();
     await new RuntimeInstaller(d).installAll();
     const pipCall = d.calls.find((call) => call.includes("pip"));
     expect(pipCall).toBeDefined();
-    expect(pipCall![pipCall!.length - 1]).toBe("crucible-agentd[memory]==0.1.0");
+    expect(pipCall![pipCall!.length - 1]).toBe("crucible-agentd[memory,semantic]==0.1.0");
   });
 
-  it("agentd install wraps a manifest wheel URL with the [memory] extra as a PEP 508 direct reference", async () => {
+  it("agentd install wraps a manifest wheel URL with the [memory,semantic] extras as a PEP 508 direct reference", async () => {
     const d = deps();
     d.manifest.components.agentd = { version: "0.3.0", urls: { any: "https://example.com/pkg.whl" } };
     await new RuntimeInstaller(d).installAll();
     const pipCall = d.calls.find((call) => call.includes("pip"));
     expect(pipCall).toBeDefined();
     expect(pipCall![pipCall!.length - 1]).toBe(
-      "crucible-agentd[memory] @ https://example.com/pkg.whl");
+      "crucible-agentd[memory,semantic] @ https://example.com/pkg.whl");
   });
 
   it("resume: matching install-state version skips the download", async () => {

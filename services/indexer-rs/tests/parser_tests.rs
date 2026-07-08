@@ -271,6 +271,246 @@ def run_task():
 }
 
 #[test]
+fn javascript_parser_emits_symbols_and_edges() {
+    // Plain JS rides the TypeScript grammar (no type annotations here at all)
+    // — this is the load-bearing assertion that the reuse actually works,
+    // not just that it compiles.
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
+    let mut graph = SymbolGraph::default();
+    let source = r#"
+import { fetchUser } from "./api";
+export class UserService extends BaseService {
+  getUser() {
+    return fetchUser();
+  }
+}
+export function buildService() {
+  return new UserService();
+}
+"#;
+
+    parser
+        .parse_file(Path::new("src/service.js"), source, &mut graph)
+        .expect("parse");
+
+    let nodes = graph.all_nodes();
+    let edges = graph.all_edges();
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Class && node.name == "UserService"));
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Function && node.name == "buildService"));
+    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Imports));
+    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Calls));
+    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Inherits));
+}
+
+#[test]
+fn jsx_parser_emits_symbols_and_edges() {
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
+    let mut graph = SymbolGraph::default();
+    let source = r#"
+export function Button() {
+  return <button onClick={() => handleClick()}>Go</button>;
+}
+"#;
+
+    parser
+        .parse_file(Path::new("src/Button.jsx"), source, &mut graph)
+        .expect("parse");
+
+    let nodes = graph.all_nodes();
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Function && node.name == "Button"));
+}
+
+#[test]
+fn typescript_parser_targets_the_method_not_the_receiver_when_receiver_sorts_last() {
+    // Regression test: `extract_call_target` used to route through a
+    // sort-then-dedup identifier list, so `zzz.run()` (receiver name sorts
+    // alphabetically AFTER the method name) picked "zzz" as the call target
+    // instead of "run" — wrong regardless of language, only ever masked
+    // because no existing test happened to use a receiver name that sorted
+    // after its method name.
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
+    let mut graph = SymbolGraph::default();
+    let source = "export function go() {\n  zzz.run();\n}\n";
+
+    parser
+        .parse_file(Path::new("src/service.ts"), source, &mut graph)
+        .expect("parse");
+
+    let edges = graph.all_edges();
+    assert!(
+        edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::Calls && e.to.contains("external:call:run")),
+        "expected a Calls edge targeting 'run', not the receiver; edges: {edges:?}"
+    );
+    assert!(
+        !edges.iter().any(|e| e.to.contains("external:call:zzz")),
+        "call target must not be the receiver 'zzz'; edges: {edges:?}"
+    );
+}
+
+#[test]
+fn go_parser_emits_symbols_and_edges() {
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
+    let mut graph = SymbolGraph::default();
+    let source = r#"
+package main
+
+import "myapp/store"
+
+type Repo interface {
+	Fetch() string
+}
+
+type App struct {
+	Name string
+}
+
+func (a *App) Build() string {
+	return store.New()
+}
+
+func main() {
+	app := App{}
+	app.Build()
+}
+"#;
+
+    parser
+        .parse_file(Path::new("app/main.go"), source, &mut graph)
+        .expect("parse");
+
+    let nodes = graph.all_nodes();
+    let edges = graph.all_edges();
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Class && node.name == "App"));
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Interface && node.name == "Repo"));
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Method && node.name == "Build"));
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Function && node.name == "main"));
+    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Imports));
+    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Calls));
+}
+
+#[test]
+fn go_parser_attaches_methods_declared_in_a_sibling_file_to_the_same_owner() {
+    // Idiomatic Go: a struct's methods routinely live in a different file
+    // within the same package directory. The owner id must be package
+    // (directory) scoped, not file scoped, or the type_spec's Class node and
+    // the method_declaration's owner node diverge into two unrelated symbols.
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
+    let mut graph = SymbolGraph::default();
+
+    parser
+        .parse_file(
+            Path::new("app/types.go"),
+            "package main\n\ntype App struct {\n\tName string\n}\n",
+            &mut graph,
+        )
+        .expect("parse types.go");
+    parser
+        .parse_file(
+            Path::new("app/handlers.go"),
+            "package main\n\nfunc (a *App) Handle() {}\n",
+            &mut graph,
+        )
+        .expect("parse handlers.go");
+
+    let nodes = graph.all_nodes();
+    let app_nodes: Vec<_> = nodes
+        .iter()
+        .filter(|n| n.kind == SymbolKind::Class && n.name == "App")
+        .collect();
+    assert_eq!(
+        app_nodes.len(),
+        1,
+        "expected a single App symbol shared across files; got {app_nodes:?}"
+    );
+
+    let edges = graph.all_edges();
+    let app_id = &app_nodes[0].id;
+    assert!(
+        edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::References && &e.to == app_id
+                && e.from.contains("handlers.go")),
+        "expected handlers.go to reference the shared App owner; edges: {edges:?}"
+    );
+}
+
+#[test]
+fn java_parser_emits_symbols_and_edges() {
+    let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
+    let mut graph = SymbolGraph::default();
+    let source = r#"
+package com.example;
+
+import com.example.store.Store;
+
+public interface Runner {
+	void run();
+}
+
+public class App extends AbstractApp implements Runner {
+	public void run() {
+		Store.fetch();
+		helper();
+		App app = new App();
+	}
+
+	private void helper() {}
+}
+"#;
+
+    parser
+        .parse_file(Path::new("src/App.java"), source, &mut graph)
+        .expect("parse");
+
+    let nodes = graph.all_nodes();
+    let edges = graph.all_edges();
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Class && node.name == "App"));
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Interface && node.name == "Runner"));
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Method && node.name == "run"));
+    assert!(nodes
+        .iter()
+        .any(|node| node.kind == SymbolKind::Method && node.name == "helper"));
+    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Imports));
+    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::Calls));
+
+    let inherits_targets: Vec<String> = edges
+        .iter()
+        .filter(|e| e.kind == EdgeKind::Inherits)
+        .map(|e| e.to.clone())
+        .collect();
+    assert!(
+        inherits_targets.iter().any(|t| t.contains("AbstractApp")),
+        "missing extends edge to AbstractApp; got {inherits_targets:?}"
+    );
+    assert!(
+        inherits_targets.iter().any(|t| t.contains("Runner")),
+        "missing implements edge to Runner; got {inherits_targets:?}"
+    );
+}
+
+#[test]
 fn rust_parser_emits_symbols_and_edges() {
     let parser = TreeSitterParser::new(std::path::PathBuf::from("."));
     let mut graph = SymbolGraph::default();

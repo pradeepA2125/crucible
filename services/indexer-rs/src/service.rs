@@ -396,17 +396,19 @@ impl IndexerService {
 fn is_supported_source_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("ts" | "tsx" | "py" | "rs")
+        Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "py" | "rs" | "go" | "java")
     )
 }
 
 fn is_ignored_path(path: &Path) -> bool {
-    const IGNORED_DIRS: [&str; 12] = [
+    const IGNORED_DIRS: [&str; 14] = [
         ".git",
         "node_modules",
         ".venv",
         "target",
         "dist",
+        "build",
+        "vendor",
         "__pycache__",
         ".pytest_cache",
         ".mypy_cache",
@@ -424,8 +426,11 @@ fn is_ignored_path(path: &Path) -> bool {
 fn language_for_path(path: &Path) -> &'static str {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("ts" | "tsx") => "typescript",
+        Some("js" | "jsx" | "mjs" | "cjs") => "javascript",
         Some("py") => "python",
         Some("rs") => "rust",
+        Some("go") => "go",
+        Some("java") => "java",
         _ => "unknown",
     }
 }

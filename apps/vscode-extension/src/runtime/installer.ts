@@ -1,6 +1,7 @@
 // vscode-free: all effects behind InstallerDeps so tests inject fakes.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { findEquinoxLauncher, findJavaExecutable } from "./jdtls.js";
 import {
   platformKey,
   verifyChecksum,
@@ -10,12 +11,17 @@ import {
 } from "./manifest.js";
 
 export interface ExecResult { code: number; stdout: string; stderr: string }
+export type ArchiveFormat = "tar.gz" | "zip";
 export interface InstallerDeps {
   runtimeDir: string;
   manifest: RuntimeManifest;
   download(url: string): Promise<Buffer>;
   exec(cmd: string, args: string[], opts?: { cwd?: string }): Promise<ExecResult>;
   hasNode(): Promise<boolean>;
+  // jre/jdtls are directory-tree archives, unlike every other component
+  // (a single self-contained binary written straight to bin/) — this
+  // extracts `archive` into `destDir`.
+  extract(archive: Buffer, destDir: string, format: ArchiveFormat): Promise<void>;
   platform?: PlatformKey;               // default platformKey()
 }
 export type ComponentStatus = "pending" | "running" | "done" | "failed" | "skipped";
@@ -23,9 +29,11 @@ export interface ComponentProgress { id: ComponentId; status: ComponentStatus; d
 export interface InstallResult { ok: boolean; components: ComponentProgress[] }
 
 // Order matters: agentd needs uv on disk first.
-const ORDER: ComponentId[] = ["uv", "agentd", "indexer", "ripgrep", "rust-analyzer", "lsps"];
+const ORDER: ComponentId[] = [
+  "uv", "agentd", "indexer", "ripgrep", "rust-analyzer", "gopls", "jre", "jdtls", "lsps",
+];
 const BIN_NAME: Partial<Record<ComponentId, string>> = {
-  uv: "uv", indexer: "crucible-indexer", ripgrep: "rg", "rust-analyzer": "rust-analyzer",
+  uv: "uv", indexer: "crucible-indexer", ripgrep: "rg", "rust-analyzer": "rust-analyzer", gopls: "gopls",
 };
 
 export function binPath(runtimeDir: string, name: string, platform: PlatformKey = platformKey()): string {
@@ -102,6 +110,12 @@ export class RuntimeInstaller {
   private async artifactPresent(id: ComponentId): Promise<boolean> {
     const bin = BIN_NAME[id];
     if (bin) return existsSync(binPath(this.deps.runtimeDir, bin, this.platform));
+    if (id === "jre") {
+      return findJavaExecutable(join(this.deps.runtimeDir, "jre"), this.platform) !== null;
+    }
+    if (id === "jdtls") {
+      return findEquinoxLauncher(join(this.deps.runtimeDir, "jdtls")) !== null;
+    }
     if (id === "agentd") {
       const py = venvPython(this.deps.runtimeDir, this.platform);
       if (!existsSync(py)) return false;
@@ -119,6 +133,30 @@ export class RuntimeInstaller {
 
   private async installOne(id: ComponentId): Promise<ComponentProgress> {
     const spec = this.deps.manifest.components[id];
+    if (id === "jre") {
+      const url = spec.urls?.[this.platform];
+      const sha = spec.sha256?.[this.platform];
+      if (!url || !sha) throw new Error(`manifest has no ${this.platform} artifact for jre`);
+      const data = await this.deps.download(url);
+      verifyChecksum(data, sha);
+      const destDir = join(this.deps.runtimeDir, "jre");
+      mkdirSync(destDir, { recursive: true });
+      await this.deps.extract(data, destDir, this.platform === "win32-x64" ? "zip" : "tar.gz");
+      return { id, status: "done" };
+    }
+    if (id === "jdtls") {
+      // Platform-independent: one universal archive under the "any" key
+      // (see manifest.ts's ComponentSpec doc comment).
+      const url = spec.urls?.any;
+      const sha = spec.sha256?.any;
+      if (!url || !sha) throw new Error("manifest has no jdtls artifact");
+      const data = await this.deps.download(url);
+      verifyChecksum(data, sha);
+      const destDir = join(this.deps.runtimeDir, "jdtls");
+      mkdirSync(destDir, { recursive: true });
+      await this.deps.extract(data, destDir, "tar.gz");
+      return { id, status: "done" };
+    }
     if (id === "lsps") {
       if (!(await this.deps.hasNode())) {
         return { id, status: "skipped", detail: "Node.js not found — code-graph edges degraded" };
@@ -134,11 +172,15 @@ export class RuntimeInstaller {
       if (venv.code !== 0) throw new Error(`uv venv failed: ${venv.stderr.slice(0, 400)}`);
       // [memory] pulls in sentence-transformers/numpy (and PyTorch, transitively) so the
       // memory harness (on by default — see agentd/memory/config.py) works out of the box
-      // instead of silently degrading its embedder. PEP 508 direct-reference syntax
-      // ("name[extra] @ url") is required to combine an extras marker with a URL install.
+      // instead of silently degrading its embedder. [semantic] adds lancedb so semantic
+      // retrieval (CRUCIBLE_SEMANTIC_RETRIEVAL, on by default via start-backend.sh) also
+      // works out of the box rather than degrading to graph-only retrieval — found live:
+      // without it, every index build logged "lancedb is required for semantic retrieval."
+      // PEP 508 direct-reference syntax ("name[extras] @ url") is required to combine an
+      // extras marker with a URL install.
       const target = spec.urls?.any
-        ? `crucible-agentd[memory] @ ${spec.urls.any}`
-        : `crucible-agentd[memory]==${spec.version}`;
+        ? `crucible-agentd[memory,semantic] @ ${spec.urls.any}`
+        : `crucible-agentd[memory,semantic]==${spec.version}`;
       const pip = await this.deps.exec(
         uv, ["pip", "install", "--python", venvPython(this.deps.runtimeDir, this.platform), target]);
       if (pip.code !== 0) throw new Error(`uv pip install failed: ${pip.stderr.slice(0, 400)}`);

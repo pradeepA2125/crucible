@@ -1,6 +1,13 @@
 // vscode-free. One instance per workspace folder; owns agentd + watcher children.
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import {
+  buildJdtlsCommand,
+  configDirForPlatform,
+  findEquinoxLauncher,
+  findJavaExecutable,
+  jdtlsDataDir,
+} from "./jdtls.js";
 import { binPath, venvPython } from "./installer.js";
 import { platformKey, type PlatformKey } from "./manifest.js";
 
@@ -179,15 +186,32 @@ export class BackendProcess {
       this.platform === "win32-x64" ? `${name}.cmd` : name);
     const lspInstalled = existsSync(join(this.deps.runtimeDir, "node_modules"));
     const rustAnalyzerBin = binPath(this.deps.runtimeDir, "rust-analyzer", this.platform);
-    // Managed install lands at rustAnalyzerBin (installer.ts); fall back to a bare
-    // PATH lookup for a dev backend running outside the managed runtime — the
-    // indexer degrades gracefully either way if it's still not found.
+    const goplsBin = binPath(this.deps.runtimeDir, "gopls", this.platform);
+    // Managed install lands at rustAnalyzerBin/goplsBin (installer.ts); fall
+    // back to a bare PATH lookup for a dev backend running outside the
+    // managed runtime — the indexer degrades gracefully either way if it's
+    // still not found.
     const rsCmd = existsSync(rustAnalyzerBin) ? rustAnalyzerBin : "rust-analyzer";
+    const goCmd = existsSync(goplsBin) ? goplsBin : "gopls";
+    const javaCmd = this.buildJavaLspCommand(workspace);
     const env = {
       ...process.env,
       CRUCIBLE_BACKEND_URL: `http://localhost:${port}`,
       CRUCIBLE_LSP_ENABLED: lspInstalled ? "true" : "false",
       CRUCIBLE_LSP_RS_CMD: rsCmd,
+      CRUCIBLE_LSP_GO_CMD: goCmd,
+      // The indexer's own defaults (config.rs) are 3000ms for both — plenty
+      // for an already-warm server answering a request, but too tight for a
+      // cold *process spawn* + full initialize handshake (gopls in
+      // particular: found live — a fresh gopls process on an end user's
+      // first-ever workspace open timed out at the bare 3s default and fell
+      // back to unresolved placeholders). start-backend.sh's dev flow
+      // already overrides these to exactly these values; the managed
+      // runtime path never did, so every non-dev install was exposed to the
+      // 3s default. Mirroring start-backend.sh's values here closes that gap.
+      CRUCIBLE_LSP_STARTUP_TIMEOUT_MS: "180000",
+      CRUCIBLE_LSP_REQUEST_TIMEOUT_MS: "20000",
+      ...(javaCmd ? { CRUCIBLE_LSP_JAVA_CMD: javaCmd } : {}),
       ...(lspInstalled
         ? {
             CRUCIBLE_LSP_PY_CMD: `${lspBin("pyright-langserver")} --stdio`,
@@ -201,6 +225,27 @@ export class BackendProcess {
       "--snapshot-path", join(workspace, ".crucible", "index-snapshot.json"),
       "--watch", "true",
     ], { env, cwd: workspace });
+  }
+
+  /// Builds the managed CRUCIBLE_LSP_JAVA_CMD when both the bundled JRE and
+  /// jdtls landed (installer.ts's "jre"/"jdtls" components); returns null
+  /// otherwise so the caller falls back to a bare `jdtls` PATH lookup —
+  /// same graceful-degradation pattern as rust-analyzer/gopls, except here
+  /// the fallback is "nothing managed", not "one binary missing".
+  private buildJavaLspCommand(workspace: string): string | null {
+    const jreDir = join(this.deps.runtimeDir, "jre");
+    const jdtlsDir = join(this.deps.runtimeDir, "jdtls");
+    const javaExecutable = findJavaExecutable(jreDir, this.platform);
+    const launcherJar = findEquinoxLauncher(jdtlsDir);
+    const configDir = configDirForPlatform(jdtlsDir, this.platform);
+    if (!javaExecutable || !launcherJar || !configDir) return null;
+
+    return buildJdtlsCommand({
+      javaExecutable,
+      launcherJar,
+      configDir,
+      dataDir: jdtlsDataDir(this.deps.runtimeDir, workspace),
+    });
   }
 
   async stop(): Promise<void> {

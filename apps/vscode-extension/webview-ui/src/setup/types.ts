@@ -40,5 +40,9 @@ export const COMPONENT_LABELS: Record<string, string> = {
   agentd: "Crucible backend",
   indexer: "Code indexer",
   ripgrep: "ripgrep",
-  lsps: "Language servers",
+  "rust-analyzer": "Rust language server",
+  gopls: "Go language server",
+  jre: "Java runtime (JRE 21)",
+  jdtls: "Java language server",
+  lsps: "Python/TS language servers",
 };

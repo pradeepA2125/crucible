@@ -15,11 +15,13 @@ tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "fs", "sync
 notify = "8.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-tree-sitter = "0.24"
+tree-sitter = "0.25"
 tree-sitter-rust = "0.23"
 tree-sitter-typescript = "0.23"
 rustpython-parser = "0.4"
 rust-bert = { version = "0.23", optional = true }
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
 
 [features]
 default = []

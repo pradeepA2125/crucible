@@ -18,14 +18,22 @@ pub enum LspLanguage {
     TypeScript,
     Python,
     Rust,
+    Go,
+    Java,
 }
 
 impl LspLanguage {
     pub fn language_for_path(path: &Path) -> Option<Self> {
         match path.extension().and_then(|ext| ext.to_str()) {
-            Some("ts" | "tsx") => Some(Self::TypeScript),
+            // JS/JSX ride the same typescript-language-server session as
+            // TS/TSX (it natively handles plain JS) — one shared session
+            // keeps cross-file ts<->js definition/implementation resolution
+            // working, which two independent server processes would not.
+            Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs") => Some(Self::TypeScript),
             Some("py") => Some(Self::Python),
             Some("rs") => Some(Self::Rust),
+            Some("go") => Some(Self::Go),
+            Some("java") => Some(Self::Java),
             _ => None,
         }
     }
@@ -35,6 +43,8 @@ impl LspLanguage {
             Self::TypeScript => "typescript",
             Self::Python => "python",
             Self::Rust => "rust",
+            Self::Go => "go",
+            Self::Java => "java",
         }
     }
 
@@ -43,6 +53,8 @@ impl LspLanguage {
             Self::TypeScript => "typescript",
             Self::Python => "python",
             Self::Rust => "rust",
+            Self::Go => "go",
+            Self::Java => "java",
         }
     }
 }
@@ -378,6 +390,11 @@ impl LspSession {
                 }
             };
 
+            if is_server_request(&payload) {
+                self.ack_server_request(&payload)?;
+                continue;
+            }
+
             if let Some(id) = response_id(&payload) {
                 if id != request_id {
                     continue;
@@ -409,6 +426,26 @@ impl LspSession {
         }
     }
 
+    /// Reply to a server-initiated request with a bare `{"result": null}` ack.
+    /// Every server request we've observed (`window/workDoneProgress/create`)
+    /// only needs acknowledgment, not a real answer, so we ack generically
+    /// rather than maintaining a per-method allowlist — the alternative,
+    /// silently dropping it (what this code did before), left gopls's request
+    /// pipeline blocked waiting for this reply: `textDocument/definition`
+    /// timed out even though gopls itself was fully warm and would have
+    /// answered in well under a second. Reproduced and confirmed with a
+    /// minimal standalone LSP client before this fix.
+    fn ack_server_request(&mut self, payload: &Value) -> Result<()> {
+        let Some(id) = payload.get("id").cloned() else {
+            return Ok(());
+        };
+        self.write_message(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": Value::Null,
+        }))
+    }
+
     fn notify(&mut self, method: &str, params: Value) -> Result<()> {
         self.write_message(&json!({
             "jsonrpc": "2.0",
@@ -430,6 +467,11 @@ impl LspSession {
                     ));
                 }
             };
+
+            if is_server_request(&payload) {
+                self.ack_server_request(&payload)?;
+                continue;
+            }
 
             if payload.get("method").is_some() {
                 self.handle_notification(&payload)?;
@@ -542,7 +584,9 @@ impl LspSession {
             match self.messages.recv_timeout(Duration::from_millis(500)) {
                 Ok(payload) => {
                     last_message = Instant::now();
-                    if payload.get("method").is_some() {
+                    if is_server_request(&payload) {
+                        self.ack_server_request(&payload)?;
+                    } else if payload.get("method").is_some() {
                         self.handle_notification(&payload)?;
                     }
                 }
@@ -795,6 +839,8 @@ impl LspAdapter {
         );
         sessions.insert(LspLanguage::Python, SessionSlot::new(config.lsp_py_cmd.clone()));
         sessions.insert(LspLanguage::Rust, SessionSlot::new(config.lsp_rs_cmd.clone()));
+        sessions.insert(LspLanguage::Go, SessionSlot::new(config.lsp_go_cmd.clone()));
+        sessions.insert(LspLanguage::Java, SessionSlot::new(config.lsp_java_cmd.clone()));
 
         Self {
             enabled: config.lsp_enabled,
@@ -864,15 +910,24 @@ impl LspAdapter {
         if !self.enabled {
             return;
         }
-        let languages = [LspLanguage::TypeScript, LspLanguage::Python, LspLanguage::Rust];
+        // Only wait on sessions `open_workspace_files` already started (i.e.
+        // languages with at least one real file in the workspace) — never
+        // call `ensure_session` here. This used to be a hardcoded
+        // `[TypeScript, Python, Rust]` list that unconditionally spawned (and
+        // waited on) all three regardless of whether the workspace had any
+        // matching files, which wasted ~20s per bootstrap on e.g. a Go-only
+        // workspace AND, worse, never waited on Go/Java at all — so the
+        // resolver queried a cold gopls/jdtls before it had finished loading
+        // the workspace and got no resolution back. Deriving the wait set
+        // from which sessions are actually live fixes both: it scales to any
+        // number of registered languages for free and only pays the
+        // indexing-wait cost for languages the workspace actually uses.
+        let languages: Vec<LspLanguage> = self.sessions.keys().copied().collect();
         for language in languages {
-            if self.ensure_session(language).is_err() {
-                continue;
-            }
             let Some(slot) = self.sessions.get_mut(&language) else {
                 continue;
             };
-            if slot.disabled_reason.is_some() {
+            if slot.disabled_reason.is_some() || slot.session.is_none() {
                 continue;
             }
             if let Some(session) = slot.session.as_mut() {
@@ -987,7 +1042,19 @@ impl LspAdapter {
     }
 
     fn flush_notifications(&mut self) -> Result<()> {
-        let languages = [LspLanguage::TypeScript, LspLanguage::Python, LspLanguage::Rust];
+        // Same fix as `wait_for_indexing`: only flush sessions a real file
+        // already started. The prior hardcoded `[TypeScript, Python, Rust]`
+        // list spawned (via `apply_operation` → `ensure_session`) a language
+        // server on every single diagnostics-collection pass regardless of
+        // whether the workspace had any matching files — e.g. a Go-only
+        // workspace paid to boot pyright, tsserver, AND rust-analyzer just to
+        // flush nothing.
+        let languages: Vec<LspLanguage> = self
+            .sessions
+            .iter()
+            .filter(|(_, slot)| slot.session.is_some())
+            .map(|(language, _)| *language)
+            .collect();
         for language in languages {
             self.apply_operation(language, SessionOperation::Flush)?;
         }
@@ -1381,6 +1448,16 @@ fn response_id(payload: &Value) -> Option<u64> {
         .and_then(|id| id.as_u64().or_else(|| id.as_i64().map(|value| value as u64)))
 }
 
+/// A server-to-client REQUEST (as opposed to a notification or one of our own
+/// responses) carries both `id` and `method` — `window/workDoneProgress/create`
+/// is the common one (gopls sends it before every progress token it reports),
+/// but the spec allows others (`client/registerCapability`, ...). Our own
+/// responses carry `id` alone; the server's notifications carry `method`
+/// alone — this is the only shape with both.
+fn is_server_request(payload: &Value) -> bool {
+    payload.get("id").is_some() && payload.get("method").is_some()
+}
+
 fn encode_message(payload: &Value) -> Result<Vec<u8>> {
     let body = serde_json::to_vec(payload)?;
     let mut frame = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
@@ -1486,6 +1563,24 @@ mod tests {
             Some(LspLanguage::Rust)
         );
         assert_eq!(
+            LspAdapter::language_for_path(Path::new("src/main.go")),
+            Some(LspLanguage::Go)
+        );
+        assert_eq!(
+            LspAdapter::language_for_path(Path::new("src/Main.java")),
+            Some(LspLanguage::Java)
+        );
+        // Plain JS/JSX share the TypeScript session (see language_for_path's
+        // doc comment) rather than getting their own LspLanguage variant.
+        assert_eq!(
+            LspAdapter::language_for_path(Path::new("src/main.js")),
+            Some(LspLanguage::TypeScript)
+        );
+        assert_eq!(
+            LspAdapter::language_for_path(Path::new("src/Button.jsx")),
+            Some(LspLanguage::TypeScript)
+        );
+        assert_eq!(
             LspAdapter::language_for_path(Path::new("README.md")),
             None
         );
@@ -1585,6 +1680,8 @@ while True:
             lsp_ts_cmd: format!("python3 -u {}", script_path.display()),
             lsp_py_cmd: "definitely-missing-pyright".to_string(),
             lsp_rs_cmd: "definitely-missing-rust-analyzer".to_string(),
+            lsp_go_cmd: "definitely-missing-gopls".to_string(),
+            lsp_java_cmd: "definitely-missing-jdtls".to_string(),
             lsp_startup_timeout_ms: 2_000,
             lsp_request_timeout_ms: 2_000,
             snapshot_output_path: root.join("snapshot.json"),
@@ -1655,6 +1752,8 @@ while True:
             lsp_ts_cmd: format!("python3 -u {}", script_path.display()),
             lsp_py_cmd: "definitely-missing-pyright".to_string(),
             lsp_rs_cmd: "definitely-missing-rust-analyzer".to_string(),
+            lsp_go_cmd: "definitely-missing-gopls".to_string(),
+            lsp_java_cmd: "definitely-missing-jdtls".to_string(),
             lsp_startup_timeout_ms: 100,
             lsp_request_timeout_ms: 100,
             snapshot_output_path: root.join("snapshot.json"),

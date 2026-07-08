@@ -115,12 +115,67 @@ describe("BackendProcess.start", () => {
     expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe(join(d.runtimeDir, "bin", "rust-analyzer"));
   });
 
+  it("sets generous LSP startup/request timeouts for the watcher (indexer's own default is 3s, too tight for a cold gopls spawn — found live)", async () => {
+    const d = deps();
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
+    await new BackendProcess(d).start(ws(), SETTINGS);
+    expect(d.spawned[1].env.CRUCIBLE_LSP_STARTUP_TIMEOUT_MS).toBe("180000");
+    expect(d.spawned[1].env.CRUCIBLE_LSP_REQUEST_TIMEOUT_MS).toBe("20000");
+  });
+
   it("falls back to the bare rust-analyzer command when the managed binary is absent", async () => {
     const d = deps();
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
     writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
     expect(d.spawned[1].env.CRUCIBLE_LSP_RS_CMD).toBe("rust-analyzer");
+  });
+
+  it("sets CRUCIBLE_LSP_GO_CMD to the managed binary when installed", async () => {
+    const d = deps();
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
+    writeFileSync(join(d.runtimeDir, "bin", "gopls"), "");
+    await new BackendProcess(d).start(ws(), SETTINGS);
+    expect(d.spawned[1].env.CRUCIBLE_LSP_GO_CMD).toBe(join(d.runtimeDir, "bin", "gopls"));
+  });
+
+  it("falls back to the bare gopls command when the managed binary is absent", async () => {
+    const d = deps();
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
+    await new BackendProcess(d).start(ws(), SETTINGS);
+    expect(d.spawned[1].env.CRUCIBLE_LSP_GO_CMD).toBe("gopls");
+  });
+
+  it("sets CRUCIBLE_LSP_JAVA_CMD when the managed JRE and jdtls both landed", async () => {
+    const d = deps();
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
+    mkdirSync(join(d.runtimeDir, "jre", "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "jre", "bin", "java"), "");
+    mkdirSync(join(d.runtimeDir, "jdtls", "plugins"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "jdtls", "plugins", "org.eclipse.equinox.launcher_1.7.200.jar"), "");
+    mkdirSync(join(d.runtimeDir, "jdtls", "config_mac_arm"), { recursive: true });
+
+    const workspace = ws();
+    await new BackendProcess(d).start(workspace, SETTINGS);
+    const javaCmd = d.spawned[1].env.CRUCIBLE_LSP_JAVA_CMD;
+    expect(javaCmd).toBeDefined();
+    expect(javaCmd).toContain(join(d.runtimeDir, "jre", "bin", "java"));
+    expect(javaCmd).toContain("-jar");
+    expect(javaCmd).toContain(join(d.runtimeDir, "jdtls", "plugins", "org.eclipse.equinox.launcher_1.7.200.jar"));
+    expect(javaCmd).toContain(join(d.runtimeDir, "jdtls", "config_mac_arm"));
+    expect(javaCmd).toContain("jdtls-data");
+  });
+
+  it("omits CRUCIBLE_LSP_JAVA_CMD (falls back to bare jdtls) when the managed JRE/jdtls are absent", async () => {
+    const d = deps();
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
+    await new BackendProcess(d).start(ws(), SETTINGS);
+    expect(d.spawned[1].env.CRUCIBLE_LSP_JAVA_CMD).toBeUndefined();
   });
 
   it("throws when health never comes up", async () => {

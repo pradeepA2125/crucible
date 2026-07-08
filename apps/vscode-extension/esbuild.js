@@ -23,4 +23,14 @@ await build({
   external: ["vscode"],
   sourcemap: true,
   logLevel: "info",
+  // extract-zip's dependency chain (`debug` -> `supports-color`) does a
+  // runtime `require('tty')` — a plain CJS conditional require esbuild can't
+  // statically resolve in ESM output, so it emits a stub that throws
+  // "Dynamic require of ... is not supported" at activation time. The fix is
+  // NOT to change the bundle format (everything else already works in ESM) —
+  // it's to give that dynamic require a real implementation: createRequire
+  // wraps Node's actual module loader, which handles it correctly.
+  banner: {
+    js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+  },
 });

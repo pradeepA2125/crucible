@@ -36,6 +36,8 @@ enum ParserLanguage {
     TypeScript,
     Tsx,
     Rust,
+    Go,
+    Java,
 }
 
 #[derive(Clone)]
@@ -52,9 +54,15 @@ impl ParserLanguage {
             .to_lowercase()
             .as_str()
         {
-            "ts" => Some(Self::TypeScript),
-            "tsx" => Some(Self::Tsx),
+            // Plain JS/JSX ride the TypeScript/TSX grammars: tree-sitter-typescript's
+            // two grammars are supersets of JavaScript (same node kinds for every
+            // construct `extract_typescript` matches on), so no separate
+            // tree-sitter-javascript crate or extractor is needed.
+            "ts" | "js" | "mjs" | "cjs" => Some(Self::TypeScript),
+            "tsx" | "jsx" => Some(Self::Tsx),
             "rs" => Some(Self::Rust),
+            "go" => Some(Self::Go),
+            "java" => Some(Self::Java),
             _ => None,
         }
     }
@@ -70,6 +78,12 @@ impl ParserLanguage {
             Self::Rust => parser
                 .set_language(&tree_sitter_rust::LANGUAGE.into())
                 .context("failed to set Rust grammar"),
+            Self::Go => parser
+                .set_language(&tree_sitter_go::LANGUAGE.into())
+                .context("failed to set Go grammar"),
+            Self::Java => parser
+                .set_language(&tree_sitter_java::LANGUAGE.into())
+                .context("failed to set Java grammar"),
         }
     }
 
@@ -78,6 +92,8 @@ impl ParserLanguage {
             Self::TypeScript => "typescript",
             Self::Tsx => "tsx",
             Self::Rust => "rust",
+            Self::Go => "go",
+            Self::Java => "java",
         }
     }
 }
@@ -121,6 +137,8 @@ impl LanguageParser for TreeSitterParser {
                 extract_typescript(file_path, source, graph, &file_id, root, None)
             }
             ParserLanguage::Rust => extract_rust(file_path, source, graph, &file_id, root, None),
+            ParserLanguage::Go => extract_go(file_path, source, graph, &file_id, root, None),
+            ParserLanguage::Java => extract_java(file_path, source, graph, &file_id, root, None),
         }
 
         if root.has_error() {
@@ -1541,6 +1559,489 @@ fn recurse_rust(
     }
 }
 
+/// Go structs and their methods are routinely split across files within the
+/// same package (idiomatic Go: `app.go` declares `type App struct`, a sibling
+/// `app_handlers.go` declares `func (a *App) Handle()`). Go's package-per-
+/// directory rule means the directory, not the file, is the real scoping
+/// unit — so owner ids here are keyed on the parent directory rather than
+/// `file_id` (unlike every other language here, where a class only ever gets
+/// methods from `impl`/class-body blocks in the same file). This keeps a
+/// struct's own type_spec and its methods declared elsewhere in the package
+/// resolving to the same symbol id.
+fn go_owner_id(file_path: &Path, name: &str) -> String {
+    let pkg_dir = file_path
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    format!("class:{pkg_dir}:{name}")
+}
+
+fn extract_go(
+    file_path: &Path,
+    source: &str,
+    graph: &mut SymbolGraph,
+    file_id: &str,
+    node: Node<'_>,
+    current_owner: Option<String>,
+) {
+    match node.kind() {
+        "import_spec" => {
+            if let Some(path_node) = node.child_by_field_name("path") {
+                if let Some(module_name) =
+                    extract_quoted_fragment(&node_text(path_node, source).unwrap_or_default())
+                {
+                    let module_id = upsert_external_symbol(
+                        graph,
+                        file_path,
+                        "module",
+                        &module_name,
+                        SymbolKind::Module,
+                        node_line(node),
+                    );
+                    graph.add_edge(SymbolEdge {
+                        from: file_id.to_string(),
+                        to: module_id,
+                        kind: EdgeKind::Imports,
+                    });
+                }
+            }
+        }
+        "type_spec" => {
+            if let (Some(name), Some(type_node)) = (
+                field_identifier(node, "name", source),
+                node.child_by_field_name("type"),
+            ) {
+                let kind = match type_node.kind() {
+                    "struct_type" => SymbolKind::Class,
+                    "interface_type" => SymbolKind::Interface,
+                    // Type aliases / defined non-struct-non-interface types
+                    // (`type ID string`) carry no useful graph structure — skip.
+                    _ => return,
+                };
+                let owner_id = go_owner_id(file_path, &name);
+                graph.upsert_node(SymbolNode {
+                    id: owner_id.clone(),
+                    path: file_path.display().to_string(),
+                    name: name.clone(),
+                    kind,
+                    line: node_line(node),
+                });
+                graph.add_edge(SymbolEdge {
+                    from: file_id.to_string(),
+                    to: owner_id,
+                    kind: EdgeKind::References,
+                });
+            }
+        }
+        "method_declaration" => {
+            if let (Some(receiver_node), Some(name)) = (
+                node.child_by_field_name("receiver"),
+                field_identifier(node, "name", source),
+            ) {
+                if let Some(owner_name) = go_receiver_owner_name(receiver_node, source) {
+                    let owner_id = go_owner_id(file_path, &owner_name);
+                    // Upsert in case this method's file is visited before the
+                    // struct's own type_spec (declaration order isn't fixed
+                    // across files in a package).
+                    graph.upsert_node(SymbolNode {
+                        id: owner_id.clone(),
+                        path: file_path.display().to_string(),
+                        name: owner_name,
+                        kind: SymbolKind::Class,
+                        line: node_line(node),
+                    });
+                    graph.add_edge(SymbolEdge {
+                        from: file_id.to_string(),
+                        to: owner_id.clone(),
+                        kind: EdgeKind::References,
+                    });
+                    let method_id = upsert_member_symbol(
+                        graph,
+                        file_path,
+                        file_id,
+                        "method",
+                        &owner_id,
+                        &name,
+                        SymbolKind::Method,
+                        node_line(node),
+                    );
+                    graph.add_edge(SymbolEdge {
+                        from: owner_id.clone(),
+                        to: method_id,
+                        kind: EdgeKind::References,
+                    });
+                    recurse_go(file_path, source, graph, file_id, node, Some(owner_id));
+                    return;
+                }
+            }
+        }
+        "function_declaration" => {
+            if let Some(name) = field_identifier(node, "name", source) {
+                let function_id = upsert_scoped_symbol(
+                    graph,
+                    file_path,
+                    file_id,
+                    "function",
+                    &name,
+                    SymbolKind::Function,
+                    node_line(node),
+                );
+                graph.add_edge(SymbolEdge {
+                    from: file_id.to_string(),
+                    to: function_id,
+                    kind: EdgeKind::References,
+                });
+            }
+        }
+        "call_expression" => {
+            if let Some(target_name) = extract_call_target(node, source) {
+                let target_id = upsert_external_symbol(
+                    graph,
+                    file_path,
+                    "call",
+                    &target_name,
+                    SymbolKind::Function,
+                    node_line(node),
+                );
+                let from = current_owner.clone().unwrap_or_else(|| file_id.to_string());
+                graph.add_edge(SymbolEdge {
+                    from: from.clone(),
+                    to: target_id.clone(),
+                    kind: EdgeKind::Calls,
+                });
+                if let Some(point) = go_callable_position(node) {
+                    graph.push_placeholder(PlaceholderEdge {
+                        from_id: from,
+                        external_to_id: target_id,
+                        file_path: file_path.to_path_buf(),
+                        line: point.row as u32,
+                        character: point.column as u32,
+                        edge_kind: EdgeKind::Calls,
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    recurse_go(file_path, source, graph, file_id, node, current_owner);
+}
+
+fn recurse_go(
+    file_path: &Path,
+    source: &str,
+    graph: &mut SymbolGraph,
+    file_id: &str,
+    node: Node<'_>,
+    current_owner: Option<String>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        extract_go(
+            file_path,
+            source,
+            graph,
+            file_id,
+            child,
+            current_owner.clone(),
+        );
+    }
+}
+
+/// Extract the receiver's declared type name, unwrapping the pointer/generic
+/// wrappers tree-sitter-go puts around it (`(a *App)` → `pointer_type ->
+/// type_identifier`; `(a *App[T])` → `pointer_type -> generic_type ->
+/// type_identifier`; `(a App)` → bare `type_identifier`).
+fn go_receiver_owner_name(receiver: Node<'_>, source: &str) -> Option<String> {
+    let mut cursor = receiver.walk();
+    for child in receiver.children(&mut cursor) {
+        if child.kind() == "parameter_declaration" {
+            if let Some(type_node) = child.child_by_field_name("type") {
+                return go_unwrap_receiver_type(type_node, source);
+            }
+        }
+    }
+    None
+}
+
+fn go_unwrap_receiver_type(node: Node<'_>, source: &str) -> Option<String> {
+    match node.kind() {
+        "type_identifier" => node_text(node, source),
+        "pointer_type" | "generic_type" => node
+            .named_child(0)
+            .and_then(|child| go_unwrap_receiver_type(child, source)),
+        _ => None,
+    }
+}
+
+/// Position of the callable identifier inside a `call_expression`'s
+/// `function` field. A bare call (`foo()`) points at the identifier itself;
+/// a selector call (`pkg.Func()` / `recv.Method()`) points at the `field`
+/// segment (tree-sitter-go's analogue of TypeScript's `property`) so gopls
+/// resolves the member, not the receiver/package identifier.
+fn go_callable_position(call_node: Node<'_>) -> Option<tree_sitter::Point> {
+    let function_node = call_node.child_by_field_name("function")?;
+    if let Some(field) = function_node.child_by_field_name("field") {
+        return Some(field.start_position());
+    }
+    Some(function_node.start_position())
+}
+
+fn extract_java(
+    file_path: &Path,
+    source: &str,
+    graph: &mut SymbolGraph,
+    file_id: &str,
+    node: Node<'_>,
+    current_class: Option<String>,
+) {
+    match node.kind() {
+        "import_declaration" => {
+            if let Some(module_name) = extract_java_import_module(&node_text(node, source).unwrap_or_default()) {
+                let module_id = upsert_external_symbol(
+                    graph,
+                    file_path,
+                    "module",
+                    &module_name,
+                    SymbolKind::Module,
+                    node_line(node),
+                );
+                graph.add_edge(SymbolEdge {
+                    from: file_id.to_string(),
+                    to: module_id,
+                    kind: EdgeKind::Imports,
+                });
+            }
+        }
+        "class_declaration" | "interface_declaration" | "enum_declaration" => {
+            if let Some(name) = field_identifier(node, "name", source) {
+                let kind = if node.kind() == "interface_declaration" {
+                    SymbolKind::Interface
+                } else {
+                    SymbolKind::Class
+                };
+                let owner_id = upsert_named_symbol(
+                    graph,
+                    file_path,
+                    file_id,
+                    if node.kind() == "interface_declaration" { "interface" } else { "class" },
+                    &name,
+                    kind,
+                    node_line(node),
+                );
+                graph.add_edge(SymbolEdge {
+                    from: file_id.to_string(),
+                    to: owner_id.clone(),
+                    kind: EdgeKind::References,
+                });
+
+                for (parent_name, pos) in java_heritage_targets(node, source) {
+                    let parent_id = upsert_external_symbol(
+                        graph,
+                        file_path,
+                        "class",
+                        &parent_name,
+                        SymbolKind::Class,
+                        node_line(node),
+                    );
+                    graph.add_edge(SymbolEdge {
+                        from: owner_id.clone(),
+                        to: parent_id.clone(),
+                        kind: EdgeKind::Inherits,
+                    });
+                    graph.push_placeholder(PlaceholderEdge {
+                        from_id: owner_id.clone(),
+                        external_to_id: parent_id,
+                        file_path: file_path.to_path_buf(),
+                        line: pos.row as u32,
+                        character: pos.column as u32,
+                        edge_kind: EdgeKind::Inherits,
+                    });
+                }
+
+                recurse_java(file_path, source, graph, file_id, node, Some(owner_id));
+                return;
+            }
+        }
+        "method_declaration" | "constructor_declaration" => {
+            if let (Some(owner_id), Some(name)) =
+                (current_class.as_ref(), field_identifier(node, "name", source))
+            {
+                let method_id = upsert_member_symbol(
+                    graph,
+                    file_path,
+                    file_id,
+                    "method",
+                    owner_id,
+                    &name,
+                    SymbolKind::Method,
+                    node_line(node),
+                );
+                graph.add_edge(SymbolEdge {
+                    from: owner_id.clone(),
+                    to: method_id,
+                    kind: EdgeKind::References,
+                });
+            }
+        }
+        "method_invocation" | "object_creation_expression" => {
+            if let Some(target_name) = java_call_target(node, source) {
+                let target_id = upsert_external_symbol(
+                    graph,
+                    file_path,
+                    "call",
+                    &target_name,
+                    SymbolKind::Function,
+                    node_line(node),
+                );
+                let from = current_class.clone().unwrap_or_else(|| file_id.to_string());
+                graph.add_edge(SymbolEdge {
+                    from: from.clone(),
+                    to: target_id.clone(),
+                    kind: EdgeKind::Calls,
+                });
+                if let Some(point) = java_call_position(node, source) {
+                    graph.push_placeholder(PlaceholderEdge {
+                        from_id: from,
+                        external_to_id: target_id,
+                        file_path: file_path.to_path_buf(),
+                        line: point.row as u32,
+                        character: point.column as u32,
+                        edge_kind: EdgeKind::Calls,
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    recurse_java(file_path, source, graph, file_id, node, current_class);
+}
+
+fn recurse_java(
+    file_path: &Path,
+    source: &str,
+    graph: &mut SymbolGraph,
+    file_id: &str,
+    node: Node<'_>,
+    current_class: Option<String>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        extract_java(
+            file_path,
+            source,
+            graph,
+            file_id,
+            child,
+            current_class.clone(),
+        );
+    }
+}
+
+/// `import com.example.store.Store;` / `import static com.example.Utils.helper;`
+/// / `import com.example.pkg.*;` — strip the keyword(s) and trailing `;`, keep
+/// the dotted path (including a trailing `.*` wildcard) as-is.
+fn extract_java_import_module(text: &str) -> Option<String> {
+    let compact = text.replace('\n', " ");
+    let rest = compact.trim().strip_prefix("import ")?;
+    let rest = rest.strip_prefix("static ").unwrap_or(rest);
+    let module = rest.trim_end_matches(';').trim();
+    if module.is_empty() {
+        return None;
+    }
+    Some(module.to_string())
+}
+
+/// Collect (base_name, position) for a class's `extends`/`implements` clauses
+/// and an interface's `extends` clause. Unlike TypeScript's heritage clauses
+/// (always a labeled `class_heritage` field), tree-sitter-java's
+/// `extends_interfaces` node on an `interface_declaration` carries no field
+/// name, so this scans direct children by kind rather than by field.
+fn java_heritage_targets(node: Node<'_>, source: &str) -> Vec<(String, tree_sitter::Point)> {
+    let mut out: Vec<(String, tree_sitter::Point)> = Vec::new();
+
+    if let Some(superclass) = node.child_by_field_name("superclass") {
+        if let Some(type_node) = superclass.named_child(0) {
+            if let Some(pair) = java_type_identifier_with_pos(type_node, source) {
+                out.push(pair);
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            // Class `implements A, B` (field "interfaces") and interface
+            // `extends A, B` (no field name) both wrap a `type_list`.
+            "super_interfaces" | "extends_interfaces" => {
+                if let Some(type_list) = child.named_child(0) {
+                    let mut lc = type_list.walk();
+                    for type_node in type_list.children(&mut lc) {
+                        if let Some(pair) = java_type_identifier_with_pos(type_node, source) {
+                            out.push(pair);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
+/// Resolve a type-reference node to (simple_name, position): `type_identifier`
+/// directly; `scoped_type_identifier` (`pkg.Outer.Inner`) to its last segment;
+/// `generic_type` (`List<Foo>`) to its base name, ignoring type arguments.
+fn java_type_identifier_with_pos(
+    node: Node<'_>,
+    source: &str,
+) -> Option<(String, tree_sitter::Point)> {
+    match node.kind() {
+        "type_identifier" => node_text(node, source).map(|text| (text, node.start_position())),
+        "scoped_type_identifier" => {
+            let mut cursor = node.walk();
+            let mut last: Option<Node<'_>> = None;
+            for child in node.children(&mut cursor) {
+                if matches!(child.kind(), "type_identifier" | "identifier") {
+                    last = Some(child);
+                }
+            }
+            last.and_then(|n| node_text(n, source).map(|text| (text, n.start_position())))
+        }
+        "generic_type" => node
+            .named_child(0)
+            .and_then(|child| java_type_identifier_with_pos(child, source)),
+        _ => None,
+    }
+}
+
+/// `method_invocation` always exposes an explicit `name` field regardless of
+/// whether a qualifier (`object`) is present, so unlike TS/Go there's no need
+/// to fish the last identifier out of free-form text.
+fn java_call_target(node: Node<'_>, source: &str) -> Option<String> {
+    match node.kind() {
+        "method_invocation" => field_identifier(node, "name", source),
+        "object_creation_expression" => node
+            .child_by_field_name("type")
+            .and_then(|type_node| java_type_identifier_with_pos(type_node, source))
+            .map(|(name, _)| name),
+        _ => None,
+    }
+}
+
+fn java_call_position(node: Node<'_>, source: &str) -> Option<tree_sitter::Point> {
+    match node.kind() {
+        "method_invocation" => node.child_by_field_name("name").map(|n| n.start_position()),
+        "object_creation_expression" => node
+            .child_by_field_name("type")
+            .and_then(|type_node| java_type_identifier_with_pos(type_node, source))
+            .map(|(_, pos)| pos),
+        _ => None,
+    }
+}
+
 fn upsert_file_node(graph: &mut SymbolGraph, file_path: &Path) -> String {
     let file_id = format!("file:{}", file_path.display());
     graph.upsert_node(SymbolNode {
@@ -1867,7 +2368,12 @@ fn parse_rust_impl_signature(text: &str) -> Option<(String, Option<String>)> {
     Some((owner_name, None))
 }
 
-fn extract_identifiers(text: &str) -> Vec<String> {
+/// Tokenize `text` into valid identifier candidates in the order they appear
+/// (no sorting, no dedup) — the primitive `first_identifier`/`last_identifier`
+/// need, since they answer "what's the first/last identifier as written"
+/// (e.g. `a.Build` → `Build` is the last identifier *positionally*, even
+/// though it sorts alphabetically *before* `a`).
+fn tokenize_identifier_candidates(text: &str) -> Vec<String> {
     let mut identifiers: Vec<String> = Vec::new();
     let mut token = String::new();
 
@@ -1889,17 +2395,34 @@ fn extract_identifiers(text: &str) -> Vec<String> {
         identifiers.push(token);
     }
 
+    identifiers
+}
+
+fn extract_identifiers(text: &str) -> Vec<String> {
+    let mut identifiers = tokenize_identifier_candidates(text);
     identifiers.sort();
     identifiers.dedup();
     identifiers
 }
 
 fn first_identifier(text: &str) -> Option<String> {
-    extract_identifiers(text).into_iter().next()
+    tokenize_identifier_candidates(text).into_iter().next()
 }
 
+/// The last identifier **in textual order**, not alphabetical order. This
+/// is load-bearing for `extract_call_target` (`a.Build()` → the callee is
+/// `Build`, not `a`) and `parse_rust_impl_signature` (`impl Foo for
+/// Bar<Baz>` → the owner is `Bar`, not whichever of `Bar`/`Baz` sorts last).
+/// Routing this through the sorted-and-deduped `extract_identifiers` — as a
+/// prior version of this function did — silently picked the alphabetically
+/// last token instead: found via a live gopls smoke test, where `a.Build()`
+/// produced an `external:call:a` placeholder instead of `external:call:Build`
+/// (harmless when the LSP resolver succeeds, since resolution is
+/// position-based and ignores this name, but wrong whenever resolution is
+/// unavailable or fails and the external placeholder is what's left in the
+/// graph).
 fn last_identifier(text: &str) -> Option<String> {
-    extract_identifiers(text).into_iter().last()
+    tokenize_identifier_candidates(text).into_iter().last()
 }
 
 fn is_valid_identifier_token(token: &str) -> bool {

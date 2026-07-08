@@ -936,9 +936,9 @@ class RetrievalArtifactClient:
         return any(part in self._IGNORED_CONTEXT_DIRS for part in relative_path.parts)
 
     def _is_supported_source_path(self, path: Path) -> bool:
-        # Same extensions as indexer-rs
+        # Same extensions as indexer-rs's is_supported_source_path (service.rs)
         ext = path.suffix.lower()
-        return ext in {".ts", ".tsx", ".py", ".rs"}
+        return ext in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go", ".java"}
 
     def _build_workspace_files_index(self, workspace_root: Path) -> list[str]:
         indexed: list[str] = []

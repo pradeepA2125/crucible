@@ -77,7 +77,13 @@ class CodeChunker:
         ".py": "python",
         ".ts": "typescript",
         ".tsx": "typescript",
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".mjs": "javascript",
+        ".cjs": "javascript",
         ".rs": "rust",
+        ".go": "go",
+        ".java": "java",
     }
 
     def __init__(self, max_chunk_lines: int = 120) -> None:

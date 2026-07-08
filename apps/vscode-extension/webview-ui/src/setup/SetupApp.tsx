@@ -12,7 +12,12 @@ interface ProgressRow {
   detail?: string;
 }
 
-const COMPONENT_ORDER = ["uv", "agentd", "indexer", "ripgrep", "lsps"];
+// Mirrors installer.ts's ORDER (apps/vscode-extension/src/runtime/installer.ts) —
+// display-only; the actual install sequence is driven server-side regardless
+// of what's listed here. Keep in sync when a component is added there.
+const COMPONENT_ORDER = [
+  "uv", "agentd", "indexer", "ripgrep", "rust-analyzer", "gopls", "jre", "jdtls", "lsps",
+];
 
 /** Animated per-component install glyph — same four states as the old text icons. */
 function StatusGlyph({ status }: { status: string }) {

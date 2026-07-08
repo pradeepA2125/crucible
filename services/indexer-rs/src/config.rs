@@ -10,6 +10,8 @@ pub struct IndexerConfig {
     pub lsp_ts_cmd: String,
     pub lsp_py_cmd: String,
     pub lsp_rs_cmd: String,
+    pub lsp_go_cmd: String,
+    pub lsp_java_cmd: String,
     pub lsp_startup_timeout_ms: u64,
     pub lsp_request_timeout_ms: u64,
     pub snapshot_output_path: PathBuf,
@@ -45,6 +47,9 @@ impl IndexerConfig {
             .unwrap_or_else(|_| "pyright-langserver --stdio".to_string());
         let lsp_rs_cmd =
             env::var("CRUCIBLE_LSP_RS_CMD").unwrap_or_else(|_| "rust-analyzer".to_string());
+        let lsp_go_cmd = env::var("CRUCIBLE_LSP_GO_CMD").unwrap_or_else(|_| "gopls".to_string());
+        let lsp_java_cmd = env::var("CRUCIBLE_LSP_JAVA_CMD")
+            .unwrap_or_else(|_| "jdtls".to_string());
 
         let lsp_startup_timeout_ms = env::var("CRUCIBLE_LSP_STARTUP_TIMEOUT_MS")
             .ok()
@@ -72,6 +77,8 @@ impl IndexerConfig {
             lsp_ts_cmd,
             lsp_py_cmd,
             lsp_rs_cmd,
+            lsp_go_cmd,
+            lsp_java_cmd,
             lsp_startup_timeout_ms,
             lsp_request_timeout_ms,
             snapshot_output_path,

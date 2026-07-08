@@ -8,6 +8,9 @@
     "indexer": { "version": "0.0.0", "urls": {}, "sha256": {} },
     "ripgrep": { "version": "14.1.1", "urls": {}, "sha256": {} },
     "rust-analyzer": { "version": "2026-07-06", "urls": {}, "sha256": {} },
+    "gopls": { "version": "v0.22.0", "urls": {}, "sha256": {} },
+    "jre": { "version": "21.0.11+10", "urls": {}, "sha256": {} },
+    "jdtls": { "version": "1.61.0-202607070104", "urls": {}, "sha256": {} },
     "lsps": {
       "version": "1",
       "npmPackages": ["pyright@1.1.400", "typescript-language-server@4.3.3"]
