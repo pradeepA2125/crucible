@@ -91,7 +91,7 @@ jobs:
       # gopls-<platform>[.exe] convention make_manifest.py already expects.
       - uses: actions/setup-go@v5
         with: { go-version: "1.24" }
-      - run: python3 scripts/release/build_gopls.py --version "$GOPLS_VERSION" --out dist/
+      - run: GOTOOLCHAIN=local python3 scripts/release/build_gopls.py --version "$GOPLS_VERSION" --out dist/
       # jre + jdtls are directory-tree archives (not single binaries) —
       # re-hosted as-is, unextracted; installer.ts extracts them client-side.
       - run: python3 scripts/release/fetch_jre.py --feature-version "$JRE_FEATURE_VERSION" --version-tag "$JRE_VERSION_TAG" --version-us "$JRE_VERSION_US" --out dist/

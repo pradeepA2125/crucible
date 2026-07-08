@@ -1,0 +1,27 @@
+name: test-fetch-tools
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch-tools:
+    runs-on: ubuntu-latest
+    env:
+      UV_VERSION: "0.5.24"
+      RG_VERSION: "14.1.1"
+      RUST_ANALYZER_VERSION: "2026-07-06"
+      GOPLS_VERSION: "v0.22.0"
+      JRE_FEATURE_VERSION: "21"
+      JRE_VERSION_TAG: "jdk-21.0.11+10"
+      JRE_VERSION_US: "21.0.11_10"
+      JDTLS_VERSION: "1.61.0-202607070104"
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/release/fetch_tools.py --uv "$UV_VERSION" --rg "$RG_VERSION" --rust-analyzer "$RUST_ANALYZER_VERSION" --out dist/
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.24" }
+      - run: GOTOOLCHAIN=local python3 scripts/release/build_gopls.py --version "$GOPLS_VERSION" --out dist/
+      - run: python3 scripts/release/fetch_jre.py --feature-version "$JRE_FEATURE_VERSION" --version-tag "$JRE_VERSION_TAG" --version-us "$JRE_VERSION_US" --out dist/
+      - run: python3 scripts/release/fetch_jdtls.py --version "$JDTLS_VERSION" --out dist/
+      - run: ls -lah dist/
+      - uses: actions/upload-artifact@v4
+        with: { name: tools, path: dist/ }
