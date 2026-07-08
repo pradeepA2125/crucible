@@ -25,6 +25,7 @@ _BINARY_COMPONENTS = (
     ("indexer", "ai-editor-indexer"),
     ("ripgrep", "rg"),
     ("uv", "uv"),
+    ("rust-analyzer", "rust-analyzer"),
 )
 
 _WHEEL_RE = re.compile(r"^ai_editor_agentd-(?P<version>.+)-py3-none-any\.whl$")

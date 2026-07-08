@@ -15,14 +15,19 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
         _touch(tmp_path, f"ai-editor-indexer-{plat}")
         _touch(tmp_path, f"rg-{plat}")
         _touch(tmp_path, f"uv-{plat}")
+        _touch(tmp_path, f"rust-analyzer-{plat}")
     _touch(tmp_path, "ai-editor-indexer-win32-x64.exe")
     _touch(tmp_path, "rg-win32-x64.exe")
     _touch(tmp_path, "uv-win32-x64.exe")
+    _touch(tmp_path, "rust-analyzer-win32-x64.exe")
     _touch(tmp_path, "ai_editor_agentd-0.2.0-py3-none-any.whl")
 
     m = build_manifest(
         "v0.2.0", tmp_path, "https://gh/rel/v0.2.0",
-        component_versions={"indexer": "0.2.0", "ripgrep": "14.1.0", "uv": "0.5.0"},
+        component_versions={
+            "indexer": "0.2.0", "ripgrep": "14.1.0", "uv": "0.5.0",
+            "rust-analyzer": "2026-07-06",
+        },
         lsp_packages=["pyright@1.1.400", "typescript-language-server@4.3.3"],
     )
     assert m["manifestVersion"] == 1 and m["releaseTag"] == "v0.2.0"
@@ -30,6 +35,11 @@ def test_build_manifest_shape(tmp_path: Path) -> None:
     assert ix["urls"]["darwin-arm64"] == "https://gh/rel/v0.2.0/ai-editor-indexer-darwin-arm64"
     assert ix["urls"]["win32-x64"].endswith(".exe")
     assert ix["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
+    ra = m["components"]["rust-analyzer"]
+    assert ra["version"] == "2026-07-06"
+    assert ra["urls"]["darwin-arm64"] == "https://gh/rel/v0.2.0/rust-analyzer-darwin-arm64"
+    assert ra["urls"]["win32-x64"].endswith(".exe")
+    assert ra["sha256"]["darwin-arm64"] == hashlib.sha256(b"bin").hexdigest()
     agentd = m["components"]["agentd"]
     assert agentd["version"] == "0.2.0"
     assert agentd["urls"]["any"].endswith("ai_editor_agentd-0.2.0-py3-none-any.whl")
