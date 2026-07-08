@@ -90,6 +90,23 @@ describe("BackendProcess.start", () => {
     expect(d.spawned).toHaveLength(1); // backend only
   });
 
+  it("sets AI_EDITOR_LSP_RS_CMD to the managed binary when installed", async () => {
+    const d = deps();
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
+    writeFileSync(join(d.runtimeDir, "bin", "rust-analyzer"), "");
+    await new BackendProcess(d).start(ws(), SETTINGS);
+    expect(d.spawned[1].env.AI_EDITOR_LSP_RS_CMD).toBe(join(d.runtimeDir, "bin", "rust-analyzer"));
+  });
+
+  it("falls back to the bare rust-analyzer command when the managed binary is absent", async () => {
+    const d = deps();
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "ai-editor-indexer"), "");
+    await new BackendProcess(d).start(ws(), SETTINGS);
+    expect(d.spawned[1].env.AI_EDITOR_LSP_RS_CMD).toBe("rust-analyzer");
+  });
+
   it("throws when health never comes up", async () => {
     const d = deps({ fetchJson: async () => { throw new Error("conn refused"); } });
     await expect(new BackendProcess(d).start(ws(), SETTINGS))

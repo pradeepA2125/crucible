@@ -175,16 +175,20 @@ export class BackendProcess {
       this.deps.runtimeDir, "node_modules", ".bin",
       this.platform === "win32-x64" ? `${name}.cmd` : name);
     const lspInstalled = existsSync(join(this.deps.runtimeDir, "node_modules"));
+    const rustAnalyzerBin = binPath(this.deps.runtimeDir, "rust-analyzer", this.platform);
+    // Managed install lands at rustAnalyzerBin (installer.ts); fall back to a bare
+    // PATH lookup for a dev backend running outside the managed runtime — the
+    // indexer degrades gracefully either way if it's still not found.
+    const rsCmd = existsSync(rustAnalyzerBin) ? rustAnalyzerBin : "rust-analyzer";
     const env = {
       ...process.env,
       AI_EDITOR_BACKEND_URL: `http://localhost:${port}`,
       AI_EDITOR_LSP_ENABLED: lspInstalled ? "true" : "false",
+      AI_EDITOR_LSP_RS_CMD: rsCmd,
       ...(lspInstalled
         ? {
             AI_EDITOR_LSP_PY_CMD: `${lspBin("pyright-langserver")} --stdio`,
             AI_EDITOR_LSP_TS_CMD: `${lspBin("typescript-language-server")} --stdio`,
-            // Detect-only: the indexer degrades gracefully when rust-analyzer is absent.
-            AI_EDITOR_LSP_RS_CMD: "rust-analyzer",
           }
         : {}),
     } as Record<string, string>;
