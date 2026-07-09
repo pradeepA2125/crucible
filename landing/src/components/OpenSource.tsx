@@ -22,6 +22,16 @@ const SERVICES = [
   },
 ];
 
+/** Languages the indexer can parse and graph */
+const INDEXED_LANGS = [
+  { lang: "Python",     langColor: "bg-green" },
+  { lang: "TypeScript", langColor: "bg-sky" },
+  { lang: "JavaScript", langColor: "bg-accent-ink" },
+  { lang: "Rust",       langColor: "bg-amber" },
+  { lang: "Go",         langColor: "bg-accent" },
+  { lang: "Java",       langColor: "bg-red" },
+];
+
 const WAYS_IN = [
   {
     title: "Read the design docs",
@@ -82,6 +92,22 @@ export default function OpenSource() {
                     {s.lang}
                   </span>
                 ))}
+              </div>
+              <div className="mt-5 pt-5 border-t border-line">
+                <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-ink-4 mb-3">
+                  Indexed languages
+                </p>
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                  {INDEXED_LANGS.map((l) => (
+                    <span
+                      key={l.lang}
+                      className="flex items-center gap-2 font-mono text-xs text-ink-3"
+                    >
+                      <span className={`w-2.5 h-2.5 rounded-full ${l.langColor}`} />
+                      {l.lang}
+                    </span>
+                  ))}
+                </div>
               </div>
               <div className="mt-auto pt-7 flex flex-wrap gap-3">
                 <a

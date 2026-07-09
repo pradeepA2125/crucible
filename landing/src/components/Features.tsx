@@ -47,7 +47,7 @@ const FEATURES: Feature[] = [
   },
   {
     title: "A symbol graph in Rust",
-    body: "An incremental tree-sitter + LSP indexer resolves calls, imports, and inheritance into a live code graph. The agent queries it mid-turn — and you fly through it in Axon, the built-in 3D view.",
+    body: "An incremental tree-sitter + LSP indexer resolves calls, imports, and inheritance into a live code graph across Python, TypeScript, JavaScript, Go, Java, and Rust. The agent queries it mid-turn — and you fly through it in Axon, the built-in 3D view.",
     tint: "text-sky",
     chipBg: "bg-sky/12",
     icon: (
