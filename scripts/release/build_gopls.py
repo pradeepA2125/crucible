@@ -94,7 +94,7 @@ def build_gopls_binaries(
     written: list[Path] = []
     for platform in PLATFORMS:
         goos, goarch = _GOPLS_TARGETS[platform]
-        dest = out_dir / gopls_artifact_name(platform)
+        dest = (out_dir / gopls_artifact_name(platform)).resolve()
         env = {**os.environ, "GOOS": goos, "GOARCH": goarch, "CGO_ENABLED": "0"}
         
         # Debug: list work_dir before build

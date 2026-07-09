@@ -9,7 +9,7 @@ jobs:
       UV_VERSION: "0.5.24"
       RG_VERSION: "14.1.1"
       RUST_ANALYZER_VERSION: "2026-07-06"
-      GOPLS_VERSION: "v0.20.0"
+      GOPLS_VERSION: "v0.22.0"
       JRE_FEATURE_VERSION: "21"
       JRE_VERSION_TAG: "jdk-21.0.11+10"
       JRE_VERSION_US: "21.0.11_10"
