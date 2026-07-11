@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Start the TurboQuant llama-server (TheTom/llama-cpp-turboquant, feature/turboquant-kv-cache).
-# Model: Devstral Small 2 24B Q4_K_XL (unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF).
-# Context: 65536 tokens, single slot, turbo3 V-cache, q8_0 K-cache.
+# Model: Qwen3.6 35B-A3B Q4_K_M (ollama blob).
+# Context: 98304 tokens, single slot, turbo3 V-cache, q8_0 K-cache.
 set -euo pipefail
 
 LLAMA_SERVER="${LLAMA_SERVER:-$HOME/tqp-src/build/bin/llama-server}"
-GGUF="${GGUF:-$HOME/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf}"
+GGUF="${GGUF:-$HOME/.ollama/models/blobs/sha256-f5ee307a2982106a6eb82b62b2c00b575c9072145a759ae4660378acda8dcf2d}"
 PORT="${TURBOQUANT_PORT:-11435}"
-CTX="${TURBOQUANT_CTX:-65536}"
+CTX="${TURBOQUANT_CTX:-98304}"
 LOG="${TURBOQUANT_LOG:-/tmp/tqp-server.log}"
 
 if [[ ! -x "$LLAMA_SERVER" ]]; then
