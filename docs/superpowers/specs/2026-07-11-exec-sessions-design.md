@@ -155,6 +155,18 @@ it running**; check `list_sessions` when resuming work on a thread.
   survives reload. **`sessions` MUST be added to `lastLiveSignature` in
   `controller.ts`** (documented `/live` dedup footgun) and to the editor-client
   Zod schema + webview mirror types.
+- **PTY inspect (expandable strip):** clicking a session row expands a read-only
+  monospace scrollback. Backed by `GET
+  /v1/chat/threads/{id}/sessions/{session_id}/transcript` → `{output_tail,
+  stdin_history: [{ts, chars}], status, exit_code}` — fetched on expand,
+  re-polled ~2 s while expanded (NOT part of `/live`, so the 1 s poll payload
+  and `lastLiveSignature` are untouched). `output_tail` is a capped tail
+  (default 16,000 chars) of the ring buffer; `stdin_history` is a capped list
+  recorded on every `write_stdin` (control chars rendered escaped, e.g. `\x03`).
+  **Invariant: the inspect read never advances the model's read cursor** — the
+  model cursor and the inspect tail are independent views of the same ring
+  buffer; otherwise inspecting a session would silently swallow output the
+  model was about to poll.
 
 ## Configuration
 
