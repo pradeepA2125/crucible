@@ -10,7 +10,7 @@ export interface SetupDeps {
     model?: string;
     credentials?: Record<string, string>;
   }): Promise<{ ok: boolean; model?: string; error?: string }>;
-  saveAndStart(backend: string, model: string, apiKey?: string): Promise<{ port: number }>;
+  saveAndStart(backend: string, model: string, apiKey?: string, extraCredentials?: Record<string, string>): Promise<{ port: number }>;
   openChat(): void;
   keyEnvVar(backend: string): string | undefined; // PROVIDER_KEY_ENV mirror
 }
@@ -18,8 +18,8 @@ export interface SetupDeps {
 // webview → host
 export type SetupInMsg =
   | { type: "setup/install" }
-  | { type: "setup/validate"; backend: string; model: string; apiKey?: string }
-  | { type: "setup/save"; backend: string; model: string; apiKey?: string }
+  | { type: "setup/validate"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
+  | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/openChat" };
 
 // host → webview
@@ -30,12 +30,21 @@ export type SetupOutMsg =
   | { type: "setup/ready"; port: number }
   | { type: "setup/error"; message: string };
 
+export interface ExtraField {
+  envVar: string;
+  label: string;
+  placeholder?: string;
+  optional?: boolean;
+}
+
 export interface ProviderInfo {
   id: string;
   label: string;
   local: boolean;
   keyEnvVar?: string;
   defaultModel: string;
+  /** Additional required credential fields beyond the primary API key. */
+  extraFields?: ExtraField[];
 }
 
 // Defaults mirror agentd/providers/factory.py::_DEFAULT_MODEL; key vars mirror
@@ -46,7 +55,17 @@ export const PROVIDERS: ProviderInfo[] = [
   { id: "gemini", label: "Google Gemini", local: false, keyEnvVar: "GEMINI_API_KEY", defaultModel: "gemini-3-flash-preview" },
   { id: "groq", label: "Groq", local: false, keyEnvVar: "GROQ_API_KEY", defaultModel: "openai/gpt-oss-120b" },
   { id: "ollama", label: "Ollama (local)", local: true, defaultModel: "glm-4.7-flash:latest" },
-  { id: "watsonx", label: "IBM watsonx", local: false, keyEnvVar: "WATSONX_API_KEY", defaultModel: "ibm/granite-3-8b-instruct" },
+  {
+    id: "watsonx",
+    label: "IBM watsonx",
+    local: false,
+    keyEnvVar: "WATSONX_API_KEY",
+    defaultModel: "openai/gpt-oss-120b",
+    extraFields: [
+      { envVar: "WATSONX_SPACE_ID", label: "Space ID", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
+      { envVar: "WATSONX_URL", label: "URL", placeholder: "https://us-south.ml.cloud.ibm.com" },
+    ],
+  },
   { id: "openrouter", label: "OpenRouter", local: false, keyEnvVar: "OPENROUTER_API_KEY", defaultModel: "stepfun/step-3.5-flash:free" },
   { id: "huggingface", label: "Hugging Face", local: false, keyEnvVar: "HF_TOKEN", defaultModel: "deepseek-ai/DeepSeek-R1:fastest" },
   { id: "turboquant", label: "TurboQuant (local)", local: true, defaultModel: "qwen3.6:35b-a3b-q4_K_M" },
@@ -73,8 +92,10 @@ export function createSetupHandler(
         }
         case "setup/validate": {
           const envVar = deps.keyEnvVar(msg.backend);
-          const credentials =
-            envVar && msg.apiKey ? { [envVar]: msg.apiKey } : undefined;
+          const primaryCred = envVar && msg.apiKey ? { [envVar]: msg.apiKey } : undefined;
+          const credentials = (primaryCred || msg.extraCredentials)
+            ? { ...primaryCred, ...msg.extraCredentials }
+            : undefined;
           const result = await deps.validate({
             backend: msg.backend,
             model: msg.model,
@@ -89,7 +110,7 @@ export function createSetupHandler(
           return;
         }
         case "setup/save": {
-          const { port } = await deps.saveAndStart(msg.backend, msg.model, msg.apiKey);
+          const { port } = await deps.saveAndStart(msg.backend, msg.model, msg.apiKey, msg.extraCredentials);
           post({ type: "setup/ready", port });
           return;
         }

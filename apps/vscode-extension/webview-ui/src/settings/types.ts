@@ -24,7 +24,7 @@ export interface SettingsState {
 // webview → host
 export type SettingsInMsg =
   | { type: "settings/load" }
-  | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string }
+  | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "settings/mcpUpsert"; name: string; entry: Record<string, unknown> }
   | { type: "settings/mcpDelete"; name: string }
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
@@ -42,12 +42,20 @@ export type SettingsOutMsg =
   | { type: "settings/error"; message: string }
   | { type: "settings/navigate"; section: SectionId };
 
+export interface ExtraField {
+  envVar: string;
+  label: string;
+  placeholder?: string;
+  optional?: boolean;
+}
+
 export interface ProviderInfo {
   id: string;
   label: string;
   local: boolean;
   keyEnvVar?: string;
   defaultModel: string;
+  extraFields?: ExtraField[];
 }
 
 // Mirror of src/setup-data.ts PROVIDERS (defaults from agentd/providers/factory.py).
@@ -57,7 +65,17 @@ export const PROVIDERS: ProviderInfo[] = [
   { id: "gemini", label: "Google Gemini", local: false, keyEnvVar: "GEMINI_API_KEY", defaultModel: "gemini-3-flash-preview" },
   { id: "groq", label: "Groq", local: false, keyEnvVar: "GROQ_API_KEY", defaultModel: "openai/gpt-oss-120b" },
   { id: "ollama", label: "Ollama (local)", local: true, defaultModel: "glm-4.7-flash:latest" },
-  { id: "watsonx", label: "IBM watsonx", local: false, keyEnvVar: "WATSONX_API_KEY", defaultModel: "ibm/granite-3-8b-instruct" },
+  {
+    id: "watsonx",
+    label: "IBM watsonx",
+    local: false,
+    keyEnvVar: "WATSONX_API_KEY",
+    defaultModel: "openai/gpt-oss-120b",
+    extraFields: [
+      { envVar: "WATSONX_SPACE_ID", label: "Space ID", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
+      { envVar: "WATSONX_URL", label: "URL", placeholder: "https://us-south.ml.cloud.ibm.com" },
+    ],
+  },
   { id: "openrouter", label: "OpenRouter", local: false, keyEnvVar: "OPENROUTER_API_KEY", defaultModel: "stepfun/step-3.5-flash:free" },
   { id: "huggingface", label: "Hugging Face", local: false, keyEnvVar: "HF_TOKEN", defaultModel: "deepseek-ai/DeepSeek-R1:fastest" },
   { id: "turboquant", label: "TurboQuant (local)", local: true, defaultModel: "qwen3.6:35b-a3b-q4_K_M" },

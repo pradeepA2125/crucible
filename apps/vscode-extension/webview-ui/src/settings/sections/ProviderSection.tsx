@@ -16,12 +16,22 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
   const [backend, setBackend] = useState(state.provider?.backend ?? PROVIDERS[0].id);
   const [model, setModel] = useState(state.provider?.model ?? PROVIDERS[0].defaultModel);
   const [apiKey, setApiKey] = useState("");
+  const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [savedFlash, setSavedFlash] = useState(false);
 
   const provider = useMemo(
     () => PROVIDERS.find((p) => p.id === backend) ?? PROVIDERS[0],
     [backend],
   );
+
+  const extraCredentials = useMemo(() => {
+    if (!provider.extraFields?.length) return undefined;
+    const creds: Record<string, string> = {};
+    for (const f of provider.extraFields) {
+      if (extraValues[f.envVar]) creds[f.envVar] = extraValues[f.envVar];
+    }
+    return Object.keys(creds).length ? creds : undefined;
+  }, [provider, extraValues]);
 
   // Flash "✓ Saved" when the active provider snapshot changes after our save.
   const providerSig = state.provider ? `${state.provider.backend}/${state.provider.model}` : "";
@@ -52,6 +62,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
                 setBackend(next.id);
                 setModel(next.defaultModel);
                 setApiKey("");
+                setExtraValues({});
               }}
             >
               {PROVIDERS.map((p) => (
@@ -75,6 +86,17 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
               />
             </label>
           )}
+          {provider.extraFields?.map((f) => (
+            <label key={f.envVar} className="flex flex-col gap-1 text-xs text-text-2">
+              {f.label} ({f.envVar}) — leave blank to keep the stored value
+              <input
+                className={FIELD}
+                value={extraValues[f.envVar] ?? ""}
+                onChange={(e) => setExtraValues((prev) => ({ ...prev, [f.envVar]: e.target.value }))}
+                placeholder={f.placeholder}
+              />
+            </label>
+          ))}
           <div className="flex items-center gap-2">
             <BtnPrimary
               disabled={busy || !model}
@@ -85,6 +107,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
                   backend,
                   model,
                   ...(provider.local || !apiKey ? {} : { apiKey }),
+                  ...(extraCredentials ? { extraCredentials } : {}),
                 });
               }}
             >

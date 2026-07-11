@@ -65,6 +65,7 @@ export default function SetupApp() {
   const [backend, setBackend] = useState(PROVIDERS[0].id);
   const [model, setModel] = useState(PROVIDERS[0].defaultModel);
   const [apiKey, setApiKey] = useState("");
+  const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [port, setPort] = useState<number | null>(null);
@@ -73,6 +74,20 @@ export default function SetupApp() {
     () => PROVIDERS.find((p) => p.id === backend) ?? PROVIDERS[0],
     [backend],
   );
+
+  const extraCredentials = useMemo(() => {
+    if (!provider.extraFields?.length) return undefined;
+    const creds: Record<string, string> = {};
+    for (const f of provider.extraFields) {
+      if (extraValues[f.envVar]) creds[f.envVar] = extraValues[f.envVar];
+    }
+    return Object.keys(creds).length ? creds : undefined;
+  }, [provider, extraValues]);
+
+  const extraFieldsFilled = useMemo(() => {
+    if (!provider.extraFields?.length) return true;
+    return provider.extraFields.every((f) => f.optional || !!extraValues[f.envVar]?.trim());
+  }, [provider, extraValues]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<SetupOutMsg>) => {
@@ -127,6 +142,7 @@ export default function SetupApp() {
       backend,
       model,
       ...(provider.local || !apiKey ? {} : { apiKey }),
+      ...(extraCredentials ? { extraCredentials } : {}),
     });
   };
 
@@ -209,12 +225,13 @@ export default function SetupApp() {
                   className={FIELD}
                   value={backend}
                   onChange={(e) => {
-                    const next = PROVIDERS.find((p) => p.id === e.target.value)!;
-                    setBackend(next.id);
-                    setModel(next.defaultModel);
-                    setApiKey("");
-                    setError(null);
-                  }}
+                      const next = PROVIDERS.find((p) => p.id === e.target.value)!;
+                      setBackend(next.id);
+                      setModel(next.defaultModel);
+                      setApiKey("");
+                      setExtraValues({});
+                      setError(null);
+                    }}
                 >
                   {PROVIDERS.map((p) => (
                     <option key={p.id} value={p.id}>{p.label}</option>
@@ -231,11 +248,22 @@ export default function SetupApp() {
                   <input type="password" className={FIELD} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
                 </label>
               )}
+              {provider.extraFields?.map((f) => (
+                <label key={f.envVar} className="flex flex-col gap-1 text-xs text-text-2">
+                  {f.label} ({f.envVar})
+                  <input
+                    className={FIELD}
+                    value={extraValues[f.envVar] ?? ""}
+                    onChange={(e) => setExtraValues((prev) => ({ ...prev, [f.envVar]: e.target.value }))}
+                    placeholder={f.placeholder}
+                  />
+                </label>
+              ))}
               {provider.local && (
                 <p className="text-[11px] text-text-3">Local provider — reachability is checked when the backend starts.</p>
               )}
               {error && <p className="text-[11px]" style={{ color: "var(--color-red)" }}>{error}</p>}
-              <BtnPrimary className="self-start" disabled={busy || !model || (!provider.local && !apiKey)} onClick={saveAndStart}>
+              <BtnPrimary className="self-start" disabled={busy || !model || (!provider.local && !apiKey) || !extraFieldsFilled} onClick={saveAndStart}>
                 {busy ? "Starting…" : "Save & Start"}
               </BtnPrimary>
             </div>

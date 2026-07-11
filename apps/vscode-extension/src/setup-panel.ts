@@ -59,8 +59,8 @@ export class SetupPanel {
           ...(result.error !== undefined ? { error: result.error } : {}),
         };
       },
-      saveAndStart: async (backend, model, apiKey) => {
-        await this.runtimeManager.saveProvider(backend, model, apiKey);
+      saveAndStart: async (backend, model, apiKey, extraCredentials) => {
+        await this.runtimeManager.saveProvider(backend, model, apiKey, extraCredentials);
         const { port } = await this.runtimeManager.startForWorkspace(this.workspacePath);
         const url = this.runtimeManager.backendUrl(this.workspacePath) ?? `http://localhost:${port}`;
         const result = await this.clientFactory(url).validateProvider({ backend, model });

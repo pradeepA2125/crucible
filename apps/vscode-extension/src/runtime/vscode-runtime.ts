@@ -161,14 +161,23 @@ export class RuntimeManager {
       const value = await this.context.secrets.get(`crucible.providerKey.${backend}`);
       if (value) settings.apiKey = { envVar, value };
     }
+    // Restore extra credentials (e.g. WATSONX_SPACE_ID, WATSONX_URL) into extraEnv.
+    const extraEnvVars = this.context.globalState.get<string[]>(`crucible.provider.extraEnvVars.${backend}`, []);
+    for (const ev of extraEnvVars) {
+      const value = await this.context.secrets.get(`crucible.providerExtra.${backend}.${ev}`);
+      if (value) settings.extraEnv = { ...settings.extraEnv, [ev]: value };
+    }
     return settings;
   }
 
-  async saveProvider(backend: string, model: string, apiKey?: string): Promise<void> {
+  async saveProvider(backend: string, model: string, apiKey?: string, extraCredentials?: Record<string, string>): Promise<void> {
     await this.context.globalState.update("crucible.provider.backend", backend);
     await this.context.globalState.update("crucible.provider.model", model);
     if (apiKey) {
       await this.storeProviderKey(backend, apiKey);
+    }
+    if (extraCredentials) {
+      await this._persistExtraCredentials(backend, extraCredentials);
     }
   }
 
@@ -176,6 +185,30 @@ export class RuntimeManager {
    * from the backend/model prefs — see SettingsPanel.buildDeps' setProvider wrapper). */
   async storeProviderKey(backend: string, key: string): Promise<void> {
     await this.context.secrets.store(`crucible.providerKey.${backend}`, key);
+  }
+
+  /** Store extra credentials (e.g. WATSONX_SPACE_ID, WATSONX_URL) without touching backend/model. */
+  async storeProviderExtraCredentials(backend: string, extraCredentials: Record<string, string>): Promise<void> {
+    await this._persistExtraCredentials(backend, extraCredentials);
+  }
+
+  /** Write the extra-credential secrets and record their env-var names. Any secret
+   * from a previous save whose env var is no longer present is deleted, so a removed
+   * field (or a provider whose extra fields shrank) never leaves an orphaned secret. */
+  private async _persistExtraCredentials(
+    backend: string,
+    extraCredentials: Record<string, string>,
+  ): Promise<void> {
+    const key = `crucible.provider.extraEnvVars.${backend}`;
+    const prevEnvVars = this.context.globalState.get<string[]>(key, []);
+    const nextEnvVars = Object.keys(extraCredentials);
+    for (const stale of prevEnvVars.filter((ev) => !nextEnvVars.includes(ev))) {
+      await this.context.secrets.delete(`crucible.providerExtra.${backend}.${stale}`);
+    }
+    await this.context.globalState.update(key, nextEnvVars);
+    for (const [ev, value] of Object.entries(extraCredentials)) {
+      await this.context.secrets.store(`crucible.providerExtra.${backend}.${ev}`, value);
+    }
   }
 
   /** Stored API key for a backend, if the user ever validated one (composer model menu). */

@@ -176,6 +176,13 @@ export class BackendProcess {
   }
 
   private spawnWatcher(workspace: string, port: number): void {
+    // Kill any previously-running watcher (e.g. after a crash-restart: the old
+    // watcher is still alive but points at the now-dead port, so it will never
+    // update the snapshot for new files).
+    if (this.watcher) {
+      try { this.watcher.kill(); } catch { /* already dead */ }
+      this.watcher = undefined;
+    }
     const indexer = binPath(this.deps.runtimeDir, "crucible-indexer", this.platform);
     if (!existsSync(indexer)) {
       this.deps.log("[runtime] indexer binary missing — watcher not started");

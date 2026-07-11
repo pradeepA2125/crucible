@@ -21,7 +21,7 @@ export interface SettingsState {
 // webview → host
 export type SettingsInMsg =
   | { type: "settings/load" }
-  | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string }
+  | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "settings/mcpUpsert"; name: string; entry: Record<string, unknown> }
   | { type: "settings/mcpDelete"; name: string }
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
@@ -69,6 +69,7 @@ export interface SettingsDeps {
   skillsDisabled(): string[];
   setSkillsDisabled(names: string[]): Promise<void>;
   storeSecret(backend: string, key: string): Promise<void>;
+  storeExtraCredentials(backend: string, extraCredentials: Record<string, string>): Promise<void>;
   keyEnvVar(backend: string): string | undefined;
   readEnvFlags(): Record<string, string>;
   updateSetting(key: string, value: string): Promise<void>;
@@ -117,8 +118,10 @@ export function createSettingsHandler(
         }
         case "settings/setProvider": {
           const envVar = deps.keyEnvVar(msg.backend);
-          const credentials =
-            envVar && msg.apiKey ? { [envVar]: msg.apiKey } : undefined;
+          const primaryCred = envVar && msg.apiKey ? { [envVar]: msg.apiKey } : undefined;
+          const credentials = (primaryCred || msg.extraCredentials)
+            ? { ...primaryCred, ...msg.extraCredentials }
+            : undefined;
           const result = await deps.client.validateProvider({
             backend: msg.backend,
             model: msg.model,
@@ -130,6 +133,9 @@ export function createSettingsHandler(
           }
           if (envVar && msg.apiKey) {
             await deps.storeSecret(msg.backend, msg.apiKey);
+          }
+          if (msg.extraCredentials) {
+            await deps.storeExtraCredentials(msg.backend, msg.extraCredentials);
           }
           await deps.client.setProvider({
             backend: msg.backend,
