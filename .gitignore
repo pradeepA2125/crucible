@@ -33,3 +33,10 @@ aider-references/
 /.playwright-mcp/
 /j-smoke-*.jpeg
 /snap-*.md
+
+# Secrets — never commit local provider keys
+.env
+.env.*
+!.env.example
+# Local scratch / tooling
+.bob/
