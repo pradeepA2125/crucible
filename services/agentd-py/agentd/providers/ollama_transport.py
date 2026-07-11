@@ -13,6 +13,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -39,6 +41,11 @@ _DEFAULT_HOST = "http://localhost:11434"
 
 class OllamaJsonTransport(ModelJsonTransport):
     """JSON transport backed by a local Ollama server."""
+
+    # Ollama passes `format` directly to llama-server's json_schema field — the
+    # identical GBNF path as TurboQuant. llama.cpp's GBNF converter enforces oneOf
+    # cleanly (no deadlock, zero cross-variant bleed), same as measured for TurboQuant.
+    supports_oneof_grammar: bool = True
 
     def __init__(
         self,
@@ -68,22 +75,27 @@ class OllamaJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
-        on_thinking: object = None,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         contents = json.dumps(user_payload)
-        user_content = contents
         body = self._build_body(
             model=model,
             system=system_instructions,
-            user_content=user_content,
+            user_content=contents,
             json_format=schema,
-            num_predict=-1,  # unlimited — thinking tokens can be large
+            num_predict=32768,  # large budget — cloud backends reject -1
         )
         response = await self._call_with_retry(body)
         self._log_usage(model, schema_name, system_instructions, contents, response)
         output_text = self._extract_text(response)
         logger.warning("ollama raw output (%s): %s", schema_name, output_text[:600])
-        return self._parse_output_object(output_text, schema_name)
+
+        # Strip <think> blocks that some models (e.g. Qwen3) may emit before the JSON.
+        thinking, output_text = _split_thinking(output_text)
+        if thinking and on_thinking:
+            on_thinking(thinking)
+
+        return _parse_output_object(output_text, schema_name)
 
     async def generate_text(
         self,
@@ -91,6 +103,7 @@ class OllamaJsonTransport(ModelJsonTransport):
         model: str,
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: Callable[[str], None] | None = None,
     ) -> str:
         contents = json.dumps(user_payload)
         body = self._build_body(
@@ -102,7 +115,11 @@ class OllamaJsonTransport(ModelJsonTransport):
         )
         response = await self._call_with_retry(body)
         self._log_usage(model, "text", system_instructions, contents, response)
-        return self._extract_text(response)
+        raw = self._extract_text(response)
+        thinking, text = _split_thinking(raw)
+        if thinking and on_thinking:
+            on_thinking(thinking)
+        return text or raw
 
     def _build_body(
         self,
@@ -204,20 +221,6 @@ class OllamaJsonTransport(ModelJsonTransport):
             return text.strip()
         raise RuntimeError("Ollama response contained no text content")
 
-    @staticmethod
-    def _parse_output_object(output_text: str, schema_name: str) -> dict[str, object]:
-        payload_text = strip_json_code_fences(output_text)
-        try:
-            payload = json.loads(payload_text)
-        except json.JSONDecodeError as exc:
-            msg = f"Ollama output is not valid JSON for {schema_name}: {output_text[:500]}"
-            raise RuntimeError(msg) from exc
-
-        if not isinstance(payload, dict):
-            msg = "Ollama output must be a JSON object"
-            raise RuntimeError(msg)
-
-        return payload
 
     @staticmethod
     def _log_usage(
@@ -247,6 +250,26 @@ class OllamaJsonTransport(ModelJsonTransport):
         )
 
 
+# ---------------------------------------------------------------------------
+# Module-level pure helpers
+# ---------------------------------------------------------------------------
+
+def _split_thinking(response: str) -> tuple[str, str]:
+    """Extract <think>…</think> block. Returns (thinking, remainder)."""
+    if "<think>" not in response:
+        return "", response
+    if "</think>" in response:
+        start = response.find("<think>") + 7
+        end = response.find("</think>")
+        thinking = response[start:end].strip()
+        remainder = response[end + 8:].strip()
+    else:
+        start = response.find("<think>") + 7
+        thinking = response[start:].strip()
+        remainder = ""
+    return thinking, remainder
+
+
 def strip_json_code_fences(text: str) -> str:
     raw = text.strip()
     if not raw.startswith("```"):
@@ -258,3 +281,44 @@ def strip_json_code_fences(text: str) -> str:
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
     return "\n".join(lines).strip()
+
+
+def _repair_json(text: str) -> str:
+    """Repair known JSON malformations before parsing."""
+    # Repair: unquoted property names — {type: "foo"} → {"type": "foo"}
+    text = re.sub(
+        r'([{,]\s*)([a-zA-Z_]\w*)(\s*:(?!\s*/))',
+        lambda m: m.group(1) + '"' + m.group(2) + '"' + m.group(3),
+        text,
+    )
+    return text
+
+
+def _parse_output_object(text: str, schema_name: str) -> dict[str, object]:
+    """Strip fences, extract first JSON object, attempt repair on failure."""
+    text = strip_json_code_fences(text)
+    start = text.find("{")
+    if start == -1:
+        raise RuntimeError(
+            f"Ollama output is not valid JSON for {schema_name}: {text[:500]}"
+        )
+    text = text[start:]
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(text)
+    except json.JSONDecodeError:
+        repaired = _repair_json(text)
+        if repaired == text:
+            raise RuntimeError(
+                f"Ollama output is not valid JSON for {schema_name}: {text[:500]}"
+            )
+        logger.warning("Ollama malformed JSON for %s — applied repair", schema_name)
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(repaired)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Ollama output is not valid JSON for {schema_name} "
+                f"(after repair): {repaired[:500]}"
+            ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Ollama output must be a JSON object")
+    return payload

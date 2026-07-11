@@ -148,6 +148,10 @@ def build_transport(
             max_tokens=_int_env(env, "CRUCIBLE_OPENROUTER_MAX_TOKENS", 4096),
             timeout_sec=_float_env(env, "CRUCIBLE_OPENROUTER_TIMEOUT_SEC", 120.0),
             max_retries=_int_env(env, "CRUCIBLE_OPENROUTER_MAX_RETRIES", 4),
+            require_parameters=env.get("CRUCIBLE_OPENROUTER_REQUIRE_PARAMETERS", "true")
+            .strip()
+            .lower()
+            not in ("0", "false", "no", "off"),
         )
     if backend == "watsonx":
         from agentd.providers.watsonx_transport import WatsonxJsonTransport

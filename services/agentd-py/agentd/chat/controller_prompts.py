@@ -180,20 +180,34 @@ def _tight_variant_branch(variant: str) -> dict[str, object]:
     }
 
 
-def controller_response_schema(*, phase: str, tight: bool = False) -> dict[str, object]:
+def controller_response_schema(
+    *, phase: str, tight: bool = False, anyof: bool = False, all_fields_required: bool = False
+) -> dict[str, object]:
     """Return the controller response schema for a phase.
 
-    `tight=False` (default, the universal fallback) → the FLAT schema with the `type`
-    enum trimmed to the phase's allowed actions. `tight=True` → a discriminated-union
-    (`oneOf`) of just those variants, each a closed object — use ONLY for providers
-    whose grammar enforces `oneOf` (the engine gates this on `supports_oneof_grammar`).
-    The flat path is deep-copied; the tight path builds fresh branch dicts per call
-    (shared leaf type-schemas like `_STR` are read-only and never mutated).
+    `tight=False` (default) → flat schema, `type` enum trimmed to the phase's allowed actions.
+    `tight=True` → discriminated-union (`oneOf`) — use ONLY for providers whose grammar enforces
+    `oneOf` (TQP/llama.cpp; Gemini deadlocks — see module docstring).
+    `anyof=True` → same per-variant branches as tight but wrapped in `anyOf` instead of `oneOf`.
+    Use for providers that support `anyOf` strict enforcement but not `oneOf` (e.g. watsonx).
+    `all_fields_required=True` → flat schema with all per-variant fields in `required` — fallback
+    for providers where neither tight nor anyof is available.
     """
     if tight:
         return {"oneOf": [_tight_variant_branch(v) for v in _PHASE_TYPES[phase]]}
+    if anyof:
+        return {"anyOf": [_tight_variant_branch(v) for v in _PHASE_TYPES[phase]]}
     schema = copy.deepcopy(CONTROLLER_RESPONSE_SCHEMA)
     schema["properties"]["type"]["enum"] = list(_PHASE_TYPES[phase])  # type: ignore[index]
+    if all_fields_required:
+        extra: list[str] = []
+        for variant in _PHASE_TYPES[phase]:
+            spec = _VARIANT_SPECS.get(variant, {})
+            for field in spec.get("required", []):  # type: ignore[union-attr]
+                if field not in extra and field not in ("patch_ops",):
+                    extra.append(field)
+        existing = list(schema.get("required", []))  # type: ignore[arg-type]
+        schema["required"] = existing + [f for f in extra if f not in existing]
     return schema
 
 

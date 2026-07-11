@@ -39,6 +39,8 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 class GroqJsonTransport(ModelJsonTransport):
+    supports_anyof_grammar: bool = True
+
     def __init__(
         self,
         *,

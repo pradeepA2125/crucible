@@ -8,7 +8,13 @@ from typing import Any
 import httpx
 import pytest
 
-from agentd.providers.ollama_transport import OllamaJsonTransport
+from agentd.providers.ollama_transport import (
+    OllamaJsonTransport,
+    _parse_output_object,
+    _repair_json,
+    _split_thinking,
+    strip_json_code_fences,
+)
 
 
 @dataclass
@@ -196,10 +202,12 @@ async def test_ollama_transport_rejects_invalid_json() -> None:
 
 @pytest.mark.asyncio
 async def test_ollama_transport_rejects_non_object_json() -> None:
+    # A plain JSON array has no '{', so it's caught as "not valid JSON" (no object).
+    # A JSON object wrapping a list would need to be a dict to pass.
     client = _FakeAsyncClient([_ok_response(json.dumps(["x"]))])
     transport = OllamaJsonTransport(http_client=client)
 
-    with pytest.raises(RuntimeError, match="must be a JSON object"):
+    with pytest.raises(RuntimeError, match="not valid JSON"):
         await transport.generate_json(
             model="m",
             schema_name="x",
@@ -207,6 +215,114 @@ async def test_ollama_transport_rejects_non_object_json() -> None:
             system_instructions="s",
             user_payload={},
         )
+
+
+# ---------------------------------------------------------------------------
+# on_thinking + think-block stripping
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_generate_json_strips_think_block_and_fires_callback() -> None:
+    content = '<think>reasoning here</think>{"result": 1}'
+    client = _FakeAsyncClient([_ok_response(content)])
+    transport = OllamaJsonTransport(http_client=client)
+
+    received: list[str] = []
+    result = await transport.generate_json(
+        model="qwen3:8b",
+        schema_name="s",
+        schema={"type": "object"},
+        system_instructions="",
+        user_payload={},
+        on_thinking=received.append,
+    )
+
+    assert result == {"result": 1}
+    assert received == ["reasoning here"]
+
+
+@pytest.mark.asyncio
+async def test_generate_text_strips_think_block_and_fires_callback() -> None:
+    content = "<think>some thought</think>actual answer"
+    client = _FakeAsyncClient([_ok_response(content)])
+    transport = OllamaJsonTransport(http_client=client)
+
+    received: list[str] = []
+    result = await transport.generate_text(
+        model="qwen3:8b",
+        system_instructions="",
+        user_payload={},
+        on_thinking=received.append,
+    )
+
+    assert result == "actual answer"
+    assert received == ["some thought"]
+
+
+@pytest.mark.asyncio
+async def test_generate_text_on_thinking_none_does_not_raise() -> None:
+    client = _FakeAsyncClient([_ok_response("<think>thought</think>answer")])
+    transport = OllamaJsonTransport(http_client=client)
+    result = await transport.generate_text(
+        model="m", system_instructions="", user_payload={}, on_thinking=None
+    )
+    assert result == "answer"
+
+
+# ---------------------------------------------------------------------------
+# Protocol conformance
+# ---------------------------------------------------------------------------
+
+def test_supports_oneof_grammar_is_true() -> None:
+    # Ollama routes json_schema to llama-server's GBNF converter — same path as
+    # TurboQuant, which has been measured to enforce oneOf cleanly.
+    transport = OllamaJsonTransport(http_client=_FakeAsyncClient([]))
+    assert transport.supports_oneof_grammar is True
+
+
+# ---------------------------------------------------------------------------
+# Pure helper unit tests
+# ---------------------------------------------------------------------------
+
+def test_split_thinking_no_tags() -> None:
+    thinking, remainder = _split_thinking("plain text")
+    assert thinking == ""
+    assert remainder == "plain text"
+
+
+def test_split_thinking_closed_tags() -> None:
+    thinking, remainder = _split_thinking("<think>reason</think>result")
+    assert thinking == "reason"
+    assert remainder == "result"
+
+
+def test_split_thinking_unclosed_tag() -> None:
+    thinking, remainder = _split_thinking("<think>partial")
+    assert thinking == "partial"
+    assert remainder == ""
+
+
+def test_repair_json_unquoted_keys() -> None:
+    repaired = _repair_json('{type: "x", val: 1}')
+    assert '"type"' in repaired
+    assert '"val"' in repaired
+
+
+def test_parse_output_object_clean() -> None:
+    assert _parse_output_object('{"x": 1}', "t") == {"x": 1}
+
+
+def test_parse_output_object_with_prefix_garbage() -> None:
+    assert _parse_output_object('preamble {"x": 2}', "t") == {"x": 2}
+
+
+def test_parse_output_object_repairs_unquoted_keys() -> None:
+    assert _parse_output_object('{key: "val"}', "t") == {"key": "val"}
+
+
+def test_parse_output_object_no_json_raises() -> None:
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        _parse_output_object("no braces", "t")
 
 
 @pytest.mark.asyncio

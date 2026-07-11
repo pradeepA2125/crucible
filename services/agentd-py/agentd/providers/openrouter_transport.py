@@ -8,7 +8,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
 from agentd.runtime.artifacts import provider_debug_root
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,8 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 class OpenRouterJsonTransport(ModelJsonTransport):
+    supports_anyof_grammar: bool = True
+
     def __init__(
         self,
         *,
@@ -43,11 +45,18 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         max_tokens: int = 4096,
         timeout_sec: float = 120.0,
         max_retries: int = 4,
+        require_parameters: bool = True,
         completions_client: Any | None = None,
     ) -> None:
         self._max_tokens = max_tokens
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
+        # When True, the strict json_schema call pins provider.require_parameters so
+        # OpenRouter only routes to providers that honor response_format. On a key/tier
+        # where no provider supports it (e.g. free), that forces a guaranteed 404 →
+        # fallback every turn; set False to let strict route to the default provider
+        # (may still succeed there, else the fallback catches it) and skip the hard 404.
+        self._require_parameters = require_parameters
 
         if completions_client is not None:
             self._completions: Any = completions_client
@@ -84,10 +93,58 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: object = None,
     ) -> dict[str, object]:
+        result = await self._generate_json_once(
+            model=model,
+            schema_name=schema_name,
+            schema=schema,
+            system_instructions=system_instructions,
+            user_payload=user_payload,
+        )
+        # Type-specific narrowing: the tight anyOf schema enforces each variant's
+        # required fields at the token level, but if the grammar was ignored (an
+        # underlying provider that silently dropped response_format, or the json_object
+        # fallback fired), the model can still return a valid `type` with its action
+        # fields missing. Narrow `required` to just that type's fields and retry once.
+        if schema_name == "controller_step_response":
+            narrowed = narrow_schema_for_type(schema, result)
+            if narrowed is not None:
+                logger.warning(
+                    "openrouter: %s returned type=%r but missing action fields — "
+                    "retrying with narrowed schema",
+                    schema_name, result.get("type"),
+                )
+                result = await self._generate_json_once(
+                    model=model,
+                    schema_name=schema_name,
+                    schema=narrowed,
+                    system_instructions=system_instructions,
+                    user_payload=user_payload,
+                )
+        return result
+
+    async def _generate_json_once(
+        self,
+        *,
+        model: str,
+        schema_name: str,
+        schema: dict[str, object],
+        system_instructions: str,
+        user_payload: dict[str, object],
+    ) -> dict[str, object]:
         safe_schema_name = "".join(c for c in schema_name if c.isalnum())
 
         # Reasoning models require temperature=1 per OpenRouter docs.
         temperature = 1 if _is_reasoning_model(model) else 0
+
+        # require_parameters: only route to providers that actually honor the
+        # parameters we send (response_format), so strict json_schema is enforced
+        # instead of silently dropped by a non-supporting backend. Gated so it can be
+        # disabled on tiers where no provider supports it (avoids a guaranteed 404).
+        extra_body: dict[str, Any] = {}
+        if self._require_parameters:
+            extra_body["provider"] = {"require_parameters": True}
+        if _is_reasoning_model(model):
+            extra_body["reasoning"] = {"enabled": True}
 
         base_kwargs: dict[str, Any] = {
             "model": model,
@@ -97,9 +154,8 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             ],
             "max_completion_tokens": self._max_tokens,
             "temperature": temperature,
+            "extra_body": extra_body,
         }
-        if _is_reasoning_model(model):
-            base_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
 
         create_kwargs = {
             **base_kwargs,
@@ -133,8 +189,17 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                 "OpenRouter json_schema failed for %s, falling back to json_object: %s",
                 schema_name, e,
             )
+            # The fallback must be permissive: drop the `provider.require_parameters`
+            # guard so it can route to ANY provider (the strict path already failed
+            # precisely because no provider honored response_format). Keep any other
+            # extra_body (e.g. reasoning). Without this, the fallback inherits the same
+            # routing restriction and 404s too — defeating its whole purpose.
+            fallback_extra_body = {
+                k: v for k, v in extra_body.items() if k != "provider"
+            }
             fallback_kwargs: dict[str, Any] = {
                 **base_kwargs,
+                "extra_body": fallback_extra_body,
                 "messages": [
                     {
                         "role": "system",

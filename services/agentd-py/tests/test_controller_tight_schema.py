@@ -1,9 +1,19 @@
-"""Tier 2 — tight (oneOf) controller schema, gated by a provider-capability flag.
+"""Tier 2 — tight (oneOf/anyOf) controller schema, gated by a provider-capability flag.
 
 The flat schema lists every variant's fields as optional siblings, so the grammar
 PERMITS cross-variant bleed (e.g. {type:"answer", tool:"x"}). On a provider whose
-grammar engine enforces JSON-schema `oneOf` (measured: llama.cpp/TQP does; Gemini
-deadlocks), a discriminated-union schema makes that bleed STRUCTURALLY impossible.
+grammar engine enforces JSON-schema `oneOf` (measured: llama.cpp/TQP does), a
+discriminated-union schema makes that bleed STRUCTURALLY impossible.
+
+Provider matrix (live-verified):
+  - TurboQuant/llama.cpp: oneOf — strict const-discriminated union, full enforcement
+  - watsonx (json_schema mode): anyOf — enforces per-branch required fields at token level
+  - OpenAI/Groq/OpenRouter: anyOf — native structured outputs enforce per-branch fields
+  - Gemini (response_json_schema): anyOf — enforces required fields within matched branch;
+    const discriminator is not strictly enforced (model may emit unknown type values),
+    but all required action fields (tool+args, answer, etc.) are present in the output.
+  - Anthropic/HuggingFace: prompt-only with narrowing retry fallback
+
 These tests pin: (1) the tight schema shape, (2) the per-provider flag, (3) the
 engine wiring that selects flat vs tight off the flag.
 """

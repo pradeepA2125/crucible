@@ -140,14 +140,14 @@ def _empty_action_correction(resp: dict[str, object], atype: str) -> str | None:
         if _blank("tool"):
             return (
                 "Your tool_call had no 'tool'. Re-emit type='tool_call' with a tool name from "
-                "AVAILABLE TOOLS and a non-empty 'args' object."
+                "AVAILABLE TOOLS and an 'args' object."
             )
         args = resp.get("args")
-        if not isinstance(args, dict) or not args:
+        if not isinstance(args, dict):
             return (
-                f"Your tool_call for '{resp.get('tool')}' had empty 'args'. Re-emit with that "
-                'tool\'s arguments (e.g. {"path": ...} for read_file, '
-                '{"pattern": ...} for search_code).'
+                f"Your tool_call for '{resp.get('tool')}' had no 'args' object. Re-emit with "
+                'args as a JSON object (use {} if the tool takes no arguments, or '
+                '{"path": ...} for read_file, {"pattern": ...} for search_code).'
             )
     return None
 
@@ -393,8 +393,11 @@ class ControllerLoop:
                         resp.get("recommended"), resp.get("options"))
                 else:
                     logger.info(
-                        "[controller] %s REJECTED (empty/invalid required field) — correcting",
-                        atype)
+                        "[controller] %s REJECTED — tool=%r args=%r (type=%s) correction=%s",
+                        atype,
+                        resp.get("tool"), resp.get("args"), type(resp.get("args")).__name__,
+                        correction[:120] if correction else None,
+                    )
                 consecutive_malformed += 1
                 if consecutive_malformed > _MAX_MALFORMED:
                     raise ControllerLoopExhausted(

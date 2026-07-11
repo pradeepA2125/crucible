@@ -290,7 +290,9 @@ class DefaultReasoningEngine(ReasoningEngine):
         # Tier 2: use the tight discriminated-union schema only on a provider whose
         # grammar enforces `oneOf` (getattr-defensive — older transports lack the flag).
         tight = getattr(self._transport, "supports_oneof_grammar", False)
-        schema = controller_response_schema(phase=phase, tight=tight)
+        anyof = getattr(self._transport, "supports_anyof_grammar", False)
+        all_fields_required = getattr(self._transport, "requires_all_fields", False)
+        schema = controller_response_schema(phase=phase, tight=tight, anyof=anyof, all_fields_required=all_fields_required)
         result = await self._transport.generate_json(
             model=self._model,
             schema_name="controller_step_response",

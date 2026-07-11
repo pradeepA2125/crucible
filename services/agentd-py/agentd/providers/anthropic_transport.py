@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import json
 import os
 from typing import Any
@@ -9,7 +11,9 @@ try:
 except ImportError:
     AsyncAnthropicClient = None
 
-from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicJsonTransport(ModelJsonTransport):
@@ -62,25 +66,32 @@ class AnthropicJsonTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: object = None,
     ) -> dict[str, object]:
-        response = await self._messages.create(
-            model=model,
-            max_tokens=self._max_tokens,
-            temperature=0,
-            system=self._build_system_prompt(
-                system_instructions=system_instructions,
-                schema_name=schema_name,
-                schema=schema,
-            ),
-            messages=[
-                {
-                    "role": "user",
-                    "content": json.dumps(user_payload),
-                }
-            ],
-        )
-
-        output_text = self._extract_text(response)
-        return self._parse_output_object(output_text)
+        active_schema = schema
+        for attempt in range(2):  # one narrowing retry for controller schemas
+            response = await self._messages.create(
+                model=model,
+                max_tokens=self._max_tokens,
+                temperature=0,
+                system=self._build_system_prompt(
+                    system_instructions=system_instructions,
+                    schema_name=schema_name,
+                    schema=active_schema,
+                ),
+                messages=[{"role": "user", "content": json.dumps(user_payload)}],
+            )
+            output_text = self._extract_text(response)
+            result = self._parse_output_object(output_text)
+            if schema_name == "controller_step_response" and attempt == 0:
+                narrowed = narrow_schema_for_type(active_schema, result)
+                if narrowed is not None:
+                    logger.warning(
+                        "anthropic: %s returned type=%r but missing action fields — retrying",
+                        schema_name, result.get("type"),
+                    )
+                    active_schema = narrowed
+                    continue
+            return result
+        return result  # type: ignore[return-value]
 
     async def generate_text(
         self,

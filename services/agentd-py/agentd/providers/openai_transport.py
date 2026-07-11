@@ -10,6 +10,8 @@ from agentd.providers.contracts import ModelJsonTransport
 
 
 class OpenAIJsonTransport(ModelJsonTransport):
+    supports_anyof_grammar: bool = True
+
     def __init__(
         self,
         *,
