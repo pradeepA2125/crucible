@@ -1,5 +1,9 @@
 # Composer Start-Mode Selector Implementation Plan
 
+> **Status: NOT IMPLEMENTED — on hold (2026-07-11).** Design only; no code was written. Shelved
+> as more complex than the intended feature (a simple toggle over allowed actions/tools within
+> `DECIDE`, no state-machine change). See the spec's "On hold" note before resuming.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an `Agent | Edit` composer toggle so a chat turn can start directly in the `EDIT` phase (patch ops + `run_command` from turn 1) instead of always starting in `DECIDE`.

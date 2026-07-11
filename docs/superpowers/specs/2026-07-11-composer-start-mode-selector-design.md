@@ -1,8 +1,15 @@
 # Composer start-mode selector — `Agent` / `Edit` — design
 
 **Date:** 2026-07-11
-**Status:** draft, pending user review
+**Status:** NOT IMPLEMENTED — on hold. Design only; no code was written.
 **Parent:** chat controller phase model (`DECIDE` → `EDIT`/`EXPLAIN`)
+
+> **On hold (2026-07-11):** shelved as more complex than the intended feature. The wanted
+> behavior was a simpler toggle that only changes which actions/tools are allowed within the
+> existing `DECIDE` phase (add `run_command`; swap `propose_mode` for `edit`/`submit_changes`)
+> with **no** state-machine change. Before resuming, verify whether `edit`/`submit_changes` can
+> run without the `EDIT` phase's `TurnEditSession` shadow setup — that determines whether the
+> simpler "just change allowed actions" approach truly avoids touching the state machine.
 
 ## Context
 
