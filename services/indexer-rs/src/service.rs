@@ -3,7 +3,7 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::IndexerConfig;
@@ -164,15 +164,31 @@ impl IndexerService {
     }
 
     async fn watch_loop(&mut self) -> Result<()> {
-        let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
+        // The notify FSEvents backend on macOS delivers events on its own CF runloop
+        // thread.  The callback posts to a std::sync::mpsc; a spawn_blocking thread
+        // bridges that to a tokio channel so the async loop can .await events without
+        // blocking a tokio worker.  The watcher MUST stay alive in this scope — moving
+        // it into the spawn_blocking closure would drop std_tx (inside the watcher)
+        // when the closure exits, immediately closing the std channel.
+        let (std_tx, std_rx) = std_mpsc::channel::<notify::Result<Event>>();
         let mut watcher =
-            notify::recommended_watcher(move |res| if tx.send(res).is_err() {})?;
+            notify::recommended_watcher(move |res| { let _ = std_tx.send(res); })?;
         watcher.watch(&self.config.workspace_root, RecursiveMode::Recursive)?;
 
+        let (async_tx, mut async_rx) = tokio::sync::mpsc::channel::<notify::Result<Event>>(256);
+        // Bridge: dedicated OS thread pumps the std channel → async channel.
+        tokio::task::spawn_blocking(move || {
+            while let Ok(event) = std_rx.recv() {
+                if async_tx.blocking_send(event).is_err() {
+                    break;
+                }
+            }
+        });
+
         loop {
-            let event_result = match rx.recv() {
-                Ok(result) => result,
-                Err(_) => break,
+            let event_result = match async_rx.recv().await {
+                Some(result) => result,
+                None => break,
             };
 
             match event_result {
@@ -183,6 +199,8 @@ impl IndexerService {
             }
         }
 
+        // watcher drops here, after the loop exits (async_rx closed).
+        drop(watcher);
         Ok(())
     }
 
