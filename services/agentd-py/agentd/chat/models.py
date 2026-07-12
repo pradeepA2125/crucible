@@ -106,3 +106,8 @@ class ThreadLiveState(BaseModel):
     # The request's live todo checklist (raw item dicts), surfaced regardless of an active
     # task/gate so the UI can show progress. None when no list exists.
     todos: list[dict[str, Any]] | None = None
+    # Live exec sessions for this thread ({id, command, status, exit_code,
+    # started_at}); None when the feature is off or no sessions. STABLE rows
+    # only — no age_sec/unread_bytes, they'd churn the /live dedup signature
+    # every tick (the webview computes age locally from started_at).
+    sessions: list[dict[str, Any]] | None = None
