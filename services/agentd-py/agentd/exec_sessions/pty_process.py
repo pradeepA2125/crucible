@@ -16,6 +16,14 @@ Hardening (dry-run review 2026-07-12):
 - The child acquires the PTY as its controlling terminal via a TIOCSCTTY
   preexec — without it a session leader with only *inherited* slave fds has
   no ctty, the PTY's foreground pgrp is empty, and \\x03 signals nobody.
+- Spawn goes through subprocess.Popen in a worker thread, NEVER
+  asyncio.create_subprocess_exec (live smoke 2026-07-12): the production
+  uvicorn runs uvloop, whose uv_spawn fork path neither orders
+  dup2s/setsid before preexec_fn (so TIOCSCTTY sees the wrong fd 0 and
+  fails ENODEV) nor survives the preexec callback in a threaded parent —
+  the forked child wedged pre-exec and the parent blocked forever inside
+  uv_spawn's exec-status read, freezing the ENTIRE event loop. Popen always
+  takes CPython's thread-hardened fork_exec regardless of the running loop.
 """
 from __future__ import annotations
 
@@ -24,6 +32,7 @@ import logging
 import os
 import signal
 import struct
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -41,7 +50,7 @@ WRITE_MAX_BYTES = 4096
 
 
 class PtyProcess:
-    def __init__(self, proc: asyncio.subprocess.Process, master_fd: int,
+    def __init__(self, proc: subprocess.Popen[bytes], master_fd: int,
                  on_output: Callable[[bytes], None]) -> None:
         self._proc = proc
         self._master_fd = master_fd
@@ -52,7 +61,9 @@ class PtyProcess:
         self.pgid = proc.pid  # start_new_session=True ⇒ child is its own pgid
         loop = asyncio.get_running_loop()
         # ONE waiter for the process's whole life — see module docstring.
-        self._wait_task = loop.create_task(proc.wait())
+        # Popen.wait blocks in a worker thread; poll() stays non-blocking on
+        # the loop thread (it try-acquires the same waitpid lock).
+        self._wait_task = loop.create_task(asyncio.to_thread(proc.wait))
         loop.add_reader(master_fd, self._readable)
 
     @classmethod
@@ -76,11 +87,16 @@ class PtyProcess:
             # must not touch allocators/locks.
             fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                command, *args, cwd=str(cwd), env=env,
+        def _spawn_blocking() -> subprocess.Popen[bytes]:
+            # subprocess.Popen, NOT asyncio.create_subprocess_exec — see the
+            # module docstring's uvloop note. Blocking, so run off the loop.
+            return subprocess.Popen(
+                [command, *args], cwd=str(cwd), env=env,
                 stdin=slave, stdout=slave, stderr=slave,
                 start_new_session=True, preexec_fn=_acquire_ctty)
+
+        try:
+            proc = await asyncio.to_thread(_spawn_blocking)
         finally:
             os.close(slave)  # parent's copy; the child holds its own
         return cls(proc, master, on_output)
@@ -137,10 +153,12 @@ class PtyProcess:
             logger.warning("[exec-sessions] stdin write failed", exc_info=True)
 
     def is_running(self) -> bool:
-        return self._proc.returncode is None
+        # Popen.returncode only updates via poll()/wait() — poll here so the
+        # loop thread sees an exit even before the waiter thread reaps it.
+        return self._proc.poll() is None
 
     def exit_code(self) -> int | None:
-        return self._proc.returncode
+        return self._proc.poll()
 
     async def wait(self, timeout_sec: float) -> bool:
         """True if the process exited within timeout_sec. Races the single

@@ -1,12 +1,45 @@
 import asyncio
 import os
 import sys
+import threading
 
 import pytest
 
 from agentd.exec_sessions.pty_process import PtyProcess
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="unix pty tests")
+
+
+def test_spawn_completes_under_uvloop(tmp_path):
+    """Regression (live smoke 2026-07-12): the production uvicorn runs uvloop,
+    and asyncio.create_subprocess_exec + preexec_fn went through uvloop's
+    uv_spawn fork path, where the preexec Python callback wedged the forked
+    child pre-exec and the parent blocked forever in uv_spawn's exec-status
+    read — freezing the WHOLE event loop (every HTTP request hung). Vanilla
+    asyncio (what pytest-asyncio uses) takes CPython's thread-hardened
+    fork_exec, so only a real uvloop loop exposes it. Runs in a side thread
+    so a regression fails the test instead of hanging the suite."""
+    uvloop = pytest.importorskip("uvloop")
+    result: dict[str, bytes] = {}
+
+    def _run() -> None:
+        async def main() -> bytes:
+            chunks: list[bytes] = []
+            proc = await PtyProcess.spawn(
+                sys.executable, ["-u", "-c", "print('uvloop ok')"],
+                cwd=tmp_path, env=dict(os.environ), on_output=chunks.append)
+            assert await proc.wait(timeout_sec=10) is True
+            proc.close()
+            return b"".join(chunks)
+
+        with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+            result["out"] = runner.run(main())
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(timeout=20)
+    assert not worker.is_alive(), "spawn wedged the uvloop event loop (uv_spawn fork hang)"
+    assert b"uvloop ok" in result["out"]
 
 
 async def _spawn(code: str, tmp_path, chunks: list[bytes]) -> PtyProcess:
