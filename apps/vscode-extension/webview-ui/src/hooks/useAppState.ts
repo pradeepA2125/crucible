@@ -34,6 +34,8 @@ const INITIAL: AppState = {
   liveReview: null,
   liveError: null,
   liveTodos: null,
+  liveSessions: null,
+  sessionTranscripts: {},
   workbar: null,
   liveStatus: null,
   turnActive: false,
@@ -331,6 +333,22 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "clearLiveTodos":
       return { ...state, liveTodos: null };
+
+    case "renderLiveSessions":
+      return { ...state, liveSessions: msg.sessions };
+
+    case "clearLiveSessions":
+      // Transcripts are per-session views — stale once the strip empties.
+      return { ...state, liveSessions: null, sessionTranscripts: {} };
+
+    case "sessionTranscript":
+      return {
+        ...state,
+        sessionTranscripts: {
+          ...state.sessionTranscripts,
+          [msg.sessionId]: msg.transcript,
+        },
+      };
 
     case "updateWorkbar":
       return { ...state, workbar: msg.info };

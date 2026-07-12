@@ -27,6 +27,8 @@ const base: AppState = {
   liveReview: null,
   liveError: null,
   liveTodos: null,
+  liveSessions: null,
+  sessionTranscripts: {},
   workbar: null,
   liveStatus: null,
   turnActive: false,

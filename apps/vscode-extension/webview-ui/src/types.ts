@@ -75,6 +75,26 @@ export interface TodoItem {
 }
 export interface LiveTodosView { items: TodoItem[] }
 
+// One live exec session row (mirror of editor-client SessionSummary — this bundle
+// does not import it). started_at (epoch sec) is deliberately the only time field:
+// the displayed age is computed locally so /live rows stay signature-stable.
+export interface LiveSessionItem {
+  id: string;
+  command: string;
+  status: "running" | "exited";
+  exit_code: number | null;
+  started_at: number;
+}
+export interface LiveSessionsView { items: LiveSessionItem[] }
+
+// The expandable PTY inspect payload (mirror of editor-client SessionTranscript).
+export interface SessionTranscriptView {
+  output_tail: string;
+  stdin_history: { ts: number; chars: string }[];
+  status: "running" | "exited";
+  exit_code: number | null;
+}
+
 // LLM-authored run narrative (headline + points), shown on the Review/Error cards.
 export interface TaskNarrativeView {
   headline: string;
@@ -132,6 +152,9 @@ export type ExtensionMessage =
   | { type: "clearLiveError" }
   | { type: "renderLiveTodos"; todos: LiveTodosView }
   | { type: "clearLiveTodos" }
+  | { type: "renderLiveSessions"; sessions: LiveSessionsView }
+  | { type: "clearLiveSessions" }
+  | { type: "sessionTranscript"; sessionId: string; transcript: SessionTranscriptView | null }
   | { type: "liveStatus"; status: string | null; turnActive?: boolean }
   | { type: "resolveInlineChangeCard"; taskId: string; resolution: "applied" | "discarded" }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } }
@@ -184,6 +207,8 @@ export type WebviewMessage =
   // Chat-window shortcut to the standalone Memory Inspector panel/command.
   | { type: "openMemoryPanel" }
   | { type: "openGraphPanel" }
+  // Exec sessions: PTY inspect fetch for an expanded session-strip row.
+  | { type: "fetchSessionTranscript"; sessionId: string }
   // @-mention composer: workspace file listing + click-to-open.
   | { type: "listWorkspaceFiles" }
   | { type: "openFile"; path: string };
@@ -209,6 +234,9 @@ export interface AppState {
   liveReview: LiveReviewView | null;
   liveError: LiveErrorView | null;
   liveTodos: LiveTodosView | null;
+  liveSessions: LiveSessionsView | null;
+  // sessionId → transcript for expanded strip rows (null = fetch failed).
+  sessionTranscripts: Record<string, SessionTranscriptView | null>;
   workbar: WorkbarInfo | null;
   liveStatus: string | null;
   // True while a controller turn / held-open controller gate is in flight (durable
