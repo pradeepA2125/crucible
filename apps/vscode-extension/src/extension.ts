@@ -160,7 +160,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     () => {
       void vscode.commands.executeCommand("crucible.openGraphPanel");
-    }
+    },
+    (sessionId: string) => controller.fetchSessionTranscript(sessionId)
   );
 
   const ui: ControllerUI = {
@@ -311,6 +312,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     clearLiveTodos: () => {
       chatPanel.clearLiveTodos();
+    },
+    renderLiveSessions: (sessions) => {
+      chatPanel.renderLiveSessions(sessions);
+    },
+    clearLiveSessions: () => {
+      chatPanel.clearLiveSessions();
     },
     sendLiveStatus: (status, turnActive) => {
       chatPanel.sendLiveStatus(status, turnActive);

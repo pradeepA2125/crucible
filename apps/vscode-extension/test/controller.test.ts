@@ -19,6 +19,7 @@ import {
   type ControllerUI,
   type LiveGateView,
   type LivePlanView,
+  type LiveSessionsView,
   type SettingsProvider,
 } from "../src/controller.js";
 import type { SessionStore } from "../src/session-store.js";
@@ -240,6 +241,8 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     clearLiveError: () => {},
     renderLiveTodos: () => {},
     clearLiveTodos: () => {},
+    renderLiveSessions: () => {},
+    clearLiveSessions: () => {},
     sendLiveStatus: () => {},
     promptSetup: () => {},
     ...overrides,
@@ -1110,6 +1113,94 @@ describe("CrucibleController — command-decision", () => {
     state.liveResponse = NULL_LIVE_STATE;
     await controller.pollThreadLiveState();
     expect(gateClears).toBe(1);
+  });
+
+  test("pollThreadLiveState renders the session strip, dedups stable rows, re-renders on change", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: NULL_LIVE_STATE,
+    };
+    const backend = createStubBackend(state);
+    const sessionRenders: LiveSessionsView[] = [];
+    let sessionClears = 0;
+    const ui = createUi({
+      renderLiveSessions: (v) => { sessionRenders.push(v); },
+      clearLiveSessions: () => { sessionClears += 1; },
+    });
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-1");
+    await Promise.resolve();
+    controller.dispose();
+    sessionRenders.length = 0; sessionClears = 0;
+
+    const row = {
+      id: "sess-1", command: "python -m http.server 8765",
+      status: "running" as const, exit_code: null, started_at: 1720000000,
+    };
+    state.liveResponse = { ...NULL_LIVE_STATE, sessions: [row] };
+    await controller.pollThreadLiveState();
+    expect(sessionRenders).toHaveLength(1);
+    expect(sessionRenders[0].items[0].id).toBe("sess-1");
+
+    // Identical rows → dedup (possible ONLY because rows are stable: no ticking
+    // age_sec/unread_bytes — the review-fix #2 invariant).
+    await controller.pollThreadLiveState();
+    expect(sessionRenders).toHaveLength(1);
+
+    // A real change (running→exited) re-renders — proves sessions is IN the signature.
+    state.liveResponse = {
+      ...NULL_LIVE_STATE,
+      sessions: [{ ...row, status: "exited" as const, exit_code: 0 }],
+    };
+    await controller.pollThreadLiveState();
+    expect(sessionRenders).toHaveLength(2);
+    expect(sessionRenders[1].items[0].status).toBe("exited");
+
+    // No sessions → strip clears.
+    state.liveResponse = NULL_LIVE_STATE;
+    await controller.pollThreadLiveState();
+    expect(sessionClears).toBeGreaterThan(0);
+  });
+
+  test("fetchSessionTranscript resolves via the active chat thread and nulls on error", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [],
+    };
+    const transcriptCalls: Array<{ threadId: string; sessionId: string }> = [];
+    const backend = {
+      ...createStubBackend(state),
+      getSessionTranscript: async (threadId: string, sessionId: string) => {
+        transcriptCalls.push({ threadId, sessionId });
+        if (sessionId === "sess-gone") throw new Error("404");
+        return {
+          output_tail: "Serving HTTP on :: port 8765",
+          stdin_history: [{ ts: 1, chars: "y\n" }],
+          status: "running" as const,
+          exit_code: null,
+        };
+      },
+    };
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-9");
+    await Promise.resolve();
+    controller.dispose();
+
+    const t = await controller.fetchSessionTranscript("sess-1");
+    expect(t?.output_tail).toContain("Serving HTTP");
+    expect(transcriptCalls[0]).toEqual({ threadId: "chat-9", sessionId: "sess-1" });
+
+    const missing = await controller.fetchSessionTranscript("sess-gone");
+    expect(missing).toBeNull();
   });
 
   test("pollThreadLiveState pushes turnActive false→true→false even when card signature is unchanged", async () => {
