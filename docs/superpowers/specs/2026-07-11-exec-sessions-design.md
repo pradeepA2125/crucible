@@ -297,3 +297,48 @@ Dependency: `pywinpty; sys_platform == 'win32'`.
 - **UTF-8 code points split at a cursor boundary decode as replacement
   chars** (cosmetic; an incremental decoder per cursor fixes it if it ever
   matters).
+
+## Live smoke 2026-07-12 (Task 12) — VERIFIED
+
+Environment: managed-runtime backend (extension spawn, uvicorn+uvloop, editable
+agentd) against `workspaces/crucible-stress`, provider TurboQuant
+`qwen3.6:35b-a3b-q4_K_M`, dev host driven via raw CDP.
+
+Verified end to end:
+1. **start_session via command gate** — "start `python -m http.server 8765` in
+   the background…" → gate rendered (`kind="command"`), Allow once → server
+   spawned (whole-line `command` recovered by `_split_command`), poll output
+   contained "Serving HTTP on :: port 8765", registry file recorded the session,
+   `/live` carried the stable session row, webview strip showed `● running · Ns`.
+2. **Expand transcript** — clicking the strip row expanded the PTY tail
+   (server log incl. request lines) and it live-refreshed while open (a new
+   request line appeared within the 2 s re-poll).
+3. **Cross-turn survival + kill** — second turn: ModeGate (model chose
+   run_command for curl) → curl 200 → `kill_session` → process gone, registry
+   `[]`, `/live` sessions cleared, strip disappeared.
+4. **No orphans** — `ps` clean after kill.
+5. **Crash reap** — third turn started a server on :8766 (registry recorded),
+   backend `kill -9`'d mid-session; extension crash-watcher respawned it; the
+   orphan was already dead at respawn (PTY master close → kernel SIGHUP to the
+   session's foreground group — a side effect of the TIOCSCTTY fix) and the
+   startup reap ran and cleared the registry to `[]`. Belt (SIGHUP) and
+   suspenders (reap) both exercised; the reap's kill path stays covered by
+   `test_reap_kills_live_recorded_process`.
+
+Two real bugs found by the smoke, both fixed + committed with regression tests:
+- **uvloop spawn wedge (CRITICAL):** `asyncio.create_subprocess_exec` +
+  `preexec_fn` under uvloop (the production uvicorn loop) wedged the forked
+  child pre-exec and blocked the parent inside `uv_spawn`'s exec-status read —
+  freezing the ENTIRE event loop (every HTTP request hung; observed live).
+  Fixed: spawn via `subprocess.Popen` in a worker thread (CPython's
+  thread-hardened `fork_exec`, loop-agnostic). Regression:
+  `test_spawn_completes_under_uvloop` (real uvloop loop in a side thread).
+  pytest-asyncio's vanilla loop could never catch this.
+- **Managed runtime ran the feature dark:** `buildBackendEnv` (extension spawn
+  env) lacked `CRUCIBLE_EXEC_SESSIONS_ENABLED=1` — only `start-backend.sh`/.env
+  opted in. Added alongside the other chat-feature opt-ins + test assertion.
+
+Known non-blocking observation: weak-model answer-emission attractor (model
+emits `tool_call tool=answer` repeatedly before the loop corrects) showed up in
+turn 2 — controller-loop behavior, not exec-sessions; already tracked by the
+malformed-action correction work.
