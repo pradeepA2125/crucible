@@ -273,6 +273,30 @@ export const TodoItemSchema = z.object({
 });
 export type TodoItem = z.infer<typeof TodoItemSchema>;
 
+// One live exec session row on /live. STABLE by design (review fix #2):
+// started_at instead of a ticking age_sec/unread_bytes — mutating fields here
+// would flip the host's lastLiveSignature on every 1s poll and re-fire the
+// whole render block at 1 Hz. The webview computes displayed age locally.
+// Snake keys pass through unmapped (the memory-inspect signals convention).
+export const SessionSummarySchema = z.object({
+  id: z.string(),
+  command: z.string(),
+  status: z.enum(["running", "exited"]),
+  exit_code: z.number().nullable(),
+  started_at: z.number(),
+});
+export type SessionSummary = z.infer<typeof SessionSummarySchema>;
+
+// The expandable PTY inspect payload (GET .../sessions/{id}/transcript).
+// Served off an independent ring-buffer view — never advances the model cursor.
+export const SessionTranscriptSchema = z.object({
+  output_tail: z.string(),
+  stdin_history: z.array(z.object({ ts: z.number(), chars: z.string() })),
+  status: z.enum(["running", "exited"]),
+  exit_code: z.number().nullable(),
+});
+export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
+
 // A thread's current actionable state — what the UI polls and renders from.
 // Resolved server-side from the thread's active task (GET /chat/threads/{id}/live),
 // so reloads and resume task-id churn self-heal on the next poll.
@@ -289,6 +313,7 @@ export const ThreadLiveStateSchema = z.object({
   runSummary: RunSummarySchema.nullable().optional(),
   taskNarrative: TaskNarrativeSchema.nullable().optional(),
   todos: z.array(TodoItemSchema).nullable().optional(),
+  sessions: z.array(SessionSummarySchema).nullable().optional(),
 });
 export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 
@@ -408,6 +433,7 @@ export interface BackendTaskClient {
   createChatThread(workspacePath: string, title?: string): Promise<ChatThreadSummary>;
   getChatThread(threadId: string): Promise<ChatThread>;
   getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
+  getSessionTranscript(threadId: string, sessionId: string): Promise<SessionTranscript>;
   getConfig(): Promise<BackendConfig>;
   getMemoryInspect(threadId: string): Promise<RecallTrace | null>;
   listMemories(filter: {

@@ -11,6 +11,8 @@ import {
   ChatThreadSchema,
   ChatEventSchema,
   ThreadLiveStateSchema,
+  SessionTranscriptSchema,
+  type SessionTranscript,
   BackendConfigSchema,
   type BackendConfig,
   RecallTraceSchema,
@@ -561,7 +563,17 @@ export class HttpBackendClient implements BackendTaskClient {
       // optional and silently parses to undefined → controller.ts never posts
       // renderLiveTodos → the TodoCard never renders (the whole /live render path is dead).
       todos: raw["todos"] ?? null,
+      // Session rows keep their snake keys (id/command/status/exit_code/started_at)
+      // — same passthrough convention as the memory-inspect signals.
+      sessions: raw["sessions"] ?? null,
     });
+  }
+
+  async getSessionTranscript(threadId: string, sessionId: string): Promise<SessionTranscript> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/sessions/${encodeURIComponent(sessionId)}/transcript`
+    );
+    return SessionTranscriptSchema.parse(raw);
   }
 
   async getConfig(): Promise<BackendConfig> {

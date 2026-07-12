@@ -586,6 +586,67 @@ describe("HttpBackendClient", () => {
     expect(live.todos ?? null).toBeNull();
   });
 
+  test("getThreadLiveState maps exec sessions from /live", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            active_task_id: null,
+            status: null,
+            pending_gate: null,
+            plan: null,
+            sessions: [{
+              id: "sess-1", command: "python -m http.server", status: "running",
+              exit_code: null, started_at: 1720000000,
+            }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-1");
+    expect(live.sessions?.[0]?.id).toBe("sess-1");
+    expect(live.sessions?.[0]?.status).toBe("running");
+    expect(live.sessions?.[0]?.started_at).toBe(1720000000);
+  });
+
+  test("getThreadLiveState maps sessions to null when absent", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({ active_task_id: null, status: null, pending_gate: null, plan: null }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        ),
+    });
+    const live = await client.getThreadLiveState("chat-1");
+    expect(live.sessions ?? null).toBeNull();
+  });
+
+  test("getSessionTranscript fetches and parses the PTY transcript", async () => {
+    let capturedUrl = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (url) => {
+        capturedUrl = String(url);
+        return new Response(
+          JSON.stringify({
+            output_tail: "Serving HTTP on :: port 8765",
+            stdin_history: [{ ts: 1, chars: "y\n" }],
+            status: "running",
+            exit_code: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+    });
+    const t = await client.getSessionTranscript("chat-1", "sess-1");
+    expect(capturedUrl).toContain("/v1/chat/threads/chat-1/sessions/sess-1/transcript");
+    expect(t.output_tail).toContain("Serving HTTP");
+    expect(t.stdin_history[0]?.chars).toBe("y\n");
+    expect(t.exit_code).toBeNull();
+  });
+
   test("getThreadLiveState defaults turnActive to false when absent", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",
