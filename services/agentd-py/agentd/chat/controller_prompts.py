@@ -424,6 +424,29 @@ even when the request seems small. Worked shape:
 """
 
 
+_SESSIONS_BLOCK = """
+
+BACKGROUND PROCESS SESSIONS
+start_session runs a command in a PTY session that SURVIVES across turns —
+it shines for dev servers, watchers, REPLs, and anything interactive;
+run_command shines for quick one-shot commands that finish on their own.
+- Yield semantics: start_session waits ~2s (yield_time_ms). If the command
+  finishes in time you get the final output; otherwise a session_id.
+- Poll with write_stdin(session_id, chars="") — returns only NEW output since
+  your last read. Send input with chars ("y\\n" answers a prompt; "\\x03" is
+  Ctrl-C). Give slow processes a longer yield_time_ms instead of hammering
+  short polls.
+- Each start_session pauses for a user approval card — that pause is expected
+  behavior, not an error.
+- ALWAYS kill_session what you started once you're done with it, unless the
+  user asked to keep it running (say so explicitly if you leave one running).
+- Sessions belong to this conversation. When resuming work, check
+  list_sessions — a server you started earlier may still be up.
+- Typical live smoke: start_session the server -> poll until the ready line
+  appears -> run_command curl against it -> kill_session.
+"""
+
+
 _SKILLS_BLOCK_HEADER = """
 
 AVAILABLE SKILLS — specialized playbooks for this workspace. Each line is a skill's
@@ -523,6 +546,11 @@ def format_controller_system_prompt(
     if any(str((d or {}).get("name", "")) == "write_doc"
            for d in tool_definitions if isinstance(d, dict)):
         base += _DOC_WRITE_BLOCK
+    # exec-session teaching block: keyed off the merged tool definitions (same
+    # pattern as the MCP/write_doc blocks) so no separate flag parameter is needed.
+    if any(str((d or {}).get("name", "")) == "start_session"
+           for d in tool_definitions if isinstance(d, dict)):
+        base += _SESSIONS_BLOCK
     return base
 
 

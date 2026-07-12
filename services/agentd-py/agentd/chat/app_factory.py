@@ -72,4 +72,7 @@ def build_app(
     router = build_router(store, orchestrator, ws_manager, None, agent)
     app = FastAPI()
     app.include_router(router)
+    # Test seam: route tests reach the chat handler to attach per-test doubles
+    # (e.g. a stub exec-session manager) without re-plumbing build_router.
+    app.state.chat_agent = agent
     return app

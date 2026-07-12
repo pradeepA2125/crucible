@@ -269,6 +269,17 @@ if _mcp_manager is not None:
     app.router.add_event_handler("startup", _mcp_manager.start)
     app.router.add_event_handler("shutdown", _mcp_manager.shutdown)
 
+# Exec sessions: reap orphans a crashed predecessor leaked (registry file) at
+# startup; kill-all + clear at shutdown. Both best-effort inside the manager.
+_exec_manager = getattr(_chat_agent, "_exec_sessions", None)
+if _exec_manager is not None:
+
+    def _reap_exec_orphans() -> None:
+        _exec_manager.reap_orphans()
+
+    app.router.add_event_handler("startup", _reap_exec_orphans)
+    app.router.add_event_handler("shutdown", _exec_manager.shutdown)
+
 # Managed-spawn lockfile: the extension sets CRUCIBLE_PORT and reads/reaps
 # <workspace>/.crucible/state/agentd.lock. The dev script doesn't set it — no-op there.
 _lock_port_raw = os.getenv("CRUCIBLE_PORT", "").strip()

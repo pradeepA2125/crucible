@@ -231,6 +231,7 @@ def build_router(
             is_skills_enabled,
             is_task_subsystem_enabled,
         )
+        from agentd.exec_sessions.config import is_exec_sessions_enabled
 
         return {
             "task_subsystem_enabled": is_task_subsystem_enabled(),
@@ -238,6 +239,7 @@ def build_router(
             "memory_enabled": is_memory_enabled(),
             "skills_enabled": is_skills_enabled(),
             "mcp_enabled": is_mcp_enabled(),
+            "exec_sessions_enabled": is_exec_sessions_enabled(),
             "provider": (
                 {
                     "backend": provider_runtime.backend,  # type: ignore[attr-defined]
@@ -1344,7 +1346,27 @@ def build_router(
             # open controller gate parked on a future) keeps input disabled across reload.
             # The legacy ChatAgent has no _active_turns → resolves to False (no regression).
             live.turn_active = thread_id in getattr(_chat_agent, "_active_turns", {})
+            # Exec sessions strip (flag-tolerant: legacy ChatAgent / flag-off has no
+            # manager → None). live_summaries rows are deliberately stable — see
+            # SessionManager.live_summaries' signature-churn invariant.
+            _exec_mgr = getattr(_chat_agent, "_exec_sessions", None)
+            if _exec_mgr is not None:
+                live.sessions = _exec_mgr.live_summaries(thread_id) or None
             return live.model_dump()
+
+        @router.get("/chat/threads/{thread_id}/sessions/{session_id}/transcript")
+        async def get_session_transcript(thread_id: str, session_id: str) -> dict:
+            """Read-only PTY inspect for the expandable session strip. Served
+            off the ring buffer's independent tail view — NEVER advances the
+            model's read cursor (spec invariant). Not part of /live: fetched
+            on expand, re-polled ~2s only while expanded."""
+            _exec_mgr = getattr(_chat_agent, "_exec_sessions", None)
+            if _exec_mgr is None:
+                raise HTTPException(status_code=404, detail="exec sessions disabled")
+            transcript = _exec_mgr.transcript(thread_id, session_id)
+            if transcript is None:
+                raise HTTPException(status_code=404, detail="unknown session")
+            return transcript
 
         @router.post("/chat/threads/{thread_id}/message")
         async def post_chat_message(thread_id: str, request: dict) -> StreamingResponse:

@@ -102,6 +102,7 @@ class ChatController:
         command_decision_timeout_sec: float = 0.0,
         memory_harness: MemoryHarness = NO_OP_HARNESS,
         mcp_manager: object | None = None,
+        exec_session_manager: object | None = None,
     ) -> None:
         self._workspace_path = workspace_path
         self._reasoning = reasoning_engine
@@ -135,6 +136,11 @@ class ChatController:
         # MCP: process-scoped connection manager (None unless CRUCIBLE_MCP_ENABLED —
         # constructed in select_chat_handler, connected in main.py's startup hook).
         self._mcp_manager = mcp_manager
+        # PTY exec sessions: process-scoped SessionManager (None unless
+        # CRUCIBLE_EXEC_SESSIONS_ENABLED — built in select_chat_handler; main.py
+        # registers its startup reap + shutdown kill-all). Sessions are
+        # thread-scoped and survive across turns.
+        self._exec_sessions = exec_session_manager
         # thread_id → future for the in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -194,6 +200,7 @@ class ChatController:
         active_skills: dict[str, str] | None = None,
         mcp_approval_cb: object | None = None,
         doc_approval_cb: object | None = None,
+        exec_session_source: object | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -217,6 +224,8 @@ class ChatController:
             from agentd.chat.doc_write_source import DocWriteToolSource
 
             sources.append(DocWriteToolSource(self._workspace_path, doc_approval_cb))
+        if exec_session_source is not None:
+            sources.append(exec_session_source)
         return AggregatingToolRegistry(sources)
 
     async def _persist_todos(self, thread_id: str, raw: str | None) -> None:
@@ -368,6 +377,16 @@ class ChatController:
         doc_cb = partial(self._doc_approval_cb, thread_id, channel_id)
         # Persist the ledger mid-turn on every write_todos so /live renders it during the turn.
         todo_persist_cb = partial(self._persist_todos, thread_id)
+        # PTY exec sessions (thread-scoped; start gated through the SAME command
+        # approval gate as run_command). Available in DECIDE and EDIT by design.
+        exec_source = None
+        if self._exec_sessions is not None:
+            from agentd.exec_sessions.manager import SessionManager
+            from agentd.exec_sessions.tool_source import ExecSessionToolSource
+
+            assert isinstance(self._exec_sessions, SessionManager)
+            exec_source = ExecSessionToolSource(
+                self._exec_sessions, thread_id, command_cb)
         # Shared active-skills map: SkillToolSource (in the registry) writes activated bodies
         # here, the loop re-injects them into the dynamic tail each iteration. A /skill
         # forced-load seeds it now so the body is active from iteration 1.
@@ -386,7 +405,8 @@ class ChatController:
             self._build_registry(command_cb, ledger, todo_persist_cb,
                                   active_skills=active_skills,
                                   mcp_approval_cb=mcp_cb,
-                                  doc_approval_cb=doc_cb), self._broadcaster,
+                                  doc_approval_cb=doc_cb,
+                                  exec_session_source=exec_source), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger,
             task_subsystem_enabled=self._task_subsystem_enabled,
             memory_harness=self._memory_harness, active_skills=active_skills)

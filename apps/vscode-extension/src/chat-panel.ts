@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import type { ChatMessage, ChatThreadSummary, CommandDecision, DocWriteDecision, McpToolDecision } from "@crucible/editor-client";
-import type { LiveGateView, LivePlanView, LiveTodosView } from "./controller.js";
+import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
 
 // Builds a settings message handler bound to a poster into THIS webview — the chat
@@ -67,6 +67,9 @@ export type OpenSettingsHandler = (section?: string) => void;
 export type OpenMemoryPanelHandler = () => void;
 export type OpenGraphPanelHandler = () => void;
 export type ListWorkspaceFilesHandler = () => Promise<string[]>;
+export type FetchSessionTranscriptHandler = (
+  sessionId: string,
+) => Promise<import("@crucible/editor-client").SessionTranscript | null>;
 export type OpenFileHandler = (relativePath: string) => void;
 
 export class ChatPanel {
@@ -112,7 +115,8 @@ export class ChatPanel {
     private readonly onOpenMemoryPanel: OpenMemoryPanelHandler = () => {},
     private readonly onListWorkspaceFiles: ListWorkspaceFilesHandler = async () => [],
     private readonly onOpenFile: OpenFileHandler = () => {},
-    private readonly onOpenGraphPanel: OpenGraphPanelHandler = () => {}
+    private readonly onOpenGraphPanel: OpenGraphPanelHandler = () => {},
+    private readonly onFetchSessionTranscript: FetchSessionTranscriptHandler = async () => null
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -269,6 +273,12 @@ export class ChatPanel {
           const paths = await this.onListWorkspaceFiles();
           this.panel?.webview.postMessage({ type: "workspaceFileList", paths });
         })();
+      } else if (m["type"] === "fetchSessionTranscript") {
+        const sessionId = m["sessionId"] as string;
+        p = (async () => {
+          const transcript = await this.onFetchSessionTranscript(sessionId);
+          this.panel?.webview.postMessage({ type: "sessionTranscript", sessionId, transcript });
+        })();
       } else if (m["type"] === "openFile") {
         this.onOpenFile(m["path"] as string);
         return;
@@ -419,6 +429,14 @@ export class ChatPanel {
 
   clearLiveTodos(): void {
     this.panel?.webview.postMessage({ type: "clearLiveTodos" });
+  }
+
+  renderLiveSessions(sessions: LiveSessionsView): void {
+    this.panel?.webview.postMessage({ type: "renderLiveSessions", sessions });
+  }
+
+  clearLiveSessions(): void {
+    this.panel?.webview.postMessage({ type: "clearLiveSessions" });
   }
 
   sendLiveStatus(status: string | null, turnActive: boolean): void {

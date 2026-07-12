@@ -43,6 +43,7 @@ describe("buildBackendEnv", () => {
     expect(env.GEMINI_API_KEY).toBe("sk-secret");
     expect(env.CRUCIBLE_RIPGREP_CMD).toBe("/rt/bin/rg");
     expect(env.CRUCIBLE_CHAT_CONTROLLER).toBe("1");
+    expect(env.CRUCIBLE_EXEC_SESSIONS_ENABLED).toBe("1");
     expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".crucible/state", "agentd.sqlite3"));
   });
   it("sets every relative-path default the backend reads, absolute and workspace-rooted", () => {

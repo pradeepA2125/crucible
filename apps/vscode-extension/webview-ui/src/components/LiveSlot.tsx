@@ -1,6 +1,10 @@
 import { sig } from "../hooks/useAppState";
-import type { LiveGateView, LivePlanView, LiveReviewView, LiveErrorView, LiveTodosView } from "../types";
+import type {
+  LiveGateView, LivePlanView, LiveReviewView, LiveErrorView, LiveTodosView,
+  LiveSessionsView, SessionTranscriptView,
+} from "../types";
 import { TodoCard } from "./messages/TodoCard";
+import { SessionStrip } from "./messages/SessionStrip";
 import { CommandGate } from "./messages/gates/CommandGate";
 import { ScopeGate } from "./messages/gates/ScopeGate";
 import { ValidationGate } from "./messages/gates/ValidationGate";
@@ -55,6 +59,9 @@ interface Props {
   /** Already filtered for dismissal by the caller. */
   liveError: LiveErrorView | null;
   liveTodos?: LiveTodosView | null;
+  liveSessions?: LiveSessionsView | null;
+  sessionTranscripts?: Record<string, SessionTranscriptView | null>;
+  onExpandSession?: (sessionId: string) => void;
   onDismissError: () => void;
 }
 
@@ -68,14 +75,26 @@ interface Props {
  *
  * Returns null when all four slots are empty.
  */
-export function LiveSlot({ liveGate, livePlan, liveReview, liveError, liveTodos, onDismissError }: Props) {
+export function LiveSlot({
+  liveGate, livePlan, liveReview, liveError, liveTodos,
+  liveSessions, sessionTranscripts, onExpandSession, onDismissError,
+}: Props) {
   const hasTodos = liveTodos != null && liveTodos.items.length > 0;
+  const hasSessions = liveSessions != null && liveSessions.items.length > 0;
   const hasContent = liveGate !== null || livePlan !== null || liveReview !== null
-    || liveError !== null || hasTodos;
+    || liveError !== null || hasTodos || hasSessions;
   if (!hasContent) return null;
 
   return (
     <div className="flex flex-col gap-2 px-3 py-2 flex-shrink-0">
+      {hasSessions && (
+        <SessionStrip
+          items={liveSessions.items}
+          transcripts={sessionTranscripts ?? {}}
+          onExpand={onExpandSession ?? (() => {})}
+        />
+      )}
+
       {liveTodos != null && liveTodos.items.length > 0 && <TodoCard items={liveTodos.items} />}
 
       {liveGate !== null && (

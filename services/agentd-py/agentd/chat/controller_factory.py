@@ -128,6 +128,18 @@ def select_chat_handler(
             from agentd.mcp.config import McpConfigLoader
 
             mcp_manager = McpConnectionManager(McpConfigLoader(workspace_path))
+        # PTY exec sessions (default off): one process-scoped SessionManager over
+        # the frozen workspace_path; main.py registers startup reap + shutdown
+        # kill-all (the MCP-manager pattern).
+        exec_manager = None
+        from agentd.exec_sessions.config import is_exec_sessions_enabled
+
+        if is_exec_sessions_enabled():
+            from pathlib import Path
+
+            from agentd.exec_sessions.manager import SessionManager
+
+            exec_manager = SessionManager(Path(workspace_path))
         return ChatController(
             workspace_path=workspace_path,
             reasoning_engine=DefaultReasoningEngine(
@@ -144,6 +156,7 @@ def select_chat_handler(
             command_decision_timeout_sec=command_decision_timeout_sec,
             memory_harness=memory_harness,
             mcp_manager=mcp_manager,
+            exec_session_manager=exec_manager,
         )
 
     from agentd.chat.agent import ChatAgent

@@ -7,6 +7,8 @@ import type {
   DocWriteDecision,
   StreamEvent,
   ResumeTaskResponse,
+  SessionSummary,
+  SessionTranscript,
   TaskResult,
   TaskStatus,
   TaskSubmission,
@@ -89,6 +91,8 @@ export interface ControllerUI {
   clearLiveError(): void;
   renderLiveTodos(todos: LiveTodosView): void;
   clearLiveTodos(): void;
+  renderLiveSessions(sessions: LiveSessionsView): void;
+  clearLiveSessions(): void;
   sendLiveStatus(status: string | null, turnActive: boolean): void;
 }
 
@@ -109,6 +113,10 @@ export interface LiveTodosView {
     status: "pending" | "in_progress" | "done" | "blocked" | "cancelled";
     note: string;
   }[];
+}
+
+export interface LiveSessionsView {
+  items: SessionSummary[];
 }
 
 export interface DiffService {
@@ -1779,6 +1787,11 @@ export class CrucibleController {
       // consumed after this gate — it MUST be in the signature, or a checklist change
       // (e.g. an item flipped to done) is deduped away and the card never updates.
       todos: live.todos,
+      // Same invariant, both directions: sessions MUST be here or the strip never
+      // updates; AND the rows must stay stable while nothing real changes (backend
+      // ships started_at, never a ticking age_sec/unread_bytes) or this signature
+      // would differ on every 1s poll and re-fire the whole render block at 1 Hz.
+      sessions: live.sessions,
     });
     if (signature === this.lastLiveSignature) {
       return; // dedup — nothing actionable changed
@@ -1878,9 +1891,31 @@ export class CrucibleController {
       this.ui.clearLiveTodos();
     }
 
+    if (live.sessions && live.sessions.length > 0) {
+      this.ui.renderLiveSessions({ items: live.sessions });
+    } else {
+      this.ui.clearLiveSessions();
+    }
+
     this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false);
     } finally {
       this.livePollInFlight = false;
+    }
+  }
+
+  /** PTY inspect fetch for the expandable session strip. Read-only (the
+   * backend serves it off an independent buffer view — never advances the
+   * model's read cursor). Null on any error: the webview shows "unavailable"
+   * rather than surfacing a transient 404 (session dropped between polls). */
+  async fetchSessionTranscript(sessionId: string): Promise<SessionTranscript | null> {
+    const threadId = this.activeThreadId;
+    if (!threadId) {
+      return null;
+    }
+    try {
+      return await this.clientForChat().getSessionTranscript(threadId, sessionId);
+    } catch {
+      return null;
     }
   }
 
