@@ -82,38 +82,47 @@ class SessionSpawnError(Exception):
 
 
 class RingBuffer:
-    """Byte ring with absolute offsets so multiple cursors read independently."""
+    """Byte ring with absolute offsets so multiple cursors read independently.
+
+    The drop marker is injected at SERVING time (a reader whose cursor lies
+    below the evicted boundary gets it prefixed), never stored in the buffer:
+    an in-buffer marker written on the next append never materializes when the
+    overflow happens on the LAST chunk — exactly what Linux PTYs produce by
+    delivering a whole burst in one big read (caught by CI: the same test
+    passed on macOS, whose PTY chunks reads smaller). Per-reader injection is
+    also more truthful — only cursors that actually missed bytes see it."""
 
     def __init__(self, cap: int) -> None:
         self._cap = cap
         self._buf = bytearray()
         self._start = 0  # absolute offset of _buf[0]
-        self._marker_pending = False
 
     @property
     def end(self) -> int:
         return self._start + len(self._buf)
 
     def append(self, data: bytes) -> None:
-        if self._marker_pending:
-            data = _DROP_MARKER + data
-            self._marker_pending = False
         self._buf.extend(data)
         overflow = len(self._buf) - self._cap
         if overflow > 0:
             del self._buf[:overflow]
             self._start += overflow
-            self._marker_pending = True  # one marker per overflow episode
 
     def read_from(self, cursor: int) -> tuple[str, int]:
-        """(text past cursor, new cursor). Dropped bytes are skipped silently —
-        the drop marker was already injected inline at overflow time."""
+        """(text past cursor, new cursor); prefixed with the drop marker when
+        bytes between cursor and the buffer start were evicted."""
         lo = max(cursor, self._start)
         chunk = bytes(self._buf[lo - self._start:])
-        return chunk.decode("utf-8", errors="replace"), self.end
+        text = chunk.decode("utf-8", errors="replace")
+        if cursor < self._start:
+            text = _DROP_MARKER.decode() + text
+        return text, self.end
 
     def tail(self, max_chars: int) -> str:
-        return bytes(self._buf).decode("utf-8", errors="replace")[-max_chars:]
+        text = bytes(self._buf).decode("utf-8", errors="replace")[-max_chars:]
+        if self._start > 0:
+            text = _DROP_MARKER.decode() + text
+        return text
 
 
 @dataclass

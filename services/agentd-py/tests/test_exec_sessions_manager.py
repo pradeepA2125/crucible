@@ -130,6 +130,26 @@ async def test_ring_buffer_overflow_drops_oldest_with_marker(tmp_path, monkeypat
     await m.shutdown()
 
 
+def test_ring_buffer_marker_when_overflow_is_the_last_append():
+    """Regression (v0.5.0 CI): Linux PTYs deliver a whole burst in ONE read, so
+    the overflow happens on the LAST append and an in-buffer marker written on
+    the next append never materializes. The marker must be injected at serving
+    time for any cursor below the evicted boundary."""
+    from agentd.exec_sessions.manager import RingBuffer
+
+    buf = RingBuffer(cap=64)
+    buf.append(b"x" * 200 + b"TAIL")  # single oversized chunk, nothing after
+    text, cursor = buf.read_from(0)
+    assert "[... output dropped]" in text
+    assert "TAIL" in text
+    assert cursor == buf.end
+    # A reader that missed nothing sees no marker.
+    again, _ = buf.read_from(cursor)
+    assert again == ""
+    # The transcript tail also flags the drop.
+    assert "[... output dropped]" in buf.tail(1000)
+
+
 # ── review-fix regression guards (dry-run 2026-07-12) ──────────────────────
 
 @pytest.mark.asyncio
