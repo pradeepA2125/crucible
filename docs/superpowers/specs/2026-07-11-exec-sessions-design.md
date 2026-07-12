@@ -1,7 +1,11 @@
 # Exec Sessions — PTY-backed background processes for the chat controller
 
 **Date:** 2026-07-11
-**Status:** Approved (design review with user)
+**Status:** Approved (design review with user); revised 2026-07-12 after a
+pre-implementation dry-run review — spawn hardening reuse, stable `/live` rows,
+deterministic drain-on-exit, win32 import guard, stdin escape decoding,
+single-waiter task hygiene, non-blocking PTY writes (see "Review fixes" notes
+inline and the expanded Deferred list).
 **Scope:** controller-only, flag-gated (`CRUCIBLE_EXEC_SESSIONS_ENABLED`, default OFF)
 
 ## Problem
@@ -65,10 +69,34 @@ shared across turns/threads; FastAPI shutdown calls `manager.shutdown()`
   group / session leader) and the slave fd as stdin/stdout/stderr; master fd read
   via `loop.add_reader` into the session's ring buffer. Window size set to a sane
   default (e.g. 200×50) so TUIs render.
+- **Master fd is `O_NONBLOCK`** (reads AND writes). A stuffed PTY buffer (child
+  not consuming stdin, ~64 KB kernel buffer) must never block the event loop —
+  an `os.write` that would block would freeze the whole backend.
+- **One persistent waiter task per process**, created at spawn; `wait(timeout)`
+  races that single task via `asyncio.wait({task}, timeout=…)`. A fresh
+  `wait_for(shield(proc.wait()), t)` per poll leaks one pending task per
+  timed-out poll for the life of the session (50 polls on a dev server = 50
+  abandoned tasks + "Task was destroyed" warnings at shutdown). Use
+  `get_running_loop()`, never the deprecated `get_event_loop()`.
+- **Deterministic drain-on-exit:** `proc.wait()` returning does NOT imply the
+  reader callback already delivered the final output chunk. When `wait()`
+  observes exit, a `drain()` pass reads the master fd (non-blocking) until
+  empty/EOF/EIO before the session is reported `exited` — no sleep heuristics.
+  Without this, fast commands race the reader (truncated final output) and
+  `_drop_if_drained` can drop a session whose last chunk is still in flight,
+  silently losing it. This is also the #1 future-flake source in tests.
 - Windows: `pywinpty` (`pywinpty; sys_platform == 'win32'` in pyproject) with the
   same reader contract; group-kill maps to the winpty process-tree kill.
-- Writes: `write(chars)` goes to the PTY master — chars are raw (the model can
-  send `\n`, `\x03` for Ctrl-C, `y\n`, etc.).
+  **The platform guard must cover the Unix imports too** — `pty`, `fcntl`, and
+  `termios` do not exist on win32, so an unguarded top-level import makes the
+  module unimportable on Windows before the winpty branch is ever reached.
+  The `WinPtyProcess` adapter must be written against the current pywinpty
+  docs at implementation time (its `PTY.read` signature and env format differ
+  from naive expectations) and explicitly marked untested-on-CI.
+- Writes: `write(chars)` goes to the PTY master — chars are raw at this layer
+  (escape decoding happens in the manager, see below). Each write is capped
+  (~4 KB) and best-effort: a `BlockingIOError` (buffer full) drops the write
+  with a warning rather than blocking the loop.
 
 ### `manager.py`
 
@@ -79,12 +107,37 @@ shared across turns/threads; FastAPI shutdown calls `manager.shutdown()`
   cursor, decoded `errors="replace"`, capped per tool result; cursor advances on
   read. Buffer overflow drops oldest bytes (a `[... output dropped]` marker is
   injected once per overflow episode).
+- **`start(...)` reuses `run_command`'s spawn hardening** (`tools/shell.py` +
+  `tools/_paths.py`) — dropping it reintroduces three known, already-fixed
+  failure classes:
+  - `_split_command`: models routinely pack the whole line into `command`
+    (`"python -m http.server 8765"`, `args=[]`); `create_subprocess_exec`
+    does no word-splitting, so without the split every such spawn is a
+    `FileNotFoundError`.
+  - `resolve_workspace_bin` probe for naked binary names, so
+    `start_session("uvicorn")` finds the workspace `.venv/bin/uvicorn`.
+  - Venv env hygiene: `os.environ.copy()` leaks the backend's own
+    `VIRTUAL_ENV` into the child; override `UV_PROJECT_ENVIRONMENT` and
+    `VIRTUAL_ENV` to the workspace venv (the exact bug `shell.py` already
+    fixes for `run_command`).
+- **`write_stdin` decodes literal escape sequences** (`\n`, `\r`, `\t`,
+  `\xNN`, `\uNNNN`, `\\`) before writing. JSON cannot carry raw control bytes
+  except as `\uNNNN`, so a model following the `\x03` teaching emits
+  backslash-x-0-3 as four literal characters — without decoding, Ctrl-C never
+  fires and the PTY receives garbage text. Already-raw control chars pass
+  through untouched. Input per call is capped (~4 KB; oversize → `is_error`
+  tool output — stdin is for interactive input, not bulk data).
 - `start(...)` enforces the concurrency cap (default 16): at cap → error output
-  telling the model to `kill_session` something first.
+  telling the model to `kill_session` something first. The cap is
+  **backend-global** while `list_sessions` is thread-scoped, so the error text
+  must say sessions from other conversations may be holding slots (a
+  per-thread cap is deferred).
 - `kill(session_id)`: `os.killpg(pgid, SIGTERM)`, grace period (2 s), then
   `SIGKILL` to the group. Group-kill is the deliberate fix for the Codex
   child-leak class.
-- `shutdown()`: kill-all (same escalation), then clear the registry file.
+- `shutdown()`: kill-all (same escalation) — kills run **concurrently**
+  (`asyncio.gather`), not serially: a worst-case serial sweep is ~4 s × N
+  sessions of shutdown stall — then clear the registry file.
 - Exited sessions stay listed (status `exited`, exit code, buffer readable) so
   the model can read final output after death; an exited session is dropped once
   its remaining output has been read (cursor at end) or on `kill_session`, and
@@ -114,7 +167,8 @@ startup or a turn.
 - **`write_stdin(session_id, chars, yield_time_ms?)`** — write `chars` to the PTY
   (empty string = pure poll), wait the yield, return only NEW output since the
   last read + status/exit code. This is both the interactivity and the polling
-  tool.
+  tool. Literal escape sequences in `chars` are decoded server-side (see
+  manager section); oversize input (> ~4 KB) is an `is_error` output.
 - **`kill_session(session_id)`** — group SIGTERM → SIGKILL escalation; returns
   final unread output.
 - **`list_sessions()`** — this thread's sessions: id, command, status, age,
@@ -150,11 +204,20 @@ it running**; check `list_sessions` when resuming work on a thread.
 
 - Live tool pills already render the calls (generic `tool_call` SSE path) —
   nothing new needed for in-turn visibility.
-- `/live` (`ThreadLiveState`) gains `sessions: [{id, command, status, age_sec}]`
-  so the webview shows a small read-only "● running: npm run dev" strip that
-  survives reload. **`sessions` MUST be added to `lastLiveSignature` in
-  `controller.ts`** (documented `/live` dedup footgun) and to the editor-client
-  Zod schema + webview mirror types.
+- `/live` (`ThreadLiveState`) gains `sessions: [{id, command, status, exit_code,
+  started_at}]` so the webview shows a small read-only "● running: npm run dev"
+  strip that survives reload. **`sessions` MUST be added to `lastLiveSignature`
+  in `controller.ts`** (documented `/live` dedup footgun) and to the
+  editor-client Zod schema + webview mirror types.
+- **`/live` rows MUST be stable while nothing real changes.** The signature
+  dedup only works if identical state serializes identically — a ticking
+  `age_sec` (changes every second) or `unread_bytes` (changes on every log
+  line the server emits) would make the signature differ on every 1 s poll,
+  re-firing the entire render block at 1 Hz: exactly the churn the signature
+  exists to prevent. So `/live` carries `started_at` (epoch seconds) and the
+  webview computes the displayed age locally (display-only, never in app
+  state); unread size stays a model-facing detail in `list_sessions` only and
+  never rides `/live`.
 - **PTY inspect (expandable strip):** clicking a session row expands a read-only
   monospace scrollback. Backed by `GET
   /v1/chat/threads/{id}/sessions/{session_id}/transcript` → `{output_tail,
@@ -215,3 +278,22 @@ Dependency: `pywinpty; sys_platform == 'win32'`.
   the model to kill).
 - Cross-backend-restart session survival (Codex-style detach/re-adopt).
 - Per-session log files on disk / artifact persistence of session transcripts.
+
+### Accepted-risk warts (dry-run review 2026-07-12 — noted, not fixed in v1)
+
+- **Cap is backend-global, visibility is thread-local:** at the cap, a thread
+  that owns none of the sessions cannot free anything via `list_sessions`.
+  Mitigated by the reworded cap error (says other conversations may hold
+  slots); a per-thread cap is the real fix, deferred.
+- **Exited-but-never-read sessions linger in the strip** until a later model
+  turn's `list_sessions`/`write_stdin` drains them or `kill_session` fires (no
+  dismiss button in v1). An auto-expiry (e.g. exited + unread for > N min) is
+  deferred.
+- **Pid-reuse reap guard matches only the first command token** — a recycled
+  pid running the same interpreter binary would be killed. Rare enough to
+  accept for a crash-recovery path.
+- **Polls always wait the full yield** (no early-return-on-first-output);
+  latency is mitigated by the prompt teaching ("longer yields, fewer polls").
+- **UTF-8 code points split at a cursor boundary decode as replacement
+  chars** (cosmetic; an incremental decoder per cursor fixes it if it ever
+  matters).

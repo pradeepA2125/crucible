@@ -170,9 +170,10 @@ def clamp_yield_ms(raw: object) -> int:
 - Test: `services/agentd-py/tests/test_exec_sessions_pty.py`
 
 **Interfaces:**
-- Produces: `class PtyProcess` with `@classmethod async spawn(command: str, args: list[str], cwd: Path, env: dict[str, str], on_output: Callable[[bytes], None]) -> PtyProcess`; attributes `pid: int`, `pgid: int`; methods `write(chars: str) -> None`, `is_running() -> bool`, `exit_code() -> int | None`, `async wait(timeout_sec: float) -> bool` (True if exited within timeout), `async kill(grace_sec: float = 2.0) -> None` (group SIGTERM→SIGKILL, idempotent), `close() -> None` (release fds/readers).
+- Produces: `class PtyProcess` with `@classmethod async spawn(command: str, args: list[str], cwd: Path, env: dict[str, str], on_output: Callable[[bytes], None]) -> PtyProcess`; attributes `pid: int`, `pgid: int`; methods `write(chars: str) -> None` (capped ~4 KB, non-blocking, best-effort), `is_running() -> bool`, `exit_code() -> int | None`, `async wait(timeout_sec: float) -> bool` (True if exited within timeout; **drains remaining PTY output before returning True**), `drain() -> None` (deterministic post-exit flush), `async kill(grace_sec: float = 2.0) -> None` (group SIGTERM→SIGKILL, idempotent), `close() -> None` (release fds/readers/waiter task).
 - `on_output` is called on the event loop thread with raw bytes as they arrive (PTY master reads).
 - `new_pty_process_class() -> type` — platform dispatch (PtyProcess on Unix, WinPtyProcess on win32).
+- **Review-fix constraints (dry-run 2026-07-12):** (a) `pty`/`fcntl`/`termios` imports MUST sit under `if sys.platform != "win32":` — they don't exist on win32 and an unguarded import crashes the module before the winpty branch is reachable; (b) ONE persistent `proc.wait()` task per process, created at spawn — `wait()` races it with `asyncio.wait({task}, timeout=…)`; never `wait_for(shield(proc.wait()), t)` per poll (leaks one pending task per timed-out poll); (c) master fd is `O_NONBLOCK`; (d) `wait()`→True implies `drain()` already ran — callers never sleep to "let output arrive"; (e) `get_running_loop()`, never `get_event_loop()`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -201,8 +202,22 @@ async def test_fast_command_exits_and_captures_output(tmp_path):
     proc = await _spawn("print('hello pty')", tmp_path, chunks)
     assert await proc.wait(timeout_sec=10) is True
     assert proc.exit_code() == 0
-    await asyncio.sleep(0.1)  # let the final reader callback drain
+    # NO sleep here — wait()==True guarantees drain-on-exit already flushed
+    # the final chunk. A sleep would mask the drain race this test guards.
     assert b"hello pty" in b"".join(chunks)
+    proc.close()
+
+
+@pytest.mark.asyncio
+async def test_repeated_waits_are_cheap_and_idempotent(tmp_path):
+    # Waiter-task hygiene: many timed-out polls must not error or leak;
+    # wait() after exit keeps returning True.
+    chunks: list[bytes] = []
+    proc = await _spawn("import time; time.sleep(1.0)", tmp_path, chunks)
+    for _ in range(5):
+        assert await proc.wait(timeout_sec=0.05) is False
+    assert await proc.wait(timeout_sec=10) is True
+    assert await proc.wait(timeout_sec=0.05) is True
     proc.close()
 
 
@@ -236,8 +251,7 @@ async def test_write_reaches_stdin(tmp_path):
     await asyncio.sleep(0.3)
     proc.write("ping\n")
     assert await proc.wait(timeout_sec=10) is True
-    await asyncio.sleep(0.1)
-    assert b"echoed" in b"".join(chunks)
+    assert b"echoed" in b"".join(chunks)  # drain-on-exit: no sleep needed
     proc.close()
 
 
@@ -264,25 +278,37 @@ Unix: stdlib pty + loop.add_reader. The child is its own session/process-group
 leader (start_new_session=True) so kill() can killpg the whole tree — the fix
 for the Codex-class orphaned-grandchild leak. Windows: pywinpty (WinPtyProcess),
 same contract; group-kill maps to winpty's process-tree kill.
+
+Hardening (dry-run review 2026-07-12):
+- Unix-only imports live under a platform guard — pty/fcntl/termios don't
+  exist on win32 and would crash the import before WinPtyProcess is reachable.
+- The master fd is O_NONBLOCK: a stuffed PTY buffer must never block the loop.
+- One persistent proc.wait() task per process; wait(timeout) races it. A fresh
+  wait_for(shield(...)) per poll leaks one pending task per timed-out poll.
+- wait()==True implies drain() ran: the final output chunk is deterministically
+  flushed before "exited" is ever reported. Callers never sleep-and-hope.
 """
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import logging
 import os
-import pty
 import signal
 import struct
 import sys
-import termios
 from collections.abc import Callable
 from pathlib import Path
+
+if sys.platform != "win32":
+    import fcntl
+    import pty
+    import termios
 
 logger = logging.getLogger(__name__)
 
 _WINSIZE_ROWS, _WINSIZE_COLS = 50, 200
 _READ_CHUNK = 65536
+WRITE_MAX_BYTES = 4096
 
 
 class PtyProcess:
@@ -292,9 +318,13 @@ class PtyProcess:
         self._master_fd = master_fd
         self._on_output = on_output
         self._closed = False
+        self._drained = False
         self.pid = proc.pid
         self.pgid = proc.pid  # start_new_session=True ⇒ child is its own pgid
-        asyncio.get_event_loop().add_reader(master_fd, self._readable)
+        loop = asyncio.get_running_loop()
+        # ONE waiter for the process's whole life — see module docstring.
+        self._wait_task = loop.create_task(proc.wait())
+        loop.add_reader(master_fd, self._readable)
 
     @classmethod
     async def spawn(cls, command: str, args: list[str], cwd: Path,
@@ -304,12 +334,22 @@ class PtyProcess:
         # Sane window so TUIs/spinners render instead of degrading to 80x24.
         fcntl.ioctl(slave, termios.TIOCSWINSZ,
                     struct.pack("HHHH", _WINSIZE_ROWS, _WINSIZE_COLS, 0, 0))
+        os.set_blocking(master, False)  # reads AND writes must never block the loop
         env = {**env, "TERM": env.get("TERM", "xterm-256color")}
+
+        def _acquire_ctty() -> None:
+            # Runs in the forked child (dup2s and setsid already done — CPython
+            # child_exec order). start_new_session gives a new session but
+            # inheriting the slave fd is NOT an open(): without TIOCSCTTY the
+            # PTY has no controlling terminal, its foreground pgrp is empty,
+            # and \x03 (Ctrl-C) silently signals nobody (review fix #8).
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 command, *args, cwd=str(cwd), env=env,
                 stdin=slave, stdout=slave, stderr=slave,
-                start_new_session=True)
+                start_new_session=True, preexec_fn=_acquire_ctty)
         finally:
             os.close(slave)  # parent's copy; the child holds its own
         return cls(proc, master, on_output)
@@ -317,6 +357,8 @@ class PtyProcess:
     def _readable(self) -> None:
         try:
             data = os.read(self._master_fd, _READ_CHUNK)
+        except BlockingIOError:
+            return  # spurious wakeup on a nonblocking fd
         except OSError:
             # EIO on Linux / closed on macOS when the child side is gone.
             self._remove_reader()
@@ -329,12 +371,39 @@ class PtyProcess:
     def _remove_reader(self) -> None:
         if not self._closed:
             try:
-                asyncio.get_event_loop().remove_reader(self._master_fd)
-            except (ValueError, OSError):
+                asyncio.get_running_loop().remove_reader(self._master_fd)
+            except (ValueError, OSError, RuntimeError):
                 pass
 
+    def drain(self) -> None:
+        """Deterministically flush output still in the kernel PTY buffer after
+        exit. proc.wait() returning does NOT imply the reader callback already
+        delivered the final chunk — without this, fast commands return
+        truncated output and a drained-session drop can race the last bytes."""
+        if self._drained or self._closed:
+            return
+        self._drained = True
+        self._remove_reader()
+        while True:
+            try:
+                data = os.read(self._master_fd, _READ_CHUNK)
+            except (BlockingIOError, OSError):
+                return  # empty (nonblocking) or EIO — nothing more can arrive
+            if not data:
+                return
+            self._on_output(data)
+
     def write(self, chars: str) -> None:
-        os.write(self._master_fd, chars.encode("utf-8"))
+        """Best-effort, capped, non-blocking. A full PTY buffer (child not
+        reading stdin, ~64 KB kernel side) must drop the write with a warning
+        rather than freeze the event loop; partial writes are tolerated."""
+        data = chars.encode("utf-8")[:WRITE_MAX_BYTES]
+        try:
+            os.write(self._master_fd, data)
+        except BlockingIOError:
+            logger.warning("[exec-sessions] stdin write dropped (PTY buffer full)")
+        except OSError:
+            logger.warning("[exec-sessions] stdin write failed", exc_info=True)
 
     def is_running(self) -> bool:
         return self._proc.returncode is None
@@ -343,29 +412,36 @@ class PtyProcess:
         return self._proc.returncode
 
     async def wait(self, timeout_sec: float) -> bool:
-        """True if the process exited within timeout_sec."""
-        try:
-            await asyncio.wait_for(asyncio.shield(self._proc.wait()), timeout_sec)
+        """True if the process exited within timeout_sec. Races the single
+        persistent waiter task — never creates a task per call. On True, the
+        remaining output has already been drained into on_output."""
+        if not self._wait_task.done():
+            await asyncio.wait({self._wait_task}, timeout=timeout_sec)
+        if self._wait_task.done():
+            self.drain()
             return True
-        except asyncio.TimeoutError:
-            return False
+        return False
 
     async def kill(self, grace_sec: float = 2.0) -> None:
         """Group SIGTERM → grace → group SIGKILL. Idempotent; never raises."""
         if not self.is_running():
+            self.drain()
             return
         for sig_ in (signal.SIGTERM, signal.SIGKILL):
             try:
                 os.killpg(self.pgid, sig_)
             except (ProcessLookupError, PermissionError):
+                self.drain()
                 return
             if await self.wait(grace_sec):
                 return
 
     def close(self) -> None:
-        """Release the reader + master fd. Call after the process is dead."""
+        """Release the reader + master fd + waiter task. Call after death."""
         self._remove_reader()
         self._closed = True
+        if not self._wait_task.done():
+            self._wait_task.cancel()
         try:
             os.close(self._master_fd)
         except OSError:
@@ -379,7 +455,15 @@ if sys.platform == "win32":  # pragma: no cover — no Windows CI; mirrors PtyPr
         """pywinpty adapter with the PtyProcess contract. Reader runs in a
         thread (winpty has no fd to add_reader); kill() uses winpty's
         process-tree termination. Untested on CI — exercised only on a real
-        Windows machine."""
+        Windows machine.
+
+        SPECULATIVE (dry-run review 2026-07-12): the sketch below was written
+        blind and does NOT match pywinpty's real API in places — verify
+        `PTY.read`'s signature (the `blocking=` kwarg may not exist), the
+        `spawn` env format (pywinpty may expect an env *string block*, not a
+        dict), and the exit-status API against the current pywinpty docs at
+        implementation time. Treat this class as a contract description, not
+        working code."""
 
         def __init__(self, pty_: "winpty.PTY", on_output) -> None:
             self._pty = pty_
@@ -437,7 +521,7 @@ def new_pty_process_class() -> type:
 ```
 
 - [ ] **Step 4: pyproject** — in `services/agentd-py/pyproject.toml`, append to the `dependencies = [...]` array: `"pywinpty>=2; sys_platform == 'win32'",`
-- [ ] **Step 5: Run** — `pytest tests/test_exec_sessions_pty.py` → 4 pass (on macOS/Linux)
+- [ ] **Step 5: Run** — `pytest tests/test_exec_sessions_pty.py` → 5 pass (on macOS/Linux)
 - [ ] **Step 6: Commit** — `git commit -am "feat(exec-sessions): PtyProcess (unix pty + pywinpty adapter)"`
 
 ---
@@ -454,13 +538,13 @@ def new_pty_process_class() -> type:
   - `@dataclass SessionRead: session_id: str; status: str  # "running"|"exited"; exit_code: int | None; new_output: str; still_running: bool`
   - Exceptions: `SessionCapError`, `SessionNotFoundError`, `SessionSpawnError`.
   - `class SessionManager(workspace_path: Path, registry_path: Path | None = None)`:
-    - `async start(thread_id, command: str, args: list[str], cwd: str | None, yield_time_ms: object) -> SessionRead` — cap-hit raises `SessionCapError`; spawn failure raises `SessionSpawnError(msg)`.
-    - `async write_stdin(thread_id, session_id, chars: str, yield_time_ms: object) -> SessionRead` — unknown/foreign-thread id raises `SessionNotFoundError` (message lists known ids).
+    - `async start(thread_id, command: str, args: list[str], cwd: str | None, yield_time_ms: object) -> SessionRead` — cap-hit raises `SessionCapError`; spawn failure raises `SessionSpawnError(msg)`. **Reuses `run_command`'s spawn hardening** (review fix #1): `_split_command` from `agentd.tools.shell` (models pack whole lines into `command`; exec does no word-splitting), `resolve_workspace_bin` from `agentd.tools._paths` (naked names find the workspace `.venv/bin/…`), and the venv env hygiene (`UV_PROJECT_ENVIRONMENT`/`VIRTUAL_ENV` → workspace venv, never the backend's own leaked one).
+    - `async write_stdin(thread_id, session_id, chars: str, yield_time_ms: object) -> SessionRead` — unknown/foreign-thread id raises `SessionNotFoundError` (message lists known ids). **Decodes literal escape sequences** (`\n`, `\r`, `\t`, `\xNN`, `\uNNNN`, `\\`) before writing — JSON can't carry raw control bytes, so models emit `\x03` as four literal characters; without decoding Ctrl-C never fires (review fix #5).
     - `async kill(thread_id, session_id) -> SessionRead` — final unread output; drops the session.
-    - `list_sessions(thread_id) -> list[dict]` — `{id, command, status, exit_code, age_sec, unread_bytes}`; drops exited sessions whose cursor is at end (spec retention rule).
-    - `live_summaries(thread_id) -> list[dict]` — same rows WITHOUT the drop side-effect (for `/live`, which must be read-only).
+    - `list_sessions(thread_id) -> list[dict]` — `{id, command, status, exit_code, age_sec, unread_bytes}` (model-facing rows); drops exited sessions whose cursor is at end (spec retention rule).
+    - `live_summaries(thread_id) -> list[dict]` — **`{id, command, status, exit_code, started_at}` — deliberately DIFFERENT rows from `list_sessions`**: no drop side-effect AND no `age_sec`/`unread_bytes`, because `/live` rows must serialize identically while nothing real changes or the webview's `lastLiveSignature` dedup churns at 1 Hz (review fix #2). Age is computed client-side from `started_at`.
     - `transcript(thread_id, session_id) -> dict | None` — `{output_tail, stdin_history, status, exit_code}`; **never advances the model cursor** (spec invariant); `output_tail` capped 16000 chars.
-    - `async shutdown() -> None` — kill-all + clear registry.
+    - `async shutdown() -> None` — kill-all **concurrently** (`asyncio.gather`; serial kills cost up to ~4 s × N) + clear registry.
     - `reap_orphans() -> int` — delegates to the registry file.
 
 - [ ] **Step 1: Write the failing tests**
@@ -594,6 +678,56 @@ async def test_ring_buffer_overflow_drops_oldest_with_marker(tmp_path, monkeypat
     assert "TAIL_SENTINEL" in out
     assert "[... output dropped]" in out
     await m.shutdown()
+
+
+# ── review-fix regression guards (dry-run 2026-07-12) ──────────────────────
+
+@pytest.mark.asyncio
+async def test_whole_line_command_is_split(tmp_path):
+    """Models pack the whole line into `command` — _split_command must recover
+    (exec does no word-splitting; without this every such spawn FileNotFoundErrors)."""
+    m = SessionManager(tmp_path)
+    r = await m.start("t1", f"{PY} -c print('split_ok')", [], None, 5000)
+    assert r.exit_code == 0 and "split_ok" in r.new_output
+    await m.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_child_env_points_at_workspace_venv(tmp_path):
+    """os.environ.copy() must not leak the backend's own VIRTUAL_ENV."""
+    m = SessionManager(tmp_path)
+    r = await m.start(
+        "t1", PY, ["-c", "import os;print('VENV='+os.environ.get('VIRTUAL_ENV',''))"],
+        None, 5000)
+    assert f"VENV={tmp_path}" in r.new_output.replace("\r", "")
+    await m.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_literal_escape_sequences_decoded(tmp_path):
+    """A model following the \\x03 teaching sends backslash-x-0-3 as four
+    literal characters (JSON can't carry raw control bytes) — write_stdin must
+    decode it to a real Ctrl-C."""
+    m = SessionManager(tmp_path)
+    r = await m.start("t1", PY, ["-c", "import time;time.sleep(60)"], None, 300)
+    r2 = await m.write_stdin("t1", r.session_id, "\\x03", 5000)
+    assert r2.status == "exited" and r2.exit_code != 0
+    await m.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_live_summaries_rows_are_stable(tmp_path):
+    """/live rows must serialize identically while nothing real changes —
+    age_sec/unread_bytes churn would defeat lastLiveSignature at 1 Hz."""
+    m = SessionManager(tmp_path)
+    code = ("import time\nfor i in range(999):\n print(i,flush=True)\n time.sleep(0.05)")
+    r = await m.start("t1", PY, ["-u", "-c", code], None, 300)
+    a = m.live_summaries("t1")
+    await asyncio.sleep(1.1)  # more output emitted, more age elapsed
+    b = m.live_summaries("t1")
+    assert a == b
+    assert set(a[0]) == {"id", "command", "status", "exit_code", "started_at"}
+    await m.shutdown()
 ```
 
 - [ ] **Step 2: Run to verify fail** — `pytest tests/test_exec_sessions_manager.py` → ImportError
@@ -613,6 +747,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -623,12 +758,36 @@ from agentd.exec_sessions.config import (
 )
 from agentd.exec_sessions.pty_process import new_pty_process_class
 from agentd.exec_sessions.registry_file import SessionRegistryFile
+from agentd.tools._paths import resolve_workspace_bin
+from agentd.tools.shell import _split_command
 
 logger = logging.getLogger(__name__)
 
 _TRANSCRIPT_TAIL_CHARS = 16_000
 _STDIN_HISTORY_MAX = 200
 _DROP_MARKER = b"\n[... output dropped]\n"
+STDIN_MAX_CHARS = 4096  # stdin is interactive input, not bulk data
+
+_ESCAPE_RE = re.compile(r"\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[nrt\\])")
+
+
+def _decode_stdin_escapes(chars: str) -> str:
+    """JSON can't carry raw control bytes except as \\uNNNN, so a model
+    following the '\\x03 is Ctrl-C' teaching emits backslash-x-0-3 as four
+    literal characters. Decode the standard escapes so control chars actually
+    fire; already-raw control chars pass through untouched."""
+    def _sub(m: re.Match[str]) -> str:
+        tok = m.group(1)
+        if tok == "n":
+            return "\n"
+        if tok == "r":
+            return "\r"
+        if tok == "t":
+            return "\t"
+        if tok == "\\":
+            return "\\"
+        return chr(int(tok[1:], 16))
+    return _ESCAPE_RE.sub(_sub, chars)
 
 
 class SessionCapError(Exception):
@@ -713,14 +872,29 @@ class SessionManager:
                     cwd: str | None, yield_time_ms: object) -> SessionRead:
         if len(self._sessions) >= max_session_count():
             raise SessionCapError(
-                f"Session cap ({max_session_count()}) reached — kill_session an "
-                "existing session first (see list_sessions).")
+                f"Session cap ({max_session_count()}) reached backend-wide — "
+                "kill_session one of yours (see list_sessions). If yours are "
+                "all needed, sessions from other conversations may be holding "
+                "slots; tell the user.")
+        # Spawn hardening — the same three fixes shell.run_command carries
+        # (dropping any of them reintroduces a known failure class):
+        # 1. whole-line `command` → split back into executable + args;
+        command, args = _split_command(command, args, self._workspace)
+        # 2. naked names probe the workspace venv/bin dirs;
+        if "/" not in command and "\\" not in command and not Path(command).is_absolute():
+            local = resolve_workspace_bin(self._workspace, command)
+            if local is not None:
+                command = str(local)
+        # 3. never leak the backend's own venv into the child.
+        env = os.environ.copy()
+        workspace_venv = self._workspace / (cwd or "") / ".venv"
+        env["UV_PROJECT_ENVIRONMENT"] = str(workspace_venv)
+        env["VIRTUAL_ENV"] = str(workspace_venv)
         target_cwd = self._resolve_cwd(cwd)
         buf = RingBuffer(buffer_bytes())
         try:
             proc = await self._pty_cls.spawn(
-                command, args, cwd=target_cwd, env=dict(os.environ),
-                on_output=buf.append)
+                command, args, cwd=target_cwd, env=env, on_output=buf.append)
         except FileNotFoundError as exc:
             raise SessionSpawnError(f"'{command}' not found on PATH") from exc
         except Exception as exc:
@@ -731,41 +905,42 @@ class SessionManager:
             buffer=buf, started_at=time.time())
         self._sessions[sess.session_id] = sess
         self._registry.record(self._sessions.values())
+        # wait()==True implies the final output was already drained (PtyProcess
+        # drain-on-exit) — no sleep heuristics here.
         exited = await proc.wait(clamp_yield_ms(yield_time_ms) / 1000)
-        if exited:
-            await asyncio.sleep(0.05)  # drain the final reader callback
         return self._read(sess, exited_hint=exited)
 
     async def write_stdin(self, thread_id: str, session_id: str, chars: str,
                           yield_time_ms: object) -> SessionRead:
         sess = self._get(thread_id, session_id)
+        chars = _decode_stdin_escapes(chars)
         if chars and sess.proc.is_running():
             sess.proc.write(chars)
             sess.stdin_history.append({"ts": time.time(), "chars": chars})
             del sess.stdin_history[:-_STDIN_HISTORY_MAX]
         exited = await sess.proc.wait(clamp_yield_ms(yield_time_ms) / 1000)
-        if exited:
-            await asyncio.sleep(0.05)
         read = self._read(sess, exited_hint=exited)
         self._drop_if_drained(sess)
         return read
 
     async def kill(self, thread_id: str, session_id: str) -> SessionRead:
         sess = self._get(thread_id, session_id)
-        await sess.proc.kill()
-        await asyncio.sleep(0.05)
+        await sess.proc.kill()  # kill() drains before returning
         read = self._read(sess, exited_hint=True)
         self._remove(sess)
         return read
 
     async def shutdown(self) -> None:
-        for sess in list(self._sessions.values()):
+        async def _kill_one(sess: _Session) -> None:
             try:
                 await sess.proc.kill()
                 sess.proc.close()
             except Exception:
                 logger.warning("[exec-sessions] shutdown kill failed for %s",
                                sess.session_id, exc_info=True)
+
+        # Concurrent: a serial sweep would stall shutdown ~4s per stubborn session.
+        await asyncio.gather(*(_kill_one(s) for s in list(self._sessions.values())))
         self._sessions.clear()
         self._registry.clear()
 
@@ -774,12 +949,11 @@ class SessionManager:
 
     # ── views ────────────────────────────────────────────────────────────────
     def list_sessions(self, thread_id: str) -> list[dict]:
+        """Model-facing rows (rich: age + unread size); applies the
+        drained-exited retention drop."""
         for sess in [s for s in self._sessions.values()
                      if s.thread_id == thread_id]:
             self._drop_if_drained(sess)
-        return self.live_summaries(thread_id)
-
-    def live_summaries(self, thread_id: str) -> list[dict]:
         return [{
             "id": s.session_id,
             "command": s.command_line,
@@ -787,6 +961,20 @@ class SessionManager:
             "exit_code": s.proc.exit_code(),
             "age_sec": int(time.time() - s.started_at),
             "unread_bytes": max(0, s.buffer.end - s.model_cursor),
+        } for s in self._sessions.values() if s.thread_id == thread_id]
+
+    def live_summaries(self, thread_id: str) -> list[dict]:
+        """/live rows. INVARIANT: must serialize identically while nothing real
+        changes — the webview dedups /live on a JSON signature, and a ticking
+        age_sec or per-log-line unread_bytes would re-render the world at 1 Hz.
+        So: started_at (stable), no age, no unread. No drop side-effect either
+        (/live is read-only)."""
+        return [{
+            "id": s.session_id,
+            "command": s.command_line,
+            "status": "running" if s.proc.is_running() else "exited",
+            "exit_code": s.proc.exit_code(),
+            "started_at": s.started_at,
         } for s in self._sessions.values() if s.thread_id == thread_id]
 
     def transcript(self, thread_id: str, session_id: str) -> dict | None:
@@ -866,7 +1054,7 @@ class SessionRegistryFile:
         return 0
 ```
 
-- [ ] **Step 4: Run** — `pytest tests/test_exec_sessions_manager.py` → 10 pass
+- [ ] **Step 4: Run** — `pytest tests/test_exec_sessions_manager.py` → 14 pass
 - [ ] **Step 5: Commit** — `git commit -am "feat(exec-sessions): SessionManager + ring buffer with independent cursors"`
 
 ---
@@ -1108,7 +1296,8 @@ async def test_long_runner_roundtrip_poll_kill(tmp_path):
     poll = await src.execute("write_stdin", {"session_id": sid, "chars": ""})
     assert not poll.is_error
     killed = await src.execute("kill_session", {"session_id": sid})
-    assert not killed.is_error and "exited" in killed.output or "killed" in killed.output
+    assert not killed.is_error
+    assert "exited" in killed.output or "killed" in killed.output
 
 
 @pytest.mark.asyncio
@@ -1127,6 +1316,19 @@ async def test_write_stdin_ungated(tmp_path):
 async def test_unknown_session_is_error_not_raise(tmp_path):
     out = await _source(tmp_path).execute("write_stdin", {"session_id": "sess-zzz"})
     assert out.is_error and "No session" in out.output
+
+
+@pytest.mark.asyncio
+async def test_oversized_stdin_rejected(tmp_path):
+    """A blocked event loop is the failure mode: a huge write into a full PTY
+    buffer would freeze the backend — reject before it reaches the fd."""
+    src = _source(tmp_path)
+    out = await src.execute("start_session", {
+        "command": PY, "args": ["-c", "import time;time.sleep(60)"],
+        "yield_time_ms": 300})
+    sid = "sess-" + out.output.split("sess-", 1)[1].split()[0].strip(".,:]")
+    res = await src.execute("write_stdin", {"session_id": sid, "chars": "x" * 5000})
+    assert res.is_error and "too large" in res.output.lower()
 ```
 
 - [ ] **Step 2: Run to verify fail** — ImportError
@@ -1146,8 +1348,8 @@ from __future__ import annotations
 
 from agentd.exec_sessions.config import result_max_chars
 from agentd.exec_sessions.manager import (
-    SessionCapError, SessionManager, SessionNotFoundError, SessionRead,
-    SessionSpawnError,
+    STDIN_MAX_CHARS, SessionCapError, SessionManager, SessionNotFoundError,
+    SessionRead, SessionSpawnError,
 )
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
@@ -1201,8 +1403,10 @@ class ExecSessionToolSource:
                 description=(
                     "Send input to a running session AND/OR poll it: writes "
                     "`chars` to the PTY (empty string = pure poll, no write; "
-                    "\\n submits a line; \\x03 is Ctrl-C), waits the yield "
-                    "window, returns only NEW output since your last read."),
+                    "\\n submits a line; \\x03 is Ctrl-C — escape sequences "
+                    "like \\x03 are decoded server-side, so sending the "
+                    "literal characters works), waits the yield window, "
+                    "returns only NEW output since your last read."),
                 parameters={
                     "type": "object",
                     "properties": {
@@ -1239,9 +1443,16 @@ class ExecSessionToolSource:
             if tool == "start_session":
                 return await self._start(args)
             if tool == "write_stdin":
+                chars = str(args.get("chars", ""))
+                if len(chars) > STDIN_MAX_CHARS:
+                    return ToolOutput(
+                        output=(f"Error: chars too large ({len(chars)} > "
+                                f"{STDIN_MAX_CHARS}). stdin is for interactive "
+                                "input, not bulk data — write a file instead."),
+                        is_error=True)
                 return self._render(await self._manager.write_stdin(
                     self._thread_id, str(args.get("session_id", "")),
-                    str(args.get("chars", "")), args.get("yield_time_ms")))
+                    chars, args.get("yield_time_ms")))
             if tool == "kill_session":
                 return self._render(await self._manager.kill(
                     self._thread_id, str(args.get("session_id", ""))),
@@ -1295,7 +1506,7 @@ class ExecSessionToolSource:
         return ToolOutput(output="Sessions:\n" + "\n".join(lines))
 ```
 
-- [ ] **Step 4: Run** — `pytest tests/test_exec_sessions_tool_source.py` → 6 pass
+- [ ] **Step 4: Run** — `pytest tests/test_exec_sessions_tool_source.py` → 7 pass
 - [ ] **Step 5: Commit** — `git commit -am "feat(exec-sessions): tool source (4 tools, gated start)"`
 
 ---
@@ -1487,6 +1698,8 @@ and next to the `mcp__` detection in `format_controller_system_prompt` (match th
 
 - [ ] **Step 1: Write the failing tests.** Read `agentd/chat/app_factory.py` first and mirror how existing chat-route tests build the app (`grep -rln "app_factory\|build_app" services/agentd-py/tests/ | head -3`). If `build_app` doesn't expose the chat handler, add `app.state.chat_agent = <handler>` inside it (a one-line, test-friendly improvement).
 
+  **These route tests use a stub manager, deliberately** (the stub-`ControllerUI` pattern): they test the *view seam* (route → manager → JSON), while real process behavior is fully covered by Task 3. Two hazards the stub avoids: (a) driving a **sync `TestClient` from inside an async test can deadlock** the anyio portal — keep these tests sync; (b) a real `PtyProcess` needs a running event loop for `add_reader`, which a sync test doesn't have.
+
 ```python
 # tests/test_exec_sessions_routes.py
 import sys
@@ -1495,7 +1708,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="unix tests")
-PY = sys.executable
+
+
+class _StubExecManager:
+    """View-seam stub; real process behavior is Task 3's coverage."""
+
+    def live_summaries(self, thread_id):
+        return [{"id": "sess-1", "command": "python -m http.server",
+                 "status": "running", "exit_code": None,
+                 "started_at": 1_720_000_000.0}]
+
+    def transcript(self, thread_id, session_id):
+        if session_id != "sess-1":
+            return None
+        return {"output_tail": "serving", "stdin_history": [],
+                "status": "running", "exit_code": None}
 
 
 @pytest.fixture()
@@ -1506,29 +1733,26 @@ def app_with_sessions(tmp_path, monkeypatch):
     return build_app(workspace_path=str(tmp_path))  # match build_app's real signature
 
 
-@pytest.mark.asyncio
-async def test_live_carries_sessions_and_transcript_roundtrip(app_with_sessions, tmp_path):
+def test_live_carries_sessions_and_transcript_roundtrip(app_with_sessions, tmp_path):
     client = TestClient(app_with_sessions)
     thread = client.post("/v1/chat/threads",
                          json={"workspace": str(tmp_path), "title": "t"}).json()
     tid = thread["thread_id"]
-    # Route-level test of the views (not the LLM loop): start a long-runner
-    # under this thread id directly on the controller's manager.
-    mgr = app_with_sessions.state.chat_agent._exec_sessions
-    await mgr.start(tid, PY, ["-u", "-c",
-                    "import time;print('serving',flush=True);time.sleep(60)"],
-                    None, 400)
+    app_with_sessions.state.chat_agent._exec_sessions = _StubExecManager()
 
     live = client.get(f"/v1/chat/threads/{tid}/live").json()
     assert live["sessions"] and live["sessions"][0]["status"] == "running"
-    sid = live["sessions"][0]["id"]
+    row = live["sessions"][0]
+    # /live rows are the STABLE shape — a ticking age_sec/unread_bytes here
+    # would churn the webview's lastLiveSignature at 1 Hz (review fix #2).
+    assert set(row) == {"id", "command", "status", "exit_code", "started_at"}
+    sid = row["id"]
 
     t = client.get(f"/v1/chat/threads/{tid}/sessions/{sid}/transcript").json()
     assert "serving" in t["output_tail"] and t["status"] == "running"
 
     missing = client.get(f"/v1/chat/threads/{tid}/sessions/sess-nope/transcript")
     assert missing.status_code == 404
-    await mgr.shutdown()
 
 
 def test_config_reports_flag(app_with_sessions):
@@ -1542,7 +1766,9 @@ def test_config_reports_flag(app_with_sessions):
   - `models.py` — after `todos` on `ThreadLiveState`:
     ```python
     # Live exec sessions for this thread ({id, command, status, exit_code,
-    # age_sec, unread_bytes}); None when the feature is off or no sessions.
+    # started_at}); None when the feature is off or no sessions. STABLE rows
+    # only — no age_sec/unread_bytes, they'd churn the /live dedup signature
+    # every tick (the webview computes age locally from started_at).
     sessions: list[dict[str, Any]] | None = None
     ```
   - `routes.py` `/live` handler — after the `live.turn_active` line (routes.py:1346):
@@ -1580,13 +1806,14 @@ def test_config_reports_flag(app_with_sessions):
 **Interfaces:**
 - Produces (exact exported names later tasks use):
   ```typescript
+  // STABLE /live rows (review fix #2): started_at instead of a ticking
+  // age_sec/unread_bytes — the webview computes displayed age locally.
   export const SessionSummarySchema = z.object({
     id: z.string(),
     command: z.string(),
     status: z.enum(["running", "exited"]),
     exit_code: z.number().nullable(),
-    age_sec: z.number(),
-    unread_bytes: z.number(),
+    started_at: z.number(),
   });
   export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -1608,7 +1835,7 @@ it("parses live state with sessions and a transcript payload", () => {
     active_task_id: null, turn_active: false, status: null,
     pending_gate: null, plan: null,
     sessions: [{ id: "sess-1", command: "python -m http.server", status: "running",
-                 exit_code: null, age_sec: 12, unread_bytes: 0 }],
+                 exit_code: null, started_at: 1720000000 }],
   });
   expect(live.sessions?.[0]?.id).toBe("sess-1");
   const t = SessionTranscriptSchema.parse({
@@ -1636,7 +1863,7 @@ it("parses live state with sessions and a transcript payload", () => {
 - Consumes: `SessionSummary`, `SessionTranscript`, `getSessionTranscript` (Task 9).
 - Produces:
   - `ControllerUI` gains `renderLiveSessions(view: LiveSessionsView): void;` and `clearLiveSessions(): void;` (next to `renderLiveTodos`, controller.ts:90). `export interface LiveSessionsView { items: SessionSummary[]; }`
-  - **Dedup signature (controller.ts:1759): add `sessions: live.sessions,` to the `JSON.stringify({...})`** with an invariant comment in the style of the `todos:` line — this is the documented `/live` footgun; omit it and the strip never updates.
+  - **Dedup signature (controller.ts:1759): add `sessions: live.sessions,` to the `JSON.stringify({...})`** with an invariant comment in the style of the `todos:` line — this is the documented `/live` footgun; omit it and the strip never updates. The inverse footgun (review fix #2): this only works because `/live` session rows are STABLE (`started_at`, never a ticking `age_sec`/`unread_bytes`) — a mutating field in the rows would flip the signature on every 1 s poll and re-fire the whole render block at 1 Hz. The comment should state both directions.
   - After the todos render branch (controller.ts:~1876):
     ```typescript
     if (live.sessions?.length) {
@@ -1668,7 +1895,7 @@ it("parses live state with sessions and a transcript payload", () => {
   ```typescript
   export interface LiveSessionItem {
     id: string; command: string; status: "running" | "exited";
-    exit_code: number | null; age_sec: number; unread_bytes: number;
+    exit_code: number | null; started_at: number; // epoch sec; age computed locally
   }
   export interface LiveSessionsView { items: LiveSessionItem[]; }
   export interface SessionTranscriptView {
@@ -1687,7 +1914,8 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { SessionStrip } from "./SessionStrip";
 
 const items = [{ id: "sess-1", command: "python -m http.server 8765",
-  status: "running" as const, exit_code: null, age_sec: 42, unread_bytes: 10 }];
+  status: "running" as const, exit_code: null,
+  started_at: Date.now() / 1000 - 42 }];
 
 it("renders a running session row", () => {
   render(<SessionStrip items={items} transcripts={{}} onExpand={() => {}} />);
@@ -1728,6 +1956,12 @@ const esc = (chars: string) =>
   chars.replace(/[\x00-\x1f]/g, (c) =>
     c === "\n" ? "\\n" : `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
 
+// Age is computed HERE, not shipped in /live rows — a ticking age_sec in the
+// payload would churn the host's lastLiveSignature every second (review fix #2).
+// Display-only: computed at render time; never stored in app state.
+const ageSec = (startedAt: number) =>
+  Math.max(0, Math.floor(Date.now() / 1000 - startedAt));
+
 export function SessionStrip({ items, transcripts, onExpand }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   if (items.length === 0) return null;
@@ -1747,7 +1981,7 @@ export function SessionStrip({ items, transcripts, onExpand }: Props) {
             <code>{s.command}</code>
             <span className="session-meta">
               {s.status}
-              {s.exit_code !== null ? ` (exit ${s.exit_code})` : ""} · {s.age_sec}s
+              {s.exit_code !== null ? ` (exit ${s.exit_code})` : ""} · {ageSec(s.started_at)}s
             </span>
           </button>
           {open === s.id && (
@@ -1804,6 +2038,63 @@ export function SessionStrip({ items, transcripts, onExpand }: Props) {
 - [ ] **Step 5: Commit** — `git commit -am "docs(exec-sessions): live smoke results"`
 
 ---
+
+## Dry-Run Review Fixes (2026-07-12, already folded into the tasks above)
+
+A pre-implementation dry-run traced every runtime path (spawn → yield → poll →
+kill → reload → restart) against the real seams. Seven findings, all fixed
+inline; the fix sites are marked "review fix #N" in the tasks:
+
+1. **Spawn hardening reuse (T3):** `start()` reuses `_split_command` +
+   `resolve_workspace_bin` + the venv env hygiene from `tools/shell.py` /
+   `tools/_paths.py`. Without them: whole-line commands (`"python -m
+   http.server 8765"`) `FileNotFoundError` (exec does no word-splitting),
+   naked names miss the workspace `.venv/bin`, and the backend's own
+   `VIRTUAL_ENV` leaks into the child.
+2. **Stable `/live` rows (T3/T8/T9/T10/T11):** `live_summaries` returns
+   `{id, command, status, exit_code, started_at}` — never a ticking `age_sec`
+   or per-log-line `unread_bytes`, which would flip `lastLiveSignature` every
+   1 s poll and re-fire the whole render block at 1 Hz. Age is computed in the
+   webview, display-only. `age_sec`/`unread_bytes` stay model-facing in
+   `list_sessions`.
+3. **Deterministic drain-on-exit (T2/T3):** `proc.wait()` returning does not
+   mean the reader callback delivered the final chunk. `wait()==True` now
+   implies a non-blocking `drain()` read-until-empty/EIO already ran — the
+   0.05 s "drain sleep" heuristic is gone (it truncated fast-command output
+   and let `_drop_if_drained` race the last bytes; also the #1 future
+   test-flake source).
+4. **win32 import guard (T2):** `pty`/`fcntl`/`termios` imports sit under
+   `if sys.platform != "win32"` — unguarded, the module can't even import on
+   Windows, making the winpty branch unreachable. `WinPtyProcess` is
+   explicitly marked speculative (verify pywinpty's real API at impl time).
+5. **stdin escape decoding (T3/T5):** JSON can't carry raw control bytes, so
+   models emit `\x03` as four literal characters; `write_stdin` decodes
+   `\n \r \t \xNN \uNNNN \\` server-side, and the tool description says so.
+6. **Waiter-task hygiene (T2):** one persistent `proc.wait()` task per
+   process, raced via `asyncio.wait({task}, timeout)` — the old
+   `wait_for(shield(proc.wait()), t)` per poll leaked one pending task per
+   timed-out poll. `get_running_loop()` throughout.
+7. **Non-blocking PTY writes (T2/T5):** master fd is `O_NONBLOCK`; writes
+   capped (4 KB at the fd, `STDIN_MAX_CHARS` at the tool with an `is_error`
+   reject) — a large write into a full PTY buffer would otherwise block the
+   entire event loop.
+8. **Controlling-TTY acquisition (T2, round-2 dry run):**
+   `start_new_session=True` + inherited slave fds gives the child a session
+   but NO controlling terminal (dup2 is not an `open()`), so the PTY's
+   foreground pgrp is empty and `\x03` Ctrl-C signals nobody — `write_stdin`
+   interrupt semantics silently dead. Fix: `preexec_fn` doing
+   `fcntl.ioctl(0, TIOCSCTTY, 0)` in the child (the `pty.fork()`/pexpect
+   approach; dup2s + setsid precede preexec in CPython's child_exec, so fd 0
+   is the slave and the child is a session leader). Kept to one raw syscall —
+   preexec_fn runs between fork and exec in a threaded parent, so it must not
+   touch allocators/locks.
+
+Accepted-risk warts (global cap vs thread-local visibility, exited-unread
+strip lingering, first-token pid-reuse guard, full-yield polls, UTF-8 cursor
+splits) are documented in the spec's Deferred section — noted, not fixed in v1.
+Shutdown kills were also made concurrent (`asyncio.gather`) and the T8 route
+tests now use a stub manager + sync `TestClient` (async-test-drives-sync-client
+deadlock hazard; real process behavior is T3's coverage).
 
 ## Self-Review Notes (already applied)
 
