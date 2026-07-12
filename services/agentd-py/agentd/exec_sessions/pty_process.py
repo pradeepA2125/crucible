@@ -58,7 +58,7 @@ class PtyProcess:
     @classmethod
     async def spawn(cls, command: str, args: list[str], cwd: Path,
                     env: dict[str, str],
-                    on_output: Callable[[bytes], None]) -> "PtyProcess":
+                    on_output: Callable[[bytes], None]) -> PtyProcess:
         master, slave = pty.openpty()
         # Sane window so TUIs/spinners render instead of degrading to 80x24.
         fcntl.ioctl(slave, termios.TIOCSWINSZ,
@@ -191,7 +191,7 @@ if sys.platform == "win32":  # pragma: no cover — no Windows CI; mirrors PtyPr
         Windows machine or CI — verify PTY.read/spawn/env semantics against
         the current pywinpty docs before first Windows use."""
 
-        def __init__(self, pty_: "winpty.PTY", on_output) -> None:
+        def __init__(self, pty_: winpty.PTY, on_output) -> None:
             self._pty = pty_
             self._on_output = on_output
             self._exit_code: int | None = None
@@ -244,6 +244,9 @@ if sys.platform == "win32":  # pragma: no cover — no Windows CI; mirrors PtyPr
             del self._pty
 
 
-def new_pty_process_class() -> type:
-    """Platform dispatch — the manager calls this once."""
-    return WinPtyProcess if sys.platform == "win32" else PtyProcess  # type: ignore[name-defined]
+def new_pty_process_class() -> type[PtyProcess]:
+    """Platform dispatch — the manager calls this once. WinPtyProcess mirrors
+    the PtyProcess contract structurally; the return type keeps callers typed."""
+    if sys.platform == "win32":
+        return WinPtyProcess  # type: ignore[return-value]
+    return PtyProcess

@@ -38,8 +38,11 @@ def result_max_chars() -> int:
 
 def clamp_yield_ms(raw: object) -> int:
     """Model-supplied yield → int clamped to [250, 30000]; garbage → default."""
-    try:
-        val = int(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
         val = default_yield_ms()
+    else:
+        try:
+            val = int(raw)
+        except ValueError:
+            val = default_yield_ms()
     return max(YIELD_MIN_MS, min(YIELD_MAX_MS, val))
