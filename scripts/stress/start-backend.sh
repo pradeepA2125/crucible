@@ -376,6 +376,7 @@ echo "uvicorn_log=$LOG_FILE"
   export CRUCIBLE_SKILLS_ENABLED="${CRUCIBLE_SKILLS_ENABLED:-1}"
   export CRUCIBLE_MCP_ENABLED="${CRUCIBLE_MCP_ENABLED:-1}"
   export CRUCIBLE_DOC_WRITE_ENABLED="${CRUCIBLE_DOC_WRITE_ENABLED:-1}"
+  export CRUCIBLE_EXEC_SESSIONS_ENABLED="${CRUCIBLE_EXEC_SESSIONS_ENABLED:-1}"
   export CRUCIBLE_SEMANTIC_RETRIEVAL="${CRUCIBLE_SEMANTIC_RETRIEVAL:-true}"
   # UX decision (chat UI redesign): the step gate is the conscious approval moment
   # on the large path — review every step by default. Override via env to opt out.
