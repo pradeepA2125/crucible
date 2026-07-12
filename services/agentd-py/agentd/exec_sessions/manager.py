@@ -130,6 +130,7 @@ class _Session:
     session_id: str
     thread_id: str
     command_line: str
+    executable: str  # resolved exe on its own — command_line is space-ambiguous
     proc: PtyProcessLike
     buffer: RingBuffer
     started_at: float
@@ -180,8 +181,8 @@ class SessionManager:
             raise SessionSpawnError(f"spawn failed: {exc}") from exc
         sess = _Session(
             session_id=f"sess-{uuid4().hex[:8]}", thread_id=thread_id,
-            command_line=" ".join([command, *args]), proc=proc,
-            buffer=buf, started_at=time.time())
+            command_line=" ".join([command, *args]), executable=command,
+            proc=proc, buffer=buf, started_at=time.time())
         self._sessions[sess.session_id] = sess
         self._registry.record(self._sessions.values())
         # wait()==True implies the final output was already drained (PtyProcess
