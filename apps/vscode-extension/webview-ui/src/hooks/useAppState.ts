@@ -37,6 +37,7 @@ const INITIAL: AppState = {
   liveSessions: null,
   sessionTranscripts: {},
   workbar: null,
+  retryStatus: null,
   liveStatus: null,
   turnActive: false,
 };
@@ -121,6 +122,7 @@ function reducer(state: AppState, action: Action): AppState {
         streaming: null,
         thinkingStatus: null,
         workbar: null,
+        retryStatus: null,
       };
 
     case "setInputEnabled":
@@ -128,7 +130,7 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "showThinking":
     case "updateThinking":
-      return { ...state, thinkingStatus: msg.message };
+      return { ...state, thinkingStatus: msg.message, retryStatus: null };
 
     case "hideThinking":
       return { ...state, thinkingStatus: null };
@@ -146,6 +148,7 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         thinkingStatus: null,
+        retryStatus: null,
         streaming: {
           ...prev,
           text: prev.text + msg.chunk,
@@ -163,6 +166,7 @@ function reducer(state: AppState, action: Action): AppState {
         : [...prev.thinkingEntries];
       return {
         ...state,
+        retryStatus: null,
         streaming: {
           ...prev,
           thinkingEntries: [...entries, msg.text],
@@ -175,6 +179,7 @@ function reducer(state: AppState, action: Action): AppState {
       const prev = ensureStreaming(state);
       return {
         ...state,
+        retryStatus: null,
         streaming: {
           ...prev,
           activeThinkingChunk: prev.activeThinkingChunk + msg.chunk,
@@ -199,6 +204,7 @@ function reducer(state: AppState, action: Action): AppState {
       const prev = ensureStreaming(state);
       return {
         ...state,
+        retryStatus: null,
         streaming: {
           ...prev,
           toolEvents: [...prev.toolEvents, { ...msg.event, done: false }],
@@ -353,6 +359,9 @@ function reducer(state: AppState, action: Action): AppState {
     case "updateWorkbar":
       return { ...state, workbar: msg.info };
 
+    case "updateRetryStatus":
+      return { ...state, retryStatus: msg.status };
+
     case "liveStatus": {
       const turnActive = msg.turnActive ?? false;
       // Durable reconciliation (spec §10): /live is the source of truth for turn
@@ -371,7 +380,7 @@ function reducer(state: AppState, action: Action): AppState {
         !turnActive && msg.status == null && (state.streaming != null || !state.inputEnabled);
       if (controllerTurnEnded) {
         const sealed = state.streaming ? sealStreaming(state, at) : state;
-        return { ...sealed, liveStatus: msg.status, turnActive, inputEnabled: true };
+        return { ...sealed, liveStatus: msg.status, turnActive, inputEnabled: true, retryStatus: null };
       }
       return { ...state, liveStatus: msg.status, turnActive };
     }

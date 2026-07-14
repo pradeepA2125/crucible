@@ -30,6 +30,7 @@ const base: AppState = {
   liveSessions: null,
   sessionTranscripts: {},
   workbar: null,
+  retryStatus: null,
   liveStatus: null,
   turnActive: false,
 };

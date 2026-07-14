@@ -313,4 +313,95 @@ describe("useAppState", () => {
     });
     expect((result.current.state.streaming?.toolEvents ?? []).map((t) => t.id)).toEqual([99]);
   });
+
+  // ── retryStatus ──────────────────────────────────────────────────────────
+
+  it("updateRetryStatus sets retryStatus", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({
+        type: "updateRetryStatus",
+        status: { attempt: 1, max_attempts: 4, reason: "rate_limited", message: "⏳ retrying…" },
+      });
+    });
+
+    expect(result.current.state.retryStatus).toEqual({
+      attempt: 1, max_attempts: 4, reason: "rate_limited", message: "⏳ retrying…",
+    });
+  });
+
+  it("retryStatus never lands in thinkingEntries", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({
+        type: "updateRetryStatus",
+        status: { attempt: 1, max_attempts: 4, reason: "network_error", message: "⏳ retrying…" },
+      });
+      fireMessage({ type: "appendChunk", chunk: "real answer" });
+      fireMessage({ type: "finalizeAgentMessage" });
+    });
+
+    const last = result.current.state.messages[result.current.state.messages.length - 1];
+    const thinkingLog = (last.metadata?.thinking_log as string[] | undefined) ?? [];
+    expect(thinkingLog.some((t) => t.includes("retrying"))).toBe(false);
+  });
+
+  it("appendChunk (real content) clears retryStatus", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({
+        type: "updateRetryStatus",
+        status: { attempt: 1, max_attempts: 4, reason: "network_error", message: "⏳ retrying…" },
+      });
+      fireMessage({ type: "appendChunk", chunk: "hi" });
+    });
+
+    expect(result.current.state.retryStatus).toBeNull();
+  });
+
+  it("appendThinkingChunk (real progress resuming) clears retryStatus", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({
+        type: "updateRetryStatus",
+        status: { attempt: 1, max_attempts: 4, reason: "network_error", message: "⏳ retrying…" },
+      });
+      fireMessage({ type: "appendThinkingChunk", chunk: "real reasoning" });
+    });
+
+    expect(result.current.state.retryStatus).toBeNull();
+  });
+
+  it("clearThread clears retryStatus", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({
+        type: "updateRetryStatus",
+        status: { attempt: 1, max_attempts: 4, reason: "network_error", message: "⏳ retrying…" },
+      });
+      fireMessage({ type: "clearThread" });
+    });
+
+    expect(result.current.state.retryStatus).toBeNull();
+  });
+
+  it("liveStatus controllerTurnEnded clears retryStatus", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({ type: "setInputEnabled", enabled: false });
+      fireMessage({
+        type: "updateRetryStatus",
+        status: { attempt: 1, max_attempts: 4, reason: "network_error", message: "⏳ retrying…" },
+      });
+      fireMessage({ type: "liveStatus", status: null, turnActive: false });
+    });
+
+    expect(result.current.state.retryStatus).toBeNull();
+  });
 });
