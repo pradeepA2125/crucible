@@ -81,3 +81,42 @@ describe("ThreadView memory shortcut", () => {
     expect(calls).toContainEqual({ type: "openMemoryPanel" });
   });
 });
+
+describe("ThreadView retry-status bubble", () => {
+  it("renders the retry bubble with the retry message when retryStatus is set", () => {
+    const state: AppState = {
+      ...base,
+      retryStatus: { attempt: 2, max_attempts: 4, reason: "rate_limited", message: "⏳ Rate limited — retrying in 8s (attempt 2/4)…" },
+    };
+
+    render(<ThreadView state={state} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+
+    expect(screen.getByText(/Rate limited — retrying in 8s \(attempt 2\/4\)/)).toBeInTheDocument();
+  });
+
+  it("retry bubble takes precedence over thinkingStatus and the streaming bubble", () => {
+    const state: AppState = {
+      ...base,
+      retryStatus: { attempt: 1, max_attempts: 4, reason: "network_error", message: "⏳ retrying…" },
+      thinkingStatus: "Thinking…",
+      streaming: { text: "partial answer", thinkingEntries: [], activeThinkingChunk: "", toolEvents: [] },
+    };
+
+    render(<ThreadView state={state} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+
+    expect(screen.getByText(/retrying/)).toBeInTheDocument();
+    expect(screen.queryByText("partial answer")).not.toBeInTheDocument();
+  });
+
+  it("renders normally (no retry bubble) once retryStatus clears", () => {
+    const state: AppState = {
+      ...base,
+      retryStatus: null,
+      streaming: { text: "partial answer", thinkingEntries: [], activeThinkingChunk: "", toolEvents: [] },
+    };
+
+    render(<ThreadView state={state} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+
+    expect(screen.getByText("partial answer")).toBeInTheDocument();
+  });
+});

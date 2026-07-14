@@ -83,6 +83,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     state.streaming?.toolEvents.length,
     state.streaming?.thinkingEntries.length,
     state.thinkingStatus,
+    state.retryStatus?.message,
   ]);
 
   const activeThread = state.threads.find(
@@ -93,7 +94,8 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   const isEmpty =
     state.messages.length === 0 &&
     !state.streaming &&
-    !state.thinkingStatus;
+    !state.thinkingStatus &&
+    !state.retryStatus;
 
   return (
     <div className="relative flex h-full overflow-hidden">
@@ -285,8 +287,26 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
               <MessageRow key={i} msg={m} planVersion={planVersionMap.get(i)} />
             ))}
 
-            {/* Thinking status line (when no streaming bubble yet) */}
-            {state.thinkingStatus && !state.streaming && (
+            {/* Retry-status bubble — takes precedence over both the thinking
+                status line and the streaming bubble below while a retry is
+                in flight. Ephemeral: never appended to thinkingEntries, no
+                trace left once it clears (see design spec). */}
+            {state.retryStatus && (
+              <div
+                className="flex items-center gap-2 text-[11px]"
+                style={{ color: "var(--color-text-3)", animation: "pulse 1.5s ease-in-out infinite" }}
+              >
+                <span
+                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  style={{ background: "var(--color-accent)" }}
+                  aria-hidden="true"
+                />
+                {state.retryStatus.message}
+              </div>
+            )}
+
+            {/* Thinking status line (when no streaming bubble yet, no retry in flight) */}
+            {!state.retryStatus && state.thinkingStatus && !state.streaming && (
               <div className="flex items-center gap-2 text-[11px]"
                 style={{ color: "var(--color-text-3)" }}>
                 <span
@@ -301,8 +321,8 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
               </div>
             )}
 
-            {/* Streaming bubble */}
-            {state.streaming && (
+            {/* Streaming bubble (hidden while a retry is in flight — resumes once it clears) */}
+            {!state.retryStatus && state.streaming && (
               <AgentRow
                 content={state.streaming.text}
                 streaming
