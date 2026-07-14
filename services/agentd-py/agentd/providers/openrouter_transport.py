@@ -78,6 +78,15 @@ def _is_retryable(exc: Exception) -> bool:
     return isinstance(status_code, int) and status_code in _RETRYABLE_STATUS_CODES
 
 
+def _classify_retry_reason(exc: Exception) -> str:
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 429:
+        return "rate_limited"
+    if isinstance(status_code, int):
+        return "server_error"
+    return "network_error"
+
+
 class OpenRouterJsonTransport(ModelJsonTransport):
     supports_anyof_grammar: bool = True
 
@@ -179,6 +188,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: Any = None,
+        on_retry: Any = None,
     ) -> dict[str, object]:
         result = await self._generate_json_once(
             model=model,
@@ -187,6 +197,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             system_instructions=system_instructions,
             user_payload=user_payload,
             on_thinking=on_thinking,
+            on_retry=on_retry,
         )
         # Type-specific narrowing: the tight anyOf schema enforces each variant's
         # required fields at the token level, but if the grammar was ignored (an
@@ -208,11 +219,12 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                     system_instructions=system_instructions,
                     user_payload=user_payload,
                     on_thinking=on_thinking,
+                    on_retry=on_retry,
                 )
         return result
 
     async def _get_completion_text(
-        self, create_kwargs: dict[str, Any], on_thinking: Any,
+        self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
     ) -> str:
         """Route through the streaming path (forwarding reasoning deltas to
         on_thinking live, as they arrive) when a callback is given, else the plain
@@ -221,8 +233,10 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         driving every turn of a live-driven session) rendered nothing until the
         whole call completed, identical to the gap fixed on the Ollama transport."""
         if callable(on_thinking):
-            return await self._stream_with_thinking(create_kwargs, on_thinking=on_thinking)
-        response = await self._call_with_retry(create_kwargs)
+            return await self._stream_with_thinking(
+                create_kwargs, on_thinking=on_thinking, on_retry=on_retry
+            )
+        response = await self._call_with_retry(create_kwargs, on_retry=on_retry)
         return self._extract_text(response)
 
     async def _generate_json_once(
@@ -234,6 +248,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: Any = None,
+        on_retry: Any = None,
     ) -> dict[str, object]:
         safe_schema_name = "".join(c for c in schema_name if c.isalnum())
 
@@ -288,7 +303,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             pass
 
         try:
-            output_text = await self._get_completion_text(create_kwargs, on_thinking)
+            output_text = await self._get_completion_text(create_kwargs, on_thinking, on_retry)
             return self._parse_output_object(output_text, schema_name)
         except Exception as e:
             # Fall back to json_object with schema injected into system prompt.
@@ -330,16 +345,17 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                         schema_name, attempt, self._max_retries, delay,
                     )
                     # A malformed-JSON retry cycle can run for minutes with the UI
-                    # otherwise showing nothing — reuse the thinking-chunk channel
-                    # so the user sees a retry is happening, not stuck silence.
-                    if callable(on_thinking):
-                        on_thinking(
+                    # otherwise showing nothing — on_retry (structured, distinct
+                    # from on_thinking) lets the caller show a retry is happening.
+                    if callable(on_retry):
+                        on_retry(
+                            attempt, self._max_retries, "malformed_response",
                             f"⏳ Malformed JSON response — retrying in {delay:.0f}s "
-                            f"(attempt {attempt}/{self._max_retries})…"
+                            f"(attempt {attempt}/{self._max_retries})…",
                         )
                     await asyncio.sleep(delay)
                 try:
-                    output_text = await self._get_completion_text(fallback_kwargs, on_thinking)
+                    output_text = await self._get_completion_text(fallback_kwargs, on_thinking, on_retry)
                     return self._parse_output_object(output_text, schema_name)
                 except RuntimeError as e2:
                     if "not valid JSON" in str(e2) or "must be a JSON object" in str(e2):
@@ -393,6 +409,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         create_kwargs: dict[str, Any],
         *,
         on_thinking: Any,
+        on_retry: Any = None,
     ) -> str:
         """Stream response forwarding reasoning chunks to on_thinking callback.
 
@@ -408,13 +425,13 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                     "OpenRouter transient error (attempt %d/%d), retrying in %.0fs",
                     attempt, self._max_retries, delay,
                 )
-                # A transient-error retry cycle can run for minutes with the UI
-                # otherwise showing nothing — reuse the thinking-chunk channel so
-                # the user sees a retry is happening, not stuck silence.
-                on_thinking(
-                    f"⏳ {last_exc.__class__.__name__ if last_exc else 'transient error'} "
-                    f"— retrying in {delay:.0f}s (attempt {attempt}/{self._max_retries})…"
-                )
+                if callable(on_retry):
+                    reason = _classify_retry_reason(last_exc) if last_exc else "network_error"
+                    message = (
+                        f"⏳ {last_exc.__class__.__name__ if last_exc else 'transient error'} "
+                        f"— retrying in {delay:.0f}s (attempt {attempt}/{self._max_retries})…"
+                    )
+                    on_retry(attempt, self._max_retries, reason, message)
                 await asyncio.sleep(delay)
             try:
                 content_parts: list[str] = []
@@ -449,7 +466,12 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         assert last_exc is not None
         raise last_exc
 
-    async def _call_with_retry(self, create_kwargs: dict[str, Any]) -> Any:
+    async def _call_with_retry(
+        self,
+        create_kwargs: dict[str, Any],
+        *,
+        on_retry: Any = None,
+    ) -> Any:
         """Call chat.completions.create with timeout and exponential backoff."""
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
@@ -459,6 +481,13 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                     "OpenRouter transient error (attempt %d/%d), retrying in %.0fs",
                     attempt, self._max_retries, delay,
                 )
+                if callable(on_retry):
+                    reason = _classify_retry_reason(last_exc) if last_exc else "network_error"
+                    message = (
+                        f"⏳ {last_exc.__class__.__name__ if last_exc else 'transient error'} "
+                        f"— retrying in {delay:.0f}s (attempt {attempt}/{self._max_retries})…"
+                    )
+                    on_retry(attempt, self._max_retries, reason, message)
                 await asyncio.sleep(delay)
             try:
                 return await asyncio.wait_for(
