@@ -128,8 +128,9 @@ class ScriptedReasoningEngine:
         *,
         phase: str,
         on_thinking: object = None,
+        on_retry: object = None,
     ) -> dict[str, object]:
-        _ = (plan_context, history, tool_definitions, phase, on_thinking)
+        _ = (plan_context, history, tool_definitions, phase, on_thinking, on_retry)
         if not self._controller_step_responses:
             raise RuntimeError("no controller_step_responses configured on ScriptedReasoningEngine")
         index = min(self._controller_step_index, len(self._controller_step_responses) - 1)

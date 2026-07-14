@@ -24,7 +24,7 @@ class _RecordingTransport:
     supports_oneof_grammar = False
 
     async def generate_json(self, *, model, schema_name, schema,
-                            system_instructions, user_payload, on_thinking=None):
+                            system_instructions, user_payload, on_thinking=None, on_retry=None):
         return {"type": "answer", "thought": "t", "answer": "a"}
 
     async def generate_text(self, *, model, system_instructions, user_payload, on_thinking=None):
