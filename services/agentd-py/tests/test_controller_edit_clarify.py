@@ -35,7 +35,7 @@ class _PhaseRecordingEngine(ScriptedReasoningEngine):
         self.phases: list[str] = []
 
     async def create_controller_step(
-        self, plan_context, history, tool_definitions, *, phase, on_thinking=None):
+        self, plan_context, history, tool_definitions, *, phase, on_thinking=None, on_retry=None):
         self.phases.append(phase)
         return await super().create_controller_step(
             plan_context, history, tool_definitions, phase=phase, on_thinking=on_thinking)

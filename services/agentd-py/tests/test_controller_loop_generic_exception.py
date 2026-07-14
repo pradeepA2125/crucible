@@ -79,11 +79,13 @@ async def test_controller_loop_recovers_from_transient_failure_without_ending_tu
 
 
 @pytest.mark.asyncio
-async def test_exception_retry_broadcasts_live_status(tmp_path: Path):
+async def test_exception_retry_broadcasts_retry_status_not_tool_thinking_chunk(tmp_path: Path):
     """User-directed: a retry cycle (transient error or malformed response) can run
     for a while with the turn otherwise showing nothing between 'Working…' and the
     eventual outcome — indistinguishable from being stuck. Each retry attempt must
-    broadcast a live tool_thinking_chunk so the user sees progress, not silence."""
+    broadcast a retry_status event (not tool_thinking_chunk — that channel is
+    reserved for genuine model reasoning, never retry noise) so the user sees
+    progress, not silence."""
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     broadcaster = EventBroadcaster()
@@ -105,13 +107,16 @@ async def test_exception_retry_broadcasts_live_status(tmp_path: Path):
     events = []
     while not queue.empty():
         events.append(queue.get_nowait())
-    retry_chunks = [
+    retry_events = [e for e in events if e.get("type") == "retry_status"]
+    stale_thinking_chunks = [
         e for e in events
         if e.get("type") == "tool_thinking_chunk"
-        and "⚠️ Response failed" in e.get("payload", {}).get("chunk", "")
+        and "Response failed" in e.get("payload", {}).get("chunk", "")
     ]
-    assert len(retry_chunks) == 2, events  # one per failed attempt before recovery
-    assert "Ollama response contained no text content" in retry_chunks[0]["payload"]["chunk"]
+    assert len(retry_events) == 2, events  # one per failed attempt before recovery
+    assert retry_events[0]["payload"]["reason"] == "malformed_response"
+    assert "Ollama response contained no text content" in retry_events[0]["payload"]["message"]
+    assert not stale_thinking_chunks, stale_thinking_chunks
 
 
 class _RaisesMidTurn:

@@ -13,7 +13,7 @@ class _CapturingEngine(ScriptedReasoningEngine):
         super().__init__(*args, **kwargs)
         self.captured_goals: list[str] = []
 
-    async def create_controller_step(self, plan_context, history, tool_definitions, *, phase, on_thinking=None):
+    async def create_controller_step(self, plan_context, history, tool_definitions, *, phase, on_thinking=None, on_retry=None):
         self.captured_goals.append(plan_context["goal"])
         return await super().create_controller_step(
             plan_context, history, tool_definitions, phase=phase, on_thinking=on_thinking)
