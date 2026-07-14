@@ -468,6 +468,38 @@ class ChatController:
             self._store.set_controller_todos(
                 thread_id, ledger.to_json() if ledger.items else None)
             raise
+        except Exception as exc:
+            # A provider call (or any other step of the loop) raised something we don't
+            # have specific recovery for — e.g. a cloud model exhausting its whole output
+            # budget on thinking and returning no text content (observed live: Ollama
+            # Cloud's Nemotron-3-Super burned 32768 tokens of <think> and never emitted a
+            # response). Before this handler existed, that exception propagated straight
+            # out of the SSE route uncaught: the stream died mid-flight with no chat_done,
+            # no breadcrumb, nothing — turn_active still flipped false (cleanup elsewhere
+            # runs regardless) so the composer re-enabled, but the todo list stayed frozen
+            # at whatever was last persisted and nothing in the transcript or the live UI
+            # ever indicated a failure happened. From the user's chair this reads as the
+            # agent silently giving up mid-task, not as an error — the worst version of
+            # "the UI looks stuck" because there isn't even a stuck state to notice.
+            #
+            # Fix: treat it like a normal turn-ending "answer" so it flows through the
+            # already-correct chat_response + chat_done broadcast path below (_finish),
+            # instead of inventing a new outcome kind every caller/frontend would need to
+            # learn. Same partial-state persistence as the cancellation branch, but no
+            # re-raise — the turn ends cleanly with a visible, actionable message.
+            logger.exception(
+                "[controller] turn failed with an unhandled exception (thread=%s)", thread_id)
+            partial_hist = loop.partial_history()
+            if partial_hist:
+                self._histories[thread_id] = partial_hist
+                self._store.set_controller_history(thread_id, partial_hist)
+            self._store.set_controller_todos(
+                thread_id, ledger.to_json() if ledger.items else None)
+            outcome = ControllerOutcome(
+                kind="answer",
+                text=f"⚠️ The turn failed and had to stop: {exc}",
+                history=partial_hist,
+            )
         self._histories[thread_id] = outcome.history or []
         # Turn trace artifact (controller analog of tool-trace.json): the whole turn's
         # info in one file for offline debugging — phase, verbatim history, pills,

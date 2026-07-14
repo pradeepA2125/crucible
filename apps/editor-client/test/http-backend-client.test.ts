@@ -1,5 +1,16 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { HttpBackendClient } from "../src/client/http-backend-client.js";
+
+// A ReadableStream that never enqueues and never closes — simulates a stalled SSE
+// connection (idle proxy timeout, dead socket with no RST) where reader.read() would
+// otherwise hang forever with no error and no data.
+function neverRespondingSseBody(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start() {
+      /* never enqueue, never close — the stream just hangs */
+    },
+  });
+}
 
 describe("HttpBackendClient skills", () => {
   test("sendChatMessage includes forced_skills in the body", async () => {
@@ -792,5 +803,64 @@ describe("HttpBackendClient", () => {
     });
     const chain = await client.getSupersedeChain("new");
     expect(chain.map((m) => m.id)).toEqual(["old", "new"]);
+  });
+});
+
+// ── SSE idle-read timeout ──────────────────────────────────────────────────────
+//
+// Regression coverage for a live-observed bug: a chat turn's SSE stream went silently
+// dead (no data, no error) for 60+ minutes while the backend kept working — nothing
+// detected it because reader.read() has no timeout by default. Each of the four chat
+// SSE generators must give up after SSE_IDLE_TIMEOUT_MS instead of hanging forever, so
+// the caller's existing reconnect logic (gated on the stream having ended) can kick in.
+
+describe("HttpBackendClient — SSE idle-read timeout", () => {
+  test("sendChatMessage ends (does not hang) after the idle timeout on a stalled stream", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new HttpBackendClient({
+        baseUrl: "http://localhost:8000",
+        fetchFn: async () =>
+          new Response(neverRespondingSseBody(), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+      });
+      const iterator = client.sendChatMessage("t1", "hi")[Symbol.asyncIterator]();
+      const nextPromise = iterator.next();
+
+      // Nothing has arrived and the promise must not resolve before the idle timeout.
+      let settled = false;
+      void nextPromise.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(119_000);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      const result = await nextPromise;
+      expect(result.done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("streamChannel ends (does not hang) after the idle timeout on a stalled stream", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new HttpBackendClient({
+        baseUrl: "http://localhost:8000",
+        fetchFn: async () =>
+          new Response(neverRespondingSseBody(), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+      });
+      const iterator = client.streamChannel("chat:t1")[Symbol.asyncIterator]();
+      const nextPromise = iterator.next();
+      await vi.advanceTimersByTimeAsync(121_000);
+      const result = await nextPromise;
+      expect(result.done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

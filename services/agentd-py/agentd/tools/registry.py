@@ -140,18 +140,24 @@ class ToolRegistry:
             ToolDefinition(
                 name="run_command",
                 description=(
-                    "Run a shell command inside the shadow workspace. Each command "
-                    "is surfaced to the user for approval (Accept / Accept & remember / "
-                    "Reject) unless the session was started in allow_all mode. If the "
-                    "user rejects, you will receive a tool-result error and should try "
-                    "a different approach (e.g. a static check). Use to run tests, "
+                    "Run a real shell command line inside the shadow workspace — "
+                    "'command' and 'args' are joined and executed via a shell, so "
+                    "pipes, redirects, and chaining work: put each token (including "
+                    "the operator) as its own args entry, e.g. args: [\"file.go\", "
+                    "\"|\", \"head\", \"-20\"] or [\"&&\", \"go\", \"vet\", \"./...\"]. "
+                    "Every other argument is passed through literally (spaces/quotes "
+                    "in a single argument are preserved). Each command is surfaced to "
+                    "the user for approval (Accept / Accept & remember / Reject) "
+                    "unless the session was started in allow_all mode. If the user "
+                    "rejects, you will receive a tool-result error and should try a "
+                    "different approach (e.g. a static check). Use to run tests, "
                     "linters, or type checkers."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "Command name or full path"},
-                        "args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments"},
+                        "args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments — include shell operators (|, &&, ||, ;, >, >>, <) as standalone entries to compose a real pipeline/chain"},
                         "cwd": {"type": "string", "description": "Optional working directory, RELATIVE to the workspace root (e.g. 'services/agentd-py'). Empty/omitted = workspace root. Paths that escape the workspace are clamped to root."},
                     },
                     "required": ["command"],

@@ -90,6 +90,7 @@ export class RuntimeManager {
   private readonly lastStartedAt = new Map<string, number>();
   private readonly intentionalStops = new Set<string>();
   private disposed = false;
+  private readyListener: ((workspace: string) => void) | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -99,6 +100,15 @@ export class RuntimeManager {
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
     this.statusBar.command = "crucible.openSettingsPanel";
     context.subscriptions.push(this.statusBar);
+  }
+
+  // Fires every time a backend for a workspace becomes healthy — the initial managed
+  // start, a crash-triggered auto-respawn (watchCrash), and an explicit restart() all
+  // route through startForWorkspace, so one registration covers all three. Callers use
+  // this to re-fetch /v1/config and refresh capability when-contexts (memoryEnabled etc)
+  // instead of reading them once at activation, which goes stale across a crash/restart.
+  onBackendReady(listener: (workspace: string) => void): void {
+    this.readyListener = listener;
   }
 
   isInstalled(): boolean {
@@ -246,6 +256,7 @@ export class RuntimeManager {
       this.lastStartedAt.set(workspace, Date.now());
       this.statusBar.text = `$(check) Crucible :${result.port}`;
       this.watchCrash(workspace, proc);
+      this.readyListener?.(workspace);
       return result;
     } catch (err) {
       this.markFailed(err instanceof Error ? err.message : String(err));

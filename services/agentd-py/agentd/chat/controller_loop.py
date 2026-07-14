@@ -14,6 +14,7 @@ from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.tool_events import trace_to_tool_events
 from agentd.domain.models import AgentToolTrace, ToolCall, ToolResult
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
+from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.reasoning.react_common import MALFORMED_CORRECTION, assistant_turn, dedup_key
 
 if TYPE_CHECKING:
@@ -368,11 +369,47 @@ class ControllerLoop:
             # hint (which is where the skill-triage check lives) only ever fired once
             # per thread, not once per user message.
             plan_context["decide_entry"] = self._sm.phase == "DECIDE" and iteration == 0
-            resp = await self._reasoning.create_controller_step(
-                plan_context=plan_context, history=history,
-                tool_definitions=tool_defs, phase=self._sm.phase,
-                on_thinking=_on_thinking,
-            )
+            try:
+                resp = await self._reasoning.create_controller_step(
+                    plan_context=plan_context, history=history,
+                    tool_definitions=tool_defs, phase=self._sm.phase,
+                    on_thinking=_on_thinking,
+                )
+            except Exception as exc:
+                # A raised exception here (empty/unparseable model output, a transport
+                # hiccup — e.g. a cloud model exhausting its output budget on <think>)
+                # is just another flavor of "the model gave me nothing usable" — the
+                # SAME thing consecutive_malformed already exists to handle for a
+                # parsed-but-invalid response below. Route it through that one shared
+                # counter/correction path instead of a second bespoke retry mechanism.
+                logger.warning("[controller] create_controller_step raised: %s", exc)
+                consecutive_malformed += 1
+                if consecutive_malformed > _MAX_MALFORMED:
+                    raise ControllerLoopExhausted(
+                        f"Controller failed {consecutive_malformed} consecutive times "
+                        f"— last error: {exc}") from exc
+                # A malformed/failed response can recur for several iterations before
+                # recovering or exhausting — without this the UI shows nothing between
+                # "Working…" and either the next real action or the eventual failure,
+                # indistinguishable from actually being stuck.
+                self._broadcaster.broadcast(self._channel_id, {
+                    "type": "tool_thinking_chunk",
+                    "payload": {
+                        "chunk": f"⚠️ Response failed ({consecutive_malformed}/{_MAX_MALFORMED}): "
+                                 f"{cap_event_output(str(exc), 200)} — retrying…"},
+                })
+                history.append({"role": "assistant", "content": "{}"})
+                history.append({
+                    "role": "tool_result", "tool": "",
+                    "content": (
+                        f"Your previous response failed: {cap_event_output(str(exc), 300)} "
+                        "Respond again with EXACTLY ONE complete JSON object matching the "
+                        "schema — no prose, no markdown fences. If your response was cut off, "
+                        "produce a SHORTER one (e.g. a smaller file, or split a large change "
+                        "into more than one patch_ops entry across turns)."
+                    ),
+                })
+                continue
             atype = str(resp.get("type", ""))
             logger.info("[controller] iter=%d phase=%s action=%s", iteration, self._sm.phase, atype)
             # Reject BEFORE dispatching: wrong action type for the phase, a propose_mode with
@@ -403,6 +440,12 @@ class ControllerLoop:
                     raise ControllerLoopExhausted(
                         f"Controller returned {consecutive_malformed} consecutive malformed "
                         f"responses (last type={atype!r})")
+                self._broadcaster.broadcast(self._channel_id, {
+                    "type": "tool_thinking_chunk",
+                    "payload": {
+                        "chunk": f"⚠️ Invalid response ({consecutive_malformed}/{_MAX_MALFORMED}): "
+                                 f"{cap_event_output(correction, 200)} — retrying…"},
+                })
                 history.append(assistant_turn(resp))
                 history.append({"role": "tool_result", "tool": "", "content": correction})
                 continue

@@ -176,3 +176,33 @@ async def test_run_command_skips_shadow_import_root_for_non_python_tool(tmp_path
         binary_name_override="eslint",
     )
     assert str(shadow / "pkgs") not in out.output
+
+
+@pytest.mark.asyncio
+async def test_run_command_timeout_kills_the_process(tmp_path: Path) -> None:
+    """Regression: asyncio.wait_for(proc.communicate(), timeout=...) only cancels
+    the WAIT — it never signals the underlying OS process. A deadlocked command
+    (e.g. a hung `go test` holding a listener open) was left running indefinitely,
+    orphaned from the tool call, after the timeout fired. Confirmed live during a
+    dogfood campaign (a deadlocked broker test kept running for 3+ minutes at ~0%
+    CPU after `run_command` had already returned). Assert the child is actually
+    dead, not just that the tool call returns."""
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    real = tmp_path / "real"
+    real.mkdir()
+
+    out = await run_command(
+        command="sleep",
+        args=["30"],
+        shadow_root=shadow,
+        real_workspace_path=real,
+        timeout_sec=1,
+    )
+    assert out.is_error
+    assert "timed out" in out.output
+
+    # No sleep-30 process left running after the timeout.
+    import subprocess
+    ps = subprocess.run(["pgrep", "-f", "sleep 30"], capture_output=True, text=True)
+    assert ps.returncode != 0, f"leaked process(es): {ps.stdout}"

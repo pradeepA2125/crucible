@@ -2,9 +2,17 @@ from pathlib import Path
 
 import pytest
 
-from agentd.chat.edit_session import TurnEditSession
+from agentd.chat.edit_session import TurnEditSession, _looks_double_escaped
 from agentd.patch.engine import PatchEngine
 from agentd.workspace.shadow import ShadowWorkspaceManager
+
+
+def test_looks_double_escaped_boundary_cases():
+    assert _looks_double_escaped("a\\nb\\nc\\n") is True  # 3 literal escapes, no real newline
+    assert _looks_double_escaped("a\\nb\\n") is False  # only 2, below threshold
+    assert _looks_double_escaped("a\nb\\nc\\nd\\n") is False  # has a real newline
+    assert _looks_double_escaped("") is False
+    assert _looks_double_escaped("short one-liner") is False
 
 
 def _sr(file: str, search: str, replace: str) -> list[dict]:
@@ -53,6 +61,76 @@ async def test_code_in_file_field_is_rejected_not_promoted(tmp_path: Path):
         await sess.apply([{"op": "create_file", "file": code, "content": "src/tax.py"}])
     # nothing landed anywhere — no garbage-named file in real or shadow
     assert list(real.iterdir()) == []
+    await sess.close()
+
+
+@pytest.mark.asyncio
+async def test_double_escaped_content_is_rejected_not_promoted(tmp_path: Path):
+    """A model can produce technically-valid JSON where a string value is
+    double-escaped: literal backslash-n/backslash-t sequences instead of real
+    newline/tab characters. This passes JSON parsing and schema validation with no
+    exception anywhere — confirmed live 2026-07-13 (Ollama Cloud / Nemotron): the
+    debug artifact already showed this shape straight out of the transport, before
+    any Crucible code touched it. Left unvalidated, apply() would silently write a
+    real file that's one giant line of escaped text (0 real newlines) with a false
+    "Applied" success. apply() must reject it instead."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    sess = TurnEditSession(
+        turn_id="bad-escape",
+        real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine(),
+    )
+    # Real fixture: a trimmed slice of the actual corrupted content observed live.
+    broken_content = 'package commitlog\\n\\nimport (\\n\\t"encoding/binary"\\n\\t"errors"\\n)\\n'
+    with pytest.raises(ValueError, match="double-escaped"):
+        await sess.apply([{"op": "create_file", "file": "commitlog/log.go", "content": broken_content}])
+    assert list(real.iterdir()) == []
+    await sess.close()
+
+
+@pytest.mark.asyncio
+async def test_short_single_line_content_is_not_flagged(tmp_path: Path):
+    """The double-escape heuristic must not false-positive on legitimate short,
+    single-line content (no real newline is expected/fine for a one-liner)."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    sess = TurnEditSession(
+        turn_id="ok-oneliner",
+        real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine(),
+    )
+    diff = await sess.apply(
+        [{"op": "create_file", "file": "VERSION", "content": "1.0.0", "reason": "r"}])
+    assert any(e.path == "VERSION" for e in diff)
+    await sess.close()
+
+
+@pytest.mark.asyncio
+async def test_content_with_real_newlines_and_a_literal_backslash_n_comment_is_not_flagged(
+    tmp_path: Path,
+):
+    """A real multi-line file that happens to mention \\n as text (e.g. inside a
+    comment or string literal about newlines) must not be flagged — the heuristic
+    only fires when there is NO real newline anywhere."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    sess = TurnEditSession(
+        turn_id="ok-mixed",
+        real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine(),
+    )
+    content = (
+        "package main\n\n"
+        '// splitLines splits on \\n, \\n, \\n markers\n'
+        "func splitLines(s string) []string { return nil }\n"
+    )
+    diff = await sess.apply(
+        [{"op": "create_file", "file": "main.go", "content": content, "reason": "r"}])
+    assert any(e.path == "main.go" for e in diff)
     await sess.close()
 
 

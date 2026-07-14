@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
+import signal
 from asyncio.subprocess import PIPE, STDOUT
 from pathlib import Path
 
@@ -15,6 +17,33 @@ from agentd.tools.registry import ToolOutput
 
 _MAX_OUTPUT_CHARS = 8000
 _DEFAULT_TIMEOUT_SEC = 60
+
+# Tokens the model may place as standalone `args` entries to compose a real shell
+# pipeline (e.g. args: ["file.go", "|", "head", "-20"]) — left UNQUOTED in the
+# built command line so the shell actually interprets them. Every other token is
+# shell-quoted individually (shlex.quote), so a normal argument containing spaces
+# or other special characters (a search pattern, a path) still passes through
+# literally, exactly like the old argv-exec did for the non-shell-operator case.
+_SHELL_OPERATORS = frozenset({"|", "&&", "||", ";", ">", ">>", "<", "2>&1", "2>", "&"})
+
+
+def _build_shell_command_line(command: str, args: list[str]) -> str:
+    """Join a resolved executable + args into one real shell command line.
+
+    The approval gate (CRUCIBLE_SHELL_POLICY=ask, the human-in-the-loop review
+    card) is the actual safety boundary here — the model could already run any
+    command via `command`+`args` (no static allowlist, see below), so a tool that
+    silently refused valid shell syntax (pipes/redirects/chaining) wasn't adding
+    real safety, just breaking what the model — and the tool's own "Run a shell
+    command" description — already implied it could do. Every argument the model
+    supplies is quoted individually unless it's a recognized shell operator, so a
+    plain command with no operators behaves exactly as before (one argument stays
+    one argument even if it contains spaces).
+    """
+    parts = [shlex.quote(command)]
+    for arg in args:
+        parts.append(arg if arg in _SHELL_OPERATORS else shlex.quote(arg))
+    return " ".join(parts)
 
 # Only these allow-listed tools import the workspace's Python package(s), so only they
 # need the shadow's editable packages prepended to PYTHONPATH. ruff/tsc/eslint/npm/cargo
@@ -131,24 +160,51 @@ async def run_command(
     env["VIRTUAL_ENV"] = str(_workspace_venv)
 
     resolved_cwd = _resolve_workspace_cwd(shadow_root, cwd)
+    shell_command_line = _build_shell_command_line(command, args)
     try:
-        proc = await asyncio.create_subprocess_exec(
-            command,
-            *args,
+        proc = await asyncio.create_subprocess_shell(
+            shell_command_line,
             cwd=str(resolved_cwd),
             env=env,
             stdout=PIPE,
             stderr=STDOUT,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
-    except asyncio.TimeoutError:
-        return ToolOutput(
-            output=f"Error: command '{command}' timed out after {timeout_sec}s",
-            is_error=True,
+            # Own process group (setsid) so a timeout can kill the WHOLE pipeline,
+            # not just the shell wrapper. A real pipeline (`cmd1 | cmd2`) forks a
+            # child per stage; killing only the tracked shell PID (proc.kill(),
+            # sufficient for a single command under create_subprocess_exec) would
+            # leave those children orphaned and still running — the exact class of
+            # leak Fix #7 (this same session) closed for the simple case.
+            start_new_session=True,
         )
     except FileNotFoundError:
+        # The shell binary itself (/bin/sh) is missing — vanishingly rare. A
+        # naked unresolvable command name instead surfaces as a normal non-zero
+        # exit ("sh: foo: command not found" on stdout/stderr), handled below
+        # like any other command failure, not as a raised exception.
         return ToolOutput(
-            output=f"Error: '{command}' not found on PATH",
+            output=f"Error: could not start a shell to run '{command}'",
+            is_error=True,
+        )
+
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        # wait_for cancels the communicate() coroutine, not the underlying OS
+        # process — proc.communicate() being abandoned does not send it a signal.
+        # Confirmed empirically: a deadlocked child (e.g. a hung `go test -race`
+        # holding a TCP listener) keeps running indefinitely, orphaned from this
+        # tool call, unless explicitly killed here. Kill the whole process GROUP
+        # (start_new_session=True above), not just the tracked shell PID — a
+        # pipeline's later stages are separate children the shell wrapper doesn't
+        # forward signals to on its own.
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            await proc.wait()
+        except ProcessLookupError:
+            pass  # already exited between the timeout firing and kill()
+        return ToolOutput(
+            output=f"Error: command '{command}' timed out after {timeout_sec}s "
+            f"and was killed",
             is_error=True,
         )
     except Exception as exc:
@@ -156,7 +212,7 @@ async def run_command(
 
     output = stdout.decode("utf-8", errors="replace")
     exit_code = proc.returncode or 0
-    header = f"$ {command} {' '.join(args)}\n(exit code: {exit_code})\n"
+    header = f"$ {shell_command_line}\n(exit code: {exit_code})\n"
     full = header + output
 
     if len(full) > _MAX_OUTPUT_CHARS:

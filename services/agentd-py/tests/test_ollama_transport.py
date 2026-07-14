@@ -44,18 +44,54 @@ class _FakeResponse:
         return self.payload
 
 
+class _FakeStreamResponse:
+    """Wraps a _FakeResponse to expose the streaming-response surface the real
+    transport uses (status_code/request/aiter_lines/aread) — a fixture built for
+    the old single-shot .json() shape degenerates cleanly into a one-line stream."""
+
+    def __init__(self, resp: _FakeResponse) -> None:
+        self._resp = resp
+
+    @property
+    def status_code(self) -> int:
+        return self._resp.status_code
+
+    @property
+    def request(self) -> _FakeRequest:
+        return self._resp.request
+
+    async def aread(self) -> bytes:
+        return self._resp.text.encode("utf-8")
+
+    async def aiter_lines(self):
+        yield self._resp.text
+
+
+class _FakeStreamCtx:
+    def __init__(self, client: "_FakeAsyncClient", url: str, body: dict[str, Any]) -> None:
+        self._client = client
+        self._url = url
+        self._body = body
+
+    async def __aenter__(self) -> _FakeStreamResponse:
+        self._client.calls.append({"url": self._url, "body": self._body})
+        out = self._client._responses.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return _FakeStreamResponse(out)
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+
 class _FakeAsyncClient:
     def __init__(self, responses: list[_FakeResponse | Exception]) -> None:
         self._responses = list(responses)
         self.calls: list[dict[str, Any]] = []
         self.closed = False
 
-    async def post(self, url: str, *, json: dict[str, Any]) -> _FakeResponse:
-        self.calls.append({"url": url, "body": json})
-        out = self._responses.pop(0)
-        if isinstance(out, Exception):
-            raise out
-        return out
+    def stream(self, method: str, url: str, *, json: dict[str, Any]) -> _FakeStreamCtx:
+        return _FakeStreamCtx(self, url, json)
 
     async def aclose(self) -> None:
         self.closed = True
@@ -94,7 +130,7 @@ async def test_ollama_transport_sends_expected_request_shape() -> None:
     assert call["url"].endswith("/api/chat")
     body = call["body"]
     assert body["model"] == "qwen2.5-coder:7b"
-    assert body["stream"] is False
+    assert body["stream"] is True
     assert body["format"] == {"type": "object"}
     assert body["options"]["temperature"] == 0
     assert "num_ctx" in body["options"]
@@ -102,6 +138,160 @@ async def test_ollama_transport_sends_expected_request_shape() -> None:
     assert body["messages"][1]["role"] == "user"
     assert json.loads(body["messages"][1]["content"]) == {"task_id": "task-1", "goal": "x"}
     assert "think" not in body
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_default_json_predict_is_half_of_num_ctx() -> None:
+    """Default num_predict must leave headroom below num_ctx for the prompt itself —
+    the pre-fix code set both to the same flat 32768, so the model's real output
+    budget was already num_ctx minus whatever the prompt consumed."""
+    client = _FakeAsyncClient([_ok_response(json.dumps({"ok": True}))])
+    transport = OllamaJsonTransport(http_client=client)
+
+    await transport.generate_json(
+        model="qwen2.5-coder:7b",
+        schema_name="plan_document",
+        schema={"type": "object"},
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    options = client.calls[0]["body"]["options"]
+    assert options["num_ctx"] == 32768
+    assert options["num_predict"] == 16384
+    assert options["num_predict"] < options["num_ctx"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_num_predict_scales_with_custom_num_ctx() -> None:
+    """A cloud model with a bigger context window (e.g. Nemotron) should get a
+    proportionally bigger output budget when num_ctx is raised, without touching the
+    fraction — this is what makes a thinking-heavy model less likely to exhaust its
+    whole output budget on <think> before ever emitting a response."""
+    client = _FakeAsyncClient([_ok_response(json.dumps({"ok": True}))])
+    transport = OllamaJsonTransport(http_client=client, num_ctx=131072)
+
+    await transport.generate_json(
+        model="nemotron-3-super:cloud",
+        schema_name="plan_document",
+        schema={"type": "object"},
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    options = client.calls[0]["body"]["options"]
+    assert options["num_ctx"] == 131072
+    assert options["num_predict"] == 65536
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_custom_json_predict_frac() -> None:
+    client = _FakeAsyncClient([_ok_response(json.dumps({"ok": True}))])
+    transport = OllamaJsonTransport(http_client=client, num_ctx=100_000, json_predict_frac=0.75)
+
+    await transport.generate_json(
+        model="qwen2.5-coder:7b",
+        schema_name="plan_document",
+        schema={"type": "object"},
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    assert client.calls[0]["body"]["options"]["num_predict"] == 75000
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_generate_text_uses_custom_num_ctx() -> None:
+    """generate_text's fixed small num_predict is intentional (avoid runaway text
+    answers) but num_ctx should still track the configured window."""
+    client = _FakeAsyncClient([_ok_response("hello")])
+    transport = OllamaJsonTransport(http_client=client, num_ctx=131072)
+
+    await transport.generate_text(
+        model="nemotron-3-super:cloud",
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    options = client.calls[0]["body"]["options"]
+    assert options["num_ctx"] == 131072
+    assert options["num_predict"] == 2048
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_custom_temperature() -> None:
+    """Default temperature=0 (greedy) is deterministic — a retry after a malformed
+    response tends to reproduce it since the input barely changed. Configurable so a
+    retry path has a real chance at sampling something different."""
+    client = _FakeAsyncClient([_ok_response(json.dumps({"ok": True}))])
+    transport = OllamaJsonTransport(http_client=client, temperature=0.7)
+
+    await transport.generate_json(
+        model="nemotron-3-super:cloud",
+        schema_name="plan_document",
+        schema={"type": "object"},
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    assert client.calls[0]["body"]["options"]["temperature"] == 0.7
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_think_omitted_by_default() -> None:
+    """Default (think=None) must omit the field entirely — model decides, matching
+    behavior before the dial existed. Raising num_predict alone can't stop a model
+    from spending its whole budget on <think>; `think` is the actual lever, so it must
+    never be silently forced on/off by default."""
+    client = _FakeAsyncClient([_ok_response(json.dumps({"ok": True}))])
+    transport = OllamaJsonTransport(http_client=client)
+
+    await transport.generate_json(
+        model="qwen2.5-coder:7b",
+        schema_name="plan_document",
+        schema={"type": "object"},
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    assert "think" not in client.calls[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_think_bool_sent_top_level() -> None:
+    """think is a top-level request field, not nested inside options — per Ollama's
+    /api/chat contract."""
+    client = _FakeAsyncClient([_ok_response(json.dumps({"ok": True}))])
+    transport = OllamaJsonTransport(http_client=client, think=False)
+
+    await transport.generate_json(
+        model="nemotron-3-super:cloud",
+        schema_name="plan_document",
+        schema={"type": "object"},
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    body = client.calls[0]["body"]
+    assert body["think"] is False
+    assert "think" not in body["options"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_think_level_string() -> None:
+    """Some models (e.g. GPT-OSS) require a level string instead of a bool."""
+    client = _FakeAsyncClient([_ok_response(json.dumps({"ok": True}))])
+    transport = OllamaJsonTransport(http_client=client, think="low")
+
+    await transport.generate_json(
+        model="gpt-oss:120b",
+        schema_name="plan_document",
+        schema={"type": "object"},
+        system_instructions="plan",
+        user_payload={"task_id": "task-1"},
+    )
+
+    assert client.calls[0]["body"]["think"] == "low"
 
 
 @pytest.mark.asyncio
@@ -343,6 +533,30 @@ async def test_ollama_transport_retries_on_503() -> None:
     )
     assert result == {"ok": True}
     assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_broadcasts_retry_status_via_on_thinking() -> None:
+    """User-directed: a transient-error retry cycle can run for minutes with the UI
+    otherwise showing nothing — on_thinking must fire a status update per retry
+    attempt so it doesn't look stuck."""
+    flaky = [
+        _FakeResponse(status_code=503, payload="busy"),
+        _ok_response(json.dumps({"ok": True})),
+    ]
+    client = _FakeAsyncClient(flaky)
+    transport = OllamaJsonTransport(http_client=client, max_retries=2)
+    chunks: list[str] = []
+
+    result = await transport.generate_json(
+        model="m", schema_name="x", schema={"type": "object"},
+        system_instructions="s", user_payload={}, on_thinking=chunks.append,
+    )
+
+    assert result == {"ok": True}
+    retry_chunks = [c for c in chunks if "retrying" in c]
+    assert len(retry_chunks) == 1, chunks
+    assert "attempt 1/2" in retry_chunks[0]
 
 
 @pytest.mark.asyncio

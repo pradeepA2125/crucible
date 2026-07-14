@@ -4,8 +4,10 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI
 
 from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
@@ -15,16 +17,60 @@ logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 503})
 
+_MODELS_ENDPOINT = "https://openrouter.ai/api/v1/models"
+_MODEL_CAPS_TTL_SEC = 3600.0
+
+
+class _ModelCapabilityCache:
+    """Process-wide cache of OpenRouter's own /api/v1/models registry — the
+    authoritative source for what a model actually supports (does it take
+    `reasoning`, what's its real default temperature, its real max output
+    tokens), instead of guessing from the model name. A hardcoded name-substring
+    list needs updating by hand for every new model family and silently goes
+    stale — it missed NVIDIA's Nemotron 3 family entirely until caught live
+    (Nemotron IS a genuine reasoning model, confirmed via the Ollama transport's
+    structured `thinking` field). This can't go stale the same way, short of
+    OpenRouter itself changing its API shape. Degrades to the name-substring
+    heuristic on any fetch failure (network issue, endpoint change) rather than
+    hard-failing a turn over a metadata lookup.
+    """
+
+    def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
+        self._client = http_client or httpx.AsyncClient()
+        self._owns_client = http_client is None
+        self._by_model: dict[str, dict[str, Any]] | None = None
+        self._fetched_at = 0.0
+
+    async def get(self, model: str) -> dict[str, Any] | None:
+        now = time.monotonic()
+        if self._by_model is None or now - self._fetched_at > _MODEL_CAPS_TTL_SEC:
+            try:
+                resp = await self._client.get(_MODELS_ENDPOINT, timeout=10.0)
+                resp.raise_for_status()
+                entries = resp.json().get("data", [])
+                self._by_model = {e["id"]: e for e in entries if "id" in e}
+                self._fetched_at = now
+            except Exception:
+                logger.debug("openrouter: model registry fetch failed", exc_info=True)
+                if self._by_model is None:
+                    return None
+        return (self._by_model or {}).get(model)
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
 
 def _is_reasoning_model(model: str) -> bool:
-    """True for models that support OpenRouter's reasoning extension (extra_body.reasoning).
-
-    Covers DeepSeek-R1 family and Qwen3 family (including qwen3-coder).
-    openrouter/free is intentionally excluded — it routes to whatever is available
-    and reasoning params cause it to return empty choices.
+    """Name-substring FALLBACK, used only when the live capability registry
+    (_ModelCapabilityCache) is unavailable or doesn't recognize the model —
+    see its docstring for why that's the primary path now. Covers DeepSeek-R1
+    family, Qwen3 family (including qwen3-coder), and Nemotron. openrouter/free
+    is intentionally excluded — it routes to whatever is available and reasoning
+    params cause it to return empty choices.
     """
     m = model.lower()
-    return any(x in m for x in ("deepseek-r1", "deepseek-r2", "qwen3"))
+    return any(x in m for x in ("deepseek-r1", "deepseek-r2", "qwen3", "nemotron"))
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -43,12 +89,22 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         site_url: str | None = None,
         site_name: str | None = None,
         max_tokens: int = 4096,
+        json_max_tokens: int = 16384,
         timeout_sec: float = 120.0,
         max_retries: int = 4,
         require_parameters: bool = True,
         completions_client: Any | None = None,
+        model_capabilities: _ModelCapabilityCache | None = None,
     ) -> None:
+        # max_tokens (generate_text): small, deliberately anti-runaway. json_max_tokens
+        # (generate_json/controller_step_response): a JSON payload carrying a full
+        # file's content (create_file/search_replace) plus schema/escaping overhead
+        # routinely exceeds 4096 tokens — confirmed live on the Ollama transport,
+        # where the equivalent under-provisioned budget silently truncated real
+        # file writes into invalid JSON (Finding #11). Split like Ollama's
+        # json_num_predict vs its fixed small text num_predict, same reasoning.
         self._max_tokens = max_tokens
+        self._json_max_tokens = json_max_tokens
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
         # When True, the strict json_schema call pins provider.require_parameters so
@@ -57,6 +113,11 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         # fallback every turn; set False to let strict route to the default provider
         # (may still succeed there, else the fallback catches it) and skip the hard 404.
         self._require_parameters = require_parameters
+        # Test/fake path: stays exactly what's passed (None by default), so
+        # existing completions_client-injected tests make zero network calls and
+        # always take the name-substring fallback — unchanged behavior unless a
+        # test explicitly injects a fake capability provider.
+        self._model_caps = model_capabilities
 
         if completions_client is not None:
             self._completions: Any = completions_client
@@ -82,6 +143,32 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             default_headers=extra_headers or None,
         )
         self._completions = client.chat.completions
+        if self._model_caps is None:
+            self._model_caps = _ModelCapabilityCache()
+
+    async def aclose(self) -> None:
+        if self._model_caps is not None:
+            await self._model_caps.aclose()
+
+    async def _reasoning_config(self, model: str) -> tuple[bool, float]:
+        """(is_reasoning, temperature) — from OpenRouter's own model registry when
+        available (the model's REAL supported_parameters + default temperature),
+        falling back to the name-substring heuristic when the registry is
+        unavailable (test/fake mode, or the fetch failed) or doesn't know this
+        model."""
+        if self._model_caps is not None:
+            caps = await self._model_caps.get(model)
+            if caps is not None:
+                supported = caps.get("supported_parameters") or []
+                is_reasoning = "reasoning" in supported
+                default_temp = (caps.get("default_parameters") or {}).get("temperature")
+                temperature = (
+                    float(default_temp) if isinstance(default_temp, int | float)
+                    else (1.0 if is_reasoning else 0.0)
+                )
+                return is_reasoning, temperature
+        is_reasoning = _is_reasoning_model(model)
+        return is_reasoning, (1.0 if is_reasoning else 0.0)
 
     async def generate_json(
         self,
@@ -91,7 +178,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
-        on_thinking: object = None,
+        on_thinking: Any = None,
     ) -> dict[str, object]:
         result = await self._generate_json_once(
             model=model,
@@ -99,6 +186,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             schema=schema,
             system_instructions=system_instructions,
             user_payload=user_payload,
+            on_thinking=on_thinking,
         )
         # Type-specific narrowing: the tight anyOf schema enforces each variant's
         # required fields at the token level, but if the grammar was ignored (an
@@ -119,8 +207,23 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                     schema=narrowed,
                     system_instructions=system_instructions,
                     user_payload=user_payload,
+                    on_thinking=on_thinking,
                 )
         return result
+
+    async def _get_completion_text(
+        self, create_kwargs: dict[str, Any], on_thinking: Any,
+    ) -> str:
+        """Route through the streaming path (forwarding reasoning deltas to
+        on_thinking live, as they arrive) when a callback is given, else the plain
+        non-streaming call. Previously on_thinking was accepted by generate_json
+        but silently never used — every controller_step_response call (the one
+        driving every turn of a live-driven session) rendered nothing until the
+        whole call completed, identical to the gap fixed on the Ollama transport."""
+        if callable(on_thinking):
+            return await self._stream_with_thinking(create_kwargs, on_thinking=on_thinking)
+        response = await self._call_with_retry(create_kwargs)
+        return self._extract_text(response)
 
     async def _generate_json_once(
         self,
@@ -130,11 +233,13 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        on_thinking: Any = None,
     ) -> dict[str, object]:
         safe_schema_name = "".join(c for c in schema_name if c.isalnum())
 
-        # Reasoning models require temperature=1 per OpenRouter docs.
-        temperature = 1 if _is_reasoning_model(model) else 0
+        # Reasoning models require temperature=1 per OpenRouter docs (confirmed
+        # live via the model's own default_parameters where the registry knows it).
+        is_reasoning, temperature = await self._reasoning_config(model)
 
         # require_parameters: only route to providers that actually honor the
         # parameters we send (response_format), so strict json_schema is enforced
@@ -143,7 +248,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         extra_body: dict[str, Any] = {}
         if self._require_parameters:
             extra_body["provider"] = {"require_parameters": True}
-        if _is_reasoning_model(model):
+        if is_reasoning:
             extra_body["reasoning"] = {"enabled": True}
 
         base_kwargs: dict[str, Any] = {
@@ -152,7 +257,11 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": json.dumps(user_payload)},
             ],
-            "max_completion_tokens": self._max_tokens,
+            # A JSON payload carrying a full file's content (create_file/
+            # search_replace) plus schema/escaping overhead routinely exceeds a
+            # few thousand tokens — json_max_tokens (default 16384) is deliberately
+            # much larger than generate_text's anti-runaway self._max_tokens.
+            "max_completion_tokens": self._json_max_tokens,
             "temperature": temperature,
             "extra_body": extra_body,
         }
@@ -179,8 +288,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             pass
 
         try:
-            response = await self._call_with_retry(create_kwargs)
-            output_text = self._extract_text(response)
+            output_text = await self._get_completion_text(create_kwargs, on_thinking)
             return self._parse_output_object(output_text, schema_name)
         except Exception as e:
             # Fall back to json_object with schema injected into system prompt.
@@ -221,10 +329,17 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                         "OpenRouter malformed JSON for %s (attempt %d/%d), retrying in %.0fs",
                         schema_name, attempt, self._max_retries, delay,
                     )
+                    # A malformed-JSON retry cycle can run for minutes with the UI
+                    # otherwise showing nothing — reuse the thinking-chunk channel
+                    # so the user sees a retry is happening, not stuck silence.
+                    if callable(on_thinking):
+                        on_thinking(
+                            f"⏳ Malformed JSON response — retrying in {delay:.0f}s "
+                            f"(attempt {attempt}/{self._max_retries})…"
+                        )
                     await asyncio.sleep(delay)
                 try:
-                    response = await self._call_with_retry(fallback_kwargs)
-                    output_text = self._extract_text(response)
+                    output_text = await self._get_completion_text(fallback_kwargs, on_thinking)
                     return self._parse_output_object(output_text, schema_name)
                 except RuntimeError as e2:
                     if "not valid JSON" in str(e2) or "must be a JSON object" in str(e2):
@@ -250,7 +365,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: object = None,
     ) -> str:
-        temperature = 1 if _is_reasoning_model(model) else 0
+        is_reasoning, temperature = await self._reasoning_config(model)
 
         create_kwargs: dict[str, Any] = {
             "model": model,
@@ -261,7 +376,7 @@ class OpenRouterJsonTransport(ModelJsonTransport):
             "max_completion_tokens": self._max_tokens,
             "temperature": temperature,
         }
-        if _is_reasoning_model(model):
+        if is_reasoning:
             create_kwargs["extra_body"] = {"reasoning": {"enabled": True}}
 
         if callable(on_thinking):
@@ -292,6 +407,13 @@ class OpenRouterJsonTransport(ModelJsonTransport):
                 logger.warning(
                     "OpenRouter transient error (attempt %d/%d), retrying in %.0fs",
                     attempt, self._max_retries, delay,
+                )
+                # A transient-error retry cycle can run for minutes with the UI
+                # otherwise showing nothing — reuse the thinking-chunk channel so
+                # the user sees a retry is happening, not stuck silence.
+                on_thinking(
+                    f"⏳ {last_exc.__class__.__name__ if last_exc else 'transient error'} "
+                    f"— retrying in {delay:.0f}s (attempt {attempt}/{self._max_retries})…"
                 )
                 await asyncio.sleep(delay)
             try:

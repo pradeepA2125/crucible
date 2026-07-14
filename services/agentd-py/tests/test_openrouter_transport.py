@@ -46,6 +46,296 @@ def _transport(contents: list[object]) -> tuple[OpenRouterJsonTransport, _FakeCo
 
 
 # ---------------------------------------------------------------------------
+# Streaming fakes (generate_json with on_thinking — Ollama-parity fix)
+# ---------------------------------------------------------------------------
+
+class _FakeDelta:
+    def __init__(self, content: str | None = None, reasoning: str | None = None) -> None:
+        self.content = content
+        self.reasoning = reasoning
+
+
+class _FakeStreamChoice:
+    def __init__(self, content: str | None, reasoning: str | None) -> None:
+        self.delta = _FakeDelta(content, reasoning)
+
+
+class _FakeStreamChunk:
+    def __init__(self, content: str | None = None, reasoning: str | None = None) -> None:
+        self.choices = [_FakeStreamChoice(content, reasoning)]
+
+
+class _FakeStream:
+    def __init__(self, chunks: list[_FakeStreamChunk]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for c in self._chunks:
+            yield c
+
+
+class _FakeCompletionsStreaming(_FakeCompletions):
+    """Extends the non-streaming fake: a stream=True call returns a fake
+    async-iterable stream of chunks instead of popping a scripted response."""
+
+    def __init__(self, contents: list[object], stream_chunks: list[_FakeStreamChunk] | None = None) -> None:
+        super().__init__(contents)
+        self._stream_chunks = stream_chunks or []
+
+    async def create(self, **kwargs: object):
+        self.calls.append(kwargs)
+        if kwargs.get("stream"):
+            return _FakeStream(self._stream_chunks)
+        item = self._contents.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return _FakeResponse(item)
+
+
+@pytest.mark.asyncio
+async def test_generate_json_streams_reasoning_when_on_thinking_given() -> None:
+    """Ollama-parity fix: on_thinking was accepted by generate_json but silently
+    unused — every controller_step_response call (the one driving every turn of a
+    live-driven session) rendered nothing until the whole call completed."""
+    chunks = [
+        _FakeStreamChunk(reasoning="weighing options"),
+        _FakeStreamChunk(content='{"answer"'),
+        _FakeStreamChunk(content=": 1}"),
+    ]
+    fake = _FakeCompletionsStreaming([], stream_chunks=chunks)
+    transport = OpenRouterJsonTransport(completions_client=fake)
+    seen: list[str] = []
+
+    result = await transport.generate_json(
+        model="some/model", schema_name="s", schema={"type": "object"},
+        system_instructions="", user_payload={}, on_thinking=seen.append,
+    )
+
+    assert result == {"answer": 1}
+    assert seen == ["weighing options"]
+    assert fake.calls[0]["stream"] is True
+
+
+@pytest.mark.asyncio
+async def test_stream_with_thinking_broadcasts_retry_status() -> None:
+    """User-directed: a transient-error retry cycle can run for minutes with the UI
+    otherwise showing nothing — on_thinking must fire a status update per retry
+    attempt so it doesn't look stuck (same requirement as the Ollama transport)."""
+
+    class _StatusError(Exception):
+        def __init__(self, status_code: int) -> None:
+            super().__init__(f"HTTP {status_code}")
+            self.status_code = status_code
+
+    class _FlakyStreamCompletions:
+        def __init__(self, chunks: list[_FakeStreamChunk]) -> None:
+            self._chunks = chunks
+            self._first = True
+            self.calls: list[dict] = []
+
+        async def create(self, **kwargs: object) -> _FakeStream:
+            self.calls.append(kwargs)
+            if self._first:
+                self._first = False
+                raise _StatusError(503)
+            return _FakeStream(self._chunks)
+
+    fake = _FlakyStreamCompletions([_FakeStreamChunk(content="hi")])
+    transport = OpenRouterJsonTransport(completions_client=fake)
+    chunks: list[str] = []
+
+    result = await transport.generate_text(
+        model="some/model", system_instructions="", user_payload={},
+        on_thinking=chunks.append,
+    )
+
+    assert result == "hi"
+    retry_chunks = [c for c in chunks if "retrying" in c]
+    assert len(retry_chunks) == 1, chunks
+    assert "attempt 1/4" in retry_chunks[0]  # default max_retries=4
+
+
+@pytest.mark.asyncio
+async def test_generate_json_non_streaming_when_no_on_thinking() -> None:
+    """Without on_thinking, the plain non-streaming call path is unchanged."""
+    transport, fake = _transport([json.dumps({"ok": True})])
+    result = await transport.generate_json(
+        model="some/model", schema_name="s", schema={"type": "object"},
+        system_instructions="", user_payload={},
+    )
+    assert result == {"ok": True}
+    assert "stream" not in fake.calls[0]
+
+
+# ---------------------------------------------------------------------------
+# json_max_tokens vs max_tokens split (Ollama-parity fix)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_generate_json_uses_json_max_tokens_not_max_tokens() -> None:
+    fake = _FakeCompletions([json.dumps({"ok": True})])
+    transport = OpenRouterJsonTransport(
+        completions_client=fake, max_tokens=111, json_max_tokens=222)
+    await transport.generate_json(
+        model="some/model", schema_name="s", schema={"type": "object"},
+        system_instructions="", user_payload={},
+    )
+    assert fake.calls[0]["max_completion_tokens"] == 222
+
+
+@pytest.mark.asyncio
+async def test_generate_text_uses_max_tokens_not_json_max_tokens() -> None:
+    fake = _FakeCompletions(["hi"])
+    transport = OpenRouterJsonTransport(
+        completions_client=fake, max_tokens=111, json_max_tokens=222)
+    await transport.generate_text(
+        model="some/model", system_instructions="", user_payload={},
+    )
+    assert fake.calls[0]["max_completion_tokens"] == 111
+
+
+def test_json_max_tokens_defaults_much_larger_than_max_tokens() -> None:
+    transport = OpenRouterJsonTransport(completions_client=_FakeCompletions([]))
+    assert transport._json_max_tokens > transport._max_tokens * 2
+
+
+# ---------------------------------------------------------------------------
+# Model-capability registry (replaces hardcoded name-substring guessing)
+# ---------------------------------------------------------------------------
+
+class _FakeCapsHttpResponse:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeCapsHttpClient:
+    """Fakes the httpx.AsyncClient surface _ModelCapabilityCache needs."""
+
+    def __init__(self, models: list[dict]) -> None:
+        self._models = models
+        self.calls = 0
+
+    async def get(self, url: str, timeout: float | None = None) -> _FakeCapsHttpResponse:
+        self.calls += 1
+        return _FakeCapsHttpResponse({"data": self._models})
+
+
+_NEMOTRON_REGISTRY_ENTRY = {
+    # Trimmed to the fields we read, matching the real shape verified live
+    # against https://openrouter.ai/api/v1/models 2026-07-13.
+    "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "supported_parameters": ["reasoning", "reasoning_effort", "max_tokens", "temperature"],
+    "default_parameters": {"temperature": 1},
+}
+
+
+@pytest.mark.asyncio
+async def test_model_capability_cache_reads_registry_shape() -> None:
+    from agentd.providers.openrouter_transport import _ModelCapabilityCache
+
+    http = _FakeCapsHttpClient([_NEMOTRON_REGISTRY_ENTRY])
+    cache = _ModelCapabilityCache(http_client=http)
+
+    entry = await cache.get("nvidia/nemotron-3-ultra-550b-a55b:free")
+    assert entry == _NEMOTRON_REGISTRY_ENTRY
+    assert await cache.get("nvidia/nemotron-3-ultra-550b-a55b:free") is not None
+    assert http.calls == 1  # cached within TTL, no second fetch
+
+
+@pytest.mark.asyncio
+async def test_model_capability_cache_unknown_model_returns_none() -> None:
+    from agentd.providers.openrouter_transport import _ModelCapabilityCache
+
+    cache = _ModelCapabilityCache(http_client=_FakeCapsHttpClient([_NEMOTRON_REGISTRY_ENTRY]))
+    assert await cache.get("some/unknown-model") is None
+
+
+@pytest.mark.asyncio
+async def test_reasoning_config_uses_registry_when_available() -> None:
+    """The real registry shape correctly drives is_reasoning=True, temperature=1 —
+    verified against the ACTUAL OpenRouter API response for this exact model."""
+    from agentd.providers.openrouter_transport import _ModelCapabilityCache
+
+    http = _FakeCapsHttpClient([_NEMOTRON_REGISTRY_ENTRY])
+    fake = _FakeCompletions([])
+    transport = OpenRouterJsonTransport(
+        completions_client=fake, model_capabilities=_ModelCapabilityCache(http_client=http))
+
+    is_reasoning, temperature = await transport._reasoning_config(
+        "nvidia/nemotron-3-ultra-550b-a55b:free")
+    assert is_reasoning is True
+    assert temperature == 1.0
+
+
+@pytest.mark.asyncio
+async def test_reasoning_config_catches_a_model_the_hardcoded_list_would_miss() -> None:
+    """The whole point of the registry-driven path: a model whose family name
+    isn't in the hardcoded substring list, but whose registry entry declares
+    reasoning support, is still correctly detected — proving this doesn't need
+    updating by hand for every new reasoning-model family the way the old
+    name-substring heuristic did (it missed Nemotron entirely until caught live)."""
+    from agentd.providers.openrouter_transport import _ModelCapabilityCache
+
+    unlisted = {
+        "id": "acme/brand-new-reasoner",
+        "supported_parameters": ["reasoning"],
+        "default_parameters": {"temperature": 0.7},
+    }
+    http = _FakeCapsHttpClient([unlisted])
+    fake = _FakeCompletions([])
+    transport = OpenRouterJsonTransport(
+        completions_client=fake, model_capabilities=_ModelCapabilityCache(http_client=http))
+
+    is_reasoning, temperature = await transport._reasoning_config("acme/brand-new-reasoner")
+    assert is_reasoning is True
+    assert temperature == 0.7
+
+
+@pytest.mark.asyncio
+async def test_reasoning_config_falls_back_to_heuristic_without_registry() -> None:
+    """Default test/fake construction (no model_capabilities injected) never makes
+    a network call — falls straight to the name-substring heuristic."""
+    transport = OpenRouterJsonTransport(completions_client=_FakeCompletions([]))
+    assert transport._model_caps is None
+
+    is_reasoning, temperature = await transport._reasoning_config("qwen/qwen3-coder")
+    assert is_reasoning is True
+    assert temperature == 1.0
+
+    is_reasoning, temperature = await transport._reasoning_config("some/plain-model")
+    assert is_reasoning is False
+    assert temperature == 0.0
+
+
+@pytest.mark.asyncio
+async def test_reasoning_config_falls_back_when_registry_lookup_fails() -> None:
+    """A capability fetch failure (network issue, endpoint change) degrades to the
+    heuristic rather than raising and failing the whole turn."""
+    from agentd.providers.openrouter_transport import _ModelCapabilityCache
+
+    class _BrokenHttpClient:
+        async def get(self, url: str, timeout: float | None = None):
+            raise RuntimeError("connection refused")
+
+    cache = _ModelCapabilityCache(http_client=_BrokenHttpClient())
+    fake = _FakeCompletions([])
+    transport = OpenRouterJsonTransport(completions_client=fake, model_capabilities=cache)
+
+    is_reasoning, temperature = await transport._reasoning_config("qwen/qwen3-coder")
+    assert is_reasoning is True
+    assert temperature == 1.0
+
+
+# ---------------------------------------------------------------------------
 # require_parameters routing guard
 # ---------------------------------------------------------------------------
 

@@ -86,6 +86,59 @@ describe("CommandGate — Allow once", () => {
   });
 });
 
+describe("CommandGate — Allow & remember default scope", () => {
+  it("defaults to prefix with the binary+verb pair for a subcommand tool (npm run build)", () => {
+    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+
+    // No radio clicks — exercise the default selection as-is.
+    fireEvent.click(screen.getByRole("button", { name: /allow.*remember/i }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "commandDecision",
+      taskId: "task-cmd",
+      approve: true,
+      remember: true,
+      scope: "prefix",
+      // shlexJoin(["npm","run"]) = "npm run" — refires on any "npm run ..." variant.
+      ruleValue: "npm run",
+    });
+  });
+
+  it("defaults to prefix with just the binary for a single-word test runner (pytest)", () => {
+    render(
+      <CommandGate
+        taskId="task-cmd"
+        payload={{ command: "pytest", args: ["tests/test_foo.py::test_bar", "-v"] }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /allow.*remember/i }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "commandDecision",
+      taskId: "task-cmd",
+      approve: true,
+      remember: true,
+      scope: "prefix",
+      ruleValue: "pytest",
+    });
+  });
+
+  it("Allow once still uses scope:exact regardless of the default remember scope", () => {
+    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "commandDecision",
+      taskId: "task-cmd",
+      approve: true,
+      remember: false,
+      scope: "exact",
+    });
+  });
+});
+
 describe("CommandGate — Allow & remember with binary scope", () => {
   it("posts ruleValue = basename when binary scope is selected", () => {
     render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
@@ -157,7 +210,7 @@ describe("CommandGate — keyboard-operable radios", () => {
   it("pressing Space on a radio option selects it (aria-checked=true)", () => {
     render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
-    // radios[0]=exact (selected by default), radios[2]=binary (not selected)
+    // radios[1]=prefix (selected by default for a subcommand tool like npm), radios[2]=binary (not selected)
     const radios = screen.getAllByRole("radio");
     const binaryRadio = radios[2];
 
@@ -171,14 +224,15 @@ describe("CommandGate — keyboard-operable radios", () => {
   it("pressing Enter on a radio option selects it (aria-checked=true)", () => {
     render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
+    // radios[0]=exact — not selected by default (prefix is, for a subcommand tool like npm).
     const radios = screen.getAllByRole("radio");
-    const prefixRadio = radios[1];
+    const exactRadio = radios[0];
 
-    expect(prefixRadio.getAttribute("aria-checked")).toBe("false");
+    expect(exactRadio.getAttribute("aria-checked")).toBe("false");
 
-    fireEvent.keyDown(prefixRadio, { key: "Enter" });
+    fireEvent.keyDown(exactRadio, { key: "Enter" });
 
-    expect(prefixRadio.getAttribute("aria-checked")).toBe("true");
+    expect(exactRadio.getAttribute("aria-checked")).toBe("true");
   });
 });
 
@@ -456,8 +510,11 @@ describe("EditGate — Accept", () => {
 });
 
 describe("EditGate — Reject", () => {
-  it("posts editDecision reject with threadId", () => {
+  it("opens a reason box on Reject, then posts editDecision reject with threadId on confirm", () => {
     render(<EditGate taskId="thread-1" payload={EDIT_PAYLOAD} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^reject$/i }));
+    expect(postMessage).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: /^reject$/i }));
 

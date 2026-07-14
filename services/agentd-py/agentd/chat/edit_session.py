@@ -19,6 +19,31 @@ from agentd.workspace.promote import promote_files
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
+_CONTENT_FIELDS = ("content", "search", "replace", "diff")
+
+
+def _looks_double_escaped(text: str) -> bool:
+    """Detects a model double-escaping its own JSON string content: technically
+    valid JSON (parses fine, triggers no retry) where the value holds literal
+    backslash-n / backslash-t two-character sequences instead of real newline/tab
+    characters — e.g. the model wrote `"content": "line1\\\\nline2"` (an escaped
+    backslash + 'n') instead of `"content": "line1\\nline2"` (an escaped newline).
+    Confirmed live 2026-07-13: a Nemotron-via-Ollama response's `patch_ops[].content`
+    already had this shape in the debug artifact BEFORE any Crucible code touched
+    it — not a parsing bug on our side, the model over-escaped under its own steam.
+    Silently writing this produces a real file with zero actual newlines (one giant
+    line of escaped text) with no exception anywhere and a false "Applied" success.
+
+    Heuristic: no real newline anywhere, but several literal escape-sequence
+    markers — a legitimate multi-line file essentially always has real newlines;
+    one that has none but "contains" repeated textual \\n/\\t markers is almost
+    certainly this failure mode, not intentional single-line content."""
+    if "\n" in text:
+        return False
+    literal_escapes = text.count("\\n") + text.count("\\t")
+    return literal_escapes >= 3
+
+
 def _validate_patch_ops(patch_ops: list[dict[str, object]]) -> None:
     """Reject structurally malformed ops BEFORE any file is touched.
 
@@ -49,6 +74,16 @@ def _validate_patch_ops(patch_ops: list[dict[str, object]]) -> None:
             raise ValueError(
                 f"'file' must be a workspace-relative path inside the workspace (got {file!r})."
             )
+        for field in _CONTENT_FIELDS:
+            value = op.get(field)
+            if isinstance(value, str) and _looks_double_escaped(value):
+                raise ValueError(
+                    f"'{field}' looks double-escaped: it contains literal \\n/\\t sequences "
+                    "(a backslash character followed by 'n' or 't') instead of real newline/tab "
+                    "characters, with no real newline anywhere. Emit the actual characters your "
+                    "JSON string value should decode to — do NOT escape newlines/tabs a second "
+                    "time inside the string."
+                )
 
 
 class TurnEditSession:

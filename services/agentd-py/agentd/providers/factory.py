@@ -73,6 +73,28 @@ def _float_env(env: dict[str, str], name: str, default: float) -> float:
         return default
 
 
+_OLLAMA_THINK_LEVELS = frozenset({"low", "medium", "high", "max"})
+
+
+def _ollama_think_env(env: dict[str, str], name: str) -> bool | str | None:
+    """Unset (None) omits Ollama's `think` field entirely — model decides, today's
+    behavior. A bool disables/re-enables reasoning for models that honor it; a level
+    string ("low"/"medium"/"high"/"max") is the finer-grained form some models (e.g.
+    GPT-OSS) require instead of a bool. See OllamaJsonTransport.__init__ for why this
+    stays opt-in rather than a default."""
+    raw = env.get(name)
+    if raw is None:
+        return None
+    normalized = raw.strip().lower()
+    if normalized in ("true", "1", "yes", "on"):
+        return True
+    if normalized in ("false", "0", "no", "off"):
+        return False
+    if normalized in _OLLAMA_THINK_LEVELS:
+        return normalized
+    return None
+
+
 def build_transport(
     backend: str, credentials: dict[str, str] | None = None
 ) -> ModelJsonTransport:
@@ -146,6 +168,7 @@ def build_transport(
         return OpenRouterJsonTransport(
             api_key=env.get("OPENROUTER_API_KEY"),
             max_tokens=_int_env(env, "CRUCIBLE_OPENROUTER_MAX_TOKENS", 4096),
+            json_max_tokens=_int_env(env, "CRUCIBLE_OPENROUTER_JSON_MAX_TOKENS", 16384),
             timeout_sec=_float_env(env, "CRUCIBLE_OPENROUTER_TIMEOUT_SEC", 120.0),
             max_retries=_int_env(env, "CRUCIBLE_OPENROUTER_MAX_RETRIES", 4),
             require_parameters=env.get("CRUCIBLE_OPENROUTER_REQUIRE_PARAMETERS", "true")
@@ -170,6 +193,10 @@ def build_transport(
             keep_alive=env.get("CRUCIBLE_OLLAMA_KEEP_ALIVE"),
             timeout_sec=_float_env(env, "CRUCIBLE_OLLAMA_TIMEOUT_SEC", 600.0),
             max_retries=_int_env(env, "CRUCIBLE_OLLAMA_MAX_RETRIES", 4),
+            num_ctx=_int_env(env, "CRUCIBLE_OLLAMA_NUM_CTX", 32768),
+            json_predict_frac=_float_env(env, "CRUCIBLE_OLLAMA_JSON_PREDICT_FRAC", 0.5),
+            think=_ollama_think_env(env, "CRUCIBLE_OLLAMA_THINK"),
+            temperature=_float_env(env, "CRUCIBLE_OLLAMA_TEMPERATURE", 0.0),
         )
     if backend == "turboquant":
         from agentd.providers.turboquant_transport import TurboQuantTransport

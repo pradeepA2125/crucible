@@ -62,3 +62,23 @@ def test_new_file_diff_renders(tmp_path: Path) -> None:
 
     [entry] = _orch(tmp_path)._compute_diff_entries(real, shadow, ["new.py"], "t1")
     assert "+a = 1" in entry.unified_diff
+
+
+def test_unified_diff_has_no_spurious_blank_lines_between_rows(tmp_path: Path) -> None:
+    """Regression: keepends=True content lines + "\\n".join(diff) doubled every
+    newline, so the diff panel rendered a blank line between every single row —
+    found live driving the chat UI. None of the source lines here are blank, so
+    the rendered diff's content rows should be exactly the source lines, one per
+    row, with no extra blank rows in between."""
+    real = tmp_path / "real"
+    real.mkdir()
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "new.py").write_text("package foo\nfunc A() {}\nfunc B() {}\n")
+
+    [entry] = _orch(tmp_path)._compute_diff_entries(real, shadow, ["new.py"], "t1")
+    content_lines = [
+        ln for ln in entry.unified_diff.split("\n")
+        if ln.startswith("+") and not ln.startswith("+++")
+    ]
+    assert content_lines == ["+package foo", "+func A() {}", "+func B() {}"]

@@ -351,26 +351,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   let taskSubsystemEnabled = false;
   let memoryEnabled = false;
   let skillsEnabled = false;
-  try {
-    const cfg = await clientFactory(settings.getBackendBaseUrl()).getConfig();
-    taskSubsystemEnabled = cfg.taskSubsystemEnabled;
-    memoryEnabled = cfg.memoryEnabled;
-    skillsEnabled = cfg.skillsEnabled;
-  } catch {
-    // backend unreachable at activation — leave hidden.
-  }
-  await vscode.commands.executeCommand(
-    "setContext", "crucible.taskSubsystemEnabled", taskSubsystemEnabled);
-  await vscode.commands.executeCommand(
-    "setContext", "crucible.memoryEnabled", memoryEnabled);
-  await vscode.commands.executeCommand(
-    "setContext", "crucible.skillsEnabled", skillsEnabled);
+  // True once /v1/config has been fetched successfully at least once — lets the
+  // gated-command toasts below distinguish "the backend told us this is off" from
+  // "we've never managed to ask" instead of conflating both into one env-var message.
+  let capabilitiesKnown = false;
+
+  // Fetches /v1/config and refreshes the three when-contexts below. Called once here at
+  // activation AND on every subsequent runtimeManager.onBackendReady (crash-respawn,
+  // explicit restart) — a one-shot activation-time read goes stale forever once the
+  // managed backend restarts after the initial fetch has already run (e.g. the backend
+  // wasn't healthy yet at activation, or it crashed and respawned mid-session).
+  const refreshCapabilityFlags = async (): Promise<void> => {
+    try {
+      const cfg = await clientFactory(settings.getBackendBaseUrl()).getConfig();
+      taskSubsystemEnabled = cfg.taskSubsystemEnabled;
+      memoryEnabled = cfg.memoryEnabled;
+      skillsEnabled = cfg.skillsEnabled;
+      capabilitiesKnown = true;
+    } catch {
+      // backend unreachable right now — leave the flags at their last-known values.
+      return;
+    }
+    await vscode.commands.executeCommand(
+      "setContext", "crucible.taskSubsystemEnabled", taskSubsystemEnabled);
+    await vscode.commands.executeCommand(
+      "setContext", "crucible.memoryEnabled", memoryEnabled);
+    await vscode.commands.executeCommand(
+      "setContext", "crucible.skillsEnabled", skillsEnabled);
+  };
+  runtimeManager.onBackendReady(() => {
+    void refreshCapabilityFlags();
+  });
+  await refreshCapabilityFlags();
 
   context.subscriptions.push(
     vscode.commands.registerCommand("crucible.startTask", async () => {
       if (!taskSubsystemEnabled) {
         void vscode.window.showInformationMessage(
-          "The task path is disabled (CRUCIBLE_TASK_SUBSYSTEM=0). Use the chat to make changes inline.");
+          capabilitiesKnown
+            ? "The task path is disabled (CRUCIBLE_TASK_SUBSYSTEM=0). Use the chat to make changes inline."
+            : "Couldn't reach the Crucible backend to check if the task path is enabled. Use the chat to make changes inline, or try again once the backend is up.");
         return;
       }
       await controller.startTask();
@@ -423,7 +443,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("crucible.openMemoryPanel", () => {
       if (!memoryEnabled) {
         void vscode.window.showInformationMessage(
-          "The memory inspector is disabled (CRUCIBLE_MEMORY_ENABLED=0).");
+          capabilitiesKnown
+            ? "The memory inspector is disabled (CRUCIBLE_MEMORY_ENABLED=0)."
+            : "Couldn't reach the Crucible backend to check if the memory inspector is enabled. Try again once the backend is up.");
         return;
       }
       new MemoryPanel(

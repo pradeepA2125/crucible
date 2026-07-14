@@ -30,6 +30,27 @@ interface Props {
   payload: Record<string, unknown>;
 }
 
+// Subcommand-style build/test tools whose second token is the meaningful verb
+// (e.g. "go test", "cargo test", "npm run") — a remembered rule should cover the
+// binary+verb pair, not the exact trailing flags/paths, or it barely ever refires.
+const SUBCOMMAND_TOOLS = new Set([
+  "go", "cargo", "npm", "yarn", "pnpm", "mvn", "gradle", "docker", "kubectl",
+]);
+
+/**
+ * Picks a sensible default "prefix" length so "Allow & remember" produces a rule
+ * that actually refires on the next similar invocation, instead of defaulting to
+ * "exact command only" (which barely ever matches again once flags/paths vary —
+ * observed live: `go test ./pkg/x/... -count=1`, `-v`, `-run Foo` each re-triggered
+ * the gate despite "remember" already having been clicked once). Binary+verb tools
+ * (go test, cargo test, npm run …) lock the first 2 tokens; single-word test/build
+ * runners (pytest, tsc, mypy, make …) lock just the binary.
+ */
+function defaultPrefixCount(tokens: string[], basename: string): number {
+  if (tokens.length <= 1) return 1;
+  return SUBCOMMAND_TOOLS.has(basename) ? 2 : 1;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
@@ -47,8 +68,8 @@ export function CommandGate({ taskId, payload }: Props) {
   const tokens = [command, ...args].filter(Boolean);
   const basename = command.split("/").pop() || command;
 
-  const [scope, setScope] = useState<ScopeKind>("exact");
-  const [prefixCount, setPrefixCount] = useState(1);
+  const [scope, setScope] = useState<ScopeKind>("prefix");
+  const [prefixCount, setPrefixCount] = useState(() => defaultPrefixCount(tokens, basename));
   const [resolved, setResolved] = useState<string | null>(null);
 
   // ── helpers ──

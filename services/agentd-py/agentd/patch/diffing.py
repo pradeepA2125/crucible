@@ -47,9 +47,14 @@ def compute_diff_entries(
         real_file = real_path / rel
         if not shadow_file.exists():
             continue
-        shadow_lines = shadow_file.read_text(errors="replace").splitlines(keepends=True)
+        # keepends=False pairs with lineterm="" below and the "\n".join(diff) call —
+        # keepends=True would leave each content line carrying its own trailing "\n",
+        # which "\n".join" then doubles into a literal blank line between every diff
+        # row (found live: diff panes rendered with every line visually interleaved
+        # with blank lines).
+        shadow_lines = shadow_file.read_text(errors="replace").splitlines()
         real_lines = (
-            real_file.read_text(errors="replace").splitlines(keepends=True)
+            real_file.read_text(errors="replace").splitlines()
             if real_file.exists()
             else []
         )

@@ -55,11 +55,77 @@ interface HttpBackendClientOptions {
   fetchFn?: FetchLike;
 }
 
+// A stalled SSE connection (idle proxy/load-balancer timeout, sleep/wake, a dead TCP
+// socket with no RST) never delivers `done` and never rejects — reader.read() just hangs
+// forever. Observed live: a chat turn's stream went silent for 60+ minutes while the
+// backend kept working; nothing detected it because nothing was watching for a gap. This
+// timeout bounds how long a single reader.read() may wait before the generator gives up.
+// It must comfortably exceed the longest normal silent gap between SSE events (a single
+// slow local-model provider call can run 30-90s with no event in between) — 2 minutes
+// gives ample margin while still recovering in a small fraction of "looks frozen forever".
+const SSE_IDLE_TIMEOUT_MS = 120_000;
+
+async function readWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<ReadableStreamReadResult<Uint8Array>>((resolve) => {
+    // Resolve with done:true (not reject) — an idle timeout should look exactly like a
+    // graceful stream end to callers, not an error. The caller (chat controller) already
+    // has working reconnect logic gated on the stream having ended; we just need to let
+    // it actually end instead of hanging.
+    timer = setTimeout(() => resolve({ done: true, value: undefined }), SSE_IDLE_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([reader.read(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class HttpBackendClient implements BackendTaskClient {
   private readonly fetchFn: FetchLike;
 
   constructor(private readonly options: HttpBackendClientOptions) {
     this.fetchFn = options.fetchFn ?? fetch;
+  }
+
+  /**
+   * Shared SSE line-parsing loop for the chat event stream, used by sendChatMessage,
+   * postModeDecision, postClarifyDecision, and streamChannel — all four hit the same
+   * `data: <ChatEvent json>` wire format and previously duplicated this ~20-line loop.
+   * `doneTypes` lets callers opt into closing the stream early on a terminal event type
+   * (streamChannel does this for `chat_done`/`done`; the turn-launching methods don't,
+   * since their HTTP response body ending IS the natural close signal).
+   */
+  private async *consumeChatEventStream(
+    response: Response, doneTypes: ReadonlySet<string> = new Set(),
+  ): AsyncIterable<StreamEvent> {
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await readWithIdleTimeout(reader);
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const event = ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
+            yield event;
+            if (doneTypes.has(event.type)) return;
+          } catch {
+            // skip malformed SSE line
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
   }
 
   async submitTask(input: TaskSubmission): Promise<{ taskId: string }> {
@@ -283,29 +349,7 @@ export class HttpBackendClient implements BackendTaskClient {
     if (!response.ok) {
       throw new Error(`Mode decision failed (${response.status}) for thread ${threadId}`);
     }
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          try {
-            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
-          } catch {
-            // skip malformed SSE line
-          }
-        }
-      }
-    } finally {
-      reader.cancel().catch(() => {});
-    }
+    yield* this.consumeChatEventStream(response);
   }
 
   // Controller clarify gate: a STREAMED dispatch (the answer re-enters the loop),
@@ -322,29 +366,7 @@ export class HttpBackendClient implements BackendTaskClient {
     if (!response.ok) {
       throw new Error(`Clarify decision failed (${response.status}) for thread ${threadId}`);
     }
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          try {
-            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
-          } catch {
-            // skip malformed SSE line
-          }
-        }
-      }
-    } finally {
-      reader.cancel().catch(() => {});
-    }
+    yield* this.consumeChatEventStream(response);
   }
 
   async stopChatTurn(threadId: string): Promise<{ ok: boolean }> {
@@ -365,32 +387,7 @@ export class HttpBackendClient implements BackendTaskClient {
     if (!response.ok) {
       throw new Error(`Channel stream failed (${response.status}) for ${channelId}`);
     }
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          try {
-            const event = ChatEventSchema.parse(
-              JSON.parse(line.slice(5).trim())) as StreamEvent;
-            yield event;
-            if (event.type === "chat_done" || event.type === "done") return;
-          } catch {
-            // skip malformed SSE line
-          }
-        }
-      }
-    } finally {
-      reader.cancel().catch(() => {});
-    }
+    yield* this.consumeChatEventStream(response, new Set(["chat_done", "done"]));
   }
 
   async resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse> {
@@ -732,29 +729,7 @@ export class HttpBackendClient implements BackendTaskClient {
     if (!response.ok) {
       throw new Error(`Chat message failed (${response.status}) for thread ${threadId}`);
     }
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          try {
-            yield ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
-          } catch {
-            // skip malformed SSE line
-          }
-        }
-      }
-    } finally {
-      reader.cancel().catch(() => {});
-    }
+    yield* this.consumeChatEventStream(response);
   }
 
   async applyInlineChange(inlineTaskId: string): Promise<void> {
