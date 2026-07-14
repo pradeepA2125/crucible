@@ -115,15 +115,21 @@ need different treatment:
   — it retries silently. It gains one: `on_retry: Callable[[int, int, str, str], None] |
   None = None`.
 
-**Threading through the reasoning layer (the largest piece of this work).** `on_thinking`
-is not local to the transports — it's a parameter on all 4 `ReasoningEngine` Protocol
-methods (`reasoning/contracts.py`), threaded through the 4 corresponding
-`DefaultReasoningEngine` methods (`reasoning/engine.py`), and stubbed as a no-op on the 4
-matching `ScriptedReasoningEngine` methods (`orchestrator/scripted_engine.py`) so scripted
-tests don't break. `on_retry` needs the identical treatment across all three files/12
-methods before it ever reaches `controller_loop.py` — this mirrors the exact
-lockstep-breakage pattern noted in project memory for the Phase-3 reranker's
-`recall_with_trace` change, and should be sized as such in the implementation plan.
+**Threading through the reasoning layer.** `on_thinking` is a parameter on 4
+`ReasoningEngine` Protocol methods (`reasoning/contracts.py`) total, but only one of
+them — `create_controller_step` — is ever called by `controller_loop.py`; the other three
+(`create_plan`, `create_tool_step`, `create_planning_step`) feed the task/planning
+pipeline, already excluded in Non-goals. So `on_retry` is added to `create_controller_step`
+only: the `ReasoningEngine` Protocol method (`reasoning/contracts.py`), its
+`DefaultReasoningEngine` implementation (`reasoning/engine.py:255-303`, which forwards it to
+`self._transport.generate_json(...)`), and the matching `ScriptedReasoningEngine` stub
+(`orchestrator/scripted_engine.py`) so scripted tests don't break — one method across three
+files, not four. `ModelJsonTransport.generate_json` (`providers/contracts.py`) gains
+`on_retry` too, since that's what `create_controller_step` calls;
+`ModelJsonTransport.generate_text` does not, since nothing in the controller-chat path
+calls it with a retry-relevant need. The underlying transport retry loops
+(`_call_with_retry` etc.) still gain `on_retry` as described above regardless of caller —
+`generate_text` callers simply never pass one.
 
 `controller_loop.py` relays every `on_retry` call as:
 
@@ -222,12 +228,11 @@ message reliably *persists* across reload) is out of scope here — see Non-goal
 
 ## Risks
 
-- **Protocol-wide signature change (section 1) is the highest-effort, highest-regression-risk
-  part of this work.** `on_retry` must land identically across `reasoning/contracts.py` (4
-  methods), `reasoning/engine.py` (4 methods), and `orchestrator/scripted_engine.py` (4
-  methods) before `controller_loop.py` ever sees it. A partial rollout (e.g. one provider
-  wired, another forgotten) would silently degrade to the current bug for whichever
-  provider was missed.
+- **Signature change across the reasoning layer.** `on_retry` must land on
+  `create_controller_step` in `reasoning/contracts.py`, `reasoning/engine.py`, and
+  `orchestrator/scripted_engine.py`, plus `generate_json` in `providers/contracts.py` and
+  both transports. A partial rollout (e.g. one provider wired, another forgotten) would
+  silently degrade to the current bug for whichever provider was missed.
 - **Duplicated retry logic across transports.** `ollama_transport.py` and
   `openrouter_transport.py` already independently duplicate backoff logic (not factored
   into a shared helper), and OpenRouter alone has three separate retry loops with slightly
