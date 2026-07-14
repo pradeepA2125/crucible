@@ -536,27 +536,89 @@ async def test_ollama_transport_retries_on_503() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ollama_transport_broadcasts_retry_status_via_on_thinking() -> None:
-    """User-directed: a transient-error retry cycle can run for minutes with the UI
-    otherwise showing nothing — on_thinking must fire a status update per retry
-    attempt so it doesn't look stuck."""
+async def test_ollama_transport_calls_on_retry_not_on_thinking() -> None:
+    """Retry status must go through on_retry, not on_thinking — on_thinking is
+    reserved for genuine model reasoning text, never retry noise."""
     flaky = [
         _FakeResponse(status_code=503, payload="busy"),
         _ok_response(json.dumps({"ok": True})),
     ]
     client = _FakeAsyncClient(flaky)
     transport = OllamaJsonTransport(http_client=client, max_retries=2)
-    chunks: list[str] = []
+    thinking_chunks: list[str] = []
+    retries: list[tuple[int, int, str, str]] = []
 
     result = await transport.generate_json(
         model="m", schema_name="x", schema={"type": "object"},
-        system_instructions="s", user_payload={}, on_thinking=chunks.append,
+        system_instructions="s", user_payload={},
+        on_thinking=thinking_chunks.append,
+        on_retry=lambda attempt, max_attempts, reason, message: retries.append(
+            (attempt, max_attempts, reason, message)
+        ),
     )
 
     assert result == {"ok": True}
-    retry_chunks = [c for c in chunks if "retrying" in c]
-    assert len(retry_chunks) == 1, chunks
-    assert "attempt 1/2" in retry_chunks[0]
+    assert not any("retrying" in c for c in thinking_chunks), thinking_chunks
+    assert len(retries) == 1, retries
+    attempt, max_attempts, reason, message = retries[0]
+    assert (attempt, max_attempts, reason) == (1, 2, "server_error")
+    assert "attempt 1/2" in message
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_classifies_429_as_rate_limited() -> None:
+    flaky = [
+        _FakeResponse(status_code=429, payload="rate limited"),
+        _ok_response(json.dumps({"ok": True})),
+    ]
+    client = _FakeAsyncClient(flaky)
+    transport = OllamaJsonTransport(http_client=client, max_retries=2)
+    retries: list[tuple[int, int, str, str]] = []
+
+    await transport.generate_json(
+        model="m", schema_name="x", schema={"type": "object"},
+        system_instructions="s", user_payload={},
+        on_retry=lambda a, m, r, msg: retries.append((a, m, r, msg)),
+    )
+
+    assert retries[0][2] == "rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_classifies_connect_error_as_network_error() -> None:
+    flaky: list[Any] = [
+        httpx.ConnectError("daemon down"),
+        _ok_response(json.dumps({"ok": True})),
+    ]
+    client = _FakeAsyncClient(flaky)
+    transport = OllamaJsonTransport(http_client=client, max_retries=2)
+    retries: list[tuple[int, int, str, str]] = []
+
+    await transport.generate_json(
+        model="m", schema_name="x", schema={"type": "object"},
+        system_instructions="s", user_payload={},
+        on_retry=lambda a, m, r, msg: retries.append((a, m, r, msg)),
+    )
+
+    assert retries[0][2] == "network_error"
+
+
+@pytest.mark.asyncio
+async def test_ollama_transport_on_retry_none_does_not_raise() -> None:
+    """Existing callers that don't pass on_retry (e.g. generate_text call sites
+    with no retry-status consumer) must keep working unchanged."""
+    flaky = [
+        _FakeResponse(status_code=503, payload="busy"),
+        _ok_response(json.dumps({"ok": True})),
+    ]
+    client = _FakeAsyncClient(flaky)
+    transport = OllamaJsonTransport(http_client=client, max_retries=2)
+
+    result = await transport.generate_json(
+        model="m", schema_name="x", schema={"type": "object"},
+        system_instructions="s", user_payload={},
+    )
+    assert result == {"ok": True}
 
 
 @pytest.mark.asyncio
