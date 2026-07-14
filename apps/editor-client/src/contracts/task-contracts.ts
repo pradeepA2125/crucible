@@ -210,7 +210,8 @@ export type StreamEvent =
   | { type: "env_install_running"; payload: { scope_key: string; command: string } }
   | { type: "env_install_done"; payload: { scope_key: string; exit_ok: boolean; tail: string } }
   | { type: "chat_breadcrumb"; payload: { text: string; task_id: string } }
-  | { type: "memory_compacted"; payload: { evicted: number; anchor_version: number } };
+  | { type: "memory_compacted"; payload: { evicted: number; anchor_version: number } }
+  | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } };
 
 // Backward-compat alias
 export type PatchStreamEvent = StreamEvent;
