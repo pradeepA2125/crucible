@@ -88,6 +88,7 @@ class GeminiJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: object = None,
+        on_retry: object = None,
     ) -> dict[str, object]:
         config: dict[str, object] = {
             "temperature": 0,

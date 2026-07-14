@@ -57,6 +57,7 @@ class ModelJsonTransport(Protocol):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
+        on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, object]: ...
 
     async def generate_text(

@@ -87,6 +87,7 @@ class GroqJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: object = None,
+        on_retry: object = None,
     ) -> dict[str, object]:
         # Normalize schema name to alphanumeric for Groq
         safe_schema_name = "".join(c for c in schema_name if c.isalnum())

@@ -39,6 +39,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: object = None,
+        on_retry: object = None,
     ) -> dict[str, object]:
         response = await self._responses.create(
             model=model,

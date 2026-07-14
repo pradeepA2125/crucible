@@ -286,6 +286,7 @@ class TurboQuantTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
+        on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, object]:
         # Constrained decoding: when thinking is OFF (our default) we send the schema as
         # a strict llama.cpp json_schema grammar (see _build_body) so the model CANNOT
