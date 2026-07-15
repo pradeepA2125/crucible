@@ -138,6 +138,45 @@ describe("RuntimeInstaller", () => {
     expect(downloads).toBe(0);
   });
 
+  it("same version string but different artifact content still triggers reinstall (content-hash staleness key)", async () => {
+    // Reproduces the crucible-agentd 0.2.0/0.2.1 incident: a release published new
+    // artifact bytes under an unchanged version label. install-state.json only ever
+    // records what stalenessKey() computed, so simulate a prior install recorded
+    // under the OLD content's hash, then swap the manifest's bytes (and therefore
+    // its sha256) while leaving "version" untouched — the installer must not treat
+    // this as already installed.
+    const d = deps();
+    await new RuntimeInstaller(d).installAll();
+
+    const staleVersion = d.manifest.components.indexer.version;
+    const newBin = Buffer.from("#!/bin/sh\necho updated\n");
+    const newSha = sha256Hex(newBin);
+    expect(newSha).not.toBe(sha256Hex(BIN)); // sanity: genuinely different content
+
+    let downloadedIndexer = false;
+    const d2: InstallerDeps = {
+      ...d,
+      manifest: {
+        ...d.manifest,
+        components: {
+          ...d.manifest.components,
+          // same version string as before — only the bytes/hash changed
+          indexer: { version: staleVersion, urls: { "darwin-arm64": "https://r/ix" }, sha256: { "darwin-arm64": newSha } },
+        },
+      },
+      download: async (url: string) => {
+        if (url.endsWith("/ix")) downloadedIndexer = true;
+        return url.endsWith("/ix") ? newBin : BIN;
+      },
+    };
+
+    const result = await new RuntimeInstaller(d2).installAll();
+    const indexer = result.components.find((c) => c.id === "indexer")!;
+    expect(downloadedIndexer).toBe(true);
+    expect(indexer.status).toBe("done");
+    expect(indexer.detail).not.toBe("already installed");
+  });
+
   it("a hollow venv (state recorded, python binary present, package not importable) is reinstalled, not silently marked done", async () => {
     const d = deps();
     // Simulate a prior interrupted install: install-state.json + a venv/bin/python

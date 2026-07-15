@@ -119,6 +119,7 @@ jobs:
             --release-tag "${GITHUB_REF_NAME}" --dist dist-artifacts \
             --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
             --component-version indexer=${GITHUB_REF_NAME#v} \
+            --component-version agentd=${GITHUB_REF_NAME#v} \
             --component-version ripgrep=14.1.1 --component-version uv=0.5.24 \
             --component-version rust-analyzer=2026-07-06 \
             --component-version gopls=v0.20.0 \

@@ -6,6 +6,7 @@ import {
   platformKey,
   verifyChecksum,
   type ComponentId,
+  type ComponentSpec,
   type PlatformKey,
   type RuntimeManifest,
 } from "./manifest.js";
@@ -59,6 +60,20 @@ function writeState(runtimeDir: string, state: Partial<Record<ComponentId, strin
   writeFileSync(join(runtimeDir, "install-state.json"), JSON.stringify(state, null, 2));
 }
 
+// The "already installed, skip" decision keys off this, not spec.version directly.
+// A manifest's sha256 is computed from the actual released artifact bytes, so it
+// changes exactly when the artifact changes — unlike a hand-maintained version
+// field, which can go stale (crucible-agentd's pyproject.toml stayed "0.2.0" across
+// a release that changed its source, so a version-string comparison silently kept
+// an old wheel installed). Falls back to spec.version only when there's no
+// downloadable artifact to hash: agentd's bare-version PyPI-fallback path (no
+// urls/sha256 in the manifest) and lsps (an npm install, not a hashed download —
+// its "version" is already a content hash of the pinned package list, see
+// make_manifest.py).
+function stalenessKey(spec: ComponentSpec, platform: PlatformKey): string {
+  return spec.sha256?.[platform] ?? spec.sha256?.any ?? spec.version;
+}
+
 export class RuntimeInstaller {
   private readonly platform: PlatformKey;
 
@@ -80,12 +95,14 @@ export class RuntimeInstaller {
       try {
         if (id === "agentd" && !uvOk) {
           progress = { id, status: "failed", detail: "uv unavailable" };
-        } else if (state[id] === spec.version && (await this.artifactPresent(id))) {
+        } else if (
+          state[id] === stalenessKey(spec, this.platform) && (await this.artifactPresent(id))
+        ) {
           progress = { id, status: "done", detail: "already installed" };
         } else {
           progress = await this.installOne(id);
           if (progress.status === "done") {
-            state[id] = spec.version;
+            state[id] = stalenessKey(spec, this.platform);
             writeState(this.deps.runtimeDir, state);
           }
         }

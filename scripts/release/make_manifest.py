@@ -94,12 +94,18 @@ def build_manifest(
     }
 
     wheel_path = _find_wheel(dist_dir)
-    match = _WHEEL_RE.match(wheel_path.name)
-    if not match:
+    if not _WHEEL_RE.match(wheel_path.name):
         raise ValueError(f"unexpected wheel filename: {wheel_path.name}")
-    agentd_version = match.group("version")
+    # version comes from component_versions (tag-derived, like every other
+    # component — see release.yml), NOT parsed from the wheel filename. The
+    # wheel's own pyproject.toml version is a human-maintained PyPI-facing
+    # number that isn't guaranteed to change every release (it didn't for
+    # v0.5.1, which silently shipped a stale backend to already-installed
+    # runtimes — see the crucible-agentd 0.2.0/0.2.1 incident). The regex
+    # above still validates the filename shape; it just no longer supplies
+    # the version used for install/staleness decisions.
     components["agentd"] = {
-        "version": agentd_version,
+        "version": component_versions["agentd"],
         "urls": {"any": f"{url_base}/{wheel_path.name}"},
         "sha256": {"any": _sha256_file(wheel_path)},
     }
@@ -168,7 +174,7 @@ def main() -> None:
     parser.add_argument(
         "--component-version", action="append", default=[],
         type=_parse_component_version, metavar="name=version",
-        help="repeatable; required for indexer, ripgrep, uv")
+        help="repeatable; required for indexer, ripgrep, uv, agentd, ...")
     parser.add_argument(
         "--lsp-packages", default="",
         help="comma-separated name@version pairs, e.g. pyright@1.1.400,...")
