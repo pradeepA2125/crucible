@@ -83,12 +83,17 @@ class ReasoningEngine(Protocol):
         *,
         phase: str,
         on_thinking: Callable[[str], None] | None = None,
+        on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, object]:
         """One turn of the agentic chat-controller ReAct loop.
 
         Returns a dict with at minimum {"type": ..., "thought": str} where type is one of
         tool_call | answer | clarify | propose_mode | edit | submit_changes (gated by `phase`:
         DECIDE allows the first four, EDIT allows tool_call/edit/submit_changes).
+
+        on_retry reports transport-level or corrective-retry attempts as structured
+        data (attempt, max_attempts, reason, message) — distinct from on_thinking,
+        which carries only genuine model reasoning text.
         """
         ...
 

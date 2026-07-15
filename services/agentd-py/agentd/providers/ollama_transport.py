@@ -44,7 +44,15 @@ class _RetryableHttpStatus(Exception):
     which can't be a simple if/continue anymore once the check lives inside a
     separate `async with self._client.stream(...)` coroutine)."""
 
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
+
+def _classify_retry_reason(exc: Exception | None) -> str:
+    if isinstance(exc, _RetryableHttpStatus):
+        return "rate_limited" if exc.status_code == 429 else "server_error"
+    return "network_error"
 
 
 class OllamaJsonTransport(ModelJsonTransport):
@@ -114,6 +122,7 @@ class OllamaJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
+        on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, object]:
         contents = json.dumps(user_payload)
         body = self._build_body(
@@ -126,7 +135,7 @@ class OllamaJsonTransport(ModelJsonTransport):
         # on_chunk forwards each streamed `message.thinking` delta live, as it
         # arrives — this is what lets the UI show real progress during a call that
         # can take minutes, instead of a blank "Working…" wait (see _stream_chat).
-        response = await self._call_with_retry(body, on_chunk=on_thinking)
+        response = await self._call_with_retry(body, on_chunk=on_thinking, on_retry=on_retry)
         self._log_usage(model, schema_name, system_instructions, contents, response)
         output_text = self._extract_text(response)
         logger.warning("ollama raw output (%s): %s", schema_name, output_text[:600])
@@ -217,11 +226,17 @@ class OllamaJsonTransport(ModelJsonTransport):
         return body
 
     async def _call_with_retry(
-        self, body: dict[str, object], *, on_chunk: Callable[[str], None] | None = None
+        self,
+        body: dict[str, object],
+        *,
+        on_chunk: Callable[[str], None] | None = None,
+        on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, Any]:
         """POST /api/chat (streamed) with timeout + exponential backoff on transient
         errors. See _stream_chat for the line-parsing/merge; on_chunk is threaded
-        through so callers (generate_json/generate_text) get live thinking deltas."""
+        through so callers (generate_json/generate_text) get live thinking deltas.
+        on_retry (distinct from on_chunk) reports retry attempts as structured
+        data — never injected into the thinking-chunk stream."""
         url = f"{self._host}/api/chat"
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
@@ -233,13 +248,16 @@ class OllamaJsonTransport(ModelJsonTransport):
                 )
                 # A transient-error retry cycle can run for minutes (a 429 storm
                 # is 4 attempts x up to 60s backoff each) with the UI otherwise
-                # showing nothing — reuse the thinking-chunk channel so the user
-                # sees a retry is happening rather than a stuck-looking silence.
-                if on_chunk is not None:
-                    on_chunk(
+                # showing nothing — on_retry (structured, distinct from on_chunk)
+                # lets the caller show a retry is happening rather than a
+                # stuck-looking silence.
+                if on_retry is not None:
+                    reason = _classify_retry_reason(last_exc)
+                    message = (
                         f"⏳ {last_exc.__class__.__name__ if last_exc else 'transient error'} "
                         f"— retrying in {delay:.0f}s (attempt {attempt}/{self._max_retries})…"
                     )
+                    on_retry(attempt, self._max_retries, reason, message)
                 await asyncio.sleep(delay)
 
             try:
@@ -281,7 +299,10 @@ class OllamaJsonTransport(ModelJsonTransport):
         async with self._client.stream("POST", url, json=body) as response:
             if response.status_code in _RETRYABLE_STATUS_CODES:
                 text = (await response.aread()).decode("utf-8", errors="replace")
-                raise _RetryableHttpStatus(f"Ollama returned {response.status_code}: {text[:200]}")
+                raise _RetryableHttpStatus(
+                    f"Ollama returned {response.status_code}: {text[:200]}",
+                    response.status_code,
+                )
             if response.status_code >= 400:
                 text = (await response.aread()).decode("utf-8", errors="replace")
                 raise RuntimeError(f"Ollama returned {response.status_code}: {text[:500]}")

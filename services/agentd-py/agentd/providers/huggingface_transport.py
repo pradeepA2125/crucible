@@ -68,6 +68,7 @@ class HuggingFaceJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: object = None,
+        on_retry: object = None,
     ) -> dict[str, object]:
         active_schema = schema
         for attempt in range(2):  # one narrowing retry for controller schemas

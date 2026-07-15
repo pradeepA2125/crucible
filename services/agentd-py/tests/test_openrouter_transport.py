@@ -119,43 +119,128 @@ async def test_generate_json_streams_reasoning_when_on_thinking_given() -> None:
     assert fake.calls[0]["stream"] is True
 
 
+class _StatusError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+
+
+class _FlakyStreamCompletions:
+    def __init__(self, chunks: list[_FakeStreamChunk], status_code: int = 503) -> None:
+        self._chunks = chunks
+        self._first = True
+        self._status_code = status_code
+        self.calls: list[dict] = []
+
+    async def create(self, **kwargs: object) -> _FakeStream:
+        self.calls.append(kwargs)
+        if self._first:
+            self._first = False
+            raise _StatusError(self._status_code)
+        return _FakeStream(self._chunks)
+
+
 @pytest.mark.asyncio
-async def test_stream_with_thinking_broadcasts_retry_status() -> None:
-    """User-directed: a transient-error retry cycle can run for minutes with the UI
-    otherwise showing nothing — on_thinking must fire a status update per retry
-    attempt so it doesn't look stuck (same requirement as the Ollama transport)."""
-
-    class _StatusError(Exception):
-        def __init__(self, status_code: int) -> None:
-            super().__init__(f"HTTP {status_code}")
-            self.status_code = status_code
-
-    class _FlakyStreamCompletions:
-        def __init__(self, chunks: list[_FakeStreamChunk]) -> None:
-            self._chunks = chunks
-            self._first = True
-            self.calls: list[dict] = []
-
-        async def create(self, **kwargs: object) -> _FakeStream:
-            self.calls.append(kwargs)
-            if self._first:
-                self._first = False
-                raise _StatusError(503)
-            return _FakeStream(self._chunks)
-
+async def test_stream_with_thinking_calls_on_retry_not_on_thinking() -> None:
+    """A transient-error retry cycle can run for minutes with the UI otherwise
+    showing nothing — on_retry must fire a status update per retry attempt, and
+    retry text must NOT go through on_thinking (reserved for real model reasoning)."""
     fake = _FlakyStreamCompletions([_FakeStreamChunk(content="hi")])
     transport = OpenRouterJsonTransport(completions_client=fake)
-    chunks: list[str] = []
+    thinking_chunks: list[str] = []
+    retries: list[tuple[int, int, str, str]] = []
 
-    result = await transport.generate_text(
-        model="some/model", system_instructions="", user_payload={},
-        on_thinking=chunks.append,
+    # _stream_with_thinking directly — generate_text's public signature doesn't
+    # expose on_retry (nothing in the controller-chat scope calls generate_text
+    # with a retry-relevant need), but the shared retry machinery still supports it.
+    result = await transport._stream_with_thinking(
+        {"model": "some/model", "messages": []},
+        on_thinking=thinking_chunks.append,
+        on_retry=lambda a, m, r, msg: retries.append((a, m, r, msg)),
     )
 
     assert result == "hi"
-    retry_chunks = [c for c in chunks if "retrying" in c]
-    assert len(retry_chunks) == 1, chunks
-    assert "attempt 1/4" in retry_chunks[0]  # default max_retries=4
+    assert not any("retrying" in c for c in thinking_chunks), thinking_chunks
+    assert len(retries) == 1, retries
+    attempt, max_attempts, reason, message = retries[0]
+    assert (attempt, max_attempts, reason) == (1, 4, "server_error")  # default max_retries=4
+    assert "attempt 1/4" in message
+
+
+class _FlakyCompletions:
+    """Non-streaming completions fake: raises once with a given status, then
+    returns a real _FakeResponse — mirrors _FlakyStreamCompletions but for the
+    plain (non-stream=True) _call_with_retry path."""
+
+    def __init__(self, content: str, status_code: int = 503) -> None:
+        self._content = content
+        self._first = True
+        self._status_code = status_code
+        self.calls: list[dict] = []
+
+    async def create(self, **kwargs: object) -> _FakeResponse:
+        self.calls.append(kwargs)
+        if self._first:
+            self._first = False
+            raise _StatusError(self._status_code)
+        return _FakeResponse(self._content)
+
+
+@pytest.mark.asyncio
+async def test_call_with_retry_calls_on_retry() -> None:
+    """_call_with_retry previously had no callback parameter at all — it retried
+    silently. This is the one case in this file where on_retry is a genuinely
+    new parameter, not a swap of an existing callback."""
+    fake = _FlakyCompletions("ignored", status_code=500)
+    transport = OpenRouterJsonTransport(completions_client=fake)
+    retries: list[tuple[int, int, str, str]] = []
+
+    result = await transport._call_with_retry(
+        {"model": "m", "messages": []},
+        on_retry=lambda a, m, r, msg: retries.append((a, m, r, msg)),
+    )
+
+    assert result is not None
+    assert len(retries) == 1
+    attempt, max_attempts, reason, message = retries[0]
+    assert (attempt, reason) == (1, "server_error")
+
+
+@pytest.mark.asyncio
+async def test_call_with_retry_classifies_429_as_rate_limited() -> None:
+    fake = _FlakyCompletions("ignored", status_code=429)
+    transport = OpenRouterJsonTransport(completions_client=fake)
+    retries: list[tuple[int, int, str, str]] = []
+
+    await transport._call_with_retry(
+        {"model": "m", "messages": []},
+        on_retry=lambda a, m, r, msg: retries.append((a, m, r, msg)),
+    )
+
+    assert retries[0][2] == "rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_fallback_calls_on_retry() -> None:
+    """The malformed-JSON fallback loop is a transport-level retry on a JSON-parse
+    failure — distinct from the controller-level corrective retry, but shares
+    reason='malformed_response' per the spec's unified taxonomy."""
+    fake = _FakeCompletions([
+        "not json at all",       # primary strict-schema attempt -> triggers fallback
+        "still not json either", # fallback attempt 0 -> malformed, retries
+        json.dumps({"ok": True}),  # fallback attempt 1 -> succeeds
+    ])
+    transport = OpenRouterJsonTransport(completions_client=fake, max_retries=2)
+    retries: list[tuple[int, int, str, str]] = []
+
+    result = await transport.generate_json(
+        model="some/model", schema_name="controller_step_response",
+        schema={"type": "object"}, system_instructions="s", user_payload={},
+        on_retry=lambda a, m, r, msg: retries.append((a, m, r, msg)),
+    )
+
+    assert result == {"ok": True}
+    assert any(r[2] == "malformed_response" for r in retries), retries
 
 
 @pytest.mark.asyncio

@@ -148,7 +148,7 @@ class _RecordingTransport:
         self.captured_schema: dict | None = None
 
     async def generate_json(self, *, model, schema_name, schema,
-                            system_instructions, user_payload, on_thinking=None):
+                            system_instructions, user_payload, on_thinking=None, on_retry=None):
         self.captured_schema = schema
         return {"type": "answer", "thought": "t", "answer": "a"}
 

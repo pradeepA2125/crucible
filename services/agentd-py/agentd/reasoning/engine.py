@@ -260,6 +260,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         *,
         phase: str,
         on_thinking: Callable[[str], None] | None = None,
+        on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, object]:
         from agentd.chat.controller_prompts import (
             build_controller_step_payload,
@@ -300,6 +301,7 @@ class DefaultReasoningEngine(ReasoningEngine):
             system_instructions=system_instructions,
             user_payload=user_payload,
             on_thinking=on_thinking,
+            on_retry=on_retry,
         )
         result = result if isinstance(result, dict) else {}
         # Artifact: the EXACT bytes entering the LLM this iteration (controller analog of

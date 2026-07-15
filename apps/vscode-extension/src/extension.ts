@@ -295,6 +295,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     updateWorkbar: (info) => {
       chatPanel.updateWorkbar(info);
     },
+    updateRetryStatus: (status) => {
+      chatPanel.updateRetryStatus(status);
+    },
     renderLiveReview: (review) => {
       chatPanel.renderLiveReview(review);
     },

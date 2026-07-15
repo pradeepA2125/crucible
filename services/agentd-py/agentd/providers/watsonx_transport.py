@@ -95,6 +95,7 @@ class WatsonxJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
+        on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, object]:
         """
         Generate JSON via model.achat() with constrained output.

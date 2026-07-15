@@ -20,6 +20,7 @@ class _CapturingTransport:
         system_instructions,
         user_payload,
         on_thinking=None,
+        on_retry=None,
     ):
         self.system_instructions = system_instructions
         return {"type": "answer", "thought": "", "message": "ok"}

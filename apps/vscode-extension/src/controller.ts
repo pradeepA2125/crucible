@@ -85,6 +85,7 @@ export interface ControllerUI {
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void;
   appendToolResult(id: number, output: string, isError: boolean): void;
   updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void;
+  updateRetryStatus(status: { attempt: number; max_attempts: number; reason: string; message: string } | null): void;
   renderLiveReview(review: { taskId: string; modifiedFiles: string[]; shadowWorkspacePath: string | null; stepsCompleted: number | null; stepsTotal: number | null; deviations: string[]; narrative?: { headline: string; points: string[] } }): void;
   clearLiveReview(): void;
   renderLiveError(error: { taskId: string; status: "FAILED" | "ABORTED"; detail?: string; narrative?: { headline: string; points: string[] } }): void;
@@ -722,6 +723,16 @@ export class CrucibleController {
         } else if (event.type === "tool_thinking_chunk") {
           const chunk = (event.payload["chunk"] as string) ?? "";
           if (chunk) this.ui.appendChatThinkingChunk(chunk);
+        } else if (event.type === "retry_status") {
+          const p = event.payload as {
+            attempt?: number; max_attempts?: number; reason?: string; message?: string;
+          };
+          this.ui.updateRetryStatus({
+            attempt: p.attempt ?? 0,
+            max_attempts: p.max_attempts ?? 0,
+            reason: p.reason ?? "",
+            message: p.message ?? "",
+          });
         } else if (event.type === "explore_tool_call") {
           this.forwardToolCall("explore", event.payload as Record<string, unknown>);
         } else if (event.type === "explore_tool_result") {
@@ -873,6 +884,7 @@ export class CrucibleController {
       this.ui.updateWorkbar(null);
       this.turnAbort = null;
       this.ui.hideChatThinking();
+      this.ui.updateRetryStatus(null);
       this.ui.finalizeAgentMessage();
       this.ui.setChatInputEnabled(true);
     }

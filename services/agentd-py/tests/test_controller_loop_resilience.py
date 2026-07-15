@@ -73,3 +73,39 @@ async def test_empty_clarify_is_rejected_and_retried(tmp_path: Path):
     out = await _loop(tmp_path, steps).run(
         {"goal": "g", "workspace_path": str(tmp_path)}, max_iters=6)
     assert out.kind == "clarify" and out.text == "Which module?"
+
+
+@pytest.mark.asyncio
+async def test_malformed_response_broadcasts_retry_status_not_tool_thinking_chunk(tmp_path: Path):
+    """The invalid-response-type corrective branch (a parsed-but-semantically-
+    invalid action, e.g. no 'type') must broadcast retry_status like the
+    exception-catch branch does — not tool_thinking_chunk, which is reserved
+    for genuine model reasoning text."""
+    reg = AggregatingToolRegistry(
+        [BuiltinToolSource(shadow_root=tmp_path, real_workspace_path=tmp_path)]
+    )
+    broadcaster = EventBroadcaster()
+    channel_id = "c"
+    queue = broadcaster.subscribe(channel_id)
+    loop = ControllerLoop(
+        ScriptedReasoningEngine(None, [], controller_step_responses=[
+            {"thought": "oops"},  # no type -> malformed
+            {"type": "answer", "thought": "ok", "answer": "recovered"},
+        ]),
+        reg, broadcaster, channel_id=channel_id, phase_sm=ControllerPhaseSM())
+
+    out = await loop.run({"goal": "g", "workspace_path": str(tmp_path)}, max_iters=6)
+
+    assert out.kind == "answer" and out.text == "recovered"
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    retry_events = [e for e in events if e.get("type") == "retry_status"]
+    stale_thinking_chunks = [
+        e for e in events
+        if e.get("type") == "tool_thinking_chunk"
+        and "Invalid response" in e.get("payload", {}).get("chunk", "")
+    ]
+    assert retry_events, events
+    assert retry_events[0]["payload"]["reason"] == "malformed_response"
+    assert not stale_thinking_chunks, stale_thinking_chunks

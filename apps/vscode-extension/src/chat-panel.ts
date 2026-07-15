@@ -458,6 +458,10 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "updateWorkbar", info });
   }
 
+  updateRetryStatus(status: { attempt: number; max_attempts: number; reason: string; message: string } | null): void {
+    this.panel?.webview.postMessage({ type: "updateRetryStatus", status });
+  }
+
   private buildHtml(): string {
     const distPath = vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist");
     let rawHtml: string;

@@ -126,6 +126,13 @@ export interface WorkbarInfo {
   phaseLabel?: string;      // tier 2 — transient event override
 }
 
+export interface RetryStatusView {
+  attempt: number;
+  max_attempts: number;
+  reason: string;
+  message: string;
+}
+
 // ── Extension → Webview ──────────────────────────────────────────────────────
 export type ExtensionMessage =
   | { type: "appendMessage"; message: ChatMsg }
@@ -135,6 +142,7 @@ export type ExtensionMessage =
   | { type: "appendToolEvent"; event: Omit<ToolEventView, "output" | "isError" | "done"> }
   | { type: "appendToolResult"; id: number; output: string; isError: boolean }
   | { type: "updateWorkbar"; info: WorkbarInfo | null }
+  | { type: "updateRetryStatus"; status: RetryStatusView | null }
   | { type: "finalizeAgentMessage" }
   | { type: "showThinking"; message: string }
   | { type: "updateThinking"; message: string }
@@ -238,6 +246,7 @@ export interface AppState {
   // sessionId → transcript for expanded strip rows (null = fetch failed).
   sessionTranscripts: Record<string, SessionTranscriptView | null>;
   workbar: WorkbarInfo | null;
+  retryStatus: RetryStatusView | null;
   liveStatus: string | null;
   // True while a controller turn / held-open controller gate is in flight (durable
   // input-disable signal from /live; survives reload). Distinct from inputEnabled,
