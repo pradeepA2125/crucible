@@ -2,7 +2,7 @@
   "name": "crucible-vscode-extension",
   "displayName": "Crucible",
   "description": "Agentic AI pair programmer: spec-first task planning, shadow-workspace patch review, and an inline chat controller — with a managed local runtime (no separate backend setup required).",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "crucible-editor",
   "icon": "resources/icon.png",
   "categories": [
