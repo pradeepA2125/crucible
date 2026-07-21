@@ -2289,7 +2289,7 @@ Wire `this.onGetPlanMode`/`this.onSetPlanMode` (constructor-injected, following 
       } else if (m["type"] === "sendMessage") {
 ```
 
-(Match this file's exact existing constructor-injection idiom for `getPlanMode`/`onSetPlanMode` — read the constructor and how e.g. `onMessage`/`onReady` are already threaded in before writing this, to keep the new fields consistent with the rest of the class rather than inventing a new wiring style.)
+(Match this file's exact existing constructor-injection idiom for `onGetPlanMode`/`onSetPlanMode` — read the constructor and how e.g. `onMessage`/`onReady` are already threaded in before writing this, to keep the new fields consistent with the rest of the class rather than inventing a new wiring style.)
 
 - [ ] **Step 9: Wire `extension.ts`**
 
