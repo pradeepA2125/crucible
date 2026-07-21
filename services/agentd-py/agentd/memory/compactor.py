@@ -13,16 +13,20 @@ AnchorSummarizer = Callable[[str, str], Awaitable[str]]
 
 _CONTINUATION_ROLES = {"tool_result", "tool"}
 
+# len//3, not len//4: a 2026-07-17 live-smoke session measured a real TurboQuant
+# KV-cache token count (cache_n=98244) against the len//4 estimate for equivalent
+# conversation_history content (~59117) — a 1.66x undercount that let compaction's
+# trigger fire too late to prevent a hard context-size overflow. len//3 halves the
+# undercount without adding a real-tokenizer dependency; if this proves insufficient
+# in practice, the next escalation is a real BPE-based estimate (e.g. tiktoken as an
+# approximation even for non-OpenAI models), not a further ratio tweak.
+# Single source of truth for BOTH directions of the chars<->tokens conversion
+# (estimate_tokens and _truncate_to_tokens) so they can't drift out of agreement.
+_CHARS_PER_TOKEN = 3
+
 
 def estimate_tokens(text: str) -> int:
-    # len//3, not len//4: a 2026-07-17 live-smoke session measured a real TurboQuant
-    # KV-cache token count (cache_n=98244) against the len//4 estimate for equivalent
-    # conversation_history content (~59117) — a 1.66x undercount that let compaction's
-    # trigger fire too late to prevent a hard context-size overflow. len//3 halves the
-    # undercount without adding a real-tokenizer dependency; if this proves insufficient
-    # in practice, the next escalation is a real BPE-based estimate (e.g. tiktoken as an
-    # approximation even for non-OpenAI models), not a further ratio tweak.
-    return max(1, len(text) // 3)
+    return max(1, len(text) // _CHARS_PER_TOKEN)
 
 
 def _history_tokens(history: History) -> int:
@@ -34,7 +38,7 @@ def _render(messages: History) -> str:
 
 
 def _truncate_to_tokens(text: str, max_tokens: int) -> str:
-    max_chars = max(8, max_tokens * 4)
+    max_chars = max(8, max_tokens * _CHARS_PER_TOKEN)
     if len(text) <= max_chars:
         return text
     head = max_chars // 2

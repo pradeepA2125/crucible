@@ -67,10 +67,27 @@ def test_estimate_tokens_minimum_is_one():
 
 
 def test_truncate_keeps_head_and_tail():
-    out = _truncate_to_tokens("A" * 100 + "Z" * 100, 10)  # 10 tokens ~ 40 chars
+    out = _truncate_to_tokens("A" * 100 + "Z" * 100, 10)  # 10 tokens ~ 30 chars (len//3)
     assert "[truncated]" in out
     assert out.startswith("A") and out.endswith("Z")
     assert len(out) < 200
+
+
+def test_truncate_to_tokens_agrees_with_estimate_tokens():
+    """Regression test for the estimate_tokens/_truncate_to_tokens ratio-mismatch bug:
+    both directions of the chars<->tokens conversion must share one ratio, else a
+    caller relying on _truncate_to_tokens(text, budget) to cap estimate_tokens(...) at
+    roughly `budget` overshoots badly (e.g. the hot-floor truncation backstop in
+    maybe_compact). Some small overshoot is expected regardless — the "…[truncated]…"
+    marker adds ~5 tokens on top of the budgeted content — but with the old mismatched
+    ratios (estimate_tokens len//3 vs _truncate_to_tokens max_tokens*4) a 40-token
+    budget overshot to 58 estimated tokens (45%); with the unified _CHARS_PER_TOKEN
+    ratio it overshoots only to ~45 (the marker's fixed cost), well under a 10-token
+    slack.
+    """
+    text = "x" * 400
+    truncated = _truncate_to_tokens(text, 40)
+    assert estimate_tokens(truncated) <= 40 + 10
 
 
 def test_select_hot_token_bounded():
@@ -181,7 +198,7 @@ async def test_single_oversize_message_is_truncated(tmp_path):
 
     comp = Compactor(
         store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=10
-    )  # hot_budget = 40 tok = 160 chars
+    )  # hot_budget = 40 tok = 120 chars (len//3)
     history = [{"role": "user", "content": "q" * 4000}]  # ~1000 tok, sole newest turn
     result = await comp.maybe_compact(history, "r1")
     assert result.compacted is True and result.degraded is True
