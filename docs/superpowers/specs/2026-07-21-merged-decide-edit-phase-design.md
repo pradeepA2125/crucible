@@ -172,11 +172,67 @@ in `_run_loop`.
 - `ControllerPhaseSM.__init__` takes the starting phase explicitly:
   `def __init__(self, start: str = "ACTIVE") -> None`, validating `start in ("PLAN", "ACTIVE")`.
   The no-arg default is `ACTIVE` (see I1 below for why and the audit this requires).
-  `enter_edit_mode`/`enter_explain_mode` are removed — there's no longer a
-  post-construction transition *into* a phase from another live phase except
-  `PLAN → ACTIVE` (via `propose_mode` resolving to `"implement"`), which is
-  constructed as a fresh `ControllerPhaseSM(start="ACTIVE")` for the re-entered turn,
-  not a mutation of the existing SM instance.
+  `enter_edit_mode`/`enter_explain_mode` are removed. There are exactly two legal
+  `start=` values, and each has exactly one non-default construction site: `"ACTIVE"`
+  for a plain fresh turn or `resolve_mode`'s `"implement"` dispatch (this C1 entry),
+  and `"PLAN"` solely for `resolve_clarify`'s PLAN-raised-clarify resume (C5 below) —
+  `PLAN` is never transitioned into from a live `ACTIVE` turn, only ever constructed
+  fresh as a turn's starting phase. Every entry is a fresh `ControllerPhaseSM(start=...)`
+  instance, never a mutation of an existing one — see NEW-I6 below for the literal
+  `_run_loop` line that turns the `phase` parameter each caller passes into this
+  `start=` argument.
+- **`_PHASE_TYPES["ACTIVE"]`'s `edit`/`submit_changes` entries additionally depend on
+  an edit-session factory being available**, not just on being in `ACTIVE`. Today this
+  is safe implicitly: `EDIT` is only ever entered via `resolve_mode`'s guarded dispatch
+  (`if mode == "edit" and self._orchestrator is None: raise RuntimeError(...)`, checked
+  *before* any `_run_loop(phase="EDIT")` call), so a no-orchestrator test harness never
+  sees an edit-capable phase. Under the merged model, `ACTIVE` is the default for
+  *every* plain message regardless of orchestrator presence — a no-orchestrator harness
+  would advertise `edit`/`submit_changes` as schema-legal and then crash fulfilling them
+  (the factory is `None`). Fix: compute `ACTIVE`'s effective action-type set once at
+  `ControllerLoop` construction, dropping `edit`/`submit_changes` when
+  `edit_session_factory is None` — the same conditional-inclusion mechanism already used
+  for `task_subsystem_enabled`'s `propose_mode` addition, just subtracting instead of
+  adding. Real production wiring always constructs a real orchestrator (`main.py`), so
+  this only matters for test harnesses that construct a `ChatController` without one.
+
+**C1b — the merged entry-hint signal (the hardest single piece of this change).**
+Today, `build_controller_step_payload` has a strict `if phase == "EDIT": ... else: # DECIDE`
+binary, and each side sets a different iteration-0 signal: `plan_context["edit_entry"]`
+(`EDIT` phase + no ledger items + no edit applied + not a resume — "first action after
+inline-edit was chosen, nothing started yet") drives the todo-list-vs-direct-edit
+guidance, while `plan_context["decide_entry"]` (`DECIDE` phase + `iteration == 0`)
+drives the skill-check + "search before answering cold" guidance. Critically, **a fresh
+`EDIT`-phase turn today only ever starts *after* `propose_mode`**, with `DECIDE` having
+already run the skill-check on an earlier iteration of that same turn — the two hints
+never both need to fire on the same iteration for the same turn. Under the merged
+model, a turn starting cold in `ACTIVE` (toggle off, brand-new thread, no prior
+`propose_mode`) needs **both** hints on iteration 0, since there's no earlier `PLAN`
+iteration to have already run the skill-check.
+
+Fix: replace the two separate signals with one combined flag —
+```python
+plan_context["active_entry"] = (
+    self._sm.phase == "ACTIVE" and iteration == 0
+    and not self._ledger.items and not self._edit_applied
+    and not plan_context.get("edit_is_resume"))
+```
+(this is `edit_entry`'s exact condition, with `phase == "EDIT"` broadened to
+`phase == "ACTIVE" and iteration == 0` — the `iteration == 0` clause is what makes it
+also cover the cold-start case `decide_entry` used to own). The payload builder's
+`else: # PLAN` branch keeps its skill-check + entry-hint text essentially as today's
+`DECIDE` branch does (unchanged). The `if phase == "ACTIVE":` branch's entry-hint text
+becomes the **union** of both old hints' content — skill-check first (reworded, see
+next paragraph), then the todo-list-vs-direct-edit guidance — fired together whenever
+`active_entry` is true.
+
+The skill-check text's own wording needs a small edit: it currently reads
+"before locating code, answering, or proposing anything" and ends with "your FIRST
+action MUST be tool_call read_skill(name)... there is no other 'first action' that
+outranks it" — the "proposing" reference is dead in `ACTIVE` (`propose_mode` isn't
+reachable there at all, except the I4 task-subsystem accommodation, which is itself
+a form of "proposing" so the word isn't entirely wrong, but the phrase should read
+"before locating code, answering, or editing" to match `ACTIVE`'s actual vocabulary).
 
 **C2 — `answer` and the todo-ledger completion gate.**
 `_PHASE_TYPES["EDIT"]` today does *not* include `answer` — only `submit_changes` is
@@ -239,14 +295,33 @@ that default is `ACTIVE`, answering a clarifying question raised during `PLAN` w
 silently escalate the turn into edit-capable territory without the user ever picking
 `"implement"`. Fix: generalize `resume_phase` from an EDIT-only special case to
 carrying the SM's actual phase at raise time (`sm.phase if sm.phase in ("PLAN", "ACTIVE") else None`,
-both at the write site and the `resolve_clarify` read site), and give
-`ControllerPhaseSM` a resume-into-`PLAN` construction path (`ControllerPhaseSM(start="PLAN")`)
-alongside `start="ACTIVE"` — `PLAN` is otherwise never a phase you transition *into*
-from another live phase, only a fresh-turn starting phase, so this resume path is the
-one exception and should be visibly distinct in the code from the C1 constructor
-change, not silently reused. `edit_is_resume=(resume_phase == "EDIT")` at both call
-sites renames to `(resume_phase == "ACTIVE")` — easy to miss since it's a derived
-boolean, not the string itself.
+both at the write site and the `resolve_clarify` read site), so a resume can construct
+`ControllerPhaseSM(start="PLAN")` — as noted in C1, this is the only place `"PLAN"` is
+ever passed as `start=` outside a turn's own toggle-derived default.
+`edit_is_resume=(resume_phase == "EDIT")` at both call sites renames to
+`(resume_phase == "ACTIVE")` — easy to miss since it's a derived boolean, not the
+string itself.
+
+**NEW-I6 — the literal `_run_loop` line that turns the `phase` parameter into the SM's
+`start=` argument, and the caller that currently drops it on the floor.** Three
+different callers feed `_run_loop`'s `phase: str | None` parameter with different
+intents: `handle_message` (must become the plan_mode-derived starting phase),
+`resolve_mode`'s `"implement"` dispatch (always `"ACTIVE"`), and `resolve_clarify`
+(`"PLAN"`, `"ACTIVE"`, or `None` defensively). `_run_loop`'s construction becomes:
+```python
+sm = ControllerPhaseSM(start=phase if phase in ("PLAN", "ACTIVE") else "ACTIVE")
+```
+replacing today's `sm = ControllerPhaseSM(); if phase == "EDIT": sm.enter_edit_mode(); elif phase == "EXPLAIN": sm.enter_explain_mode()`.
+**`handle_message` currently hardcodes `resume_phase = None` and passes that straight
+through as `phase`** (with a comment explaining this was fine because clarify-resume
+used to be driven entirely by `resolve_clarify`, never a plain message). That local
+must be replaced by the plan_mode computation (`"PLAN" if plan_mode else "ACTIVE"`)
+rather than staying a stray `None` — leaving it as `None` would silently force every
+plain message into the `"ACTIVE"` default (via the fallback in the line above)
+regardless of the sticky toggle's actual value, defeating the entire feature. This is
+the one seam where C1, C5, and the sticky-toggle plumbing actually meet in code; an
+implementer wiring the three sections above independently could easily leave
+`handle_message`'s old `None` in place and never notice the toggle has no effect.
 
 ## UI
 
@@ -306,9 +381,15 @@ since most of the underlying behavior they assert still holds:
   successfully `edit` **and** `run_command` with no round-trip — this is the concrete
   case that crashes today under C1 and is the whole point of the change.
 - Both halves of the merged entry-hint fire together on `ACTIVE` iteration 0
-  (skill-check + todo-list-vs-direct-edit guidance).
+  (skill-check + todo-list-vs-direct-edit guidance) — i.e. `plan_context["active_entry"]`
+  (C1b) is true and both hint texts are present in the payload.
+- `handle_message` with `plan_mode=true` actually starts the turn's SM in `PLAN` (not
+  just that the field is accepted) — this is the regression test for NEW-I6's "stray
+  `None`" failure mode, where the toggle is silently ignored.
 - `plan_mode=true` starts a turn in `PLAN`; a `propose_mode`→`"implement"` resolution
   lands the turn in `ACTIVE` for its remainder.
+- A no-orchestrator `ChatController` (test-harness construction) does not advertise
+  `edit`/`submit_changes` in `ACTIVE`'s action set (M6/C1's factory-gated action set).
 - C2's two directions: `answer` blocked when this-turn edit + pending items; `answer`
   allowed for pure Q&A despite an unrelated stale non-empty ledger.
 - C5's `PLAN`-clarify-resume: answering a clarify raised during `PLAN` re-enters
