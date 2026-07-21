@@ -977,7 +977,11 @@ Replace the entire block from `if phase == "EDIT":` through the end of the `else
             "action\" that outranks it. \"this looks simple\", \"I already know how to do this\", "
             "and \"let me explore first\" are NOT valid reasons to skip the check. "
         ) if skills_available and plan_context.get("skill_check_due") else ""
-        if plan_context.get("active_entry"):
+        # `or not history` mirrors the PLAN branch's fallback below (and the old
+        # edit_entry code's `or not history`) — a direct caller of this function
+        # that never sets active_entry explicitly (a test, or a future caller)
+        # still gets the entry hint on empty history, matching PLAN's symmetry.
+        if plan_context.get("active_entry") or not history:
             hint = (
                 skill_check +
                 "This is your FIRST action and nothing is started yet. Decide the approach:\n"
@@ -1448,7 +1452,7 @@ becomes:
                 else _propose_mode_correction(resp, self._allowed_modes_for_current_phase()) if atype == "propose_mode"
 ```
 
-Also update `controller_response_schema`'s and `create_controller_step`'s callers are unaffected (they trim by `phase` alone via `_PHASE_TYPES[phase]`, which stays PLAN/ACTIVE's own module-level table — the I4 addition is a runtime-only relaxation on top of the schema's phase-based enum, mirroring how `_decide_state_change_correction` is also a runtime-only restriction beyond the schema). **Do not** add `propose_mode` to `_PHASE_TYPES["ACTIVE"]` itself — that would make it always legal regardless of the task-subsystem flag, defeating the point; the schema's per-request `enum` trim happens per the `phase` string alone, so the reachability distinction here is enforced entirely by `_allowed_action_types()`'s dispatch-time check, same pattern `_decide_state_change_correction` already uses for a different runtime-only restriction.
+Note: `controller_response_schema`'s and `create_controller_step`'s callers need NO change — they trim by `phase` alone via `_PHASE_TYPES[phase]`, which stays PLAN/ACTIVE's own module-level table; the I4 addition is a runtime-only relaxation on top of the schema's phase-based enum, mirroring how `_decide_state_change_correction` is also a runtime-only restriction beyond the schema. **Do not** add `propose_mode` to `_PHASE_TYPES["ACTIVE"]` itself — that would make it always legal regardless of the task-subsystem flag, defeating the point; the schema's per-request `enum` trim happens per the `phase` string alone, so the reachability distinction here is enforced entirely by `_allowed_action_types()`'s dispatch-time check, same pattern `_decide_state_change_correction` already uses for a different runtime-only restriction.
 
 - [ ] **Step 4: Run this task's tests**
 
@@ -1842,7 +1846,7 @@ with:
             channel_id = f"chat:{thread_id}"
 ```
 
-Then add `plan_mode=plan_mode` to BOTH `handle_message(...)` call sites a few lines below (the detached-turn path at `_chat_agent.handle_message(thread_id, message, channel_id=channel_id, step_review=step_review, forced_skills=forced_skills, mentioned_files=mentioned_files)` and the legacy-path call `await _chat_agent.handle_message(thread_id, message, channel_id=channel_id, step_review=step_review)`). The legacy `ChatAgent` path's `handle_message` does not accept `plan_mode` (it's controller-only, matching the existing convention for `mentioned_files`/`forced_skills`/MCP/skills) — guard the legacy call site so it does NOT pass `plan_mode` (only the `_active is not None` / `ChatController` branch does).
+Add `plan_mode=plan_mode` to ONLY the `ChatController` call site a few lines below — the one inside the `if _active is not None:` branch: `_chat_agent.handle_message(thread_id, message, channel_id=channel_id, step_review=step_review, forced_skills=forced_skills, mentioned_files=mentioned_files)`. Do **NOT** add `plan_mode` to the other call site further down, `await _chat_agent.handle_message(thread_id, message, channel_id=channel_id, step_review=step_review)` — that one dispatches to the legacy `ChatAgent` (the `CRUCIBLE_CHAT_CONTROLLER=0` path, a real supported configuration per this repo's CLAUDE.md, not dead code), whose `handle_message` does not accept `plan_mode` at all (controller-only, matching the existing convention for `mentioned_files`/`forced_skills`/MCP/skills). Passing `plan_mode` there raises `TypeError: handle_message() got an unexpected keyword argument 'plan_mode'` the first time the backend runs with the controller flag off.
 
 - [ ] **Step 5: Run this task's tests**
 
@@ -2252,34 +2256,13 @@ Read `apps/vscode-extension/src/runtime/vscode-runtime.ts` around its existing `
   }
 ```
 
-- [ ] **Step 6: Write the failing test for `chat-panel.ts`'s message routing**
+- [ ] **Step 6: No test file exists for `chat-panel.ts` — confirmed by search, not an oversight to fix here**
 
-Read the existing test file covering `chat-panel.ts`'s `registerHandlers` (likely `apps/vscode-extension/src/test/chat-panel.test.ts` or similar — find it via `find apps/vscode-extension/src -iname "*chat-panel*test*"`) to match its existing mocking pattern, then add:
+`find apps/vscode-extension -iname "*chat-panel*test*"` returns zero matches, and a broader sweep of every non-`webview-ui` `.test.ts` file in this package (`test/prompt-files.test.ts`, `test/settings-data.test.ts`, `test/memory-data.test.ts`, `test/controller.test.ts`, etc.) shows they all test **vscode-free companion modules** — this package's established pattern (per CLAUDE.md's `settings-data.ts`/`settings-panel.ts` and `memory-data.ts`/`memory-panel.ts` split) is that the vscode-API-touching panel class itself (needing a real `vscode.WebviewPanel`, `onDidReceiveMessage`, etc.) is verified live/manually, not unit-mocked — there is no existing harness for mocking `vscode.WebviewPanel` to reuse or extend. Building one from scratch here would be introducing new test infrastructure this package has deliberately avoided elsewhere, not "matching an existing pattern."
 
-```ts
-it("routes setPlanMode to the injected handler", async () => {
-  const setPlanMode = vi.fn();
-  // ... construct the panel per this file's existing pattern, injecting setPlanMode
-  // as a dependency (mirroring however onMessage/other handlers are injected here) ...
-  await simulateWebviewMessage({ type: "setPlanMode", enabled: true });
-  expect(setPlanMode).toHaveBeenCalledWith(true);
-});
+Given that, skip writing a new automated unit test for `chat-panel.ts`'s message routing in this task. Correctness here is covered by: TypeScript's compiler (the new message-type fields are type-checked at Step 8's edit site), the already-covered `ModeGate`/`InputArea` tests (Tasks 9-10 elsewhere) exercising the messages `chat-panel.ts` routes, and this task's Step 14 full-suite + typecheck run. Proceed directly to Step 8's implementation.
 
-it("hydrates planModeState on webviewReady", async () => {
-  const posted: unknown[] = [];
-  // getPlanMode returns true per this test's injected stub
-  await simulateWebviewMessage({ type: "webviewReady" });
-  expect(posted).toContainEqual({ type: "planModeState", enabled: true });
-});
-```
-
-(Adapt the exact mock/injection mechanics to match this file's established test style once read — the plan cannot pin exact helper names without having read the test file's current dependency-injection shape.)
-
-- [ ] **Step 7: Run it, confirm it fails**
-
-```bash
-npm run -w crucible-vscode-extension test -- chat-panel 2>&1 | tail -40
-```
+- [ ] **Step 7: (intentionally skipped — see Step 6)**
 
 - [ ] **Step 8: Wire `setPlanMode` + hydration into `chat-panel.ts`**
 
@@ -2310,14 +2293,25 @@ Wire `this.getPlanMode`/`this.onSetPlanMode` (constructor-injected, following th
 
 - [ ] **Step 9: Wire `extension.ts`**
 
-In `apps/vscode-extension/src/extension.ts`, find where `ChatPanel` is constructed with its handler dependencies (mirroring line ~102's `sendChatMessage` wiring) and add:
+`ChatPanel`'s constructor (`chat-panel.ts:82-117`) is **purely positional** — 26+ arguments, no options object — ending with `onFetchSessionTranscript: FetchSessionTranscriptHandler = async () => null` as its last (defaulted) parameter. Step 8's `onGetPlanMode`/`onSetPlanMode` fields must be added as two MORE positional parameters, each with a default, appended after `onFetchSessionTranscript` in the constructor signature:
 
 ```ts
-getPlanMode: () => runtimeManager.getPlanMode(),
-onSetPlanMode: (enabled: boolean) => runtimeManager.setPlanMode(enabled),
+    private readonly onFetchSessionTranscript: FetchSessionTranscriptHandler = async () => null,
+    private readonly onGetPlanMode: GetPlanModeHandler = () => false,
+    private readonly onSetPlanMode: SetPlanModeHandler = async () => {}
+  ) {}
 ```
 
-(matching whatever object/constructor-arg shape `ChatPanel` actually expects once Step 8 defines it — this is the extension-side glue between the panel and `RuntimeManager`, the same shape as every other handler already wired at this call site).
+In `apps/vscode-extension/src/extension.ts`, the `new ChatPanel(...)` call site (starting at line 99) ends with `(sessionId: string) => controller.fetchSessionTranscript(sessionId)` as its last argument before the closing `);`. Append two more positional arguments in the SAME relative position as the constructor edit above:
+
+```ts
+    (sessionId: string) => controller.fetchSessionTranscript(sessionId),
+    () => runtimeManager.getPlanMode(),
+    (enabled: boolean) => runtimeManager.setPlanMode(enabled)
+  );
+```
+
+(Both edits are positional — the constructor parameter list and the call site's argument list must gain their two new entries in the same relative order, or the arguments silently bind to the wrong parameters. Since both new parameters have defaults, no other existing positional argument shifts.)
 
 - [ ] **Step 10: `controller.ts`'s `sendChatMessage` gains `planMode`**
 
