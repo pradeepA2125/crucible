@@ -173,14 +173,15 @@ in `_run_loop`.
   `def __init__(self, start: str = "ACTIVE") -> None`, validating `start in ("PLAN", "ACTIVE")`.
   The no-arg default is `ACTIVE` (see I1 below for why and the audit this requires).
   `enter_edit_mode`/`enter_explain_mode` are removed. There are exactly two legal
-  `start=` values, and each has exactly one non-default construction site: `"ACTIVE"`
-  for a plain fresh turn or `resolve_mode`'s `"implement"` dispatch (this C1 entry),
-  and `"PLAN"` solely for `resolve_clarify`'s PLAN-raised-clarify resume (C5 below) —
-  `PLAN` is never transitioned into from a live `ACTIVE` turn, only ever constructed
-  fresh as a turn's starting phase. Every entry is a fresh `ControllerPhaseSM(start=...)`
-  instance, never a mutation of an existing one — see NEW-I6 below for the literal
-  `_run_loop` line that turns the `phase` parameter each caller passes into this
-  `start=` argument.
+  `start=` values. `"ACTIVE"`'s non-default construction sites are `resolve_mode`'s
+  `"implement"` dispatch (this C1 entry) and `resolve_clarify`'s `ACTIVE`-resume (a
+  clarify raised mid-`ACTIVE`, resumed — C5 below); `"PLAN"`'s only non-default
+  construction site is `resolve_clarify`'s `PLAN`-resume (a clarify raised mid-`PLAN`,
+  resumed — C5 below) — `PLAN` is never transitioned into from a live `ACTIVE` turn
+  otherwise, only ever constructed fresh as a turn's toggle-derived starting phase.
+  Every entry is a fresh `ControllerPhaseSM(start=...)` instance, never a mutation of
+  an existing one — see NEW-I6 below for the literal `_run_loop` line that turns the
+  `phase` parameter each caller passes into this `start=` argument.
 - **`_PHASE_TYPES["ACTIVE"]`'s `edit`/`submit_changes` entries additionally depend on
   an edit-session factory being available**, not just on being in `ACTIVE`. Today this
   is safe implicitly: `EDIT` is only ever entered via `resolve_mode`'s guarded dispatch
@@ -198,33 +199,48 @@ in `_run_loop`.
 
 **C1b — the merged entry-hint signal (the hardest single piece of this change).**
 Today, `build_controller_step_payload` has a strict `if phase == "EDIT": ... else: # DECIDE`
-binary, and each side sets a different iteration-0 signal: `plan_context["edit_entry"]`
-(`EDIT` phase + no ledger items + no edit applied + not a resume — "first action after
-inline-edit was chosen, nothing started yet") drives the todo-list-vs-direct-edit
-guidance, while `plan_context["decide_entry"]` (`DECIDE` phase + `iteration == 0`)
-drives the skill-check + "search before answering cold" guidance. Critically, **a fresh
-`EDIT`-phase turn today only ever starts *after* `propose_mode`**, with `DECIDE` having
-already run the skill-check on an earlier iteration of that same turn — the two hints
-never both need to fire on the same iteration for the same turn. Under the merged
-model, a turn starting cold in `ACTIVE` (toggle off, brand-new thread, no prior
-`propose_mode`) needs **both** hints on iteration 0, since there's no earlier `PLAN`
-iteration to have already run the skill-check.
+binary, and each side sets a different signal: `plan_context["edit_entry"]` (`EDIT`
+phase + no ledger items + no edit applied + not a resume — **no `iteration` clause at
+all**) drives the todo-list-vs-direct-edit guidance, while `plan_context["decide_entry"]`
+(`DECIDE` phase + `iteration == 0`) drives the skill-check + "search before answering
+cold" guidance. `edit_entry`'s missing iteration clause is deliberate, per the existing
+code comment: it's designed to **persist across iterations** so that if the model
+fumbles an empty `edit` (no `patch_ops`) on its first attempt, the very next iteration
+still sees the "nothing started yet, decide your approach" hint rather than falling
+through to the "reflect on your last edit's result" text written for a *landed* edit —
+this is a previously-fixed thrash bug (the model looping on an empty edit with no
+steering back to the right first move), and the entry-hint mechanism exists
+specifically to keep preventing it.
 
-Fix: replace the two separate signals with one combined flag —
+Critically, **a fresh `EDIT`-phase turn today only ever starts *after* `propose_mode`**,
+with `DECIDE` having already run the skill-check on an earlier iteration of that same
+turn — the two hints never both need to fire on the same iteration for the same turn.
+Under the merged model, a turn starting cold in `ACTIVE` (toggle off, brand-new
+thread, no prior `propose_mode`) needs **both** hints on iteration 0 (there's no
+earlier `PLAN` iteration to have already run the skill-check) — but only the
+skill-check half is one-shot; the todo-vs-direct-edit half must keep `edit_entry`'s
+original unconditional persistence, or the fumble-recovery case regresses.
+
+**Fix: two flags, not one — combine only at the text layer, not the condition layer:**
 ```python
+plan_context["skill_check_due"] = self._sm.phase == "ACTIVE" and iteration == 0
 plan_context["active_entry"] = (
-    self._sm.phase == "ACTIVE" and iteration == 0
-    and not self._ledger.items and not self._edit_applied
-    and not plan_context.get("edit_is_resume"))
+    self._sm.phase == "ACTIVE" and not self._ledger.items
+    and not self._edit_applied and not plan_context.get("edit_is_resume"))
 ```
-(this is `edit_entry`'s exact condition, with `phase == "EDIT"` broadened to
-`phase == "ACTIVE" and iteration == 0` — the `iteration == 0` clause is what makes it
-also cover the cold-start case `decide_entry` used to own). The payload builder's
-`else: # PLAN` branch keeps its skill-check + entry-hint text essentially as today's
-`DECIDE` branch does (unchanged). The `if phase == "ACTIVE":` branch's entry-hint text
-becomes the **union** of both old hints' content — skill-check first (reworded, see
-next paragraph), then the todo-list-vs-direct-edit guidance — fired together whenever
-`active_entry` is true.
+`active_entry` is `edit_entry`'s exact condition with `phase == "EDIT"` broadened to
+`phase == "ACTIVE"` — **no iteration clause added**, preserving the fumble-recovery
+persistence exactly. `skill_check_due` is `decide_entry`'s exact condition with
+`phase == "DECIDE"` broadened to `phase == "ACTIVE"`, kept strictly one-shot (skill
+triage genuinely is redundant to re-run every iteration once it's been done or
+missed). The payload builder's `else: # PLAN` branch keeps its skill-check + entry-hint
+text essentially as today's `DECIDE` branch does (unchanged, using `decide_entry`'s
+same one-shot shape, renamed). The `if phase == "ACTIVE":` branch shows the
+todo-vs-direct-edit guidance whenever `active_entry` is true (any iteration), and
+additionally prepends the (reworded) skill-check block only when `skill_check_due` is
+*also* true — both true together on a cold turn's iteration 0; after an empty-edit
+fumble at iteration 0, `active_entry` alone keeps firing on iteration 1+ while
+`skill_check_due` correctly does not re-fire.
 
 The skill-check text's own wording needs a small edit: it currently reads
 "before locating code, answering, or proposing anything" and ends with "your FIRST
@@ -382,7 +398,14 @@ since most of the underlying behavior they assert still holds:
   case that crashes today under C1 and is the whole point of the change.
 - Both halves of the merged entry-hint fire together on `ACTIVE` iteration 0
   (skill-check + todo-list-vs-direct-edit guidance) — i.e. `plan_context["active_entry"]`
-  (C1b) is true and both hint texts are present in the payload.
+  and `plan_context["skill_check_due"]` (C1b) are both true and both hint texts are
+  present in the payload.
+- The fumble-recovery case C1b exists to protect: after an empty `edit` (no
+  `patch_ops`) at `ACTIVE` iteration 0 with no ledger started, iteration 1 still shows
+  the todo-vs-direct-edit guidance (`active_entry` stays true — no ledger, no edit
+  applied, unconditional on iteration) while the skill-check does NOT re-fire
+  (`skill_check_due` is false past iteration 0). A regression here would silently
+  reintroduce a previously-fixed thrash bug.
 - `handle_message` with `plan_mode=true` actually starts the turn's SM in `PLAN` (not
   just that the field is accepted) — this is the regression test for NEW-I6's "stray
   `None`" failure mode, where the toggle is silently ignored.
