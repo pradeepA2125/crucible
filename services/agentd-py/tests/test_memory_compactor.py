@@ -45,8 +45,24 @@ async def test_below_threshold_reports_zero_counts(tmp_path):
     assert result.evicted_count == 0 and result.anchor_version == 0
 
 
-def test_estimate_tokens_charsdiv4():
-    assert estimate_tokens("abcd") == 1
+def test_estimate_tokens_uses_conservative_ratio():
+    """Regression test for the 2026-07-17 undercount finding: real TurboQuant KV-cache
+    tokens (98244) vs the len//4 estimate for equivalent-sized content (~59117) showed a
+    1.66x undercount, which let compaction's trigger fire too late to prevent context
+    overflow. len//3 is still an approximation but cuts the undercount roughly in half
+    without needing a real tokenizer dependency."""
+    # 300 chars of representative code/JSON-ish content (the kind that dominates this
+    # conversation's history — tool_result payloads, patch_ops, ruff/pytest output).
+    text = '{"op": "search_replace", "file": "core/x.py", "search": "a", "replace": "b"}' * 4
+    assert len(text) == 304
+    # len//4 (the old ratio) would give 76 — the fix must NOT be the old ratio.
+    assert estimate_tokens(text) != len(text) // 4
+    # len//3 is the new floor (101).
+    assert estimate_tokens(text) == len(text) // 3
+
+
+def test_estimate_tokens_minimum_is_one():
+    assert estimate_tokens("abc") == 1
     assert estimate_tokens("") == 1
 
 
@@ -58,10 +74,10 @@ def test_truncate_keeps_head_and_tail():
 
 
 def test_select_hot_token_bounded():
-    hist = [{"role": "user", "content": "x" * 80} for _ in range(5)]  # ~20 tok each
-    evicted, hot, used = _select_hot(hist, hot_budget_tokens=45, hot_turns_cap=10)
+    hist = [{"role": "user", "content": "x" * 80} for _ in range(5)]  # ~26 tok each (len//3)
+    evicted, hot, used = _select_hot(hist, hot_budget_tokens=52, hot_turns_cap=10)
     assert len(hot) == 2 and hot == hist[-2:]
-    assert len(evicted) == 3 and used <= 45
+    assert len(evicted) == 3 and used <= 52
 
 
 def test_select_hot_count_capped():
@@ -124,9 +140,9 @@ async def test_over_threshold_compacts(tmp_path):
         return "MERGED ANCHOR"
 
     comp = Compactor(
-        store, summ, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
-    )  # hot_budget = 40 tokens
-    history = [{"role": "user", "content": "z" * 80} for _ in range(6)]  # ~20 tok each
+        store, summ, window_tokens=130, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
+    )  # hot_budget = 52 tokens (to fit 2 messages of ~26 tok each with len//3)
+    history = [{"role": "user", "content": "z" * 80} for _ in range(6)]  # ~26 tok each (len//3)
     result = await comp.maybe_compact(history, "r1")
     assert result.compacted is True
     assert result.history[-2:] == history[-2:]  # last 2 verbatim (count cap)
@@ -184,11 +200,11 @@ async def test_summarizer_failure_falls_back(tmp_path):
         raise RuntimeError("provider down")
 
     comp = Compactor(
-        store, boom, window_tokens=100, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
+        store, boom, window_tokens=130, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=2
     )
     history = [{"role": "user", "content": "y" * 80} for _ in range(6)]
     result = await comp.maybe_compact(history, "r1")
     assert result.degraded is True and result.compacted is True
-    assert result.history[-2:] == history[-2:]  # hot preserved
+    assert result.history[-2:] == history[-2:]  # hot preserved (2 messages of ~26 tok each)
     assert len(store.get_segments("r1")) == 4  # evicted still persisted (lossless)
     assert store.get_anchor("r1") is None  # no anchor written on failure

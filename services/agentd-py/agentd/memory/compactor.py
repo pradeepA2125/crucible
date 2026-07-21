@@ -15,7 +15,14 @@ _CONTINUATION_ROLES = {"tool_result", "tool"}
 
 
 def estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
+    # len//3, not len//4: a 2026-07-17 live-smoke session measured a real TurboQuant
+    # KV-cache token count (cache_n=98244) against the len//4 estimate for equivalent
+    # conversation_history content (~59117) — a 1.66x undercount that let compaction's
+    # trigger fire too late to prevent a hard context-size overflow. len//3 halves the
+    # undercount without adding a real-tokenizer dependency; if this proves insufficient
+    # in practice, the next escalation is a real BPE-based estimate (e.g. tiktoken as an
+    # approximation even for non-OpenAI models), not a further ratio tweak.
+    return max(1, len(text) // 3)
 
 
 def _history_tokens(history: History) -> int:
