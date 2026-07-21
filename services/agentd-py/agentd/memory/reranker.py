@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -23,6 +24,8 @@ class Reranker:
         self._scorer = scorer
         self._available = True
         self._model: Any = None
+        # See Embedder._load_lock — same warmup-thread-vs-real-call race, same fix.
+        self._load_lock = threading.Lock()
 
     @property
     def available(self) -> bool:
@@ -32,8 +35,10 @@ class Reranker:
         if self._scorer is not None:
             return self._scorer(pairs)
         if self._model is None:
-            from sentence_transformers import CrossEncoder
-            self._model = CrossEncoder(self._model_name)
+            with self._load_lock:
+                if self._model is None:
+                    from sentence_transformers import CrossEncoder
+                    self._model = CrossEncoder(self._model_name)
         return [float(s) for s in self._model.predict(pairs)]
 
     def rerank(self, query: str, candidates: list[Memory]) -> list[tuple[Memory, float]]:

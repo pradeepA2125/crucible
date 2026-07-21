@@ -153,6 +153,33 @@ def _empty_action_correction(resp: dict[str, object], atype: str) -> str | None:
     return None
 
 
+# The top-level response `type`s (see CONTROLLER_RESPONSE_SCHEMA) — never real tool
+# names. A model that just correctly used {"type":"tool_call","tool":"write_todos",...}
+# can generalize the same shape onto these (most often 'edit'), since nothing in the
+# tool_call schema constrains 'tool' to the registry. The registry's generic "unknown
+# tool" error gives it no signal to self-correct from, so it can grind on the identical
+# illegal call indefinitely (found live: an hour+ of retries, each a full regeneration).
+_RESERVED_ACTION_TOOL_NAMES = frozenset(
+    {"answer", "clarify", "propose_mode", "edit", "submit_changes"})
+
+
+def _reserved_tool_name_correction(resp: dict[str, object], atype: str) -> str | None:
+    """Reject a tool_call whose 'tool' is actually a top-level response type name."""
+    if atype != "tool_call":
+        return None
+    tool = str(resp.get("tool", ""))
+    if tool not in _RESERVED_ACTION_TOOL_NAMES:
+        return None
+    return (
+        f"'{tool}' is not a callable tool — there is no such tool in AVAILABLE TOOLS. "
+        f"'{tool}' is a top-level response TYPE, emitted as its own object — "
+        f'{{"type":"{tool}", ...}} (see the "{tool}" variant above for its required '
+        f'fields) — NEVER as {{"type":"tool_call","tool":"{tool}",...}}. If you are '
+        "trying to make a change: first emit type='propose_mode' so the user picks how "
+        "to proceed; only after they pick 'edit' does type='edit' become available."
+    )
+
+
 def _normalized_recommended(resp: dict[str, object]) -> str:
     """The model's recommended mode if valid, else the first option's mode (a hint,
     never blocks the gate — see _propose_mode_correction)."""
@@ -431,7 +458,8 @@ class ControllerLoop:
                 MALFORMED_CORRECTION
                 if atype not in self._sm.allowed_types()
                 else _propose_mode_correction(resp, self._allowed_modes) if atype == "propose_mode"
-                else _decide_state_change_correction(resp, self._sm.phase)
+                else _reserved_tool_name_correction(resp, atype)
+                or _decide_state_change_correction(resp, self._sm.phase)
                 or _empty_action_correction(resp, atype)
             )
             if correction is not None:
@@ -451,6 +479,18 @@ class ControllerLoop:
                     raise ControllerLoopExhausted(
                         f"Controller returned {consecutive_malformed} consecutive malformed "
                         f"responses (last type={atype!r})")
+                if consecutive_malformed >= 2:
+                    # A rejection alone isn't landing — the model reads the correction but
+                    # keeps retrying (observed live: 5 identical `run_command` attempts in
+                    # DECIDE phase, each rejected the same way, exhausting the budget without
+                    # ever adapting to `propose_mode`). Make the shrinking runway explicit
+                    # rather than relying on the correction text alone.
+                    remaining = _MAX_MALFORMED - consecutive_malformed
+                    correction = (
+                        f"⚠ Retry {consecutive_malformed}/{_MAX_MALFORMED} — "
+                        f"{remaining} attempt(s) left before this turn fails outright. "
+                        + correction
+                    )
                 _on_retry(
                     consecutive_malformed, _MAX_MALFORMED, "malformed_response",
                     f"⚠️ Invalid response ({consecutive_malformed}/{_MAX_MALFORMED}): "
@@ -639,6 +679,16 @@ class ControllerLoop:
                     # record of a successful apply — only the pre-apply ops line at L302).
                     logger.info("[controller] edit applied phase=%s files=%s",
                                 self._sm.phase, touched)
+                    # The workspace state just changed — a tool_call that duplicates an
+                    # EARLIER (pre-edit) call is no longer a mindless repeat, it may now be
+                    # the objectively correct next step (e.g. retrying the same `uv add`
+                    # after fixing the pyproject.toml it failed on). Without this the model
+                    # can get permanently wedged: DUPLICATE BLOCKED forever with no way to
+                    # signal "I need to redo this now that state changed" (found live:
+                    # 35+ iterations / ~30min stuck retrying an identical run_command after
+                    # a state-changing edit). Mirrors verify_phase_sm's emit_patch dedup,
+                    # which also clears on every transition.
+                    seen.clear()
                     # Q1 reconcile checkpoint: when a todo list is ACTIVE (something still
                     # open), flag the just-edited files + the active item so the NEXT turn's
                     # instruction leads with a pointed "is THIS item done?" question. This is

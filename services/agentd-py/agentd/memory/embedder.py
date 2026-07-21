@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -30,6 +31,12 @@ class Embedder:
         self._encoder = encoder
         self._available = True
         self._model: Any = None  # lazy SentenceTransformer
+        # Guards lazy construction: the background warmup thread (harness.py) and a real
+        # turn's demand-triggered embed() can both race to construct the model the first
+        # time (found live — this was still a crash even after serializing the embedder/
+        # reranker warmup threads against each other, because warmup-vs-real-call was a
+        # SEPARATE unlocked race on the same `if self._model is None` check).
+        self._load_lock = threading.Lock()
 
     @property
     def dim(self) -> int:
@@ -51,8 +58,10 @@ class Embedder:
         if self._encoder is not None:
             return self._encoder(texts)
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self._model_name)
+            with self._load_lock:
+                if self._model is None:  # re-check: another thread may have won the race
+                    from sentence_transformers import SentenceTransformer
+                    self._model = SentenceTransformer(self._model_name)
         return [list(map(float, row)) for row in self._model.encode(texts)]
 
     def embed(self, texts: list[str]) -> list[list[float]]:

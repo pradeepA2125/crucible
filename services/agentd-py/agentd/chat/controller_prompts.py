@@ -251,11 +251,26 @@ Variant — tool_call (explore): {type, thought, tool, args}
   emit propose_mode (never write files via the shell); run_command unlocks once editing starts.
   {"type":"tool_call","thought":"locate the chat route","tool":"search_code","args":{"pattern":"def .*message","path_filter":"*.py"}}
   {"type":"tool_call","thought":"read the handler","tool":"read_file","args":{"path":"services/agentd-py/agentd/api/routes.py","start_line":120,"end_line":200}}
+  WRONG — "tool" must be a name from AVAILABLE TOOLS, never one of THIS schema's own
+  response types (answer/clarify/propose_mode/edit/submit_changes). Those are never
+  callable tools, even though write_todos (a real tool) is also invoked via tool_call:
+  {"type":"tool_call","tool":"edit","args":{"patch_ops":[...]}}  ← INVALID, "edit" is not a tool.
+  To write a file, emit a top-level {"type":"edit","patch_ops":[...]} object instead (see below).
 
 Variant — answer (respond in text): {type, answer}
   The COMPLETE response goes in "answer" (self-contained, specific, cites files/functions you READ).
   Keep "thought" brief so your output lands in "answer". NEVER an empty or placeholder "answer".
   {"type":"answer","thought":"have read the route + loop","answer":"The message flow: `routes.py` ... "}
+  "answer" ENDS THE TURN — control returns to the user and you do not run again until they reply.
+  NEVER use "answer" to narrate a NEXT step you have not taken yet ("Let me start by reading X",
+  "I'll begin by exploring Y", "Before I can write the plan I need to ground myself in Z"). That
+  wastes the entire turn: nothing gets read or done, and the user has to say "go ahead" again just
+  to get you to take the step you already announced. If there is a next step, TAKE it now —
+  emit that tool_call (or propose_mode/edit) THIS turn instead of describing it in "answer". Only
+  emit "answer" when you are delivering the actual finished content, not a preview of intent.
+  WRONG: {"type":"answer","thought":"...","answer":"I'm using the writing-plans skill... Let me
+  start by reading the design spec and exploring the workspace."}  ← describes reading, doesn't read.
+  RIGHT: {"type":"tool_call","thought":"ground in the design spec before planning","tool":"read_file","args":{"path":"docs/superpowers/specs/....md"}}
 
 Variant — clarify (you genuinely cannot proceed): {type, question, options}
   Use when an ambiguity blocks you and reading the workspace won't resolve it. Never a blank answer.
@@ -330,6 +345,13 @@ Rules: mark 'done' ONLY with concrete evidence (a tool/edit result) cited in 'no
 memory. Mark 'blocked' (with the unblock condition) instead of faking done when stuck; mark
 'cancelled' (with why) instead of silently dropping. Every change must serve the user's original
 goal — no speculative nice-to-haves.
+An applied edit proves a file EXISTS, not that it WORKS. When the work includes tests (or the
+plan has explicit "run tests"/"verify" steps), the verification RUN is its own todo item — never
+folded into the create-the-file item.
+  WRONG: one item "Create config.py and its test" marked done citing the create_file edit — the
+  test file exists but was never run.
+  RIGHT: "Create config.py + tests/test_config.py" AND a separate "Run pytest tests/test_config.py"
+  item; the run item's 'done' evidence is the run_command output, never an edit.
 
 After an edit, prefer live tools (read_file/search_code) over the retrieval seed — your edit is
 already on the real workspace. Available tools:
@@ -465,6 +487,11 @@ The args object MUST contain "name". If a skill's instructions are already prese
 in your payload (active_skills), follow them directly — do NOT call read_skill again.
 A skill may bundle helper scripts under its scripts/ folder — run them with
 run_command, e.g. run_command(command="python .crucible/skills/<name>/scripts/<file>.py").
+read_skill loads instructions for YOU to execute, not content to summarize back to the
+user. The moment it returns, CONTINUE in the same turn — your next action is the
+skill's actual first step (a real read_file/search_code, or propose_mode/edit), not an
+"answer" restating the skill's steps as a plan. Loading a skill and then stopping to
+describe what you're about to do is the single most common way this turn gets wasted.
 """
 
 
@@ -626,13 +653,17 @@ def build_controller_step_payload(
                         f"Your current todo item is '{reconcile_item.get('title')}' "
                         f"(status: {reconcile_item.get('status', 'pending')}). "
                         f"Did this edit COMPLETE it? • If YES → emit write_todos NOW marking "
-                        f"'{reconcile_item.get('title')}' 'done' (cite this edit in 'note'). "
+                        f"'{reconcile_item.get('title')}' 'done' (cite this edit in 'note') — but if "
+                        f"'{reconcile_item.get('title')}' includes tests or a verify step, an edit is "
+                        "NOT completion: run_command the verification first, or leave it 'in_progress'. "
                         f"• If only PARTIAL → keep editing '{reconcile_item.get('title')}', leave "
                         "it 'in_progress'. Then continue. ")
                 else:
                     item_clause = (
                         "Did this edit COMPLETE one of your todo items? • If YES → emit write_todos "
-                        "NOW marking it 'done' (cite this edit in 'note'). • If only PARTIAL → keep "
+                        "NOW marking it 'done' (cite this edit in 'note') — but if that item includes "
+                        "tests or a verify step, an edit is NOT completion: run_command the "
+                        "verification first, or leave it 'in_progress'. • If only PARTIAL → keep "
                         "editing that SAME item, leave it 'in_progress'. Then continue. ")
                 checkpoint = f"CHECKPOINT — you just edited {files_str}. {item_clause}"
             hint = checkpoint + (

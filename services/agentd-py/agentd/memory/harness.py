@@ -288,14 +288,27 @@ def build_memory_harness(
         if config.reranker_enabled:  # Phase 3.1 — independent flag, default off
             from agentd.memory.reranker import Reranker
             reranker = Reranker(config.reranker_model)
-            threading.Thread(target=reranker.warmup, daemon=True).start()
         recall_engine = RecallEngine(
             store, embedder, weights=config.weights,
             reranker=reranker, rerank_min_candidates=config.rerank_min_candidates,
         )
-        # FIX #3: warm the model in a background thread so the first real turn doesn't eat the
-        # ~130MB load. A daemon thread works regardless of event-loop state at construction.
-        threading.Thread(target=embedder.warmup, daemon=True).start()
+
+        # FIX #3: warm the models in a background thread so the first real turn doesn't eat
+        # the load cost. A daemon thread works regardless of event-loop state at construction.
+        #
+        # Both warmups MUST run in the SAME thread, one after the other — never two separate
+        # threads. PyTorch's MPS backend (Apple GPU) is not thread-safe for concurrent lazy
+        # first-init: two threads racing to initialize it simultaneously (as this code
+        # originally did — one thread per model) deadlocks inside PyTorch's internal Metal
+        # shader cache, wedging the ENTIRE process, not just one turn (reproduced 3x live on
+        # real hardware via `sample`, both threads stuck in the identical MPS call chain).
+        # Serializing removes the race: only ever one thread touches MPS's first-init.
+        def _warmup_all() -> None:
+            embedder.warmup()
+            if reranker is not None:
+                reranker.warmup()
+
+        threading.Thread(target=_warmup_all, daemon=True).start()
     return MemoryHarness(
         enabled=True, compactor=compactor, consolidator=consolidator,
         recall_engine=recall_engine, scope_kind="workspace", scope_id=workspace_path,

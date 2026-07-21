@@ -21,6 +21,9 @@ _WRITE_TODOS_DEF = ToolDefinition(
         "new shape. Mark an item 'done' ONLY with evidence (cite the tool/edit result in "
         "'note'); 'blocked' (put the unblock condition in 'note') if you cannot proceed; "
         "'cancelled' (say why in 'note') to abandon one — never silently drop it. "
+        "A 'run tests/verify' step from the user's plan is always its OWN item, separate "
+        "from creating the file it tests; its 'done' evidence is the command output, never "
+        "an edit result. "
         "submit_changes is BLOCKED while any item is pending or in_progress."
     ),
     parameters={
