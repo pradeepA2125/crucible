@@ -148,8 +148,7 @@ existing-pattern reuse. Scoping that plumbing explicitly:
 - Every `self._sm.phase` read used purely for logging/turn-trace/edit-entry-clearing
   bookkeeping renames with zero behavior risk.
 - `PROPOSE_MODE_CORRECTION`'s valid-modes text (`controller_loop.py`) becomes
-  `implement | create_task | resume` (drops `explain`, renames `edit`→`implement` to
-  match the I5 decision above).
+  `implement | create_task | resume` (drops `explain`, renames `edit`→`implement`).
 
 **C1 — `ControllerPhaseSM` construction + `TurnEditSession` laziness.**
 Today, `TurnEditSession` is built eagerly in `_run_loop` only when `phase == "EDIT"`,
@@ -163,15 +162,20 @@ in `_run_loop`.
   `controller.py` builds this closure whenever `self._orchestrator is not None`,
   regardless of phase — closures are free; the session object (and its shadow) is not.
 - `ControllerLoop` keeps `self._edit: TurnEditSession | None = None` plus the factory.
-  The `edit`/`run_command` dispatch sites replace `assert self._edit is not None` with
-  "construct via the factory on first use if not already built."
+  The `edit` dispatch site replaces `assert self._edit is not None` with "construct via
+  the factory on first use if not already built." (`run_command` is unaffected — it
+  never referenced `self._edit`; it dispatches through the `ToolRegistry` independently
+  and is already correctly gated by `_decide_state_change_correction`'s phase check,
+  addressed separately above.)
 - `close()` stays conditional on `self._edit is not None` exactly as today, so a pure
   Q&A `ACTIVE` turn that never edits never touches the shadow at all — matching
   `TurnEditSession`'s own "shadow created lazily on first edit" contract, just pushed
   one level up so the session object itself is deferred too.
 - `ControllerPhaseSM.__init__` takes the starting phase explicitly:
   `def __init__(self, start: str = "ACTIVE") -> None`, validating `start in ("PLAN", "ACTIVE")`.
-  The no-arg default is `ACTIVE` (see I1 below for why and the audit this requires).
+  The no-arg default is `ACTIVE` (see the Testing section's `ControllerPhaseSM()`
+  43-site audit below for why this default choice requires an audit, not a blanket
+  rename).
   `enter_edit_mode`/`enter_explain_mode` are removed. There are exactly two legal
   `start=` values. `"ACTIVE"`'s non-default construction sites are `resolve_mode`'s
   `"implement"` dispatch (this C1 entry) and `resolve_clarify`'s `ACTIVE`-resume (a
@@ -412,7 +416,7 @@ since most of the underlying behavior they assert still holds:
 - `plan_mode=true` starts a turn in `PLAN`; a `propose_mode`→`"implement"` resolution
   lands the turn in `ACTIVE` for its remainder.
 - A no-orchestrator `ChatController` (test-harness construction) does not advertise
-  `edit`/`submit_changes` in `ACTIVE`'s action set (M6/C1's factory-gated action set).
+  `edit`/`submit_changes` in `ACTIVE`'s action set (C1's factory-gated action set).
 - C2's two directions: `answer` blocked when this-turn edit + pending items; `answer`
   allowed for pure Q&A despite an unrelated stale non-empty ledger.
 - C5's `PLAN`-clarify-resume: answering a clarify raised during `PLAN` re-enters
