@@ -2273,7 +2273,7 @@ export type SetPlanModeHandler = (enabled: boolean) => Promise<void>;
 export type GetPlanModeHandler = () => boolean;
 ```
 
-Wire `this.getPlanMode`/`this.onSetPlanMode` (constructor-injected, following the exact pattern this file already uses for other handlers — read the constructor signature first) into `registerHandlers`'s message switch: add, alongside the existing `webviewReady` branch's `p = this.onReady();` — extend that branch to also push the hydration message before calling `onReady()`:
+Wire `this.onGetPlanMode`/`this.onSetPlanMode` (constructor-injected, following this file's exceptionless `on`-prefix convention for every one of its 33 existing handler parameters — `onMessage`, `onListPrompts`, `onListSkills`, etc.; declared in Step 9) into `registerHandlers`'s message switch: add, alongside the existing `webviewReady` branch's `p = this.onReady();` — extend that branch to also push the hydration message before calling `onReady()`:
 
 ```ts
       if (m["type"] === "webviewReady") {
@@ -2281,7 +2281,7 @@ Wire `this.getPlanMode`/`this.onSetPlanMode` (constructor-injected, following th
           this.updateWorkbar(this.lastWorkbarInfo);
         }
         void this.panel?.webview.postMessage({
-          type: "planModeState", enabled: this.getPlanMode ? this.getPlanMode() : false,
+          type: "planModeState", enabled: this.onGetPlanMode ? this.onGetPlanMode() : false,
         });
         p = this.onReady();
       } else if (m["type"] === "setPlanMode") {
