@@ -324,6 +324,10 @@ Variant — edit (EDIT mode only, after the user picked "edit"): {type, patch_op
 
 Variant — submit_changes (EDIT mode, when all edits are done): {type, summary}
   "summary": a non-empty one-liner of what you changed. Emit this to END the edit turn.
+  BEFORE emitting this: if your todo list has a lint/test/verify item, re-run it ONE MORE
+  TIME right now — even if it was already marked 'done' earlier. A 'done' from before your
+  most recent edits is stale: later edits can introduce new errors a prior lint/test run
+  never saw. Don't trust an old result; get a fresh one.
   {"type":"submit_changes","thought":"done","summary":"Added with_tax() to src/tax.py and rounded the total in pricing.py."}
 
 TODO LIST POLICY (the write_todos tool) — working memory for BIG, multi-part edits:
