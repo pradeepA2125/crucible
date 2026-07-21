@@ -43,7 +43,7 @@ class PendingGate(BaseModel):
     gates — the controller has no task, so they live on the thread
     (pending_controller_gate).
     """
-    kind: Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool", "doc_write"]
+    kind: Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -75,6 +75,14 @@ class ChatThread(BaseModel):
     # Request-scoped todo ledger (raw item dicts), surfaced to /live so the user sees the
     # live checklist. Populated from controller_todo_json; None until the first write_todos.
     controller_todos: list[dict[str, Any]] | None = None
+    # Thread-scoped active skill ({"name", "body"} or None) — exactly one at a time,
+    # replaced (not accumulated) on the next read_skill. Survives every turn boundary
+    # (including "answer" outcomes, unlike controller_todos) since a skill's mid-flow
+    # steps can themselves be presented as an answer awaiting open-ended user reply
+    # (e.g. brainstorming's "user reviews spec" step) — clearing on outcome kind would
+    # drop it right when the next turn needs it most. The natural eviction is a
+    # DIFFERENT skill being read (e.g. brainstorming handing off to writing-plans).
+    controller_active_skill: dict[str, Any] | None = None
 
 
 class ChatEvent(BaseModel):

@@ -44,6 +44,10 @@ class ChatThreadStore:
         # Request-scoped todo ledger (survives DECIDE->EDIT + clarify resume), added later.
         if "controller_todo_json" not in existing:
             self._conn.execute("ALTER TABLE chat_threads ADD COLUMN controller_todo_json TEXT")
+        # Thread-scoped active skill (survives every turn boundary), added later.
+        if "controller_active_skill_json" not in existing:
+            self._conn.execute(
+                "ALTER TABLE chat_threads ADD COLUMN controller_active_skill_json TEXT")
         self._conn.commit()
 
     @staticmethod
@@ -59,6 +63,11 @@ class ChatThreadStore:
     @staticmethod
     def _todos_from_row(row: sqlite3.Row) -> list[dict] | None:
         raw = row["controller_todo_json"]
+        return json.loads(raw) if raw else None
+
+    @staticmethod
+    def _active_skill_from_row(row: sqlite3.Row) -> dict | None:
+        raw = row["controller_active_skill_json"]
         return json.loads(raw) if raw else None
 
     @staticmethod
@@ -99,6 +108,7 @@ class ChatThreadStore:
                 controller_conversation_history=self._history_from_row(row),
                 controller_retrieval_seed=self._seed_from_row(row),
                 controller_todos=self._todos_from_row(row),
+                controller_active_skill=self._active_skill_from_row(row),
             )
             for row in rows
         ]
@@ -121,6 +131,7 @@ class ChatThreadStore:
             controller_conversation_history=self._history_from_row(row),
             controller_retrieval_seed=self._seed_from_row(row),
             controller_todos=self._todos_from_row(row),
+            controller_active_skill=self._active_skill_from_row(row),
         )
 
     def set_controller_seed(self, thread_id: str, seed: dict | None) -> None:
@@ -165,6 +176,26 @@ class ChatThreadStore:
             (raw, thread_id),
         )
         self._conn.commit()
+
+    def set_controller_active_skill(self, thread_id: str, raw: str | None) -> None:
+        """Persist (raw = json.dumps({"name","body"})) or clear (raw = None) the thread's
+        single active skill. Deliberately survives every turn boundary including "answer"
+        outcomes (unlike set_controller_todos) — a skill's mid-flow step can itself be an
+        answer awaiting open-ended reply, so clearing on outcome kind would drop it right
+        when the next turn needs it. Eviction happens naturally when read_skill next
+        activates a DIFFERENT skill (SkillToolSource replaces, never accumulates)."""
+        self._conn.execute(
+            "UPDATE chat_threads SET controller_active_skill_json = ? WHERE thread_id = ?",
+            (raw, thread_id),
+        )
+        self._conn.commit()
+
+    def get_controller_active_skill(self, thread_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT controller_active_skill_json FROM chat_threads WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        return row["controller_active_skill_json"] if row else None
 
     def get_controller_todos(self, thread_id: str) -> str | None:
         row = self._conn.execute(

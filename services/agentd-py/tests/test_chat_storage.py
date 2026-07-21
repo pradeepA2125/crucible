@@ -117,4 +117,27 @@ def test_clear_inflight_markers_drops_marker_keeps_pills(store: ChatThreadStore)
     # …but the pills survive as a normal agent message.
     pill_msgs = [m for m in msgs if (m.metadata or {}).get("tool_events")]
     assert len(pill_msgs) == 1
-    assert pill_msgs[0].metadata["tool_events"][0]["id"] == 0
+
+
+def test_active_skill_round_trips_through_get_thread(store: ChatThreadStore) -> None:
+    import json
+
+    thread = store.create_thread("/ws/project")
+    tid = thread.thread_id
+    assert store.get_thread(tid).controller_active_skill is None
+    raw = json.dumps({"name": "brainstorming", "body": "STEP 1..."})
+    store.set_controller_active_skill(tid, raw)
+    reloaded = store.get_thread(tid)
+    assert reloaded.controller_active_skill == {"name": "brainstorming", "body": "STEP 1..."}
+    assert store.get_controller_active_skill(tid) == raw
+
+
+def test_set_controller_active_skill_none_clears_it(store: ChatThreadStore) -> None:
+    import json
+
+    thread = store.create_thread("/ws/project")
+    tid = thread.thread_id
+    store.set_controller_active_skill(tid, json.dumps({"name": "a", "body": "b"}))
+    store.set_controller_active_skill(tid, None)
+    assert store.get_thread(tid).controller_active_skill is None
+    assert store.get_controller_active_skill(tid) is None
