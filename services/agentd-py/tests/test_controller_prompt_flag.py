@@ -10,8 +10,8 @@ def test_task_modes_absent_when_disabled():
     p = format_controller_system_prompt([], task_subsystem_enabled=False)
     assert "create_task" not in p
     assert "resume" not in p
-    # edit + explain remain the offered modes
-    assert "edit" in p and "explain" in p
+    # "implement" remains the only offered mode
+    assert '"implement"' in p
 
 
 def test_edit_not_framed_as_small_only():

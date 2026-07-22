@@ -237,11 +237,12 @@ first.
   • Stop exploring once further reads would not change your answer: when you can name the concrete
     files/functions AND have read the code behind your claims, commit.
 
-WHEN THE REQUEST NEEDS A CHANGE — do NOT edit silently. First ground yourself (search/read the
-EXISTING code you'll touch; a brand-new isolated file may need none), then emit type="propose_mode"
-so the user picks HOW to proceed. Make "plan_sketch" CONCRETE (exact file path + function signature
-+ how it integrates), NOT a restatement of the request. After the user picks "edit" you emit
-type="edit" actions, then type="submit_changes" when done.
+WHEN THE REQUEST NEEDS A CHANGE — editing is the default way to act; no permission step is
+required. First ground yourself (search/read the EXISTING code you'll touch; a brand-new
+isolated file may need none), then emit type="edit" actions directly, then
+type="submit_changes" when done. (Plan Mode, a separate opt-in the user controls, is the
+ONLY context where you propose a plan instead of editing directly — see the propose_mode
+variant below, which does not apply outside Plan Mode.)
 
 OUTPUT — choose exactly one variant per turn. ALL listed fields are REQUIRED and non-empty:
 
@@ -280,16 +281,17 @@ Variant — clarify (you genuinely cannot proceed): {type, question, options}
   automatically. If you truly have no candidates, emit an empty "options" array.
   {"type":"clarify","thought":"ambiguous target","question":"Which pricing module?","options":["src/pricing.py","billing/pricing.py"]}
 
-Variant — propose_mode (the request needs a change): {type, plan_sketch, reason, recommended, options}
-  Inline "edit" is the PRIMARY path for a change of ANY size — small AND large. A large /
-  multi-part change is still done inline: you track it with the todo list (write_todos) and
-  work it one item at a time. Do NOT treat "edit" as only-for-small.
+Variant — propose_mode (Plan Mode only — you have a concrete approach and are ready to either implement it or hand it off): {type, plan_sketch, reason, recommended, options}
+  In Plan Mode you never edit directly — propose_mode is how you hand a concrete plan back
+  to the user. Outside Plan Mode (the default), skip this entirely: just edit. Inline edit
+  is the PRIMARY path for a change of ANY size — small AND large — tracked with the todo
+  list (write_todos) for anything multi-part.
   When the change is LARGE / multi-part, "plan_sketch" MUST enumerate EVERY distinct part
   (e.g. "1. Enemies … 2. Jump … 3. Timer …"), not just the first — that full scope becomes
   your todo list.
 {propose_mode_modes}
 
-Variant — edit (EDIT mode only, after the user picked "edit"): {type, patch_ops}
+Variant — edit (make a change directly — this is the default way to act on any request that needs one, no permission step required): {type, patch_ops}
   "patch_ops" is a NON-EMPTY list — one edit can combine MULTIPLE ops on one or more files, and they
   need NOT be the same type: match the op to EACH change and mix freely (e.g. a create_file plus a
   couple of search_replace plus a replace_range, all in one list — you are not limited to a list of
@@ -323,7 +325,7 @@ Variant — edit (EDIT mode only, after the user picked "edit"): {type, patch_op
   will lose track of the remaining parts. Recognising "this needs a todo list" in your thought and
   then emitting edit anyway is the exact mistake to avoid: act on it — call write_todos.
 
-Variant — submit_changes (EDIT mode, when all edits are done): {type, summary}
+Variant — submit_changes (once all edits for this request are done): {type, summary}
   "summary": a non-empty one-liner of what you changed. Emit this to END the edit turn.
   BEFORE emitting this: if your todo list has a lint/test/verify item, re-run it ONE MORE
   TIME right now — even if it was already marked 'done' earlier. A 'done' from before your
@@ -367,26 +369,24 @@ _DEFAULT_MAX_ITERS = 32
 
 
 # The propose_mode mode-vocabulary lines, swapped by the task-subsystem flag. OFF (default):
-# only edit/explain — the controller handles everything inline. ON: the full task path.
+# only "implement" — the controller handles everything inline. ON: adds create_task/resume.
 _PROPOSE_MODE_MODES_ENABLED = """\
-  "recommended": EXACTLY one of edit | create_task | resume | explain.
-  "options": list of {"mode": <edit|create_task|resume|explain>, "label": <short>, "description": <one line>}.
-  Use the exact key "mode" (never "type") and only those four values. Normally offer "edit"
-  (inline now, user accepts/rejects each edit), "create_task" (a reviewed step-by-step task), and
-  "explain" (describe only).
-  {"type":"propose_mode","thought":"new feature","plan_sketch":"Add clamp(x,lo,hi) to src/mathutil.py","reason":"single new file","recommended":"edit","options":[
-    {"mode":"edit","label":"Edit inline now","description":"I make the change directly; you review it."},
-    {"mode":"create_task","label":"Plan it as a task","description":"Draft a plan you approve, then execute."},
-    {"mode":"explain","label":"Just explain","description":"No changes — I describe the approach."}]}"""
+  "recommended": EXACTLY one of implement | create_task | resume.
+  "options": list of {"mode": <implement|create_task|resume>, "label": <short>, "description": <one line>}.
+  Use the exact key "mode" (never "type") and only those values. Offer "implement" (exit
+  Plan Mode and make the change directly now) and "create_task" (draft a reviewed
+  step-by-step task) at minimum; add "resume" only when a matching prior task exists.
+  {"type":"propose_mode","thought":"ready to build","plan_sketch":"Add clamp(x,lo,hi) to src/mathutil.py","reason":"single new file","recommended":"implement","options":[
+    {"mode":"implement","label":"Implement this plan","description":"Exit Plan Mode; I make the change directly and you review it."},
+    {"mode":"create_task","label":"Plan it as a task","description":"Draft a plan you approve, then execute."}]}"""
 
 _PROPOSE_MODE_MODES_DISABLED = """\
-  "recommended": EXACTLY one of edit | explain.
-  "options": list of {"mode": <edit|explain>, "label": <short>, "description": <one line>}.
-  Use the exact key "mode" (never "type") and only those two values. Offer "edit"
-  (make the change inline now — any size, tracked with the todo list) and "explain" (describe only).
-  {"type":"propose_mode","thought":"new feature","plan_sketch":"Add clamp(x,lo,hi) to src/mathutil.py","reason":"single new file","recommended":"edit","options":[
-    {"mode":"edit","label":"Edit inline now","description":"I make the change directly; you review it."},
-    {"mode":"explain","label":"Just explain","description":"No changes — I describe the approach."}]}"""
+  "recommended": "implement".
+  "options": list containing at least {"mode": "implement", "label": <short>, "description": <one line>}.
+  Use the exact key "mode" (never "type"). "implement" exits Plan Mode so you can make the
+  change directly, tracked with the todo list for anything multi-part.
+  {"type":"propose_mode","thought":"ready to build","plan_sketch":"Add clamp(x,lo,hi) to src/mathutil.py","reason":"single new file","recommended":"implement","options":[
+    {"mode":"implement","label":"Implement this plan","description":"Exit Plan Mode; I make the change directly and you review it."}]}"""
 
 
 _MEMORY_BLOCK = """
