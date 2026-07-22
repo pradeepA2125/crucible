@@ -401,21 +401,28 @@ class ControllerLoop:
             plan_context["active_skills"] = [
                 {"name": n, "body": b} for n, b in self._active_skills.items()
             ]
-            # EDIT-entry signal: first action after inline-edit was chosen, nothing started yet
-            # (no list, no edit applied). The payload builder swaps the clean entry hint
+            # active_entry (C1b): first action in ACTIVE, nothing started yet (no list,
+            # no edit applied). The payload builder swaps the clean entry hint
             # (write_todos-as-tool_call) for the mid-turn reconcile hint once this clears —
-            # which it does the moment a list exists OR an edit lands, so the entry hint persists
-            # through an empty-edit fumble (keeps steering the right first move).
-            plan_context["edit_entry"] = (
-                self._sm.phase == "EDIT" and not self._ledger.items
+            # which it does the moment a list exists OR an edit lands. NO iteration clause
+            # — this is deliberate: it must persist through an empty-edit fumble (the model
+            # emits an edit with empty patch_ops, nothing lands) so the NEXT iteration still
+            # sees "nothing started yet" rather than falling through to the mid-turn
+            # "reflect on your last edit's result" text written for a LANDED edit. This is a
+            # previously-fixed thrash bug — do not add an iteration gate here.
+            plan_context["active_entry"] = (
+                self._sm.phase == "ACTIVE" and not self._ledger.items
                 and not self._edit_applied and not plan_context.get("edit_is_resume"))
-            # DECIDE-entry signal: the first model call of THIS run (iteration is the
-            # for-loop counter above, fresh every run() — unlike `history`, which seeds
-            # from the whole thread's replayed conversation and is non-empty for every
-            # message after the thread's first ever). Without this, the "first move"
-            # hint (which is where the skill-triage check lives) only ever fired once
-            # per thread, not once per user message.
-            plan_context["decide_entry"] = self._sm.phase == "DECIDE" and iteration == 0
+            # skill_check_due (C1b): the first model call of THIS run only (iteration is
+            # the for-loop counter above, fresh every run() — unlike `history`, which
+            # seeds from the whole thread's replayed conversation and is non-empty for
+            # every message after the thread's first ever). Unlike active_entry, this IS
+            # strictly one-shot — skill triage is genuinely redundant to re-run every
+            # iteration once it's been done or missed.
+            plan_context["skill_check_due"] = self._sm.phase == "ACTIVE" and iteration == 0
+            # decide_entry (PLAN): unchanged semantics from the old DECIDE branch, just
+            # renamed to the PLAN phase value — the first model call of THIS run only.
+            plan_context["decide_entry"] = self._sm.phase == "PLAN" and iteration == 0
             try:
                 resp = await self._reasoning.create_controller_step(
                     plan_context=plan_context, history=history,

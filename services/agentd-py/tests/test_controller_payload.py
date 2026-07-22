@@ -62,15 +62,15 @@ def test_goal_change_preserves_cacheable_prefix():
 
 def test_edit_phase_instruction_hint():
     payload = build_controller_step_payload(
-        {"goal": "g", "workspace_path": "/w"}, history=[], tool_definitions=[], phase="EDIT")
-    assert "EDIT mode" in str(payload["instruction"])
+        {"goal": "g", "workspace_path": "/w"}, history=[], tool_definitions=[], phase="ACTIVE")
+    assert "FIRST action" in str(payload["instruction"])
 
 
 def test_todo_status_lands_in_tail_when_present():
     payload = build_controller_step_payload(
         {"goal": "add features", "workspace_path": "/w",
          "todo_status": "2 items (1 done) — [✓ A] [☐ B]"},
-        history=[], tool_definitions=[], phase="EDIT")
+        history=[], tool_definitions=[], phase="ACTIVE")
     assert payload.get("todo_status") == "2 items (1 done) — [✓ A] [☐ B]"
     keys = list(payload.keys())
     assert keys.index("todo_status") > keys.index("workspace_path")
@@ -79,7 +79,7 @@ def test_todo_status_lands_in_tail_when_present():
 def test_todo_status_omitted_when_blank():
     payload = build_controller_step_payload(
         {"goal": "g", "workspace_path": "/w", "todo_status": ""},
-        history=[], tool_definitions=[], phase="EDIT")
+        history=[], tool_definitions=[], phase="ACTIVE")
     assert "todo_status" not in payload
 
 
@@ -101,7 +101,7 @@ def test_edit_entry_offers_explicit_todo_choice():
               {"role": "assistant", "content": "{}"}]
     payload = build_controller_step_payload(
         {"goal": "g", "workspace_path": "/w"}, history=seeded,
-        tool_definitions=[], phase="EDIT")
+        tool_definitions=[], phase="ACTIVE")
     instr = str(payload["instruction"]).lower()
     assert "write_todos" in instr            # the option is named in the live EDIT hint
     assert "3+ files" in instr               # concrete "use a list" trigger
@@ -126,7 +126,7 @@ def test_edit_hint_steers_incremental_todo_marking():
               {"role": "assistant", "content": "{}"}]
     payload = build_controller_step_payload(
         {"goal": "g", "workspace_path": "/w", "todo_status": "3 items (0 done) — [...]"},
-        history=seeded, tool_definitions=[], phase="EDIT")
+        history=seeded, tool_definitions=[], phase="ACTIVE")
     instr = str(payload["instruction"]).lower()
     assert "in_progress" in instr            # uses the in_progress state for partial work
     assert "reconcile" in instr              # reconcile-the-ledger-first framing
@@ -146,10 +146,10 @@ def test_edit_hint_leads_with_reconcile_checkpoint_naming_active_item():
          "todo_status": "2 items (0 done) — [▶ Add enemies] [☐ Jump]",
          "pending_reconcile_files": ["game.js"],
          "reconcile_item": {"title": "Add enemies", "status": "in_progress"}},
-        history=seeded, tool_definitions=[], phase="EDIT")
+        history=seeded, tool_definitions=[], phase="ACTIVE")
     instr = str(payload["instruction"])
     # Leads (right after the Phase= prefix), not buried mid-paragraph.
-    assert instr.startswith("Phase=EDIT. CHECKPOINT")
+    assert instr.startswith("Phase=ACTIVE. CHECKPOINT")
     assert "game.js" in instr            # names the just-edited file
     assert "Add enemies" in instr        # names the active todo item
     assert "COMPLETE" in instr           # the yes-branch question
@@ -164,7 +164,7 @@ def test_no_checkpoint_without_pending_reconcile_files():
     payload = build_controller_step_payload(
         {"goal": "g", "workspace_path": "/w",
          "todo_status": "2 items (0 done) — [▶ A] [☐ B]"},
-        history=seeded, tool_definitions=[], phase="EDIT")
+        history=seeded, tool_definitions=[], phase="ACTIVE")
     assert "CHECKPOINT" not in str(payload["instruction"])
 
 
@@ -178,8 +178,8 @@ def test_edit_entry_hint_leads_with_write_todos_tool_syntax():
     seeded = [{"role": "user", "content": "build 3 modules"},
               {"role": "assistant", "content": "{}"}]
     payload = build_controller_step_payload(
-        {"goal": "g", "workspace_path": "/w", "edit_entry": True},
-        history=seeded, tool_definitions=[], phase="EDIT")
+        {"goal": "g", "workspace_path": "/w", "active_entry": True},
+        history=seeded, tool_definitions=[], phase="ACTIVE")
     instr = str(payload["instruction"])
     assert "tool_call" in instr                       # exact action type for write_todos
     assert "write_todos" in instr
@@ -188,11 +188,11 @@ def test_edit_entry_hint_leads_with_write_todos_tool_syntax():
 
 
 def test_edit_mid_turn_hint_when_not_entry():
-    """Without edit_entry (work underway), the mid-turn reconcile hint applies (unchanged)."""
+    """Without active_entry (work underway), the mid-turn reconcile hint applies (unchanged)."""
     seeded = [{"role": "user", "content": "x"}, {"role": "assistant", "content": "{}"}]
     payload = build_controller_step_payload(
         {"goal": "g", "workspace_path": "/w", "todo_status": "2 items (0 done) — [..]"},
-        history=seeded, tool_definitions=[], phase="EDIT")
+        history=seeded, tool_definitions=[], phase="ACTIVE")
     assert "reflect on your last edit" in str(payload["instruction"])
 
 
@@ -215,5 +215,5 @@ def test_no_checkpoint_without_active_list():
         {"goal": "g", "workspace_path": "/w",
          "pending_reconcile_files": ["x.js"],
          "reconcile_item": {"title": "A", "status": "in_progress"}},
-        history=seeded, tool_definitions=[], phase="EDIT")
+        history=seeded, tool_definitions=[], phase="ACTIVE")
     assert "CHECKPOINT" not in str(payload["instruction"])

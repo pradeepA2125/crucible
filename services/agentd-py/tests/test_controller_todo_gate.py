@@ -228,8 +228,8 @@ async def test_edit_entry_flag_set_until_productive_start(tmp_path: Path):
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=10, auto_accept_edits=True)
     assert out.kind == "submit_changes"
-    assert rec.plan_contexts[0].get("edit_entry") is True    # first action, nothing started
-    assert rec.plan_contexts[1].get("edit_entry") is False   # list now exists
+    assert rec.plan_contexts[0].get("active_entry") is True    # first action, nothing started
+    assert rec.plan_contexts[1].get("active_entry") is False   # list now exists
 
 
 @pytest.mark.asyncio
@@ -258,7 +258,7 @@ async def test_edit_entry_suppressed_on_clarify_resume(tmp_path: Path):
         max_iters=5, auto_accept_edits=True)
     assert out.kind == "submit_changes"
     # Empty ledger + no edit applied, but it's a resume → NOT a fresh entry.
-    assert rec.plan_contexts[0].get("edit_entry") is False
+    assert rec.plan_contexts[0].get("active_entry") is False
 
 
 @pytest.mark.asyncio

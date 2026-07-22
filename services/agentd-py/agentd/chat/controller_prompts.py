@@ -609,19 +609,37 @@ def build_controller_step_payload(
     has_query_graph = any(t.get("name") == "query_graph" for t in tool_definitions)
     _graph = "/query_graph" if has_query_graph else ""
     final_call = iteration >= max_iters - 1
-    if phase == "EDIT":
-        # `edit_entry` (loop-set: EDIT phase + no list + no edit applied yet) is the real
-        # "first action after choosing inline-edit" signal. The old `not history` test is DEAD
-        # for a mode-gated EDIT — resolve_mode seeds the loop with the whole DECIDE conversation,
-        # so history is non-empty on the first EDIT action and entry fell through to the mid-turn
-        # reconcile `else` hint (irrelevant: no prior edit, no list). That mis-route + write_todos
-        # lacking its action-type syntax caused the live empty-edit thrash (the model's thought
-        # said "use write_todos" but it emitted type='edit' with empty patch_ops). `or not history`
-        # keeps the zero-seed case (direct callers/tests) on the entry hint too.
-        if plan_context.get("edit_entry") or not history:
+    if phase == "ACTIVE":
+        skill_check = (
+            "SKILL CHECK — do this BEFORE locating code, answering, or editing: "
+            "treat this as intent classification, in two steps. (1) Name the KIND of request "
+            "this is, in your own words, in one short phrase — exactly as you naturally would "
+            "if asked \"what is this request?\" (you already do this kind of labeling "
+            "unprompted — use it deliberately here). Do NOT pick your wording from this "
+            "workspace's own catalog below, and do NOT force it into a fixed set of categories "
+            "— whatever installed skills exist should never bias what label you'd give an "
+            "unrelated request. (2) Check that label against every skill's \"when to use\" line "
+            "in the AVAILABLE SKILLS list (system prompt) — each line IS an intent trigger written "
+            "by that skill's own author. A match means your label is close in MEANING, not "
+            "overlapping in wording — and the line's enumeration bounds that meaning: when the "
+            "author lists what the trigger covers, your label must fall inside that list, not "
+            "merely share a broad headline word with it. This is UNCONDITIONAL: once you find a matching line, load "
+            "it — do not then re-judge whether the task \"really needs\" it, or downgrade a match "
+            "because the request seems small; the trigger line already made that call. If your "
+            "label matches any line, even partially, THIS check "
+            "wins over everything else below: your FIRST action MUST be tool_call read_skill(name), "
+            "BEFORE locating code, answering, or editing — there is no other \"first "
+            "action\" that outranks it. \"this looks simple\", \"I already know how to do this\", "
+            "and \"let me explore first\" are NOT valid reasons to skip the check. "
+        ) if skills_available and plan_context.get("skill_check_due") else ""
+        # `or not history` mirrors the PLAN branch's fallback below (and the old
+        # edit_entry code's `or not history`) — a direct caller of this function
+        # that never sets active_entry explicitly (a test, or a future caller)
+        # still gets the entry hint on empty history, matching PLAN's symmetry.
+        if plan_context.get("active_entry") or not history:
             hint = (
-                "EDIT mode — approved to edit; this is your FIRST action and nothing is started "
-                "yet. Decide the approach:\n"
+                skill_check +
+                "This is your FIRST action and nothing is started yet. Decide the approach:\n"
                 "• BIG / multi-part (spans 3+ files, OR several independent parts, OR >~2 edit "
                 "cycles): START A TODO LIST FIRST. write_todos is a TOOL — emit "
                 "type='tool_call', tool='write_todos', args={\"items\":[{\"title\":...,"
@@ -630,7 +648,8 @@ def build_controller_step_payload(
                 "After the list exists, edit items ONE AT A TIME (submit_changes is BLOCKED until "
                 "none are pending).\n"
                 "• SMALL / cohesive (one file, or a few related ops): SKIP the list — emit "
-                "type='edit' now with a NON-EMPTY patch_ops.\n"
+                "type='edit' now with a NON-EMPTY patch_ops, OR type='answer' if this needs no "
+                "change at all.\n"
                 f"Read the target region of any EXISTING file before changing it (search_code{_graph} "
                 "→ read_file); a brand-new file needs no read. Finish with type='submit_changes'."
             )
@@ -640,15 +659,10 @@ def build_controller_step_payload(
                 "turn — or type='clarify' if a true blocker remains. No more edits after this."
             )
         else:
-            # Q1 reconcile checkpoint: after an applied edit while a list is ACTIVE, LEAD with a
-            # concrete, file- and item-specific question (the loop sets pending_reconcile_files +
-            # reconcile_item on the just-applied edit; cleared once write_todos runs). Naming the
-            # exact item the edit was for ("is 'Add enemies' done?") is far stickier than the
-            # generic reconcile paragraph below — but it stays non-blocking: PARTIAL keeps editing
-            # the SAME item, so a half-done edit is never pressured into a false 'done'.
             reconcile_files = plan_context.get("pending_reconcile_files")
             reconcile_item = plan_context.get("reconcile_item")
             checkpoint = ""
+            todo_status = plan_context.get("todo_status")
             if reconcile_files and todo_status:
                 files_str = (
                     ", ".join(str(f) for f in reconcile_files)
@@ -689,17 +703,21 @@ def build_controller_step_payload(
                 "op (do NOT repeat the failed op verbatim); otherwise emit type='edit' for the "
                 "current 'in_progress' item (or the next pending one). (B) DONE — only when no items "
                 "remain (or the change was small), emit type='submit_changes' with a summary. A "
-                "read-resistant blocker → mark the item 'blocked' or use type='clarify'. Do NOT "
-                "propose_mode again."
+                "read-resistant blocker → mark the item 'blocked' or use type='clarify'."
             )
-    else:  # DECIDE
-        # Runs every DECIDE turn regardless of thread-history length — a returning
-        # thread's 5th user message gets this exact check on ITS first iteration, not
-        # only the thread's very first message ever (decide_entry is loop-run-scoped,
-        # set by ControllerLoop; `not history` is only the fallback for direct callers/
-        # tests that never set it). Generic across whatever the catalog holds — no
-        # hardcoded keyword categories (any skill's OWN "when to use" line is the match
-        # target, not a proxy list of verbs).
+    else:  # PLAN
+        # Plan Mode is a deliberate user choice (the sticky toggle) — unlike the old
+        # DECIDE, which was simply the SM's only starting state and never something
+        # the user opted into. Say so explicitly so the model's behavior matches
+        # intent (lean into discussion, no rush) — this is per-turn payload text
+        # (C4), never the cache-stable system prompt. Prepended on EVERY PLAN
+        # iteration, not just entry — a mid-turn reminder earns its keep here.
+        plan_mode_framing = (
+            "You are in Plan Mode — the user turned this on deliberately for this message, "
+            "specifically to discuss and refine before anything changes. Lean into that: it's "
+            "fine to ask questions, explore thoroughly, and take an extra round to get the "
+            "approach right, rather than rushing to propose_mode. "
+        )
         skill_check = (
             "SKILL CHECK — do this BEFORE locating code, answering, or proposing anything: "
             "treat this as intent classification, in two steps. (1) Name the KIND of request "
@@ -723,7 +741,7 @@ def build_controller_step_payload(
             "and \"let me explore first\" are NOT valid reasons to skip the check. "
         ) if skills_available else ""
         if plan_context.get("decide_entry") or not history:
-            hint = (
+            hint = plan_mode_framing + (
                 skill_check +
                 "Once the skill check above is done (no line matched, or the matched skill's body "
                 "is now in your payload), plan your next move. For a code-specific request "
@@ -733,7 +751,7 @@ def build_controller_step_payload(
                 "conversational message needing no repo access."
             )
         elif final_call:
-            hint = (
+            hint = plan_mode_framing + (
                 "⚠ FINAL STEP: exploration budget is spent. Commit now — type='answer' (complete, "
                 "citing what you READ), type='propose_mode' (for a change), or type='clarify'. "
                 "No more tool calls."
@@ -744,7 +762,7 @@ def build_controller_step_payload(
                 "this turn? Do that now, before committing — name the kind of request this is, "
                 "then load any skill whose trigger matches that label. "
             ) if skills_available else ""
-            hint = (
+            hint = plan_mode_framing + (
                 skill_reminder +
                 "FIRST reflect: which files/functions can you cite from code you ACTUALLY opened "
                 "this turn, and is anything material still unread? THEN choose ONE: (A) READ MORE "

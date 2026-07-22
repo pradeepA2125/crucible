@@ -60,7 +60,7 @@ def test_match_is_bounded_by_the_lines_enumeration() -> None:
     assert "enumeration bounds" in block
     payload = build_controller_step_payload(
         {"goal": "g", "decide_entry": True}, [], [],
-        phase="DECIDE", skills_available=True)
+        phase="PLAN", skills_available=True)
     instruction = str(payload.get("instruction", ""))
     assert "SKILL CHECK" in instruction
     assert "enumeration bounds" in instruction
