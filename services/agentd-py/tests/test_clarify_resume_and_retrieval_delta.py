@@ -48,8 +48,7 @@ async def test_accepted_edit_appends_retrieval_delta_without_mutating_seed(tmp_p
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"), patch_engine=PatchEngine())
@@ -63,7 +62,8 @@ async def test_accepted_edit_appends_retrieval_delta_without_mutating_seed(tmp_p
             {"op": "search_replace", "file": "f.py",
              "search": "x = 1", "replace": "x = 2", "reason": "r"}]},
         {"type": "submit_changes", "thought": "done", "summary": "s"},
-    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm, edit_session=sess)
+    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm,
+        edit_session_factory=lambda: sess)
     seed = {"neighbors": ["a.py"]}
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real), "retrieval_seed": seed},

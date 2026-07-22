@@ -27,11 +27,12 @@ async def test_write_todos_persists_on_nonterminal_turn(tmp_path: Path):
          "args": {"items": [{"title": "Enemies", "status": "pending"},
                             {"title": "Jump", "status": "pending"}]}},
         {"type": "propose_mode", "thought": "big", "plan_sketch": "1. Enemies 2. Jump",
-         "recommended": "edit", "reason": "multi-part",
-         "options": [{"mode": "edit", "label": "Edit inline now", "description": "do it"},
-                     {"mode": "explain", "label": "Just explain", "description": "describe"}]},
+         "recommended": "implement", "reason": "multi-part",
+         "options": [{"mode": "implement", "label": "Edit inline now", "description": "do it"}]},
     ])
-    await ctrl.handle_message(thread.thread_id, "add enemies and jump", channel_id="c1")
+    # propose_mode is only legal in PLAN (task subsystem off, default) — start there.
+    await ctrl.handle_message(
+        thread.thread_id, "add enemies and jump", channel_id="c1", plan_mode=True)
     led = TodoLedger.from_json(store.get_controller_todos(thread.thread_id))
     assert [i.title for i in led.items] == ["Enemies", "Jump"]
 

@@ -51,8 +51,7 @@ async def test_loop_invokes_edit_record_cb_on_each_edit(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -74,7 +73,7 @@ async def test_loop_invokes_edit_record_cb_on_each_edit(tmp_path: Path):
     q = bc.subscribe("c")
     loop = ControllerLoop(
         ScriptedReasoningEngine(None, [], controller_step_responses=steps),
-        reg, bc, channel_id="c", phase_sm=sm, edit_session=sess)
+        reg, bc, channel_id="c", phase_sm=sm, edit_session_factory=lambda: sess)
     await loop.run(
         {"goal": "bump x", "workspace_path": str(real)}, max_iters=6,
         auto_accept_edits=True, edit_record_cb=rec)
@@ -196,7 +195,7 @@ async def test_resolve_mode_edit_honors_remembered_step_review(tmp_path: Path):
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store, orchestrator=object())
     store.set_controller_gate(th.thread_id, PendingGate(
-        kind="mode", payload={"options": [{"mode": "edit", "label": "Edit inline now"}]}))
+        kind="mode", payload={"options": [{"mode": "implement", "label": "Edit inline now"}]}))
     ctrl._step_review_by_thread[th.thread_id] = True
 
     captured: dict[str, object] = {}
@@ -214,10 +213,10 @@ async def test_resolve_mode_edit_honors_remembered_step_review(tmp_path: Path):
     ctrl._finish = fake_finish  # type: ignore[assignment]
 
     await ctrl.resolve_mode(
-        th.thread_id, "edit", channel_id=f"chat:{th.thread_id}", goal="add discount")
+        th.thread_id, "implement", channel_id=f"chat:{th.thread_id}", goal="add discount")
 
     assert captured["step_review"] is True  # NOT the old hardcoded False
-    assert captured["phase"] == "EDIT"
+    assert captured["phase"] == "ACTIVE"
 
 
 @pytest.mark.asyncio

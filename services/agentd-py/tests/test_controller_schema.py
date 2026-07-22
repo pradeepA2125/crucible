@@ -10,7 +10,7 @@ def _flat_patch_op_item() -> dict:
 
 
 def _tight_edit_patch_op_item() -> dict:
-    tight = controller_response_schema(phase="EDIT", tight=True)
+    tight = controller_response_schema(phase="ACTIVE", tight=True)
     edit = next(
         b for b in tight["oneOf"] if b["properties"]["type"]["const"] == "edit"
     )
@@ -69,13 +69,13 @@ def test_schema_is_flat_not_oneof():
 
 
 def test_phase_gating_trims_type_enum():
-    decide = controller_response_schema(phase="DECIDE")["properties"]["type"]["enum"]
-    assert set(decide) == {"tool_call", "answer", "clarify", "propose_mode"}
-    edit = controller_response_schema(phase="EDIT")["properties"]["type"]["enum"]
-    # clarify is allowed in EDIT (ask when blocked mid-edit); propose_mode is not.
-    assert set(edit) == {"tool_call", "edit", "clarify", "submit_changes"}
+    plan = controller_response_schema(phase="PLAN")["properties"]["type"]["enum"]
+    assert set(plan) == {"tool_call", "answer", "clarify", "propose_mode"}
+    active = controller_response_schema(phase="ACTIVE")["properties"]["type"]["enum"]
+    # clarify is allowed in ACTIVE (ask when blocked mid-edit); propose_mode is not.
+    assert set(active) == {"tool_call", "answer", "edit", "clarify", "submit_changes"}
     # deep-copy: mutating the returned schema must not affect the module-level one
-    decide.append("__probe__")
+    plan.append("__probe__")
     assert "__probe__" not in CONTROLLER_RESPONSE_SCHEMA["properties"]["type"]["enum"]
 
 

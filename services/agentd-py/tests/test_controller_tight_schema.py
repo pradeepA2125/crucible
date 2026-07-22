@@ -38,29 +38,29 @@ def _branches_by_type(schema: dict) -> dict[str, dict]:
 # ----------------------------------------------------------------------------
 
 def test_flat_schema_is_default_and_unchanged() -> None:
-    schema = controller_response_schema(phase="DECIDE")
+    schema = controller_response_schema(phase="PLAN")
     assert "oneOf" not in schema
     assert schema["properties"]["type"]["enum"] == [  # type: ignore[index]
         "tool_call", "answer", "clarify", "propose_mode"
     ]
 
 
-def test_tight_decide_is_oneof_of_the_four_phase_variants() -> None:
-    schema = controller_response_schema(phase="DECIDE", tight=True)
+def test_tight_plan_is_oneof_of_the_four_phase_variants() -> None:
+    schema = controller_response_schema(phase="PLAN", tight=True)
     assert set(schema.keys()) == {"oneOf"}
     branches = _branches_by_type(schema)
     assert set(branches) == {"tool_call", "answer", "clarify", "propose_mode"}
 
 
-def test_tight_edit_is_oneof_of_the_edit_phase_variants() -> None:
-    schema = controller_response_schema(phase="EDIT", tight=True)
+def test_tight_active_is_oneof_of_the_active_phase_variants() -> None:
+    schema = controller_response_schema(phase="ACTIVE", tight=True)
     branches = _branches_by_type(schema)
-    assert set(branches) == {"tool_call", "edit", "clarify", "submit_changes"}
+    assert set(branches) == {"tool_call", "answer", "edit", "clarify", "submit_changes"}
 
 
 def test_tight_branch_forbids_cross_variant_bleed() -> None:
     # The whole point: a propose_mode response can carry ONLY its own fields.
-    branches = _branches_by_type(controller_response_schema(phase="DECIDE", tight=True))
+    branches = _branches_by_type(controller_response_schema(phase="PLAN", tight=True))
     propose = branches["propose_mode"]
     assert propose["additionalProperties"] is False
     props = set(propose["properties"].keys())
@@ -69,21 +69,21 @@ def test_tight_branch_forbids_cross_variant_bleed() -> None:
 
 
 def test_tight_tool_call_requires_tool_and_args() -> None:
-    branches = _branches_by_type(controller_response_schema(phase="DECIDE", tight=True))
+    branches = _branches_by_type(controller_response_schema(phase="PLAN", tight=True))
     tool_call = branches["tool_call"]
     assert set(tool_call["required"]) == {"type", "thought", "tool", "args"}
     assert tool_call["additionalProperties"] is False
 
 
 def test_tight_answer_requires_a_nonempty_answer_field() -> None:
-    branches = _branches_by_type(controller_response_schema(phase="DECIDE", tight=True))
+    branches = _branches_by_type(controller_response_schema(phase="PLAN", tight=True))
     answer = branches["answer"]
     assert "answer" in answer["required"]
     assert answer["properties"]["answer"]["type"] == "string"
 
 
 def test_tight_propose_mode_requires_all_its_fields() -> None:
-    branches = _branches_by_type(controller_response_schema(phase="DECIDE", tight=True))
+    branches = _branches_by_type(controller_response_schema(phase="PLAN", tight=True))
     propose = branches["propose_mode"]
     assert set(propose["required"]) == {
         "type", "thought", "plan_sketch", "recommended", "reason", "options"
@@ -91,7 +91,7 @@ def test_tight_propose_mode_requires_all_its_fields() -> None:
 
 
 def test_tight_edit_patch_ops_items_require_op_file_reason() -> None:
-    branches = _branches_by_type(controller_response_schema(phase="EDIT", tight=True))
+    branches = _branches_by_type(controller_response_schema(phase="ACTIVE", tight=True))
     edit = branches["edit"]
     assert "patch_ops" in edit["required"]
     item = edit["properties"]["patch_ops"]["items"]
@@ -102,7 +102,7 @@ def test_tight_edit_patch_ops_items_require_op_file_reason() -> None:
 
 
 def test_tight_submit_changes_requires_summary() -> None:
-    branches = _branches_by_type(controller_response_schema(phase="EDIT", tight=True))
+    branches = _branches_by_type(controller_response_schema(phase="ACTIVE", tight=True))
     assert "summary" in branches["submit_changes"]["required"]
 
 
@@ -164,7 +164,7 @@ async def test_engine_uses_tight_schema_when_provider_supports_oneof() -> None:
     transport = _RecordingTransport(supports_oneof_grammar=True)
     engine = DefaultReasoningEngine(model="m", transport=transport)  # type: ignore[arg-type]
     await engine.create_controller_step(
-        {"goal": "g", "workspace_path": "/w"}, [], [], phase="DECIDE")
+        {"goal": "g", "workspace_path": "/w"}, [], [], phase="PLAN")
     assert transport.captured_schema is not None
     assert "oneOf" in transport.captured_schema
 
@@ -176,6 +176,6 @@ async def test_engine_uses_flat_schema_when_provider_lacks_oneof() -> None:
     transport = _RecordingTransport(supports_oneof_grammar=False)
     engine = DefaultReasoningEngine(model="m", transport=transport)  # type: ignore[arg-type]
     await engine.create_controller_step(
-        {"goal": "g", "workspace_path": "/w"}, [], [], phase="DECIDE")
+        {"goal": "g", "workspace_path": "/w"}, [], [], phase="PLAN")
     assert transport.captured_schema is not None
     assert "oneOf" not in transport.captured_schema

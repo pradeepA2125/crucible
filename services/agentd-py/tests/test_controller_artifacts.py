@@ -38,14 +38,14 @@ async def test_create_controller_step_dumps_exact_llm_bytes(tmp_path, monkeypatc
     await engine.create_controller_step(
         {"goal": "g", "workspace_path": str(tmp_path),
          "artifact_thread_id": "th1", "artifact_turn_id": "turn1"},
-        history=[], tool_definitions=[], phase="DECIDE")
+        history=[], tool_definitions=[], phase="PLAN")
 
     dump = chat_turn_artifacts_root("th1", "turn1", tmp_path) / "controller-turn-00.json"
     assert dump.exists(), "exact-bytes dump not written"
     data = json.loads(dump.read_text())
     assert "system_instructions" in data and data["system_instructions"]
     assert "user_payload" in data and data["user_payload"]["goal"] == "g"
-    assert data["phase"] == "DECIDE"
+    assert data["phase"] == "PLAN"
     assert data["raw_result"]["type"] == "answer"
 
 
@@ -64,7 +64,7 @@ async def test_continuation_turn_numbers_from_zero_with_original_goal(tmp_path, 
         {"goal": "understood, let's do this", "workspace_path": str(tmp_path),
          "artifact_thread_id": "th1", "artifact_turn_id": "turn1",
          "artifact_seed_len": len(seed)},
-        history=list(seed), tool_definitions=[], phase="DECIDE")
+        history=list(seed), tool_definitions=[], phase="PLAN")
 
     root = chat_turn_artifacts_root("th1", "turn1", tmp_path)
     assert (root / "controller-turn-00.json").exists(), "continuation turn must start at -00"
@@ -80,7 +80,7 @@ async def test_create_controller_step_no_dump_without_artifact_ids(tmp_path, mon
     engine = DefaultReasoningEngine(model="m", transport=_RecordingTransport())  # type: ignore[arg-type]
     await engine.create_controller_step(
         {"goal": "g", "workspace_path": str(tmp_path)},
-        history=[], tool_definitions=[], phase="DECIDE")
+        history=[], tool_definitions=[], phase="PLAN")
     assert not (tmp_path / ".crucible/state" / "artifacts" / "chat").exists()
 
 
@@ -104,4 +104,4 @@ async def test_handle_message_writes_turn_trace(tmp_path, monkeypatch):
     data = json.loads(traces[0].read_text())
     assert data["goal"] == "hi"
     assert data["outcome_kind"] == "answer"
-    assert data["phase"] == "DECIDE"
+    assert data["phase"] == "ACTIVE"  # handle_message defaults to ACTIVE (Task 1)

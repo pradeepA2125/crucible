@@ -287,11 +287,13 @@ async def test_create_task_explore_context_derived_from_history_uncapped(tmp_pat
                  "recommended": "create_task",
                  "options": [
                      {"mode": "create_task", "label": "Plan it", "description": "d"},
-                     {"mode": "edit", "label": "Edit", "description": "d"}]}]),
+                     {"mode": "implement", "label": "Edit inline now", "description": "d"}]}]),
         thread_store=store, orchestrator=orch, broadcaster=EventBroadcaster(),
         retrieval_client=None)
 
-    await ctrl.handle_message(thread.thread_id, "do the thing", channel_id="c1")
+    # propose_mode is only legal in PLAN (task subsystem off, default) — start there.
+    await ctrl.handle_message(
+        thread.thread_id, "do the thing", channel_id="c1", plan_mode=True)
     await ctrl.resolve_mode(thread.thread_id, "create_task", channel_id="c1", goal="do the thing")
 
     ctx = orch.explore_context

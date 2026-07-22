@@ -102,7 +102,11 @@ async def test_mode_decision_double_dispatch_guarded(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_mode_decision_explain_reenters_loop_with_answer(tmp_path: Path):
+async def test_mode_decision_resume_not_yet_wired_writes_breadcrumb(tmp_path: Path):
+    """"explain" mode was removed entirely (2026-07-16) — the only modes now are
+    implement/create_task/resume. "resume" passes the task-subsystem guard but its
+    dispatch isn't wired yet (v1), so it degrades gracefully to a persisted
+    breadcrumb instead of raising or silently no-oping."""
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     eng = ScriptedReasoningEngine(None, [], controller_step_responses=[
@@ -111,6 +115,8 @@ async def test_mode_decision_explain_reenters_loop_with_answer(tmp_path: Path):
     ctrl._histories[th.thread_id] = [{"role": "assistant", "content": "{}"}]
     store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={}))
     await ctrl.resolve_mode(
-        th.thread_id, "explain", channel_id=f"chat:{th.thread_id}", goal="g")
+        th.thread_id, "resume", channel_id=f"chat:{th.thread_id}", goal="g")
     msgs = store.get_thread(th.thread_id).messages
-    assert any(m.role == "agent" and "would happen" in m.content for m in msgs)
+    assert any(
+        m.role == "agent" and "not available yet" in m.content.lower() for m in msgs)
+    assert store.get_thread(th.thread_id).pending_controller_gate is None

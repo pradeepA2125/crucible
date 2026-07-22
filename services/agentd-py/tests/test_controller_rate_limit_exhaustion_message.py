@@ -1,7 +1,7 @@
 """Reproduces a live gap found 2026-07-13: a ControllerLoopExhausted failure (e.g.
 sustained Ollama Cloud rate-limiting — 429 on every retry) that happens AFTER an
 earlier successful turn (handle_message: explore + propose_mode) and DURING a
-resolve_mode-entered EDIT phase never appeared as a persisted chat message live —
+resolve_mode-entered ACTIVE phase never appeared as a persisted chat message live —
 the transcript just stopped at the last successful breadcrumb with zero indication
 the turn then failed. Live rate-limiting blocked further live reproduction, so this
 drives the REAL handle_message -> resolve_mode -> _run_loop -> _finish path (no
@@ -23,8 +23,8 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
 class _FakeOrchestrator:
-    """Just enough surface for TurnEditSession construction in _run_loop's EDIT
-    branch — resolve_mode("edit") requires self._orchestrator is not None."""
+    """Just enough surface for TurnEditSession construction in _run_loop's ACTIVE
+    branch — resolve_mode("implement") requires self._orchestrator is not None."""
 
     def __init__(self, tmp_path: Path) -> None:
         self._workspace_manager = ShadowWorkspaceManager(tmp_path / "shadows")
@@ -54,8 +54,8 @@ class _SucceedsThenSustainedRateLimit:
         if self.calls == 2:
             return {
                 "type": "propose_mode", "thought": "propose",
-                "plan_sketch": "edit f.py", "recommended": "edit", "reason": "r",
-                "options": [{"mode": "edit", "label": "Edit inline now", "description": "d"}],
+                "plan_sketch": "edit f.py", "recommended": "implement", "reason": "r",
+                "options": [{"mode": "implement", "label": "Edit inline now", "description": "d"}],
             }
         if self.calls == 3:
             return {"type": "tool_call", "thought": "check status", "tool": "run_command",
@@ -82,18 +82,20 @@ async def test_exhaustion_after_resolve_mode_reentry_is_persisted(tmp_path: Path
         shell_policy=ShellPolicy.ASK)
 
     # Turn A: explore + propose_mode -> parks at a mode gate, no failure yet.
-    await ctrl.handle_message(thread.thread_id, "change f.py", channel_id="c1")
+    # propose_mode is only legal in PLAN (task subsystem off, default) — start there.
+    await ctrl.handle_message(
+        thread.thread_id, "change f.py", channel_id="c1", plan_mode=True)
     reloaded = store.get_thread(thread.thread_id)
     assert reloaded is not None
     assert reloaded.pending_controller_gate is not None
     assert reloaded.pending_controller_gate.kind == "mode"
 
-    # Turn B: resolve_mode re-enters EDIT with a NEW turn_id — runs as a background
+    # Turn B: resolve_mode re-enters ACTIVE with a NEW turn_id — runs as a background
     # task so we can resolve the mid-turn command-approval gate from "outside" the
     # same coroutine, exactly like a separate HTTP request would live — then
     # sustained "429"s exhaust the loop.
     resolve_task = asyncio.create_task(
-        ctrl.resolve_mode(thread.thread_id, "edit", channel_id="c1", goal="change f.py"))
+        ctrl.resolve_mode(thread.thread_id, "implement", channel_id="c1", goal="change f.py"))
     for _ in range(50):
         await asyncio.sleep(0)
         gate = store.get_thread(thread.thread_id).pending_controller_gate

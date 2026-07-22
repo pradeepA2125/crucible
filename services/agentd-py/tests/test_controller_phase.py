@@ -44,3 +44,11 @@ def test_no_post_construction_transition_methods():
     sm = ControllerPhaseSM()
     assert not hasattr(sm, "enter_edit_mode")
     assert not hasattr(sm, "enter_explain_mode")
+
+
+def test_default_pin_regression():
+    # Explicit pin, independent of the 43-site audit above: catches an accidental
+    # future flip back to a restricted default.
+    sm = ControllerPhaseSM()
+    assert sm.phase == "ACTIVE"
+    assert "edit" in sm.allowed_types()

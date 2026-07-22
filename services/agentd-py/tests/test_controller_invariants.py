@@ -30,12 +30,12 @@ def _reg(path):
 
 
 # Invariant 2 — never auto-enter a mutating mode.
-def test_decide_phase_schema_forbids_edit():
-    decide = controller_response_schema(phase="DECIDE")["properties"]["type"]["enum"]
-    assert "edit" not in decide
-    assert "submit_changes" not in decide
-    edit = controller_response_schema(phase="EDIT")["properties"]["type"]["enum"]
-    assert "edit" in edit
+def test_plan_phase_schema_forbids_edit():
+    plan = controller_response_schema(phase="PLAN")["properties"]["type"]["enum"]
+    assert "edit" not in plan
+    assert "submit_changes" not in plan
+    active = controller_response_schema(phase="ACTIVE")["properties"]["type"]["enum"]
+    assert "edit" in active
 
 
 # Invariant 1 — cache-prefix immutability: tool defs serialize deterministically
@@ -90,8 +90,7 @@ async def test_each_edit_promotes_before_next(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("a = 0\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     spy = _SpyEdit(TurnEditSession(
         turn_id="t", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"), patch_engine=PatchEngine()))
@@ -103,7 +102,8 @@ async def test_each_edit_promotes_before_next(tmp_path: Path):
             {"op": "search_replace", "file": "f.py",
              "search": "a = 1", "replace": "a = 2", "reason": "r"}]},
         {"type": "submit_changes", "thought": "done", "summary": "s"},
-    ]), _reg(real), EventBroadcaster(), channel_id="c", phase_sm=sm, edit_session=spy)
+    ]), _reg(real), EventBroadcaster(), channel_id="c", phase_sm=sm,
+        edit_session_factory=lambda: spy)
     await loop.run({"goal": "g", "workspace_path": str(real)}, max_iters=8, auto_accept_edits=True)
     # Interleaved (apply, accept, apply, accept) — NOT batched (apply, apply, accept, accept).
     assert spy.calls == ["apply", "accept", "apply", "accept"]
@@ -118,8 +118,7 @@ async def test_shadow_equals_real_across_cross_file_reject(tmp_path: Path):
     real.mkdir()
     (real / "a.py").write_text("A = 1\n")
     (real / "b.py").write_text("B = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"), patch_engine=PatchEngine())
@@ -138,7 +137,7 @@ async def test_shadow_equals_real_across_cross_file_reject(tmp_path: Path):
              "search": "B = 1", "replace": "B = 2", "reason": "r"}]},
         {"type": "submit_changes", "thought": "done", "summary": "s"},
     ]), _reg(real), EventBroadcaster(), channel_id="c", phase_sm=sm,
-        edit_session=sess)
+        edit_session_factory=lambda: sess)
     await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=8,
         auto_accept_edits=False, edit_decision_cb=edit_cb)

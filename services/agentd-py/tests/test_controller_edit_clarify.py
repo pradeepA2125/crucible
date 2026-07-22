@@ -1,7 +1,8 @@
-"""EDIT-mode clarify: the controller may ask a clarifying question while editing,
+"""ACTIVE-phase clarify: the controller may ask a clarifying question while acting,
 and the user's reply (via the clarify gate → resolve_clarify) RESUMES the loop in
-EDIT (not a DECIDE restart that would force re-picking the mode). The phase is
-preserved via `resume_phase` carried in the clarify gate payload."""
+the SAME phase it was raised in (not a PLAN restart that would force re-picking the
+mode). The phase is preserved via `resume_phase` carried in the clarify gate
+payload — both PLAN and ACTIVE clarifies carry their own phase through."""
 from pathlib import Path
 
 import pytest
@@ -52,7 +53,7 @@ def _orchestrator(tmp_path: Path) -> AgentOrchestrator:
 
 
 @pytest.mark.asyncio
-async def test_clarify_in_edit_mode_resumes_in_edit(tmp_path: Path):
+async def test_clarify_in_active_phase_resumes_in_active(tmp_path: Path):
     ws = tmp_path / "ws"
     ws.mkdir()
     store = ChatThreadStore(tmp_path / "c.sqlite3")
@@ -60,13 +61,13 @@ async def test_clarify_in_edit_mode_resumes_in_edit(tmp_path: Path):
     chan = f"chat:{th.thread_id}"
 
     eng = _PhaseRecordingEngine([
-        # turn 1 (DECIDE): propose edit
+        # turn 1 (PLAN): propose implement
         {"type": "propose_mode", "thought": "t", "plan_sketch": "add clamp() to util.py",
-         "reason": "r", "recommended": "edit", "options": [
-             {"mode": "edit", "label": "Edit inline now", "description": "d"}]},
-        # mode pick → EDIT: agent is blocked, asks a question
+         "reason": "r", "recommended": "implement", "options": [
+             {"mode": "implement", "label": "Edit inline now", "description": "d"}]},
+        # mode pick → ACTIVE: agent is blocked, asks a question
         {"type": "clarify", "thought": "t", "question": "clamp to what range?"},
-        # user replies → MUST resume in EDIT: emit the edit, then submit
+        # user replies → MUST resume in ACTIVE: emit the edit, then submit
         {"type": "edit", "thought": "t", "patch_ops": [
             {"op": "create_file", "file": "util.py",
              "content": "def clamp(x):\n    return max(0, min(1, x))\n", "reason": "add"}]},
@@ -77,30 +78,32 @@ async def test_clarify_in_edit_mode_resumes_in_edit(tmp_path: Path):
         orchestrator=_orchestrator(tmp_path), broadcaster=EventBroadcaster(),
         retrieval_client=None)
 
-    # turn 1 → propose_mode gate
-    await ctrl.handle_message(th.thread_id, "add a clamp helper", channel_id=chan)
-    # pick edit → EDIT loop emits clarify (question to the user)
-    await ctrl.resolve_mode(th.thread_id, "edit", channel_id=chan, goal="add a clamp helper")
-    # The EDIT clarify sets a durable clarify gate carrying resume_phase=EDIT, so the
-    # answer (via resolve_clarify) resumes EDIT rather than restarting DECIDE.
+    # turn 1 → propose_mode gate (Plan Mode toggle on, so the turn starts in PLAN)
+    await ctrl.handle_message(
+        th.thread_id, "add a clamp helper", channel_id=chan, plan_mode=True)
+    # pick implement → ACTIVE loop emits clarify (question to the user)
+    await ctrl.resolve_mode(th.thread_id, "implement", channel_id=chan, goal="add a clamp helper")
+    # The ACTIVE clarify sets a durable clarify gate carrying resume_phase=ACTIVE, so the
+    # answer (via resolve_clarify) resumes ACTIVE rather than restarting PLAN.
     gate = store.get_thread(th.thread_id).pending_controller_gate
     assert gate is not None and gate.kind == "clarify"
-    assert gate.payload["resume_phase"] == "EDIT"
-    # user answers via the card → the resumed turn runs in EDIT, emits the edit + submit
+    assert gate.payload["resume_phase"] == "ACTIVE"
+    # user answers via the card → the resumed turn runs in ACTIVE, emits the edit + submit
     await ctrl.resolve_clarify(th.thread_id, "[0, 1]", channel_id=chan, goal="add a clamp helper")
 
-    # Phases: turn1=DECIDE, mode-pick=EDIT(clarify), resumed turn=EDIT,EDIT (edit+submit).
-    assert eng.phases == ["DECIDE", "EDIT", "EDIT", "EDIT"]
+    # Phases: turn1=PLAN, mode-pick=ACTIVE(clarify), resumed turn=ACTIVE,ACTIVE (edit+submit).
+    assert eng.phases == ["PLAN", "ACTIVE", "ACTIVE", "ACTIVE"]
     # The edit was actually applied to the real workspace (instant-promote).
     assert (ws / "util.py").read_text().startswith("def clamp(")
-    # Gate cleared once the EDIT turn terminated cleanly.
+    # Gate cleared once the ACTIVE turn terminated cleanly.
     assert store.get_thread(th.thread_id).pending_controller_gate is None
 
 
 @pytest.mark.asyncio
-async def test_decide_clarify_does_not_set_edit_resume(tmp_path: Path):
-    """A plain DECIDE-phase clarify sets a clarify gate with resume_phase=None —
-    only an EDIT-phase clarify carries resume_phase=EDIT."""
+async def test_plan_clarify_sets_plan_resume(tmp_path: Path):
+    """A PLAN-phase clarify (Plan Mode toggle on) sets a clarify gate with
+    resume_phase=PLAN — it carries through its own originating phase, same as an
+    ACTIVE-phase clarify carries resume_phase=ACTIVE (see the other test above)."""
     ws = tmp_path / "ws"
     ws.mkdir()
     store = ChatThreadStore(tmp_path / "c.sqlite3")
@@ -112,7 +115,8 @@ async def test_decide_clarify_does_not_set_edit_resume(tmp_path: Path):
         workspace_path=str(ws), reasoning_engine=eng, thread_store=store,
         orchestrator=_orchestrator(tmp_path), broadcaster=EventBroadcaster(),
         retrieval_client=None)
-    await ctrl.handle_message(th.thread_id, "fix it", channel_id=f"chat:{th.thread_id}")
+    await ctrl.handle_message(
+        th.thread_id, "fix it", channel_id=f"chat:{th.thread_id}", plan_mode=True)
     gate = store.get_thread(th.thread_id).pending_controller_gate
     assert gate is not None and gate.kind == "clarify"
-    assert gate.payload["resume_phase"] is None
+    assert gate.payload["resume_phase"] == "PLAN"

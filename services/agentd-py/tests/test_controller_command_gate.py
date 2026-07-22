@@ -1,4 +1,4 @@
-"""Phase 2 of the Finding 6 fix: run_command in a chat EDIT turn is gated.
+"""Phase 2 of the Finding 6 fix: run_command in a chat ACTIVE turn is gated.
 
 Mirrors the engine's task-path command gate (_build_command_approval_callback) on the
 controller's thread-gate machinery (the same pattern as the per-edit gate): honors
@@ -157,13 +157,12 @@ async def test_command_decision_timeout_rejects(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_run_command_in_edit_loop_raises_command_gate(tmp_path: Path):
-    # End-to-end: a ControllerLoop in EDIT with the controller's real registry+cb wired.
+    # End-to-end: a ControllerLoop in ACTIVE with the controller's real registry+cb wired.
     # run_command must raise the command gate; on approve it executes and the loop finishes.
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store, ShellPolicy.ASK)
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     cid = f"chat:{th.thread_id}"
     reg = ctrl._build_registry(partial(ctrl._command_approval_cb, th.thread_id, cid))
     steps = [

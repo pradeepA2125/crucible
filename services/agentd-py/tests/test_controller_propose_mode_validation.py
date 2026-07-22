@@ -19,9 +19,12 @@ def _loop(tmp_path: Path, responses: list[dict]) -> ControllerLoop:
     reg = AggregatingToolRegistry(
         [BuiltinToolSource(shadow_root=tmp_path, real_workspace_path=tmp_path)])
     return ControllerLoop(
-        eng, reg, EventBroadcaster(), channel_id="c1", phase_sm=ControllerPhaseSM(),
-        # These exercise the full mode vocabulary (incl. create_task); offered-set
-        # flag-gating is covered by test_controller_mode_gating.py.
+        eng, reg, EventBroadcaster(), channel_id="c1",
+        # PLAN is where the full mode vocabulary (incl. "implement") is offered;
+        # ACTIVE's propose_mode carve-out only ever offers create_task/resume, since
+        # ACTIVE is already the implementing phase. Offered-set flag-gating is
+        # covered by test_controller_mode_gating.py.
+        phase_sm=ControllerPhaseSM(start="PLAN"),
         task_subsystem_enabled=True)
 
 
@@ -34,9 +37,9 @@ async def test_invalid_modes_are_corrected_then_valid_surfaces(tmp_path: Path):
     }
     valid = {
         "type": "propose_mode", "thought": "t",
-        "plan_sketch": "add clamp", "recommended": "edit", "reason": "small",
+        "plan_sketch": "add clamp", "recommended": "implement", "reason": "small",
         "options": [
-            {"mode": "edit", "label": "Edit inline now", "description": "edit directly"},
+            {"mode": "implement", "label": "Edit inline now", "description": "edit directly"},
             {"mode": "create_task", "label": "Plan it as a task", "description": "plan it"},
         ],
     }
@@ -44,9 +47,9 @@ async def test_invalid_modes_are_corrected_then_valid_surfaces(tmp_path: Path):
         {"goal": "add clamp", "workspace_path": str(tmp_path)}, max_iters=8)
     assert outcome.kind == "propose_mode"
     assert outcome.payload is not None
-    assert outcome.payload["recommended"] == "edit"
+    assert outcome.payload["recommended"] == "implement"
     modes = [o["mode"] for o in outcome.payload["options"]]
-    assert modes == ["edit", "create_task"]
+    assert modes == ["implement", "create_task"]
 
 
 @pytest.mark.asyncio
@@ -58,7 +61,7 @@ async def test_valid_options_missing_recommended_is_normalized_not_rejected(tmp_
         "type": "propose_mode", "thought": "t", "plan_sketch": "add clamp",
         # no "recommended" key at all
         "options": [
-            {"mode": "edit", "label": "Edit inline now", "description": "edit directly"},
+            {"mode": "implement", "label": "Edit inline now", "description": "edit directly"},
             {"mode": "create_task", "label": "Plan it as a task", "description": "plan it"},
         ],
     }
@@ -66,7 +69,7 @@ async def test_valid_options_missing_recommended_is_normalized_not_rejected(tmp_
         {"goal": "add clamp", "workspace_path": str(tmp_path)}, max_iters=8)
     assert outcome.kind == "propose_mode"
     assert outcome.payload is not None
-    assert outcome.payload["recommended"] == "edit"  # defaulted to first option
+    assert outcome.payload["recommended"] == "implement"  # defaulted to first option
 
 
 @pytest.mark.asyncio

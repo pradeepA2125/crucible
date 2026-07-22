@@ -25,9 +25,7 @@ class _ScriptedReasoning:
 
 
 def _edit_sm() -> ControllerPhaseSM:
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
-    return sm
+    return ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
 
 
 def _wt(items):
@@ -132,8 +130,7 @@ async def test_reconcile_marker_set_after_edit_and_cleared_on_write_todos(tmp_pa
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -149,7 +146,7 @@ async def test_reconcile_marker_set_after_edit_and_cleared_on_write_todos(tmp_pa
     ])
     loop = ControllerLoop(
         rec, AggregatingToolRegistry([TodoToolSource(ledger)]), EventBroadcaster(),
-        channel_id="c", phase_sm=sm, edit_session=sess, todo_ledger=ledger)
+        channel_id="c", phase_sm=sm, edit_session_factory=lambda: sess, todo_ledger=ledger)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=10, auto_accept_edits=True)
 
@@ -171,8 +168,7 @@ async def test_empty_edit_redirects_to_write_todos_not_malformed(tmp_path: Path)
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -190,7 +186,7 @@ async def test_empty_edit_redirects_to_write_todos_not_malformed(tmp_path: Path)
     ])
     loop = ControllerLoop(
         rec, AggregatingToolRegistry([TodoToolSource(ledger)]), EventBroadcaster(),
-        channel_id="c", phase_sm=sm, edit_session=sess, todo_ledger=ledger)
+        channel_id="c", phase_sm=sm, edit_session_factory=lambda: sess, todo_ledger=ledger)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=20, auto_accept_edits=True)
     assert out.kind == "submit_changes"  # recovered, not exhausted-malformed
@@ -207,8 +203,7 @@ async def test_edit_entry_flag_set_until_productive_start(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -224,7 +219,7 @@ async def test_edit_entry_flag_set_until_productive_start(tmp_path: Path):
     ])
     loop = ControllerLoop(
         rec, AggregatingToolRegistry([TodoToolSource(ledger)]), EventBroadcaster(),
-        channel_id="c", phase_sm=sm, edit_session=sess, todo_ledger=ledger)
+        channel_id="c", phase_sm=sm, edit_session_factory=lambda: sess, todo_ledger=ledger)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=10, auto_accept_edits=True)
     assert out.kind == "submit_changes"
@@ -242,8 +237,7 @@ async def test_edit_entry_suppressed_on_clarify_resume(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -252,7 +246,7 @@ async def test_edit_entry_suppressed_on_clarify_resume(tmp_path: Path):
     rec = _RecordingPlanCtx([{"type": "submit_changes", "thought": "d", "summary": "done"}])
     loop = ControllerLoop(
         rec, AggregatingToolRegistry([TodoToolSource(ledger)]), EventBroadcaster(),
-        channel_id="c", phase_sm=sm, edit_session=sess, todo_ledger=ledger)
+        channel_id="c", phase_sm=sm, edit_session_factory=lambda: sess, todo_ledger=ledger)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real), "edit_is_resume": True},
         max_iters=5, auto_accept_edits=True)
@@ -268,8 +262,7 @@ async def test_no_reconcile_marker_when_ledger_empty(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -283,7 +276,7 @@ async def test_no_reconcile_marker_when_ledger_empty(tmp_path: Path):
     ])
     loop = ControllerLoop(
         rec, AggregatingToolRegistry([TodoToolSource(ledger)]), EventBroadcaster(),
-        channel_id="c", phase_sm=sm, edit_session=sess, todo_ledger=ledger)
+        channel_id="c", phase_sm=sm, edit_session_factory=lambda: sess, todo_ledger=ledger)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=10, auto_accept_edits=True)
     assert out.kind == "submit_changes"

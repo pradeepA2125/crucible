@@ -99,7 +99,7 @@ async def test_mode_decision_registers_detached_turn(_app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as client:
         url = f"/v1/chat/threads/{thread.thread_id}/mode-decision"
-        bg = asyncio.create_task(_consume_stream(client, url, {"mode": "explain"}))
+        bg = asyncio.create_task(_consume_stream(client, url, {"mode": "implement"}))
         await asyncio.sleep(0.05)
         assert thread.thread_id in handler._active_turns
         gate.set()

@@ -33,8 +33,7 @@ async def test_repeated_tool_call_after_edit_is_not_blocked_as_duplicate(tmp_pat
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM(start="ACTIVE")
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -53,7 +52,8 @@ async def test_repeated_tool_call_after_edit_is_not_blocked_as_duplicate(tmp_pat
     ]
     loop = ControllerLoop(
         ScriptedReasoningEngine(None, [], controller_step_responses=steps),
-        reg, EventBroadcaster(), channel_id="c", phase_sm=sm, edit_session=sess)
+        reg, EventBroadcaster(), channel_id="c", phase_sm=sm,
+        edit_session_factory=lambda: sess)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=8,
         auto_accept_edits=True)
@@ -74,8 +74,7 @@ async def test_identical_tool_call_within_same_state_is_still_blocked(tmp_path: 
     # in between are still a mindless repeat and must stay blocked.
     real = tmp_path / "ws"
     real.mkdir()
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM(start="ACTIVE")
     reg = AggregatingToolRegistry(
         [BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
     same_call = {"type": "tool_call", "thought": "list it",

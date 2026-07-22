@@ -2,9 +2,9 @@
 prefix, not just the same static correction text every time.
 
 Root cause (found live 2026-07-17): after a resumed "continue executing the plan"
-turn started fresh in DECIDE phase, the model tried `run_command` 5 times in a
-row — each time getting the identical "run_command is not available while
-deciding..." rejection — never adapting to emit `propose_mode`, until the
+turn started fresh in PLAN phase, the model tried `run_command` 5 times in a
+row — each time getting the identical "run_command is not available in Plan
+Mode..." rejection — never adapting to emit `propose_mode`, until the
 consecutive-malformed budget (3) was exhausted and the whole turn failed. The
 correction text alone wasn't enough signal that it was burning down a shrinking
 retry budget.
@@ -34,7 +34,7 @@ async def test_repeated_rejection_gets_escalating_retry_budget_warning(tmp_path:
     bad_run_command = {"type": "tool_call", "thought": "run it",
                         "tool": "run_command", "args": {"command": "uv", "args": ["add", "x"]}}
     with pytest.raises(ControllerLoopExhausted):
-        await _loop(tmp_path, [bad_run_command] * 5, ControllerPhaseSM()).run(
+        await _loop(tmp_path, [bad_run_command] * 5, ControllerPhaseSM(start="PLAN")).run(
             {"goal": "g", "workspace_path": str(tmp_path)}, max_iters=20)
 
 
@@ -44,7 +44,7 @@ async def test_second_rejection_history_shows_shrinking_budget(tmp_path: Path):
                         "tool": "run_command", "args": {"command": "uv", "args": ["add", "x"]}}
     steps = [bad_run_command, bad_run_command,
              {"type": "answer", "thought": "give up", "answer": "done"}]
-    out = await _loop(tmp_path, steps, ControllerPhaseSM()).run(
+    out = await _loop(tmp_path, steps, ControllerPhaseSM(start="PLAN")).run(
         {"goal": "g", "workspace_path": str(tmp_path)}, max_iters=20)
     tool_results = [
         m.get("content") for m in out.history if m.get("role") == "tool_result"

@@ -33,10 +33,9 @@ def _loop(tmp_path, steps, sm):
 
 @pytest.mark.asyncio
 async def test_tool_call_edit_is_rejected_not_dispatched(tmp_path: Path):
-    # EDIT phase — even here, 'edit' as a tool_call TOOL is illegal; it is only ever
+    # ACTIVE phase — even here, 'edit' as a tool_call TOOL is illegal; it is only ever
     # valid as a top-level {"type":"edit",...} object.
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     steps = [
         {"type": "tool_call", "thought": "write the plan",
          "tool": "edit", "args": {"patch_ops": [
@@ -51,13 +50,15 @@ async def test_tool_call_edit_is_rejected_not_dispatched(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_tool_call_propose_mode_is_rejected_in_decide(tmp_path: Path):
+async def test_tool_call_propose_mode_is_rejected_in_plan(tmp_path: Path):
+    # PLAN phase — propose_mode IS a legal top-level type here, which makes the
+    # tool_call-shaped imposter especially deceptive; it must still be rejected.
     steps = [
         {"type": "tool_call", "thought": "propose a change",
          "tool": "propose_mode", "args": {}},
         {"type": "answer", "thought": "ok", "answer": "done"},
     ]
-    out = await _loop(tmp_path, steps, ControllerPhaseSM()).run(
+    out = await _loop(tmp_path, steps, ControllerPhaseSM(start="PLAN")).run(
         {"goal": "g", "workspace_path": str(tmp_path)}, max_iters=6)
     assert out.kind == "answer" and out.text == "done"
 
@@ -69,8 +70,7 @@ async def test_repeated_tool_call_edit_exhausts_instead_of_looping_forever(tmp_p
     bad = {"type": "tool_call", "thought": "retry", "tool": "edit",
            "args": {"patch_ops": [{"op": "create_file", "file": "p.md",
                                     "content": "x", "reason": "r"}]}}
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     with pytest.raises(ControllerLoopExhausted):
         await _loop(tmp_path, [bad, bad, bad, bad], sm).run(
             {"goal": "g", "workspace_path": str(tmp_path)}, max_iters=50)

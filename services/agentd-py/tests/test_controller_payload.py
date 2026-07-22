@@ -18,7 +18,7 @@ def test_payload_key_order_is_cache_stable():
         {"goal": "g", "workspace_path": "/w", "retrieval_seed": {"neighbors": []}},
         history=[{"role": "assistant", "content": "{}"}],
         tool_definitions=[],
-        phase="DECIDE",
+        phase="PLAN",
     )
     keys = list(payload.keys())
     assert keys.index("retrieval_seed") < keys.index("conversation_history")
@@ -42,10 +42,10 @@ def test_goal_change_preserves_cacheable_prefix():
     ]
     ctx = {"workspace_path": "/w", "retrieval_seed": {"neighbors": ["a", "b"]}}
     sa = json.dumps(build_controller_step_payload(
-        {**ctx, "goal": "short alpha"}, hist, [], phase="DECIDE"))
+        {**ctx, "goal": "short alpha"}, hist, [], phase="PLAN"))
     sb = json.dumps(build_controller_step_payload(
         {**ctx, "goal": "a COMPLETELY different and longer second-turn message"},
-        hist, [], phase="DECIDE"))
+        hist, [], phase="PLAN"))
     # common prefix
     n = 0
     while n < min(len(sa), len(sb)) and sa[n] == sb[n]:

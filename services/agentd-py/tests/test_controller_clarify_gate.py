@@ -18,7 +18,8 @@ from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
 def _controller(tmp_path):
     """A ChatController over a real sqlite chat store + scripted engine, no orchestrator
-    (DECIDE-only is enough for the gate/resolve unit tests). Returns (ctrl, store, tid)."""
+    (no task-subsystem plumbing needed for the gate/resolve unit tests). Returns
+    (ctrl, store, tid)."""
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = ChatController(
@@ -111,11 +112,11 @@ async def test_resolve_clarify_writes_combined_breadcrumb_and_clears_gate(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_resolve_clarify_edit_resume_phase(tmp_path: Path):
+async def test_resolve_clarify_active_resume_phase(tmp_path: Path):
     ctrl, store, tid = _controller(tmp_path)
     store.set_controller_gate(tid, PendingGate(
         kind="clarify",
-        payload={"question": "range?", "options": [], "resume_phase": "EDIT"}))
+        payload={"question": "range?", "options": [], "resume_phase": "ACTIVE"}))
     captured: dict[str, object] = {}
 
     async def _noop_loop(*_a, **kw):
@@ -125,7 +126,7 @@ async def test_resolve_clarify_edit_resume_phase(tmp_path: Path):
 
     ctrl._run_loop = _noop_loop  # type: ignore[assignment]
     await ctrl.resolve_clarify(tid, "[0,1]", channel_id=f"chat:{tid}", goal="g")
-    assert captured["phase"] == "EDIT"
+    assert captured["phase"] == "ACTIVE"
     assert captured["edit_is_resume"] is True
 
 

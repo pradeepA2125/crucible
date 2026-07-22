@@ -7,7 +7,7 @@ def test_active_skills_ride_the_tail_after_goal() -> None:
         "goal": "do it",
         "active_skills": [{"name": "git-commit", "body": "STEP 1..."}],
     }
-    payload = build_controller_step_payload(ctx, [], [], phase="DECIDE")
+    payload = build_controller_step_payload(ctx, [], [], phase="PLAN")
     assert payload["active_skills"] == [{"name": "git-commit", "body": "STEP 1..."}]
     keys = list(payload.keys())
     assert keys.index("active_skills") > keys.index("goal")  # tail, after goal
@@ -15,6 +15,6 @@ def test_active_skills_ride_the_tail_after_goal() -> None:
 
 def test_active_skills_omitted_when_empty() -> None:
     payload = build_controller_step_payload(
-        {"workspace_path": "/ws", "goal": "x", "active_skills": []}, [], [], phase="DECIDE"
+        {"workspace_path": "/ws", "goal": "x", "active_skills": []}, [], [], phase="PLAN"
     )
     assert "active_skills" not in payload

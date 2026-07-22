@@ -43,7 +43,7 @@ def test_engine_injects_agents_md(tmp_path: Path) -> None:
             plan_context={"goal": "hi", "workspace_path": str(tmp_path)},
             history=[],
             tool_definitions=[],
-            phase="DECIDE",
+            phase="PLAN",
         )
     )
     assert "Prefix replies with FOX." in transport.system_instructions
@@ -57,7 +57,7 @@ def test_engine_without_loader_has_no_block(tmp_path: Path) -> None:
             plan_context={"goal": "hi", "workspace_path": str(tmp_path)},
             history=[],
             tool_definitions=[],
-            phase="DECIDE",
+            phase="PLAN",
         )
     )
     assert "PROJECT INSTRUCTIONS" not in transport.system_instructions

@@ -22,13 +22,13 @@ def test_registry_aggregation_dispatches_session_tools(tmp_path):
     assert "start_session" in names and "list_sessions" in names
 
 
-def test_session_tools_allowed_in_decide_phase():
-    """Sessions are deliberately available in DECIDE (spec: live smokes are
+def test_session_tools_allowed_in_plan_phase():
+    """Sessions are deliberately available in PLAN (spec: live smokes are
     conversational). Only run_command is in _STATE_CHANGING_TOOLS — this is
     the regression guard against someone adding session tools to it."""
     for tool in ("start_session", "write_stdin", "kill_session", "list_sessions"):
         resp = {"type": "tool_call", "tool": tool, "args": {}}
-        assert _decide_state_change_correction(resp, "DECIDE") is None
-    # sanity: run_command IS still barred in DECIDE
+        assert _decide_state_change_correction(resp, "PLAN") is None
+    # sanity: run_command IS still barred in PLAN
     resp = {"type": "tool_call", "tool": "run_command", "args": {}}
-    assert _decide_state_change_correction(resp, "DECIDE") is not None
+    assert _decide_state_change_correction(resp, "PLAN") is not None

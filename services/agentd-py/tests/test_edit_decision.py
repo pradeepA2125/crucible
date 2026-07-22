@@ -17,8 +17,7 @@ async def test_reject_leaves_real_untouched_then_accept_promotes(tmp_path: Path)
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"), patch_engine=PatchEngine())
@@ -37,7 +36,8 @@ async def test_reject_leaves_real_untouched_then_accept_promotes(tmp_path: Path)
             {"op": "search_replace", "file": "f.py",
              "search": "x = 1", "replace": "x = 2", "reason": "r"}]},
         {"type": "submit_changes", "thought": "done", "summary": "s"},
-    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm, edit_session=sess)
+    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm,
+        edit_session_factory=lambda: sess)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=8,
         auto_accept_edits=False, edit_decision_cb=edit_cb)
@@ -51,8 +51,7 @@ async def test_reject_reason_feeds_history(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t2", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"), patch_engine=PatchEngine())
@@ -67,7 +66,8 @@ async def test_reject_reason_feeds_history(tmp_path: Path):
             {"op": "search_replace", "file": "f.py",
              "search": "x = 1", "replace": "x = 9", "reason": "r"}]},
         {"type": "submit_changes", "thought": "giving up", "summary": "s"},
-    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm, edit_session=sess)
+    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm,
+        edit_session_factory=lambda: sess)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=8,
         auto_accept_edits=False, edit_decision_cb=edit_cb)
@@ -83,8 +83,7 @@ async def test_bad_patch_feeds_back_instead_of_crashing(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t3", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"), patch_engine=PatchEngine())
@@ -98,7 +97,8 @@ async def test_bad_patch_feeds_back_instead_of_crashing(tmp_path: Path):
             {"op": "search_replace", "file": "f.py",
              "search": "x = 1", "replace": "x = 2", "reason": "r"}]},
         {"type": "submit_changes", "thought": "done", "summary": "s"},
-    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm, edit_session=sess)
+    ]), reg, EventBroadcaster(), channel_id="c", phase_sm=sm,
+        edit_session_factory=lambda: sess)
     out = await loop.run(
         {"goal": "g", "workspace_path": str(real)}, max_iters=8, auto_accept_edits=True)
     assert out.kind == "submit_changes"

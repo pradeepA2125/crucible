@@ -7,7 +7,7 @@ def test_recalled_memories_land_after_history_in_tail():
         "recalled_memories": ["- (semantic) patch ops in patch/engine.py"],
     }
     history = [{"role": "user", "content": "hi"}]
-    payload = build_controller_step_payload(plan_context, history, [], phase="DECIDE")
+    payload = build_controller_step_payload(plan_context, history, [], phase="PLAN")
     keys = list(payload.keys())
     assert "recalled_memories" in keys
     # KV-cache invariant: recalled lands AFTER the cached conversation_history (dynamic tail).
@@ -17,5 +17,5 @@ def test_recalled_memories_land_after_history_in_tail():
 def test_no_recalled_key_when_empty():
     plan_context = {"goal": "do X", "workspace_path": "/ws", "recalled_memories": []}
     history = [{"role": "user", "content": "hi"}]
-    payload = build_controller_step_payload(plan_context, history, [], phase="DECIDE")
+    payload = build_controller_step_payload(plan_context, history, [], phase="PLAN")
     assert "recalled_memories" not in payload  # empty → omitted, no KV churn

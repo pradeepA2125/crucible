@@ -13,7 +13,7 @@ async def test_scripted_controller_step_returns_scripted_action():
         plan_context={"goal": "g", "workspace_path": "/w"},
         history=[],
         tool_definitions=[],
-        phase="DECIDE",
+        phase="PLAN",
     )
     assert out["type"] == "answer" and out["answer"] == "hi"
 
@@ -27,7 +27,7 @@ async def test_scripted_controller_step_accepts_on_retry_without_raising():
         plan_context={"goal": "g", "workspace_path": "/w"},
         history=[],
         tool_definitions=[],
-        phase="DECIDE",
+        phase="PLAN",
         on_retry=lambda a, m, r, msg: None,
     )
     assert out["type"] == "answer"
@@ -53,7 +53,7 @@ async def test_create_controller_step_forwards_on_retry_to_transport() -> None:
 
     await engine.create_controller_step(
         plan_context={}, history=[], tool_definitions=[],
-        phase="DECIDE", on_retry=_on_retry,
+        phase="PLAN", on_retry=_on_retry,
     )
 
     assert calls == [(1, 3, "network_error", "⏳ retrying…")]
