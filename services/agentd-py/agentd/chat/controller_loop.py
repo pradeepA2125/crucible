@@ -516,6 +516,29 @@ class ControllerLoop:
                 continue
             consecutive_malformed = 0
             if atype == "answer":
+                # C2: answer is reachable from ACTIVE (unlike the old EDIT phase, which
+                # only had submit_changes as a terminal). Block it ONLY when THIS turn
+                # itself applied an edit and the ledger still has open items — the same
+                # class of guarantee submit_changes already enforces, but scoped tighter:
+                # a stale unrelated ledger must never block ordinary Q&A that never
+                # touched it (see the negative-control test in
+                # test_controller_loop_answer_ledger_gate.py).
+                if self._edit_applied and self._ledger.pending():
+                    still_open = self._ledger.pending()
+                    titles = ", ".join(i.title for i in still_open)
+                    history.append(assistant_turn(resp))
+                    history.append({
+                        "role": "tool_result", "tool": "",
+                        "content": (
+                            f"'answer' is BLOCKED — {len(still_open)} todo item(s) are still "
+                            f"pending/in_progress after edits you made this turn: {titles}. "
+                            "Reconcile the list first (mark items done with evidence, or "
+                            "'blocked' with a reason), or emit 'submit_changes' once it's "
+                            "clear. If nothing here needs finishing, emit 'answer' again "
+                            "unchanged."
+                        ),
+                    })
+                    continue
                 history.append(assistant_turn(resp))
                 return ControllerOutcome(
                     kind="answer", text=str(resp.get("answer", "")), history=history)
