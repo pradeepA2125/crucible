@@ -177,7 +177,7 @@ _PHASE_TYPES: dict[str, list[str]] = {
     # needs no permission step. Keeps `clarify` so the agent can ask when a genuine
     # ambiguity blocks it mid-edit; the user's reply resumes the loop in ACTIVE
     # (ChatController.resolve_clarify). `propose_mode` is added back in only when the
-    # task subsystem flag is on (Task 6 — ControllerLoop mutates its own allowed-types
+    # task subsystem flag is on (Task 5 — ControllerLoop mutates its own allowed-types
     # view per-instance; this module-level table is ACTIVE's task-subsystem-OFF shape).
     "ACTIVE": ["tool_call", "answer", "clarify", "edit", "submit_changes"],
 }
