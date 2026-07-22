@@ -333,7 +333,8 @@ class ChatController:
         # Clarify-resume is now driven by resolve_clarify (the gate carries resume_phase),
         # not a fresh user message: the main composer is disabled while a clarify gate is
         # pending, so the answer arrives via the card. A plain message here always
-        # supersedes any pending gate (cleared above) and re-enters DECIDE.
+        # supersedes any pending gate (cleared above) and starts fresh in ACTIVE (the
+        # plan_mode-derived phase computation lands here in Task 7).
         resume_phase = None
         # One id for this turn's in-flight pills message — lets the loop upsert it per
         # tool result and _finish finalize the SAME message (no duplicate). Finding 5.
@@ -361,7 +362,7 @@ class ChatController:
         ledger = TodoLedger.from_json(self._store.get_controller_todos(thread_id))
         # The edit session (Task 2) is built lazily inside the loop now, not here.
         edit = None
-        # run_command (EDIT-only; DECIDE rejects it) is gated through the controller's
+        # run_command (ACTIVE-only; PLAN rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
         # MCP tool calls gate through the same thread-gate machinery (kind="mcp_tool").
@@ -369,7 +370,7 @@ class ChatController:
         # Persist the ledger mid-turn on every write_todos so /live renders it during the turn.
         todo_persist_cb = partial(self._persist_todos, thread_id)
         # PTY exec sessions (thread-scoped; start gated through the SAME command
-        # approval gate as run_command). Available in DECIDE and EDIT by design.
+        # approval gate as run_command). Available in PLAN and ACTIVE by design.
         exec_source = None
         if self._exec_sessions is not None:
             from agentd.exec_sessions.manager import SessionManager
