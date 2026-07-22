@@ -360,8 +360,17 @@ class ChatController:
         # Request-scoped todo ledger: rehydrate so it survives the PLAN->ACTIVE (mode
         # gate) and clarify-resume loop boundaries within one request.
         ledger = TodoLedger.from_json(self._store.get_controller_todos(thread_id))
-        # The edit session (Task 2) is built lazily inside the loop now, not here.
-        edit = None
+        # ACTIVE is now the default phase for every plain turn — the session (which
+        # needs the orchestrator's workspace_manager/patch_engine) must be buildable
+        # from ANY phase, not just a mode-gated entry. Build a closure unconditionally
+        # (free) and let ControllerLoop construct the real session lazily, on the
+        # first actual `edit` dispatch (C1) — a pure Q&A/PLAN turn never pays for it.
+        edit_session_factory = (
+            (lambda: TurnEditSession(
+                turn_id=thread_id, real_path=Path(self._workspace_path),
+                workspace_manager=self._orchestrator._workspace_manager,
+                patch_engine=self._orchestrator._patch_engine))
+            if self._orchestrator is not None else None)
         # run_command (ACTIVE-only; PLAN rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
@@ -408,7 +417,8 @@ class ChatController:
                                   active_skill_persist_cb=active_skill_persist_cb,
                                   mcp_approval_cb=mcp_cb,
                                   exec_session_source=exec_source), self._broadcaster,
-            channel_id=channel_id, phase_sm=sm, edit_session=edit, todo_ledger=ledger,
+            channel_id=channel_id, phase_sm=sm, edit_session_factory=edit_session_factory,
+            todo_ledger=ledger,
             task_subsystem_enabled=self._task_subsystem_enabled,
             memory_harness=self._memory_harness, active_skills=active_skills)
         plan_context: dict[str, object] = {

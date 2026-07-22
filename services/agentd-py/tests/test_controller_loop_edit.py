@@ -17,8 +17,7 @@ async def test_edit_phase_promotes_then_submits(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()  # simulate user picked edit
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -33,7 +32,8 @@ async def test_edit_phase_promotes_then_submits(tmp_path: Path):
     ]
     loop = ControllerLoop(
         ScriptedReasoningEngine(None, [], controller_step_responses=steps),
-        reg, EventBroadcaster(), channel_id="c", phase_sm=sm, edit_session=sess)
+        reg, EventBroadcaster(), channel_id="c", phase_sm=sm,
+        edit_session_factory=lambda: sess)
     out = await loop.run(
         {"goal": "bump x", "workspace_path": str(real)}, max_iters=6,
         auto_accept_edits=True)
@@ -56,8 +56,7 @@ async def test_failed_edit_surfaces_thinking_line_and_no_card(tmp_path: Path):
     real = tmp_path / "ws"
     real.mkdir()
     (real / "f.py").write_text("x = 1\n")
-    sm = ControllerPhaseSM()
-    sm.enter_edit_mode()
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     sess = TurnEditSession(
         turn_id="t1", real_path=real,
         workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
@@ -79,7 +78,7 @@ async def test_failed_edit_surfaces_thinking_line_and_no_card(tmp_path: Path):
     q = bc.subscribe("c")
     loop = ControllerLoop(
         ScriptedReasoningEngine(None, [], controller_step_responses=steps),
-        reg, bc, channel_id="c", phase_sm=sm, edit_session=sess)
+        reg, bc, channel_id="c", phase_sm=sm, edit_session_factory=lambda: sess)
     out = await loop.run(
         {"goal": "x", "workspace_path": str(real)}, max_iters=6,
         auto_accept_edits=True, edit_record_cb=_record)

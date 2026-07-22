@@ -219,7 +219,7 @@ class ControllerLoop:
         *,
         channel_id: str,
         phase_sm: ControllerPhaseSM,
-        edit_session: TurnEditSession | None = None,
+        edit_session_factory: Callable[[], TurnEditSession] | None = None,
         todo_ledger: TodoLedger | None = None,
         task_subsystem_enabled: bool = False,
         memory_harness: MemoryHarness = NO_OP_HARNESS,
@@ -230,7 +230,12 @@ class ControllerLoop:
         self._broadcaster = broadcaster
         self._channel_id = channel_id
         self._sm = phase_sm
-        self._edit = edit_session
+        # Built lazily on first `edit` dispatch (see the edit branch in _iterate), not
+        # eagerly here — ACTIVE is now the default phase for every plain turn, so
+        # eager construction would build a (cheap but real) session + shadow for every
+        # pure Q&A turn too. The factory itself is a free closure either way.
+        self._edit_session_factory = edit_session_factory
+        self._edit: TurnEditSession | None = None
         self._ledger = todo_ledger or TodoLedger()
         self._memory_harness = memory_harness
         # Shared with the SkillToolSource: read_skill writes activated bodies here; each
@@ -597,8 +602,12 @@ class ControllerLoop:
                     "options": resp.get("options", []),
                 }, history=history)
             if atype == "edit":
-                # EDIT phase is only reachable with an edit_session (phase SM gate).
-                assert self._edit is not None
+                # Lazily construct on first use (C1) — ACTIVE is the default phase, so
+                # a plain turn that never edits never pays for a session/shadow at all.
+                if self._edit is None:
+                    if self._edit_session_factory is None:
+                        raise RuntimeError("edit requires an orchestrator (no edit_session_factory)")
+                    self._edit = self._edit_session_factory()
                 raw_ops = resp.get("patch_ops")
                 ops: list[dict[str, object]] = raw_ops if isinstance(raw_ops, list) else []
                 logger.info("[controller] edit phase=%s ops=%d files=%s",
