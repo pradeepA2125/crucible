@@ -52,29 +52,32 @@ class ControllerLoopExhausted(Exception):
 
 
 # The modes propose_mode may offer; resolution routes on these exact strings
-# (resolve_mode: edit/explain re-enter the loop, create_task/resume hand off).
-_VALID_MODES = frozenset({"edit", "create_task", "resume", "explain"})
+# (resolve_mode: "implement" re-enters the loop in ACTIVE; create_task/resume hand
+# off). "implement" is a NEW value, not a relabeled "edit" — it collides with the
+# unrelated `edit` action-type string ACTIVE's schema already uses if reused (see
+# the design doc's I5 finding).
+_VALID_MODES = frozenset({"implement", "create_task", "resume"})
 
-# Tools that mutate the workspace. They are barred in the DECIDE phase (read-only
-# exploration before mode selection) so the model cannot write source files via the
-# shell (`cat >`/`tee`/`touch`), bypassing the EditGate. Enforced at the dispatch
-# guard only — the advertised tool list (system prompt) is unchanged, keeping the
-# cached prefix byte-stable across the DECIDE→EDIT transition.
+# Tools that mutate the workspace. They are barred in the PLAN phase (read-only
+# exploration/discussion before committing to act) so the model cannot write source
+# files via the shell (`cat >`/`tee`/`touch`), bypassing the EditGate. Enforced at the
+# dispatch guard only — the advertised tool list (system prompt) is unchanged, keeping
+# the cached prefix byte-stable across the PLAN→ACTIVE transition.
 _STATE_CHANGING_TOOLS = frozenset({"run_command"})
 
 STATE_CHANGING_DECIDE_CORRECTION = (
-    "run_command is not available while deciding how to proceed — it can mutate the "
-    "workspace, which must go through review. In this phase use only read-only tools "
+    "run_command is not available in Plan Mode — it can mutate the workspace, which "
+    "Plan Mode exists to discuss first. In this phase use only read-only tools "
     "(search_code / read_file / list_directory / read_env_profile). To make changes, "
-    "emit propose_mode and let the user pick edit mode; run_command becomes available "
-    "once editing has started."
+    "emit propose_mode and let the user pick \"Implement this plan\"; run_command "
+    "becomes available once you're out of Plan Mode."
 )
 
 
 def _decide_state_change_correction(resp: dict[str, object], phase: str) -> str | None:
-    """Reject a state-changing tool_call in DECIDE; None otherwise (inert for other
+    """Reject a state-changing tool_call in PLAN; None otherwise (inert for other
     phases and non-tool_call actions)."""
-    if phase != "DECIDE" or str(resp.get("type", "")) != "tool_call":
+    if phase != "PLAN" or str(resp.get("type", "")) != "tool_call":
         return None
     if str(resp.get("tool", "")) in _STATE_CHANGING_TOOLS:
         return STATE_CHANGING_DECIDE_CORRECTION
@@ -84,11 +87,11 @@ def _decide_state_change_correction(resp: dict[str, object], phase: str) -> str 
 PROPOSE_MODE_CORRECTION = (
     "Your propose_mode was rejected: each option MUST be an object "
     '{"mode": <m>, "label": <short button text>, "description": <one line>} where '
-    "<m> is one of edit | create_task | resume | explain, and the top-level "
+    "<m> is one of implement | create_task | resume, and the top-level "
     '"recommended" MUST be one of those same values. You used an invalid mode name '
     "or the wrong keys (e.g. \"type\" instead of \"mode\"). Re-emit propose_mode with "
-    "valid modes — typically offer BOTH edit (make the change inline now) and "
-    "create_task (plan it as a reviewed task), plus explain."
+    "valid modes — typically offer \"implement\" (exit Plan Mode, make the change "
+    "directly) at minimum, plus create_task (plan it as a reviewed task) when available."
 )
 
 
@@ -175,8 +178,8 @@ def _reserved_tool_name_correction(resp: dict[str, object], atype: str) -> str |
         f"'{tool}' is a top-level response TYPE, emitted as its own object — "
         f'{{"type":"{tool}", ...}} (see the "{tool}" variant above for its required '
         f'fields) — NEVER as {{"type":"tool_call","tool":"{tool}",...}}. If you are '
-        "trying to make a change: first emit type='propose_mode' so the user picks how "
-        "to proceed; only after they pick 'edit' does type='edit' become available."
+        "trying to make a change: type='edit' is already directly available — emit it "
+        "now (Plan Mode is the only phase where you'd emit propose_mode first)."
     )
 
 

@@ -82,16 +82,17 @@ CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
 }
 
 _PHASE_TYPES: dict[str, list[str]] = {
-    "DECIDE": ["tool_call", "answer", "clarify", "propose_mode"],
-    # EDIT keeps `clarify` so the agent can ask when a genuine ambiguity blocks it
-    # mid-edit (reading the workspace can't resolve it); the user's reply resumes the
-    # loop in EDIT (ChatController._edit_clarify_pending). It still cannot re-open mode
-    # selection — `propose_mode` stays DECIDE-only.
-    "EDIT": ["tool_call", "edit", "clarify", "submit_changes"],
-    # EXPLAIN (user picked "Just explain"): describe the approach — explore then answer.
-    # propose_mode is FORBIDDEN here so the explain re-entry can't re-open the mode gate
-    # (finding 4: DECIDE re-entry kept re-proposing); edit is forbidden too (no changes).
-    "EXPLAIN": ["tool_call", "answer", "clarify"],
+    # PLAN (was DECIDE): read-only exploration + discussion before committing to act.
+    # propose_mode is how PLAN hands a concrete plan back to the user ("Implement this
+    # plan", or create_task/resume when the task subsystem is on).
+    "PLAN": ["tool_call", "answer", "clarify", "propose_mode"],
+    # ACTIVE (merges the old DECIDE+EDIT): the default phase for every turn — editing
+    # needs no permission step. Keeps `clarify` so the agent can ask when a genuine
+    # ambiguity blocks it mid-edit; the user's reply resumes the loop in ACTIVE
+    # (ChatController.resolve_clarify). `propose_mode` is added back in only when the
+    # task subsystem flag is on (Task 6 — ControllerLoop mutates its own allowed-types
+    # view per-instance; this module-level table is ACTIVE's task-subsystem-OFF shape).
+    "ACTIVE": ["tool_call", "answer", "clarify", "edit", "submit_changes"],
 }
 
 # Per-variant property/required specs for the TIGHT (oneOf) schema. Each entry is one

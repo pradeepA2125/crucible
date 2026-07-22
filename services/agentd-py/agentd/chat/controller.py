@@ -341,7 +341,7 @@ class ChatController:
         outcome = await self._run_loop(
             thread_id, channel_id, turn_message, seed_history=seed_history,
             step_review=step_review, phase=resume_phase, turn_id=turn_id,
-            edit_is_resume=(resume_phase == "EDIT"), forced_skills=forced_skills)
+            edit_is_resume=(resume_phase == "ACTIVE"), forced_skills=forced_skills)
         await self._finish(thread_id, channel_id, outcome, step_review, turn_id=turn_id)
 
     async def _run_loop(
@@ -350,25 +350,17 @@ class ChatController:
         phase: str | None = None, turn_id: str | None = None,
         edit_is_resume: bool = False, forced_skills: list[str] | None = None,
     ) -> ControllerOutcome:
-        sm = ControllerPhaseSM()
-        # Request-scoped todo ledger: rehydrate so it survives the DECIDE->EDIT (mode gate)
-        # and clarify-resume loop boundaries within one request.
+        # Three callers feed `phase` with different intents: handle_message (the
+        # plan_mode-derived starting phase — Task 7), resolve_mode's "implement"
+        # dispatch (always "ACTIVE"), resolve_clarify ("PLAN"/"ACTIVE"/None
+        # defensively). Anything not one of the two legal values falls back to the
+        # default, "ACTIVE".
+        sm = ControllerPhaseSM(start=phase if phase in ("PLAN", "ACTIVE") else "ACTIVE")
+        # Request-scoped todo ledger: rehydrate so it survives the PLAN->ACTIVE (mode
+        # gate) and clarify-resume loop boundaries within one request.
         ledger = TodoLedger.from_json(self._store.get_controller_todos(thread_id))
-        # Edits only happen in EDIT phase (entered via /mode-decision). A DECIDE turn
-        # never reaches the edit branch, so the session — which needs the orchestrator's
-        # workspace_manager/patch_engine — is built lazily only when editing.
+        # The edit session (Task 2) is built lazily inside the loop now, not here.
         edit = None
-        if phase == "EDIT":
-            sm.enter_edit_mode()
-            if self._orchestrator is not None:
-                edit = TurnEditSession(
-                    turn_id=thread_id, real_path=Path(self._workspace_path),
-                    workspace_manager=self._orchestrator._workspace_manager,
-                    patch_engine=self._orchestrator._patch_engine)
-        elif phase == "EXPLAIN":
-            # User picked "Just explain" — describe the approach, never re-propose the
-            # mode gate (finding 4). The SM forbids propose_mode/edit in EXPLAIN.
-            sm.enter_explain_mode()
         # run_command (EDIT-only; DECIDE rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
@@ -532,7 +524,7 @@ class ChatController:
         # never transitions back).
         if outcome.kind == "clarify":
             payload = dict(outcome.payload or {})
-            payload["resume_phase"] = "EDIT" if sm.phase == "EDIT" else None
+            payload["resume_phase"] = sm.phase if sm.phase in ("PLAN", "ACTIVE") else None
             outcome.payload = payload
         return outcome
 
@@ -934,8 +926,9 @@ class ChatController:
         self, thread_id: str, mode: str, *, channel_id: str, goal: str,
     ) -> None:
         """Resolve the mode gate (POST /mode-decision). Clears the gate in place
-        (Class-A), writes a breadcrumb, then dispatches: edit/explain re-enter the
-        loop (a new streamed turn), create_task/resume hand off to the orchestrator."""
+        (Class-A), writes a breadcrumb, then dispatches: "implement" exits Plan Mode
+        and re-enters the loop in ACTIVE (a new streamed turn); create_task/resume
+        hand off to the orchestrator."""
         # Precondition + idempotency guard: only a pending `mode` gate may resolve.
         # The read→clear pair has no `await` between it (sqlite is sync), so two
         # concurrent /mode-decision posts can't both dispatch (which would double-
@@ -968,28 +961,14 @@ class ChatController:
         # dies on reload, leaving no record of what the user chose.
         self._write_breadcrumb(thread_id, channel_id, f"▸ You chose: {label}")
 
-        if mode in ("edit", "explain"):
-            if mode == "edit" and self._orchestrator is None:
-                raise RuntimeError("edit mode requires an orchestrator")
-            phase = "EDIT" if mode == "edit" else "EXPLAIN"
-            # Honor the "Review each edit" toggle from the message that opened this
-            # gate (explain has no edits, so the value is inert there).
+        if mode == "implement":
+            if self._orchestrator is None:
+                raise RuntimeError("implement mode requires an orchestrator")
+            phase = "ACTIVE"
             review = self._step_review_by_thread.get(thread_id)
             seed_history = self._seed_for(thread_id)
-            if mode == "explain":
-                # The /mode-decision POST isn't part of the loop history, so without this
-                # the re-entered turn has no signal the user chose "explain" and (in the
-                # old DECIDE re-entry) just re-proposed. Inject the intent so the model
-                # describes the approach; the EXPLAIN phase also blocks propose_mode.
-                seed_history = (seed_history or []) + [{
-                    "role": "user",
-                    "content": ("Explain your proposed approach in detail — what you would "
-                                "change and how. Do NOT make any changes or re-propose a "
-                                "mode; just describe the plan."),
-                }]
-            # The edit/explain re-entry is a full turn — give it a turn_id too so it gets
-            # incremental pill persistence (finding 5) AND debug artifacts, like the
-            # handle_message path.
+            # The re-entry is a full turn — give it a turn_id too so it gets incremental
+            # pill persistence (finding 5) AND debug artifacts, like the handle_message path.
             turn_id = uuid4().hex
             outcome = await self._run_loop(
                 thread_id, channel_id, effective_goal,
@@ -1038,8 +1017,8 @@ class ChatController:
     ) -> None:
         """Resolve the clarify gate (POST /clarify-decision). Clears the gate in place
         (Class-A), writes ONE combined `❓ q → a` breadcrumb, then re-enters the loop with
-        the answer injected as the user's reply (EDIT if the clarify fired mid-edit, else
-        DECIDE) — a fresh streamed turn, like resolve_mode's edit/explain re-entry.
+        the answer injected as the user's reply — ACTIVE if the clarify fired mid-ACTIVE,
+        PLAN if it fired mid-PLAN — a fresh streamed turn, like resolve_mode's dispatch.
 
         Idempotency + empty guards: the read→clear pair has no `await` between it (sqlite
         is sync), so two concurrent posts can't both re-enter; a blank answer no-ops (the
@@ -1056,7 +1035,7 @@ class ChatController:
             return
         question = str(gate.payload.get("question") or "")
         resume_phase = gate.payload.get("resume_phase")
-        resume_phase = resume_phase if resume_phase == "EDIT" else None
+        resume_phase = resume_phase if resume_phase in ("PLAN", "ACTIVE") else None
         self._store.set_controller_gate(thread_id, None)
         # PERSIST + broadcast (mirror write_chat_breadcrumb): a bare broadcast dies on
         # reload, leaving no record of the Q the agent asked or the A the user gave.
@@ -1071,6 +1050,6 @@ class ChatController:
         outcome = await self._run_loop(
             thread_id, channel_id, goal, seed_history=seed_history,
             step_review=review, phase=resume_phase, turn_id=turn_id,
-            edit_is_resume=(resume_phase == "EDIT"))
+            edit_is_resume=(resume_phase == "ACTIVE"))
         await self._finish(
             thread_id, channel_id, outcome, step_review=review, turn_id=turn_id)
