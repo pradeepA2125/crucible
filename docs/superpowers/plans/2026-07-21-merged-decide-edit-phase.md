@@ -828,6 +828,9 @@ mode gate. Build lazily on first use instead."
 **Files:**
 - Modify: `services/agentd-py/agentd/chat/controller_loop.py:396-410` (the `edit_entry`/`decide_entry` plan_context writes)
 - Modify: `services/agentd-py/agentd/chat/controller_prompts.py:611-755` (the `if phase == "EDIT": ... else: # DECIDE` payload branch)
+- Modify: `services/agentd-py/tests/test_controller_todo_gate.py` (rename `edit_entry`→`active_entry` in two test bodies only — leave its unrelated `ControllerPhaseSM()` sites for Task 8)
+- Modify: `services/agentd-py/tests/test_controller_payload.py` (rename `edit_entry`→`active_entry` keys + `phase="EDIT"`→`phase="ACTIVE"` in test bodies)
+- Modify: `services/agentd-py/tests/test_skills_prompt.py` (`phase="DECIDE"`→`phase="PLAN"`; the `decide_entry` key itself is unchanged)
 - Test: new `services/agentd-py/tests/test_controller_prompts_active_entry.py`
 
 **Interfaces:**
@@ -1128,19 +1131,30 @@ pytest tests/test_controller_prompts_active_entry.py -v
 ```
 Expected: `3 passed`.
 
-- [ ] **Step 6: Run the full `test_controller_loop_*` + `test_controller_prompts*` sweep**
+- [ ] **Step 6: Fix every test file that asserts on the renamed `edit_entry`/`phase="DECIDE"` values directly**
+
+This task renames the `edit_entry` plan_context key to `active_entry` (adds `skill_check_due` alongside it) and makes `"DECIDE"`/`"EDIT"` invalid `phase=` arguments to `build_controller_step_payload`/`_decide_state_change_correction`. A keyword-filtered pytest sweep (`-k "controller_loop or controller_prompts or controller_phase"`) does NOT reliably surface every affected file, since a file can assert on these exact values without "controller_loop"/"controller_prompts"/"controller_phase" appearing in its own filename. Three specific files are CONFIRMED (via `grep -rln "edit_entry\|decide_entry" tests/`) to need fixes — fix each explicitly, don't rely on the sweep alone to find them:
+
+- **`tests/test_controller_todo_gate.py`** — `test_edit_entry_flag_set_until_productive_start` and `test_edit_entry_suppressed_on_clarify_resume` assert directly on `rec.plan_contexts[i].get("edit_entry")` (lines ~231, 232, 261). Change every `.get("edit_entry")` to `.get("active_entry")` in both tests. (This file also has unrelated `ControllerPhaseSM()`/`enter_edit_mode` sites out of THIS task's scope — leave those for Task 8; only touch the `edit_entry`→`active_entry` key renames here.)
+- **`tests/test_controller_payload.py`** — `test_edit_entry_hint_leads_with_write_todos_tool_syntax` (line ~181) constructs `{"goal": "g", "workspace_path": "/w", "edit_entry": True}` directly as a `plan_context` — change the key to `"active_entry": True`. Check this file's other test function bodies (including `test_edit_entry_offers_explicit_todo_choice` and the one at line ~191 referencing "Without edit_entry") for the same pattern and fix each; also check whether any of these pass `phase="EDIT"` to `build_controller_step_payload` and update to `phase="ACTIVE"`. Test function NAMES containing "edit_entry" (e.g. `test_edit_entry_offers_explicit_todo_choice`) are cosmetic and don't need renaming, only the actual dict keys/phase strings passed in test bodies.
+- **`tests/test_skills_prompt.py`** — line ~62-63 calls `build_controller_step_payload({"goal": "g", "decide_entry": True}, [], [], phase="DECIDE", skills_available=True)`. The `decide_entry` KEY name is unchanged by this task (PLAN keeps it, per Step 4's note) — only `phase="DECIDE"` needs to become `phase="PLAN"`. Leave the `"decide_entry": True` key as-is.
+
+- [ ] **Step 7: Run the full `test_controller_loop_*` + `test_controller_prompts*` sweep, plus the three files fixed above**
 
 ```bash
-pytest tests/ -k "controller_loop or controller_prompts or controller_phase" -v 2>&1 | tail -80
+pytest tests/ -k "controller_loop or controller_prompts or controller_phase" tests/test_controller_todo_gate.py tests/test_controller_payload.py tests/test_skills_prompt.py -v 2>&1 | tail -100
 ```
-Fix any newly-broken test whose failure is directly attributable to this task's rename (e.g. a test asserting on the literal string `"decide_entry"` or `"edit_entry"` in a `plan_context` dict — rename the key it asserts on to match). Do NOT fix failures belonging to other files' `enter_edit_mode`/old-mode-value usage — those are Task 8's scope.
+Fix any OTHER newly-broken test whose failure is directly attributable to this task's rename (the same `edit_entry`/`decide_entry`/`phase="DECIDE"`/`phase="EDIT"` pattern, in a file the Step 6 grep didn't catch — re-run `grep -rln "edit_entry\|phase=\"DECIDE\"\|phase=\"EDIT\"" tests/` if anything here still fails for that reason). Do NOT fix failures belonging to other files' `enter_edit_mode`/old-mode-value usage that are unrelated to this task's specific rename — those are Task 8's scope.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add services/agentd-py/agentd/chat/controller_loop.py \
         services/agentd-py/agentd/chat/controller_prompts.py \
-        services/agentd-py/tests/test_controller_prompts_active_entry.py
+        services/agentd-py/tests/test_controller_prompts_active_entry.py \
+        services/agentd-py/tests/test_controller_todo_gate.py \
+        services/agentd-py/tests/test_controller_payload.py \
+        services/agentd-py/tests/test_skills_prompt.py
 git commit -m "fix(controller): split the merged entry-hint into active_entry + skill_check_due (C1b)
 
 A single merged flag with an added iteration==0 clause would have
@@ -1936,7 +1950,7 @@ Read the file (two `ControllerPhaseSM()` sites per the earlier grep, lines ~93 a
 
 - [ ] **Step 7: Fix `test_controller_todo_gate.py`**
 
-Read the file (three sites per the earlier grep). This file is a strong candidate to also need `atype == "submit_changes"` / new `atype == "answer"` gate coverage cross-checked against Task 4's C2 change — if any existing scripted step sequence here relies on `answer` being ungated mid-edit-with-pending-items, that assumption is now wrong and the test needs updating to reconcile the ledger first (do not weaken Task 4's gate).
+Read the file (three `ControllerPhaseSM()`/`enter_edit_mode` sites per the earlier grep). **Note:** this file's `edit_entry`→`active_entry` key-name rename was already fixed in Task 3 Step 6 — do not re-touch those two assertions here; this step is only the `ControllerPhaseSM()` audit (Step 1's classification) for this file's remaining sites. This file is a strong candidate to also need `atype == "submit_changes"` / new `atype == "answer"` gate coverage cross-checked against Task 4's C2 change — if any existing scripted step sequence here relies on `answer` being ungated mid-edit-with-pending-items, that assumption is now wrong and the test needs updating to reconcile the ledger first (do not weaken Task 4's gate).
 
 - [ ] **Step 8: Fix `test_controller_clarify_gate.py` and `test_controller_edit_clarify.py`**
 
