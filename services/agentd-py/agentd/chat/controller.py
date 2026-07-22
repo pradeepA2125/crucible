@@ -432,7 +432,7 @@ class ChatController:
         # _edit_applied flag resets on the new loop, and a cohesive (no-list) edit leaves the
         # ledger empty, so without this signal the entry hint would wrongly re-appear mid-feature.
         # (A history scan can't tell this feature's prior edit from an earlier feature's — this
-        # explicit flag can.) resolve_mode("edit") is a fresh entry → default False.
+        # explicit flag can.) resolve_mode("implement") is a fresh entry → default False.
         plan_context["edit_is_resume"] = edit_is_resume
         # Debug-artifact keys (KV-safe: build_controller_step_payload ignores them) so
         # create_controller_step can dump the exact per-iteration LLM bytes under

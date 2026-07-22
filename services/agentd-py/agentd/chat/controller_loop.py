@@ -103,7 +103,7 @@ def _propose_mode_correction(
 
     Enforces the mode vocabulary the same way the phase SM enforces action types: a weak model
     that invents modes ("create") or wrong keys (options[].type) gets corrected and retried
-    rather than surfacing an unusable gate. `allowed_modes` is {edit, explain} when the task
+    rather than surfacing an unusable gate. `allowed_modes` is {implement} when the task
     subsystem is OFF (default) — so a model that offers create_task/resume despite the prompt
     omission gets corrected, not dispatched. `recommended` is a non-blocking hint — it's
     normalized in the emit branch, not required here (weak models reliably emit good options
