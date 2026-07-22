@@ -241,10 +241,16 @@ class ControllerLoop:
         # Shared with the SkillToolSource: read_skill writes activated bodies here; each
         # iteration we re-inject them into the dynamic tail (compaction-resilient).
         self._active_skills = active_skills if active_skills is not None else {}
-        # OFF (default): only edit/explain may be offered — the controller handles changes
-        # inline; a model that proposes create_task/resume anyway gets corrected.
-        self._allowed_modes = (
-            _VALID_MODES if task_subsystem_enabled else frozenset({"edit", "explain"}))
+        self._task_subsystem_enabled = task_subsystem_enabled
+        # PLAN's allowed modes: the full vocabulary when the task subsystem is on,
+        # else just "implement" (create_task/resume stripped — the controller
+        # handles everything inline).
+        self._plan_allowed_modes = (
+            _VALID_MODES if task_subsystem_enabled else frozenset({"implement"}))
+        # ACTIVE's allowed modes (I4): only reachable at all when the task subsystem
+        # is on, and even then restricted to create_task/resume — never "implement",
+        # since ACTIVE is already the implementing phase.
+        self._active_allowed_modes = frozenset({"create_task", "resume"})
         self._calls: list[ToolCall] = []
         self._results: list[ToolResult] = []
         self._thinking: list[str] = []
@@ -257,6 +263,21 @@ class ControllerLoop:
         # clean EDIT-ENTRY hint (write_todos-as-tool_call) instead of the mid-turn reconcile
         # hint, so the first-action-after-inline case isn't mis-routed.
         self._edit_applied = False
+
+    def _allowed_action_types(self) -> list[str]:
+        """The action types legal THIS iteration — the phase SM's own set, plus a
+        conditional propose_mode addition when in ACTIVE with the task subsystem on
+        (I4: lets a big-enough ACTIVE-phase request escalate to a reviewed task
+        without a detour through Plan Mode)."""
+        types = list(self._sm.allowed_types())
+        if self._sm.phase == "ACTIVE" and self._task_subsystem_enabled:
+            types.append("propose_mode")
+        return types
+
+    def _allowed_modes_for_current_phase(self) -> frozenset[str]:
+        return (
+            self._active_allowed_modes if self._sm.phase == "ACTIVE"
+            else self._plan_allowed_modes)
 
     def partial_history(self) -> list[dict[str, object]]:
         """The verbatim conversation accumulated so far this turn. Meaningful after a
@@ -471,8 +492,8 @@ class ControllerLoop:
             # _empty_action_correction). Each is corrected + retried, bounded by _MAX_MALFORMED.
             correction = (
                 MALFORMED_CORRECTION
-                if atype not in self._sm.allowed_types()
-                else _propose_mode_correction(resp, self._allowed_modes) if atype == "propose_mode"
+                if atype not in self._allowed_action_types()
+                else _propose_mode_correction(resp, self._allowed_modes_for_current_phase()) if atype == "propose_mode"
                 else _reserved_tool_name_correction(resp, atype)
                 or _decide_state_change_correction(resp, self._sm.phase)
                 or _empty_action_correction(resp, atype)
