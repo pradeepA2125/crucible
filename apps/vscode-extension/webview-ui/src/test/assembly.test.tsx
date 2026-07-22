@@ -37,6 +37,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     retryStatus: null,
     liveStatus: null,
     turnActive: false,
+    planMode: false,
     ...overrides,
   };
 }

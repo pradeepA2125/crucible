@@ -66,6 +66,7 @@ describe("InputArea slash-command expansion", () => {
       type: "sendMessage",
       text: "/review src/a.py",
       stepReview: true,
+      planMode: false,
     });
     // And the composer is cleared (message left the box).
     expect((ta as HTMLTextAreaElement).value).toBe("");
@@ -154,6 +155,7 @@ describe("InputArea @-file mentions", () => {
     const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(calls).toContainEqual({
       type: "sendMessage", text: "@src/foo.py look here", stepReview: true,
+      planMode: false,
       mentionedPaths: ["src/foo.py"],
     });
   });
@@ -173,5 +175,26 @@ describe("InputArea @-file mentions", () => {
     const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     const sent = calls.find((c) => c.type === "sendMessage");
     expect(sent.mentionedPaths).toBeUndefined();
+  });
+});
+
+describe("InputArea Plan Mode toggle", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("renders a Plan Mode checkbox reflecting the hydrated planMode prop", () => {
+    render(
+      <InputArea availability={availability} draft="" onDraftChange={() => {}} planMode={true} />
+    );
+    const checkbox = screen.getByLabelText(/plan mode/i) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it("posts setPlanMode when toggled and includes planMode on send", () => {
+    render(
+      <InputArea availability={availability} draft="hi" onDraftChange={() => {}} planMode={false} />
+    );
+    fireEvent.click(screen.getByLabelText(/plan mode/i));
+    const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(calls).toContainEqual({ type: "setPlanMode", enabled: true });
   });
 });

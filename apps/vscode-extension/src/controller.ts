@@ -631,7 +631,8 @@ export class CrucibleController {
   }
 
   async sendChatMessage(
-    text: string, stepReview?: boolean, forcedSkills?: string[], mentionedPaths?: string[]
+    text: string, stepReview?: boolean, forcedSkills?: string[], mentionedPaths?: string[],
+    planMode?: boolean,
   ): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
@@ -668,11 +669,12 @@ export class CrucibleController {
         threadId,
         text,
         this.turnAbort.signal,
-        stepReview !== undefined || forcedSkills?.length || mentionedFiles?.length
+        stepReview !== undefined || forcedSkills?.length || mentionedFiles?.length || planMode !== undefined
           ? {
               ...(stepReview !== undefined ? { stepReview } : {}),
               ...(forcedSkills?.length ? { forcedSkills } : {}),
               ...(mentionedFiles?.length ? { mentionedFiles } : {}),
+              ...(planMode !== undefined ? { planMode } : {}),
             }
           : undefined,
       ),

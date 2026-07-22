@@ -40,6 +40,7 @@ const INITIAL: AppState = {
   retryStatus: null,
   liveStatus: null,
   turnActive: false,
+  planMode: false,
 };
 
 // ── Action types ─────────────────────────────────────────────────────────────
@@ -384,6 +385,9 @@ function reducer(state: AppState, action: Action): AppState {
       }
       return { ...state, liveStatus: msg.status, turnActive };
     }
+
+    case "planModeState":
+      return { ...state, planMode: msg.enabled };
 
     default:
       return state;

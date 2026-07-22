@@ -321,7 +321,7 @@ describe("InputArea — Enter sends text and clears draft", () => {
     const textarea = screen.getByRole("textbox");
     fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
 
-    expect(postMessage).toHaveBeenCalledWith({ type: "sendMessage", text: "hello world", stepReview: true });
+    expect(postMessage).toHaveBeenCalledWith({ type: "sendMessage", text: "hello world", stepReview: true, planMode: false });
     expect(onDraftChange).toHaveBeenCalledWith("");
   });
 
@@ -358,7 +358,7 @@ describe("InputArea — Enter sends text and clears draft", () => {
 
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: false });
 
-    expect(postMessage).toHaveBeenCalledWith({ type: "sendMessage", text: "trimmed", stepReview: true });
+    expect(postMessage).toHaveBeenCalledWith({ type: "sendMessage", text: "trimmed", stepReview: true, planMode: false });
   });
 
   it("does not send on empty draft", () => {

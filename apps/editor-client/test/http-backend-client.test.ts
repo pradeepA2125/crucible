@@ -60,6 +60,34 @@ describe("HttpBackendClient skills", () => {
     expect(JSON.parse(sentBody).mentioned_files).toBeUndefined();
   });
 
+  test("sendChatMessage includes plan_mode in the request body when planMode is set", async () => {
+    let sentBody = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (_url, init) => {
+        sentBody = (init?.body as string) ?? "";
+        return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    const iter = client.sendChatMessage("t1", "hello", undefined, { planMode: true });
+    await iter[Symbol.asyncIterator]().next();
+    expect(JSON.parse(sentBody).plan_mode).toBe(true);
+  });
+
+  test("sendChatMessage omits plan_mode from the request body when not provided", async () => {
+    let sentBody = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (_url, init) => {
+        sentBody = (init?.body as string) ?? "";
+        return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    const iter = client.sendChatMessage("t1", "hi");
+    await iter[Symbol.asyncIterator]().next();
+    expect(JSON.parse(sentBody).plan_mode).toBeUndefined();
+  });
+
   test("listSkills maps the response", async () => {
     const client = new HttpBackendClient({
       baseUrl: "http://localhost:8000",

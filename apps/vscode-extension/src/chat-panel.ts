@@ -15,7 +15,8 @@ export type ChatMessageHandler = (
   message: string,
   stepReview?: boolean,
   forcedSkills?: string[],
-  mentionedPaths?: string[]
+  mentionedPaths?: string[],
+  planMode?: boolean
 ) => Promise<void>;
 export type PlanCardActionHandler = (
   taskId: string,
@@ -69,6 +70,9 @@ export type FetchSessionTranscriptHandler = (
   sessionId: string,
 ) => Promise<import("@crucible/editor-client").SessionTranscript | null>;
 export type OpenFileHandler = (relativePath: string) => void;
+// Sticky Plan Mode toggle (survives across threads/reloads via extension globalState).
+export type GetPlanModeHandler = () => boolean;
+export type SetPlanModeHandler = (enabled: boolean) => Promise<void>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
@@ -113,7 +117,9 @@ export class ChatPanel {
     private readonly onListWorkspaceFiles: ListWorkspaceFilesHandler = async () => [],
     private readonly onOpenFile: OpenFileHandler = () => {},
     private readonly onOpenGraphPanel: OpenGraphPanelHandler = () => {},
-    private readonly onFetchSessionTranscript: FetchSessionTranscriptHandler = async () => null
+    private readonly onFetchSessionTranscript: FetchSessionTranscriptHandler = async () => null,
+    private readonly onGetPlanMode: GetPlanModeHandler = () => false,
+    private readonly onSetPlanMode: SetPlanModeHandler = async () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -183,7 +189,12 @@ export class ChatPanel {
         if (this.lastWorkbarInfo !== null) {
           this.updateWorkbar(this.lastWorkbarInfo);
         }
+        void this.panel?.webview.postMessage({
+          type: "planModeState", enabled: this.onGetPlanMode ? this.onGetPlanMode() : false,
+        });
         p = this.onReady();
+      } else if (m["type"] === "setPlanMode") {
+        p = this.onSetPlanMode ? this.onSetPlanMode(m["enabled"] === true) : Promise.resolve();
       } else if (m["type"] === "sendMessage") {
         const forcedSkills = Array.isArray(m["forcedSkills"])
           ? (m["forcedSkills"] as string[])
@@ -191,7 +202,7 @@ export class ChatPanel {
         const mentionedPaths = Array.isArray(m["mentionedPaths"])
           ? (m["mentionedPaths"] as string[])
           : undefined;
-        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills, mentionedPaths);
+        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills, mentionedPaths, m["planMode"] === true);
       } else if (m["type"] === "implementPlan") {
         p = this.onPlanAction(m["taskId"] as string, "implement");
       } else if (m["type"] === "planFeedback") {

@@ -169,12 +169,15 @@ export type ExtensionMessage =
   // P1: prompt-file expansion replies from the host
   | { type: "promptList"; names: string[] }
   | { type: "promptExpanded"; name: string; found: boolean; text: string }
-  | { type: "workspaceFileList"; paths: string[] };
+  | { type: "workspaceFileList"; paths: string[] }
+  // Sticky Plan Mode toggle hydration (extension globalState), pushed on webviewReady
+  // and whenever the composer/ModeGate posts setPlanMode back to the host.
+  | { type: "planModeState"; enabled: boolean };
 
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
   | { type: "webviewReady" }
-  | { type: "sendMessage"; text: string; stepReview?: boolean; forcedSkills?: string[]; mentionedPaths?: string[] }
+  | { type: "sendMessage"; text: string; stepReview?: boolean; forcedSkills?: string[]; mentionedPaths?: string[]; planMode?: boolean }
   | { type: "implementPlan"; taskId: string }
   | { type: "planFeedback"; taskId: string; feedback: string }
   | { type: "newChat" }
@@ -255,4 +258,7 @@ export interface AppState {
   // input-disable signal from /live; survives reload). Distinct from inputEnabled,
   // which is the ephemeral per-turn flag a fresh webview mounts as `true`.
   turnActive: boolean;
+  // Sticky Plan Mode toggle, hydrated from the extension's globalState on mount
+  // (planModeState) and kept live as the composer/ModeGate flips it.
+  planMode: boolean;
 }

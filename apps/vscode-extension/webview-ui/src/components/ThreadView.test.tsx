@@ -33,6 +33,7 @@ const base: AppState = {
   retryStatus: null,
   liveStatus: null,
   turnActive: false,
+  planMode: false,
 };
 
 function renderView() {

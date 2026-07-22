@@ -14,6 +14,7 @@ interface Props {
   // Opens the in-chat settings popup. When absent (standalone/test call sites),
   // the gear falls back to the legacy openSettings host message.
   onOpenSettings?: () => void;
+  planMode?: boolean;  // hydrated from the extension's globalState via planModeState
 }
 
 // 5 lines × ~19.2px line-height ≈ 96px. Caps the textarea's auto-grow.
@@ -26,7 +27,7 @@ const MAX_TEXTAREA_HEIGHT = 96;
  * newline. When availability.showStop is true, a Stop button appears on the
  * left side of the footer row and posts { type: "stopTurn" } once.
  */
-export function InputArea({ availability, draft, onDraftChange, onOpenSettings }: Props) {
+export function InputArea({ availability, draft, onDraftChange, onOpenSettings, planMode = false }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [stopping, setStopping] = useState(false);
   // One-shot guard for the Tier B task-abort buttons (keep / revert).
@@ -137,10 +138,11 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
           type: "sendMessage",
           text: skill.message,
           stepReview,
+          planMode,
           forcedSkills: skill.forcedSkills,
         });
       } else {
-        vscode.postMessage({ type: "sendMessage", text: original, stepReview });
+        vscode.postMessage({ type: "sendMessage", text: original, stepReview, planMode });
       }
       onDraftChange("");
       const el = textareaRef.current;
@@ -148,7 +150,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [onDraftChange, stepReview, skillNames]);
+  }, [onDraftChange, stepReview, skillNames, planMode]);
 
   function autoGrow() {
     const el = textareaRef.current;
@@ -243,6 +245,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
       type: "sendMessage",
       text: trimmed,
       stepReview,
+      planMode,
       ...(mentionedPaths.length ? { mentionedPaths } : {}),
     });
     trackedMentionsRef.current = [];
@@ -395,6 +398,21 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings }
             className="accent-[var(--color-accent)] w-3 h-3"
           />
           Review each step
+        </label>
+
+        {/* Plan Mode toggle — sticky across threads (extension globalState), unlike
+            "Review each step" which is per-message local state. */}
+        <label className="flex items-center gap-1.5 text-[10px] text-text-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={planMode}
+            aria-label="Plan Mode"
+            onChange={(e) => {
+              vscode.postMessage({ type: "setPlanMode", enabled: e.target.checked });
+            }}
+            className="accent-[var(--color-accent)] w-3 h-3"
+          />
+          Plan Mode
         </label>
 
         {/* ⌘↵ hint */}

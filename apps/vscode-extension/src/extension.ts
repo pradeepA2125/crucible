@@ -98,8 +98,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const chatPanel = new ChatPanel(
     context.extensionUri,
-    (message, stepReview, forcedSkills, mentionedPaths) =>
-      controller.sendChatMessage(message, stepReview, forcedSkills, mentionedPaths),
+    (message, stepReview, forcedSkills, mentionedPaths, planMode) =>
+      controller.sendChatMessage(message, stepReview, forcedSkills, mentionedPaths, planMode),
     (taskId, action, feedback) => controller.handlePlanCardAction(taskId, action, feedback),
     () => controller.newChatThread(),
     (threadId) => controller.switchChatThread(threadId),
@@ -160,7 +160,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => {
       void vscode.commands.executeCommand("crucible.openGraphPanel");
     },
-    (sessionId: string) => controller.fetchSessionTranscript(sessionId)
+    (sessionId: string) => controller.fetchSessionTranscript(sessionId),
+    () => runtimeManager.getPlanMode(),
+    (enabled: boolean) => runtimeManager.setPlanMode(enabled)
   );
 
   const ui: ControllerUI = {

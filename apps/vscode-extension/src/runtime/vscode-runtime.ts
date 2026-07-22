@@ -335,6 +335,14 @@ export class RuntimeManager {
       this.context.globalState.update("crucible.skillsDisabled", names));
   }
 
+  getPlanMode(): boolean {
+    return this.context.globalState.get<boolean>("crucible.chat.planMode", false);
+  }
+
+  async setPlanMode(enabled: boolean): Promise<void> {
+    await this.context.globalState.update("crucible.chat.planMode", enabled);
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     for (const [workspace, proc] of this.processes) {
