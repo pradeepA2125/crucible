@@ -46,6 +46,13 @@ export function ModeGate({ taskId, payload }: Props) {
     if (resolved !== null) return; // one-shot guard
     setResolved(label);
     vscode.postMessage({ type: "modeDecision", threadId: taskId, mode });
+    // Picking "implement" exits Plan Mode — the composer's sticky toggle must flip
+    // off too, in the SAME action (not inferred by the extension from modeDecision
+    // alone — the card already knows this is an exit). Single write path: the
+    // extension's setPlanMode handler is the one place this value ever changes.
+    if (mode === "implement") {
+      vscode.postMessage({ type: "setPlanMode", enabled: false });
+    }
   }
 
   function handleChatAbout() {
@@ -65,9 +72,16 @@ export function ModeGate({ taskId, payload }: Props) {
       borderColor="var(--accent-brd)"
       headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
     >
-      {/* ── Approach sketch ── */}
+      {/* ── Approach sketch — scrollable/expandable so a long, detailed plan is
+          actually readable before deciding (this is what makes dropping the old
+          EXPLAIN mode safe — its only purpose was working around this card being
+          too shallow to read). ── */}
       {planSketch && (
-        <div className="px-2.5 py-2 text-[12px] text-text-1 whitespace-pre-wrap border-t border-border">
+        <div
+          data-testid="plan-sketch"
+          className="px-2.5 py-2 text-[12px] text-text-1 whitespace-pre-wrap border-t border-border overflow-y-auto"
+          style={{ maxHeight: "16rem" }}
+        >
           {planSketch}
         </div>
       )}
