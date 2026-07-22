@@ -125,7 +125,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => controller.listSkills(),
     () => controller.openChat(),
     (threadId, decision) => controller.handleMcpDecisionFromChat(threadId, decision),
-    (threadId, decision) => controller.handleDocDecisionFromChat(threadId, decision),
     () => composerModelState(),
     async (backend, model) => {
       // Pass the stored key as request credentials: the running backend's env may

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
-import type { ChatMessage, ChatThreadSummary, CommandDecision, DocWriteDecision, McpToolDecision } from "@crucible/editor-client";
+import type { ChatMessage, ChatThreadSummary, CommandDecision, McpToolDecision } from "@crucible/editor-client";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
 
@@ -52,8 +52,6 @@ export type ExpandPromptHandler = (
 export type ListSkillsHandler = () => Promise<{ name: string; description: string }[]>;
 // P3: controller mcp_tool gate — approve/reject an external MCP tool call.
 export type McpDecisionHandler = (threadId: string, decision: McpToolDecision) => Promise<void>;
-// Controller doc_write gate — approve/reject a write_doc file write.
-export type DocDecisionHandler = (threadId: string, decision: DocWriteDecision) => Promise<void>;
 
 // Composer model quick-swap (options are ModelOption[] from composer-models.ts, kept
 // as unknown[] here since chat-panel doesn't import that type; the webview mirrors it).
@@ -108,7 +106,6 @@ export class ChatPanel {
     private readonly onListSkills: ListSkillsHandler = async () => [],
     private readonly onReady: () => Promise<void> = async () => {},
     private readonly onMcpDecision: McpDecisionHandler = async () => {},
-    private readonly onDocDecision: DocDecisionHandler = async () => {},
     private readonly onListModels: ListModelsHandler = async () => ({ current: null, options: [] }),
     private readonly onSetModel: SetModelHandler = async () => ({ current: null, options: [] }),
     private readonly onOpenSettings: OpenSettingsHandler = () => {},
@@ -229,10 +226,6 @@ export class ChatPanel {
         p = this.onMcpDecision(m["threadId"] as string, {
           approve: m["approve"] === true,
           remember: m["remember"] === true,
-        });
-      } else if (m["type"] === "docDecision") {
-        p = this.onDocDecision(m["threadId"] as string, {
-          approve: m["approve"] === true,
         });
       } else if (m["type"] === "stepDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "discard";

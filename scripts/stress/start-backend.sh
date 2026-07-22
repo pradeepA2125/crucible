@@ -370,12 +370,11 @@ echo "uvicorn_log=$LOG_FILE"
   export CRUCIBLE_ARTIFACTS_ROOT="$ARTIFACTS_ROOT"
   export CRUCIBLE_SHELL_POLICY="${CRUCIBLE_SHELL_POLICY:-ask}"
   # Default-on feature flags (2026-07-02): reactive controller + its tool surface
-  # (skills catalog, MCP servers from .crucible/mcp.json, gated write_doc).
+  # (skills catalog, MCP servers from .crucible/mcp.json).
   # Override any of these via env to opt out.
   export CRUCIBLE_CHAT_CONTROLLER="${CRUCIBLE_CHAT_CONTROLLER:-1}"
   export CRUCIBLE_SKILLS_ENABLED="${CRUCIBLE_SKILLS_ENABLED:-1}"
   export CRUCIBLE_MCP_ENABLED="${CRUCIBLE_MCP_ENABLED:-1}"
-  export CRUCIBLE_DOC_WRITE_ENABLED="${CRUCIBLE_DOC_WRITE_ENABLED:-1}"
   export CRUCIBLE_EXEC_SESSIONS_ENABLED="${CRUCIBLE_EXEC_SESSIONS_ENABLED:-1}"
   export CRUCIBLE_SEMANTIC_RETRIEVAL="${CRUCIBLE_SEMANTIC_RETRIEVAL:-true}"
   # UX decision (chat UI redesign): the step gate is the conscious approval moment

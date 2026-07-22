@@ -7,11 +7,13 @@ under-trigger fix and vice versa):
 
   A (no unnecessary trigger): a doc request the user already specified
     -> the turn's tool-call sequence contains NO read_skill, and parks at a
-    doc_write gate (rejected by the eval, so the workspace is left unchanged).
+    mode gate (propose_mode; rejected via "explain", so the workspace is left
+    unchanged — write_doc was removed, so any file write now routes through
+    propose_mode -> edit).
   B (trigger still fires): a bug report
     -> the FIRST tool call is read_skill with a debugging-ish skill.
 
-Needs: a running backend (CRUCIBLE_CHAT_CONTROLLER=1, SKILLS+DOC_WRITE on)
+Needs: a running backend (CRUCIBLE_CHAT_CONTROLLER=1, SKILLS on)
 serving a workspace with the superpowers skills installed, e.g.
   bash scripts/stress/start-backend.sh --backend turboquant --port 8002 \
       --workspace "$PWD/workspaces/crucible-stress" --validation-profile none
@@ -55,6 +57,28 @@ def _drive_message(base_url: str, thread_id: str, content: str) -> threading.Thr
                 "POST",
                 f"{base_url}/v1/chat/threads/{thread_id}/message",
                 json={"content": content},
+                headers={"Accept": "text/event-stream"},
+                timeout=TURN_TIMEOUT_SEC,
+            ) as resp:
+                for _ in resp.iter_lines():
+                    pass
+        except httpx.HTTPError:
+            pass  # the eval judges via /live + artifacts, not this stream
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return t
+
+
+def _resolve_mode(base_url: str, thread_id: str, mode: str) -> threading.Thread:
+    """POST /mode-decision on a daemon thread (it streams for the resumed turn)."""
+
+    def _run() -> None:
+        try:
+            with httpx.stream(
+                "POST",
+                f"{base_url}/v1/chat/threads/{thread_id}/mode-decision",
+                json={"mode": mode},
                 headers={"Accept": "text/event-stream"},
                 timeout=TURN_TIMEOUT_SEC,
             ) as resp:
@@ -119,7 +143,8 @@ def _wait_for_settle(client: httpx.Client, base_url: str, thread_id: str) -> str
 
 
 def eval_direction_a(client: httpx.Client, base_url: str, workspace: str) -> list[str]:
-    """Doc request: no read_skill anywhere; parks at doc_write; eval rejects it."""
+    """Doc request: no read_skill anywhere; parks at a mode gate; eval picks
+    "explain" so nothing is written."""
     failures: list[str] = []
     tid = _new_thread(client, base_url, workspace, "eval: doc no-trigger")
     print(f"[A] thread {tid}: {DOC_REQUEST[:60]}...")
@@ -129,12 +154,11 @@ def eval_direction_a(client: httpx.Client, base_url: str, workspace: str) -> lis
     print(f"[A] gate={gate} sequence={seq}")
     if any(tool == "read_skill" for _, tool in seq):
         failures.append(f"A: unnecessary skill trigger — sequence {seq}")
-    if gate != "doc_write":
-        failures.append(f"A: expected doc_write gate, got {gate}")
+    if gate != "mode":
+        failures.append(f"A: expected mode gate, got {gate}")
     else:
-        # Reject: leaves the workspace byte-identical (verified by the gate contract).
-        client.post(f"{base_url}/v1/chat/threads/{tid}/doc-decision",
-                    json={"approve": False})
+        # Explain: leaves the workspace byte-identical (no edit session opened).
+        _resolve_mode(base_url, tid, "explain")
         time.sleep(2)
     client.post(f"{base_url}/v1/chat/threads/{tid}/stop")
     return failures

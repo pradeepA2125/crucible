@@ -247,30 +247,20 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   config (community SearXNG/Tavily/Brave MCP servers), not code. Spec/plan:
   `docs/superpowers/specs|plans/2026-07-02-doc-write-tool-web-search-defaults*`.
 
-#### write_doc (gated docs/data writes from chat)
+#### write_doc — REMOVED (2026-07-16)
 
-One-tool lightweight write path for standalone non-executable artifacts — the alternative
-to full EDIT mode for READMEs/diagrams/data. Flag-gated, **default OFF**
-(`CRUCIBLE_DOC_WRITE_ENABLED`), **controller-only**. Spec/plan:
-`docs/superpowers/specs|plans/2026-07-02-doc-write-tool-web-search-defaults*`.
-
-- **Tool (`agentd/chat/doc_write_source.py::DocWriteToolSource`):** `write_doc(path, content)`,
-  one file per call. Validation BEFORE the gate (is_error output, no gate): workspace-relative
-  path (traversal/absolute rejected), extension allowlist `.md .mmd .mermaid .txt .rst .adoc
-  .svg .json .yaml .yml .csv` (case-insensitive, final suffix), content ≤ 1 MB.
-- **Gate:** every call raises `PendingGate(kind="doc_write", payload={path, exists, preview})`
-  (Class-A; `doc_write_requested` SSE is only the instant-render poke). `preview` = capped
-  unified diff (existing file) or capped content (new file). Resolved by
-  `POST /v1/chat/threads/{id}/doc-decision {approve}` — **NO remember option** (every write is
-  unique content). Approve → write to the REAL workspace (mkdir parents). Timeout env
-  `CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC` (0 = wait forever; timeout → reject).
-  `PendingGate.kind` gained `"doc_write"` in chat/models.py + editor-client Zod + webview
-  types.ts (the three-enum footgun).
-- **Phase availability (explicit decision):** available in DECIDE **and** EDIT; in EDIT a
-  doc write is still gated per write and lands immediately, independent of the edit
-  session's shadow.
-- **Prompt:** `_DOC_WRITE_BLOCK` auto-appends when a `write_doc` tool def is present
-  (the `_MCP_BLOCK` detection pattern — no new parameter).
+The one-shot `write_doc(path, content)` tool (single-call, full-file-content-only,
+no append/partial-write) was removed entirely — every doc/plan/data write now goes
+through the same `propose_mode → edit` flow as source code (`create_file` for a new
+file, `search_replace`/`apply_diff` to grow or modify one incrementally). Root cause:
+the single-call-with-full-content contract had no way to split a large multi-section
+document (e.g. a multi-phase implementation plan) across multiple calls, which
+reliably broke weaker/slower models (TurboQuant malformed-JSON truncation, Gemini
+empty-args repetition attractor — both observed live on the same real plan-writing
+turn). The original spec/plan docs (`docs/superpowers/specs|plans/2026-07-02-doc-write-tool-web-search-defaults*`)
+are left as historical record; the tool, its `PendingGate(kind="doc_write")` gate,
+`/doc-decision` route, `CRUCIBLE_DOC_WRITE_ENABLED`/`CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC`
+env vars, and the `DocWriteGate` webview component no longer exist.
 
 #### P4 — Install, managed runtime & settings UI (copilot-parity roadmap)
 
@@ -474,7 +464,7 @@ live-smoke verified (real backend + VS Code dev host, CDP-driven).
   - **Discovery:** `extension.ts` exposes a `listWorkspaceFiles`/`workspaceFileList` round-trip over `vscode.workspace.findFiles` (standard ignore-dirs, capped 5000), lazily fetched on the first `@`. `openFile`/`vscode.window.showTextDocument` closure for click-to-open. Both are plain `extension.ts` closures (not `controller.ts`, which stays vscode-API-free) — the same pattern as the pre-existing `onOpenSettings`. The hand-maintained `vscode-shim.d.ts` (this repo doesn't pull in `@types/vscode`) gained `findFiles`/`asRelativePath`/`showTextDocument`.
   - **Insertion + tracking:** selecting a file inserts `@path ` into the draft; `InputArea.tsx` tracks the exact set of paths inserted via the dropdown for the current draft (`trackedMentionsRef`) — only those resolve to a real mention on send, never a blind `@`-regex scan (so an email address or handle typed by hand never triggers). On send, `mentionedPaths` (paths still present in the final text) rides the `sendMessage` webview message.
   - **Read + cap (`apps/vscode-extension/src/mentioned-files.ts::readMentionedFiles`):** `controller.ts`'s `sendChatMessage` reads each mentioned path off the real workspace and caps content at a **fixed 20,000-char constant** (`MENTION_FILE_MAX_CHARS`, deliberately not an env var — a UI-side convenience limit, not a backend policy knob); a missing/unreadable file becomes `"(file not found or unreadable)"` rather than blocking send.
-  - **Contract:** editor-client `sendChatMessage(..., {mentionedFiles: {path, content}[]})` → HTTP body `mentioned_files`. `routes.py`'s `post_chat_message` parses it and passes it to `ChatController.handle_message(..., mentioned_files=…)` — **controller-only**, matching the existing convention for `write_doc`/MCP/skills (the legacy `ChatAgent` path is untouched).
+  - **Contract:** editor-client `sendChatMessage(..., {mentionedFiles: {path, content}[]})` → HTTP body `mentioned_files`. `routes.py`'s `post_chat_message` parses it and passes it to `ChatController.handle_message(..., mentioned_files=…)` — **controller-only**, matching the existing convention for MCP/skills (the legacy `ChatAgent` path is untouched).
   - **Turn-scoped folding (`ChatController.handle_message`):** the referenced content is appended as a `"...\n\n---\nReferenced files:\n### path\n\`\`\`\n<content>\n\`\`\`"` block to a local `turn_message` that feeds **only** `_run_loop`'s `goal` (→ `plan_context["goal"]`) for that one call — the persisted/display `ChatMessage.content` stays the original short text, tagged with `metadata.mentioned_files` (paths only). **Verified live via direct SQLite inspection of `chat.sqlite3`:** neither `messages_json` nor `controller_history_json`/`controller_seed_json` (the cache-prefix replay history) ever contain the file content — it exists only in that turn's one-shot debug artifact (`controller-turn-NN.json`'s `goal` field). A later turn that needs the file again costs the model one extra `read_file` call; the mentioned path stays visible in the persisted display text as a breadcrumb either way. This was an explicit design tradeoff (bounded context growth over never-re-reading), not an oversight.
   - **Rendering:** `MessageRow` passes `msg.metadata?.mentioned_files` into `UserMessage`, which linkifies only those exact `@path` tokens (never an unrestricted regex over the bubble text) — click posts `{type:"openFile", path}`. **GOTCHA (found + fixed via live smoke):** the *optimistic* echo (`controller.ts`'s `appendChatMessage`, called before the network round-trip completes) originally hardcoded `metadata: {}`, so a mention only rendered clickable after a reload (when the persisted message with real metadata was fetched) — fixed to mirror the backend's shape so the link renders instantly on send.
 - **Memory inspector polish:** `memory/{MemoryApp,BrowserTab,RecallTraceTab}.tsx` (a separate Vite bundle that already imported the shared `index.css` but predated the chat/settings design-token pass) migrated from hardcoded slate hex onto the same `--color-*` tokens; kind-accent colors (semantic/procedural/episodic) now reuse existing tint tokens (filled pill: tint bg + `var(--color-panel)` text) instead of one-off hex. A new header icon button in `ThreadView.tsx` (`db` icon, alongside the existing ☰) posts `openMemoryPanel`, routed through `chat-panel.ts`/`extension.ts` to the pre-existing `crucible.openMemoryPanel` command — no new capability-flag plumbing needed, since that command already degrades gracefully when memory is disabled. Deliberately **not** merged into the Settings pane/bundle and **not** an inline floating overlay (both considered, both rejected/deferred) — it stays a separate panel, just discoverable from chat now.
@@ -588,11 +578,9 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `CRUCIBLE_MCP_TOOLS_MAX_CHARS` — char budget for MCP tool definitions in tools_json (default `16000`; order-truncation).
 - `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` — per-server connect wait at startup before continuing without it (default `30`).
 - `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
-- `CRUCIBLE_DOC_WRITE_ENABLED` — offer the `write_doc` per-write-gated docs tool to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "write_doc".
-- `CRUCIBLE_DOC_WRITE_DECISION_TIMEOUT_SEC` — seconds to wait for the doc_write gate decision; `0` (default) = wait forever; timeout → reject.
 - `CRUCIBLE_PORT` — when set, writes `<workspace>/.crucible/state/agentd.lock` (`{pid, port, started_at}`) at startup and clears it at shutdown. Only the extension's managed spawn sets this; `start-backend.sh`/manual runs don't, so they never write a lockfile. See "P4 — Install, managed runtime & settings UI".
 - `CRUCIBLE_SKILLS_DISABLED` — comma-separated skill names to exclude from the catalog (user-local disable, set by the extension's settings panel; not cached with the catalog's mtime signature).
-- **`start-backend.sh` defaults ON (2026-07-02):** `CRUCIBLE_CHAT_CONTROLLER`, `CRUCIBLE_SKILLS_ENABLED`, `CRUCIBLE_MCP_ENABLED`, `CRUCIBLE_DOC_WRITE_ENABLED` (+ `CRUCIBLE_SEMANTIC_RETRIEVAL=true`) — the engine defaults above stay OFF, but the script opts in (`${VAR:-1}`, override via env to opt out; same pattern as the scope-policy note). The repo-root `.env` sets the same flags for manual runs.
+- **`start-backend.sh` defaults ON (2026-07-02):** `CRUCIBLE_CHAT_CONTROLLER`, `CRUCIBLE_SKILLS_ENABLED`, `CRUCIBLE_MCP_ENABLED` (+ `CRUCIBLE_SEMANTIC_RETRIEVAL=true`) — the engine defaults above stay OFF, but the script opts in (`${VAR:-1}`, override via env to opt out; same pattern as the scope-policy note). The repo-root `.env` sets the same flags for manual runs.
 - Provider API keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, etc.
 
 **Model selection** (per provider)
