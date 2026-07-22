@@ -194,7 +194,16 @@ export class ChatPanel {
         });
         p = this.onReady();
       } else if (m["type"] === "setPlanMode") {
-        p = this.onSetPlanMode ? this.onSetPlanMode(m["enabled"] === true) : Promise.resolve();
+        // The checkbox is a fully controlled prop (sourced from globalState, not local
+        // state, so it survives across threads/reloads) — without echoing the persisted
+        // value back here, it would never visually update after a click, and the stale
+        // prop value would keep riding every sendMessage until the next webview reload.
+        const enabled = m["enabled"] === true;
+        p = Promise.resolve(this.onSetPlanMode ? this.onSetPlanMode(enabled) : undefined).then(
+          () => {
+            void this.panel?.webview.postMessage({ type: "planModeState", enabled });
+          }
+        );
       } else if (m["type"] === "sendMessage") {
         const forcedSkills = Array.isArray(m["forcedSkills"])
           ? (m["forcedSkills"] as string[])
