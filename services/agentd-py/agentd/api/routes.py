@@ -1387,6 +1387,8 @@ def build_router(
                 ]
                 if isinstance(_raw_mentioned, list) else None
             ) or None
+            _raw_plan_mode = request.get("plan_mode")
+            plan_mode = _raw_plan_mode if isinstance(_raw_plan_mode, bool) else None
             channel_id = f"chat:{thread_id}"
 
             # Flag-tolerant: only the ChatController detaches turns. The legacy
@@ -1407,7 +1409,7 @@ def build_router(
                     _chat_agent.handle_message(
                         thread_id, message, channel_id=channel_id,
                         step_review=step_review, forced_skills=forced_skills,
-                        mentioned_files=mentioned_files),
+                        mentioned_files=mentioned_files, plan_mode=plan_mode),
                     channel_id=channel_id,
                 )
                 queue = _chat_agent._broadcaster.subscribe(channel_id)

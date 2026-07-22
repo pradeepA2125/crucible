@@ -282,6 +282,7 @@ class ChatController:
         self, thread_id: str, message: str, channel_id: str, step_review: bool | None = None,
         forced_skills: list[str] | None = None,
         mentioned_files: list[dict[str, str]] | None = None,
+        plan_mode: bool | None = None,
     ) -> None:
         thread = self._store.get_thread(thread_id)
         if thread is None:
@@ -333,9 +334,10 @@ class ChatController:
         # Clarify-resume is now driven by resolve_clarify (the gate carries resume_phase),
         # not a fresh user message: the main composer is disabled while a clarify gate is
         # pending, so the answer arrives via the card. A plain message here always
-        # supersedes any pending gate (cleared above) and starts fresh in ACTIVE (the
-        # plan_mode-derived phase computation lands here in Task 7).
-        resume_phase = None
+        # supersedes any pending gate (cleared above) and starts fresh, in the phase the
+        # sticky Plan Mode toggle selects (NEW-I6 — this MUST be the plan_mode
+        # computation, never a stray None, or the toggle silently has no effect).
+        resume_phase = "PLAN" if plan_mode else "ACTIVE"
         # One id for this turn's in-flight pills message — lets the loop upsert it per
         # tool result and _finish finalize the SAME message (no duplicate). Finding 5.
         turn_id = uuid4().hex
