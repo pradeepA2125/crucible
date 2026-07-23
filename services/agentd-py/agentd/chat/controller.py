@@ -323,7 +323,7 @@ class ChatController:
         # earlier turn). Drop it so this turn's switch-back dedup is scoped to its own
         # message (finding 5); the orphan's pills stay as a normal message.
         self._store.clear_inflight_markers(thread_id)
-        # Remember this turn's review toggle so a propose_mode → "edit" re-entry
+        # Remember this turn's review toggle so a propose_mode → "implement" re-entry
         # (resolved via /mode-decision, which carries no step_review) honors it.
         self._step_review_by_thread[thread_id] = step_review
 
@@ -344,7 +344,15 @@ class ChatController:
         outcome = await self._run_loop(
             thread_id, channel_id, turn_message, seed_history=seed_history,
             step_review=step_review, phase=resume_phase, turn_id=turn_id,
-            edit_is_resume=(resume_phase == "ACTIVE"), forced_skills=forced_skills)
+            # A plain message is ALWAYS a fresh entry, never a resume — unlike
+            # resolve_clarify's identical-looking expression below, `resume_phase`
+            # here is the toggle-derived starting phase for a brand-new turn, not
+            # "the phase we're resuming an in-flight feature into." Passing
+            # (resume_phase == "ACTIVE") would evaluate True for every default
+            # (Plan Mode off) message, suppressing the C1b entry hint on every
+            # follow-up turn in a thread — exactly the mis-route active_entry
+            # exists to prevent.
+            edit_is_resume=False, forced_skills=forced_skills)
         await self._finish(thread_id, channel_id, outcome, step_review, turn_id=turn_id)
 
     async def _run_loop(
@@ -954,8 +962,8 @@ class ChatController:
             return
         if mode in ("create_task", "resume") and not self._task_subsystem_enabled:
             raise ValueError(
-                "task subsystem is disabled (CRUCIBLE_TASK_SUBSYSTEM=0) — only edit/explain "
-                "are available; the controller handles changes inline.")
+                "task subsystem is disabled (CRUCIBLE_TASK_SUBSYSTEM=0) — only \"implement\" "
+                "is available; the controller handles changes inline.")
         # Friendly record of the choice — read the option label from the gate BEFORE
         # clearing it so the breadcrumb reads "▸ You chose: Edit inline now" not a raw mode.
         label = mode

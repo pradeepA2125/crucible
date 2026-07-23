@@ -258,10 +258,10 @@ class ControllerLoop:
         # caller can persist what a CANCELLED turn (/stop) accumulated before the cancel
         # raised, instead of losing the turn's exploration + already-promoted edits (Q2).
         self._history: list[dict[str, object]] = []
-        # Whether any edit has been applied this turn — half of the `edit_entry` signal (the
-        # other half is "no todo list yet"). While both hold, the payload builder shows the
-        # clean EDIT-ENTRY hint (write_todos-as-tool_call) instead of the mid-turn reconcile
-        # hint, so the first-action-after-inline case isn't mis-routed.
+        # Whether any edit has been applied this turn — half of the `active_entry` signal
+        # (the other half is "no todo list yet"). While both hold, the payload builder shows
+        # the clean entry hint (write_todos-as-tool_call) instead of the mid-turn reconcile
+        # hint, so the first-action case isn't mis-routed.
         self._edit_applied = False
 
     def _allowed_action_types(self) -> list[str]:

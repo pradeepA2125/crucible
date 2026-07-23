@@ -211,7 +211,17 @@ export class ChatPanel {
         const mentionedPaths = Array.isArray(m["mentionedPaths"])
           ? (m["mentionedPaths"] as string[])
           : undefined;
-        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills, mentionedPaths, m["planMode"] === true);
+        // ModeGate's "Chat about this approach" feedback field posts sendMessage with
+        // no planMode at all (it doesn't track the composer's toggle state) — falling
+        // back to `undefined === true` -> false would silently drop a Plan-Mode turn
+        // into ACTIVE the moment the user types feedback on the card, contradicting the
+        // whole point of Plan Mode persisting through a plan-refinement round-trip.
+        // Fall back to the persisted (single-source-of-truth) value only when the
+        // field is genuinely absent, not when it's explicitly false.
+        const planMode = typeof m["planMode"] === "boolean"
+          ? (m["planMode"] as boolean)
+          : (this.onGetPlanMode ? this.onGetPlanMode() : false);
+        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills, mentionedPaths, planMode);
       } else if (m["type"] === "implementPlan") {
         p = this.onPlanAction(m["taskId"] as string, "implement");
       } else if (m["type"] === "planFeedback") {

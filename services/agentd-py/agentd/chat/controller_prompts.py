@@ -248,9 +248,10 @@ OUTPUT — choose exactly one variant per turn. ALL listed fields are REQUIRED a
 
 Variant — tool_call (explore): {type, thought, tool, args}
   "tool" is a tool name from AVAILABLE TOOLS; "args" is a NON-EMPTY object of that tool's params.
-  Before mode selection, use ONLY read-only tools (search_code / read_file / list_directory /
-  read_env_profile / search_semantic). run_command is NOT available yet — to change anything,
-  emit propose_mode (never write files via the shell); run_command unlocks once editing starts.
+  run_command and every other tool are directly available by default — no permission step
+  required. The ONLY exception is Plan Mode (a separate opt-in the user controls): there, use
+  ONLY read-only tools (search_code / read_file / list_directory / read_env_profile /
+  search_semantic) and emit propose_mode instead of run_command to make a change.
   {"type":"tool_call","thought":"locate the chat route","tool":"search_code","args":{"pattern":"def .*message","path_filter":"*.py"}}
   {"type":"tool_call","thought":"read the handler","tool":"read_file","args":{"path":"services/agentd-py/agentd/api/routes.py","start_line":120,"end_line":200}}
   WRONG — "tool" must be a name from AVAILABLE TOOLS, never one of THIS schema's own
@@ -604,7 +605,7 @@ def build_controller_step_payload(
         payload["todo_status"] = todo_status
     # Per-turn steering, mirroring build_planning_step_payload's reflect-then-choose
     # scaffold: first-turn anchoring (don't commit cold), mid-turn reflect→(explore|commit),
-    # and a final-step "land it now" warning. Phase-aware (DECIDE vs EDIT). This — not the
+    # and a final-step "land it now" warning. Phase-aware (PLAN vs ACTIVE). This — not the
     # static system prompt — is what stops the iter=0 cold answer and the endless thrash.
     has_query_graph = any(t.get("name") == "query_graph" for t in tool_definitions)
     _graph = "/query_graph" if has_query_graph else ""
