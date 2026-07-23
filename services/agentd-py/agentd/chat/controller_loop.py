@@ -441,9 +441,9 @@ class ControllerLoop:
             # strictly one-shot — skill triage is genuinely redundant to re-run every
             # iteration once it's been done or missed.
             plan_context["skill_check_due"] = self._sm.phase == "ACTIVE" and iteration == 0
-            # decide_entry (PLAN): unchanged semantics from the old DECIDE branch, just
+            # plan_entry (PLAN): unchanged semantics from the old DECIDE branch, just
             # renamed to the PLAN phase value — the first model call of THIS run only.
-            plan_context["decide_entry"] = self._sm.phase == "PLAN" and iteration == 0
+            plan_context["plan_entry"] = self._sm.phase == "PLAN" and iteration == 0
             try:
                 resp = await self._reasoning.create_controller_step(
                     plan_context=plan_context, history=history,
@@ -736,7 +736,7 @@ class ControllerLoop:
                 history.append(assistant_turn(resp))
                 if accepted:
                     touched = [d.path for d in diff]
-                    # A real edit landed → out of the EDIT-entry window (clears edit_entry).
+                    # A real edit landed → out of the active-entry window (clears active_entry).
                     self._edit_applied = True
                     # Log the apply outcome (the diff card carries the UI; agentd.log had no
                     # record of a successful apply — only the pre-apply ops line at L302).

@@ -741,7 +741,7 @@ def build_controller_step_payload(
             "action\" that outranks it. \"this looks simple\", \"I already know how to do this\", "
             "and \"let me explore first\" are NOT valid reasons to skip the check. "
         ) if skills_available else ""
-        if plan_context.get("decide_entry") or not history:
+        if plan_context.get("plan_entry") or not history:
             hint = plan_mode_framing + (
                 skill_check +
                 "Once the skill check above is done (no line matched, or the matched skill's body "

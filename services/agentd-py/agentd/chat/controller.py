@@ -114,7 +114,7 @@ class ChatController:
         # Task subsystem flag (default OFF): gates create_task/resume mode handoff and the
         # task-mode prompt injection. Process-fixed — resolved once, like the controller flag.
         self._task_subsystem_enabled = is_task_subsystem_enabled()
-        # run_command gating for EDIT turns (DECIDE bars it entirely — see
+        # run_command gating for ACTIVE turns (PLAN bars it entirely — see
         # controller_loop._decide_state_change_correction). Mirrors the task path's
         # CRUCIBLE_SHELL_POLICY / CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC.
         self._shell_policy = shell_policy
@@ -960,6 +960,19 @@ class ChatController:
             logger.info("[controller] resolve_mode no-op: no pending mode gate (thread=%s)",
                         thread_id)
             return
+        # Backward-compat (spec edge case): a mode gate persisted BEFORE the merged-phase
+        # deploy may carry a legacy mode ("edit"/"explain") the new dispatch no longer
+        # knows. Rather than strand it in the graceful-degrade "not available yet" else
+        # branch below, map ONLY those two known legacy values to "implement" — the
+        # closest live equivalent (exit to ACTIVE and make the change). Deliberately
+        # narrow: any OTHER unrecognized mode string (a genuinely invalid/garbled
+        # client value, not a known legacy one) still falls through to the existing
+        # graceful-degrade path below rather than being silently treated as "go ahead
+        # and make a change" — this endpoint takes untrusted input, so only a known,
+        # enumerated legacy value gets remapped, not "anything we don't recognize."
+        if mode in ("edit", "explain"):
+            logger.info("[controller] resolve_mode: legacy mode %r → implement", mode)
+            mode = "implement"
         if mode in ("create_task", "resume") and not self._task_subsystem_enabled:
             raise ValueError(
                 "task subsystem is disabled (CRUCIBLE_TASK_SUBSYSTEM=0) — only \"implement\" "

@@ -102,6 +102,29 @@ async def test_mode_decision_double_dispatch_guarded(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_mode_decision_legacy_mode_maps_to_implement(tmp_path: Path):
+    """Backward-compat edge case: a mode gate persisted BEFORE the merged-phase deploy
+    may carry a legacy mode ("edit"/"explain"). resolve_mode maps any unrecognized mode
+    to "implement" (exit to ACTIVE, make the change) rather than stranding it in the
+    'not available yet' degrade branch."""
+    store = ChatThreadStore(tmp_path / "c.sqlite3")
+    th = store.create_thread(str(tmp_path), title="t")
+    eng = ScriptedReasoningEngine(None, [], controller_step_responses=[
+        {"type": "answer", "thought": "t", "answer": "implemented"}])
+    ctrl = _controller(tmp_path, store, eng, _Orch())
+    ctrl._histories[th.thread_id] = [{"role": "assistant", "content": "{}"}]
+    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
+        "options": [{"mode": "edit", "label": "Edit inline now"}]}))
+    await ctrl.resolve_mode(
+        th.thread_id, "edit", channel_id=f"chat:{th.thread_id}", goal="g")
+    msgs = store.get_thread(th.thread_id).messages
+    # Dispatched as implement (the ACTIVE re-entry ran) — NOT the resume/unknown degrade.
+    assert not any("not available yet" in m.content.lower() for m in msgs)
+    assert any(m.role == "agent" and m.content == "implemented" for m in msgs)
+    assert store.get_thread(th.thread_id).pending_controller_gate is None
+
+
+@pytest.mark.asyncio
 async def test_mode_decision_resume_not_yet_wired_writes_breadcrumb(tmp_path: Path):
     """"explain" mode was removed entirely (2026-07-16) — the only modes now are
     implement/create_task/resume. "resume" passes the task-subsystem guard but its
