@@ -41,7 +41,7 @@ def test_flat_schema_is_default_and_unchanged() -> None:
     schema = controller_response_schema(phase="PLAN")
     assert "oneOf" not in schema
     assert schema["properties"]["type"]["enum"] == [  # type: ignore[index]
-        "tool_call", "answer", "clarify", "propose_mode"
+        "tool_call", "answer", "clarify", "propose_mode", "progress"
     ]
 
 
@@ -49,13 +49,15 @@ def test_tight_plan_is_oneof_of_the_four_phase_variants() -> None:
     schema = controller_response_schema(phase="PLAN", tight=True)
     assert set(schema.keys()) == {"oneOf"}
     branches = _branches_by_type(schema)
-    assert set(branches) == {"tool_call", "answer", "clarify", "propose_mode"}
+    assert set(branches) == {"tool_call", "answer", "clarify", "propose_mode", "progress"}
 
 
 def test_tight_active_is_oneof_of_the_active_phase_variants() -> None:
     schema = controller_response_schema(phase="ACTIVE", tight=True)
     branches = _branches_by_type(schema)
-    assert set(branches) == {"tool_call", "answer", "edit", "clarify", "submit_changes"}
+    assert set(branches) == {
+        "tool_call", "answer", "edit", "clarify", "submit_changes", "progress",
+    }
 
 
 def test_tight_branch_forbids_cross_variant_bleed() -> None:

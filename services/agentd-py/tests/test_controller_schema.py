@@ -63,17 +63,21 @@ def test_system_prompt_teaches_apply_diff_and_replace_range():
 def test_schema_is_flat_not_oneof():
     assert "oneOf" not in CONTROLLER_RESPONSE_SCHEMA and "anyOf" not in CONTROLLER_RESPONSE_SCHEMA
     enum = CONTROLLER_RESPONSE_SCHEMA["properties"]["type"]["enum"]
-    assert set(enum) == {"tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes"}
+    assert set(enum) == {
+        "tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress",
+    }
     # plan_sketch present for propose_mode
     assert "plan_sketch" in CONTROLLER_RESPONSE_SCHEMA["properties"]
 
 
 def test_phase_gating_trims_type_enum():
     plan = controller_response_schema(phase="PLAN")["properties"]["type"]["enum"]
-    assert set(plan) == {"tool_call", "answer", "clarify", "propose_mode"}
+    assert set(plan) == {"tool_call", "answer", "clarify", "propose_mode", "progress"}
     active = controller_response_schema(phase="ACTIVE")["properties"]["type"]["enum"]
     # clarify is allowed in ACTIVE (ask when blocked mid-edit); propose_mode is not.
-    assert set(active) == {"tool_call", "answer", "edit", "clarify", "submit_changes"}
+    assert set(active) == {
+        "tool_call", "answer", "edit", "clarify", "submit_changes", "progress",
+    }
     # deep-copy: mutating the returned schema must not affect the module-level one
     plan.append("__probe__")
     assert "__probe__" not in CONTROLLER_RESPONSE_SCHEMA["properties"]["type"]["enum"]

@@ -36,7 +36,7 @@ CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
     "properties": {
         "type": {
             "type": "string",
-            "enum": ["tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes"],
+            "enum": ["tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress"],
         },
         "thought": {"type": "string"},
         # tool_call
@@ -45,6 +45,8 @@ CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
         # answer / clarify
         "answer": {"type": "string"},
         "question": {"type": "string"},
+        # progress — a non-terminal user-visible status note; the turn continues
+        "note": {"type": "string"},
         # propose_mode
         "plan_sketch": {"type": "string"},
         "recommended": {"type": "string"},
@@ -85,14 +87,14 @@ _PHASE_TYPES: dict[str, list[str]] = {
     # PLAN (was DECIDE): read-only exploration + discussion before committing to act.
     # propose_mode is how PLAN hands a concrete plan back to the user ("Implement this
     # plan", or create_task/resume when the task subsystem is on).
-    "PLAN": ["tool_call", "answer", "clarify", "propose_mode"],
+    "PLAN": ["tool_call", "answer", "clarify", "propose_mode", "progress"],
     # ACTIVE (merges the old DECIDE+EDIT): the default phase for every turn — editing
     # needs no permission step. Keeps `clarify` so the agent can ask when a genuine
     # ambiguity blocks it mid-edit; the user's reply resumes the loop in ACTIVE
     # (ChatController.resolve_clarify). `propose_mode` is added back in only when the
     # task subsystem flag is on (Task 5 — ControllerLoop mutates its own allowed-types
     # view per-instance; this module-level table is ACTIVE's task-subsystem-OFF shape).
-    "ACTIVE": ["tool_call", "answer", "clarify", "edit", "submit_changes"],
+    "ACTIVE": ["tool_call", "answer", "clarify", "edit", "submit_changes", "progress"],
 }
 
 # Per-variant property/required specs for the TIGHT (oneOf) schema. Each entry is one
@@ -164,6 +166,7 @@ _VARIANT_SPECS: dict[str, dict[str, object]] = {
         "properties": {"patch_ops": {"type": "array", "items": _PATCH_OP_ITEM}},
     },
     "submit_changes": {"required": ["summary"], "properties": {"summary": _STR}},
+    "progress": {"required": ["note"], "properties": {"note": _STR}},
 }
 
 
@@ -269,11 +272,21 @@ Variant — answer (respond in text): {type, answer}
   "I'll begin by exploring Y", "Before I can write the plan I need to ground myself in Z"). That
   wastes the entire turn: nothing gets read or done, and the user has to say "go ahead" again just
   to get you to take the step you already announced. If there is a next step, TAKE it now —
-  emit that tool_call (or propose_mode/edit) THIS turn instead of describing it in "answer". Only
-  emit "answer" when you are delivering the actual finished content, not a preview of intent.
+  emit that tool_call (or propose_mode/edit) THIS turn instead of describing it in "answer" — or, if
+  you just want to tell the user what you are about to do without ending the turn, emit "progress".
+  Only emit "answer" when you are delivering the actual finished content, not a preview of intent.
   WRONG: {"type":"answer","thought":"...","answer":"I'm using the writing-plans skill... Let me
   start by reading the design spec and exploring the workspace."}  ← describes reading, doesn't read.
   RIGHT: {"type":"tool_call","thought":"ground in the design spec before planning","tool":"read_file","args":{"path":"docs/superpowers/specs/....md"}}
+
+Variant — progress (post a short status note WITHOUT ending the turn): {type, note}
+  Use when you want to tell the user what you are doing or about to do while you keep working
+  in the SAME turn — e.g. between finishing one file and starting the next in a multi-step change.
+  The 'note' is shown to the user immediately; the turn does NOT end and you run again right after.
+  {"type":"progress","thought":"plan saved; starting task 1","note":"Plan saved. Now implementing task 1 — creating the commit-log struct."}
+  progress is for a status update mid-work; 'answer' is for the finished, self-contained reply that
+  ENDS the turn. If you have more to do this turn, use progress and then take the next action; do not
+  use 'answer' to describe a step you have not taken yet.
 
 Variant — clarify (you genuinely cannot proceed): {type, question, options}
   Use when an ambiguity blocks you and reading the workspace won't resolve it. Never a blank answer.
