@@ -143,6 +143,11 @@ def _empty_action_correction(resp: dict[str, object], atype: str) -> str | None:
         )
     if atype == "clarify" and _blank("question"):
         return "Your 'question' was empty. Re-emit type='clarify' with a concrete question."
+    if atype == "progress" and _blank("note"):
+        return (
+            "Your 'note' was empty. Re-emit type='progress' with a short non-empty 'note' "
+            "describing what you are doing, or take a real action instead."
+        )
     if atype == "tool_call":
         if _blank("tool"):
             return (
@@ -228,8 +233,60 @@ def _answer_intent_divergence_correction(
         f"have to prompt you again just to get you to do what you already said. If '{mentioned}' "
         "(or whatever the real next action is) is genuinely next, TAKE it now: emit "
         "type='tool_call' with that tool (or type='edit'/'submit_changes' if that's the real "
-        "next action) instead of narrating it in 'answer'."
+        "next action) instead of narrating it in 'answer'. If you only want to TELL the user "
+        "what you are about to do without ending the turn, emit type='progress' with a 'note', "
+        "then take the action."
     )
+
+
+# A progress note is a short user-visible status line, not a place to dump work — cap
+# it so a model that decides to narrate at length can't bloat the transcript or history.
+_PROGRESS_NOTE_MAX_CHARS = 500
+
+
+def _normalize_progress_note(resp: dict[str, object]) -> str:
+    """The ONE canonical form of a progress note — stripped and capped.
+
+    Both the dedup guard and the dispatch branch must derive the note through this, so
+    they compare and store the same bytes: normalizing at dispatch only (storing the
+    capped note) while checking the raw value let any note longer than the cap evade
+    dedup entirely, since it could never equal what was stored.
+    """
+    return str(resp.get("note", "")).strip()[:_PROGRESS_NOTE_MAX_CHARS]
+
+
+def _progress_repeat_correction(
+    resp: dict[str, object], atype: str, last_was_progress: bool,
+) -> str | None:
+    """Reject a `progress` note that immediately follows another `progress` with no real
+    action between — a weak model can turn a free non-terminal action into a narration
+    attractor (spam notes instead of acting). Mirrors the emit_patch-dedup discipline;
+    routes through the same _MAX_MALFORMED correction chain (no new retry primitive)."""
+    if atype != "progress" or not last_was_progress:
+        return None
+    return (
+        "You already posted a progress note and took no action after it. A progress note "
+        "does NOT count as doing the work. Take the actual next action now — emit "
+        "type='tool_call' / 'edit' / 'submit_changes' (or 'answer' if you are truly done)."
+    )
+
+
+def _progress_dedup_correction(
+    resp: dict[str, object], atype: str, seen_notes: set[str],
+) -> str | None:
+    """Reject an exact-duplicate progress note already emitted this turn (same attractor
+    class as _progress_repeat_correction, but catches non-adjacent repeats)."""
+    if atype != "progress":
+        return None
+    note = _normalize_progress_note(resp)
+    # An empty note is _empty_action_correction's business (it fires earlier in the
+    # chain); never let "" match a stored value here.
+    if note and note in seen_notes:
+        return (
+            "You already posted that exact progress note this turn. Do not repeat it — "
+            "take the next real action instead (tool_call / edit / submit_changes / answer)."
+        )
+    return None
 
 
 # Matches this workspace's writing-plans skill's own plan-doc convention, e.g.:
@@ -320,6 +377,7 @@ class ControllerLoop:
         active_skills: dict[str, str] | None = None,
         skill_catalog_loader: object | None = None,
         active_skill_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
+        progress_note_cb: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -344,6 +402,10 @@ class ControllerLoop:
         # read_skill itself.
         self._skill_catalog_loader = skill_catalog_loader
         self._active_skill_persist_cb = active_skill_persist_cb
+        # Persists a non-terminal `progress` note as a durable transcript message. The
+        # loop broadcasts the live chat_progress event itself; this cb is the durable
+        # half (reload). None → live-only (broadcast still fires).
+        self._progress_note_cb = progress_note_cb
         self._task_subsystem_enabled = task_subsystem_enabled
         # PLAN's allowed modes: the full vocabulary when the task subsystem is on,
         # else just "implement" (create_task/resume stripped — the controller
@@ -546,6 +608,13 @@ class ControllerLoop:
         # whole run, so this is computed once, not per iteration.
         tool_names = frozenset(str(d.get("name", "")) for d in tool_defs)
 
+        # progress-action guardrail state, per turn (see _progress_repeat_correction /
+        # _progress_dedup_correction). `last_was_progress` means "the last ACCEPTED
+        # action was a note" — a rejected response deliberately leaves it alone, so two
+        # notes separated only by junk are still caught as adjacent.
+        last_was_progress = False
+        seen_notes: set[str] = set()
+
         for iteration in range(max_iters + 1):
             # Live "thinking" status so the chat UI isn't blank during the first model
             # call (the frontend maps chat_agent_thinking → the thinking pane). Only the
@@ -673,6 +742,10 @@ class ControllerLoop:
                 or _decide_state_change_correction(resp, self._sm.phase)
                 or _empty_action_correction(resp, atype)
                 or _answer_intent_divergence_correction(resp, atype, tool_names)
+                # After _empty_action_correction on purpose: a blank note must be
+                # reported as EMPTY, not misdiagnosed as a duplicate of "".
+                or _progress_repeat_correction(resp, atype, last_was_progress)
+                or _progress_dedup_correction(resp, atype, seen_notes)
             )
             if correction is not None:
                 if atype == "propose_mode":
@@ -711,7 +784,14 @@ class ControllerLoop:
                 history.append(assistant_turn(resp))
                 history.append({"role": "tool_result", "tool": "", "content": correction})
                 continue
+            # Captured BEFORE the reset so the progress branch can restore it — a note
+            # is not evidence of progress, so it must not zero a malformed streak.
+            prev_malformed = consecutive_malformed
             consecutive_malformed = 0
+            # Any accepted action clears the progress-adjacency flag; the progress branch
+            # below sets it back to True. (Placed here so it only runs on an ACCEPTED
+            # action — a corrected response `continue`s above and never reaches this.)
+            last_was_progress = False
             if atype == "answer":
                 # C2: answer is reachable from ACTIVE (unlike the old EDIT phase, which
                 # only had submit_changes as a terminal). Block it ONLY when THIS turn
@@ -739,6 +819,32 @@ class ControllerLoop:
                 history.append(assistant_turn(resp))
                 return ControllerOutcome(
                     kind="answer", text=str(resp.get("answer", "")), history=history)
+            if atype == "progress":
+                # A progress note is not evidence of progress: restore the malformed
+                # counter so a stuck model can't launder its malformed streak through
+                # interleaved notes to evade _MAX_MALFORMED.
+                consecutive_malformed = prev_malformed
+                note = _normalize_progress_note(resp)
+                seen_notes.add(note)
+                last_was_progress = True
+                # Live event (durable half is the cb below). Mirrors tool_call's
+                # broadcast-live / persist-separately split.
+                self._broadcaster.broadcast(self._channel_id, {
+                    "type": "chat_progress", "payload": {"note": note}})
+                if self._progress_note_cb is not None:
+                    try:
+                        await self._progress_note_cb(note)
+                    except Exception:  # noqa: BLE001 — a narration write must never kill a turn
+                        logger.warning("[controller] progress_note_cb failed", exc_info=True)
+                history.append(assistant_turn(resp))
+                history.append({
+                    "role": "tool_result", "tool": "",
+                    "content": (
+                        f'Progress note posted to the user: "{note}". This did NOT end the '
+                        "turn — now take the actual next action."
+                    ),
+                })
+                continue
             if atype == "tool_call":
                 if iteration >= max_iters:
                     return ControllerOutcome(
