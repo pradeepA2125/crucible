@@ -420,6 +420,13 @@ class ChatController:
                     except OSError:
                         pass
         active_skill_persist_cb = partial(self._persist_active_skill, thread_id)
+        # Same loader class the forced_skills seeding above already uses (own instance —
+        # SkillCatalogLoader's mtime cache is per-instance and cheap to build). Lets
+        # ControllerLoop force-load a skill a just-saved plan doc's own text names as
+        # REQUIRED, without the model having to notice and call read_skill itself
+        # (see ControllerLoop._maybe_force_required_subskill).
+        skill_catalog_loader = (
+            SkillCatalogLoader(self._workspace_path) if is_skills_enabled() else None)
         loop = ControllerLoop(
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb,
@@ -430,7 +437,9 @@ class ChatController:
             channel_id=channel_id, phase_sm=sm, edit_session_factory=edit_session_factory,
             todo_ledger=ledger,
             task_subsystem_enabled=self._task_subsystem_enabled,
-            memory_harness=self._memory_harness, active_skills=active_skills)
+            memory_harness=self._memory_harness, active_skills=active_skills,
+            skill_catalog_loader=skill_catalog_loader,
+            active_skill_persist_cb=active_skill_persist_cb)
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path,
             # run_id keys the per-thread compaction segments + anchored summary.

@@ -6,7 +6,9 @@ edit/submit_changes are added in E2/E3.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -16,6 +18,7 @@ from agentd.domain.models import AgentToolTrace, ToolCall, ToolResult
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.reasoning.react_common import MALFORMED_CORRECTION, assistant_turn, dedup_key
+from agentd.skills.config import skills_body_max_chars
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -183,6 +186,97 @@ def _reserved_tool_name_correction(resp: dict[str, object], atype: str) -> str |
     )
 
 
+# A forward-looking, first-person intent phrase — "I'm about to do X" rather than
+# "I already did X". Paired below with a real tool name so the correction only fires
+# on the specific "announced but not taken" shape (bare tool-name mentions in an
+# otherwise-finished explanatory answer are common and must NOT trip this).
+_FORWARD_INTENT_RE = re.compile(
+    r"\b(let me start|let'?s start|i'?ll begin|i will begin|i'?m going to|"
+    r"i should (?:use|call|run|invoke)|i need to (?:use|call|run|invoke)|"
+    r"before i can\b|next i(?:'?ll| will| need to))\b",
+    re.IGNORECASE,
+)
+
+
+def _answer_intent_divergence_correction(
+    resp: dict[str, object], atype: str, tool_names: frozenset[str],
+) -> str | None:
+    """Reject an 'answer' whose own thought/answer narrates a concrete next tool call
+    it has not taken — the "announce, don't act" failure. CONTROLLER_SYSTEM_PROMPT
+    already teaches this in prose (WRONG/RIGHT examples on the answer variant); a live
+    dogfood run reproduced it twice regardless (right after a plan-writing sub-goal
+    landed, the model's own thought said "I should use write_todos first... then start
+    implementing" and STILL emitted type='answer' narrating intent — see
+    docs/superpowers/... skill-handoff-gap write-up). This is a mechanical backstop for
+    that specific shape, not a replacement for the prompt guidance: it only fires when
+    BOTH a forward-looking first-person intent phrase AND a real tool name from
+    AVAILABLE TOOLS appear together in thought+answer — narrower than either signal
+    alone, to keep false positives on ordinary explanatory answers low."""
+    if atype != "answer":
+        return None
+    combined = f"{resp.get('thought', '')} {resp.get('answer', '')}"
+    if not _FORWARD_INTENT_RE.search(combined):
+        return None
+    lowered = combined.lower()
+    mentioned = next((t for t in tool_names if t and t.lower() in lowered), None)
+    if mentioned is None:
+        return None
+    return (
+        f"Your own thought/answer describes a next step you have not taken ('{mentioned}' "
+        f"mentioned alongside forward-looking language like \"I should\"/\"let me start\"). "
+        "'answer' ENDS the turn — nothing you described will actually run, and the user will "
+        f"have to prompt you again just to get you to do what you already said. If '{mentioned}' "
+        "(or whatever the real next action is) is genuinely next, TAKE it now: emit "
+        "type='tool_call' with that tool (or type='edit'/'submit_changes' if that's the real "
+        "next action) instead of narrating it in 'answer'."
+    )
+
+
+# Matches this workspace's writing-plans skill's own plan-doc convention, e.g.:
+#   "REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended)
+#    or superpowers:executing-plans to implement this plan task-by-task."
+# One directive LINE can name more than one candidate (an "either/or" handoff choice,
+# as above) — _REQUIRED_SUBSKILL_LINE_RE captures the rest of that line, then
+# _SUPERPOWERS_NAME_RE pulls every `superpowers:<name>` mention out of it, so
+# _extract_required_subskills returns all of them, in the order they appear.
+_REQUIRED_SUBSKILL_LINE_RE = re.compile(r"REQUIRED SUB-SKILL:([^\n]*)", re.IGNORECASE)
+_SUPERPOWERS_NAME_RE = re.compile(r"superpowers:([a-z0-9_-]+)", re.IGNORECASE)
+
+# Crucible's chat controller has no subagent-dispatch tool (verified: no such tool
+# exists anywhere in agentd/tools or agentd/skills) — a plan directive naming
+# "subagent-driven-development" is never actually executable here, only its sibling
+# "executing-plans" (single continuous session, no separate session needed) is. This
+# is a fixed fact about THIS host, not a preference between the two skills.
+_NON_EXECUTABLE_SUBSKILLS = frozenset({"subagent-driven-development"})
+
+
+def _extract_required_subskills(ops: list[dict[str, object]]) -> list[str]:
+    """Pull every `superpowers:<name>` named in a 'REQUIRED SUB-SKILL:' directive line
+    out of a just-applied edit's raw op text (content/diff/replace/search — whichever
+    fields that op type carries). Order-preserving, de-duplicated across all ops in the
+    batch."""
+    seen: list[str] = []
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        text = " ".join(
+            str(op.get(k, "")) for k in ("content", "diff", "replace", "search")
+        )
+        for line_match in _REQUIRED_SUBSKILL_LINE_RE.finditer(text):
+            for name_match in _SUPERPOWERS_NAME_RE.finditer(line_match.group(1)):
+                name = name_match.group(1)
+                if name not in seen:
+                    seen.append(name)
+    return seen
+
+
+def _pick_executable_required_subskill(names: list[str]) -> str | None:
+    """Of the names a plan directive names, return the one THIS host can actually run
+    (see _NON_EXECUTABLE_SUBSKILLS) — None if the directive named none, or named only
+    ones this host can't run."""
+    return next((n for n in names if n not in _NON_EXECUTABLE_SUBSKILLS), None)
+
+
 def _normalized_recommended(resp: dict[str, object]) -> str:
     """The model's recommended mode if valid, else the first option's mode (a hint,
     never blocks the gate — see _propose_mode_correction)."""
@@ -224,6 +318,8 @@ class ControllerLoop:
         task_subsystem_enabled: bool = False,
         memory_harness: MemoryHarness = NO_OP_HARNESS,
         active_skills: dict[str, str] | None = None,
+        skill_catalog_loader: object | None = None,
+        active_skill_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -241,6 +337,13 @@ class ControllerLoop:
         # Shared with the SkillToolSource: read_skill writes activated bodies here; each
         # iteration we re-inject them into the dynamic tail (compaction-resilient).
         self._active_skills = active_skills if active_skills is not None else {}
+        # Duck-typed SkillCatalogLoader (mirrors tool_source.py's own `loader: object`
+        # typing — avoids an import-cycle-prone hard dependency here). None unless
+        # skills are enabled, in which case _maybe_force_required_subskill can resolve
+        # a REQUIRED SUB-SKILL directive name to its body without the model calling
+        # read_skill itself.
+        self._skill_catalog_loader = skill_catalog_loader
+        self._active_skill_persist_cb = active_skill_persist_cb
         self._task_subsystem_enabled = task_subsystem_enabled
         # PLAN's allowed modes: the full vocabulary when the task subsystem is on,
         # else just "implement" (create_task/resume stripped — the controller
@@ -263,6 +366,73 @@ class ControllerLoop:
         # the clean entry hint (write_todos-as-tool_call) instead of the mid-turn reconcile
         # hint, so the first-action case isn't mis-routed.
         self._edit_applied = False
+
+    async def _maybe_force_required_subskill(
+        self, ops: list[dict[str, object]], history: list[dict[str, object]],
+    ) -> None:
+        """Deterministically load a skill a just-applied edit's own text says is
+        REQUIRED — a judgment gap the skill-catalog prompt's model-driven read_skill
+        cannot be relied on to close on its own.
+
+        Root cause (confirmed live, 2 independent dogfood runs): writing-plans'
+        template makes the model author a plan document whose OWN header names
+        "REQUIRED SUB-SKILL: superpowers:executing-plans" (or
+        subagent-driven-development), then the model continues executing that same
+        plan later in the SAME turn — well past `skill_check_due`, which is
+        deliberately one-shot-per-turn by design (see
+        docs/superpowers/specs/2026-07-21-merged-decide-edit-phase-design.md: "skill
+        triage is genuinely redundant to re-run every iteration once it's been done or
+        missed" — true for the turn-start case that spec covers, but this trigger is a
+        DIFFERENT one: new information the model itself just wrote, mid-turn). No
+        prompt nudge fired here in either observed run. Since the plan text already
+        names the exact skill, there's nothing left to infer — force-load it the same
+        way /skill's forced_skills seeding does, rather than iterating on prompt
+        wording again (P2's skill-judgment work took 3 rounds for a similar gap and
+        even then only reached "promising, not proven at scale" — see
+        project_p2_agent_skills memory).
+        """
+        if self._skill_catalog_loader is None:
+            return
+        names = _extract_required_subskills(ops)
+        if not names:
+            return
+        target = _pick_executable_required_subskill(names)
+        if target is None or target in self._active_skills:
+            return
+        catalog = self._skill_catalog_loader.load_catalog()  # type: ignore[attr-defined]
+        manifest = next((m for m in catalog if m.name == target), None)
+        if manifest is None:
+            return
+        try:
+            body = manifest.body_path.read_text(encoding="utf-8")
+        except OSError:
+            return
+        cap = skills_body_max_chars()
+        if len(body) > cap:
+            body = body[:cap] + f"\n\n[... skill '{target}' truncated at {cap} chars ...]"
+        # Mirrors SkillToolSource.execute's "exactly one skill active" replace semantics.
+        self._active_skills.clear()
+        self._active_skills[target] = body
+        if self._active_skill_persist_cb is not None:
+            await self._active_skill_persist_cb(json.dumps({"name": target, "body": body}))
+        logger.info(
+            "[controller] auto-loaded required sub-skill %r (named in a plan doc "
+            "written this turn)", target)
+        self._thinking.append(
+            f"⚡ auto-loaded skill '{target}' — required by the plan document you just wrote")
+        # A synthetic tool_result (no real read_skill call happened) so the model sees
+        # WHY the skill body appeared in its payload and is told to act on it now,
+        # instead of silently mutating context the model has no visibility into.
+        history.append({
+            "role": "tool_result", "tool": "read_skill",
+            "content": (
+                f"[auto-loaded] The document you just wrote names "
+                f"REQUIRED SUB-SKILL: superpowers:{target}. Its instructions are now "
+                "active (see active_skills in your payload) — follow them starting "
+                "with their own first step, in THIS same turn. Do not re-call "
+                "read_skill for it."
+            ),
+        })
 
     def _allowed_action_types(self) -> list[str]:
         """The action types legal THIS iteration — the phase SM's own set, plus a
@@ -370,6 +540,11 @@ class ControllerLoop:
                     "reason": reason, "message": message,
                 },
             })
+
+        # Real tool names only (never the schema's own top-level action types) —
+        # feeds _answer_intent_divergence_correction. tool_defs is fixed for the
+        # whole run, so this is computed once, not per iteration.
+        tool_names = frozenset(str(d.get("name", "")) for d in tool_defs)
 
         for iteration in range(max_iters + 1):
             # Live "thinking" status so the chat UI isn't blank during the first model
@@ -497,6 +672,7 @@ class ControllerLoop:
                 else _reserved_tool_name_correction(resp, atype)
                 or _decide_state_change_correction(resp, self._sm.phase)
                 or _empty_action_correction(resp, atype)
+                or _answer_intent_divergence_correction(resp, atype, tool_names)
             )
             if correction is not None:
                 if atype == "propose_mode":
@@ -742,6 +918,11 @@ class ControllerLoop:
                     # record of a successful apply — only the pre-apply ops line at L302).
                     logger.info("[controller] edit applied phase=%s files=%s",
                                 self._sm.phase, touched)
+                    # A plan document this edit just wrote may itself name a
+                    # REQUIRED SUB-SKILL for its own execution — force-load it now
+                    # rather than rely on the model noticing its own plan text later
+                    # in this same turn (see _maybe_force_required_subskill).
+                    await self._maybe_force_required_subskill(ops, history)
                     # The workspace state just changed — a tool_call that duplicates an
                     # EARLIER (pre-edit) call is no longer a mindless repeat, it may now be
                     # the objectively correct next step (e.g. retrying the same `uv add`
