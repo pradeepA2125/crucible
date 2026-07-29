@@ -439,7 +439,8 @@ class ChatController:
             task_subsystem_enabled=self._task_subsystem_enabled,
             memory_harness=self._memory_harness, active_skills=active_skills,
             skill_catalog_loader=skill_catalog_loader,
-            active_skill_persist_cb=active_skill_persist_cb)
+            active_skill_persist_cb=active_skill_persist_cb,
+            progress_note_cb=partial(self._progress_note_cb, thread_id))
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path,
             # run_id keys the per-thread compaction segments + anchored summary.
@@ -951,6 +952,16 @@ class ChatController:
             role="agent", content=text, type="text", metadata={"breadcrumb": True}))
         self._broadcaster.broadcast(channel_id, {
             "type": "chat_breadcrumb", "payload": {"text": text, "task_id": ""}})
+
+    async def _progress_note_cb(self, thread_id: str, note: str) -> None:
+        """Persist a non-terminal `progress` note as a durable transcript message —
+        the reload half. The live `chat_progress` event is already broadcast by the
+        loop itself (ControllerLoop._iterate), so this must persist ONLY — broadcasting
+        here too would duplicate the live signal. async to match the loop's `await
+        self._progress_note_cb(note)` call site; the body is a single sync sqlite
+        write (mirrors _persist_todos/_persist_active_skill), no thread pool needed."""
+        self._store.append_message(thread_id, ChatMessage(
+            role="agent", content=note, type="text", metadata={"progress": True}))
 
     async def resolve_mode(
         self, thread_id: str, mode: str, *, channel_id: str, goal: str,
