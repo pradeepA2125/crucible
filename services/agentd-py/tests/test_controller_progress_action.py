@@ -14,6 +14,7 @@ new retry primitive:
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -235,6 +236,36 @@ async def test_progress_note_is_capped_at_dispatch(tmp_path: Path) -> None:
     )
     await loop.run({"goal": "x", "workspace_path": str(tmp_path)}, max_iters=8)
     assert [len(n) for n in notes] == [_PROGRESS_NOTE_MAX_CHARS]
+
+
+@pytest.mark.asyncio
+async def test_progress_history_entry_strips_thought_and_carries_the_capped_note(
+    tmp_path: Path,
+) -> None:
+    # The history entry is the half that rides EVERY subsequent iteration's prompt, so
+    # the cap has to apply there too — persisting `resp` verbatim (assistant_turn strips
+    # only 'thought') let an uncapped note bloat the context the cap exists to bound.
+    raw_note = "n" * 5000
+    loop = build_loop(
+        tmp_path,
+        [
+            {"type": "progress", "thought": "secret reasoning", "note": raw_note},
+            {"type": "answer", "thought": "t", "answer": "Done."},
+        ],
+    )
+    outcome = await loop.run({"goal": "x", "workspace_path": str(tmp_path)}, max_iters=8)
+    assert outcome.history is not None
+    assistant = json.loads(str(outcome.history[0]["content"]))
+    assert assistant["type"] == "progress"
+    # thought is stripped (react_common.assistant_turn) — a forward-looking narration
+    # thought is the highest-risk text in this schema for a copy-continue attractor.
+    assert "thought" not in assistant
+    assert len(assistant["note"]) == _PROGRESS_NOTE_MAX_CHARS
+    assert raw_note not in str(outcome.history[0]["content"])
+    # ...and the paired observation that keeps the ReAct loop going.
+    observation = outcome.history[1]
+    assert observation["role"] == "tool_result"
+    assert "did NOT end the" in str(observation["content"])
 
 
 @pytest.mark.asyncio

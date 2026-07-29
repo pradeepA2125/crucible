@@ -612,6 +612,15 @@ class ControllerLoop:
         # _progress_dedup_correction). `last_was_progress` means "the last ACCEPTED
         # action was a note" — a rejected response deliberately leaves it alone, so two
         # notes separated only by junk are still caught as adjacent.
+        #
+        # Known boundary: it tracks ACCEPTED-ness, not whether real work happened, so the
+        # five branches that accept an action and then `continue` without doing anything
+        # clear it — answer/submit_changes blocked by the todo ledger, an edit with empty
+        # patch_ops, a tool_call hitting DUPLICATE BLOCKED, and an edit whose apply raised
+        # (PATCH FAILED). The last two are the loop's canonical stuck states, so they are
+        # the likeliest to interleave with narration. Deliberately not closed: it would
+        # mean threading a "did real work" flag through five unrelated pre-existing
+        # branches, and _progress_dedup_correction already catches the repeated note.
         last_was_progress = False
         seen_notes: set[str] = set()
 
@@ -836,7 +845,12 @@ class ControllerLoop:
                         await self._progress_note_cb(note)
                     except Exception:  # noqa: BLE001 — a narration write must never kill a turn
                         logger.warning("[controller] progress_note_cb failed", exc_info=True)
-                history.append(assistant_turn(resp))
+                # Persist the NORMALIZED note, not `resp`'s raw one: assistant_turn strips
+                # only 'thought', so passing resp verbatim would ride the uncapped note
+                # into every subsequent iteration's prompt — the exact context bloat
+                # _PROGRESS_NOTE_MAX_CHARS exists to prevent. Same substitute-before-
+                # persisting shape the edit branch uses for patch_ops.
+                history.append(assistant_turn({**resp, "note": note}))
                 history.append({
                     "role": "tool_result", "tool": "",
                     "content": (
