@@ -576,6 +576,47 @@ describe("CrucibleController — chat", () => {
     expect(retryCalls[retryCalls.length - 1]).toBeNull();
   });
 
+  test("streamTurn relays chat_progress as a progress-tagged agent message", async () => {
+    const appendedMessages: ChatMessage[] = [];
+
+    const chatBackend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+        rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+      }),
+      createChatThread: async (workspacePath) => ({
+        threadId: "chat-new", workspacePath, title: "New Chat", createdAt: "2026-07-25T00:00:00Z",
+      }),
+      listChatThreads: async () => [],
+      getChatThread: async (threadId) => ({
+        threadId, workspacePath: "/tmp/workspace", title: "New Chat", messages: [], touchedFiles: [],
+      }),
+      sendChatMessage: async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
+        yield {
+          type: "chat_progress" as const,
+          payload: { note: "Working on task 1." },
+        };
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+      },
+    };
+
+    const controller = new CrucibleController(
+      () => chatBackend, new MemorySessionStore(), createSettings(),
+      createUi({ appendChatMessage: (m) => appendedMessages.push(m) }),
+      { openDiff: async () => {} },
+      () => "2026-07-25T00:00:00.000Z"
+    );
+
+    await controller.sendChatMessage("hello");
+    controller.dispose();
+
+    const progressMsg = appendedMessages.find((m) => m.metadata?.progress === true);
+    expect(progressMsg).toBeDefined();
+    expect(progressMsg?.content).toBe("Working on task 1.");
+    expect(progressMsg?.role).toBe("agent");
+    expect(progressMsg?.type).toBe("text");
+  });
+
   test("sendChatMessage with mentionedPaths tags the optimistic echo with mentioned_files metadata", async () => {
     const appendedMessages: ChatMessage[] = [];
     const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), "mention-ctrl-"));
