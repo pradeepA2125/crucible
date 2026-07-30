@@ -4,6 +4,7 @@ import { ToolPill } from "../components/shared/ToolPill";
 import { ThinkingBlock } from "../components/shared/ThinkingBlock";
 import { AgentRow } from "../components/messages/AgentRow";
 import { UserMessage } from "../components/messages/UserMessage";
+import { MessageRow } from "../components/MessageRow";
 import type { ToolEventView } from "../types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -145,5 +146,27 @@ describe("UserMessage", () => {
     const { container } = render(<UserMessage content="Hello world" />);
     expect(container.querySelectorAll("code").length).toBe(0);
     expect(screen.getByText("Hello world")).toBeTruthy();
+  });
+});
+
+// ── 5. MessageRow progress ────────────────────────────────────────────────────
+
+describe("MessageRow", () => {
+  it("renders a progress-tagged message as a muted progress line", () => {
+    const { getByText } = render(
+      <MessageRow
+        msg={{
+          role: "agent",
+          content: "Implementing task 1.",
+          type: "text",
+          timestamp: new Date(0).toISOString(),
+          metadata: { progress: true },
+        }}
+      />,
+    );
+    const line = getByText("Implementing task 1.");
+    expect(line).toBeTruthy();
+    // progress line is muted (text-text-3), distinct from a normal answer
+    expect(line.className).toContain("text-text-3");
   });
 });

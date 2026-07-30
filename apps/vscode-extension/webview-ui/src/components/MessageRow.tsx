@@ -148,6 +148,14 @@ export function MessageRow({ msg, planVersion }: Props) {
         );
       }
 
+      // Non-terminal mid-turn status note (backend `progress` action + live
+      // `chat_progress` echo). Checked before breadcrumb so a note can never
+      // be mistaken for one, even in the (currently impossible) case both
+      // flags were set — progress wins by construction of this ordering.
+      if (msg.metadata?.progress === true) {
+        return <AgentRow content={msg.content} progress />;
+      }
+
       if (msg.metadata?.breadcrumb === true) {
         return (
           <AgentRow

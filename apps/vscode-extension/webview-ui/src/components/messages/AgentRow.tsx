@@ -9,6 +9,7 @@ import { Icon } from "../Icon";
 interface Props {
   content: string;
   breadcrumb?: boolean;
+  progress?: boolean;
   thinkingLog?: string[];
   toolEvents?: ToolEventView[];
   streaming?: boolean;
@@ -21,12 +22,15 @@ interface Props {
  * Matches .turn / .crumb / .stream-line / .caret in the hi-fi mockup.
  *
  * breadcrumb: compact icon+text row, strips leading marker character.
+ * progress: compact icon+text row for a non-terminal mid-turn status note —
+ *   breadcrumb-adjacent but never strips a marker (a progress note has none).
  * normal: plain text, optional streaming caret.
  * Copy button on hover (not while streaming).
  */
 export function AgentRow({
   content,
   breadcrumb,
+  progress,
   thinkingLog,
   toolEvents,
   streaming,
@@ -76,7 +80,9 @@ export function AgentRow({
         {/* Content. Finished messages get the same markdown treatment as
             QAMessage (a turn with pills must not lose answer formatting);
             streaming stays plain text — markdown on partial chunks flickers. */}
-        {breadcrumb ? (
+        {progress ? (
+          <ProgressLine text={content} />
+        ) : breadcrumb ? (
           <BreadcrumbLine text={content} />
         ) : streaming ? (
           <div className="text-xs text-text-3 whitespace-pre-wrap">
@@ -122,6 +128,20 @@ const MARKER_ICONS: Array<{ char: string; icon: "check" | "x" | "retry"; color: 
   { char: "↻", icon: "retry", color: "text-accent" },
   { char: "↩", icon: "retry", color: "text-accent" },
 ];
+
+// ── Progress line ──────────────────────────────────────────────────────────────
+
+function ProgressLine({ text }: { text: string }) {
+  // De-emphasized, breadcrumb-adjacent but distinct: muted italic, no marker
+  // stripping (a progress note is plain narration, never a "✓ done"-style
+  // marker string). `clock` reads as "in progress" without implying success/failure.
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <Icon name="clock" size={11} className="text-text-3" />
+      <span className="text-text-3 italic">{text}</span>
+    </div>
+  );
+}
 
 function BreadcrumbLine({ text }: { text: string }) {
   // Check if the text starts with a known marker character.
