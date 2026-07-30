@@ -170,8 +170,10 @@ def _empty_action_correction(resp: dict[str, object], atype: str) -> str | None:
 # tool_call schema constrains 'tool' to the registry. The registry's generic "unknown
 # tool" error gives it no signal to self-correct from, so it can grind on the identical
 # illegal call indefinitely (found live: an hour+ of retries, each a full regeneration).
+# `progress` belongs here too (final whole-branch review, finding 3) — it is exactly as
+# eligible for the {"type":"tool_call","tool":"progress",...} confusion as the others.
 _RESERVED_ACTION_TOOL_NAMES = frozenset(
-    {"answer", "clarify", "propose_mode", "edit", "submit_changes"})
+    {"answer", "clarify", "propose_mode", "edit", "submit_changes", "progress"})
 
 
 def _reserved_tool_name_correction(resp: dict[str, object], atype: str) -> str | None:
@@ -419,6 +421,22 @@ class ControllerLoop:
         self._calls: list[ToolCall] = []
         self._results: list[ToolResult] = []
         self._thinking: list[str] = []
+        # Index into self._calls/self._results/self._thinking marking the start of the
+        # CURRENT pills segment — advanced to the current length whenever a `progress`
+        # note is dispatched (finding 1, final whole-branch review). A durable `progress`
+        # note seals the in-flight pills message accumulated so far (see
+        # ChatController._progress_note_cb / ChatThreadStore.seal_inflight_pills) so the
+        # note lands after them in transcript order, mirroring the live webview's
+        # sealStreaming split; these two indices are the LOOP-side half of that same
+        # boundary — they keep every pills computation (live call_index + the durable
+        # tool_events/thinking_log passed to on_pills_update, and the final outcome's own
+        # tool_events/thinking_log) scoped to "since the last note" instead of the whole
+        # turn, so a segment after a note never re-shows pills a prior (already sealed)
+        # message already carries. Stay 0 for the whole turn when no note ever fires, so
+        # a zero-`progress` turn is byte-identical to pre-fix behavior (slicing a list
+        # from 0 is the full list).
+        self._pill_segment_start = 0
+        self._thinking_segment_start = 0
         # The live conversation list `_iterate` mutates — exposed via partial_history() so a
         # caller can persist what a CANCELLED turn (/stop) accumulated before the cancel
         # raised, instead of losing the turn's exploration + already-promoted edits (Q2).
@@ -544,6 +562,8 @@ class ControllerLoop:
         self._calls = []
         self._results = []
         self._thinking = []
+        self._pill_segment_start = 0
+        self._thinking_segment_start = 0
         self._edit_applied = False
         try:
             outcome = await self._iterate(
@@ -555,12 +575,22 @@ class ControllerLoop:
                 retrieval_delta_cb=retrieval_delta_cb,
                 on_pills_update=on_pills_update,
             )
-            if outcome.tool_events is None and self._calls:
+            # Sliced to the segment since the last `progress` note (finding 1) — a note
+            # right before the terminal action correctly yields an EMPTY segment here
+            # (segment_start == len(self._calls)), since that note already sealed
+            # everything preceding it into its own durable message; the closing message
+            # should only carry pills from AFTER the note, not repeat them. A no-note
+            # turn has segment_start==0 for its whole life, so this stays byte-identical
+            # to the pre-fix "whole self._calls" behavior.
+            segment_calls = self._calls[self._pill_segment_start:]
+            segment_results = self._results[self._pill_segment_start:]
+            segment_thinking = self._thinking[self._thinking_segment_start:]
+            if outcome.tool_events is None and segment_calls:
                 outcome.tool_events = trace_to_tool_events(
-                    AgentToolTrace(step_id="chat", calls=self._calls, results=self._results),
+                    AgentToolTrace(step_id="chat", calls=segment_calls, results=segment_results),
                     "execution")
-            if outcome.thinking_log is None and self._thinking:
-                outcome.thinking_log = list(self._thinking)
+            if outcome.thinking_log is None and segment_thinking:
+                outcome.thinking_log = list(segment_thinking)
             return outcome
         finally:
             # The per-turn shadow is discarded at turn end on ANY exit (submit, budget
@@ -790,7 +820,23 @@ class ControllerLoop:
                     f"⚠️ Invalid response ({consecutive_malformed}/{_MAX_MALFORMED}): "
                     f"{cap_event_output(correction, 200)} — retrying…",
                 )
-                history.append(assistant_turn(resp))
+                # A REJECTED `progress` still needs the SAME cap the accept path applies
+                # (see the atype == "progress" branch below) — _progress_repeat_correction
+                # and _progress_dedup_correction both reject actual `progress` responses,
+                # and without this the raw (uncapped) note rides every subsequent prompt
+                # until _MAX_MALFORMED, exactly the context bloat the cap exists to bound
+                # (final whole-branch review, finding 2). Scoped to `progress` rather than
+                # a blanket fix here: this file's existing idiom for a large-field rejection
+                # is a targeted strip/substitute at the field whose bloat risk is understood
+                # (e.g. the empty-edit and PATCH-FAILED branches below both drop patch_ops
+                # from the persisted intent) — a generic cap at this shared site would need
+                # to know which field matters per type anyway, and 'progress' is the only
+                # type with an established cap to reuse here.
+                persisted = (
+                    {**resp, "note": _normalize_progress_note(resp)}
+                    if atype == "progress" else resp
+                )
+                history.append(assistant_turn(persisted))
                 history.append({"role": "tool_result", "tool": "", "content": correction})
                 continue
             # Captured BEFORE the reset so the progress branch can restore it — a note
@@ -836,6 +882,16 @@ class ControllerLoop:
                 note = _normalize_progress_note(resp)
                 seen_notes.add(note)
                 last_was_progress = True
+                # This note is the pills-segment boundary (finding 1): everything from
+                # here on (live call_index, the durable on_pills_update payload, and the
+                # final outcome's own tool_events/thinking_log if the turn ends before
+                # another tool_call) is scoped to "since THIS note", not the whole turn —
+                # mirrors the durable seal below (ChatController._progress_note_cb calls
+                # ChatThreadStore.seal_inflight_pills at the same boundary) and the live
+                # webview's sealStreaming, which resets its streaming bubble's toolEvents
+                # to [] right after sealing one into a message.
+                self._pill_segment_start = len(self._calls)
+                self._thinking_segment_start = len(self._thinking)
                 # Live event (durable half is the cb below). Mirrors tool_call's
                 # broadcast-live / persist-separately split.
                 self._broadcaster.broadcast(self._channel_id, {
@@ -882,11 +938,14 @@ class ControllerLoop:
                             self._sm.phase, iteration, tool, str(args)[:200])
                 # Live tool pill: tool_call before execute, tool_result after. The
                 # frontend pairs these by source ("execution") into a pill with thought.
-                # call_index = the position this call will occupy in the trace (it's
-                # appended below), which equals the persisted pill id (trace_to_tool_events
-                # uses enumerate index). The FE uses it as the pill id so a switch-back
-                # resume dedups replayed pills against the loaded in-flight message.
-                call_index = len(self._calls)
+                # call_index = the position this call will occupy WITHIN THE CURRENT PILLS
+                # SEGMENT (it's appended below), which equals the persisted pill id
+                # (trace_to_tool_events enumerates the segment-sliced list below, not the
+                # whole-turn one — see self._pill_segment_start). The FE uses it as the
+                # pill id so a switch-back resume dedups replayed pills against the loaded
+                # in-flight message; relative-to-segment keeps it valid across a `progress`
+                # note, which starts a fresh in-flight message (finding 1).
+                call_index = len(self._calls) - self._pill_segment_start
                 self._broadcaster.broadcast(self._channel_id, {
                     "type": "tool_call",
                     "payload": {"tool": tool, "thought": str(resp.get("thought", "")),
@@ -922,11 +981,18 @@ class ControllerLoop:
                 # the turn.
                 if on_pills_update is not None:
                     try:
+                        # Sliced to the CURRENT segment (since the last `progress` note, or
+                        # turn start if none yet) — see self._pill_segment_start. A no-note
+                        # turn has segment_start==0 for its whole life, so this is a no-op
+                        # slice ([0:] == the full list) and byte-identical to pre-fix.
                         pills = trace_to_tool_events(
                             AgentToolTrace(
-                                step_id="chat", calls=self._calls, results=self._results),
+                                step_id="chat",
+                                calls=self._calls[self._pill_segment_start:],
+                                results=self._results[self._pill_segment_start:]),
                             "execution")
-                        await on_pills_update(pills, list(self._thinking))
+                        await on_pills_update(
+                            pills, list(self._thinking[self._thinking_segment_start:]))
                     except Exception:
                         logger.debug("[controller] inflight pill persist failed", exc_info=True)
                 history.append(assistant_turn(resp))

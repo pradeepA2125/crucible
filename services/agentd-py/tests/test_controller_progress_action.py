@@ -269,6 +269,35 @@ async def test_progress_history_entry_strips_thought_and_carries_the_capped_note
 
 
 @pytest.mark.asyncio
+async def test_rejected_progress_note_is_capped_in_history_too(tmp_path: Path) -> None:
+    # Finding 2 (final whole-branch review): the correction/rejection branch persisted
+    # `resp` RAW — the accept path was already fixed to cap the note
+    # (assistant_turn({**resp, "note": note})), but this path, ~35 lines earlier, was
+    # missed, and it fires for `progress` because _progress_repeat_correction /
+    # _progress_dedup_correction route rejected progress responses through it. Without
+    # the fix, an uncapped note here rides every subsequent iteration's prompt until
+    # _MAX_MALFORMED — the exact bloat _PROGRESS_NOTE_MAX_CHARS exists to prevent.
+    huge_note = "B" * 40000
+    loop = build_loop(
+        tmp_path,
+        [
+            {"type": "progress", "thought": "t", "note": "first"},
+            # Rejected: two progress notes in a row with no real action between —
+            # _progress_repeat_correction fires, NOT _empty_action_correction, so the
+            # raw (huge) note is what would ride into history pre-fix.
+            {"type": "progress", "thought": "t", "note": huge_note},
+            {"type": "answer", "thought": "t", "answer": "Done."},
+        ],
+    )
+    outcome = await loop.run({"goal": "x", "workspace_path": str(tmp_path)}, max_iters=8)
+    assert outcome.history is not None
+    rejected_assistant = json.loads(str(outcome.history[2]["content"]))
+    assert rejected_assistant["type"] == "progress"
+    assert len(rejected_assistant["note"]) == _PROGRESS_NOTE_MAX_CHARS
+    assert huge_note not in str(outcome.history[2]["content"])
+
+
+@pytest.mark.asyncio
 async def test_progress_does_not_reset_the_malformed_streak(tmp_path: Path) -> None:
     # A note is not evidence of progress: it must not launder a malformed streak.
     # Two malformed, then a note, then malformed until the cap → the turn still bails.
@@ -355,6 +384,43 @@ async def test_progress_broadcasts_a_live_chat_progress_event(tmp_path: Path) ->
     await loop.run({"goal": "x", "workspace_path": str(tmp_path)}, max_iters=8)
     progress_events = [e for e in events if e.get("type") == "chat_progress"]
     assert progress_events == [{"type": "chat_progress", "payload": {"note": "live half"}}]
+
+
+@pytest.mark.asyncio
+async def test_call_index_resets_per_pills_segment_after_a_note(tmp_path: Path) -> None:
+    # Finding 1's loop-side half: live `call_index` (the broadcast tool_call/tool_result
+    # payload) must stay relative to the CURRENT pills segment, matching the durable
+    # array position `trace_to_tool_events` assigns within that same (now segment-sliced)
+    # message — otherwise a switch-back resume's dedup-by-id (webview useAppState.ts
+    # appendToolEvent) would compare a live GLOBAL index against a durable SEGMENT-local
+    # one and never match post-note.
+    (tmp_path / "f1.py").write_text("a = 1\n")
+    (tmp_path / "f2.py").write_text("b = 2\n")
+    loop = build_loop(
+        tmp_path,
+        [
+            {"type": "tool_call", "thought": "t", "tool": "read_file", "args": {"path": "f1.py"}},
+            {"type": "progress", "thought": "t", "note": "segment boundary"},
+            {"type": "tool_call", "thought": "t", "tool": "read_file", "args": {"path": "f2.py"}},
+            {"type": "answer", "thought": "t", "answer": "Done."},
+        ],
+    )
+    events: list[dict[str, object]] = []
+    original = loop._broadcaster.broadcast
+
+    def spy(channel_id: str, event: dict[str, object]) -> None:
+        events.append(event)
+        original(channel_id, event)
+
+    loop._broadcaster.broadcast = spy  # type: ignore[method-assign]
+    await loop.run({"goal": "x", "workspace_path": str(tmp_path)}, max_iters=8)
+    call_indices = [
+        e["payload"]["call_index"] for e in events if e.get("type") == "tool_call"
+    ]
+    # Both calls are the FIRST call of their own segment (f1 before the note, f2 after
+    # it) — both must broadcast call_index == 0, not 0 then 1 (which a GLOBAL,
+    # unsliced index would produce).
+    assert call_indices == [0, 0]
 
 
 @pytest.mark.asyncio

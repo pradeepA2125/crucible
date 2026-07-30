@@ -440,7 +440,7 @@ class ChatController:
             memory_harness=self._memory_harness, active_skills=active_skills,
             skill_catalog_loader=skill_catalog_loader,
             active_skill_persist_cb=active_skill_persist_cb,
-            progress_note_cb=partial(self._progress_note_cb, thread_id))
+            progress_note_cb=partial(self._progress_note_cb, thread_id, turn_id))
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path,
             # run_id keys the per-thread compaction segments + anchored summary.
@@ -953,13 +953,22 @@ class ChatController:
         self._broadcaster.broadcast(channel_id, {
             "type": "chat_breadcrumb", "payload": {"text": text, "task_id": ""}})
 
-    async def _progress_note_cb(self, thread_id: str, note: str) -> None:
+    async def _progress_note_cb(self, thread_id: str, turn_id: str | None, note: str) -> None:
         """Persist a non-terminal `progress` note as a durable transcript message —
         the reload half. The live `chat_progress` event is already broadcast by the
         loop itself (ControllerLoop._iterate), so this must persist ONLY — broadcasting
         here too would duplicate the live signal. async to match the loop's `await
         self._progress_note_cb(note)` call site; the body is a single sync sqlite
-        write (mirrors _persist_todos/_persist_active_skill), no thread pool needed."""
+        write (mirrors _persist_todos/_persist_active_skill), no thread pool needed.
+
+        Finding 1 (final whole-branch review): seal THIS turn's in-flight pills message
+        BEFORE appending the note, so the note lands after the pills accumulated so far
+        instead of ending up ahead of the eventual closing (answer/submit_changes)
+        message, which finalizes that SAME in-flight message object in place. Mirrors
+        the live webview's sealStreaming split around each note. A no-op when no
+        in-flight message exists yet (e.g. a note before any tool call this turn)."""
+        if turn_id:
+            self._store.seal_inflight_pills(thread_id, turn_id)
         self._store.append_message(thread_id, ChatMessage(
             role="agent", content=note, type="text", metadata={"progress": True}))
 

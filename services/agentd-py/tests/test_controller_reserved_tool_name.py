@@ -64,6 +64,26 @@ async def test_tool_call_propose_mode_is_rejected_in_plan(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_repeated_tool_call_progress_exhausts_instead_of_looping_forever(
+    tmp_path: Path,
+):
+    # `progress` (final whole-branch review, finding 3) is a top-level response type
+    # exactly like edit/answer/clarify/propose_mode/submit_changes — a tool_call wrapping
+    # it must count toward consecutive_malformed, same as the others, or it grinds
+    # silently (dispatched to the registry as an "unknown tool" error, never counted,
+    # never exhausted) instead of failing fast and visibly. Mirrors
+    # test_repeated_tool_call_edit_exhausts_instead_of_looping_forever exactly, swapping
+    # 'edit' for 'progress' — this is the actual regression-sensitive shape: without the
+    # fix, dispatch-not-rejected never raises here at all (it just spins to max_iters).
+    bad = {"type": "tool_call", "thought": "retry", "tool": "progress",
+           "args": {"note": "working on it"}}
+    sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
+    with pytest.raises(ControllerLoopExhausted):
+        await _loop(tmp_path, [bad, bad, bad, bad], sm).run(
+            {"goal": "g", "workspace_path": str(tmp_path)}, max_iters=50)
+
+
+@pytest.mark.asyncio
 async def test_repeated_tool_call_edit_exhausts_instead_of_looping_forever(tmp_path: Path):
     # Before the fix this never counted as malformed and could grind for max_iters (500,
     # each attempt a full regeneration) instead of failing fast and visibly.

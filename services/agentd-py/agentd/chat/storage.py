@@ -305,6 +305,42 @@ class ChatThreadStore:
         self._conn.commit()
         return True
 
+    def seal_inflight_pills(self, thread_id: str, turn_id: str) -> None:
+        """Freeze THIS turn's in-flight pills message in place (finding 1) — drop its
+        ``inflight_turn_id`` marker WITHOUT touching content or metadata, a no-op if
+        none exists yet.
+
+        Called when a non-terminal `progress` note is persisted, BEFORE the note's own
+        ``append_message``. Without this, ``finalize_inflight_pills`` at turn end updates
+        the SAME message object created at the FIRST tool result (before the note was
+        appended), so the final answer lands ahead of the note in transcript order
+        despite happening after it live. Sealing here means the message stays exactly
+        where it is (pills accumulated up to the note, in order), and the NEXT tool
+        result's ``upsert_inflight_pills`` — finding no message with this turn_id any
+        more — appends a FRESH in-flight message positioned after the note, mirroring
+        the live webview's ``sealStreaming`` split around each note."""
+        row = self._conn.execute(
+            "SELECT messages_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return
+        messages: list[dict] = json.loads(row["messages_json"])
+        existing = next(
+            (m for m in messages
+             if (m.get("metadata") or {}).get("inflight_turn_id") == turn_id),
+            None,
+        )
+        if existing is None:
+            return
+        metadata = dict(existing.get("metadata") or {})
+        metadata.pop("inflight_turn_id", None)
+        existing["metadata"] = metadata
+        self._conn.execute(
+            "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
+            (json.dumps(messages), thread_id),
+        )
+        self._conn.commit()
+
     def clear_inflight_markers(self, thread_id: str) -> None:
         """Drop the ``inflight_turn_id`` marker from any lingering in-flight pills message
         (a prior turn that was stopped/restart-orphaned before finalize). The pills STAY

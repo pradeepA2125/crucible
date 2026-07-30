@@ -14,6 +14,7 @@ TYPE_REQUIRED_FIELDS: dict[str, list[str]] = {
     "propose_mode": ["plan_sketch", "recommended", "reason", "options"],
     "edit": ["patch_ops"],
     "submit_changes": ["summary"],
+    "progress": ["note"],
 }
 
 

@@ -258,8 +258,8 @@ Variant — tool_call (explore): {type, thought, tool, args}
   {"type":"tool_call","thought":"locate the chat route","tool":"search_code","args":{"pattern":"def .*message","path_filter":"*.py"}}
   {"type":"tool_call","thought":"read the handler","tool":"read_file","args":{"path":"services/agentd-py/agentd/api/routes.py","start_line":120,"end_line":200}}
   WRONG — "tool" must be a name from AVAILABLE TOOLS, never one of THIS schema's own
-  response types (answer/clarify/propose_mode/edit/submit_changes). Those are never
-  callable tools, even though write_todos (a real tool) is also invoked via tool_call:
+  response types (answer/clarify/propose_mode/edit/submit_changes/progress). Those are
+  never callable tools, even though write_todos (a real tool) is also invoked via tool_call:
   {"type":"tool_call","tool":"edit","args":{"patch_ops":[...]}}  ← INVALID, "edit" is not a tool.
   To write a file, emit a top-level {"type":"edit","patch_ops":[...]} object instead (see below).
 
@@ -665,7 +665,10 @@ def build_controller_step_payload(
                 "type='edit' now with a NON-EMPTY patch_ops, OR type='answer' if this needs no "
                 "change at all.\n"
                 f"Read the target region of any EXISTING file before changing it (search_code{_graph} "
-                "→ read_file); a brand-new file needs no read. Finish with type='submit_changes'."
+                "→ read_file); a brand-new file needs no read. Finish with type='submit_changes'. "
+                "type='progress' with a short note is also available at any point before you "
+                "commit, if you want to tell the user what you're about to do without spending "
+                "the turn on it — it does not end the turn."
             )
         elif final_call:
             hint = (
@@ -716,8 +719,11 @@ def build_controller_step_payload(
                 "CONTINUE/FIX — if an edit failed, re-read the exact lines and re-emit ONE corrected "
                 "op (do NOT repeat the failed op verbatim); otherwise emit type='edit' for the "
                 "current 'in_progress' item (or the next pending one). (B) DONE — only when no items "
-                "remain (or the change was small), emit type='submit_changes' with a summary. A "
-                "read-resistant blocker → mark the item 'blocked' or use type='clarify'."
+                "remain (or the change was small), emit type='submit_changes' with a summary. (C) "
+                "NARRATE — type='progress' with a short note if you want to update the user on "
+                "where things stand before continuing; it does not end the turn, so follow it with "
+                "(A) or (B) right after. A read-resistant blocker → mark the item 'blocked' or use "
+                "type='clarify'."
             )
     else:  # PLAN
         # Plan Mode is a deliberate user choice (the sticky toggle) — unlike the old
@@ -784,7 +790,10 @@ def build_controller_step_payload(
                 f"(search{_graph}) and read that region; never re-issue an identical call. "
                 "(B) COMMIT — if you've read the code behind every claim, emit type='answer' "
                 "(complete, non-empty, in the 'answer' field) or type='propose_mode' for a change. "
-                "Neither is penalized — pick what your reflection supports."
+                "(C) NARRATE — type='progress' with a short note if you want to tell the user "
+                "what you're exploring or about to check next without ending the turn, then follow "
+                "with (A) or (B). Neither (A) nor (B) is penalized — pick what your reflection "
+                "supports."
             )
     payload["instruction"] = f"Phase={phase}. {hint} ({iteration} of {max_iters} steps used.)"
     payload["budget_status"] = f"{iteration}/{max_iters} steps used"  # LAST (varies every turn)
