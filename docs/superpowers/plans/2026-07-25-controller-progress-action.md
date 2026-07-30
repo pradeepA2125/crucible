@@ -906,13 +906,108 @@ git add -A
 git commit -m "test(chat): full-stack verification pass for progress action"
 ```
 
-Then STOP and hand back for the live dogfood run (Open Item A in the spec: force-loading/behavior-under-real-model is a separate live check, out of scope for this plan).
+Then proceed to Task 8.
+
+---
+
+### Task 8: Live smoke — a real model uses `progress` and distinguishes it from `answer`
+
+The whole point of the feature is a behavioral change in a real model. Tasks 1-7 prove the mechanism is *available, guarded, persisted, and rendered*; this task is the only one that proves it **works**. It resolves spec Open Item A.
+
+**Requires a live model.** This repo's default local path is TurboQuant (`CRUCIBLE_REASONING_BACKEND="turboquant"`, `CRUCIBLE_TURBOQUANT_MODEL="qwen3.6:35b-a3b-q4_K_M"`) — deliberately a *weak* model, which is the right test: the narrate-instead-of-act failure this feature fixes was observed on exactly this model.
+
+**Files:** none (verification only). Any bug found becomes its own fix commit.
+
+- [ ] **Step 1: Start the model server**
+
+```bash
+bash scripts/start-tqp.sh
+# wait for the server, then confirm:
+curl -s http://127.0.0.1:11435/health
+```
+
+- [ ] **Step 2: Start the backend against a scratch workspace**
+
+Use a workspace OUTSIDE any ignored-named ancestor dir (never under `.tmp/` — `is_ignored_path` matches ignored dir names against the FULL absolute path, so an indexer under `.tmp/` silently indexes zero files).
+
+```bash
+export $(cat .env | grep -v "^#" | grep "=" | sed 's/"//g' | xargs)
+bash scripts/start-backend.sh \
+  --backend turboquant \
+  --workspace "$PWD/workspaces/progress-smoke" \
+  --validation-profile none
+curl -s http://localhost:8000/health
+```
+
+`CRUCIBLE_CHAT_CONTROLLER=1` is required (`start-backend.sh` defaults it on). **Always quote `--workspace`** — an unquoted path with a space corrupts every derived var.
+
+- [ ] **Step 3: Drive a multi-step turn that should produce narration**
+
+Create a thread and send a prompt whose natural shape is "do several things in sequence" — the condition under which the model previously emitted a terminal `answer` mid-execution:
+
+```bash
+TID=$(curl -s -X POST http://localhost:8000/v1/chat/threads \
+  -H 'Content-Type: application/json' \
+  -d '{"workspace":"'"$PWD"'/workspaces/progress-smoke","title":"progress smoke"}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+
+curl -sN --no-buffer -X POST "http://localhost:8000/v1/chat/threads/$TID/message" \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"Create a Python module calc.py with add and multiply functions, then a test file test_calc.py covering both, then run the tests."}' \
+  | tee /tmp/progress-smoke-sse.txt
+```
+
+- [ ] **Step 4: Assert the four behaviors that matter**
+
+From the SSE stream and the debug artifacts, confirm:
+
+1. **`progress` actually fires** — at least one `chat_progress` event in the stream:
+   ```bash
+   grep -c "chat_progress" /tmp/progress-smoke-sse.txt
+   ```
+2. **The turn CONTINUES after it** — a `progress` event is followed by more `tool_call`/`patch_applied` activity, not `chat_done`. This is the non-terminal property.
+3. **`answer` is still used correctly and distinctly** — the turn ends with exactly one terminal `answer` (or `submit_changes`) delivering finished content, NOT a status update. Compare the `answer` text against the `progress` notes: the notes should be status ("now creating the test file"), the answer should be a result ("Added add/multiply to calc.py; 2 tests pass").
+4. **No narrate-and-stop regression** — the turn must not end with an `answer` that describes work it never did. Inspect the per-iteration artifacts for the exact model bytes:
+   ```bash
+   ls workspaces/progress-smoke/.crucible/state/artifacts/chat/$TID/*/controller-turn-*.json
+   ```
+   Grep each `raw_result` for `"type"` values in order — that sequence IS the behavioral record.
+
+- [ ] **Step 5: Verify durable persistence**
+
+```bash
+sqlite3 workspaces/progress-smoke/.crucible/state/chat.sqlite3 \
+  "SELECT messages_json FROM chat_threads WHERE id='$TID';" \
+  | python3 -m json.tool | grep -A2 '"progress"'
+```
+Expected: one persisted `agent`/`text` message per note, each with `metadata.progress = true`, content equal to the note (capped at 500 chars).
+
+- [ ] **Step 6: Verify the guardrails fire on a real model (not just in tests)**
+
+Watch the log for the cap/dedup corrections. They should fire rarely or never on a well-behaved turn — but if the model does spam notes, confirm the correction lands rather than the loop spinning:
+```bash
+grep -E "already posted|progress" .tmp/stress-*/logs/agentd.log | tail -20
+```
+
+- [ ] **Step 7: Verify UI rendering in the dev host**
+
+```bash
+npm run build
+code --extensionDevelopmentPath="$PWD/apps/vscode-extension" "$PWD/workspaces/progress-smoke"
+```
+Send the same prompt through the chat panel. Confirm: notes appear as muted progress lines *during* the turn (not only at the end), the composer stays in "working" state across them, and a reload mid-turn still shows the notes (durable path).
+
+- [ ] **Step 8: Record the outcome**
+
+Write findings to `docs/superpowers/2026-07-25-progress-action-live-smoke.md`: the observed action-type sequence, verbatim examples of a `progress` note and the final `answer` side by side (the differentiation evidence), whether any guardrail fired, and any bug found.
+
+**If the model does NOT use `progress`** — it keeps emitting terminal `answer` mid-turn — that is a real finding, not a failed task: the mechanism works but the steering doesn't. Report it with the artifact evidence; the fix is prompt-side (per project memory, few-shot worked examples beat abstract rules for this model), and it becomes its own follow-up spec rather than being patched blindly here.
 
 ---
 
 ## Notes for the executor
 
-- **Live behavior is NOT in scope.** These tasks make `progress` *available, guarded, persisted, and rendered*. Whether a real weak model *uses it well* (and stops emitting terminal `answer` mid-turn) is a live dogfood question tracked as spec Open Item A — do not try to verify it here.
+- **Tasks 1-7 do not prove the feature works.** They make `progress` *available, guarded, persisted, and rendered*. Whether a real model *uses it well* — and clearly distinguishes it from `answer` — is Task 8, and Task 8 is the acceptance gate. Do not report the feature complete after Task 7.
 - **The two `controller.ts` handler sites are not identical** — copy each one's surrounding `appendChatMessage` field shape exactly (the breadcrumb branches at `:752` and `:1018` differ in whether they pass `taskId`). Don't unify them.
 - **If `build_loop` / stub helpers don't exist** in the referenced test files, write minimal local ones — do not refactor the existing tests to extract shared helpers (out of scope; risks touching the fix-branch's own new tests).
 ```
