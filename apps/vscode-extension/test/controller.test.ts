@@ -890,6 +890,46 @@ describe("CrucibleController — deviation capture", () => {
   });
 });
 
+
+describe("CrucibleController — chat_progress rendering", () => {
+  test("renders chat_progress as a progress-tagged agent message via streamTaskIntoChatThread", async () => {
+    const taskId = "task-progress-1";
+    const messages: ChatMessage[] = [];
+
+    const backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [],
+        rejectCalls: [], getResultCalls: [], planFeedbackCalls: [],
+      }),
+      streamPatchEvents: async function* (_taskId: string) {
+        yield {
+          type: "chat_progress" as const,
+          payload: { note: "Working on task 1." },
+        };
+        yield { type: "done" as const, payload: { status: "SUCCEEDED" } };
+      },
+    };
+
+    const controller = new CrucibleController(
+      () => backend,
+      new MemorySessionStore(),
+      createSettings(),
+      createUi({ appendChatMessage: (m) => messages.push(m) }),
+      { openDiff: async () => {} },
+      () => "2026-07-25T00:00:00.000Z"
+    );
+
+    await controller.streamTaskIntoChatThread(taskId);
+    controller.dispose();
+
+    const progressMsg = messages.find((m) => m.metadata?.progress === true);
+    expect(progressMsg).toBeDefined();
+    expect(progressMsg?.content).toBe("Working on task 1.");
+    expect(progressMsg?.role).toBe("agent");
+    expect(progressMsg?.type).toBe("text");
+  });
+});
+
 describe("CrucibleController — resume streaming", () => {
   const resumeBackend = (
     onStream: (taskId: string) => void,

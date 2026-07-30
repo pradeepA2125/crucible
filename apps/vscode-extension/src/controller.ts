@@ -761,6 +761,17 @@ export class CrucibleController {
             timestamp: this.now(),
             metadata: { breadcrumb: true },
           });
+        } else if (event.type === "chat_progress") {
+          // Non-terminal mid-turn status note. Render live; the durable copy
+          // (metadata.progress) arrives on reload from the backend persist.
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: (event.payload["note"] as string) ?? "",
+            type: "text",
+            taskId: "",
+            timestamp: this.now(),
+            metadata: { progress: true },
+          });
         } else if (event.type === "memory_compacted") {
           // Observability: the memory harness compacted older history into the anchored
           // summary. Render a subtle system line so the user can see it fired.
@@ -1039,6 +1050,14 @@ export class CrucibleController {
           ) {
             this.noteDeviation(event.payload.task_id ?? taskId, breadcrumbText);
           }
+        } else if (event.type === "chat_progress") {
+          this.ui.appendChatMessage({
+            role: "agent",
+            content: event.payload.note,
+            type: "text",
+            timestamp: this.now(),
+            metadata: { progress: true },
+          });
         } else if (event.type === "plan_card") {
           // Read-only transcript record (e.g. a feedback-regenerated version picked up
           // when execution starts). Display-only; chat.js dedups by task+content.
