@@ -154,6 +154,13 @@ class ChatController:
         # task handle stop_turn cancels. A backend restart clears it — the orphaned
         # turn is dead anyway (the transcript + pending_controller_gate survive in sqlite).
         self._active_turns: dict[str, asyncio.Task] = {}
+        # The ControllerLoop currently running for a thread, so the mid-turn durable
+        # writers (_write_breadcrumb, _edit_record_cb) can tell it a message just landed
+        # in the transcript — see _mark_pills_boundary. Registered/released around
+        # loop.run() in _run_loop; absent between turns, which makes the mark a no-op for
+        # every out-of-turn breadcrumb (a restart-orphan crumb, ✗ Stopped, and the
+        # mode/clarify decision crumbs, which precede a brand-new loop).
+        self._active_loops: dict[str, ControllerLoop] = {}
 
     def launch_turn(
         self, thread_id: str, coro, *, channel_id: str | None = None,
@@ -440,7 +447,13 @@ class ChatController:
             memory_harness=self._memory_harness, active_skills=active_skills,
             skill_catalog_loader=skill_catalog_loader,
             active_skill_persist_cb=active_skill_persist_cb,
-            progress_note_cb=partial(self._progress_note_cb, thread_id, turn_id))
+            progress_note_cb=partial(self._progress_note_cb, thread_id),
+            # Store half of the pills-segment boundary: freeze the in-flight pills message
+            # in place so the next tool result appends a fresh one after whatever durable
+            # message landed in between (the loop owns WHEN — see mark_pills_boundary).
+            pills_seal_cb=(
+                partial(self._store.seal_inflight_pills, thread_id, turn_id)
+                if turn_id else None))
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path,
             # run_id keys the per-thread compaction segments + anchored summary.
@@ -476,6 +489,8 @@ class ChatController:
         pills_cb = partial(self._persist_inflight_pills, thread_id, turn_id) \
             if turn_id else None
         max_iters = int(os.environ.get("CRUCIBLE_CONTROLLER_MAX_ITERS", "500"))
+        # Reachable by the mid-turn durable writers for exactly the loop's lifetime.
+        self._active_loops[thread_id] = loop
         try:
             outcome = await loop.run(
                 plan_context, max_iters=max_iters, seed_history=seed_history,
@@ -531,6 +546,10 @@ class ChatController:
                 text=f"⚠️ The turn failed and had to stop: {exc}",
                 history=partial_hist,
             )
+        finally:
+            # Released on EVERY exit (including the re-raised cancel) so a later
+            # out-of-turn breadcrumb can never mark a dead loop's boundary.
+            self._active_loops.pop(thread_id, None)
         self._histories[thread_id] = outcome.history or []
         # Turn trace artifact (controller analog of tool-trace.json): the whole turn's
         # info in one file for offline debugging — phase, verbatim history, pills,
@@ -750,6 +769,8 @@ class ChatController:
              "deletions": d.deletions, "unified_diff": d.unified_diff}
             for d in diff]
         resolved = "applied" if decision == "accept" else "discarded"
+        # A mid-turn durable message: pills from after the edit belong after this card.
+        self._mark_pills_boundary(thread_id)
         self._store.append_message(thread_id, ChatMessage(
             role="agent", content="", type="diff_card",
             metadata={"diff_entries": diff_payload, "resolved": resolved}))
@@ -944,16 +965,34 @@ class ChatController:
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
         return True
 
+    def _mark_pills_boundary(self, thread_id: str) -> None:
+        """Tell the running loop a durable message just landed in the transcript, so the
+        pills it persists from here on start a NEW message positioned after it.
+
+        Without this, the in-flight pills message (created at the turn's FIRST tool result
+        and updated in place) keeps absorbing every later pill — and the closing text
+        finalizes that same message — so on reload the whole turn's pills render as one
+        block ahead of every breadcrumb/diff_card that actually preceded them. The live
+        webview has no such divergence: its `appendMessage` reducer seals the streaming
+        bubble for EVERY appended message (webview-ui/src/hooks/useAppState.ts), which is
+        the rule this mirrors on the durable side.
+
+        No-op between turns (see self._active_loops)."""
+        loop = self._active_loops.get(thread_id)
+        if loop is not None:
+            loop.mark_pills_boundary()
+
     def _write_breadcrumb(self, thread_id: str, channel_id: str, text: str) -> None:
         """Persist a durable transcript breadcrumb AND broadcast it live (mirror
         engine.write_chat_breadcrumb). The live mode/edit gate is ephemeral; this is
         the permanent record of the user's decision so history reads as a narrative."""
+        self._mark_pills_boundary(thread_id)
         self._store.append_message(thread_id, ChatMessage(
             role="agent", content=text, type="text", metadata={"breadcrumb": True}))
         self._broadcaster.broadcast(channel_id, {
             "type": "chat_breadcrumb", "payload": {"text": text, "task_id": ""}})
 
-    async def _progress_note_cb(self, thread_id: str, turn_id: str | None, note: str) -> None:
+    async def _progress_note_cb(self, thread_id: str, note: str) -> None:
         """Persist a non-terminal `progress` note as a durable transcript message —
         the reload half. The live `chat_progress` event is already broadcast by the
         loop itself (ControllerLoop._iterate), so this must persist ONLY — broadcasting
@@ -961,14 +1000,11 @@ class ChatController:
         self._progress_note_cb(note)` call site; the body is a single sync sqlite
         write (mirrors _persist_todos/_persist_active_skill), no thread pool needed.
 
-        Finding 1 (final whole-branch review): seal THIS turn's in-flight pills message
-        BEFORE appending the note, so the note lands after the pills accumulated so far
-        instead of ending up ahead of the eventual closing (answer/submit_changes)
-        message, which finalizes that SAME in-flight message object in place. Mirrors
-        the live webview's sealStreaming split around each note. A no-op when no
-        in-flight message exists yet (e.g. a note before any tool call this turn)."""
-        if turn_id:
-            self._store.seal_inflight_pills(thread_id, turn_id)
+        The note is a pills-segment boundary like any other mid-turn durable message, so
+        it lands after the pills accumulated so far instead of ending up ahead of the
+        eventual closing (answer/submit_changes) message, which finalizes that SAME
+        in-flight message object in place. The loop marks the boundary itself at the
+        `progress` dispatch (ControllerLoop.mark_pills_boundary) — nothing to do here."""
         self._store.append_message(thread_id, ChatMessage(
             role="agent", content=note, type="text", metadata={"progress": True}))
 

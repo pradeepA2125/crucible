@@ -380,6 +380,7 @@ class ControllerLoop:
         skill_catalog_loader: object | None = None,
         active_skill_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
         progress_note_cb: Callable[[str], Awaitable[None]] | None = None,
+        pills_seal_cb: Callable[[], None] | None = None,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -422,21 +423,34 @@ class ControllerLoop:
         self._results: list[ToolResult] = []
         self._thinking: list[str] = []
         # Index into self._calls/self._results/self._thinking marking the start of the
-        # CURRENT pills segment — advanced to the current length whenever a `progress`
-        # note is dispatched (finding 1, final whole-branch review). A durable `progress`
-        # note seals the in-flight pills message accumulated so far (see
-        # ChatController._progress_note_cb / ChatThreadStore.seal_inflight_pills) so the
-        # note lands after them in transcript order, mirroring the live webview's
-        # sealStreaming split; these two indices are the LOOP-side half of that same
-        # boundary — they keep every pills computation (live call_index + the durable
-        # tool_events/thinking_log passed to on_pills_update, and the final outcome's own
-        # tool_events/thinking_log) scoped to "since the last note" instead of the whole
-        # turn, so a segment after a note never re-shows pills a prior (already sealed)
-        # message already carries. Stay 0 for the whole turn when no note ever fires, so
-        # a zero-`progress` turn is byte-identical to pre-fix behavior (slicing a list
-        # from 0 is the full list).
+        # CURRENT pills segment — advanced whenever a durable message lands in the
+        # transcript mid-turn (a `progress` note, a gate breadcrumb, an inert diff_card).
+        # Such a message is appended at the END of the message list, while pills
+        # accumulate in ONE in-flight message updated in place (ChatThreadStore.
+        # upsert_inflight_pills) — so without a boundary every later pill, and the
+        # closing text that finalizes that same message, is persisted BEHIND something
+        # that happened before it (on reload the whole turn's pills pile up at the top,
+        # with only the breadcrumbs in position). These two indices are the LOOP-side
+        # half of the boundary: they keep every pills computation (live call_index + the
+        # durable tool_events/thinking_log passed to on_pills_update, and the final
+        # outcome's own tool_events/thinking_log) scoped to "since the last boundary"
+        # instead of the whole turn, so a later segment never re-shows pills an
+        # already-sealed message carries. The store-side half is _pills_seal_cb. Both
+        # stay untouched for a turn with no mid-turn message, so that turn is
+        # byte-identical to pre-fix behavior (slicing a list from 0 is the full list).
         self._pill_segment_start = 0
         self._thinking_segment_start = 0
+        # Deferred boundary (see mark_pills_boundary/_apply_pills_boundary). A gate
+        # callback fires DURING registry.execute(), i.e. mid-tool-call, so applying the
+        # boundary there would strand the in-flight call: its live `call_index` was
+        # already broadcast relative to the OLD segment, and the pill it produces belongs
+        # with the ones the live webview sealed alongside it. Marking now and applying at
+        # the next iteration boundary keeps live and durable order identical.
+        self._pills_boundary_pending = False
+        # Seals the store's in-flight pills message (drops its inflight_turn_id marker so
+        # it freezes in place and the next tool result appends a fresh one). None → the
+        # loop still segments its own pill arrays, it just has nothing to seal.
+        self._pills_seal_cb = pills_seal_cb
         # The live conversation list `_iterate` mutates — exposed via partial_history() so a
         # caller can persist what a CANCELLED turn (/stop) accumulated before the cancel
         # raised, instead of losing the turn's exploration + already-promoted edits (Q2).
@@ -446,6 +460,35 @@ class ControllerLoop:
         # the clean entry hint (write_todos-as-tool_call) instead of the mid-turn reconcile
         # hint, so the first-action case isn't mis-routed.
         self._edit_applied = False
+
+    def mark_pills_boundary(self) -> None:
+        """A durable message just landed in the transcript mid-turn — close the current
+        pills segment at the next iteration boundary.
+
+        Called by the loop itself for a `progress` note, and by ChatController for every
+        other mid-turn durable write (gate breadcrumbs, inert diff_cards) via
+        _mark_pills_boundary. Idempotent: repeated marks before an apply collapse into
+        one boundary, which is what a burst of breadcrumbs with no pill between them
+        should produce (an empty segment would persist an empty pills message)."""
+        self._pills_boundary_pending = True
+
+    def _apply_pills_boundary(self) -> None:
+        """Apply a pending boundary: seal the store's in-flight pills message where it is,
+        and scope all subsequent pill/thinking slices to what comes after it.
+
+        Deliberately deferred to an iteration boundary rather than done at mark time —
+        see self._pills_boundary_pending. Best-effort on the store half: a persist failure
+        must never break the turn (mirrors the on_pills_update call site)."""
+        if not self._pills_boundary_pending:
+            return
+        self._pills_boundary_pending = False
+        if self._pills_seal_cb is not None:
+            try:
+                self._pills_seal_cb()
+            except Exception:
+                logger.debug("[controller] in-flight pill seal failed", exc_info=True)
+        self._pill_segment_start = len(self._calls)
+        self._thinking_segment_start = len(self._thinking)
 
     async def _maybe_force_required_subskill(
         self, ops: list[dict[str, object]], history: list[dict[str, object]],
@@ -564,6 +607,7 @@ class ControllerLoop:
         self._thinking = []
         self._pill_segment_start = 0
         self._thinking_segment_start = 0
+        self._pills_boundary_pending = False
         self._edit_applied = False
         try:
             outcome = await self._iterate(
@@ -575,13 +619,18 @@ class ControllerLoop:
                 retrieval_delta_cb=retrieval_delta_cb,
                 on_pills_update=on_pills_update,
             )
-            # Sliced to the segment since the last `progress` note (finding 1) — a note
-            # right before the terminal action correctly yields an EMPTY segment here
-            # (segment_start == len(self._calls)), since that note already sealed
-            # everything preceding it into its own durable message; the closing message
-            # should only carry pills from AFTER the note, not repeat them. A no-note
-            # turn has segment_start==0 for its whole life, so this stays byte-identical
-            # to the pre-fix "whole self._calls" behavior.
+            # The terminal action is itself an iteration, so a boundary marked during it
+            # (or during the tool call before it) has had no iteration top to run at —
+            # apply it here, BEFORE slicing, or the closing message would finalize the
+            # in-flight message created ahead of that mid-turn write and land behind it.
+            self._apply_pills_boundary()
+            # Sliced to the segment since the last mid-turn durable message — one right
+            # before the terminal action correctly yields an EMPTY segment here
+            # (segment_start == len(self._calls)), since the seal froze everything
+            # preceding it into its own durable message; the closing message should only
+            # carry pills from AFTER the boundary, not repeat them. A turn with no
+            # mid-turn message has segment_start==0 for its whole life, so this stays
+            # byte-identical to the pre-fix "whole self._calls" behavior.
             segment_calls = self._calls[self._pill_segment_start:]
             segment_results = self._results[self._pill_segment_start:]
             segment_thinking = self._thinking[self._thinking_segment_start:]
@@ -655,6 +704,10 @@ class ControllerLoop:
         seen_notes: set[str] = set()
 
         for iteration in range(max_iters + 1):
+            # Close a pills segment marked since the last iteration (a gate breadcrumb
+            # written mid-tool-call, a `progress` note) BEFORE anything this iteration
+            # computes a call_index or persists a pill against it.
+            self._apply_pills_boundary()
             # Live "thinking" status so the chat UI isn't blank during the first model
             # call (the frontend maps chat_agent_thinking → the thinking pane). Only the
             # first iteration: subsequent activity is conveyed by tool pills + the live
@@ -882,16 +935,15 @@ class ControllerLoop:
                 note = _normalize_progress_note(resp)
                 seen_notes.add(note)
                 last_was_progress = True
-                # This note is the pills-segment boundary (finding 1): everything from
-                # here on (live call_index, the durable on_pills_update payload, and the
-                # final outcome's own tool_events/thinking_log if the turn ends before
-                # another tool_call) is scoped to "since THIS note", not the whole turn —
-                # mirrors the durable seal below (ChatController._progress_note_cb calls
-                # ChatThreadStore.seal_inflight_pills at the same boundary) and the live
+                # This note is a pills-segment boundary: everything from here on (live
+                # call_index, the durable on_pills_update payload, and the final outcome's
+                # own tool_events/thinking_log if the turn ends before another tool_call)
+                # is scoped to "since THIS note", not the whole turn — mirroring the live
                 # webview's sealStreaming, which resets its streaming bubble's toolEvents
-                # to [] right after sealing one into a message.
-                self._pill_segment_start = len(self._calls)
-                self._thinking_segment_start = len(self._thinking)
+                # to [] right after sealing one into a message. Same mechanism every other
+                # mid-turn durable message uses (see mark_pills_boundary); applied at the
+                # next iteration top, which is before the next pill either way.
+                self.mark_pills_boundary()
                 # Live event (durable half is the cb below). Mirrors tool_call's
                 # broadcast-live / persist-separately split.
                 self._broadcaster.broadcast(self._channel_id, {
