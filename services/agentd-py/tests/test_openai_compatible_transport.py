@@ -78,6 +78,23 @@ async def test_generate_text_uses_max_tokens_not_json_max_tokens() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openrouter_generate_text_sends_no_require_parameters_guard() -> None:
+    """The `for_json` seam, from the caller's side: provider.require_parameters
+    guards response_format routing, which only a structured-output call sends.
+    Routing an OpenRouter TEXT completion through it would narrow provider choice
+    with nothing to protect. Extracting the base briefly regressed this by putting
+    generate_text through the same hook call as generate_json — this pins it."""
+    fake = _FakeCompletions(["hello"])
+    transport = OpenRouterJsonTransport(completions_client=fake)
+
+    await transport.generate_text(model="some/model", system_instructions="", user_payload={})
+
+    assert "provider" not in fake.calls[0].get("extra_body", {})
+    # A non-reasoning text call carries no extra_body key at all.
+    assert "extra_body" not in fake.calls[0]
+
+
+@pytest.mark.asyncio
 async def test_generate_json_uses_json_max_tokens() -> None:
     transport, fake = _transport([json.dumps({"ok": True})], max_tokens=77, json_max_tokens=4242)
     await transport.generate_json(

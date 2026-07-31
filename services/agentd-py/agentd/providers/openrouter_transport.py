@@ -126,13 +126,20 @@ class OpenRouterJsonTransport(OpenAICompatibleTransport):
             extra_headers["X-Title"] = self._site_name
         return extra_headers or None
 
-    def _build_extra_body(self, model: str, is_reasoning: bool) -> dict[str, Any]:
+    def _build_extra_body(
+        self, model: str, is_reasoning: bool, *, for_json: bool
+    ) -> dict[str, Any]:
         # require_parameters: only route to providers that actually honor the
         # parameters we send (response_format), so strict json_schema is enforced
         # instead of silently dropped by a non-supporting backend. Gated so it can be
         # disabled on tiers where no provider supports it (avoids a guaranteed 404).
-        extra_body = super()._build_extra_body(model, is_reasoning)
-        if self._require_parameters:
+        #
+        # for_json only: the guard exists to protect response_format, which is sent
+        # by structured-output calls alone. Pinning it on a text completion would
+        # narrow routing with nothing to protect, and the json_object fallback needs
+        # it dropped so it can route anywhere after the strict call already failed.
+        extra_body = super()._build_extra_body(model, is_reasoning, for_json=for_json)
+        if for_json and self._require_parameters:
             extra_body["provider"] = {"require_parameters": True}
         return extra_body
 

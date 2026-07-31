@@ -108,8 +108,19 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         """Vendor-specific headers. Base sends none."""
         return None
 
-    def _build_extra_body(self, model: str, is_reasoning: bool) -> dict[str, Any]:
-        """Vendor-specific request body extras. Base sends only reasoning."""
+    def _build_extra_body(
+        self, model: str, is_reasoning: bool, *, for_json: bool
+    ) -> dict[str, Any]:
+        """Vendor-specific request body extras. Base sends only reasoning.
+
+        `for_json` distinguishes a structured-output call (json_schema or the
+        json_object fallback) from a plain text completion. The base ignores it —
+        it has no JSON-only extras — but it is the seam a vendor uses to attach
+        something that is only meaningful when a `response_format` is in play.
+        OpenRouter's `provider.require_parameters` is exactly that: it guards
+        response_format routing, so sending it on a text call would restrict
+        routing for no benefit.
+        """
         extra_body: dict[str, Any] = {}
         if is_reasoning:
             extra_body["reasoning"] = {"enabled": True}
@@ -203,7 +214,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # live via the model's own default_parameters where the registry knows it).
         is_reasoning, temperature = await self._reasoning_config(model)
 
-        extra_body = self._build_extra_body(model, is_reasoning)
+        extra_body = self._build_extra_body(model, is_reasoning, for_json=True)
 
         base_kwargs: dict[str, Any] = {
             "model": model,
@@ -251,16 +262,17 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 "%s json_schema failed for %s, falling back to json_object: %s",
                 self._label, schema_name, e,
             )
-            # The fallback must be permissive: drop the `provider.require_parameters`
-            # guard so it can route to ANY provider (the strict path already failed
-            # precisely because no provider honored response_format). Keep any other
-            # extra_body (e.g. reasoning). Without this, the fallback inherits the same
-            # routing restriction and 404s too — defeating its whole purpose.
-            # (`provider` is an OpenRouter-only key; dropping it is a no-op for
-            # vendors that never set it.)
-            fallback_extra_body = {
-                k: v for k, v in extra_body.items() if k != "provider"
-            }
+            # The fallback must be permissive: it has to be able to route to ANY
+            # provider, because the strict path already failed precisely because no
+            # provider honored response_format. Any routing guard a vendor pins for
+            # the strict call would be inherited here and 404 too — defeating the
+            # fallback's whole purpose. So rather than filtering keys out, rebuild
+            # the extras from scratch with for_json=False, which asks the vendor for
+            # its unguarded set. Non-routing extras (e.g. reasoning) come back
+            # unchanged; the base stays ignorant of any vendor's key names.
+            fallback_extra_body = self._build_extra_body(
+                model, is_reasoning, for_json=False
+            )
             fallback_kwargs: dict[str, Any] = {
                 **base_kwargs,
                 "extra_body": fallback_extra_body,
@@ -336,7 +348,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             "max_completion_tokens": self._max_tokens,
             "temperature": temperature,
         }
-        extra_body = self._build_extra_body(model, is_reasoning)
+        extra_body = self._build_extra_body(model, is_reasoning, for_json=False)
         if extra_body:
             create_kwargs["extra_body"] = extra_body
 
