@@ -694,7 +694,7 @@ asyncio.run(main())
 
 Expected: prints `OK {...}` and `json_mode: strict`.
 
-Do **not** use `z-ai/glm-5.2` for this check — it is queued on NVIDIA's free tier and returned zero bytes for >10 minutes during planning (a 227s queue was measured once). Nemotron 3 Ultra answers in ~0.5s.
+Do **not** use `z-ai/glm-5.2` for this check. It is capable (strict json_schema with oneOf verified) but queue-bound on the free tier — ~225s TTFB per call, and one probe died with an HTTP 504 after 302s. Nemotron 3 Ultra answers in ~0.5s.
 
 - [ ] **Step 7: Commit**
 
@@ -1097,9 +1097,13 @@ Add a gotcha near the other provider notes:
   `openai_compatible` backend for any non-OpenAI endpoint.
 - **NVIDIA NIM (`https://integrate.api.nvidia.com/v1`)**: verified 2026-07-31 to support
   strict `response_format: json_schema` including `oneOf` discriminated unions, and to
-  accept `max_completion_tokens`. `nvext.guided_json` is not needed. Free-tier capacity
-  is per-model: `nvidia/nemotron-3-ultra-550b-a55b` answers in ~0.5s while
-  `z-ai/glm-5.2` sat in a queue for 227s (measured) — a queue, not a client bug.
+  accept `max_completion_tokens`. `nvext.guided_json` is not needed. Free-tier **capacity
+  is per-model, and is the real constraint — not capability**:
+  `nvidia/nemotron-3-ultra-550b-a55b` answers in ~0.5s, while `z-ai/glm-5.2` passed the
+  same `oneOf` schema probe but only after a **225s queue** (0.4s of that was generation),
+  and a second probe died with an HTTP 504 after 302s. GLM-5.2 is capable but not usable
+  interactively on the free tier: one Crucible turn makes many calls. Use a paid endpoint
+  (Z.ai's own API is OpenAI-compatible — a base-URL change) if you want that model.
 ```
 
 - [ ] **Step 2: Commit**

@@ -44,13 +44,29 @@ The third is the controller's tight-schema shape. It works, so `nvext.guided_jso
 needed and strict mode is the correct default. `supports_oneof_grammar`/`supports_anyof_grammar`
 are justified as `True` for this endpoint.
 
-**`z-ai/glm-5.2` itself is queued on NVIDIA's free tier and could not be measured.** A 32-token
-streamed request returned zero bytes for >10 minutes, while `meta/llama-3.1-8b-instruct` answered
-in 0.34s and Nemotron 3 Ultra in 0.75s on the same key, URL, and request shape — and NIM's own
-`nvext.scheduler_snapshot` reported `num_waiting_reqs: 0` for the responsive models. This is
-NVIDIA-side queueing for that model, not a client problem. It does not affect this design: the
-transport is model-agnostic and the sticky downgrade (§4) covers any endpoint whose capabilities
-differ from the ones measured here.
+**`z-ai/glm-5.2` also passes, but is queue-bound on the free tier.** Measured separately:
+
+| Probe | Result |
+|---|---|
+| Plain `chat/completions` | PASS — but **226.8s TTFB**, of which only 0.4s was generation |
+| Strict `json_schema`, flat object | HTTP 504 after 302s — gateway timeout, **not** a schema rejection |
+| Strict `json_schema`, `oneOf` union | **PASS** — 223.6s TTFB, discriminator honored |
+
+The `oneOf` probe is strictly harder than the flat one, so its success establishes strict-schema
+support for this model; the flat probe's 504 is free-tier capacity, not capability. On the same
+key, URL, and request shape, `meta/llama-3.1-8b-instruct` answered in 0.34s and Nemotron 3 Ultra
+in 0.75s, and NIM's own `nvext.scheduler_snapshot` reported `num_waiting_reqs: 0` for the
+responsive models — so the wait is NVIDIA-side queueing for this specific model, not a client
+problem.
+
+**Practical consequence:** GLM-5.2 on NVIDIA's *free* tier is not viable for interactive use here.
+A single Crucible turn issues many LLM calls, so a ~225s wait per call compounds past usability
+even though each call is fast once served. Point the provider at Nemotron 3 Ultra on NIM, or at a
+paid GLM-5.2 endpoint (Z.ai's own API is OpenAI-compatible) — which is a base-URL change under
+this design, not code.
+
+None of this affects the design: the transport is model-agnostic, and the sticky downgrade (§4)
+covers any endpoint whose capabilities differ from those measured here.
 
 ## Scope
 
