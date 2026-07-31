@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI
 
 from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
 from agentd.runtime.artifacts import provider_debug_root
@@ -27,9 +27,51 @@ def _is_reasoning_model(model: str) -> bool:
     return any(x in m for x in ("deepseek-r1", "deepseek-r2", "qwen3", "nemotron"))
 
 
+class TransientTransportError(RuntimeError):
+    """A request that failed for infrastructure reasons (timeout), NOT because of
+    anything about the request's own shape.
+
+    Subclasses RuntimeError so every existing `except RuntimeError` / message
+    assertion keeps working; it exists purely so the sticky-downgrade decision can
+    tell "the endpoint rejected my schema" apart from "the network hiccuped".
+    """
+
+
 def _is_retryable(exc: Exception) -> bool:
     status_code = getattr(exc, "status_code", None)
     return isinstance(status_code, int) and status_code in _RETRYABLE_STATUS_CODES
+
+
+def _proves_json_schema_unsupported(exc: Exception) -> bool:
+    """Does this strict-call failure actually prove the endpoint can't do
+    json_schema? Only then may the process-wide downgrade fire.
+
+    Deliberately a DENYLIST of infrastructure failures rather than an allowlist of
+    recognized "unsupported" errors, because the two mistakes are not symmetric:
+      - a false negative (we fail to downgrade) costs one wasted strict attempt
+        per call — exactly today's behavior, i.e. harmless;
+      - a false positive (a network blip downgrades permanently) silently degrades
+        every structured call for the rest of the process, which is the bug this
+        whole feature is supposed to be worth introducing.
+    An unrecognized error string therefore keeps the downgrade, while anything we
+    can positively identify as transient does not.
+    """
+    if isinstance(exc, TransientTransportError):
+        return False
+    # Rate limiting and every server-side/gateway fault (500/502/503/504 …), even
+    # with retries already exhausted: a load/availability signal, never a statement
+    # about response_format. Deliberately WIDER than _RETRYABLE_STATUS_CODES, which
+    # governs whether to retry — a 502 is not worth retrying here but is equally
+    # worthless as evidence. 501 Not Implemented is swept up too; that costs one
+    # wasted strict attempt per call, the harmless direction.
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int) and (status_code >= 500 or status_code in (408, 429)):
+        return False
+    # DNS/TCP/TLS failures, and the SDK's own APITimeoutError (a subclass).
+    if isinstance(exc, APIConnectionError):
+        return False
+    # TimeoutError is an OSError subclass on 3.11+; ConnectionError likewise.
+    return not isinstance(exc, OSError)
 
 
 def _classify_retry_reason(exc: Exception) -> str:
@@ -82,6 +124,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # Instance attribute, NOT a class attribute: OpenRouter must keep the
         # contracts default (False) while openai_compatible opts in to True.
         self.supports_oneof_grammar = supports_oneof
+        # "strict" | "json_object". Every generate_json starts by probing strict
+        # json_schema; the first failure that PROVES the endpoint can't honor it
+        # flips this for the rest of the process (see _downgrade_json_mode).
+        self._json_mode = "strict"
 
         if completions_client is not None:
             self._completions: Any = completions_client
@@ -231,103 +277,169 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             "extra_body": extra_body,
         }
 
-        create_kwargs = {
-            **base_kwargs,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": safe_schema_name,
-                    "strict": True,
-                    "schema": schema,
+        if self._json_mode == "strict":
+            create_kwargs = {
+                **base_kwargs,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": safe_schema_name,
+                        "strict": True,
+                        "schema": schema,
+                    },
                 },
-            },
-        }
+            }
+            self._dump_debug_request(create_kwargs, safe_schema_name)
+            try:
+                output_text = await self._get_completion_text(
+                    create_kwargs, on_thinking, on_retry
+                )
+                return self._parse_output_object(output_text, schema_name)
+            except Exception as e:
+                # Fall back to json_object with schema injected into system prompt.
+                # Some models/providers don't support json_schema strict mode.
+                # The fallback itself is unconditional (unchanged behavior); only
+                # the PERMANENT downgrade needs the failure to be probative.
+                if _proves_json_schema_unsupported(e):
+                    logger.warning(
+                        "%s: strict json_schema failed for %s — downgrading to "
+                        "json_object for the rest of this process: %s",
+                        self._label, schema_name, e,
+                    )
+                    self._downgrade_json_mode()
+                else:
+                    logger.warning(
+                        "%s json_schema call failed transiently for %s, falling back "
+                        "to json_object for this call only: %s",
+                        self._label, schema_name, e,
+                    )
 
+        return await self._json_object_fallback(
+            base_kwargs=base_kwargs,
+            model=model,
+            is_reasoning=is_reasoning,
+            schema=schema,
+            schema_name=schema_name,
+            safe_schema_name=safe_schema_name,
+            system_instructions=system_instructions,
+            user_payload=user_payload,
+            on_thinking=on_thinking,
+            on_retry=on_retry,
+        )
+
+    def _downgrade_json_mode(self) -> None:
+        """The single place `_json_mode` is ever written after construction.
+
+        Permanent for this process. A restart re-probes, so an endpoint that gains
+        strict support recovers with no cache to invalidate.
+        """
+        self._json_mode = "json_object"
+        # An endpoint that cannot honor response_format cannot be trusted with a
+        # tight union schema either — stop offering one. Assigning on the instance
+        # shadows the class-level supports_anyof_grammar; that is per-instance by
+        # design, so one degraded endpoint never mutates another transport.
+        self.supports_oneof_grammar = False
+        self.supports_anyof_grammar = False
+
+    def _dump_debug_request(self, create_kwargs: dict[str, Any], name: str) -> None:
+        """Best-effort artifact of the exact request bytes. Never raises: a debug
+        dump must not be able to fail a live call."""
         out_dir = provider_debug_root(self._vendor)
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / f"debug-req-{safe_schema_name}.json").write_text(
+            (out_dir / f"debug-req-{name}.json").write_text(
                 json.dumps(create_kwargs, indent=2, default=str), encoding="utf-8"
             )
         except Exception:
             pass
 
-        try:
-            output_text = await self._get_completion_text(create_kwargs, on_thinking, on_retry)
-            return self._parse_output_object(output_text, schema_name)
-        except Exception as e:
-            # Fall back to json_object with schema injected into system prompt.
-            # Some models/providers don't support json_schema strict mode.
-            logger.warning(
-                "%s json_schema failed for %s, falling back to json_object: %s",
-                self._label, schema_name, e,
-            )
-            # The fallback must be permissive: it has to be able to route to ANY
-            # provider, because the strict path already failed precisely because no
-            # provider honored response_format. Any routing guard a vendor pins for
-            # the strict call would be inherited here and 404 too — defeating the
-            # fallback's whole purpose. So rather than filtering keys out, rebuild
-            # the extras from scratch with for_json=False, which asks the vendor for
-            # its unguarded set. Non-routing extras (e.g. reasoning) come back
-            # unchanged; the base stays ignorant of any vendor's key names.
-            fallback_extra_body = self._build_extra_body(
-                model, is_reasoning, for_json=False
-            )
-            fallback_kwargs: dict[str, Any] = {
-                **base_kwargs,
-                "extra_body": fallback_extra_body,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            f"{system_instructions}\n\n"
-                            f"You MUST return a JSON object matching this schema:\n"
-                            f"{json.dumps(schema, indent=2)}"
-                        ),
-                    },
-                    {"role": "user", "content": json.dumps(user_payload)},
-                ],
-                "response_format": {"type": "json_object"},
-            }
-            last_parse_exc: Exception | None = None
-            for attempt in range(self._max_retries + 1):
-                if attempt > 0:
-                    delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
-                    logger.warning(
-                        "%s malformed JSON for %s (attempt %d/%d), retrying in %.0fs",
-                        self._label, schema_name, attempt, self._max_retries, delay,
+    async def _json_object_fallback(
+        self,
+        *,
+        base_kwargs: dict[str, Any],
+        model: str,
+        is_reasoning: bool,
+        schema: dict[str, object],
+        schema_name: str,
+        safe_schema_name: str,
+        system_instructions: str,
+        user_payload: dict[str, object],
+        on_thinking: Any = None,
+        on_retry: Any = None,
+    ) -> dict[str, object]:
+        """json_object mode with the schema injected into the system prompt.
+
+        Reached either after a failed strict attempt, or directly once the process
+        has downgraded. Behaviorally identical to the inline version it replaced.
+        """
+        # The fallback must be permissive: it has to be able to route to ANY
+        # provider, because the strict path already failed precisely because no
+        # provider honored response_format. Any routing guard a vendor pins for
+        # the strict call would be inherited here and 404 too — defeating the
+        # fallback's whole purpose. So rather than filtering keys out, rebuild
+        # the extras from scratch with for_json=False, which asks the vendor for
+        # its unguarded set. Non-routing extras (e.g. reasoning) come back
+        # unchanged; the base stays ignorant of any vendor's key names.
+        fallback_extra_body = self._build_extra_body(model, is_reasoning, for_json=False)
+        fallback_kwargs: dict[str, Any] = {
+            **base_kwargs,
+            "extra_body": fallback_extra_body,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        f"{system_instructions}\n\n"
+                        f"You MUST return a JSON object matching this schema:\n"
+                        f"{json.dumps(schema, indent=2)}"
+                    ),
+                },
+                {"role": "user", "content": json.dumps(user_payload)},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+        # Once downgraded, the strict request is never built, so without this the
+        # provider debug artifact would freeze at the last strict attempt forever.
+        if self._json_mode != "strict":
+            self._dump_debug_request(fallback_kwargs, f"{safe_schema_name}fallback")
+        last_parse_exc: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            if attempt > 0:
+                delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                logger.warning(
+                    "%s malformed JSON for %s (attempt %d/%d), retrying in %.0fs",
+                    self._label, schema_name, attempt, self._max_retries, delay,
+                )
+                # A malformed-JSON retry cycle can run for minutes with the UI
+                # otherwise showing nothing — on_retry (structured, distinct
+                # from on_thinking) lets the caller show a retry is happening.
+                if callable(on_retry):
+                    on_retry(
+                        attempt, self._max_retries, "malformed_response",
+                        f"⏳ Malformed JSON response — retrying in {delay:.0f}s "
+                        f"(attempt {attempt}/{self._max_retries})…",
                     )
-                    # A malformed-JSON retry cycle can run for minutes with the UI
-                    # otherwise showing nothing — on_retry (structured, distinct
-                    # from on_thinking) lets the caller show a retry is happening.
-                    if callable(on_retry):
-                        on_retry(
-                            attempt, self._max_retries, "malformed_response",
-                            f"⏳ Malformed JSON response — retrying in {delay:.0f}s "
-                            f"(attempt {attempt}/{self._max_retries})…",
-                        )
-                    await asyncio.sleep(delay)
-                try:
-                    output_text = await self._get_completion_text(
-                        fallback_kwargs, on_thinking, on_retry
-                    )
-                    return self._parse_output_object(output_text, schema_name)
-                except RuntimeError as e2:
-                    if "not valid JSON" in str(e2) or "must be a JSON object" in str(e2):
-                        last_parse_exc = e2
-                        continue
-                    raise RuntimeError(
-                        f"{self._label} API error for {schema_name} (fallback also failed): {e2}"
-                    ) from e2
-                except Exception as e2:
-                    raise RuntimeError(
-                        f"{self._label} API error for {schema_name} (fallback also failed): {e2}"
-                    ) from e2
-            assert last_parse_exc is not None
-            raise RuntimeError(
-                f"{self._label} API error for {schema_name} "
-                f"(fallback malformed JSON after retries): {last_parse_exc}"
-            ) from last_parse_exc
+                await asyncio.sleep(delay)
+            try:
+                output_text = await self._get_completion_text(
+                    fallback_kwargs, on_thinking, on_retry
+                )
+                return self._parse_output_object(output_text, schema_name)
+            except RuntimeError as e2:
+                if "not valid JSON" in str(e2) or "must be a JSON object" in str(e2):
+                    last_parse_exc = e2
+                    continue
+                raise RuntimeError(
+                    f"{self._label} API error for {schema_name} (fallback also failed): {e2}"
+                ) from e2
+            except Exception as e2:
+                raise RuntimeError(
+                    f"{self._label} API error for {schema_name} (fallback also failed): {e2}"
+                ) from e2
+        assert last_parse_exc is not None
+        raise RuntimeError(
+            f"{self._label} API error for {schema_name} "
+            f"(fallback malformed JSON after retries): {last_parse_exc}"
+        ) from last_parse_exc
 
     async def generate_text(
         self,
@@ -412,7 +524,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         content_parts.append(content)
                 return "".join(content_parts).strip()
             except TimeoutError as exc:
-                raise RuntimeError(
+                # TransientTransportError subclasses RuntimeError: same type for
+                # every existing handler, but distinguishable by the downgrade check.
+                raise TransientTransportError(
                     f"{self._label} streaming timed out after {self._timeout_sec}s"
                 ) from exc
             except Exception as exc:
@@ -453,7 +567,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     timeout=self._timeout_sec,
                 )
             except TimeoutError as exc:
-                raise RuntimeError(
+                raise TransientTransportError(
                     f"{self._label} chat.completions timed out after {self._timeout_sec}s"
                 ) from exc
             except Exception as exc:
