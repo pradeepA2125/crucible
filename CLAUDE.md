@@ -283,9 +283,11 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
   pings a provider (`generate_text` with a 30s timeout) and always returns
   `200 {"ok": bool, "model"?, "error"?, "json_mode"?, "warning"?}` — never a 500, so the
   wizard/panel can render the provider's own error message verbatim. `json_mode` reports
-  the transport's post-probe JSON mode (`json_schema` = strict, `json_object` = downgraded)
-  and `warning` is the non-fatal note the UI renders in amber next to a *successful*
-  validate (e.g. "no strict JSON schema support"). A **failed** validate must clear any
+  the transport's post-probe JSON mode — `"strict"` or `"json_object"` (downgraded), and is
+  **omitted entirely** when the probe was inconclusive (a transient blip prevented the check)
+  or when the backend isn't probed at all. `warning` is the non-fatal note the UI renders in
+  amber next to a *successful* validate. So there are four shapes, and `json_mode` absent +
+  `warning` present means "couldn't tell", NOT "downgraded". A **failed** validate must clear any
   earlier `warning` from the panel state — it describes a result no longer in effect
   (`settings-data.ts` posts a refreshed `settings/state` **before** the `settings/error`,
   since `SettingsApp` clears its error banner on every state message). `PUT /v1/config/provider`
