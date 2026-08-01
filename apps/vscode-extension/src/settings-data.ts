@@ -138,6 +138,13 @@ export function createSettingsHandler(
             ...(credentials ? { credentials } : {}),
           });
           if (!result.ok) {
+            // A stale warning describes a validate that's no longer in effect —
+            // it must not survive a subsequent failed attempt (mirrors the setup
+            // wizard's SetupApp.tsx, which clears validateWarning on every new
+            // attempt). A successful validate already unconditionally overwrites
+            // providerWarning below regardless of backend, so a provider switch
+            // that succeeds is already covered; this is the one remaining path.
+            providerWarning = null;
             post({ type: "settings/error", message: result.error ?? "validation failed" });
             return;
           }

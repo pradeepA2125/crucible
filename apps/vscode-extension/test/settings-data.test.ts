@@ -101,6 +101,26 @@ describe("createSettingsHandler", () => {
     expect(state.providerWarning).toBe("degraded json mode");
   });
 
+  it("a later failed validate clears a stale providerWarning from an earlier successful one", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const d = deps();
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+
+    // First attempt: openai_compatible validates ok but with a degraded-json-mode warning.
+    d.client.validateProvider = async () => ({ ok: true, model: "m", warning: "degraded json mode" });
+    await handle({ type: "settings/setProvider", backend: "openai_compatible", model: "m" });
+
+    // Second attempt: a different provider (or the same one with a bad Base URL) fails
+    // validation entirely. The stale warning from the first attempt must not survive —
+    // it describes a validate result that's no longer in effect.
+    d.client.validateProvider = async () => ({ ok: false, error: "bad key" });
+    await handle({ type: "settings/setProvider", backend: "openai", model: "gpt-5", apiKey: "bad" });
+
+    await handle({ type: "settings/load" });
+    const state = stateMsg(posted[posted.length - 1]).state;
+    expect(state.providerWarning).toBeFalsy();
+  });
+
   it("mcpToggle updates user-local disabled list and reconnects with it", async () => {
     const d = deps();
     const posted: SettingsOutMsg[] = [];
