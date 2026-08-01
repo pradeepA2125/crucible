@@ -27,13 +27,28 @@ def _is_reasoning_model(model: str) -> bool:
     return any(x in m for x in ("deepseek-r1", "deepseek-r2", "qwen3", "nemotron"))
 
 
-class TransientTransportError(RuntimeError):
-    """A request that failed for infrastructure reasons (timeout), NOT because of
-    anything about the request's own shape.
+class NonProbativeError(RuntimeError):
+    """Marker: this failure says NOTHING about whether the endpoint can honor
+    `response_format`, so it must never trip the sticky json_object downgrade.
 
-    Subclasses RuntimeError so every existing `except RuntimeError` / message
-    assertion keeps working; it exists purely so the sticky-downgrade decision can
-    tell "the endpoint rejected my schema" apart from "the network hiccuped".
+    Subclasses RuntimeError so every existing `except RuntimeError` and message
+    assertion keeps working; the type exists purely to carry that one bit to
+    `_proves_json_schema_unsupported`.
+    """
+
+
+class TransientTransportError(NonProbativeError):
+    """Infrastructure failure: a timeout, or a stream that broke part-way through.
+    Says nothing about the request's own shape."""
+
+
+class EmptyResponseError(NonProbativeError):
+    """The response carried no usable text at all (no choices, or empty content).
+
+    No output is no evidence. This is a real, documented condition here that has
+    nothing to do with schema support: `openrouter/free` returns empty choices as
+    a routing artifact (see _is_reasoning_model), and qwen3-family models can burn
+    the whole output budget on implicit thinking and emit nothing.
     """
 
 
@@ -42,21 +57,31 @@ def _is_retryable(exc: Exception) -> bool:
     return isinstance(status_code, int) and status_code in _RETRYABLE_STATUS_CODES
 
 
-def _proves_json_schema_unsupported(exc: Exception) -> bool:
+def _proves_json_schema_unsupported(
+    exc: Exception, *, finish_reason: str | None = None
+) -> bool:
     """Does this strict-call failure actually prove the endpoint can't do
     json_schema? Only then may the process-wide downgrade fire.
 
-    Deliberately a DENYLIST of infrastructure failures rather than an allowlist of
+    `finish_reason` is the one from the response that produced `exc`, when there
+    was one (None if the call never got that far).
+
+    Deliberately a DENYLIST of non-probative failures rather than an allowlist of
     recognized "unsupported" errors, because the two mistakes are not symmetric:
       - a false negative (we fail to downgrade) costs one wasted strict attempt
         per call — exactly today's behavior, i.e. harmless;
-      - a false positive (a network blip downgrades permanently) silently degrades
-        every structured call for the rest of the process, which is the bug this
-        whole feature is supposed to be worth introducing.
-    An unrecognized error string therefore keeps the downgrade, while anything we
-    can positively identify as transient does not.
+      - a false positive (a blip downgrades permanently) silently degrades every
+        structured call for the rest of the process, which is the bug this whole
+        feature is supposed to be worth introducing.
+    An unrecognized failure therefore keeps the downgrade, while anything we can
+    positively identify as non-probative does not.
     """
-    if isinstance(exc, TransientTransportError):
+    # Truncation at max_completion_tokens: a PERFECTLY enforced grammar still
+    # yields unparseable JSON when the response is cut off mid-object. One
+    # oversized file edit must not cost the session its schema enforcement.
+    if finish_reason == "length":
+        return False
+    if isinstance(exc, NonProbativeError):
         return False
     # Rate limiting and every server-side/gateway fault (500/502/503/504 …), even
     # with retries already exhausted: a load/availability signal, never a statement
@@ -72,6 +97,16 @@ def _proves_json_schema_unsupported(exc: Exception) -> bool:
         return False
     # TimeoutError is an OSError subclass on 3.11+; ConnectionError likewise.
     return not isinstance(exc, OSError)
+
+
+def _response_finish_reason(response: Any) -> str | None:
+    """`choices[0].finish_reason` if present. Defensive: any endpoint that omits
+    it just yields None, which the downgrade check treats as "not truncated"."""
+    choices = getattr(response, "choices", None)
+    if not isinstance(choices, list) or not choices:
+        return None
+    reason = getattr(choices[0], "finish_reason", None)
+    return reason if isinstance(reason, str) else None
 
 
 def _classify_retry_reason(exc: Exception) -> str:
@@ -127,7 +162,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # "strict" | "json_object". Every generate_json starts by probing strict
         # json_schema; the first failure that PROVES the endpoint can't honor it
         # flips this for the rest of the process (see _downgrade_json_mode).
-        self._json_mode = "strict"
+        self._json_mode: str = "strict"
 
         if completions_client is not None:
             self._completions: Any = completions_client
@@ -227,21 +262,36 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 )
         return result
 
-    async def _get_completion_text(
+    async def _get_completion_output(
         self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         """Route through the streaming path (forwarding reasoning deltas to
         on_thinking live, as they arrive) when a callback is given, else the plain
         non-streaming call. Previously on_thinking was accepted by generate_json
         but silently never used — every controller_step_response call (the one
         driving every turn of a live-driven session) rendered nothing until the
-        whole call completed, identical to the gap fixed on the Ollama transport."""
+        whole call completed, identical to the gap fixed on the Ollama transport.
+
+        Returns (text, finish_reason). The finish_reason is what lets the caller
+        tell a truncated response apart from a genuinely malformed one.
+        """
         if callable(on_thinking):
-            return await self._stream_with_thinking(
+            return await self._stream_with_finish_reason(
                 create_kwargs, on_thinking=on_thinking, on_retry=on_retry
             )
         response = await self._call_with_retry(create_kwargs, on_retry=on_retry)
-        return self._extract_text(response)
+        return self._extract_text(response), _response_finish_reason(response)
+
+    async def _get_completion_text(
+        self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
+    ) -> str:
+        """Text-only view of _get_completion_output, for callers that have no use
+        for the finish_reason (the json_object fallback — it never decides a
+        downgrade, so truncation there is just a malformed-JSON retry)."""
+        text, _finish_reason = await self._get_completion_output(
+            create_kwargs, on_thinking, on_retry
+        )
+        return text
 
     async def _generate_json_once(
         self,
@@ -290,8 +340,11 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 },
             }
             self._dump_debug_request(create_kwargs, safe_schema_name)
+            # Bound before the try so the except can still read it when the parse
+            # (not the request) is what failed; stays None if we never got a response.
+            finish_reason: str | None = None
             try:
-                output_text = await self._get_completion_text(
+                output_text, finish_reason = await self._get_completion_output(
                     create_kwargs, on_thinking, on_retry
                 )
                 return self._parse_output_object(output_text, schema_name)
@@ -300,7 +353,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # Some models/providers don't support json_schema strict mode.
                 # The fallback itself is unconditional (unchanged behavior); only
                 # the PERMANENT downgrade needs the failure to be probative.
-                if _proves_json_schema_unsupported(e):
+                if _proves_json_schema_unsupported(e, finish_reason=finish_reason):
                     logger.warning(
                         "%s: strict json_schema failed for %s — downgrading to "
                         "json_object for the rest of this process: %s",
@@ -400,7 +453,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # Once downgraded, the strict request is never built, so without this the
         # provider debug artifact would freeze at the last strict attempt forever.
         if self._json_mode != "strict":
-            self._dump_debug_request(fallback_kwargs, f"{safe_schema_name}fallback")
+            self._dump_debug_request(fallback_kwargs, f"{safe_schema_name}-fallback")
         last_parse_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
@@ -480,10 +533,28 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_thinking: Any,
         on_retry: Any = None,
     ) -> str:
+        """Text-only view of _stream_with_finish_reason (generate_text's entry
+        point, and the long-standing public-ish shape of this method)."""
+        text, _finish_reason = await self._stream_with_finish_reason(
+            create_kwargs, on_thinking=on_thinking, on_retry=on_retry
+        )
+        return text
+
+    async def _stream_with_finish_reason(
+        self,
+        create_kwargs: dict[str, Any],
+        *,
+        on_thinking: Any,
+        on_retry: Any = None,
+    ) -> tuple[str, str | None]:
         """Stream response forwarding reasoning chunks to on_thinking callback.
 
         OpenAI-compatible endpoints surface reasoning in delta.reasoning
         (OpenRouter does — same field as Groq).
+
+        Opening the stream and consuming it are deliberately separate try blocks:
+        a failure to OPEN can be probative (a 400 rejecting response_format), while
+        a failure part-way THROUGH never is.
         """
         kwargs = {**create_kwargs, "stream": True}
         last_exc: Exception | None = None
@@ -504,25 +575,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     on_retry(attempt, self._max_retries, reason, message)
                 await asyncio.sleep(delay)
             try:
-                content_parts: list[str] = []
                 stream = await asyncio.wait_for(
                     self._completions.create(**kwargs),
                     timeout=self._timeout_sec,
                 )
-                async for chunk in stream:
-                    choices = getattr(chunk, "choices", None) or []
-                    if not choices:
-                        continue
-                    delta = getattr(choices[0], "delta", None)
-                    if delta is None:
-                        continue
-                    reasoning = getattr(delta, "reasoning", None)
-                    if reasoning:
-                        on_thinking(reasoning)
-                    content = getattr(delta, "content", None) or ""
-                    if content:
-                        content_parts.append(content)
-                return "".join(content_parts).strip()
             except TimeoutError as exc:
                 # TransientTransportError subclasses RuntimeError: same type for
                 # every existing handler, but distinguishable by the downgrade check.
@@ -533,7 +589,47 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 if _is_retryable(exc):
                     last_exc = exc
                     continue
+                # The request was rejected before a single byte came back — that
+                # CAN be a genuine "I don't support response_format". Leave it
+                # unwrapped so the downgrade check can still see it.
                 raise
+            try:
+                content_parts: list[str] = []
+                finish_reason: str | None = None
+                async for chunk in stream:
+                    choices = getattr(chunk, "choices", None) or []
+                    if not choices:
+                        continue
+                    chunk_reason = getattr(choices[0], "finish_reason", None)
+                    if isinstance(chunk_reason, str) and chunk_reason:
+                        finish_reason = chunk_reason
+                    delta = getattr(choices[0], "delta", None)
+                    if delta is None:
+                        continue
+                    reasoning = getattr(delta, "reasoning", None)
+                    if reasoning:
+                        on_thinking(reasoning)
+                    content = getattr(delta, "content", None) or ""
+                    if content:
+                        content_parts.append(content)
+                return "".join(content_parts).strip(), finish_reason
+            except TimeoutError as exc:
+                raise TransientTransportError(
+                    f"{self._label} streaming timed out after {self._timeout_sec}s"
+                ) from exc
+            except Exception as exc:
+                if _is_retryable(exc):
+                    last_exc = exc
+                    continue
+                # The stream opened and then broke (httpx disconnect, SDK read
+                # error). httpx exceptions derive from httpx.HTTPError — NOT
+                # OSError — and carry no status_code, so without this wrap a mid-
+                # response disconnect would look probative and downgrade for good.
+                # This is the PRIMARY chat path: every controller turn passes
+                # on_thinking, so every controller turn streams.
+                raise TransientTransportError(
+                    f"{self._label} stream failed mid-response: {exc}"
+                ) from exc
 
         assert last_exc is not None
         raise last_exc
@@ -591,11 +687,13 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 logger.warning(
                     "%s response missing choices — response: %r", self._label, response
                 )
-            raise RuntimeError(f"{self._label} response missing choices")
+            # EmptyResponseError, not a bare RuntimeError: no output is no evidence
+            # about response_format support. Same message, same RuntimeError base.
+            raise EmptyResponseError(f"{self._label} response missing choices")
         message = getattr(choices[0], "message", None)
         content = getattr(message, "content", None)
         if not isinstance(content, str) or not content.strip():
-            raise RuntimeError(f"{self._label} response contained no text output")
+            raise EmptyResponseError(f"{self._label} response contained no text output")
         return content.strip()
 
     def _parse_output_object(self, output_text: str, schema_name: str) -> dict[str, object]:
