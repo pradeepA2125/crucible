@@ -29,6 +29,27 @@ def _is_reasoning_model(model: str) -> bool:
 
 _CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
 
+# Streamed reasoning is not in the OpenAI spec, so the ecosystem settled on two
+# different delta field names: `reasoning` (OpenRouter, Groq) and
+# `reasoning_content` (DeepSeek, vLLM, NVIDIA NIM — confirmed live against
+# nvidia/nemotron-3-ultra, whose deltas carry reasoning_content and no reasoning).
+# Both are first-class here; neither is a vendor special case.
+_REASONING_DELTA_FIELDS: tuple[str, ...] = ("reasoning", "reasoning_content")
+
+
+def _first_reasoning_chunk(delta: Any) -> str | None:
+    """The one non-empty reasoning chunk on a stream delta, or None.
+
+    Returns at most ONE value even when an endpoint populates both field names,
+    so the same text is never reported to on_thinking twice. Tolerates a delta
+    that has neither field (or no attributes at all, incl. None).
+    """
+    for field in _REASONING_DELTA_FIELDS:
+        value = getattr(delta, field, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
 
 def normalize_base_url(raw: str | None) -> str | None:
     """Accept what a user actually pastes, and return a base URL the OpenAI SDK
@@ -593,8 +614,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
     ) -> tuple[str, str | None]:
         """Stream response forwarding reasoning chunks to on_thinking callback.
 
-        OpenAI-compatible endpoints surface reasoning in delta.reasoning
-        (OpenRouter does — same field as Groq).
+        There is no single reasoning field: an OpenAI-compatible endpoint may
+        surface it as `delta.reasoning` (OpenRouter, Groq) OR as
+        `delta.reasoning_content` (DeepSeek, vLLM, NVIDIA NIM). Both are read —
+        see _first_reasoning_chunk.
 
         Opening the stream and consuming it are deliberately separate try blocks:
         a failure to OPEN can be probative (a 400 rejecting response_format), while
@@ -650,7 +673,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     delta = getattr(choices[0], "delta", None)
                     if delta is None:
                         continue
-                    reasoning = getattr(delta, "reasoning", None)
+                    reasoning = _first_reasoning_chunk(delta)
                     if reasoning:
                         on_thinking(reasoning)
                     content = getattr(delta, "content", None) or ""

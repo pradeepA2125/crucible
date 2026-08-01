@@ -496,20 +496,50 @@ class _HttpxLikeError(Exception):
 
 
 class _StreamDelta:
+    """Both reasoning field names default to None — the shape of a content-only
+    delta. A test opts into whichever field the endpoint it stands in for sends."""
+
+    def __init__(
+        self,
+        content: str | None,
+        *,
+        reasoning: str | None = None,
+        reasoning_content: str | None = None,
+    ) -> None:
+        self.content = content
+        self.reasoning = reasoning
+        self.reasoning_content = reasoning_content
+
+
+class _BareStreamDelta:
+    """A delta carrying NEITHER reasoning attribute — what a plain non-reasoning
+    endpoint sends, and the case getattr's default has to absorb."""
+
     def __init__(self, content: str | None) -> None:
         self.content = content
-        self.reasoning = None
 
 
 class _StreamChoice:
-    def __init__(self, content: str | None, finish_reason: str | None = None) -> None:
-        self.delta = _StreamDelta(content)
+    def __init__(
+        self,
+        content: str | None,
+        finish_reason: str | None = None,
+        *,
+        delta: object | None = None,
+    ) -> None:
+        self.delta = _StreamDelta(content) if delta is None else delta
         self.finish_reason = finish_reason
 
 
 class _StreamChunk:
-    def __init__(self, content: str | None, finish_reason: str | None = None) -> None:
-        self.choices = [_StreamChoice(content, finish_reason)]
+    def __init__(
+        self,
+        content: str | None,
+        finish_reason: str | None = None,
+        *,
+        delta: object | None = None,
+    ) -> None:
+        self.choices = [_StreamChoice(content, finish_reason, delta=delta)]
 
 
 class _GoodStream:
@@ -522,6 +552,27 @@ class _GoodStream:
 
     async def _gen(self):
         yield _StreamChunk(self._content)
+        yield _StreamChunk(None, finish_reason=self._finish_reason)
+
+
+class _DeltaStream:
+    """Streams caller-supplied delta objects verbatim.
+
+    _GoodStream can only express content, so it cannot reach the reasoning
+    branch at all — which is exactly why the existing suite never noticed that
+    only one of the two ecosystem reasoning fields was read.
+    """
+
+    def __init__(self, deltas: list[object], finish_reason: str = "stop") -> None:
+        self._deltas = deltas
+        self._finish_reason = finish_reason
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for delta in self._deltas:
+            yield _StreamChunk(None, delta=delta)
         yield _StreamChunk(None, finish_reason=self._finish_reason)
 
 
@@ -617,6 +668,93 @@ async def test_stream_with_thinking_still_returns_a_plain_string() -> None:
         {"model": "m", "messages": []}, on_thinking=lambda _c: None,
     )
     assert result == "hi"
+
+
+# ------------------------------------------------- streamed reasoning fields
+# There is no spec field for streamed reasoning, so the ecosystem uses two
+# names. This transport serves BOTH OpenRouter and the generic openai_compatible
+# backend, so it has to accept either — reading only `reasoning` silently
+# dropped every thinking chunk from NIM/DeepSeek/vLLM-class endpoints.
+
+
+async def _collect_thinking(transport: OpenAICompatibleTransport) -> tuple[list[str], str]:
+    chunks: list[str] = []
+    result = await transport._stream_with_thinking(
+        {"model": "m", "messages": []}, on_thinking=chunks.append,
+    )
+    return chunks, result
+
+
+@pytest.mark.asyncio
+async def test_streamed_reasoning_content_field_reaches_on_thinking() -> None:
+    """NVIDIA NIM (nvidia/nemotron-3-ultra, observed live): its deltas carry
+    `reasoning_content` and never `reasoning`, so the whole turn streamed zero
+    thinking events while the same model via Ollama streamed them fine.
+    `reasoning_content` is the wider convention (DeepSeek, vLLM, NIM)."""
+    transport, _ = _transport([
+        _DeltaStream([
+            _StreamDelta(None, reasoning_content="weighing "),
+            _StreamDelta(None, reasoning_content="the options"),
+            _StreamDelta("answer"),
+        ]),
+    ])
+
+    chunks, result = await _collect_thinking(transport)
+
+    assert chunks == ["weighing ", "the options"]
+    assert result == "answer"
+
+
+@pytest.mark.asyncio
+async def test_streamed_reasoning_field_still_reaches_on_thinking() -> None:
+    """OpenRouter's (and Groq's) shape. The fix is additive: this path must be
+    byte-identical, since OpenRouter sends `reasoning` and no `reasoning_content`."""
+    transport, _ = _transport([
+        _DeltaStream([
+            _StreamDelta(None, reasoning="step one"),
+            _StreamDelta("done"),
+        ]),
+    ])
+
+    chunks, result = await _collect_thinking(transport)
+
+    assert chunks == ["step one"]
+    assert result == "done"
+
+
+@pytest.mark.asyncio
+async def test_stream_without_reasoning_never_calls_on_thinking() -> None:
+    """Neither field present, both empty, and both None — none of which may
+    reach on_thinking. An empty chunk would render as a blank thinking line."""
+    transport, _ = _transport([
+        _DeltaStream([
+            _BareStreamDelta("hel"),                                  # attributes absent
+            _StreamDelta("lo", reasoning="", reasoning_content=""),   # present but empty
+            _StreamDelta(None),                                       # present but None
+        ]),
+    ])
+
+    chunks, result = await _collect_thinking(transport)
+
+    assert chunks == []
+    assert result == "hello"
+
+
+@pytest.mark.asyncio
+async def test_delta_carrying_both_reasoning_fields_reports_once() -> None:
+    """No endpoint is known to populate both, but a proxy that echoed one into
+    the other must not double-report the same text into the thinking pane."""
+    transport, _ = _transport([
+        _DeltaStream([
+            _StreamDelta(None, reasoning="thinking…", reasoning_content="thinking…"),
+            _StreamDelta("ok"),
+        ]),
+    ])
+
+    chunks, result = await _collect_thinking(transport)
+
+    assert chunks == ["thinking…"]
+    assert result == "ok"
 
 
 # --------------------------------------------------------- normalize_base_url
