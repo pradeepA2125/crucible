@@ -202,6 +202,16 @@ resolve_default_model() {
     huggingface) printf '%s' "${CRUCIBLE_HUGGINGFACE_MODEL:-deepseek-ai/DeepSeek-R1:fastest}" ;;
     ollama) printf '%s' "${CRUCIBLE_OLLAMA_MODEL:-glm-4.7-flash:latest}" ;;
     turboquant) printf '%s' "${CRUCIBLE_TURBOQUANT_MODEL:-qwen3.6:35b-a3b-q4_K_M}" ;;
+    openai_compatible)
+      # Deliberately no default here (mirrors factory.py::default_model): the
+      # endpoint is user-supplied, so a guessed model name would 404 at the
+      # vendor with a confusing message instead of failing here, clearly.
+      if [[ -z "${CRUCIBLE_OPENAI_COMPAT_MODEL:-}" ]]; then
+        echo "CRUCIBLE_OPENAI_COMPAT_MODEL is required for the openai_compatible backend (no default — set it or pass --model)" >&2
+        exit 1
+      fi
+      printf '%s' "$CRUCIBLE_OPENAI_COMPAT_MODEL"
+      ;;
     *)
       echo "Unsupported backend: $1" >&2
       exit 1
@@ -329,6 +339,15 @@ case "$BACKEND" in
       exit 1
     fi
     ;;
+  openai_compatible)
+    # No default endpoint (unlike every other backend here) — the base URL is
+    # user-supplied. Fail here with a clear message rather than letting the
+    # backend start and 404/401 confusingly at the vendor on the first call.
+    if [[ -z "${CRUCIBLE_OPENAI_COMPAT_BASE_URL:-}" ]]; then
+      echo "CRUCIBLE_OPENAI_COMPAT_BASE_URL is required for the openai_compatible backend (e.g. https://integrate.api.nvidia.com/v1)" >&2
+      exit 1
+    fi
+    ;;
   scripted)
     ;;
   *)
@@ -422,6 +441,14 @@ echo "uvicorn_log=$LOG_FILE"
       export CRUCIBLE_TURBOQUANT_MODEL="$MODEL"
       export TURBOQUANT_HOST="${TURBOQUANT_HOST:-http://localhost:11435}"
       export CRUCIBLE_TURBOQUANT_TIMEOUT_SEC="$TURBOQUANT_TIMEOUT_SEC"
+      ;;
+    openai_compatible)
+      export CRUCIBLE_OPENAI_COMPAT_MODEL="$MODEL"
+      # Already validated non-empty in the pre-flight case above; re-export
+      # explicitly (rather than relying on inheritance) since this is a
+      # user-supplied endpoint, not a well-known var most shells already export.
+      export CRUCIBLE_OPENAI_COMPAT_BASE_URL="$CRUCIBLE_OPENAI_COMPAT_BASE_URL"
+      [[ -n "${CRUCIBLE_OPENAI_COMPAT_API_KEY:-}" ]] && export CRUCIBLE_OPENAI_COMPAT_API_KEY="$CRUCIBLE_OPENAI_COMPAT_API_KEY"
       ;;
     scripted)
       ;;
