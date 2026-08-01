@@ -280,10 +280,18 @@ def build_router(
         from agentd.providers.validate import ProviderValidationError, ping_provider
 
         try:
-            resolved = await ping_provider(body.backend, body.model, body.credentials)
+            result = await ping_provider(body.backend, body.model, body.credentials)
         except ProviderValidationError as exc:
             return {"ok": False, "error": str(exc)}
-        return {"ok": True, "model": resolved}
+        # json_mode/warning are omitted rather than sent as nulls: they are only
+        # meaningful for the backends that get probed, and an absent key reads
+        # unambiguously as "nothing to say" on the client.
+        payload: dict[str, object] = {"ok": True, "model": result.model}
+        if result.json_mode is not None:
+            payload["json_mode"] = result.json_mode
+        if result.warning is not None:
+            payload["warning"] = result.warning
+        return payload
 
     def _mcp_server_listing() -> dict[str, object]:
         from agentd.mcp.admin import read_raw_servers

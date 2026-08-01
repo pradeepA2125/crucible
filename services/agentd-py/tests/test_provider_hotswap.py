@@ -89,6 +89,29 @@ def test_put_route_and_config_report(
     }
 
 
+def test_put_route_400_when_transport_cannot_be_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transport that refuses to construct is a user configuration mistake with
+    its own actionable message ("set CRUCIBLE_OPENAI_COMPAT_BASE_URL"). It raises
+    RuntimeError, which the route does not catch — so it used to escape as an
+    unactionable 500. The openai_compatible backend makes a missing base URL a
+    routine mistake rather than an exotic one."""
+    rt, engine = _runtime()
+
+    def _boom(backend, credentials=None):
+        raise RuntimeError("CRUCIBLE_OPENAI_COMPAT_BASE_URL is required")
+
+    monkeypatch.setattr(runtime_mod, "build_transport", _boom)
+    resp = _client(tmp_path, rt).put(
+        "/v1/config/provider", json={"backend": "openai_compatible"}
+    )
+    assert resp.status_code == 400
+    assert "CRUCIBLE_OPENAI_COMPAT_BASE_URL" in resp.json()["detail"]
+    # A failed swap leaves the live engines untouched, same as a failed ping.
+    assert engine._model == "old-model" and rt.backend == "openai"
+
+
 def test_put_route_409_when_no_runtime(tmp_path: Path) -> None:
     client = _client(tmp_path, None)
     assert client.put("/v1/config/provider", json={"backend": "groq"}).status_code == 409

@@ -56,7 +56,7 @@ class NonProbativeError(RuntimeError):
 
     Subclasses RuntimeError so every existing `except RuntimeError` and message
     assertion keeps working; the type exists purely to carry that one bit to
-    `_proves_json_schema_unsupported`.
+    `proves_json_schema_unsupported`.
     """
 
 
@@ -80,11 +80,16 @@ def _is_retryable(exc: Exception) -> bool:
     return isinstance(status_code, int) and status_code in _RETRYABLE_STATUS_CODES
 
 
-def _proves_json_schema_unsupported(
+def proves_json_schema_unsupported(
     exc: Exception, *, finish_reason: str | None = None
 ) -> bool:
     """Does this strict-call failure actually prove the endpoint can't do
     json_schema? Only then may the process-wide downgrade fire.
+
+    Public because the validate-route capability probe faces the identical
+    question and must reach the identical verdict — two copies of this asymmetry
+    would drift, and the drift would be invisible until a user got told their
+    good endpoint was degraded.
 
     `finish_reason` is the one from the response that produced `exc`, when there
     was one (None if the call never got that far).
@@ -205,6 +210,20 @@ class OpenAICompatibleTransport(ModelJsonTransport):
 
         client = AsyncOpenAI(**client_kwargs)
         self._completions = client.chat.completions
+
+    @property
+    def json_mode(self) -> str:
+        """Current structured-output mode: "strict" until a probative failure
+        downgrades it to "json_object" for the rest of this process.
+
+        Read-only on purpose — `_downgrade_json_mode` stays the single writer.
+        Exposed because "did strict actually work?" is not answerable from the
+        OUTSIDE by watching for an exception: generate_json falls back to
+        json_object and returns a valid dict, so a rejected strict call looks
+        exactly like a successful one to a caller. The validate-route probe reads
+        this to tell those two apart.
+        """
+        return self._json_mode
 
     # ---------------------------------------------------------------- hooks
 
@@ -376,7 +395,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # Some models/providers don't support json_schema strict mode.
                 # The fallback itself is unconditional (unchanged behavior); only
                 # the PERMANENT downgrade needs the failure to be probative.
-                if _proves_json_schema_unsupported(e, finish_reason=finish_reason):
+                if proves_json_schema_unsupported(e, finish_reason=finish_reason):
                     logger.warning(
                         "%s: strict json_schema failed for %s — downgrading to "
                         "json_object for the rest of this process: %s",
