@@ -57,6 +57,8 @@ export class SetupPanel {
           ok: result.ok,
           ...(result.model !== undefined ? { model: result.model } : {}),
           ...(result.error !== undefined ? { error: result.error } : {}),
+          ...(result.jsonMode !== undefined ? { jsonMode: result.jsonMode } : {}),
+          ...(result.warning !== undefined ? { warning: result.warning } : {}),
         };
       },
       saveAndStart: async (backend, model, apiKey, extraCredentials) => {
@@ -72,7 +74,11 @@ export class SetupPanel {
         // first attempt) leaves the controller pointed at the stale default backendBaseUrl
         // and every chat call fails with "fetch failed" even though the backend is healthy.
         this.setManagedBackendUrl(url);
-        return { port };
+        return {
+          port,
+          ...(result.jsonMode !== undefined ? { jsonMode: result.jsonMode } : {}),
+          ...(result.warning !== undefined ? { warning: result.warning } : {}),
+        };
       },
       openChat: () => this.openChatCommand(),
       keyEnvVar: (backend) => PROVIDER_KEY_ENV[backend],

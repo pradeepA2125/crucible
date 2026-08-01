@@ -124,6 +124,9 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
               Active: <code>{state.provider.backend}</code> / <code>{state.provider.model}</code>
             </p>
           )}
+          {state.providerWarning && (
+            <p className="text-xs" style={{ color: "var(--color-amber)" }}>⚠ {state.providerWarning}</p>
+          )}
         </div>
       </CardShell>
     </div>

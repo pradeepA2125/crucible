@@ -592,8 +592,14 @@ export class HttpBackendClient implements BackendTaskClient {
         model: req.model ?? null,
         credentials: req.credentials ?? {},
       }),
+    }) as Record<string, unknown>;
+    // json_mode -> jsonMode; every other key is already camelCase-compatible.
+    // The route omits json_mode/warning entirely when it has nothing to say
+    // (see routes.py), so both are simply absent from `raw` in that case.
+    return ProviderValidateResultSchema.parse({
+      ...raw,
+      ...(raw["json_mode"] !== undefined ? { jsonMode: raw["json_mode"] } : {}),
     });
-    return ProviderValidateResultSchema.parse(raw);
   }
 
   async setProvider(req: {

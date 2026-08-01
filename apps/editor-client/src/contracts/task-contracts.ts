@@ -328,10 +328,15 @@ export const SkillSummarySchema = z.object({ name: z.string(), description: z.st
 export type SkillSummary = z.infer<typeof SkillSummarySchema>;
 
 // ── Settings surfaces (P4): provider validation + MCP server management.
+// jsonMode/warning (Task 4, openai_compatible probe): jsonMode is undefined both
+// when the backend was never probed (a known provider) and when the probe was
+// inconclusive; `warning` disambiguates — see ProviderPingResult in validate.py.
 export const ProviderValidateResultSchema = z.object({
   ok: z.boolean(),
   model: z.string().optional(),
   error: z.string().optional(),
+  jsonMode: z.string().optional(),
+  warning: z.string().optional(),
 });
 export type ProviderValidateResult = z.infer<typeof ProviderValidateResultSchema>;
 

@@ -29,6 +29,21 @@ describe("settings client methods", () => {
     expect((sent[0].body as { backend: string }).backend).toBe("groq");
   });
 
+  test("validateProvider maps json_mode to jsonMode and passes warning through", async () => {
+    const res = await clientWith({
+      ok: true, model: "m", json_mode: "json_object", warning: "degraded",
+    }).validateProvider({ backend: "openai_compatible", model: "m" });
+    expect(res).toEqual({ ok: true, model: "m", jsonMode: "json_object", warning: "degraded" });
+  });
+
+  test("validateProvider omits jsonMode/warning when the route omits them", async () => {
+    const res = await clientWith({ ok: true, model: "m" })
+      .validateProvider({ backend: "gemini", model: "m" });
+    expect(res).toEqual({ ok: true, model: "m" });
+    expect(res.jsonMode).toBeUndefined();
+    expect(res.warning).toBeUndefined();
+  });
+
   test("setProvider PUTs to /v1/config/provider", async () => {
     const sent: Sent[] = [];
     const res = await clientWith({ ok: true, backend: "groq", model: "m2" }, sent)

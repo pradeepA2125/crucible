@@ -91,6 +91,16 @@ describe("createSettingsHandler", () => {
     expect(posted).toEqual([{ type: "settings/error", message: "bad key" }]);
   });
 
+  it("setProvider carries a validate warning into subsequent state snapshots", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const d = deps();
+    d.client.validateProvider = async () => ({ ok: true, model: "m", warning: "degraded json mode" });
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({ type: "settings/setProvider", backend: "openai_compatible", model: "m" });
+    const state = stateMsg(posted[posted.length - 1]).state;
+    expect(state.providerWarning).toBe("degraded json mode");
+  });
+
   it("mcpToggle updates user-local disabled list and reconnects with it", async () => {
     const d = deps();
     const posted: SettingsOutMsg[] = [];

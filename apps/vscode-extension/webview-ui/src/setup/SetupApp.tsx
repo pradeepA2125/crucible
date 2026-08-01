@@ -69,6 +69,7 @@ export default function SetupApp() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [port, setPort] = useState<number | null>(null);
+  const [validateWarning, setValidateWarning] = useState<string | null>(null);
 
   const provider = useMemo(
     () => PROVIDERS.find((p) => p.id === backend) ?? PROVIDERS[0],
@@ -108,11 +109,13 @@ export default function SetupApp() {
         case "setup/validateResult":
           setBusy(false);
           setError(msg.ok ? null : msg.error ?? "validation failed");
+          setValidateWarning(msg.warning ?? null);
           break;
         case "setup/ready":
           setBusy(false);
           setError(null);
           setPort(msg.port);
+          setValidateWarning(msg.warning ?? null);
           setStep("done");
           break;
         case "setup/error":
@@ -137,6 +140,7 @@ export default function SetupApp() {
   const saveAndStart = () => {
     setBusy(true);
     setError(null);
+    setValidateWarning(null);
     vscode.postMessage({
       type: "setup/save",
       backend,
@@ -231,6 +235,7 @@ export default function SetupApp() {
                       setApiKey("");
                       setExtraValues({});
                       setError(null);
+                      setValidateWarning(null);
                     }}
                 >
                   {PROVIDERS.map((p) => (
@@ -263,7 +268,14 @@ export default function SetupApp() {
                 <p className="text-[11px] text-text-3">Local provider — reachability is checked when the backend starts.</p>
               )}
               {error && <p className="text-[11px]" style={{ color: "var(--color-red)" }}>{error}</p>}
-              <BtnPrimary className="self-start" disabled={busy || !model || (!provider.local && !apiKey) || !extraFieldsFilled} onClick={saveAndStart}>
+              {validateWarning && (
+                <p className="text-xs" style={{ color: "var(--color-amber)" }}>⚠ {validateWarning}</p>
+              )}
+              <BtnPrimary
+                className="self-start"
+                disabled={busy || !model || (!provider.local && !provider.keyOptional && !apiKey) || !extraFieldsFilled}
+                onClick={saveAndStart}
+              >
                 {busy ? "Starting…" : "Save & Start"}
               </BtnPrimary>
             </div>
@@ -278,6 +290,9 @@ export default function SetupApp() {
               <p className="text-xs text-text-2">
                 Backend is running on port {port}. Provider <code>{backend}</code> / <code>{model}</code> validated.
               </p>
+              {validateWarning && (
+                <p className="text-xs" style={{ color: "var(--color-amber)" }}>⚠ {validateWarning}</p>
+              )}
               <BtnPrimary icon="send" onClick={() => vscode.postMessage({ type: "setup/openChat" })}>
                 Open chat
               </BtnPrimary>

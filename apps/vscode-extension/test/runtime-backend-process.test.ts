@@ -63,6 +63,19 @@ describe("buildBackendEnv", () => {
     expect(env.CRUCIBLE_SHELL_POLICY).toBe("allow_all");
     expect(env.CRUCIBLE_SKILLS_DISABLED).toBe("a,b");
   });
+  it("sets CRUCIBLE_OPENAI_COMPAT_MODEL and threads the base URL through extraEnv, no API key", () => {
+    // openai_compatible's API key is optional (keyless local servers like vLLM/LM
+    // Studio) — settings.apiKey is simply absent, no *_API_KEY var should appear.
+    // The Base URL extra field rides the generic extraEnv path (same as watsonx's
+    // WATSONX_SPACE_ID/WATSONX_URL) — no bespoke wiring needed here.
+    const env = buildBackendEnv("/ws", {
+      backend: "openai_compatible", model: "llama-3.3-70b",
+      extraEnv: { CRUCIBLE_OPENAI_COMPAT_BASE_URL: "http://localhost:8000/v1" },
+    }, "/rt", 8123, "darwin-arm64");
+    expect(env.CRUCIBLE_OPENAI_COMPAT_MODEL).toBe("llama-3.3-70b");
+    expect(env.CRUCIBLE_OPENAI_COMPAT_BASE_URL).toBe("http://localhost:8000/v1");
+    expect(env.CRUCIBLE_OPENAI_COMPAT_API_KEY).toBeUndefined();
+  });
 });
 
 describe("BackendProcess.start", () => {

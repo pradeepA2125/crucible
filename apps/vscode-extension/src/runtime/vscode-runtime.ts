@@ -34,6 +34,7 @@ export const PROVIDER_KEY_ENV: Record<string, string> = {
   openrouter: "OPENROUTER_API_KEY",
   watsonx: "WATSONX_API_KEY",
   huggingface: "HF_TOKEN",
+  openai_compatible: "CRUCIBLE_OPENAI_COMPAT_API_KEY",
 };
 
 // VS Code settings that become spawn env (only when the user explicitly set them —

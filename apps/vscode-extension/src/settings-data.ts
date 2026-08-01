@@ -11,6 +11,10 @@ export interface McpServerRow extends McpServerView {
 
 export interface SettingsState {
   provider: { backend: string; model: string } | null;
+  // Non-fatal note from the last successful provider validate (e.g. an
+  // openai_compatible endpoint that only supports json_object, not strict JSON
+  // schema). null once no validate has produced one yet.
+  providerWarning?: string | null;
   runtime: { releaseTag: string; components: Record<string, string> } | null;
   mcp: { enabled: boolean; servers: McpServerRow[] };
   skills: { name: string; description: string; enabled: boolean }[];
@@ -48,7 +52,7 @@ export interface SettingsDeps {
       backend: string;
       model?: string;
       credentials?: Record<string, string>;
-    }): Promise<{ ok: boolean; error?: string | undefined }>;
+    }): Promise<{ ok: boolean; error?: string | undefined; jsonMode?: string | undefined; warning?: string | undefined }>;
     setProvider(req: {
       backend: string;
       model?: string;
@@ -78,7 +82,11 @@ export interface SettingsDeps {
   restartBackend(): Promise<void>;
 }
 
-async function buildState(deps: SettingsDeps, restartRequired: boolean): Promise<SettingsState> {
+async function buildState(
+  deps: SettingsDeps,
+  restartRequired: boolean,
+  providerWarning: string | null,
+): Promise<SettingsState> {
   const [config, mcpList, skillSummaries] = await Promise.all([
     deps.client.getConfig(),
     deps.client.listMcpServers(),
@@ -88,6 +96,7 @@ async function buildState(deps: SettingsDeps, restartRequired: boolean): Promise
   const disabledSkills = new Set(deps.skillsDisabled());
   return {
     provider: config.provider ?? null,
+    providerWarning,
     runtime: deps.readRuntimeJson(),
     mcp: {
       enabled: mcpList.enabled,
@@ -104,9 +113,10 @@ export function createSettingsHandler(
   post: (msg: SettingsOutMsg) => void,
 ): (msg: SettingsInMsg) => Promise<void> {
   let restartRequired = false;
+  let providerWarning: string | null = null;
 
   const postState = async (): Promise<void> => {
-    post({ type: "settings/state", state: await buildState(deps, restartRequired) });
+    post({ type: "settings/state", state: await buildState(deps, restartRequired, providerWarning) });
   };
 
   return async (msg: SettingsInMsg): Promise<void> => {
@@ -131,6 +141,7 @@ export function createSettingsHandler(
             post({ type: "settings/error", message: result.error ?? "validation failed" });
             return;
           }
+          providerWarning = result.warning ?? null;
           if (envVar && msg.apiKey) {
             await deps.storeSecret(msg.backend, msg.apiKey);
           }

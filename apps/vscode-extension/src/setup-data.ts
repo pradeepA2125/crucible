@@ -9,8 +9,13 @@ export interface SetupDeps {
     backend: string;
     model?: string;
     credentials?: Record<string, string>;
-  }): Promise<{ ok: boolean; model?: string; error?: string }>;
-  saveAndStart(backend: string, model: string, apiKey?: string, extraCredentials?: Record<string, string>): Promise<{ port: number }>;
+  }): Promise<{ ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }>;
+  saveAndStart(
+    backend: string,
+    model: string,
+    apiKey?: string,
+    extraCredentials?: Record<string, string>,
+  ): Promise<{ port: number; jsonMode?: string; warning?: string }>;
   openChat(): void;
   keyEnvVar(backend: string): string | undefined; // PROVIDER_KEY_ENV mirror
 }
@@ -26,8 +31,8 @@ export type SetupInMsg =
 export type SetupOutMsg =
   | { type: "setup/progress"; component: string; status: string; detail?: string | undefined }
   | { type: "setup/installDone"; ok: boolean }
-  | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string }
-  | { type: "setup/ready"; port: number }
+  | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }
+  | { type: "setup/ready"; port: number; jsonMode?: string; warning?: string }
   | { type: "setup/error"; message: string };
 
 export interface ExtraField {
@@ -42,6 +47,8 @@ export interface ProviderInfo {
   label: string;
   local: boolean;
   keyEnvVar?: string;
+  /** Cloud provider whose API key is genuinely optional (self-hosted endpoints). */
+  keyOptional?: boolean;
   defaultModel: string;
   /** Additional required credential fields beyond the primary API key. */
   extraFields?: ExtraField[];
@@ -69,6 +76,21 @@ export const PROVIDERS: ProviderInfo[] = [
   { id: "openrouter", label: "OpenRouter", local: false, keyEnvVar: "OPENROUTER_API_KEY", defaultModel: "stepfun/step-3.5-flash:free" },
   { id: "huggingface", label: "Hugging Face", local: false, keyEnvVar: "HF_TOKEN", defaultModel: "deepseek-ai/DeepSeek-R1:fastest" },
   { id: "turboquant", label: "TurboQuant (local)", local: true, defaultModel: "qwen3.6:35b-a3b-q4_K_M" },
+  {
+    id: "openai_compatible",
+    label: "OpenAI-compatible",
+    local: false,
+    keyOptional: true,
+    keyEnvVar: "CRUCIBLE_OPENAI_COMPAT_API_KEY",
+    defaultModel: "",
+    extraFields: [
+      {
+        envVar: "CRUCIBLE_OPENAI_COMPAT_BASE_URL",
+        label: "Base URL",
+        placeholder: "https://integrate.api.nvidia.com/v1",
+      },
+    ],
+  },
 ];
 
 export function createSetupHandler(
@@ -106,12 +128,21 @@ export function createSetupHandler(
             ok: result.ok,
             ...(result.model !== undefined ? { model: result.model } : {}),
             ...(result.error !== undefined ? { error: result.error } : {}),
+            ...(result.jsonMode !== undefined ? { jsonMode: result.jsonMode } : {}),
+            ...(result.warning !== undefined ? { warning: result.warning } : {}),
           });
           return;
         }
         case "setup/save": {
-          const { port } = await deps.saveAndStart(msg.backend, msg.model, msg.apiKey, msg.extraCredentials);
-          post({ type: "setup/ready", port });
+          const { port, jsonMode, warning } = await deps.saveAndStart(
+            msg.backend, msg.model, msg.apiKey, msg.extraCredentials,
+          );
+          post({
+            type: "setup/ready",
+            port,
+            ...(jsonMode !== undefined ? { jsonMode } : {}),
+            ...(warning !== undefined ? { warning } : {}),
+          });
           return;
         }
         case "setup/openChat":

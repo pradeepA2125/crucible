@@ -33,4 +33,20 @@ describe("ProviderSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /Save & validate/ }));
     expect(send.mock.calls[0][0]).toMatchObject({ apiKey: "sk-test" });
   });
+
+  it("renders the validate warning when the state carries one", () => {
+    render(
+      <ProviderSection
+        state={{ ...state, providerWarning: "No strict JSON schema support; using json_object." }}
+        busy={false}
+        send={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/No strict JSON schema support/)).toBeTruthy();
+  });
+
+  it("renders no warning when the state has none", () => {
+    render(<ProviderSection state={state} busy={false} send={vi.fn()} />);
+    expect(screen.queryByText(/⚠/)).toBeNull();
+  });
 });

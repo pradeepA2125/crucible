@@ -10,8 +10,8 @@ export type SetupInMsg =
 export type SetupOutMsg =
   | { type: "setup/progress"; component: string; status: string; detail?: string }
   | { type: "setup/installDone"; ok: boolean }
-  | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string }
-  | { type: "setup/ready"; port: number }
+  | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }
+  | { type: "setup/ready"; port: number; jsonMode?: string; warning?: string }
   | { type: "setup/error"; message: string };
 
 export interface ExtraField {
@@ -26,6 +26,8 @@ export interface ProviderInfo {
   label: string;
   local: boolean;
   keyEnvVar?: string;
+  /** Cloud provider whose API key is genuinely optional (self-hosted endpoints). */
+  keyOptional?: boolean;
   defaultModel: string;
   extraFields?: ExtraField[];
 }
@@ -51,6 +53,21 @@ export const PROVIDERS: ProviderInfo[] = [
   { id: "openrouter", label: "OpenRouter", local: false, keyEnvVar: "OPENROUTER_API_KEY", defaultModel: "stepfun/step-3.5-flash:free" },
   { id: "huggingface", label: "Hugging Face", local: false, keyEnvVar: "HF_TOKEN", defaultModel: "deepseek-ai/DeepSeek-R1:fastest" },
   { id: "turboquant", label: "TurboQuant (local)", local: true, defaultModel: "qwen3.6:35b-a3b-q4_K_M" },
+  {
+    id: "openai_compatible",
+    label: "OpenAI-compatible",
+    local: false,
+    keyOptional: true,
+    keyEnvVar: "CRUCIBLE_OPENAI_COMPAT_API_KEY",
+    defaultModel: "",
+    extraFields: [
+      {
+        envVar: "CRUCIBLE_OPENAI_COMPAT_BASE_URL",
+        label: "Base URL",
+        placeholder: "https://integrate.api.nvidia.com/v1",
+      },
+    ],
+  },
 ];
 
 export const COMPONENT_LABELS: Record<string, string> = {

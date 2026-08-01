@@ -40,7 +40,7 @@ export const MODEL_ENV_VAR: Record<string, string> = {
   huggingface: "CRUCIBLE_HUGGINGFACE_MODEL", groq: "CRUCIBLE_GROQ_MODEL",
   openrouter: "CRUCIBLE_OPENROUTER_MODEL", watsonx: "CRUCIBLE_WATSONX_MODEL",
   ollama: "CRUCIBLE_OLLAMA_MODEL", turboquant: "CRUCIBLE_TURBOQUANT_MODEL",
-  openai: "CRUCIBLE_OPENAI_MODEL",
+  openai: "CRUCIBLE_OPENAI_MODEL", openai_compatible: "CRUCIBLE_OPENAI_COMPAT_MODEL",
 };
 
 const HEALTH_ATTEMPTS = 60;
