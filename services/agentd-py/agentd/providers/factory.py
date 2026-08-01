@@ -32,6 +32,7 @@ MODEL_ENV_VAR: dict[str, str] = {
     "ollama": "CRUCIBLE_OLLAMA_MODEL",
     "turboquant": "CRUCIBLE_TURBOQUANT_MODEL",
     "openai": "CRUCIBLE_OPENAI_MODEL",
+    "openai_compatible": "CRUCIBLE_OPENAI_COMPAT_MODEL",
 }
 
 PROVIDER_KEY_ENV: dict[str, str] = {
@@ -42,10 +43,22 @@ PROVIDER_KEY_ENV: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
     "watsonx": "WATSONX_API_KEY",
     "huggingface": "HF_TOKEN",
+    # Optional here, unlike every other entry: keyless local servers (vLLM,
+    # LM Studio) ignore the header entirely. The table records WHERE a key goes
+    # when the endpoint wants one, not that one is required.
+    "openai_compatible": "CRUCIBLE_OPENAI_COMPAT_API_KEY",
 }
 
 
 def default_model(backend: str) -> str:
+    if backend == "openai_compatible":
+        # Deliberately no _DEFAULT_MODEL entry: the endpoint is user-supplied, so
+        # any guess would 404 at the vendor with a confusing message instead of
+        # failing here naming the exact env var to set.
+        raise ValueError(
+            "openai_compatible has no default model — set CRUCIBLE_OPENAI_COMPAT_MODEL "
+            "(or pass an explicit model)"
+        )
     try:
         return _DEFAULT_MODEL[backend]
     except KeyError:
@@ -206,4 +219,30 @@ def build_transport(
         from agentd.providers.openai_transport import OpenAIJsonTransport
 
         return OpenAIJsonTransport(api_key=env.get("OPENAI_API_KEY"))
+    if backend == "openai_compatible":
+        from agentd.providers.openai_compatible_transport import (
+            OpenAICompatibleTransport,
+            normalize_base_url,
+        )
+
+        base_url = normalize_base_url(env.get("CRUCIBLE_OPENAI_COMPAT_BASE_URL"))
+        if not base_url:
+            msg = (
+                "CRUCIBLE_OPENAI_COMPAT_BASE_URL is required for the OpenAI-compatible "
+                "provider (e.g. https://integrate.api.nvidia.com/v1)"
+            )
+            raise RuntimeError(msg)
+        return OpenAICompatibleTransport(
+            # Optional: keyless local servers (vLLM, LM Studio) construct fine —
+            # the base sends a placeholder the server ignores.
+            api_key=env.get("CRUCIBLE_OPENAI_COMPAT_API_KEY"),
+            base_url=base_url,
+            max_tokens=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_MAX_TOKENS", 4096),
+            json_max_tokens=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_JSON_MAX_TOKENS", 16384),
+            timeout_sec=_float_env(env, "CRUCIBLE_OPENAI_COMPAT_TIMEOUT_SEC", 120.0),
+            max_retries=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_MAX_RETRIES", 4),
+            # Verified live against NVIDIA NIM: strict json_schema honors oneOf
+            # discriminated unions. The sticky downgrade covers endpoints that don't.
+            supports_oneof=True,
+        )
     raise ValueError(f"Unsupported backend: {backend}")

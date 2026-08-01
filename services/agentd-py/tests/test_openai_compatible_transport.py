@@ -2,7 +2,10 @@ import json
 
 import pytest
 
-from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
+from agentd.providers.openai_compatible_transport import (
+    OpenAICompatibleTransport,
+    normalize_base_url,
+)
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 
 
@@ -609,3 +612,38 @@ async def test_stream_with_thinking_still_returns_a_plain_string() -> None:
         {"model": "m", "messages": []}, on_thinking=lambda _c: None,
     )
     assert result == "hi"
+
+
+# --------------------------------------------------------- normalize_base_url
+
+
+def test_normalize_base_url_strips_trailing_slash() -> None:
+    assert normalize_base_url("https://x.test/v1/") == "https://x.test/v1"
+
+
+def test_normalize_base_url_strips_pasted_chat_completions_suffix() -> None:
+    """Vendors document the full endpoint URL; pasting it is the predictable mistake."""
+    assert normalize_base_url("https://x.test/v1/chat/completions") == "https://x.test/v1"
+
+
+def test_normalize_base_url_strips_a_trailing_slash_after_chat_completions() -> None:
+    """Both mistakes at once — a copied endpoint URL that also ended in a slash."""
+    assert normalize_base_url("https://x.test/v1/chat/completions/") == "https://x.test/v1"
+
+
+def test_normalize_base_url_leaves_no_trailing_slash_behind_the_suffix() -> None:
+    """A doubled separator before the suffix must not leak a trailing slash into
+    the SDK's base_url — every returned value has the same shape."""
+    assert normalize_base_url("https://x.test/v1//chat/completions") == "https://x.test/v1"
+
+
+def test_normalize_base_url_passes_through_a_plain_base() -> None:
+    assert normalize_base_url("https://integrate.api.nvidia.com/v1") == \
+        "https://integrate.api.nvidia.com/v1"
+
+
+def test_normalize_base_url_handles_none_and_empty() -> None:
+    assert normalize_base_url(None) is None
+    assert normalize_base_url("") is None
+    assert normalize_base_url("   ") is None
+    assert normalize_base_url(" / ") is None

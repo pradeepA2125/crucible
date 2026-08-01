@@ -27,6 +27,29 @@ def _is_reasoning_model(model: str) -> bool:
     return any(x in m for x in ("deepseek-r1", "deepseek-r2", "qwen3", "nemotron"))
 
 
+_CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
+
+
+def normalize_base_url(raw: str | None) -> str | None:
+    """Accept what a user actually pastes, and return a base URL the OpenAI SDK
+    can append `/chat/completions` to.
+
+    Vendors document the full endpoint URL, so pasting it (with or without a
+    trailing slash) is the predictable mistake — strip it back to the base.
+    Pure: no env reads, no I/O. Returns None for anything that isn't a URL at
+    all, so the caller owns the "required" error message.
+    """
+    if raw is None:
+        return None
+    trimmed = raw.strip().rstrip("/")
+    if trimmed.endswith(_CHAT_COMPLETIONS_SUFFIX):
+        # rstrip again: a doubled separator ("…/v1//chat/completions") would
+        # otherwise leak a trailing slash, breaking the one shape invariant
+        # every returned value here has.
+        trimmed = trimmed[: -len(_CHAT_COMPLETIONS_SUFFIX)].rstrip("/")
+    return trimmed or None
+
+
 class NonProbativeError(RuntimeError):
     """Marker: this failure says NOTHING about whether the endpoint can honor
     `response_format`, so it must never trip the sticky json_object downgrade.

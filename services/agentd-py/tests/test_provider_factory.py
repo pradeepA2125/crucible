@@ -1,6 +1,7 @@
 import pytest
 
 from agentd.providers.factory import (
+    MODEL_ENV_VAR,
     PROVIDER_KEY_ENV,
     build_transport,
     default_model,
@@ -118,3 +119,81 @@ def test_build_transport_openrouter_honors_json_max_tokens_env(
     monkeypatch.setenv("CRUCIBLE_OPENROUTER_JSON_MAX_TOKENS", "32000")
     transport = build_transport("openrouter")
     assert transport._json_max_tokens == 32000
+
+
+def test_openai_compatible_requires_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CRUCIBLE_OPENAI_COMPAT_BASE_URL", raising=False)
+    with pytest.raises(RuntimeError, match="CRUCIBLE_OPENAI_COMPAT_BASE_URL"):
+        build_transport("openai_compatible")
+
+
+def test_openai_compatible_has_no_default_model() -> None:
+    """A guessed default would fail confusingly at the endpoint instead of clearly here."""
+    with pytest.raises(ValueError, match="CRUCIBLE_OPENAI_COMPAT_MODEL"):
+        default_model("openai_compatible")
+
+
+def test_openai_compatible_resolve_model_uses_the_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """resolve_model must reach the table entry, not the raising default."""
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
+    assert resolve_model("openai_compatible") == "nvidia/nemotron-3-ultra-550b-a55b"
+
+
+def test_default_model_still_returns_for_other_backends() -> None:
+    """The openai_compatible branch must not turn every lookup into a raise."""
+    assert default_model("openrouter") == "stepfun/step-3.5-flash:free"
+    assert default_model("ollama") == "glm-4.7-flash:latest"
+
+
+def test_openai_compatible_builds_with_base_url_and_no_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local vLLM / LM Studio have no API key — construction must still succeed."""
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_BASE_URL", "http://localhost:8000/v1")
+    monkeypatch.delenv("CRUCIBLE_OPENAI_COMPAT_API_KEY", raising=False)
+    transport = build_transport("openai_compatible")
+    assert transport.supports_oneof_grammar is True
+
+
+def test_openai_compatible_normalizes_a_pasted_endpoint_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "CRUCIBLE_OPENAI_COMPAT_BASE_URL", "https://x.test/v1/chat/completions"
+    )
+    transport = build_transport("openai_compatible")
+    assert str(transport._completions._client.base_url).rstrip("/") == "https://x.test/v1"
+
+
+def test_openai_compatible_honors_token_and_retry_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_BASE_URL", "http://localhost:8000/v1")
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_MAX_TOKENS", "512")
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_JSON_MAX_TOKENS", "32000")
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_TIMEOUT_SEC", "45")
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_MAX_RETRIES", "1")
+    transport = build_transport("openai_compatible")
+    assert transport._max_tokens == 512
+    assert transport._json_max_tokens == 32000
+    assert transport._timeout_sec == 45.0
+    assert transport._max_retries == 1
+
+
+def test_openai_compatible_credentials_override_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_BASE_URL", "http://from-env/v1")
+    transport = build_transport(
+        "openai_compatible",
+        credentials={"CRUCIBLE_OPENAI_COMPAT_BASE_URL": "http://from-request/v1"},
+    )
+    assert transport is not None
+    assert "from-request" in str(transport._completions._client.base_url)
+
+
+def test_openai_compatible_is_registered_in_the_env_tables() -> None:
+    assert MODEL_ENV_VAR["openai_compatible"] == "CRUCIBLE_OPENAI_COMPAT_MODEL"
+    assert PROVIDER_KEY_ENV["openai_compatible"] == "CRUCIBLE_OPENAI_COMPAT_API_KEY"
