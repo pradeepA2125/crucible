@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,12 @@ async def test_validate_warns_when_strict_schema_unsupported(monkeypatch) -> Non
     from agentd.providers import validate as validate_mod
 
     class _NoSchemaTransport:
+        """Deliberately exposes NO `json_mode`, which drives the probe's LAST
+        resolution branch (the raw predicate on the exception). No transport
+        `build_transport` can return today lacks the property, so this covers a
+        contingency, NOT the production path — see
+        test_probe_against_a_real_downgrading_transport for that one."""
+
         async def generate_text(self, **kwargs):
             return "OK"
 
@@ -191,6 +198,97 @@ async def test_probe_reads_the_transports_own_verdict_not_just_the_exception(
     result = await validate_mod.ping_provider("openai_compatible", "m", None)
     assert result.json_mode == "json_object"
     assert result.warning is not None and "lower reliability" in result.warning
+
+
+class _BadRequest(Exception):
+    """Shaped like the OpenAI SDK's APIStatusError — proves_json_schema_unsupported
+    reads `.status_code` and nothing else. 400 is PROBATIVE: the endpoint is saying
+    it cannot honor this request, unlike a 429/5xx, which Task 2 correctly ignores.
+    Also not in _RETRYABLE_STATUS_CODES, so it surfaces without any backoff sleep."""
+
+    status_code = 400
+
+    def __init__(self) -> None:
+        super().__init__("400 response_format.type json_schema is not supported")
+
+
+class _StubMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _StubChoice:
+    def __init__(self, content: str) -> None:
+        self.message = _StubMessage(content)
+        self.finish_reason = "stop"
+
+
+class _StubResponse:
+    def __init__(self, content: str) -> None:
+        self.choices = [_StubChoice(content)]
+
+
+class _RejectsJsonSchemaCompletions:
+    """A real endpoint that rejects strict json_schema but speaks json_object —
+    the LM Studio / vLLM case the sticky downgrade exists for.
+
+    Routes on the request's own `response_format` rather than replaying a
+    positional script, so the stub states the endpoint's behavior directly and
+    the assertions can name which request got which answer.
+    """
+
+    def __init__(self) -> None:
+        self.response_formats: list[str] = []
+
+    async def create(self, **kwargs):
+        fmt = (kwargs.get("response_format") or {}).get("type", "text")
+        self.response_formats.append(fmt)
+        if fmt == "json_schema":
+            raise _BadRequest()
+        return _StubResponse(json.dumps({"ok": True}) if fmt == "json_object" else "OK")
+
+
+@pytest.mark.asyncio
+async def test_probe_against_a_real_downgrading_transport(monkeypatch) -> None:
+    """The production path, end to end, against the REAL OpenAICompatibleTransport
+    rather than a duck type — because this is precisely the composition the brief's
+    design got wrong.
+
+    build_transport("openai_compatible") always returns this class, so this is the
+    only test here that exercises what actually runs. The chain under test:
+    strict request rejected -> Task 2's sticky downgrade fires -> the json_object
+    fallback SUCCEEDS and generate_json returns a valid dict with NO exception ->
+    Task 4's probe must still report "json_object", which it can only do by reading
+    the transport's own json_mode.
+    """
+    from agentd.providers import validate as validate_mod
+    from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
+
+    stub = _RejectsJsonSchemaCompletions()
+    transport = OpenAICompatibleTransport(
+        base_url="https://example.test/v1",
+        completions_client=stub,
+        supports_oneof=True,
+    )
+    assert transport.json_mode == "strict"  # nothing learned yet
+
+    monkeypatch.setattr(validate_mod, "build_transport", lambda *a, **k: transport)
+    result = await validate_mod.ping_provider("openai_compatible", "m", None)
+
+    assert result.model == "m"
+    assert result.json_mode == "json_object"
+    assert result.warning is not None and "lower reliability" in result.warning
+
+    # The verdict came from the real sticky downgrade, not a shortcut: the
+    # transport flipped its own mode and stopped offering a tight union schema.
+    assert transport.json_mode == "json_object"
+    assert transport.supports_oneof_grammar is False
+    assert transport.supports_anyof_grammar is False
+
+    # And generate_json genuinely did NOT raise — the strict request was rejected
+    # and the fallback answered successfully. Watching for an exception here would
+    # have reported "strict" for an endpoint that cannot do strict at all.
+    assert stub.response_formats == ["text", "json_schema", "json_object"]
 
 
 @pytest.mark.asyncio
@@ -263,6 +361,12 @@ async def test_probe_is_bounded_by_its_own_timeout(monkeypatch) -> None:
 def test_route_surfaces_json_mode_and_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Scope is the ROUTE's serialization of a degraded result, so the cheapest
+    fake that yields one is right here. It has no `json_mode` and so reaches the
+    verdict through the probe's contingency branch, not the production one — the
+    real-transport composition is covered by
+    test_probe_against_a_real_downgrading_transport."""
+
     class _NoSchema:
         async def generate_text(self, *, model, system_instructions, user_payload):
             return "OK"
