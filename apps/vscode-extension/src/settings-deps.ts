@@ -65,6 +65,7 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
     skillsDisabled: () => runtimeManager.skillsDisabled(),
     setSkillsDisabled: (names) => runtimeManager.setSkillsDisabled(names),
     storeSecret: (backend, key) => runtimeManager.storeProviderKey(backend, key),
+    deleteSecret: (backend) => runtimeManager.deleteProviderKey(backend),
     storeExtraCredentials: (backend, extraCredentials) =>
       runtimeManager.storeProviderExtraCredentials(backend, extraCredentials),
     keyEnvVar: (backend) => PROVIDER_KEY_ENV[backend],

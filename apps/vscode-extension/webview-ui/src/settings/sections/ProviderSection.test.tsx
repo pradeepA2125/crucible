@@ -34,6 +34,27 @@ describe("ProviderSection", () => {
     expect(send.mock.calls[0][0]).toMatchObject({ apiKey: "sk-test" });
   });
 
+  it("Clear key posts a delete for the provider currently selected in the dropdown", () => {
+    const send = vi.fn();
+    render(<ProviderSection state={state} busy={false} send={send} />);
+    // Switch the dropdown WITHOUT saving — clearing must target what the key field
+    // is labeled with (openai_compatible), not the still-active saved provider.
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "openai_compatible" } });
+    fireEvent.click(screen.getByRole("button", { name: /Clear key/ }));
+    expect(send).toHaveBeenCalledWith({
+      type: "settings/clearProviderKey",
+      backend: "openai_compatible",
+    });
+    expect(screen.getByText(/Stored key deleted/)).toBeTruthy();
+  });
+
+  it("hides Clear key for a local provider with no key env var", () => {
+    const send = vi.fn();
+    render(<ProviderSection state={state} busy={false} send={send} />);
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "ollama" } });
+    expect(screen.queryByRole("button", { name: /Clear key/ })).toBeNull();
+  });
+
   it("renders the validate warning when the state carries one", () => {
     render(
       <ProviderSection

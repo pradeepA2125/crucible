@@ -53,6 +53,8 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
       box.skills = n;
     },
     storeSecret: async () => {},
+    deleteSecret: async () => {},
+    storeExtraCredentials: async () => {},
     keyEnvVar: () => "X_KEY",
     readEnvFlags: () => ({ "crucible.policy.shell": "ask" }),
     updateSetting: async () => {},
@@ -88,7 +90,10 @@ describe("createSettingsHandler", () => {
       apiKey: "k",
     });
     expect(setProvider).not.toHaveBeenCalled();
-    expect(posted).toEqual([{ type: "settings/error", message: "bad key" }]);
+    // The state refresh must land BEFORE the error: SettingsApp clears its error
+    // banner on every settings/state, so the reverse order would erase the message.
+    expect(posted.map((m) => m.type)).toEqual(["settings/state", "settings/error"]);
+    expect(posted[posted.length - 1]).toEqual({ type: "settings/error", message: "bad key" });
   });
 
   it("setProvider carries a validate warning into subsequent state snapshots", async () => {
@@ -113,12 +118,48 @@ describe("createSettingsHandler", () => {
     // Second attempt: a different provider (or the same one with a bad Base URL) fails
     // validation entirely. The stale warning from the first attempt must not survive —
     // it describes a validate result that's no longer in effect.
+    posted.length = 0;
     d.client.validateProvider = async () => ({ ok: false, error: "bad key" });
     await handle({ type: "settings/setProvider", backend: "openai", model: "gpt-5", apiKey: "bad" });
 
-    await handle({ type: "settings/load" });
-    const state = stateMsg(posted[posted.length - 1]).state;
-    expect(state.providerWarning).toBeFalsy();
+    // The failure path itself must push the cleared state — the webview never sends a
+    // follow-up `settings/load` in this flow, so a handler that only posts
+    // `settings/error` leaves the stale amber warning rendered next to the red error.
+    const refreshed = posted.filter((m) => m.type === "settings/state");
+    expect(refreshed).toHaveLength(1);
+    expect(stateMsg(refreshed[0]).state.providerWarning).toBeFalsy();
+  });
+
+  it("clearProviderKey deletes the selected backend's secret and flags a restart", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const deleted: string[] = [];
+    const d = deps({ deleteSecret: async (backend: string) => void deleted.push(backend) });
+    await createSettingsHandler(d, (m) => posted.push(m))({
+      type: "settings/clearProviderKey",
+      backend: "openai_compatible",
+    });
+    // Scoped to the backend named in the message — never the active saved provider
+    // (deps().getConfig reports "openai"), so switching the dropdown without saving
+    // and clearing removes the key the user is actually looking at.
+    expect(deleted).toEqual(["openai_compatible"]);
+    // The running managed backend still has the old key in its spawn env.
+    expect(stateMsg(posted[posted.length - 1]).state.restartRequired).toBe(true);
+  });
+
+  it("clearProviderKey surfaces a delete failure instead of failing silently", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const d = deps({
+      deleteSecret: async () => {
+        throw new Error("secret storage unavailable");
+      },
+    });
+    await createSettingsHandler(d, (m) => posted.push(m))({
+      type: "settings/clearProviderKey",
+      backend: "openai_compatible",
+    });
+    expect(posted).toEqual([
+      { type: "settings/error", message: "secret storage unavailable" },
+    ]);
   });
 
   it("mcpToggle updates user-local disabled list and reconnects with it", async () => {

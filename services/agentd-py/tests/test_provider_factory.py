@@ -164,6 +164,10 @@ def test_openai_compatible_normalizes_a_pasted_endpoint_url(
         "CRUCIBLE_OPENAI_COMPAT_BASE_URL", "https://x.test/v1/chat/completions"
     )
     transport = build_transport("openai_compatible")
+    # The rstrip below makes this assertion blind to a trailing slash, so the
+    # no-trailing-slash invariant is pinned ONLY by the unit test
+    # test_normalize_base_url_leaves_no_trailing_slash_behind_the_suffix in
+    # test_openai_compatible_transport.py. Don't delete it believing this covers it.
     assert str(transport._completions._client.base_url).rstrip("/") == "https://x.test/v1"
 
 

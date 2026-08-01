@@ -439,8 +439,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
     def _dump_debug_request(self, create_kwargs: dict[str, Any], name: str) -> None:
         """Best-effort artifact of the exact request bytes. Never raises: a debug
         dump must not be able to fail a live call."""
-        out_dir = provider_debug_root(self._vendor)
         try:
+            # Inside the try on purpose: provider_debug_root resolves paths against
+            # the cwd and can itself raise OSError, which would break "never raises".
+            out_dir = provider_debug_root(self._vendor)
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / f"debug-req-{name}.json").write_text(
                 json.dumps(create_kwargs, indent=2, default=str), encoding="utf-8"

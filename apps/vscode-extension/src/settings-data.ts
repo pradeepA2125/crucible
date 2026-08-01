@@ -26,6 +26,10 @@ export interface SettingsState {
 export type SettingsInMsg =
   | { type: "settings/load" }
   | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
+  // Explicit delete of a backend's stored API key. A blank API-key field means
+  // "keep the stored key" (setProvider only writes a non-empty one), so this is
+  // the ONLY way to get rid of it — see the openai_compatible note in SettingsDeps.
+  | { type: "settings/clearProviderKey"; backend: string }
   | { type: "settings/mcpUpsert"; name: string; entry: Record<string, unknown> }
   | { type: "settings/mcpDelete"; name: string }
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
@@ -73,6 +77,15 @@ export interface SettingsDeps {
   skillsDisabled(): string[];
   setSkillsDisabled(names: string[]): Promise<void>;
   storeSecret(backend: string, key: string): Promise<void>;
+  /**
+   * Delete a backend's stored API key. Needed because the stored key follows the
+   * PROVIDER SLOT, not the endpoint: for `openai_compatible` a user can retarget
+   * the Base URL at a different host while the previous host's bearer token stays
+   * on file and keeps being sent. Every other provider is safe by construction
+   * (its key env var is 1:1 with its endpoint), but the delete is offered for all
+   * of them since the mechanism is identical.
+   */
+  deleteSecret(backend: string): Promise<void>;
   storeExtraCredentials(backend: string, extraCredentials: Record<string, string>): Promise<void>;
   keyEnvVar(backend: string): string | undefined;
   readEnvFlags(): Record<string, string>;
@@ -145,6 +158,15 @@ export function createSettingsHandler(
             // providerWarning below regardless of backend, so a provider switch
             // that succeeds is already covered; this is the one remaining path.
             providerWarning = null;
+            // Push the cleared state BEFORE the error. The webview sends no
+            // follow-up `settings/load` here, so without this the stale amber
+            // warning stays rendered next to the new red error. Order matters:
+            // SettingsApp clears its error banner on every `settings/state`.
+            try {
+              await postState();
+            } catch {
+              // A state-rebuild failure must never swallow the validation error.
+            }
             post({ type: "settings/error", message: result.error ?? "validation failed" });
             return;
           }
@@ -160,6 +182,15 @@ export function createSettingsHandler(
             model: msg.model,
             ...(credentials ? { credentials } : {}),
           });
+          await postState();
+          return;
+        }
+        case "settings/clearProviderKey": {
+          await deps.deleteSecret(msg.backend);
+          // The running managed backend still holds the old key in its spawn env
+          // (buildBackendEnv injects it at spawn), so deleting the secret alone
+          // does not stop it being sent. Surface the existing restart banner.
+          restartRequired = true;
           await postState();
           return;
         }

@@ -198,6 +198,13 @@ export class RuntimeManager {
     await this.context.secrets.store(`crucible.providerKey.${backend}`, key);
   }
 
+  /** Delete a backend's stored API key (settings panel's "Clear key"). Uses the same
+   * SecretStorage delete as _persistExtraCredentials' stale-secret pruning. Deleting a
+   * key that was never stored is a no-op, so the caller needs no existence check. */
+  async deleteProviderKey(backend: string): Promise<void> {
+    await this.context.secrets.delete(`crucible.providerKey.${backend}`);
+  }
+
   /** Store extra credentials (e.g. WATSONX_SPACE_ID, WATSONX_URL) without touching backend/model. */
   async storeProviderExtraCredentials(backend: string, extraCredentials: Record<string, string>): Promise<void> {
     await this._persistExtraCredentials(backend, extraCredentials);

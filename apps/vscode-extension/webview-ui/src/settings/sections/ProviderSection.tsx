@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CardShell } from "../../components/shared/CardShell";
-import { BtnPrimary } from "../../components/shared/buttons";
+import { BtnGhost, BtnPrimary } from "../../components/shared/buttons";
 import { Icon } from "../../components/Icon";
 import { SectionHeader } from "../SectionHeader";
 import { PROVIDERS } from "../types";
@@ -18,6 +18,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
   const [apiKey, setApiKey] = useState("");
   const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [savedFlash, setSavedFlash] = useState(false);
+  const [clearedFlash, setClearedFlash] = useState(false);
 
   const provider = useMemo(
     () => PROVIDERS.find((p) => p.id === backend) ?? PROVIDERS[0],
@@ -63,6 +64,9 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
                 setModel(next.defaultModel);
                 setApiKey("");
                 setExtraValues({});
+                // The "key deleted" note is scoped to one provider — it must not
+                // linger over a different slot's key field.
+                setClearedFlash(false);
               }}
             >
               {PROVIDERS.map((p) => (
@@ -74,17 +78,42 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
             Model
             <input className={FIELD} value={model} onChange={(e) => setModel(e.target.value)} />
           </label>
-          {!provider.local && (
-            <label className="flex flex-col gap-1 text-xs text-text-2">
-              API key ({provider.keyEnvVar}) — leave blank to keep the stored key
-              <input
-                type="password"
-                className={FIELD}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-…"
-              />
-            </label>
+          {provider.keyEnvVar && (
+            <>
+              <label className="flex flex-col gap-1 text-xs text-text-2">
+                API key ({provider.keyEnvVar}) — leave blank to keep the stored key
+                <input
+                  type="password"
+                  className={FIELD}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="sk-…"
+                />
+              </label>
+              {/* A blank field keeps the stored key, so removing one has to be
+                  explicit. This matters most for openai_compatible, whose key follows
+                  the provider SLOT rather than the Base URL: retargeting the endpoint
+                  would otherwise keep sending the previous host's token. Scoped to the
+                  provider currently selected in the dropdown — the same one whose env
+                  var the label above names. */}
+              <div className="flex items-center gap-2">
+                <BtnGhost
+                  disabled={busy}
+                  onClick={() => {
+                    setApiKey("");
+                    setClearedFlash(true);
+                    send({ type: "settings/clearProviderKey", backend });
+                  }}
+                >
+                  Clear key
+                </BtnGhost>
+                {clearedFlash && (
+                  <span className="anim-pop text-[11px] text-text-3">
+                    Stored key deleted — restart the backend to stop sending it.
+                  </span>
+                )}
+              </div>
+            </>
           )}
           {provider.extraFields?.map((f) => (
             <label key={f.envVar} className="flex flex-col gap-1 text-xs text-text-2">
@@ -102,6 +131,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
               disabled={busy || !model}
               onClick={() => {
                 pendingSave.current = true;
+                setClearedFlash(false);
                 send({
                   type: "settings/setProvider",
                   backend,

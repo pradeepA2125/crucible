@@ -29,6 +29,9 @@ export interface SettingsState {
 export type SettingsInMsg =
   | { type: "settings/load" }
   | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
+  // Explicit delete of a backend's stored API key — a blank API-key field means
+  // "keep the stored key", so this is the only way to remove one.
+  | { type: "settings/clearProviderKey"; backend: string }
   | { type: "settings/mcpUpsert"; name: string; entry: Record<string, unknown> }
   | { type: "settings/mcpDelete"; name: string }
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }

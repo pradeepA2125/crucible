@@ -8,6 +8,11 @@ from agentd.providers.openai_compatible_transport import (
 )
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 
+# The fake response/completions classes below deliberately duplicate the ones in
+# tests/test_openrouter_transport.py: that file is the extraction's regression net and
+# must stay byte-for-byte unmodified, so sharing fixtures would couple it to this new
+# file and undo exactly the insulation that made the extraction safe to land.
+
 
 class _FakeMessage:
     def __init__(self, content: str) -> None:
@@ -633,7 +638,12 @@ def test_normalize_base_url_strips_a_trailing_slash_after_chat_completions() -> 
 
 def test_normalize_base_url_leaves_no_trailing_slash_behind_the_suffix() -> None:
     """A doubled separator before the suffix must not leak a trailing slash into
-    the SDK's base_url — every returned value has the same shape."""
+    the SDK's base_url — every returned value has the same shape.
+
+    NOT redundant with test_provider_factory.py's normalize test: that one `rstrip`s
+    the SDK's base_url before comparing, so it is structurally blind to a trailing
+    slash leaking through. This unit test is the sole pin for that invariant.
+    """
     assert normalize_base_url("https://x.test/v1//chat/completions") == "https://x.test/v1"
 
 
