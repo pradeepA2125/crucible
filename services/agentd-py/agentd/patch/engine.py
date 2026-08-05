@@ -44,6 +44,43 @@ from agentd.patch.policy import ForbiddenPathPolicy, PatchPolicyViolation
 logger = logging.getLogger(__name__)
 
 
+class PatchPreflightFailed(RuntimeError):
+    """Preflight rejected the patch, with the structured issues attached.
+
+    Subclasses RuntimeError so every existing `except RuntimeError` around apply keeps
+    working unchanged. The `issues` list is what lets a caller give the model guidance
+    matched to the actual failure code instead of one canned sentence for every error.
+    """
+
+    def __init__(self, message: str, issues: list[PatchPreflightIssue]) -> None:
+        super().__init__(message)
+        self.issues = issues
+
+
+def _format_preflight_issues(issues: list[PatchPreflightIssue]) -> str:
+    """Render issues for the model, keeping the op index and file that the report
+    already carries.
+
+    The model is handed this string alone: the controller strips its patch_ops from
+    history before the retry (repetition-attractor guard), so without the index and the
+    filename it cannot tell WHICH op of a batch failed and re-emits everything blind.
+    op_index is 0-based internally and rendered 1-based, matching how the ops are
+    numbered in the prompt the model wrote.
+    """
+    parts: list[str] = []
+    for issue in issues[:3]:
+        prefix = ""
+        if issue.op_index is not None:
+            prefix = f"op {issue.op_index + 1}"
+        # Skip the filename when the message already carries it — the Python syntax
+        # check embeds the path as its compile label, and repeating it read as though
+        # two different files were involved.
+        if issue.file and issue.file not in issue.message:
+            prefix = f"{prefix} ({issue.file})" if prefix else issue.file
+        parts.append(f"{prefix}: {issue.message}" if prefix else issue.message)
+    return "; ".join(parts)
+
+
 @dataclass(frozen=True)
 class PatchResult:
     touched_files: list[str]
@@ -326,10 +363,9 @@ class PatchEngine:
         if not report.success:
             if report.issues and report.issues[0].code == PatchFailureCode.POLICY_VIOLATION:
                 raise PatchPolicyViolation(report.issues[0].message)
-            details = "; ".join(
-                issue.message for issue in report.issues[:3]
-            )
-            raise RuntimeError(f"Patch preflight failed: {details}")
+            details = _format_preflight_issues(report.issues)
+            raise PatchPreflightFailed(
+                f"Patch preflight failed: {details}", report.issues)
 
         touched: set[str] = set()
         for operation in patch.patch_ops:
@@ -1009,8 +1045,9 @@ class PatchEngine:
         if not report.success:
             if report.issues and report.issues[0].code == PatchFailureCode.POLICY_VIOLATION:
                 raise PatchPolicyViolation(report.issues[0].message)
-            details = "; ".join(issue.message for issue in report.issues[:3])
-            raise RuntimeError(f"Patch preflight failed: {details}")
+            details = _format_preflight_issues(report.issues)
+            raise PatchPreflightFailed(
+                f"Patch preflight failed: {details}", report.issues)
 
         touched: set[str] = set()
         incremental_errors: list[str] = []

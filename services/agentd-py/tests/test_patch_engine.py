@@ -271,3 +271,81 @@ async def test_patch_candidate_applies_python_cst_replace(tmp_path: Path) -> Non
     result = await engine.apply_patch_candidate(tmp_path, candidate)
     assert result.touched_files == ["sample.py"]
     assert "return 2" in target.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_preflight_failure_names_the_file_and_op_index(tmp_path: Path) -> None:
+    """The model gets only this string back, and its own patch_ops are stripped from
+    history before the retry (controller_loop, repetition-attractor guard). So the
+    message is its ONLY handle on which op to fix: without the file and the op index it
+    cannot tell which of several ops failed, and re-emits the whole batch blind.
+
+    PatchPreflightIssue already carries op_index and file — they were being dropped."""
+    engine = PatchEngine()
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("y = 2\n", encoding="utf-8")
+    candidate = PatchCandidateV2.model_validate({
+        "candidate_id": "c1",
+        "patch_ops": [
+            {"op": "search_replace", "file": "a.py",
+             "search": "x = 1", "replace": "x = 9", "reason": "ok"},
+            {"op": "search_replace", "file": "b.py",
+             "search": "NOT_PRESENT_ANYWHERE", "replace": "z", "reason": "bad"},
+        ],
+    })
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await engine.apply_patch_candidate(tmp_path, candidate)
+
+    msg = str(excinfo.value)
+    assert "b.py" in msg, msg          # which file
+    assert "op 2" in msg, msg          # which op (1-based: the second one)
+    assert "Search text not found" in msg, msg
+
+
+@pytest.mark.asyncio
+async def test_preflight_failure_carries_structured_issues(tmp_path: Path) -> None:
+    """Callers need the failure CODE, not a string to sniff, to give the model guidance
+    matched to what actually broke. Subclasses RuntimeError so every existing
+    `except RuntimeError` around apply keeps working unchanged."""
+    from agentd.patch.engine import PatchPreflightFailed
+
+    engine = PatchEngine()
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    candidate = PatchCandidateV2.model_validate({
+        "candidate_id": "c1",
+        "patch_ops": [
+            {"op": "search_replace", "file": "a.py",
+             "search": "NOT_PRESENT", "replace": "z", "reason": "bad"},
+        ],
+    })
+
+    with pytest.raises(PatchPreflightFailed) as excinfo:
+        await engine.apply_patch_candidate(tmp_path, candidate)
+
+    assert isinstance(excinfo.value, RuntimeError)
+    assert [i.code for i in excinfo.value.issues] == [PatchFailureCode.ANCHOR_MISSING]
+
+
+@pytest.mark.asyncio
+async def test_preflight_failure_does_not_repeat_a_filename_already_in_the_message(
+    tmp_path: Path,
+) -> None:
+    """Some issue messages already name the file (the Python syntax check embeds it as
+    the compile label). Prefixing again produced 'failed: t.py: ... error in t.py at
+    line 2' — the same path twice in one sentence, which reads like two files."""
+    engine = PatchEngine()
+    candidate = PatchCandidateV2.model_validate({
+        "candidate_id": "c1",
+        "patch_ops": [
+            {"op": "create_file", "file": "t.py",
+             "content": 'pytest.main([__file__, "-v\n', "reason": "r"},
+        ],
+    })
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await engine.apply_patch_candidate(tmp_path, candidate)
+
+    msg = str(excinfo.value)
+    assert "t.py" in msg, msg
+    assert msg.count("t.py") == 1, msg
