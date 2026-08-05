@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.tool_events import trace_to_tool_events
-from agentd.domain.models import AgentToolTrace, ToolCall, ToolResult
+from agentd.domain.models import AgentToolTrace, PatchFailureCode, ToolCall, ToolResult
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.reasoning.react_common import MALFORMED_CORRECTION, assistant_turn, dedup_key
@@ -191,6 +191,60 @@ def _reserved_tool_name_correction(resp: dict[str, object], atype: str) -> str |
         "trying to make a change: type='edit' is already directly available — emit it "
         "now (Plan Mode is the only phase where you'd emit propose_mode first)."
     )
+
+
+# Guidance appended after a failed edit, chosen by the failure code.
+#
+# This used to be one frozen sentence (the _EDIT_GUIDANCE_FALLBACK below) sent for every
+# failure. That sentence is advice for ONE malformation — code pasted into the 'file'
+# field — and it was the dominant text the model saw for failures where 'file' was
+# perfectly correct, pointing it at the wrong field. A live run showed 81% of edit
+# failures were syntax errors, every one of them told to check its path handling.
+#
+# An empty string means "the message already says everything useful, add nothing".
+_EDIT_GUIDANCE_BY_CODE: dict[PatchFailureCode, str] = {
+    PatchFailureCode.ANCHOR_MISSING: (
+        "The 'search' anchor was not found. Read the file first and copy the anchor "
+        "text exactly as it appears, including indentation."),
+    PatchFailureCode.ANCHOR_AMBIGUOUS: (
+        "The 'search' anchor matched more than once. Include more surrounding lines "
+        "so it identifies exactly one location."),
+    PatchFailureCode.ORDER_CONFLICT: (
+        "An earlier op in this same batch already changed that file, so this anchor no "
+        "longer matches. Re-read the file and anchor against its current text."),
+    PatchFailureCode.FILE_MISSING: (
+        "That file does not exist. Use create_file to create it, or correct the path."),
+    PatchFailureCode.FILE_EXISTS: (
+        "That file already exists. Use search_replace or apply_diff to change it "
+        "instead of create_file."),
+    PatchFailureCode.APPLY_ERROR: (
+        "The patched file does not parse. Fix the syntax at the reported line — the "
+        "usual cause is an unterminated string or an unbalanced bracket in the content "
+        "you emitted."),
+    PatchFailureCode.SCOPE_VIOLATION: (
+        "That file is outside the current scope."),
+    PatchFailureCode.PATH_ESCAPE: (
+        "'file' must be a workspace-relative path inside the workspace."),
+}
+
+# Kept for every failure we cannot classify — notably the malformed-op shape errors
+# raised by _validate_patch_ops before preflight ever runs, which is what it was
+# written for.
+_EDIT_GUIDANCE_FALLBACK = (
+    "Re-emit ONE corrected edit op — 'file' is a workspace-relative path, "
+    "code goes in 'content'.")
+
+
+def _edit_failure_guidance(exc: Exception) -> str:
+    """Guidance matched to why the edit actually failed.
+
+    Uses the FIRST issue, which is the one _format_preflight_issues leads with, so the
+    prose and the message agree about which op they are talking about.
+    """
+    issues = getattr(exc, "issues", None)
+    if not issues:
+        return _EDIT_GUIDANCE_FALLBACK
+    return _EDIT_GUIDANCE_BY_CODE.get(issues[0].code, _EDIT_GUIDANCE_FALLBACK)
 
 
 # A forward-looking, first-person intent phrase — "I'm about to do X" rather than
@@ -1111,22 +1165,33 @@ class ControllerLoop:
                     #
                     # Observability: a failed edit produces NO diff card (edit_record_cb only
                     # fires on success), so without this it is invisible — the UI shows a silent
-                    # wait while the model thrashes. Log it AND surface a live + durable thinking
+                    # wait while the model thrashes. Log it AND surface a LIVE-ONLY thinking
                     # line ("✗ edit failed: <reason>") so the failure is legible in agentd.log
-                    # and the chat thinking pane.
+                    # and the chat thinking pane while the turn runs.
+                    #
+                    # Deliberately NOT appended to self._thinking: a preflight/engine error is
+                    # not model reasoning, and thinking_log is the turn's permanent reasoning
+                    # trace shown to the USER on reload. Same rule _on_retry follows
+                    # (retry_status on its own channel).
+                    #
+                    # This does NOT withhold the error from the model. thinking_log is
+                    # UI-only — the model's context comes from `history` (persisted as
+                    # ChatThread.controller_conversation_history), and the PATCH FAILED
+                    # tool_result appended below is how it reconciles. The two channels are
+                    # independent: one is what the user sees, one is what the model reads.
                     reason_line = str(exc).splitlines()[0][:200] if str(exc) else "unknown error"
                     logger.info("[controller] edit FAILED phase=%s ops=%d: %s",
                                 self._sm.phase, len(ops), reason_line)
-                    self._thinking.append(f"✗ edit failed: {reason_line}")
                     self._broadcaster.broadcast(self._channel_id, {
                         "type": "chat_agent_thinking",
                         "payload": {"message": f"✗ edit failed: {reason_line}"}})
                     intent = {k: v for k, v in resp.items() if k != "patch_ops"}
                     history.append(assistant_turn(intent))
+                    guidance = _edit_failure_guidance(exc)
                     history.append({
                         "role": "tool_result", "tool": "edit",
-                        "content": f"PATCH FAILED: {exc} Re-emit ONE corrected edit op — "
-                                   "'file' is a workspace-relative path, code goes in 'content'."})
+                        "content": f"PATCH FAILED: {exc}"
+                                   + (f" {guidance}" if guidance else "")})
                     continue
                 # Auto-accept (instant promote) OR hold for a per-edit review decision.
                 # The decision cb holds the SSE stream open + renders the live diff via
