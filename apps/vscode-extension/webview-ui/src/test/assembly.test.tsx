@@ -35,6 +35,8 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     sessionTranscripts: {},
     workbar: null,
     retryStatus: null,
+  tokenProgress: null,
+  editFailure: null,
     liveStatus: null,
     turnActive: false,
     planMode: false,

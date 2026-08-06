@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { WorkbarInfo } from "../types";
+import type { WorkbarInfo, TokenProgressView } from "../types";
 
 // Status-to-label map (tier 3 of the label precedence hierarchy).
 const STATUS_LABELS: Record<string, string> = {
@@ -16,6 +16,7 @@ interface Props {
   workbar: WorkbarInfo | null;
   liveStatus: string | null;
   thinkingStatus: string | null;
+  tokenProgress?: TokenProgressView | null;
   visible: boolean;
 }
 
@@ -23,6 +24,45 @@ function formatElapsed(secs: number): string {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Thousands separators — a five-digit raw count is hard to read at a glance. */
+function formatCount(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+/**
+ * Live token counter: 🧠 while reasoning, ✍ once output starts.
+ *
+ * The two phases are shown separately because they mean different things to
+ * someone waiting: reasoning streams visibly into the thinking pane, but content
+ * is accumulated silently until the call returns — so without this, the moment
+ * reasoning ends looks exactly like a hang. Counts are delta tallies (measured
+ * ~1.4% below true token counts), which is why this reads as an activity
+ * indicator rather than a billing figure.
+ */
+function TokenCounter({ progress }: { progress: TokenProgressView }) {
+  const { thinking, output } = progress;
+  if (!thinking && !output) return null;
+  return (
+    <span
+      className="flex-shrink-0 flex items-center gap-2 font-mono tabular-nums"
+      style={{ fontSize: "10px", color: "var(--color-text-4)" }}
+      aria-label={`${thinking} thinking tokens, ${output} output tokens`}
+    >
+      {thinking > 0 && (
+        <span title="reasoning tokens">🧠 {formatCount(thinking)}</span>
+      )}
+      {output > 0 && (
+        <span
+          title="output tokens"
+          style={{ color: "var(--color-accent-ink)" }}
+        >
+          ✍ {formatCount(output)}
+        </span>
+      )}
+    </span>
+  );
 }
 
 /**
@@ -37,7 +77,7 @@ function formatElapsed(secs: number): string {
  *   3. STATUS_LABELS map keyed by liveStatus
  *   4. fallback: thinkingStatus ?? "Working…"
  */
-export function WorkBar({ workbar, liveStatus, thinkingStatus, visible }: Props) {
+export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, visible }: Props) {
   const [elapsed, setElapsed] = useState(0);
 
   // Reset timer when bar becomes visible; count while visible.
@@ -125,6 +165,9 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, visible }: Props)
       >
         {label}
       </span>
+
+      {/* Live token counter — between label and timer */}
+      {tokenProgress ? <TokenCounter progress={tokenProgress} /> : null}
 
       {/* Elapsed timer */}
       <span

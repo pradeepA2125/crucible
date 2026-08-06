@@ -236,6 +236,8 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     appendToolResult: () => {},
     updateWorkbar: () => {},
     updateRetryStatus: () => {},
+    updateTokenProgress: () => {},
+    updateEditFailure: () => {},
     renderLiveReview: () => {},
     clearLiveReview: () => {},
     renderLiveError: () => {},

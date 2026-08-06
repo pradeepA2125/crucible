@@ -126,6 +126,13 @@ export interface WorkbarInfo {
   phaseLabel?: string;      // tier 2 — transient event override
 }
 
+/** Live token counts during a model call. `thinking` climbs during reasoning,
+ * then `output` climbs — the transition that otherwise reads as a hang. */
+export interface TokenProgressView {
+  thinking: number;
+  output: number;
+}
+
 export interface RetryStatusView {
   attempt: number;
   max_attempts: number;
@@ -143,6 +150,8 @@ export type ExtensionMessage =
   | { type: "appendToolResult"; id: number; output: string; isError: boolean }
   | { type: "updateWorkbar"; info: WorkbarInfo | null }
   | { type: "updateRetryStatus"; status: RetryStatusView | null }
+  | { type: "updateTokenProgress"; progress: TokenProgressView | null }
+  | { type: "updateEditFailure"; failure: { reason: string; ops: number } | null }
   | { type: "finalizeAgentMessage" }
   | { type: "showThinking"; message: string }
   | { type: "updateThinking"; message: string }
@@ -253,6 +262,8 @@ export interface AppState {
   sessionTranscripts: Record<string, SessionTranscriptView | null>;
   workbar: WorkbarInfo | null;
   retryStatus: RetryStatusView | null;
+  tokenProgress: TokenProgressView | null;
+  editFailure: { reason: string; ops: number } | null;
   liveStatus: string | null;
   // True while a controller turn / held-open controller gate is in flight (durable
   // input-disable signal from /live; survives reload). Distinct from inputEnabled,

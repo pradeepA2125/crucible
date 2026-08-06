@@ -193,6 +193,62 @@ def _reserved_tool_name_correction(resp: dict[str, object], atype: str) -> str |
     )
 
 
+# Guidance appended after a PARSE failure, chosen by the decoder's own complaint.
+#
+# One canned sentence used to answer every parse failure. Live on NIM that text
+# happened to describe `Extra data` exactly (trailing prose after the object) and the
+# model recovered on the very next call — while `Invalid control character` (a literal
+# newline inside a string value) got the same words, which say nothing about it, and
+# duly recurred. Same shape as the edit-guidance boilerplate fixed alongside this.
+#
+# Matched against json.JSONDecodeError's message text, which the transport now
+# interpolates into the exception it raises.
+_PARSE_GUIDANCE: tuple[tuple[str, str], ...] = (
+    ("Invalid control character", (
+        "A string value contains a literal newline, tab or control character. Inside "
+        "JSON these MUST be escaped as \\n and \\t — never written raw. This usually "
+        "happens when a long multi-line answer or file body is placed in a string.")),
+    ("Invalid \\escape", (
+        "A lone backslash appears inside a string value. Every backslash in the CONTENT "
+        "must be doubled for the JSON envelope: if the file you are writing contains "
+        "\\n inside a Python string literal, a regex like \\d+, or a Windows path, it "
+        "must appear as \\\\n / \\\\d+ in the JSON. A single \\ is only legal before "
+        "\" \\ / b f n r t or u.")),
+    ("Unterminated string", (
+        "A string value is never closed. Check for an unescaped \" inside it — every "
+        "double quote within a string must be written as \\\".")),
+    ("Expecting ',' delimiter", (
+        "A string value likely ended early because of an unescaped \" inside it — "
+        "write every inner double quote as \\\".")),
+    ("Extra data", (
+        "Your JSON object was COMPLETE, but you kept generating after it. Stop "
+        "immediately at the closing brace of the single object — do not continue with "
+        "more fields, further messages, or anything else. Live evidence: on large "
+        "responses the model carried on emitting conversation structure "
+        "(\'\", {\"role\": \"tool\"…\') past the end of its own object. If the response is "
+        "getting long, emit a SMALLER one (split a big file across turns) rather than "
+        "running past the end.")),
+    ("Expecting value", (
+        "The response was empty or cut off before the JSON began. Reply with ONE "
+        "complete JSON object.")),
+)
+
+_PARSE_GUIDANCE_FALLBACK = (
+    "Respond again with EXACTLY ONE complete JSON object matching the schema — no "
+    "prose, no markdown fences. If your response was cut off, produce a SHORTER one "
+    "(e.g. a smaller file, or split a large change into more than one patch_ops entry "
+    "across turns)."
+)
+
+
+def _parse_failure_guidance(exc_text: str) -> str:
+    """Advice matched to WHY the JSON failed to parse, not a single canned line."""
+    for marker, guidance in _PARSE_GUIDANCE:
+        if marker in exc_text:
+            return guidance
+    return _PARSE_GUIDANCE_FALLBACK
+
+
 # Guidance appended after a failed edit, chosen by the failure code.
 #
 # This used to be one frozen sentence (the _EDIT_GUIDANCE_FALLBACK below) sent for every
@@ -717,12 +773,49 @@ class ControllerLoop:
         retrieval_delta_cb: RetrievalDeltaCb | None,
         on_pills_update: PillsUpdateCb | None = None,
     ) -> ControllerOutcome:
+        pending_salvage: list[str] = []
+        # Set when preflight rejects generated code for a SYNTAX error, cleared as soon
+        # as it is consumed. NIM's grammar silently corrupts escapes (`print("hello")`
+        # -> `print("hello"}`): the JSON stays valid and the CODE breaks, so preflight is
+        # the only place the corruption is observable. One unconstrained retry escapes
+        # it; keeping it per-call means a GENUINE model syntax error (a missing colon, a
+        # stray quote) costs one call of lost grammar rather than the whole session.
+        retry_unconstrained = False
+
         def _on_thinking(chunk: str) -> None:
             # Stream the model's reasoning live so the chat thinking pane updates
             # during a model call (the FE maps tool_thinking_chunk). Raw token
             # chunks are live-only; durable thinking_log gets compact tool labels.
             self._broadcaster.broadcast(self._channel_id, {
                 "type": "tool_thinking_chunk", "payload": {"chunk": chunk}})
+
+        def _on_progress(reasoning_n: int, content_n: int) -> None:
+            # Live token counts DURING a call. Its own channel, not the thinking pane:
+            # a progress counter is not model reasoning (same rule as _on_retry and
+            # edit_failed). Reasoning already streams via _on_thinking, but CONTENT
+            # deltas are accumulated silently and only surface when the call returns —
+            # so a long generation looks identical to a hang until this lands.
+            self._broadcaster.broadcast(self._channel_id, {
+                "type": "token_progress",
+                "payload": {"thinking": reasoning_n, "output": content_n},
+            })
+
+        def _on_salvage(discarded_chars: int, discarded_text: str) -> None:
+            # The transport parsed the FIRST complete object and dropped what followed
+            # (a second action the model emitted in the same reply). Keeping that silent
+            # desynchronises the model: its history would show only the first action's
+            # result, so it can believe the second ran too. The transport reports the
+            # fact; authoring the model-facing text belongs here.
+            # Cause-neutral on purpose. Trailing content has two indistinguishable
+            # causes: a genuine SECOND action (`{"type":…`), or surplus brackets /
+            # an early close after the first. Naming one would be wrong about half
+            # the time — the mistake this whole line of work exists to stop.
+            pending_salvage.append(
+                f"NOTE: {discarded_chars} character(s) after your first complete JSON "
+                f"object were DISCARDED (starting: {discarded_text[:120]!r}). Only the "
+                "first object was executed. Emit exactly ONE action per response, with "
+                "balanced brackets and every \" inside a string escaped. If those "
+                "characters were a second action you still intend, issue it now.")
 
         def _on_retry(attempt: int, max_attempts: int, reason: str, message: str) -> None:
             # Distinct channel from _on_thinking — a retry is not model reasoning
@@ -839,7 +932,10 @@ class ControllerLoop:
                     plan_context=plan_context, history=history,
                     tool_definitions=tool_defs, phase=self._sm.phase,
                     on_thinking=_on_thinking, on_retry=_on_retry,
+                    on_progress=_on_progress, on_salvage=_on_salvage,
+                    unconstrained=retry_unconstrained,
                 )
+                retry_unconstrained = False   # one call only, always
             except Exception as exc:
                 # A raised exception here (empty/unparseable model output, a transport
                 # hiccup — e.g. a cloud model exhausting its output budget on <think>)
@@ -867,15 +963,18 @@ class ControllerLoop:
                     "role": "tool_result", "tool": "",
                     "content": (
                         f"Your previous response failed: {cap_event_output(str(exc), 300)} "
-                        "Respond again with EXACTLY ONE complete JSON object matching the "
-                        "schema — no prose, no markdown fences. If your response was cut off, "
-                        "produce a SHORTER one (e.g. a smaller file, or split a large change "
-                        "into more than one patch_ops entry across turns)."
+                        + _parse_failure_guidance(str(exc))
                     ),
                 })
                 continue
             atype = str(resp.get("type", ""))
             logger.info("[controller] iter=%d phase=%s action=%s", iteration, self._sm.phase, atype)
+            # Drain any salvage notice BEFORE dispatching: the model must see that its
+            # trailing action was dropped, on the same turn it happened.
+            while pending_salvage:
+                note = pending_salvage.pop(0)
+                logger.info("[controller] %s", note.split(" (starting")[0])
+                history.append({"role": "tool_result", "tool": "", "content": note})
             # Reject BEFORE dispatching: wrong action type for the phase, a propose_mode with
             # invalid mode vocabulary, OR a well-typed action with an empty REQUIRED field (the
             # flat schema permits {"type":"answer"} / empty tool_call — see
@@ -1169,22 +1268,30 @@ class ControllerLoop:
                     # line ("✗ edit failed: <reason>") so the failure is legible in agentd.log
                     # and the chat thinking pane while the turn runs.
                     #
-                    # Deliberately NOT appended to self._thinking: a preflight/engine error is
-                    # not model reasoning, and thinking_log is the turn's permanent reasoning
-                    # trace shown to the USER on reload. Same rule _on_retry follows
-                    # (retry_status on its own channel).
+                    # Its OWN event type, and NOT appended to self._thinking. A
+                    # preflight/engine error is not model reasoning: on the thinking
+                    # channel the webview renders it as a numbered reasoning step,
+                    # indistinguishable from the model's own thought. Same rule
+                    # _on_retry follows with retry_status, for the same reason.
                     #
-                    # This does NOT withhold the error from the model. thinking_log is
+                    # This does NOT withhold the error from the model. These channels are
                     # UI-only — the model's context comes from `history` (persisted as
                     # ChatThread.controller_conversation_history), and the PATCH FAILED
-                    # tool_result appended below is how it reconciles. The two channels are
-                    # independent: one is what the user sees, one is what the model reads.
+                    # tool_result appended below is how it reconciles. One is what the
+                    # user sees, one is what the model reads.
                     reason_line = str(exc).splitlines()[0][:200] if str(exc) else "unknown error"
                     logger.info("[controller] edit FAILED phase=%s ops=%d: %s",
                                 self._sm.phase, len(ops), reason_line)
+                    # A syntax rejection is the ONLY observable signal of grammar
+                    # corruption (see retry_unconstrained). Genuine model syntax errors
+                    # trip it too — accepted, because the cost is one unconstrained call.
+                    if "syntax error" in reason_line.lower():
+                        retry_unconstrained = True
+                        logger.info("[controller] syntax rejection — next model call "
+                                    "will skip the grammar (one call only)")
                     self._broadcaster.broadcast(self._channel_id, {
-                        "type": "chat_agent_thinking",
-                        "payload": {"message": f"✗ edit failed: {reason_line}"}})
+                        "type": "edit_failed",
+                        "payload": {"reason": reason_line, "ops": len(ops)}})
                     intent = {k: v for k, v in resp.items() if k != "patch_ops"}
                     history.append(assistant_turn(intent))
                     guidance = _edit_failure_guidance(exc)

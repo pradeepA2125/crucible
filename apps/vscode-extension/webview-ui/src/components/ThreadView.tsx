@@ -355,6 +355,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         workbar={state.workbar}
         liveStatus={state.liveStatus}
         thinkingStatus={state.thinkingStatus}
+        tokenProgress={state.tokenProgress}
         visible={workbarVisible}
       />
 

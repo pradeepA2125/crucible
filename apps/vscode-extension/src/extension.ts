@@ -299,6 +299,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     updateRetryStatus: (status) => {
       chatPanel.updateRetryStatus(status);
     },
+    updateTokenProgress: (progress) => {
+      chatPanel.updateTokenProgress(progress);
+    },
+    updateEditFailure: (failure) => {
+      chatPanel.updateEditFailure(failure);
+    },
     renderLiveReview: (review) => {
       chatPanel.renderLiveReview(review);
     },

@@ -261,6 +261,9 @@ class DefaultReasoningEngine(ReasoningEngine):
         phase: str,
         on_thinking: Callable[[str], None] | None = None,
         on_retry: Callable[[int, int, str, str], None] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+        on_salvage: Callable[[int, str], None] | None = None,
+        unconstrained: bool = False,
     ) -> dict[str, object]:
         from agentd.chat.controller_prompts import (
             build_controller_step_payload,
@@ -302,6 +305,23 @@ class DefaultReasoningEngine(ReasoningEngine):
             user_payload=user_payload,
             on_thinking=on_thinking,
             on_retry=on_retry,
+            # Capability-gated: only openai_compatible advertises this, so the other
+            # eight transports never see an unexpected kwarg (same getattr-defensive
+            # idiom as supports_oneof_grammar above).
+            **({"on_progress": on_progress}
+               if on_progress is not None
+               and getattr(self._transport, "supports_token_progress", False)
+               else {}),
+            # Same capability gate: only openai_compatible salvages a trailing action.
+            **({"on_salvage": on_salvage}
+               if on_salvage is not None
+               and getattr(self._transport, "supports_token_progress", False)
+               else {}),
+            # Same capability gate — only openai_compatible has the escape hatch.
+            **({"unconstrained": True}
+               if unconstrained
+               and getattr(self._transport, "supports_token_progress", False)
+               else {}),
         )
         result = result if isinstance(result, dict) else {}
         # Artifact: the EXACT bytes entering the LLM this iteration (controller analog of

@@ -485,6 +485,14 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "updateRetryStatus", status });
   }
 
+  updateTokenProgress(progress: { thinking: number; output: number } | null): void {
+    this.panel?.webview.postMessage({ type: "updateTokenProgress", progress });
+  }
+
+  updateEditFailure(failure: { reason: string; ops: number } | null): void {
+    this.panel?.webview.postMessage({ type: "updateEditFailure", failure });
+  }
+
   private buildHtml(): string {
     const distPath = vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist");
     let rawHtml: string;

@@ -205,7 +205,15 @@ export type StreamEvent =
   | { type: "chat_breadcrumb"; payload: { text: string; task_id: string } }
   | { type: "chat_progress"; payload: { note: string } }
   | { type: "memory_compacted"; payload: { evicted: number; anchor_version: number } }
-  | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } };
+  | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } }
+  // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
+  // reasoning, then `output` climbs — the transition that otherwise looks like
+  // a hang, since content deltas are accumulated silently until the call returns.
+  | { type: "token_progress"; payload: { thinking: number; output: number } }
+  // A failed edit has its own channel rather than chat_agent_thinking: a
+  // preflight/engine error is not model reasoning and must not render as a
+  // numbered reasoning step (same rule as retry_status).
+  | { type: "edit_failed"; payload: { reason: string; ops: number } };
 
 // Backward-compat alias
 export type PatchStreamEvent = StreamEvent;

@@ -63,7 +63,7 @@ class _RecordingEngine(ScriptedReasoningEngine):
         self.calls_seen.clear()
 
     async def create_controller_step(self, plan_context, history, tool_definitions,
-                                      *, phase, on_thinking=None, on_retry=None):
+                                      *, phase, on_thinking=None, on_retry=None, on_progress=None, on_salvage=None, unconstrained=False):
         self.histories_seen.append([dict(h) for h in history])
         self.plan_contexts_seen.append(dict(plan_context))
         self.calls_seen.append({

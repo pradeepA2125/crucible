@@ -85,6 +85,8 @@ export interface ControllerUI {
   appendToolResult(id: number, output: string, isError: boolean): void;
   updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void;
   updateRetryStatus(status: { attempt: number; max_attempts: number; reason: string; message: string } | null): void;
+  updateTokenProgress(progress: { thinking: number; output: number } | null): void;
+  updateEditFailure(failure: { reason: string; ops: number } | null): void;
   renderLiveReview(review: { taskId: string; modifiedFiles: string[]; shadowWorkspacePath: string | null; stepsCompleted: number | null; stepsTotal: number | null; deviations: string[]; narrative?: { headline: string; points: string[] } }): void;
   clearLiveReview(): void;
   renderLiveError(error: { taskId: string; status: "FAILED" | "ABORTED"; detail?: string; narrative?: { headline: string; points: string[] } }): void;
@@ -724,6 +726,15 @@ export class CrucibleController {
         } else if (event.type === "tool_thinking_chunk") {
           const chunk = (event.payload["chunk"] as string) ?? "";
           if (chunk) this.ui.appendChatThinkingChunk(chunk);
+        } else if (event.type === "token_progress") {
+          const p = event.payload as { thinking?: number; output?: number };
+          this.ui.updateTokenProgress({
+            thinking: p.thinking ?? 0,
+            output: p.output ?? 0,
+          });
+        } else if (event.type === "edit_failed") {
+          const p = event.payload as { reason?: string; ops?: number };
+          this.ui.updateEditFailure({ reason: p.reason ?? "", ops: p.ops ?? 0 });
         } else if (event.type === "retry_status") {
           const p = event.payload as {
             attempt?: number; max_attempts?: number; reason?: string; message?: string;
@@ -895,6 +906,8 @@ export class CrucibleController {
       this.turnAbort = null;
       this.ui.hideChatThinking();
       this.ui.updateRetryStatus(null);
+      this.ui.updateTokenProgress(null);
+      this.ui.updateEditFailure(null);
       this.ui.finalizeAgentMessage();
       this.ui.setChatInputEnabled(true);
     }
