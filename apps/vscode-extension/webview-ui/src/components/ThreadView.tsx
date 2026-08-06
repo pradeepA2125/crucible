@@ -366,6 +366,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           onDraftChange={setDraft}
           onOpenSettings={() => setSettingsSection("overview")}
           planMode={state.planMode}
+          stepReview={state.stepReview}
         />
       </div>
       </div>

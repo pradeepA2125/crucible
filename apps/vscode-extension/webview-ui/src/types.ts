@@ -181,7 +181,8 @@ export type ExtensionMessage =
   | { type: "workspaceFileList"; paths: string[] }
   // Sticky Plan Mode toggle hydration (extension globalState), pushed on webviewReady
   // and whenever the composer/ModeGate posts setPlanMode back to the host.
-  | { type: "planModeState"; enabled: boolean };
+  | { type: "planModeState"; enabled: boolean }
+  | { type: "reviewPrefState"; enabled: boolean };
 
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
@@ -272,4 +273,7 @@ export interface AppState {
   // Sticky Plan Mode toggle, hydrated from the extension's globalState on mount
   // (planModeState) and kept live as the composer/ModeGate flips it.
   planMode: boolean;
+  // "Review each step" — hydrated from globalState like planMode. Local webview
+  // state silently reset to true on every remount, re-enabling edit gates.
+  stepReview: boolean;
 }

@@ -43,6 +43,7 @@ const INITIAL: AppState = {
   liveStatus: null,
   turnActive: false,
   planMode: false,
+  stepReview: true,
 };
 
 // ── Action types ─────────────────────────────────────────────────────────────
@@ -403,6 +404,9 @@ function reducer(state: AppState, action: Action): AppState {
       }
       return { ...state, liveStatus: msg.status, turnActive };
     }
+
+    case "reviewPrefState":
+      return { ...state, stepReview: msg.enabled };
 
     case "planModeState":
       return { ...state, planMode: msg.enabled };

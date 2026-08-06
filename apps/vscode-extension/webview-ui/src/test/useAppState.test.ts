@@ -404,4 +404,30 @@ describe("useAppState", () => {
 
     expect(result.current.state.retryStatus).toBeNull();
   });
+
+  // ── stepReview ────────────────────────────────────────────────────────────
+  // BUG: "Review each step" was local useState(true) in InputArea, while planMode was
+  // a prop hydrated from globalState. Every remount (thread switch, panel reload)
+  // silently returned it to CHECKED, so an unchecked box came back on and the next
+  // message gated its edits again. It has to be state like planMode.
+
+  it("stepReview defaults to true", () => {
+    const { result } = renderHook(() => useAppState());
+    expect(result.current.state.stepReview).toBe(true);
+  });
+
+  it("reviewPrefState sets stepReview and survives other messages", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({ type: "reviewPrefState", enabled: false });
+    });
+    expect(result.current.state.stepReview).toBe(false);
+
+    // A remount is what used to reset it; here, an unrelated message must not.
+    act(() => {
+      fireMessage({ type: "showThinking", message: "Thinking…" });
+    });
+    expect(result.current.state.stepReview).toBe(false);
+  });
 });

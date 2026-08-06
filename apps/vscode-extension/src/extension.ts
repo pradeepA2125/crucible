@@ -162,7 +162,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     (sessionId: string) => controller.fetchSessionTranscript(sessionId),
     () => runtimeManager.getPlanMode(),
-    (enabled: boolean) => runtimeManager.setPlanMode(enabled)
+    (enabled: boolean) => runtimeManager.setPlanMode(enabled),
+    () => runtimeManager.getStepReview()
   );
 
   const ui: ControllerUI = {

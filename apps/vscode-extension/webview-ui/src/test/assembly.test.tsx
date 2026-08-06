@@ -40,6 +40,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     liveStatus: null,
     turnActive: false,
     planMode: false,
+  stepReview: true,
     ...overrides,
   };
 }

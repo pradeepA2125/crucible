@@ -15,6 +15,7 @@ interface Props {
   // the gear falls back to the legacy openSettings host message.
   onOpenSettings?: () => void;
   planMode?: boolean;  // hydrated from the extension's globalState via planModeState
+  stepReview?: boolean;  // hydrated from globalState via reviewPrefState
 }
 
 // 5 lines × ~19.2px line-height ≈ 96px. Caps the textarea's auto-grow.
@@ -27,14 +28,20 @@ const MAX_TEXTAREA_HEIGHT = 96;
  * newline. When availability.showStop is true, a Stop button appears on the
  * left side of the footer row and posts { type: "stopTurn" } once.
  */
-export function InputArea({ availability, draft, onDraftChange, onOpenSettings, planMode = false }: Props) {
+export function InputArea({ availability, draft, onDraftChange, onOpenSettings, planMode = false, stepReview = true }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [stopping, setStopping] = useState(false);
   // One-shot guard for the Tier B task-abort buttons (keep / revert).
   const [aborting, setAborting] = useState(false);
-  // Per-task "Review each step" toggle — always sent; the backend applies it
-  // only when the turn creates a task (large_change). Default on.
-  const [stepReview, setStepReview] = useState(true);
+  // "Review each step" — a CONTROLLED prop sourced from the extension's globalState,
+  // not local state. As local useState(true) it silently returned to checked on every
+  // remount (thread switch, panel reload), so an unchecked box came back on and the
+  // next message gated its edits again. Mirrors planMode exactly.
+  //
+  // It governs BOTH paths: the controller applies it per message to its edit gate
+  // (controller.py `is_review = step_review is True` -> auto_accept_edits), and the
+  // task path uses it as the creation default. The older comment here claimed it was
+  // task-only; that has not been true since the controller gained per-edit review.
 
   // Focus on mount and whenever disabled flips to false.
   useEffect(() => {
@@ -389,7 +396,9 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
             checked={stepReview}
             onChange={(e) => {
               const checked = e.target.checked;
-              setStepReview(checked);
+              // No local setState: the host persists and echoes reviewPrefState back,
+              // which updates this controlled prop. The round-trip is required, not
+              // decorative — same contract as setPlanMode.
               // Live-mutable: a running task re-reads this before each step gate. Checked =
               // "review each step" = auto_accept false. A 409 (no task running) is benign on
               // the extension side — the value still governs the next task's creation default.

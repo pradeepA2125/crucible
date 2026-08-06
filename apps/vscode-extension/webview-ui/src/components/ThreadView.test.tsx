@@ -36,6 +36,7 @@ const base: AppState = {
   liveStatus: null,
   turnActive: false,
   planMode: false,
+  stepReview: true,
 };
 
 function renderView() {

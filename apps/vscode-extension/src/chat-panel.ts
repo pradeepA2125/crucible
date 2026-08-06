@@ -72,6 +72,7 @@ export type FetchSessionTranscriptHandler = (
 export type OpenFileHandler = (relativePath: string) => void;
 // Sticky Plan Mode toggle (survives across threads/reloads via extension globalState).
 export type GetPlanModeHandler = () => boolean;
+export type GetStepReviewHandler = () => boolean;
 export type SetPlanModeHandler = (enabled: boolean) => Promise<void>;
 
 export class ChatPanel {
@@ -119,7 +120,8 @@ export class ChatPanel {
     private readonly onOpenGraphPanel: OpenGraphPanelHandler = () => {},
     private readonly onFetchSessionTranscript: FetchSessionTranscriptHandler = async () => null,
     private readonly onGetPlanMode: GetPlanModeHandler = () => false,
-    private readonly onSetPlanMode: SetPlanModeHandler = async () => {}
+    private readonly onSetPlanMode: SetPlanModeHandler = async () => {},
+    private readonly onGetStepReview: GetStepReviewHandler = () => true
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -191,6 +193,10 @@ export class ChatPanel {
         }
         void this.panel?.webview.postMessage({
           type: "planModeState", enabled: this.onGetPlanMode ? this.onGetPlanMode() : false,
+        });
+        void this.panel?.webview.postMessage({
+          type: "reviewPrefState",
+          enabled: this.onGetStepReview ? this.onGetStepReview() : true,
         });
         p = this.onReady();
       } else if (m["type"] === "setPlanMode") {
@@ -280,7 +286,15 @@ export class ChatPanel {
       } else if (m["type"] === "abortTask") {
         p = this.onAbortTask(m["revert"] === true);
       } else if (m["type"] === "setReviewPref") {
-        p = this.onSetReviewPref(m["autoAccept"] === true);
+        // autoAccept is the INVERSE of the checkbox: checked = review each step =
+        // do not auto-accept. Persist, then echo the checkbox value back — the box is
+        // a controlled prop, so without the echo it never visually updates.
+        const autoAccept = m["autoAccept"] === true;
+        p = Promise.resolve(this.onSetReviewPref(autoAccept)).then(() => {
+          void this.panel?.webview.postMessage({
+            type: "reviewPrefState", enabled: !autoAccept,
+          });
+        });
       } else if (m["type"] === "listPrompts") {
         p = (async () => {
           const names = await this.onListPrompts();

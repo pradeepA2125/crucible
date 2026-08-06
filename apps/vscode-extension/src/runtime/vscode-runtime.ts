@@ -343,6 +343,17 @@ export class RuntimeManager {
       this.context.globalState.update("crucible.skillsDisabled", names));
   }
 
+  /** "Review each step" — persisted for the same reason as planMode: it was local
+   *  webview state defaulting to true, so every remount silently re-checked it and
+   *  the next message gated its edits again. Default true (review on). */
+  getStepReview(): boolean {
+    return this.context.globalState.get<boolean>("crucible.chat.stepReview", true);
+  }
+
+  async setStepReview(enabled: boolean): Promise<void> {
+    await this.context.globalState.update("crucible.chat.stepReview", enabled);
+  }
+
   getPlanMode(): boolean {
     return this.context.globalState.get<boolean>("crucible.chat.planMode", false);
   }

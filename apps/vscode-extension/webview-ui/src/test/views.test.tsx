@@ -325,8 +325,11 @@ describe("InputArea — Enter sends text and clears draft", () => {
     expect(onDraftChange).toHaveBeenCalledWith("");
   });
 
-  it("sends stepReview flag with the message; toggle flips it", () => {
-    render(
+  it("sends the stepReview PROP with the message, not local state", () => {
+    // Controlled prop, sourced from globalState. As local useState(true) it silently
+    // reset to checked on every remount (thread switch, panel reload), so an unchecked
+    // box came back on and the next message gated its edits again.
+    const { rerender } = render(
       <InputArea
         availability={makeAvailability()}
         draft="do it"
@@ -339,7 +342,15 @@ describe("InputArea — Enter sends text and clears draft", () => {
       expect.objectContaining({ type: "sendMessage", text: "do it", stepReview: true }),
     );
 
-    fireEvent.click(screen.getByLabelText(/review each step/i));
+    // The host persists and echoes reviewPrefState, which arrives as this prop.
+    rerender(
+      <InputArea
+        availability={makeAvailability()}
+        draft="do it"
+        onDraftChange={vi.fn()}
+        stepReview={false}
+      />,
+    );
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", shiftKey: false });
     expect(postMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({ text: "do it", stepReview: false }),
@@ -502,12 +513,30 @@ describe("InputArea — Tier B task abort + dynamic review pref", () => {
         onDraftChange={vi.fn()}
       />,
     );
-    // Default checked (review on); first click → unchecked → auto_accept true.
+    // Default prop is checked (review on); clicking asks the host for the inverse.
     fireEvent.click(screen.getByLabelText(/review each step/i));
     expect(postMessage).toHaveBeenLastCalledWith({ type: "setReviewPref", autoAccept: true });
-    // Click again → checked → auto_accept false.
-    fireEvent.click(screen.getByLabelText(/review each step/i));
-    expect(postMessage).toHaveBeenLastCalledWith({ type: "setReviewPref", autoAccept: false });
+  });
+
+  it("the checkbox reflects the prop, not the last click", () => {
+    // A controlled box does not flip on click — the host echoes reviewPrefState back.
+    // Without that echo the click would appear to do nothing, which is exactly why the
+    // round-trip is required rather than decorative (same contract as setPlanMode).
+    const { rerender } = render(
+      <InputArea availability={makeAvailability({ disabled: true, taskStop: true })}
+                 draft="" onDraftChange={vi.fn()} />,
+    );
+    const box = screen.getByLabelText(/review each step/i) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+
+    fireEvent.click(box);
+    expect(box.checked).toBe(true);   // no local flip
+
+    rerender(
+      <InputArea availability={makeAvailability({ disabled: true, taskStop: true })}
+                 draft="" onDraftChange={vi.fn()} stepReview={false} />,
+    );
+    expect((screen.getByLabelText(/review each step/i) as HTMLInputElement).checked).toBe(false);
   });
 });
 
