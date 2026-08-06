@@ -201,3 +201,36 @@ def test_openai_compatible_credentials_override_env(
 def test_openai_compatible_is_registered_in_the_env_tables() -> None:
     assert MODEL_ENV_VAR["openai_compatible"] == "CRUCIBLE_OPENAI_COMPAT_MODEL"
     assert PROVIDER_KEY_ENV["openai_compatible"] == "CRUCIBLE_OPENAI_COMPAT_API_KEY"
+
+
+def test_openai_compat_json_mode_env_reaches_the_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CRUCIBLE_OPENAI_COMPAT_JSON_MODE=none is the development escape hatch for an
+    endpoint whose grammar enforcement corrupts JSON escapes (NVIDIA NIM's large
+    nemotrons). It has to be reachable without editing code."""
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_JSON_MODE", "none")
+    transport = build_transport("openai_compatible")
+    assert transport.json_mode == "none"
+
+
+def test_openai_compat_json_mode_defaults_to_strict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opt-in only: an unset env var must leave the strict probe exactly as it was."""
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_BASE_URL", "https://example.test/v1")
+    monkeypatch.delenv("CRUCIBLE_OPENAI_COMPAT_JSON_MODE", raising=False)
+    transport = build_transport("openai_compatible")
+    assert transport.json_mode == "strict"
+
+
+def test_openai_compat_json_mode_rejects_an_unknown_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typo ('None', 'off', 'no-format') must fail loudly at construction rather
+    than silently leaving the corrupting strict path in place."""
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("CRUCIBLE_OPENAI_COMPAT_JSON_MODE", "off")
+    with pytest.raises(RuntimeError, match="CRUCIBLE_OPENAI_COMPAT_JSON_MODE"):
+        build_transport("openai_compatible")

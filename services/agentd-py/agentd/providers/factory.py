@@ -35,6 +35,18 @@ MODEL_ENV_VAR: dict[str, str] = {
     "openai_compatible": "CRUCIBLE_OPENAI_COMPAT_MODEL",
 }
 
+# Structured-output modes accepted for the openai_compatible backend.
+# "strict"      — probe json_schema, sticky-downgrade to json_object on a probative
+#                 failure. The default, and what every healthy endpoint should use.
+# "json_object" — skip the probe, start already downgraded.
+# "none"        — DEVELOPMENT ONLY: send no response_format at all, schema in the
+#                 prompt. For endpoints whose grammar enforcement corrupts output —
+#                 NVIDIA NIM's large nemotrons mangle the `\"` escape before a closing
+#                 bracket, and json_object is grammar-enforced too, so it is no escape.
+#                 Nothing enforces the shape in this mode; see the _json_mode comment
+#                 in openai_compatible_transport for the trade-off.
+_OPENAI_COMPAT_JSON_MODES = frozenset({"strict", "json_object", "none"})
+
 PROVIDER_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -232,6 +244,13 @@ def build_transport(
                 "provider (e.g. https://integrate.api.nvidia.com/v1)"
             )
             raise RuntimeError(msg)
+        json_mode = (env.get("CRUCIBLE_OPENAI_COMPAT_JSON_MODE") or "strict").strip()
+        if json_mode not in _OPENAI_COMPAT_JSON_MODES:
+            msg = (
+                f"CRUCIBLE_OPENAI_COMPAT_JSON_MODE must be one of "
+                f"{sorted(_OPENAI_COMPAT_JSON_MODES)} (got {json_mode!r})"
+            )
+            raise RuntimeError(msg)
         return OpenAICompatibleTransport(
             # Optional: keyless local servers (vLLM, LM Studio) construct fine —
             # the base sends a placeholder the server ignores.
@@ -244,5 +263,6 @@ def build_transport(
             # Verified live against NVIDIA NIM: strict json_schema honors oneOf
             # discriminated unions. The sticky downgrade covers endpoints that don't.
             supports_oneof=True,
+            json_mode=json_mode,
         )
     raise ValueError(f"Unsupported backend: {backend}")

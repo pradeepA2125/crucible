@@ -221,26 +221,35 @@ async def test_call_with_retry_classifies_429_as_rate_limited() -> None:
 
 
 @pytest.mark.asyncio
-async def test_malformed_json_fallback_calls_on_retry() -> None:
-    """The malformed-JSON fallback loop is a transport-level retry on a JSON-parse
-    failure — distinct from the controller-level corrective retry, but shares
-    reason='malformed_response' per the spec's unified taxonomy."""
+async def test_unrepairable_json_raises_rather_than_retrying_blind() -> None:
+    """The transport no longer retries a JSON-parse failure.
+
+    It used to re-send BYTE-IDENTICAL messages up to max_retries, so an
+    input-determined failure was simply reproduced (measured live on NIM: 4
+    attempts, ~1500 tokens each, all malformed). It now raises on the first
+    unrepairable parse, carrying the offending text, and the CONTROLLER loop —
+    which owns model-conversation semantics — appends a correction with that error
+    and retries. Same reason='malformed_response' still reaches the UI, from the
+    outer loop, with the real error interpolated. Transient failures (429/5xx/
+    timeouts) are unaffected and still retry here."""
     fake = _FakeCompletions([
-        "not json at all",       # primary strict-schema attempt -> triggers fallback
-        "still not json either", # fallback attempt 0 -> malformed, retries
-        json.dumps({"ok": True}),  # fallback attempt 1 -> succeeds
+        "not json at all",        # strict attempt -> triggers fallback
+        "still not json either",  # fallback -> unrepairable, must RAISE now
+        json.dumps({"ok": True}),  # never reached
     ])
     transport = OpenRouterJsonTransport(completions_client=fake, max_retries=2)
     retries: list[tuple[int, int, str, str]] = []
 
-    result = await transport.generate_json(
-        model="some/model", schema_name="controller_step_response",
-        schema={"type": "object"}, system_instructions="s", user_payload={},
-        on_retry=lambda a, m, r, msg: retries.append((a, m, r, msg)),
-    )
+    with pytest.raises(RuntimeError) as excinfo:
+        await transport.generate_json(
+            model="some/model", schema_name="controller_step_response",
+            schema={"type": "object"}, system_instructions="s", user_payload={},
+            on_retry=lambda a, m, r, msg: retries.append((a, m, r, msg)),
+        )
 
-    assert result == {"ok": True}
-    assert any(r[2] == "malformed_response" for r in retries), retries
+    assert len(fake.calls) == 2, f"retried blind: {len(fake.calls)} calls"
+    # The offending text rides the exception so the loop's correction can cite it.
+    assert "still not json either" in str(excinfo.value), str(excinfo.value)
 
 
 @pytest.mark.asyncio

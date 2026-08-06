@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 from openai import APIConnectionError, AsyncOpenAI
@@ -28,6 +29,11 @@ def _is_reasoning_model(model: str) -> bool:
 
 
 _CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
+
+# Minimum gap between on_progress emissions. Live-measured delta rate is ~29/sec;
+# emitting per delta would put ~29 SSE frames/sec on the chat channel for a
+# counter a human reads a few times a second. ~6/sec reads as continuous.
+_PROGRESS_INTERVAL_SEC = 0.15
 
 # Streamed reasoning is not in the OpenAI spec, so the ecosystem settled on two
 # different delta field names: `reasoning` (OpenRouter, Groq) and
@@ -189,6 +195,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         timeout_sec: float = 120.0,
         max_retries: int = 4,
         supports_oneof: bool = False,
+        json_mode: str = "strict",
         default_headers: dict[str, str] | None = None,
         completions_client: Any | None = None,
     ) -> None:
@@ -208,10 +215,32 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # Instance attribute, NOT a class attribute: OpenRouter must keep the
         # contracts default (False) while openai_compatible opts in to True.
         self.supports_oneof_grammar = supports_oneof
-        # "strict" | "json_object". Every generate_json starts by probing strict
-        # json_schema; the first failure that PROVES the endpoint can't honor it
+        # Advertises on_progress support so the engine can pass it WITHOUT every
+        # other transport having to grow the kwarg (same getattr-defensive idiom as
+        # supports_oneof_grammar / requires_all_fields).
+        self.supports_token_progress = True
+        # "strict" | "json_object" | "none". Every generate_json starts by probing
+        # strict json_schema; the first failure that PROVES the endpoint can't honor it
         # flips this for the rest of the process (see _downgrade_json_mode).
-        self._json_mode: str = "strict"
+        #
+        # "none" is a DEVELOPMENT escape hatch, only reachable by pinning it here (env
+        # CRUCIBLE_OPENAI_COMPAT_JSON_MODE=none) — no failure ever downgrades INTO it.
+        # It sends no response_format at all, so the endpoint applies no grammar, and
+        # the schema reaches the model through the system prompt alone.
+        #
+        # Why it exists: NVIDIA NIM's grammar enforcement corrupts the JSON escape
+        # `\"` when the next literal character is a closing bracket, turning
+        # `pytest.main([__file__, "-v"])` into `"-v"})` — silently, as VALID JSON, so
+        # nothing retries. Verified live on nemotron-3-ultra and -super; the same
+        # weights on Ollama Cloud are clean, and unconstrained NIM is clean (4/4).
+        # The existing json_object downgrade is no escape: json_object is itself
+        # grammar-enforced and corrupts identically. Hence a third rung.
+        #
+        # The trade: nothing enforces the shape, so malformed JSON becomes the model's
+        # responsibility. Survivable because the fallback loop already retries
+        # malformed output and ControllerLoop has its own correct-and-continue path —
+        # but it IS a real robustness downgrade. Do not make it a default.
+        self._json_mode: str = json_mode
 
         if completions_client is not None:
             self._completions: Any = completions_client
@@ -291,6 +320,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: Any = None,
         on_retry: Any = None,
+        on_progress: Any = None,
+        on_salvage: Any = None,
+        unconstrained: bool = False,
     ) -> dict[str, object]:
         result = await self._generate_json_once(
             model=model,
@@ -300,6 +332,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             user_payload=user_payload,
             on_thinking=on_thinking,
             on_retry=on_retry,
+            on_progress=on_progress,
+            on_salvage=on_salvage,
+            unconstrained=unconstrained,
         )
         # Type-specific narrowing: the tight anyOf schema enforces each variant's
         # required fields at the token level, but if the grammar was ignored (an
@@ -322,11 +357,15 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     user_payload=user_payload,
                     on_thinking=on_thinking,
                     on_retry=on_retry,
+                    on_progress=on_progress,
+                    on_salvage=on_salvage,
+                    unconstrained=unconstrained,
                 )
         return result
 
     async def _get_completion_output(
         self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
+        on_progress: Any = None,
     ) -> tuple[str, str | None]:
         """Route through the streaming path (forwarding reasoning deltas to
         on_thinking live, as they arrive) when a callback is given, else the plain
@@ -340,19 +379,21 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         """
         if callable(on_thinking):
             return await self._stream_with_finish_reason(
-                create_kwargs, on_thinking=on_thinking, on_retry=on_retry
+                create_kwargs, on_thinking=on_thinking, on_retry=on_retry,
+                on_progress=on_progress,
             )
         response = await self._call_with_retry(create_kwargs, on_retry=on_retry)
         return self._extract_text(response), _response_finish_reason(response)
 
     async def _get_completion_text(
         self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
+        on_progress: Any = None,
     ) -> str:
         """Text-only view of _get_completion_output, for callers that have no use
         for the finish_reason (the json_object fallback — it never decides a
         downgrade, so truncation there is just a malformed-JSON retry)."""
         text, _finish_reason = await self._get_completion_output(
-            create_kwargs, on_thinking, on_retry
+            create_kwargs, on_thinking, on_retry, on_progress
         )
         return text
 
@@ -366,6 +407,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: Any = None,
         on_retry: Any = None,
+        on_progress: Any = None,
+        on_salvage: Any = None,
+        unconstrained: bool = False,
     ) -> dict[str, object]:
         safe_schema_name = "".join(c for c in schema_name if c.isalnum())
 
@@ -390,7 +434,11 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             "extra_body": extra_body,
         }
 
-        if self._json_mode == "strict":
+        # One-shot escape hatch: the caller saw evidence that the grammar corrupted
+        # the last response (preflight rejected the generated code), so skip it for
+        # THIS call only. Per-call, never sticky — `self._json_mode` is untouched, so
+        # the next call is constrained again and a false positive costs one call.
+        if self._json_mode == "strict" and not unconstrained:
             create_kwargs = {
                 **base_kwargs,
                 "response_format": {
@@ -408,9 +456,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             finish_reason: str | None = None
             try:
                 output_text, finish_reason = await self._get_completion_output(
-                    create_kwargs, on_thinking, on_retry
+                    create_kwargs, on_thinking, on_retry, on_progress
                 )
-                return self._parse_output_object(output_text, schema_name)
+                return self._parse_output_object(
+                    output_text, schema_name, on_salvage)
             except Exception as e:
                 # Fall back to json_object with schema injected into system prompt.
                 # Some models/providers don't support json_schema strict mode.
@@ -441,6 +490,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             user_payload=user_payload,
             on_thinking=on_thinking,
             on_retry=on_retry,
+            on_progress=on_progress,
+            on_salvage=on_salvage,
+            unconstrained=unconstrained,
         )
 
     def _downgrade_json_mode(self) -> None:
@@ -484,6 +536,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: Any = None,
         on_retry: Any = None,
+        on_progress: Any = None,
+        on_salvage: Any = None,
+        unconstrained: bool = False,
     ) -> dict[str, object]:
         """json_object mode with the schema injected into the system prompt.
 
@@ -513,8 +568,12 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 },
                 {"role": "user", "content": json.dumps(user_payload)},
             ],
-            "response_format": {"type": "json_object"},
         }
+        # json_object is grammar-enforced, so on an endpoint whose grammar corrupts
+        # escapes it is no safer than json_schema. "none" omits response_format
+        # entirely — the only way to get an unconstrained decode. See _json_mode.
+        if self._json_mode != "none" and not unconstrained:
+            fallback_kwargs["response_format"] = {"type": "json_object"}
         # Once downgraded, the strict request is never built, so without this the
         # provider debug artifact would freeze at the last strict attempt forever.
         if self._json_mode != "strict":
@@ -539,13 +598,32 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 await asyncio.sleep(delay)
             try:
                 output_text = await self._get_completion_text(
-                    fallback_kwargs, on_thinking, on_retry
+                    fallback_kwargs, on_thinking, on_retry, on_progress
                 )
-                return self._parse_output_object(output_text, schema_name)
+                return self._parse_output_object(
+                    output_text, schema_name, on_salvage)
+            except TransientTransportError as e2:
+                # MUST precede `except RuntimeError` — TransientTransportError is a
+                # RuntimeError subclass, so the base handler would shadow it.
+                # Infrastructure, not the model: a timeout, a dropped stream, or a
+                # provider-side capacity error (live: NIM "ResourceExhausted: Worker
+                # local total request limit reached (32/32)", which carries no
+                # status_code so _is_retryable misses it). Raising here burned one of
+                # the controller's three attempts as if the model had misbehaved —
+                # and the request never reached the model, so its thinking showed no
+                # error to reason about. This is the one class that SHOULD retry.
+                last_parse_exc = e2
+                continue
             except RuntimeError as e2:
                 if "not valid JSON" in str(e2) or "must be a JSON object" in str(e2):
-                    last_parse_exc = e2
-                    continue
+                    # Do NOT retry: the messages are byte-identical every attempt, so a
+                    # parse failure is input-determined and resampling reproduces it
+                    # (measured live: 3 identical ~1500-token regenerations, all bad).
+                    # Raise now, carrying the offending text, and let the loop layer —
+                    # which knows the schema — correct the model an attempt later
+                    # instead of four. Transient failures still retry above; only this
+                    # deterministic class short-circuits.
+                    raise
                 raise RuntimeError(
                     f"{self._label} API error for {schema_name} (fallback also failed): {e2}"
                 ) from e2
@@ -611,6 +689,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         *,
         on_thinking: Any,
         on_retry: Any = None,
+        on_progress: Any = None,
     ) -> tuple[str, str | None]:
         """Stream response forwarding reasoning chunks to on_thinking callback.
 
@@ -618,6 +697,13 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         surface it as `delta.reasoning` (OpenRouter, Groq) OR as
         `delta.reasoning_content` (DeepSeek, vLLM, NVIDIA NIM). Both are read —
         see _first_reasoning_chunk.
+
+        on_progress(reasoning_n, content_n) reports running delta counts DURING the
+        call. Reasoning is already visible through on_thinking, but content deltas
+        are accumulated silently and only surface when the call returns, so a long
+        generation is indistinguishable from a hang (observed live: a 15-minute
+        call behind a motionless UI). Emission is throttled — measured ~29
+        deltas/sec, and one broadcast per delta would flood the SSE channel.
 
         Opening the stream and consuming it are deliberately separate try blocks:
         a failure to OPEN can be probative (a 400 rejecting response_format), while
@@ -663,6 +749,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             try:
                 content_parts: list[str] = []
                 finish_reason: str | None = None
+                reasoning_n = content_n = 0
+                last_progress = 0.0
                 async for chunk in stream:
                     choices = getattr(chunk, "choices", None) or []
                     if not choices:
@@ -675,10 +763,21 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         continue
                     reasoning = _first_reasoning_chunk(delta)
                     if reasoning:
+                        reasoning_n += 1
                         on_thinking(reasoning)
                     content = getattr(delta, "content", None) or ""
                     if content:
+                        content_n += 1
                         content_parts.append(content)
+                    if on_progress is not None and (reasoning or content):
+                        now = time.monotonic()
+                        if now - last_progress >= _PROGRESS_INTERVAL_SEC:
+                            last_progress = now
+                            on_progress(reasoning_n, content_n)
+                # Final emit: throttling can swallow the last tick, and the closing
+                # number is the one a user actually reads.
+                if on_progress is not None and (reasoning_n or content_n):
+                    on_progress(reasoning_n, content_n)
                 return "".join(content_parts).strip(), finish_reason
             except TimeoutError as exc:
                 raise TransientTransportError(
@@ -763,17 +862,116 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             raise EmptyResponseError(f"{self._label} response contained no text output")
         return content.strip()
 
-    def _parse_output_object(self, output_text: str, schema_name: str) -> dict[str, object]:
+    def _parse_output_object(
+        self, output_text: str, schema_name: str, on_salvage: Any = None,
+    ) -> dict[str, object]:
         payload_text = _strip_json_code_fences(output_text)
         try:
-            payload = json.loads(payload_text)
+            # raw_decode, NOT json.loads: it parses the FIRST complete JSON value and
+            # returns where it stopped, tolerating trailing data. This transport was
+            # the only one on bare json.loads (ollama/turboquant/watsonx already use
+            # raw_decode), so a model emitting two actions in one reply cost the whole
+            # generation — measured live at 19,772 / 20,878 / 26,714 / 30,681 / 39,225
+            # chars discarded and regenerated, with the first object valid every time.
+            #
+            # Safe by protocol: exactly ONE action per response is the contract, so the
+            # first object IS the action. Surplus after it is dropped; the loop re-derives
+            # it next iteration. A first object that is itself invalid still raises below
+            # with the full error window — salvage must never mask a real failure.
+            payload, end = json.JSONDecoder().raw_decode(payload_text)
+            trailing = payload_text.rstrip()[end:].strip()
+            # ALWAYS salvage the first object, whatever follows it.
+            #
+            # A short remainder is ambiguous — `]}` follows a complete object (surplus
+            # brackets), `"}` follows one that closed early because an unescaped quote
+            # ended a string, leaving truncated content. The bytes look identical, so a
+            # guard here can only guess.
+            #
+            # It does not need to guess, because PREFLIGHT is the real net: the live
+            # truncation case was caught downstream as "unterminated string error in
+            # game_loop.py at line 468" and the edit was rejected before touching disk.
+            # So truncation is loud already, and salvaging costs nothing when the object
+            # is fine — whereas raising costs a full regeneration (~10K tokens) in BOTH
+            # cases. Residual risk: a file type with no syntax check (markdown, config)
+            # could take truncated content; preflight cannot see those.
+            if trailing:
+                logger.warning(
+                    "%s: %s had %d trailing chars after a complete object — salvaged "
+                    "the first, discarded the rest",
+                    self._label, schema_name, len(trailing))
+                # Report it: a SILENT discard desynchronises the model from reality —
+                # it emitted two actions, only the first ran, and its history shows
+                # just that one's result. The loop owns telling it (this layer must
+                # not author model-facing text).
+                if callable(on_salvage):
+                    on_salvage(len(trailing), trailing[:400])
+
         except json.JSONDecodeError as exc:
+            # NO regex "repair" pass here, deliberately. The obvious one — quoting
+            # unquoted property names, as ollama/turboquant/watsonx do — runs over the
+            # whole text, string values included, and Python type annotations are
+            # indistinguishable from unquoted JSON keys:
+            #   def __init__(self, x: int = 0)  ->  def __init__(self, "x": int = 0)
+            # Observed live corrupting two consecutive create_file edits, then
+            # reporting the damage it had just caused ("after repair, Expecting ','").
+            # Those transports carry file content in JSON strings too and have the
+            # same latent bug. Report the payload AS THE MODEL WROTE IT — it can only
+            # fix what it actually emitted.
             raise RuntimeError(
-                f"{self._label} output is not valid JSON for {schema_name}: {output_text[:500]}"
+                f"{self._label} output is not valid JSON for {schema_name} "
+                f"({exc}). Near the error: {_error_window(payload_text, exc.pos)}"
             ) from exc
         if not isinstance(payload, dict):
             raise RuntimeError(f"{self._label} output must be a JSON object")
         return payload
+
+
+_ERROR_WINDOW_RADIUS = 70
+
+
+def _trailing_remainder_message(n: int) -> str:
+    """Describe unparsed trailing characters WITHOUT guessing the cause.
+
+    A short remainder has two indistinguishable causes, both seen live:
+      `"}`  — a string ended early (unescaped quote), so the object closed before its
+              content finished; the file written was truncated ("unterminated string
+              literal at line 468").
+      `]}`  — the object closed correctly and surplus brackets followed; the content
+              was complete.
+    The bytes look the same. Naming one is wrong half the time, so name both and let
+    the model check. Raising either way is the safe default: salvaging a truncated
+    object writes a silently corrupt file, while raising costs one regeneration.
+    """
+    return (
+        f"{n} unparsed character(s) followed the JSON object. Either a string ended "
+        "early (an unescaped \" inside it) so the object closed before its content "
+        "was finished, or you emitted extra closing brackets after it. Check that "
+        "every \" inside a string value is escaped and that your brackets balance, "
+        "then send the complete object again."
+    )
+
+
+def _error_window(text: str, pos: int, radius: int = _ERROR_WINDOW_RADIUS) -> str:
+    """The bytes AROUND a parse failure, with the offending position marked.
+
+    The head of a malformed response is the least useful part — '{"type":"answer",
+    "thought":"…' is always well-formed. Live, a control character at char 217 was
+    reported to the model alongside output_text[:500], which the loop then capped to
+    300, leaving 178 chars: the error was in the truncated-away remainder. It got an
+    exact coordinate into text it could not see, and failed four times running.
+
+    Control characters are escaped in the excerpt so the marker stays on one line —
+    a raw newline is the most common offender and would otherwise be invisible.
+    """
+    start = max(0, pos - radius)
+    end = min(len(text), pos + radius)
+    def _vis(chunk: str) -> str:
+        return chunk.replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r")
+    before, after = _vis(text[start:pos]), _vis(text[pos + 1:end])
+    at = _vis(text[pos:pos + 1])
+    lead = "…" if start > 0 else ""
+    tail = "…" if end < len(text) else ""
+    return f"{lead}{before}◀HERE▶{at}{after}{tail}"
 
 
 def _strip_json_code_fences(text: str) -> str:

@@ -449,6 +449,10 @@ echo "uvicorn_log=$LOG_FILE"
       # user-supplied endpoint, not a well-known var most shells already export.
       export CRUCIBLE_OPENAI_COMPAT_BASE_URL="$CRUCIBLE_OPENAI_COMPAT_BASE_URL"
       [[ -n "${CRUCIBLE_OPENAI_COMPAT_API_KEY:-}" ]] && export CRUCIBLE_OPENAI_COMPAT_API_KEY="$CRUCIBLE_OPENAI_COMPAT_API_KEY"
+      # Development escape hatch (strict|json_object|none). Explicit for the same
+      # reason as BASE_URL above, and because forgetting to propagate a new flag
+      # here is a recurring gap — an unset var silently leaves the default in place.
+      [[ -n "${CRUCIBLE_OPENAI_COMPAT_JSON_MODE:-}" ]] && export CRUCIBLE_OPENAI_COMPAT_JSON_MODE="$CRUCIBLE_OPENAI_COMPAT_JSON_MODE"
       ;;
     scripted)
       ;;

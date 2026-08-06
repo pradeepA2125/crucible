@@ -795,3 +795,540 @@ def test_normalize_base_url_handles_none_and_empty() -> None:
     assert normalize_base_url("") is None
     assert normalize_base_url("   ") is None
     assert normalize_base_url(" / ") is None
+
+
+# ------------------------------------------------- json_mode="none" (dev escape hatch)
+# NVIDIA NIM's grammar enforcement corrupts the JSON escape `\"` when the next literal
+# character is a closing bracket, so `pytest.main([__file__, "-v"])` comes back as
+# `"-v"})` — silently, as valid JSON. Verified live on nemotron-3-ultra/super: it fires
+# with response_format json_schema AND json_object (json_object is grammar-enforced too,
+# so the existing sticky downgrade cannot escape it), while the SAME weights on Ollama
+# Cloud are clean. Unconstrained, the model escapes correctly — 4/4 with the schema in
+# the prompt. This mode is that last rung: no response_format at all.
+
+
+@pytest.mark.asyncio
+async def test_json_mode_none_sends_no_response_format() -> None:
+    """The whole point: server-side grammar enforcement is what corrupts the escape,
+    so the request must carry no response_format key at all. json_object is NOT a
+    substitute — it is grammar-enforced and corrupts identically."""
+    transport, fake = _transport([json.dumps({"ok": True})], json_mode="none")
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+    )
+
+    assert result == {"ok": True}
+    assert len(fake.calls) == 1, "no strict attempt should be made first"
+    assert "response_format" not in fake.calls[0], fake.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_json_mode_none_still_puts_the_schema_in_the_prompt() -> None:
+    """Nothing enforces the shape now, so the schema has to reach the model somehow —
+    it rides the system prompt, exactly as in the json_object fallback."""
+    transport, fake = _transport(
+        [json.dumps({"ok": True})], json_mode="none")
+
+    await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object", "title": "MARKER_SCHEMA"},
+        system_instructions="sys", user_payload={"k": "v"},
+    )
+
+    system = fake.calls[0]["messages"][0]["content"]
+    assert "MARKER_SCHEMA" in system, system
+    assert "sys" in system, system
+
+
+@pytest.mark.asyncio
+async def test_json_mode_none_is_reported_by_the_property() -> None:
+    """The validate route reads .json_mode to tell the caller what actually happened."""
+    transport, _ = _transport([json.dumps({"ok": True})], json_mode="none")
+    assert transport.json_mode == "none"
+
+
+@pytest.mark.asyncio
+async def test_default_json_mode_still_probes_strict() -> None:
+    """The escape hatch is opt-in: omitting json_mode must not change any behavior."""
+    transport, fake = _transport([json.dumps({"ok": True})])
+    await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+    )
+    assert transport.json_mode == "strict"
+    assert fake.calls[0]["response_format"]["type"] == "json_schema"
+
+
+# ------------------------------------------------------- live token progress
+# Reasoning streams visibly via on_thinking, but CONTENT deltas are accumulated
+# silently and only surface when the call returns — a long generation looks frozen
+# (observed live: a 15-minute nemotron call with a motionless UI while it worked).
+# on_progress reports running counts DURING the call, split by kind.
+
+
+class _CountingProgress:
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int]] = []
+
+    def __call__(self, reasoning_n: int, content_n: int) -> None:
+        self.calls.append((reasoning_n, content_n))
+
+
+@pytest.mark.asyncio
+async def test_stream_progress_reports_reasoning_and_content_separately() -> None:
+    """The split is the point: 'still thinking' and 'writing output' are different
+    states to a waiting user. The delta loop already distinguishes them."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([
+        _DeltaStream([
+            _StreamDelta(None, reasoning_content="think "),
+            _StreamDelta(None, reasoning_content="more "),
+            _StreamDelta("out1"),
+            _StreamDelta("out2"),
+            _StreamDelta("out3"),
+        ]),
+    ])
+    progress = _CountingProgress()
+
+    text, _ = await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None, on_progress=progress,
+    )
+
+    assert text == "out1out2out3"
+    assert progress.calls, "on_progress was never called"
+    assert progress.calls[-1] == (2, 3), progress.calls
+
+
+@pytest.mark.asyncio
+async def test_stream_progress_is_throttled_not_one_call_per_delta() -> None:
+    """~29 deltas/sec measured live; one SSE broadcast per delta would flood the
+    channel. Throttled emission must still end on the true final totals."""
+    deltas = [_StreamDelta(f"c{i}") for i in range(40)]
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([_DeltaStream(deltas)])
+    progress = _CountingProgress()
+
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None, on_progress=progress,
+    )
+
+    assert len(progress.calls) < 40, f"not throttled: {len(progress.calls)} calls"
+    assert progress.calls[-1] == (0, 40), progress.calls
+
+
+@pytest.mark.asyncio
+async def test_stream_without_on_progress_is_unchanged() -> None:
+    """Opt-in: every existing caller passes no on_progress and must be unaffected."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([
+        _DeltaStream([_StreamDelta("a"), _StreamDelta("b")]),
+    ])
+
+    text, _ = await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None,
+    )
+
+    assert text == "ab"
+
+
+@pytest.mark.asyncio
+async def test_json_mode_none_still_reports_token_progress() -> None:
+    """Regression: progress was plumbed only into the STRICT path's
+    _get_completion_output. In json_mode="none" (and after any sticky downgrade)
+    every call skips strict and goes through _json_object_fallback ->
+    _get_completion_text, so the counter silently never fired — the exact config
+    the escape-corruption workaround runs in. Caught on the wire, not by the unit
+    tests, which called _stream_with_finish_reason directly."""
+    transport, _ = _transport([], json_mode="none")
+    transport._completions = _FakeCompletions([
+        _DeltaStream([
+            _StreamDelta(None, reasoning_content="hm "),
+            _StreamDelta('{"ok"'),
+            _StreamDelta(": true}"),
+        ]),
+    ])
+    progress = _CountingProgress()
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+        on_thinking=lambda _c: None, on_progress=progress,
+    )
+
+    assert result == {"ok": True}
+    assert progress.calls, "on_progress never fired on the json_object/none path"
+    assert progress.calls[-1] == (1, 2), progress.calls
+
+
+# ------------------------------------------------- malformed JSON: repair + fail fast
+# Observed live: three identical ~1500-token regenerations of one long prose answer,
+# each unparseable. The retry re-sent BYTE-IDENTICAL messages, so resampling just
+# reproduced an input-determined failure — 4 attempts, ~6000 tokens, 35s of backoff,
+# and the model never learned anything. Three transports (ollama/turboquant/watsonx)
+# already repair locally; this one had no repair at all.
+
+
+class _CountingCompletions(_FakeCompletions):
+    """Counts how many times the endpoint was actually hit."""
+
+
+@pytest.mark.asyncio
+async def test_unrepairable_json_fails_fast_instead_of_retrying_blind() -> None:
+    """Blind retry is right for a 503 and wrong for malformed output: the input is
+    identical, so the failure is deterministic. Fail on the FIRST unrepairable parse
+    so the loop layer — which knows the schema and can say something useful — gets
+    to correct the model an attempt later instead of four."""
+    transport, fake = _transport(["this is prose, not JSON at all"], json_mode="none")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await transport.generate_json(
+            model="m", schema_name="s", schema={"type": "object"},
+            system_instructions="sys", user_payload={"k": "v"},
+        )
+
+    assert len(fake.calls) == 1, f"retried blind {len(fake.calls)} times"
+    # The offending text must ride the exception — the retry path previously logged
+    # only an attempt counter, making this failure class undiagnosable from logs.
+    assert "prose, not JSON" in str(excinfo.value), str(excinfo.value)
+
+
+
+
+# ------------------------------------------- error window instead of the head
+# Live failure: the model was told "Invalid control character at column 218" and
+# shown output_text[:500], which the loop then capped to 300 — leaving only 178
+# chars of payload. The offending character at 217 was in the truncated-away part,
+# so it received a precise coordinate into text it could not see, four times in a
+# row. The head is also the least useful part: '{"type":"answer","thought":"…' is
+# always well-formed. Show a window around the error, like a compiler does.
+
+
+def test_error_window_centres_on_the_failure_not_the_head() -> None:
+    from agentd.providers.openai_compatible_transport import _error_window
+
+    body = '{"type":"answer","answer":"' + ("x" * 400) + "\n" + ("y" * 400) + '"}'
+    pos = body.index("\n")
+
+    window = _error_window(body, pos)
+
+    assert len(window) < len(body), "window must be shorter than the payload"
+    assert "xxx" in window and "yyy" in window, window   # both sides of the error
+    assert not window.startswith('{"type"'), "showed the head, not the error site"
+
+
+def test_error_window_marks_the_offending_position() -> None:
+    from agentd.providers.openai_compatible_transport import _error_window
+
+    body = "A" * 100 + "\t" + "B" * 100
+    window = _error_window(body, 100)
+
+    assert "◀" in window or "HERE" in window, window
+
+
+def test_error_window_returns_short_payloads_whole() -> None:
+    from agentd.providers.openai_compatible_transport import _error_window
+
+    body = '{"a": 1,}'
+    assert "{" in _error_window(body, 8)
+
+
+@pytest.mark.asyncio
+async def test_parse_error_message_shows_the_bytes_around_the_failure() -> None:
+    """End to end: the RuntimeError the loop appends must carry the error SITE, and
+    stay short enough to survive the loop's 300-char cap."""
+    long_prose = "word " * 120
+    bad = '{"type":"answer","thought":"t","answer":"# Title\n' + long_prose + '"}'
+    transport, _ = _transport([bad], json_mode="none")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await transport.generate_json(
+            model="m", schema_name="s", schema={"type": "object"},
+            system_instructions="sys", user_payload={"k": "v"},
+        )
+
+    msg = str(excinfo.value)
+    assert "Invalid control character" in msg, msg
+    assert "# Title" in msg, "the error site is not in the message"
+    assert len(msg) < 400, f"message too long to survive the 300-char cap: {len(msg)}"
+
+
+@pytest.mark.asyncio
+async def test_no_regex_repair_is_applied_to_payloads_carrying_code() -> None:
+    """REGRESSION: a borrowed 'repair unquoted property names' regex ran over the whole
+    JSON text, string values included. Python type annotations look identical to
+    unquoted JSON keys, so it rewrote
+
+        def __init__(self, x: int = 0, y: int = 0)
+    into
+        def __init__(self, "x": int = 0, "y": int = 0)
+
+    corrupting valid code inside a create_file `content` field and reporting the
+    damage it had just caused ("after repair, Expecting ',' delimiter"). Observed
+    live on two consecutive edits. A malformed payload must be reported AS THE MODEL
+    WROTE IT — the model can only fix what it actually emitted."""
+    body = ('{"type":"edit","patch_ops":[{"op":"create_file","file":"e.py",'
+            '"content":"def __init__(self, x: int = 0, y: int = 0):\n    pass"}]}')
+    transport, _ = _transport([body], json_mode="none")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await transport.generate_json(
+            model="m", schema_name="s", schema={"type": "object"},
+            system_instructions="sys", user_payload={"k": "v"},
+        )
+
+    msg = str(excinfo.value)
+    assert "after repair" not in msg, msg
+    assert '"x":' not in msg, f"repair corrupted the reported payload: {msg}"
+
+
+@pytest.mark.asyncio
+async def test_transient_stream_failure_is_retried_not_reported_as_model_failure() -> None:
+    """Live: NIM returned 'ResourceExhausted: Worker local total request limit reached
+    (32/32)' mid-stream. It carries no status_code, so _is_retryable missed it, it was
+    wrapped as TransientTransportError, and the fallback loop RAISED — burning one of
+    the controller's three attempts as though the model had misbehaved. Two arrived a
+    second apart and never reached the model at all, so its thinking showed no error.
+
+    TransientTransportError is documented as 'infrastructure failure… says nothing
+    about the request's own shape' — it is the one class that SHOULD be retried here."""
+    calls = {"n": 0}
+
+    class _ExhaustedThenOk:
+        def __aiter__(self):
+            return self._gen()
+
+        async def _gen(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                yield _StreamChunk("partial")
+                raise RuntimeError("ResourceExhausted: Worker local total request "
+                                   "limit reached (32/32)")
+            yield _StreamChunk(json.dumps({"ok": True}))
+            yield _StreamChunk(None, finish_reason="stop")
+
+    transport, _ = _transport([], json_mode="none")
+    transport._completions = _FakeCompletions([_ExhaustedThenOk(), _ExhaustedThenOk()])
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+        on_thinking=lambda _c: None,
+    )
+
+    assert result == {"ok": True}, "a transient stream failure must be retried"
+
+
+# ------------------------------------------- salvage the first object (raw_decode)
+# This transport was the ONLY one using bare json.loads; ollama/turboquant/watsonx all
+# use raw_decode. json.loads rejects the WHOLE response on trailing data, so a model
+# that emitted two actions in one reply cost the entire generation. Measured live:
+# 19,772 / 20,878 / 26,714 / 30,681 / 39,225 chars discarded, each regenerated on
+# retry. The first object was complete and valid every time.
+#
+# Safe by protocol: exactly one action per response is the contract, so the FIRST
+# object IS the action; anything after it is surplus the loop will re-derive next
+# iteration.
+
+
+@pytest.mark.asyncio
+async def test_trailing_second_action_salvages_the_first_object() -> None:
+    """The live 39K-char shape: a complete tool_call, a blank line, then a second
+    complete action. Previously 'Extra data: line 3 column 1' and the lot discarded."""
+    body = ('{"type":"tool_call","tool":"write_todos","args":{"items":[{"note":"loop"}]}}'
+            '\n\n{"type":"edit","thought":"Creating game_loop.py"}')
+    transport, fake = _transport([body], json_mode="none")
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+    )
+
+    assert result["type"] == "tool_call"
+    assert result["tool"] == "write_todos"
+    assert len(fake.calls) == 1, "salvage must not cost a retry"
+
+
+
+
+@pytest.mark.asyncio
+async def test_genuinely_broken_json_still_raises_with_the_error_window() -> None:
+    """Salvage must not mask a real failure: if the FIRST object is itself invalid
+    there is nothing to recover, and the model still needs what/where/why."""
+    body = '{"type":"answer","answer":"line one\nline two"}'   # raw control char
+    transport, _ = _transport([body], json_mode="none")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await transport.generate_json(
+            model="m", schema_name="s", schema={"type": "object"},
+            system_instructions="sys", user_payload={"k": "v"},
+        )
+
+    msg = str(excinfo.value)
+    assert "Invalid control character" in msg, msg
+    assert "HERE" in msg, msg
+
+
+@pytest.mark.asyncio
+async def test_salvage_reports_the_discard_to_the_caller() -> None:
+    """A silent discard desynchronises the model from reality: it emitted two actions,
+    we ran the first and dropped the second, and its history shows only the first's
+    result — so it can believe the second happened. The transport reports the fact;
+    the LOOP owns telling the model (same split as on_thinking/on_retry/on_progress)."""
+    body = ('{"type":"tool_call","tool":"write_todos","args":{"items":[]}}'
+            '\n\n{"type":"edit","thought":"Creating game_loop.py"}')
+    transport, _ = _transport([body], json_mode="none")
+    salvaged: list[tuple[int, str]] = []
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+        on_salvage=lambda n, text: salvaged.append((n, text)),
+    )
+
+    assert result["tool"] == "write_todos"
+    assert salvaged, "the discard was not reported"
+    discarded_chars, discarded_text = salvaged[0]
+    assert discarded_chars > 0
+    assert '"type":"edit"' in discarded_text, discarded_text
+
+
+@pytest.mark.asyncio
+async def test_no_salvage_callback_when_nothing_was_discarded() -> None:
+    """A clean single-object response must not report a phantom discard."""
+    transport, _ = _transport([json.dumps({"type": "answer", "answer": "hi"})],
+                              json_mode="none")
+    salvaged: list[tuple[int, str]] = []
+
+    await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+        on_salvage=lambda n, text: salvaged.append((n, text)),
+    )
+
+    assert salvaged == []
+
+
+# --------------------------------- salvage ONLY a genuine second action
+# Live regression from the first cut of this: a response with just 2 trailing chars
+# ("}) was "salvaged", but a 2-char remainder means the object CLOSED EARLY — an
+# unescaped quote ended a string prematurely — so the parsed object held TRUNCATED
+# content. The edit applied and preflight caught "unterminated string literal at line
+# 468" in the generated Python. Silent truncation is worse than a loud parse failure.
+
+
+
+
+@pytest.mark.asyncio
+async def test_trailing_object_is_still_salvaged() -> None:
+    """The 39K case stands: trailing content that STARTS a new object is a genuine
+    second action, and the first is safe to execute."""
+    body = ('{"type":"tool_call","tool":"write_todos","args":{"items":[]}}'
+            '\n\n{"type":"edit","thought":"Creating game_loop.py"}')
+    transport, _ = _transport([body], json_mode="none")
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+    )
+
+    assert result["tool"] == "write_todos"
+
+
+def test_trailing_remainder_message_does_not_assert_a_cause() -> None:
+    """Two different faults produce an identical short remainder and I cannot tell
+    them apart from the bytes: `"}` was a genuine early close (content truncated,
+    live: "unterminated string literal at line 468"), while `]}` followed a complete,
+    properly-quoted todo list — surplus brackets. Asserting "the content is truncated"
+    is wrong half the time, and a confidently-wrong correction is the exact failure
+    this whole line of work has been chasing. State the fact, name both causes."""
+    from agentd.providers.openai_compatible_transport import _trailing_remainder_message
+
+    msg = _trailing_remainder_message(2)
+
+    assert "2" in msg
+    assert "bracket" in msg.lower(), msg
+    # Must NOT claim to know which cause it was.
+    assert "is truncated" not in msg, msg
+
+
+@pytest.mark.asyncio
+async def test_short_trailing_remainder_is_salvaged_not_raised() -> None:
+    """A short remainder is AMBIGUOUS — `]}` follows a complete object (surplus
+    brackets), `"}` follows one that closed early (truncated content). Identical bytes,
+    so a guard can only guess. It doesn't need to: preflight is the net, and caught the
+    live truncation as "unterminated string literal at line 468" before disk. Raising
+    would cost a full regeneration (~10K tokens) in BOTH cases; salvaging costs nothing
+    when the object is fine and one rejected edit when it isn't."""
+    body = '{"type":"edit","patch_ops":[{"content":"def f(): pass"}]}]}'
+    transport, fake = _transport([body], json_mode="none")
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"},
+    )
+
+    assert result["type"] == "edit"
+    assert len(fake.calls) == 1, "salvage must not cost a retry"
+
+
+# ---------------------------------------- one-shot unconstrained escape hatch
+# Strict is the better default: a grammar makes the ENTIRE JSON-validity failure
+# class structurally impossible (Extra data, Invalid control character, unescaped
+# quotes, early closes — every failure observed in a night of running `none`).
+# Its one defect is NIM's silent escape corruption, which turns `print("hello")`
+# into `print("hello"}` — invalid JSON is not produced, invalid CODE is, so it
+# surfaces at preflight rather than here.
+#
+# So: strict every call, and when preflight rejects the generated code, the loop
+# asks for ONE unconstrained call. Per-call, not sticky — a genuine model syntax
+# error (a missing colon, a stray quote) then costs one call of lost grammar, not
+# the rest of the session.
+
+
+@pytest.mark.asyncio
+async def test_unconstrained_call_sends_no_response_format() -> None:
+    """The escape hatch: this one call skips the grammar entirely."""
+    transport, fake = _transport([json.dumps({"ok": True})])   # default json_mode=strict
+
+    await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"}, unconstrained=True,
+    )
+
+    assert "response_format" not in fake.calls[0], fake.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_unconstrained_call_salvages_trailing_content() -> None:
+    """It must also get raw_decode, since without a grammar the model may append a
+    second action — the whole reason `none` needs salvage."""
+    body = ('{"type":"tool_call","tool":"write_todos","args":{"items":[]}}'
+            '\n\n{"type":"edit","thought":"x"}')
+    transport, _ = _transport([body])
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={"k": "v"}, unconstrained=True,
+    )
+
+    assert result["tool"] == "write_todos"
+
+
+@pytest.mark.asyncio
+async def test_unconstrained_does_not_persist_to_the_next_call() -> None:
+    """Auto-reverting by construction: the flag is per-call, so the very next call is
+    constrained again. A sticky downgrade would lose grammar enforcement for the whole
+    process on one false positive."""
+    transport, fake = _transport([json.dumps({"ok": True}), json.dumps({"ok": True})])
+
+    await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={}, unconstrained=True)
+    await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="sys", user_payload={})
+
+    assert "response_format" not in fake.calls[0]
+    assert fake.calls[1]["response_format"]["type"] == "json_schema", fake.calls[1]
+    assert transport.json_mode == "strict", "one unconstrained call must not downgrade"
