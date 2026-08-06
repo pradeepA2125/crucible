@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Sequence
 
 from agentd.domain.models import TaskRecord
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
@@ -87,6 +90,19 @@ class ShadowWorkspaceManager:
 
         shadow_path = self._resolve_shadow_path(task_id)
         if shadow_path.exists():
+            # This wipe is how an interrupted turn's work becomes unrecoverable: the
+            # chat shadow is keyed by THREAD id (chatturn-<thread_id>), so the next
+            # edit in the same thread destroys any files a dead turn left behind.
+            # ChatController.resolve_edit can promote those from here, but only until
+            # this runs — so say so loudly rather than deleting in silence.
+            orphans = [
+                str(p.relative_to(shadow_path))
+                for p in shadow_path.rglob("*") if p.is_file()
+            ]
+            if orphans:
+                logger.warning(
+                    "shadow %s already exists with %d file(s) — wiping: %s",
+                    task_id, len(orphans), orphans[:10])
             shutil.rmtree(shadow_path)
         shadow_path.mkdir(parents=True, exist_ok=True)
 

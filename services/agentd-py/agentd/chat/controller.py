@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from agentd.chat.controller_factory import is_task_subsystem_enabled
+from agentd.chat.controller_factory import is_skills_enabled, is_task_subsystem_enabled
 from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
@@ -25,12 +25,12 @@ from agentd.chat.models import ChatMessage, PendingGate
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.domain.models import CommandDecision, McpToolDecision, ShellPolicy
-from agentd.chat.controller_factory import is_skills_enabled
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
+from agentd.workspace.promote import promote_files
 
 if TYPE_CHECKING:
     from agentd.chat.storage import ChatThreadStore
@@ -801,17 +801,63 @@ class ChatController:
         re-enables). The user re-issues the edit. Matches the orphaned-task degradation."""
         fut = self._pending_edit.get(thread_id)
         if fut is None or fut.done():
-            # No live waiter. If a stale edit gate persists (restart orphan), clear it.
+            # No live waiter (worker died mid-turn). The generation is NOT lost: the
+            # edit was already applied to the shadow — only the promote didn't run —
+            # and the persisted gate carries the exact paths it covered. So an accept
+            # is reconstructible from durable state alone. Live incident: a 288-line
+            # pathfinding.py was discarded here and survived only because the shadow
+            # had not yet been rmtree'd by the next edit.
             thread = self._store.get_thread(thread_id)
             gate = thread.pending_controller_gate if thread is not None else None
-            if gate is not None and gate.kind == "edit":
-                self._store.set_controller_gate(thread_id, None)
-                self._write_breadcrumb(
-                    thread_id, f"chat:{thread_id}",
-                    "Previous turn ended — please re-send your request.")
-            return False
+            if gate is None or gate.kind != "edit":
+                return False
+            promoted: list[str] = []
+            if str(decision.get("decision", "")) == "accept":
+                promoted = self._promote_orphaned_edit(thread_id, gate)
+            # Clear AFTER promoting: the gate is the only record of which paths the
+            # edit covered, so losing it first would strand the shadow again.
+            self._store.set_controller_gate(thread_id, None)
+            self._write_breadcrumb(
+                thread_id, f"chat:{thread_id}",
+                (f"✓ Recovered {len(promoted)} file(s) from the interrupted turn: "
+                 + ", ".join(promoted))
+                if promoted else
+                "Previous turn ended — please re-send your request.")
+            return bool(promoted)
         fut.set_result(decision)
         return True
+
+    def _promote_orphaned_edit(self, thread_id: str, gate: PendingGate) -> list[str]:
+        """Promote a dead turn's shadow edit into the real workspace.
+
+        Reuses promote_files (the same call TurnEditSession.accept makes) so there is
+        one promote path, and promotes ONLY the paths the gate recorded — never
+        whatever else happens to be sitting in the shadow. Best-effort: recovery must
+        never raise into the decision route.
+        """
+        if self._orchestrator is None:
+            return []
+        entries = gate.payload.get("diff_entries") or []
+        paths = [str(e.get("path")) for e in entries if isinstance(e, dict) and e.get("path")]
+        if not paths:
+            return []
+        try:
+            wm = self._orchestrator._workspace_manager
+            shadow = wm._resolve_shadow_path(f"chatturn-{thread_id}")
+            if not shadow.exists():
+                return []
+            real = Path(self._workspace_path)
+            present = [p for p in paths if (shadow / p).exists()]
+            if not present:
+                return []
+            promote_files(shadow, real, present)
+            logger.info("[controller] recovered %d orphaned edit file(s) for %s: %s",
+                        len(present), thread_id, present)
+            return present
+        except Exception:
+            logger.warning("[controller] orphaned-edit recovery failed for %s",
+                           thread_id, exc_info=True)
+            return []
 
     async def _command_approval_cb(
         self, thread_id: str, channel_id: str,
@@ -852,7 +898,7 @@ class ChatController:
         timeout = self._command_decision_timeout_sec
         try:
             decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             decision = CommandDecision(approve=False)
         finally:
             self._pending_command.pop(thread_id, None)
@@ -913,7 +959,7 @@ class ChatController:
         timeout = mcp_decision_timeout_sec()
         try:
             decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             decision = McpToolDecision(approve=False)
         finally:
             self._pending_mcp.pop(thread_id, None)

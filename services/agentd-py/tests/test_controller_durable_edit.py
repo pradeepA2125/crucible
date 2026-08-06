@@ -20,6 +20,7 @@ from agentd.domain.models import DiffEntry
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.patch.engine import PatchEngine
+from agentd.workspace.shadow import ShadowWorkspaceManager
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
@@ -89,7 +90,7 @@ async def test_loop_streams_thinking_via_on_thinking(tmp_path: Path):
     class _ThinkingEngine:
         async def create_controller_step(
             self, *, plan_context, history, tool_definitions, phase, on_thinking=None, on_retry=None,
-        ):
+        on_progress=None, on_salvage=None, unconstrained=False):
             if on_thinking:
                 on_thinking("weighing options")
             return {"type": "answer", "thought": "t", "answer": "hi"}
@@ -286,3 +287,75 @@ async def test_resolve_edit_clears_stale_gate_when_no_waiter(tmp_path: Path):
     assert any(
         m.metadata.get("breadcrumb") and "re-send" in m.content.lower()
         for m in refreshed.messages)
+
+
+# ── Orphaned EditGate: recover from the shadow instead of discarding ──────────
+# Live incident: a worker restart killed a turn holding an EditGate for a 288-line
+# pathfinding.py. The edit had ALREADY been applied to the shadow — only the
+# promote (TurnEditSession.accept) hadn't run — yet resolve_edit cleared the gate
+# and told the user to re-send, discarding a completed, expensive generation.
+# Everything needed to honour the accept survives: the persisted gate carries
+# payload.diff_entries[].path, and the shadow is on disk. Only the in-memory
+# future is gone.
+
+
+class _WmOnlyOrchestrator:
+    """Minimal stand-in: recovery only needs the workspace manager, which owns the
+    shadow-path convention (chatturn-<thread_id> under its root)."""
+
+    def __init__(self, wm) -> None:
+        self._workspace_manager = wm
+        self._patch_engine = PatchEngine()
+
+
+def _orphaned(tmp_path, real, files: dict[str, str]):
+    """A thread whose EditGate persisted, whose shadow holds `files`, and whose
+    in-memory waiter is gone — the exact post-worker-death state."""
+    wm = ShadowWorkspaceManager(tmp_path / "shadows")
+    store = ChatThreadStore(tmp_path / "chat.sqlite3")
+    thread = store.create_thread(str(real))
+    shadow = wm._resolve_shadow_path(f"chatturn-{thread.thread_id}")
+    for rel, text in files.items():
+        dst = shadow / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(text)
+    store.set_controller_gate(thread.thread_id, PendingGate(
+        kind="edit", payload={"diff_entries": [
+            {"path": rel, "additions": 1, "deletions": 0, "unified_diff": "@@"}
+            for rel in files]}))
+    ctrl = ChatController(
+        workspace_path=str(real),
+        reasoning_engine=ScriptedReasoningEngine(None, []),
+        thread_store=store, orchestrator=_WmOnlyOrchestrator(wm),
+        broadcaster=EventBroadcaster(), retrieval_client=None)
+    assert thread.thread_id not in ctrl._pending_edit
+    return ctrl, store, thread
+
+
+@pytest.mark.asyncio
+async def test_resolve_edit_promotes_from_shadow_when_waiter_is_gone(tmp_path: Path):
+    """An accept on an orphaned gate must LAND the edit, not throw it away."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    body = "def a_star():\n    return []\n"
+    ctrl, store, thread = _orphaned(tmp_path, real, {"pkg/new.py": body})
+
+    ok = await ctrl.resolve_edit(thread.thread_id, {"decision": "accept"})
+
+    assert ok is True, "an accept with a recoverable shadow must succeed"
+    assert (real / "pkg" / "new.py").read_text() == body
+    assert store.get_thread(thread.thread_id).pending_controller_gate is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_edit_reject_on_orphan_discards_without_promoting(tmp_path: Path):
+    """Reject keeps today's behaviour: clear the gate, promote nothing."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    ctrl, store, thread = _orphaned(tmp_path, real, {"pkg/new.py": "unwanted\n"})
+
+    ok = await ctrl.resolve_edit(thread.thread_id, {"decision": "reject"})
+
+    assert ok is False
+    assert not (real / "pkg" / "new.py").exists(), "reject must not promote"
+    assert store.get_thread(thread.thread_id).pending_controller_gate is None
