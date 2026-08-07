@@ -40,3 +40,10 @@ aider-references/
 !.env.example
 # Local scratch / tooling
 .bob/
+
+# Packaged extension builds — regenerate with `vsce package`, never commit
+*.vsix
+
+# Claude Code: settings.json is shared project config; these are per-machine
+.claude/settings.local.json
+.claude/*.lock
