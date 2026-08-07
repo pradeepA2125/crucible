@@ -2,7 +2,14 @@ import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import type { ToolEventView } from "../../types";
 import { ToolDetailPanel } from "./ToolDetailPanel";
 import { ToolPill } from "./ToolPill";
-import { COL_GAP, SIDE_PAD, packRows } from "./tool-track-layout";
+import {
+  CAP_RADIUS,
+  COL_GAP,
+  SIDE_PAD,
+  buildTrackPath,
+  packRows,
+  type RowGeometry,
+} from "./tool-track-layout";
 
 /**
  * Pill width is a pure function of (tool, state): the content is an icon, the
@@ -131,6 +138,10 @@ export function ToolTrack({ events, measureWidths }: Props) {
   }, [needsProbe, missing.join("|"), width]);
 
   const rowsRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const pathRef = useRef<SVGPathElement | null>(null);
+  const startCapRef = useRef<SVGCircleElement | null>(null);
+  const endCapRef = useRef<SVGCircleElement | null>(null);
 
   // Aim the caret at the expanded pill. Read after commit, when the row and the
   // panel are both laid out; jsdom reports zeroes, so the clamp keeps it valid.
@@ -149,10 +160,76 @@ export function ToolTrack({ events, measureWidths }: Props) {
     caret.style.left = `${Math.max(14, Math.min(panel.offsetWidth - 14, centre))}px`;
   }, [expandedId, layoutKey, width]);
 
+  // Measure the committed rows and write the road straight onto the SVG. Going
+  // through refs rather than state keeps this to one render per layout change.
+  useLayoutEffect(() => {
+    const host = rowsRef.current;
+    const path = pathRef.current;
+    if (!host || !path || width === 0) return;
+
+    const rowEls = Array.from(host.querySelectorAll<HTMLElement>("[data-row]"));
+    const geometry: RowGeometry[] = rowEls.map((row, index) => {
+      const pills = Array.from(row.querySelectorAll<HTMLElement>("button"));
+      const first = pills[0];
+      const last = pills[pills.length - 1];
+      const dirRight = index % 2 === 0;
+      // `first` is the earliest call in the row; row-reverse puts it on the right.
+      return {
+        y: row.offsetTop + row.offsetHeight / 2,
+        startX: dirRight ? first.offsetLeft : first.offsetLeft + first.offsetWidth,
+        endX: dirRight ? last.offsetLeft + last.offsetWidth : last.offsetLeft,
+        dirRight,
+      };
+    });
+
+    // `width` is the container's own clientWidth, so the rails are drawn
+    // against exactly the width packRows packed the rows against. Re-reading
+    // the node here could disagree with it mid-resize.
+    const result = buildTrackPath(geometry, width);
+    path.setAttribute("d", result.d);
+    svgRef.current?.setAttribute("viewBox", `0 0 ${width} ${host.offsetHeight}`);
+
+    if (result.startCap && startCapRef.current) {
+      startCapRef.current.setAttribute("cx", String(result.startCap.cx));
+      startCapRef.current.setAttribute("cy", String(result.startCap.cy));
+    }
+    if (result.endCap && endCapRef.current) {
+      endCapRef.current.setAttribute("cx", String(result.endCap.cx));
+      endCapRef.current.setAttribute("cy", String(result.endCap.cy));
+    }
+  }, [layoutKey, expandedId, width]);
+
   if (events.length === 0) return null;
 
   return (
     <div ref={setTrackNode} className="relative">
+      {groups.length > 0 && (
+        <svg
+          ref={svgRef}
+          data-rails=""
+          aria-hidden="true"
+          className="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
+        >
+          <path
+            ref={pathRef}
+            data-rail-path=""
+            fill="none"
+            stroke="var(--color-border-strong)"
+            strokeWidth={1}
+            strokeLinecap="round"
+          />
+          <circle
+            ref={startCapRef}
+            data-cap="start"
+            r={CAP_RADIUS}
+            fill="var(--color-panel)"
+            stroke="var(--color-border-strong)"
+            strokeWidth={1}
+          />
+          <circle ref={endCapRef} data-cap="end" r={CAP_RADIUS} fill="var(--color-border-strong)" />
+        </svg>
+      )}
+
       <div ref={rowsRef} className="flex flex-col gap-6">
         {groups.map((indices, rowIndex) => {
           const dirRight = rowIndex % 2 === 0;

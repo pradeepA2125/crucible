@@ -145,6 +145,23 @@ describe("ToolTrack", () => {
     fireEvent.click(buttons[1]);
     expect(container.querySelectorAll("[data-rowpanel]").length).toBe(0);
   });
+
+  it("renders a decorative rails layer with both caps", () => {
+    const { container } = render(
+      <ToolTrack events={makeEvents(5)} measureWidths={fixedWidths} />
+    );
+    const rails = container.querySelector("[data-rails]");
+    expect(rails).not.toBeNull();
+    expect(rails!.getAttribute("aria-hidden")).toBe("true");
+    expect(container.querySelector("[data-rail-path]")).not.toBeNull();
+    expect(container.querySelector('[data-cap="start"]')).not.toBeNull();
+    expect(container.querySelector('[data-cap="end"]')).not.toBeNull();
+  });
+
+  it("draws no rails when there are no rows", () => {
+    const { container } = render(<ToolTrack events={[]} measureWidths={fixedWidths} />);
+    expect(container.querySelector("[data-rails]")).toBeNull();
+  });
 });
 
 // The five tests above all inject `measureWidths`, so `needsProbe` is always
