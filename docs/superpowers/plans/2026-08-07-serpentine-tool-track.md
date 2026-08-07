@@ -1062,10 +1062,13 @@ Replace the `groups.map(...)` body so each row can be followed by its panel. The
                 data-dir={dirRight ? "r" : "l"}
                 data-fill={String(fill)}
                 className={[
-                  "flex items-start gap-[14px] px-7",
+                  "flex items-start",
                   dirRight ? "" : "flex-row-reverse",
                   fill ? "justify-between" : "",
                 ].join(" ")}
+                // SIDE_PAD/COL_GAP drive the packing math above; restating them
+                // as bare Tailwind classes would let the two silently desync.
+                style={{ columnGap: COL_GAP, paddingLeft: SIDE_PAD, paddingRight: SIDE_PAD }}
               >
                 {indices.map((i) => (
                   <ToolPill
@@ -1082,7 +1085,11 @@ Replace the `groups.map(...)` body so each row can be followed by its panel. The
               </div>
 
               {openIndex !== undefined && (
-                <div data-rowpanel="" className="relative mx-7">
+                <div
+                  data-rowpanel=""
+                  className="relative"
+                  style={{ marginLeft: SIDE_PAD, marginRight: SIDE_PAD }}
+                >
                   <span
                     data-caret=""
                     className="absolute -top-[5px] w-[9px] h-[9px] rotate-45"
