@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { ToolTrack, resetToolTrackWidthCacheForTests } from "../components/shared/ToolTrack";
 import type { ToolEventView } from "../types";
@@ -88,6 +88,62 @@ describe("ToolTrack", () => {
       el.getAttribute("data-event-id")
     );
     expect(ids).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("mounts the detail panel immediately after the pill's own row", () => {
+    const { container } = render(
+      <ToolTrack events={makeEvents(5)} measureWidths={fixedWidths} />
+    );
+    // Third pill lives on row 2 (rows hold 2, 2, 1).
+    const pills = container.querySelectorAll("button[aria-expanded]");
+    fireEvent.click(pills[2]);
+
+    const panel = container.querySelector("[data-rowpanel]");
+    expect(panel).not.toBeNull();
+
+    const rows = [...container.querySelectorAll("[data-row]")];
+    expect(panel!.previousElementSibling).toBe(rows[1]);
+    expect(panel!.querySelector("[data-caret]")).not.toBeNull();
+  });
+
+  it("moves the panel rather than opening a second one", () => {
+    const { container } = render(
+      <ToolTrack events={makeEvents(5)} measureWidths={fixedWidths} />
+    );
+    const pills = container.querySelectorAll("button[aria-expanded]");
+
+    fireEvent.click(pills[0]);
+    expect(container.querySelectorAll("[data-rowpanel]").length).toBe(1);
+
+    fireEvent.click(pills[4]);
+    expect(container.querySelectorAll("[data-rowpanel]").length).toBe(1);
+    const rows = [...container.querySelectorAll("[data-row]")];
+    expect(container.querySelector("[data-rowpanel]")!.previousElementSibling).toBe(rows[2]);
+  });
+
+  it("collapses when the open pill is clicked again", () => {
+    const { container } = render(
+      <ToolTrack events={makeEvents(5)} measureWidths={fixedWidths} />
+    );
+    const pill = container.querySelectorAll("button[aria-expanded]")[0];
+
+    fireEvent.click(pill);
+    expect(container.querySelectorAll("[data-rowpanel]").length).toBe(1);
+
+    fireEvent.click(pill);
+    expect(container.querySelectorAll("[data-rowpanel]").length).toBe(0);
+  });
+
+  it("does not open a panel for a running call", () => {
+    const events = makeEvents(2);
+    events[1] = { ...events[1], done: false };
+    const { container } = render(
+      <ToolTrack events={events} measureWidths={fixedWidths} />
+    );
+    // The running pill carries no aria-expanded, so target it by position.
+    const buttons = container.querySelectorAll("[data-row] button");
+    fireEvent.click(buttons[1]);
+    expect(container.querySelectorAll("[data-rowpanel]").length).toBe(0);
   });
 });
 

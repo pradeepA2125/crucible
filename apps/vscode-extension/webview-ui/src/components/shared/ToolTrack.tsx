@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import type { ToolEventView } from "../../types";
+import { ToolDetailPanel } from "./ToolDetailPanel";
 import { ToolPill } from "./ToolPill";
 import { COL_GAP, SIDE_PAD, packRows } from "./tool-track-layout";
 
@@ -90,6 +91,12 @@ export function ToolTrack({ events, measureWidths }: Props) {
       ? packRows(widths, Math.max(120, width - SIDE_PAD * 2), COL_GAP)
       : [];
 
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  // groups is a fresh array every render; deriving a string key lets the
+  // caret-positioning effect below depend on the row layout without
+  // re-running on every unrelated render.
+  const layoutKey = groups.map((g) => g.join(",")).join("|");
+
   useLayoutEffect(() => {
     if (!needsProbe || !probeRef.current) return;
     let recordedAny = false;
@@ -123,44 +130,86 @@ export function ToolTrack({ events, measureWidths }: Props) {
     if (recordedAny) bumpMeasuredWidths((v) => v + 1);
   }, [needsProbe, missing.join("|"), width]);
 
+  const rowsRef = useRef<HTMLDivElement | null>(null);
+
+  // Aim the caret at the expanded pill. Read after commit, when the row and the
+  // panel are both laid out; jsdom reports zeroes, so the clamp keeps it valid.
+  useLayoutEffect(() => {
+    const host = rowsRef.current;
+    if (!host || expandedId === null) return;
+    const panel = host.querySelector<HTMLElement>("[data-rowpanel]");
+    const pill = host.querySelector<HTMLElement>(`button[data-event-id="${expandedId}"]`);
+    const caret = panel?.querySelector<HTMLElement>("[data-caret]");
+    if (!panel || !pill || !caret) return;
+    const centre = pill.offsetLeft + pill.offsetWidth / 2 - panel.offsetLeft;
+    caret.style.left = `${Math.max(14, Math.min(panel.offsetWidth - 14, centre))}px`;
+  }, [expandedId, layoutKey]);
+
   if (events.length === 0) return null;
 
   return (
     <div ref={setTrackNode} className="relative">
-      <div className="flex flex-col gap-6">
+      <div ref={rowsRef} className="flex flex-col gap-6">
         {groups.map((indices, rowIndex) => {
           const dirRight = rowIndex % 2 === 0;
           // The last row keeps its natural packing so the road can end on a
           // dot instead of being stretched to an edge it has no content for.
           const fill = rowIndex < groups.length - 1;
+          const openIndex = indices.find((i) => events[i].id === expandedId);
+
           return (
-            <div
-              key={rowIndex}
-              data-row=""
-              data-dir={dirRight ? "r" : "l"}
-              data-fill={String(fill)}
-              className={[
-                "flex items-start",
-                dirRight ? "" : "flex-row-reverse",
-                fill ? "justify-between" : "",
-              ].join(" ")}
-              // SIDE_PAD/COL_GAP drive the packing math above (`packRows(...,
-              // width - SIDE_PAD * 2, COL_GAP)`); restating them as bare
-              // Tailwind classes (px-7, gap-[14px]) would let the two silently
-              // desync the moment either constant changes. Task 6 also builds
-              // the SVG rail directly on these row boundaries, so the rendered
-              // padding/gap must stay provably identical to the packed geometry.
-              style={{ columnGap: COL_GAP, paddingLeft: SIDE_PAD, paddingRight: SIDE_PAD }}
-            >
-              {indices.map((i) => (
-                <ToolPill
-                  key={events[i].id}
-                  event={events[i]}
-                  expanded={false}
-                  onToggle={() => {}}
-                />
-              ))}
-            </div>
+            <Fragment key={rowIndex}>
+              <div
+                data-row=""
+                data-dir={dirRight ? "r" : "l"}
+                data-fill={String(fill)}
+                className={[
+                  "flex items-start",
+                  dirRight ? "" : "flex-row-reverse",
+                  fill ? "justify-between" : "",
+                ].join(" ")}
+                // SIDE_PAD/COL_GAP drive the packing math above (`packRows(...,
+                // width - SIDE_PAD * 2, COL_GAP)`); restating them as bare
+                // Tailwind classes (px-7, gap-[14px]) would let the two silently
+                // desync the moment either constant changes. Task 6 also builds
+                // the SVG rail directly on these row boundaries, so the rendered
+                // padding/gap must stay provably identical to the packed geometry.
+                style={{ columnGap: COL_GAP, paddingLeft: SIDE_PAD, paddingRight: SIDE_PAD }}
+              >
+                {indices.map((i) => (
+                  <ToolPill
+                    key={events[i].id}
+                    event={events[i]}
+                    expanded={events[i].id === expandedId}
+                    onToggle={() =>
+                      setExpandedId((current) =>
+                        current === events[i].id ? null : events[i].id,
+                      )
+                    }
+                  />
+                ))}
+              </div>
+
+              {openIndex !== undefined && (
+                <div
+                  data-rowpanel=""
+                  className="relative"
+                  style={{ marginLeft: SIDE_PAD, marginRight: SIDE_PAD }}
+                >
+                  <span
+                    data-caret=""
+                    className="absolute -top-[5px] w-[9px] h-[9px] rotate-45"
+                    style={{
+                      left: 14,
+                      background: "var(--color-surface)",
+                      borderLeft: "1px solid var(--accent-brd)",
+                      borderTop: "1px solid var(--accent-brd)",
+                    }}
+                  />
+                  <ToolDetailPanel event={events[openIndex]} />
+                </div>
+              )}
+            </Fragment>
           );
         })}
       </div>
