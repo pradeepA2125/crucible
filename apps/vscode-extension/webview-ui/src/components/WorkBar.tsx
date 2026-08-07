@@ -32,7 +32,11 @@ function formatCount(n: number): string {
 }
 
 /**
- * Live token counter: 🧠 while reasoning, ✍ once output starts.
+ * Live token counter: 🧠 while reasoning, ↓ once output starts.
+ *
+ * The output glyph is a text-presentation arrow rather than an emoji so it
+ * actually inherits its colour token — an emoji renders in its own palette and
+ * ignores `color`, which is what made the previous ✍ read as muddy at 10px.
  *
  * The two phases are shown separately because they mean different things to
  * someone waiting: reasoning streams visibly into the thinking pane, but content
@@ -56,9 +60,9 @@ function TokenCounter({ progress }: { progress: TokenProgressView }) {
       {output > 0 && (
         <span
           title="output tokens"
-          style={{ color: "var(--color-accent-ink)" }}
+          style={{ color: "var(--color-green)" }}
         >
-          ✍ {formatCount(output)}
+          ↓ {formatCount(output)}
         </span>
       )}
     </span>

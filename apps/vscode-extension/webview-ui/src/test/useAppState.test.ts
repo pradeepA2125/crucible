@@ -430,4 +430,63 @@ describe("useAppState", () => {
     });
     expect(result.current.state.stepReview).toBe(false);
   });
+
+  // ── tokenProgress ─────────────────────────────────────────────────────────
+  // BUG: tokenProgress was cleared alongside retryStatus/editFailure in every
+  // activity reducer. Those two are one-off NOTICES that should yield to real
+  // progress; tokenProgress is a CONCURRENT counter of that very progress.
+  // Reasoning deltas land at ~29/sec (each → appendThinkingChunk → null) while
+  // token_progress is throttled to ~6.7/sec, so the counter was nulled ~4x for
+  // every time it was set — a strobe, not a readable number.
+
+  const PROGRESS = { thinking: 147, output: 32 };
+
+  it.each([
+    ["appendThinkingChunk", { type: "appendThinkingChunk", chunk: "reasoning" }],
+    ["appendThinkingEntry", { type: "appendThinkingEntry", text: "classified intent" }],
+    ["appendChunk", { type: "appendChunk", chunk: "hi" }],
+    ["showThinking", { type: "showThinking", message: "Thinking…" }],
+    [
+      "appendToolEvent",
+      {
+        type: "appendToolEvent",
+        event: { id: "tc-1", tool: "read_file", args: {}, source: "execution" },
+      },
+    ],
+  ] as [string, ExtensionMessage][])(
+    "%s does not clear tokenProgress (counter must not strobe)",
+    (_name, activity) => {
+      const { result } = renderHook(() => useAppState());
+
+      act(() => {
+        fireMessage({ type: "updateTokenProgress", progress: PROGRESS });
+        fireMessage(activity);
+      });
+
+      expect(result.current.state.tokenProgress).toEqual(PROGRESS);
+    },
+  );
+
+  it("clearThread clears tokenProgress", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({ type: "updateTokenProgress", progress: PROGRESS });
+      fireMessage({ type: "clearThread" });
+    });
+
+    expect(result.current.state.tokenProgress).toBeNull();
+  });
+
+  it("liveStatus controllerTurnEnded clears tokenProgress", () => {
+    const { result } = renderHook(() => useAppState());
+
+    act(() => {
+      fireMessage({ type: "setInputEnabled", enabled: false });
+      fireMessage({ type: "updateTokenProgress", progress: PROGRESS });
+      fireMessage({ type: "liveStatus", status: null, turnActive: false });
+    });
+
+    expect(result.current.state.tokenProgress).toBeNull();
+  });
 });

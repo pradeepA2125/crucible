@@ -136,7 +136,7 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "showThinking":
     case "updateThinking":
-      return { ...state, thinkingStatus: msg.message, retryStatus: null, tokenProgress: null, editFailure: null };
+      return { ...state, thinkingStatus: msg.message, retryStatus: null, editFailure: null };
 
     case "hideThinking":
       return { ...state, thinkingStatus: null };
@@ -155,7 +155,6 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         thinkingStatus: null,
         retryStatus: null,
-        tokenProgress: null,
         editFailure: null,
         streaming: {
           ...prev,
@@ -175,7 +174,6 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         retryStatus: null,
-        tokenProgress: null,
         editFailure: null,
         streaming: {
           ...prev,
@@ -190,7 +188,6 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         retryStatus: null,
-        tokenProgress: null,
         editFailure: null,
         streaming: {
           ...prev,
@@ -217,7 +214,6 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         retryStatus: null,
-        tokenProgress: null,
         editFailure: null,
         streaming: {
           ...prev,
@@ -376,6 +372,13 @@ function reducer(state: AppState, action: Action): AppState {
     case "updateRetryStatus":
       return { ...state, retryStatus: msg.status };
 
+    // Unlike retryStatus/editFailure — one-off notices that correctly yield the
+    // moment real progress resumes — this is a CONCURRENT counter OF that progress.
+    // So it must NOT be cleared by the activity reducers: reasoning deltas arrive at
+    // ~29/sec (each one an appendThinkingChunk) while token_progress is throttled to
+    // ~6.7/sec, so clearing there nulled the counter ~4x for every time it was set and
+    // the numbers strobed instead of reading. Cleared only when the turn ends
+    // (liveStatus controllerTurnEnded) or the view resets (clearThread).
     case "updateTokenProgress":
       return { ...state, tokenProgress: msg.progress };
 
