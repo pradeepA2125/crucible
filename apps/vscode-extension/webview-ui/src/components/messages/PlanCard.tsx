@@ -3,6 +3,11 @@ import ReactMarkdown from "react-markdown";
 import { Icon } from "../Icon";
 import { vscode } from "../../vscodeApi";
 import { BtnPrimary, BtnGhost } from "../shared/buttons";
+import {
+  MARKDOWN_COMPONENTS,
+  MARKDOWN_PLUGINS,
+  MARKDOWN_TABLE_CLASSES,
+} from "../shared/MarkdownContent";
 
 interface Props {
   content: string;
@@ -134,9 +139,12 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
             "[&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-1.5",
             "[&_h2]:text-[11px] [&_h2]:font-semibold [&_h2]:text-text [&_h2]:mt-2 [&_h2]:mb-1",
             "[&_h3]:text-[11px] [&_h3]:font-semibold [&_h3]:text-text [&_h3]:mt-1.5 [&_h3]:mb-0.5",
+            ...MARKDOWN_TABLE_CLASSES,
           ].join(" ")}
         >
-          <ReactMarkdown>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+            {content}
+          </ReactMarkdown>
         </div>
 
         {/* Fade overlay — hidden when expanded */}

@@ -1,8 +1,37 @@
+import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Props {
   content: string;
 }
+
+/**
+ * A table is the one block that can be wider than the chat panel, which is narrow
+ * and resizable. Scroll it inside its own box so the transcript itself never gains
+ * a horizontal scrollbar.
+ */
+export const MARKDOWN_COMPONENTS = {
+  table: ({ children, ...props }: { children?: ReactNode }) => (
+    <div className="overflow-x-auto mb-2">
+      <table {...props}>{children}</table>
+    </div>
+  ),
+};
+
+/**
+ * GFM extras the model routinely emits and CommonMark does not cover: tables,
+ * strikethrough, task lists, bare autolinks. Without this plugin react-markdown
+ * renders a pipe table as a literal `| a | b |` paragraph.
+ */
+export const MARKDOWN_PLUGINS = [remarkGfm];
+
+/** Table styling, shared with PlanCard so both markdown surfaces match. */
+export const MARKDOWN_TABLE_CLASSES = [
+  "[&_table]:w-full [&_table]:border-collapse [&_table]:text-[11px]",
+  "[&_th]:border [&_th]:border-border-strong [&_th]:bg-surface-2 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold [&_th]:text-text",
+  "[&_td]:border [&_td]:border-border-strong [&_td]:px-2 [&_td]:py-1 [&_td]:align-top",
+];
 
 /**
  * Markdown answer body inside a left-aligned agent box — the visual mirror of
@@ -31,9 +60,13 @@ export function MarkdownContent({ content }: Props) {
         // Lists
         "[&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-2",
         "[&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-2",
+        // Tables (GFM)
+        ...MARKDOWN_TABLE_CLASSES,
       ].join(" ")}
     >
-      <ReactMarkdown>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }
