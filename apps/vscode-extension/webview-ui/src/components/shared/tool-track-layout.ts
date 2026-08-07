@@ -47,3 +47,67 @@ export function packRows(widths: number[], avail: number, gap: number): number[]
   if (current.length > 0) rows.push(current);
   return rows;
 }
+
+/** One rendered row, measured. `startX`/`endX` are the road's entry and exit. */
+export interface RowGeometry {
+  y: number;
+  /** x of the row's earliest call, on the side the road enters. */
+  startX: number;
+  /** x of the row's latest call, on the side the road leaves. */
+  endX: number;
+  dirRight: boolean;
+}
+
+export interface TrackCap {
+  cx: number;
+  cy: number;
+}
+
+export interface TrackPath {
+  d: string;
+  startCap: TrackCap | null;
+  endCap: TrackCap | null;
+}
+
+/**
+ * Build the serpentine's SVG path.
+ *
+ * Even rows run left-to-right and turn on the right; odd rows run right-to-left
+ * and turn on the left, so the call after a row's last pill is the next row's
+ * first pill directly beneath it. The final row never runs on to an edge — it
+ * stops at its last pill, where the caller draws the end dot.
+ */
+export function buildTrackPath(rows: RowGeometry[], width: number): TrackPath {
+  if (rows.length === 0) return { d: "", startCap: null, endCap: null };
+
+  const axisRight = width - TURN_INSET;
+  const axisLeft = TURN_INSET;
+  const lead = (row: RowGeometry) => (row.dirRight ? -RAIL_OVERSHOOT : RAIL_OVERSHOOT);
+  const tail = (row: RowGeometry) => (row.dirRight ? RAIL_OVERSHOOT : -RAIL_OVERSHOOT);
+
+  let d = `M ${rows[0].startX + lead(rows[0])} ${rows[0].y}`;
+
+  rows.forEach((row, index) => {
+    if (index === rows.length - 1) {
+      d += ` L ${row.endX + tail(row)} ${row.y}`;
+      return;
+    }
+    const axis = row.dirRight ? axisRight : axisLeft;
+    // Approach direction: a rightward row meets its turn from the left.
+    const approach = row.dirRight ? -1 : 1;
+    const nextY = rows[index + 1].y;
+    d +=
+      ` L ${axis + approach * TURN_RADIUS} ${row.y}` +
+      ` Q ${axis} ${row.y} ${axis} ${row.y + TURN_RADIUS}` +
+      ` L ${axis} ${nextY - TURN_RADIUS}` +
+      ` Q ${axis} ${nextY} ${axis + approach * TURN_RADIUS} ${nextY}`;
+  });
+
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  return {
+    d,
+    startCap: { cx: first.startX + lead(first), cy: first.y },
+    endCap: { cx: last.endX + tail(last), cy: last.y },
+  };
+}
