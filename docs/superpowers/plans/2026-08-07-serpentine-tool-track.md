@@ -338,7 +338,7 @@ git commit -m "feat(chat): pure rail path builder for the tool track"
 - Produces:
   - `toolIcon(tool: string): IconName`
   - `ToolDetailPanel({ event }: { event: ToolEventView })`
-  - `ToolPill({ event, expanded, onToggle }: { event: ToolEventView; expanded: boolean; onToggle: () => void })` — renders a bare `<button>`, no wrapper, no panel. Task 4 renders it; Task 5 renders `ToolDetailPanel`.
+  - `ToolPill({ event, expanded, onToggle }: { event: ToolEventView; expanded: boolean; onToggle: () => void })` — renders a bare `<button>`, no wrapper, no panel. The button carries `data-event-id={event.id}`: `ToolTrack` needs to find a specific pill's box to aim the panel caret, and a stable identity attribute on the element itself beats a wrapper element that exists only to hold one. Task 4 renders it; Task 5 renders `ToolDetailPanel`.
 
 **Note:** `AgentRow.tsx` and `DiffCard.tsx` still render `<ToolPill event={…}/>` and will not typecheck after this task. That is expected and fixed in Task 7. Run tests, not `typecheck`, at this task's gate.
 
@@ -605,6 +605,7 @@ export function ToolPill({ event, expanded, onToggle }: Props) {
   return (
     <button
       type="button"
+      data-event-id={event.id}
       className={pillClass}
       style={pillStyle}
       onClick={handleClick}
@@ -772,7 +773,7 @@ describe("ToolTrack", () => {
     );
     // DOM order is call order regardless of visual direction, so a screen
     // reader announces 1..n in sequence even though row 2 renders reversed.
-    const ids = [...container.querySelectorAll("[data-row] [data-event-id]")].map((el) =>
+    const ids = [...container.querySelectorAll("[data-row] button[data-event-id]")].map((el) =>
       el.getAttribute("data-event-id")
     );
     expect(ids).toEqual(["1", "2", "3", "4", "5"]);
@@ -790,7 +791,7 @@ Expected: FAIL — cannot resolve `../components/shared/ToolTrack`.
 Create `apps/vscode-extension/webview-ui/src/components/shared/ToolTrack.tsx`:
 
 ```tsx
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { ToolEventView } from "../../types";
 import { ToolPill } from "./ToolPill";
 import { COL_GAP, SIDE_PAD, packRows } from "./tool-track-layout";
@@ -833,7 +834,9 @@ export function ToolTrack({ events, measureWidths }: Props) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const probeRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
-  const [cacheVersion, setCacheVersion] = useState(0);
+  // The value is never read — only the re-render it forces matters. Naming the
+  // setter alone keeps noUnusedLocals happy and says so.
+  const [, bumpMeasuredWidths] = useState(0);
 
   // Track the container width. useLayoutEffect so the first real measurement
   // lands before paint and the user never sees a mis-packed frame.
@@ -846,16 +849,23 @@ export function ToolTrack({ events, measureWidths }: Props) {
     return () => observer.disconnect();
   }, []);
 
-  const keys = useMemo(() => events.map(pillKey), [events]);
-
-  // Distinct keys we have never measured. Recomputed on cacheVersion so the
-  // probe row empties out once its widths are recorded.
-  const missing = useMemo(() => {
-    void cacheVersion;
-    return [...new Set(keys)].filter((k) => !widthCache.has(k));
-  }, [keys, cacheVersion]);
-
+  // Plain per-render computation rather than useMemo: these are O(events) over a
+  // few dozen items, and memoising them would need a fake dependency just to
+  // invalidate after a measure pass.
+  const keys = events.map(pillKey);
+  const missing = [...new Set(keys)].filter((k) => !widthCache.has(k));
   const needsProbe = measureWidths === undefined && missing.length > 0;
+
+  const widths = measureWidths
+    ? measureWidths(events)
+    : missing.length > 0
+      ? null
+      : keys.map((k) => widthCache.get(k) ?? 0);
+
+  const groups =
+    widths && width > 0
+      ? packRows(widths, Math.max(120, width - SIDE_PAD * 2), COL_GAP)
+      : [];
 
   useLayoutEffect(() => {
     if (!needsProbe || !probeRef.current) return;
@@ -863,19 +873,11 @@ export function ToolTrack({ events, measureWidths }: Props) {
       const key = (child as HTMLElement).dataset.key;
       if (key) widthCache.set(key, Math.ceil(child.getBoundingClientRect().width));
     }
-    setCacheVersion((v) => v + 1);
-  }, [needsProbe, missing]);
-
-  const widths = useMemo(() => {
-    if (measureWidths) return measureWidths(events);
-    if (missing.length > 0) return null;
-    return keys.map((k) => widthCache.get(k) ?? 0);
-  }, [measureWidths, events, keys, missing]);
-
-  const groups = useMemo(() => {
-    if (!widths || width === 0) return [];
-    return packRows(widths, Math.max(120, width - SIDE_PAD * 2), COL_GAP);
-  }, [widths, width]);
+    // The cache is module-level, so React cannot see that it changed. Force the
+    // re-render that reads the fresh widths; it clears `missing`, so this effect
+    // no-ops on its next run.
+    bumpMeasuredWidths((v) => v + 1);
+  }, [needsProbe, missing.join("|")]);
 
   if (events.length === 0) return null;
 
@@ -900,9 +902,12 @@ export function ToolTrack({ events, measureWidths }: Props) {
               ].join(" ")}
             >
               {indices.map((i) => (
-                <span key={events[i].id} data-event-id={events[i].id} className="contents">
-                  <ToolPill event={events[i]} expanded={false} onToggle={() => {}} />
-                </span>
+                <ToolPill
+                  key={events[i].id}
+                  event={events[i]}
+                  expanded={false}
+                  onToggle={() => {}}
+                />
               ))}
             </div>
           );
@@ -929,8 +934,6 @@ export function ToolTrack({ events, measureWidths }: Props) {
   );
 }
 ```
-
-**Note on `data-event-id`:** the wrapping `<span className="contents">` exists only to carry the id for tests; `display: contents` keeps it out of the flex layout entirely, so the pill remains a direct flex child.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1033,10 +1036,13 @@ In `ToolTrack.tsx`, add the import:
 import { ToolDetailPanel } from "./ToolDetailPanel";
 ```
 
-Add expansion state next to the other hooks:
+Add expansion state next to the other hooks, plus a stable identity for the
+layout — `groups` is a fresh array every render, so an effect depending on it
+directly would re-run on every render:
 
 ```tsx
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const layoutKey = groups.map((g) => g.join(",")).join("|");
 ```
 
 Replace the `groups.map(...)` body so each row can be followed by its panel. The row `<div>` and the panel are returned together from a fragment:
@@ -1062,17 +1068,16 @@ Replace the `groups.map(...)` body so each row can be followed by its panel. The
                 ].join(" ")}
               >
                 {indices.map((i) => (
-                  <span key={events[i].id} data-event-id={events[i].id} className="contents">
-                    <ToolPill
-                      event={events[i]}
-                      expanded={events[i].id === expandedId}
-                      onToggle={() =>
-                        setExpandedId((current) =>
-                          current === events[i].id ? null : events[i].id,
-                        )
-                      }
-                    />
-                  </span>
+                  <ToolPill
+                    key={events[i].id}
+                    event={events[i]}
+                    expanded={events[i].id === expandedId}
+                    onToggle={() =>
+                      setExpandedId((current) =>
+                        current === events[i].id ? null : events[i].id,
+                      )
+                    }
+                  />
                 ))}
               </div>
 
@@ -1099,7 +1104,7 @@ Replace the `groups.map(...)` body so each row can be followed by its panel. The
 Add `Fragment` to the React import:
 
 ```tsx
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useRef, useState } from "react";
 ```
 
 Finally, point the caret at the pill it belongs to. Add a ref for the rows container and a layout effect after the width effect:
@@ -1113,12 +1118,12 @@ Finally, point the caret at the pill it belongs to. Add a ref for the rows conta
     const host = rowsRef.current;
     if (!host || expandedId === null) return;
     const panel = host.querySelector<HTMLElement>("[data-rowpanel]");
-    const pill = host.querySelector<HTMLElement>(`[data-event-id="${expandedId}"] button`);
+    const pill = host.querySelector<HTMLElement>(`button[data-event-id="${expandedId}"]`);
     const caret = panel?.querySelector<HTMLElement>("[data-caret]");
     if (!panel || !pill || !caret) return;
     const centre = pill.offsetLeft + pill.offsetWidth / 2 - panel.offsetLeft;
     caret.style.left = `${Math.max(14, Math.min(panel.offsetWidth - 14, centre))}px`;
-  }, [expandedId, groups]);
+  }, [expandedId, layoutKey]);
 ```
 
 and attach it to the rows container:
@@ -1244,7 +1249,7 @@ Add the drawing effect after the caret effect. It depends on `expandedId` too, b
       endCapRef.current.setAttribute("cx", String(result.endCap.cx));
       endCapRef.current.setAttribute("cy", String(result.endCap.cy));
     }
-  }, [groups, expandedId, width]);
+  }, [layoutKey, expandedId, width]);
 ```
 
 Render the SVG as the first child of the track wrapper, before the rows:
