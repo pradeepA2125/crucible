@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ToolPill } from "../components/shared/ToolPill";
+import { ToolDetailPanel } from "../components/shared/ToolDetailPanel";
 import { ThinkingBlock } from "../components/shared/ThinkingBlock";
 import { AgentRow } from "../components/messages/AgentRow";
 import { UserMessage } from "../components/messages/UserMessage";
@@ -23,59 +24,71 @@ function makeEvent(overrides: Partial<ToolEventView> = {}): ToolEventView {
 // ── 1. ToolPill running ───────────────────────────────────────────────────────
 
 describe("ToolPill", () => {
-  it("running: shows tool name, no panel toggle arrow hint", () => {
+  it("running: shows the tool name and does not call onToggle when clicked", () => {
+    const onToggle = vi.fn();
     const event = makeEvent({ done: false });
-    render(<ToolPill event={event} />);
+    render(<ToolPill event={event} expanded={false} onToggle={onToggle} />);
+
     expect(screen.getByText("read_file")).toBeTruthy();
-    // Panel must not be visible since not done.
-    expect(screen.queryByText(/INPUT/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button"));
+    expect(onToggle).not.toHaveBeenCalled();
   });
 
-  it("done: click pill opens panel with INPUT key/value and OUTPUT", () => {
+  it("done: clicking calls onToggle", () => {
+    const onToggle = vi.fn();
+    const event = makeEvent({ done: true, output: "line 1\nline 2" });
+    render(<ToolPill event={event} expanded={false} onToggle={onToggle} />);
+
+    fireEvent.click(screen.getByRole("button"));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("done: reflects expanded state on aria-expanded", () => {
+    const event = makeEvent({ done: true });
+    const { rerender } = render(
+      <ToolPill event={event} expanded={false} onToggle={() => {}} />
+    );
+    expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("false");
+
+    rerender(<ToolPill event={event} expanded={true} onToggle={() => {}} />);
+    expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("never renders the detail panel itself", () => {
+    const event = makeEvent({ done: true, output: "line 1" });
+    render(<ToolPill event={event} expanded={true} onToggle={() => {}} />);
+    expect(screen.queryByText("INPUT")).toBeNull();
+    expect(screen.queryByText("OUTPUT")).toBeNull();
+  });
+});
+
+describe("ToolDetailPanel", () => {
+  it("renders the tool name, input args and output", () => {
     const event = makeEvent({
       done: true,
       isError: false,
       args: { path: "src/foo.ts" },
       output: "line 1\nline 2",
     });
-    const { container } = render(<ToolPill event={event} />);
+    render(<ToolDetailPanel event={event} />);
 
-    // Panel not visible before click.
-    expect(screen.queryByText(/INPUT/)).toBeNull();
-
-    // Click the pill button.
-    const pill = container.querySelector("button")!;
-    fireEvent.click(pill);
-
-    // Panel should appear.
     expect(screen.getByText("INPUT")).toBeTruthy();
     expect(screen.getByText("OUTPUT")).toBeTruthy();
-    // Key in args.
     expect(screen.getByText("path:")).toBeTruthy();
-    // Output text.
     expect(screen.getByText(/line 1/)).toBeTruthy();
-
-    // Click again — panel collapses.
-    fireEvent.click(pill);
-    expect(screen.queryByText(/INPUT/)).toBeNull();
+    // Line count badge comes from the output.
+    expect(screen.getByText("2 lines")).toBeTruthy();
   });
 
-  it("error: renders with output text; isError styling path covered", () => {
+  it("renders error output", () => {
     const event = makeEvent({
       done: true,
       isError: true,
       args: { cmd: "npm test" },
       output: "FAIL src/foo.ts",
     });
-    render(<ToolPill event={event} />);
-
-    // Pill renders the tool name.
-    expect(screen.getByText("read_file")).toBeTruthy();
-
-    // Click to expand and confirm error output renders.
-    const pill = screen.getByRole("button");
-    fireEvent.click(pill);
-    expect(screen.getByText(/FAIL src\/foo.ts/)).toBeTruthy();
+    render(<ToolDetailPanel event={event} />);
+    expect(screen.getByText(/FAIL src\/foo\.ts/)).toBeTruthy();
   });
 });
 
