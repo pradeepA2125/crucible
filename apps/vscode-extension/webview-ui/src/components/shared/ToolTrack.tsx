@@ -134,6 +134,10 @@ export function ToolTrack({ events, measureWidths }: Props) {
 
   // Aim the caret at the expanded pill. Read after commit, when the row and the
   // panel are both laid out; jsdom reports zeroes, so the clamp keeps it valid.
+  // `width` must be a dependency alongside `layoutKey`: every non-last row is
+  // justify-between, so a resize that doesn't cross a packing threshold moves
+  // each pill's offsetLeft without changing which indices land in which row —
+  // layoutKey alone would miss that and leave the caret pointing at empty space.
   useLayoutEffect(() => {
     const host = rowsRef.current;
     if (!host || expandedId === null) return;
@@ -143,7 +147,7 @@ export function ToolTrack({ events, measureWidths }: Props) {
     if (!panel || !pill || !caret) return;
     const centre = pill.offsetLeft + pill.offsetWidth / 2 - panel.offsetLeft;
     caret.style.left = `${Math.max(14, Math.min(panel.offsetWidth - 14, centre))}px`;
-  }, [expandedId, layoutKey]);
+  }, [expandedId, layoutKey, width]);
 
   if (events.length === 0) return null;
 
