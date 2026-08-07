@@ -145,6 +145,11 @@
           "default": true,
           "description": "Provision and spawn the Crucible runtime (backend, indexer, ripgrep, language servers) automatically per workspace. Disable to fall back to the pure dev flow (start-backend.sh + an explicit crucible.backendBaseUrl)."
         },
+        "crucible.devSourcePath": {
+          "type": "string",
+          "default": "",
+          "description": "DEVELOPMENT ONLY. Absolute path to a Crucible checkout. When set, the managed runtime installs crucible-agentd EDITABLE from <path>/services/agentd-py instead of the released wheel, so backend edits are picked up on reload without rebuilding. Leave empty for normal installs. Changing it requires re-running Crucible: Run Setup (or deleting ~/.crucible/runtime/venv) to take effect."
+        },
         "crucible.policy.shell": {
           "type": "string",
           "default": "ask",

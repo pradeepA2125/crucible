@@ -236,3 +236,47 @@ describe("venvPython", () => {
     expect(venvPython("/r", "win32-x64")).toContain(join("venv", "Scripts", "python.exe"));
   });
 });
+
+// ── dev source: editable install instead of a wheel ──────────────────────────
+// The managed runtime installs crucible-agentd from a wheel, so testing a local
+// backend change means rebuilding and reinstalling one. With devSourcePath set,
+// agentd installs EDITABLE from the working tree, and `uvicorn` in the managed
+// venv picks up edits on reload — the same flow start-backend.sh already gives
+// the dev path, but for the managed runtime the shipped extension actually uses.
+
+describe("RuntimeInstaller — devSourcePath", () => {
+  it("installs agentd editable from the source tree", async () => {
+    const calls: string[][] = [];
+    const d = deps({
+      exec: async (cmd: string, args: string[]) => {
+        calls.push(args);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    await new RuntimeInstaller({ ...d, devSourcePath: "/repo" }).installAll();
+
+    const pip = calls.find((a) => a[0] === "pip" && a[1] === "install");
+    expect(pip).toBeDefined();
+    expect(pip).toContain("-e");
+    // Points at the package dir, and keeps the extras the wheel path installs —
+    // without them the memory harness and semantic retrieval silently degrade.
+    expect(pip!.some((a) => a.includes("/repo/services/agentd-py"))).toBe(true);
+    expect(pip!.some((a) => a.includes("[memory,semantic]"))).toBe(true);
+  });
+
+  it("without devSourcePath the wheel/PyPI path is unchanged", async () => {
+    const calls: string[][] = [];
+    const d = deps({
+      exec: async (cmd: string, args: string[]) => {
+        calls.push(args);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    await new RuntimeInstaller(d).installAll();
+
+    const pip = calls.find((a) => a[0] === "pip" && a[1] === "install");
+    expect(pip).toBeDefined();
+    expect(pip).not.toContain("-e");
+    expect(pip!.some((a) => a.startsWith("crucible-agentd[memory,semantic]=="))).toBe(true);
+  });
+});

@@ -24,6 +24,12 @@ export interface InstallerDeps {
   // extracts `archive` into `destDir`.
   extract(archive: Buffer, destDir: string, format: ArchiveFormat): Promise<void>;
   platform?: PlatformKey;               // default platformKey()
+  // Development: absolute path to a crucible checkout. When set, agentd installs
+  // EDITABLE from <devSourcePath>/services/agentd-py instead of the released wheel,
+  // so the MANAGED runtime (the one the shipped extension uses) picks up local
+  // backend edits on reload — the same loop start-backend.sh gives the dev path.
+  // Unset in every normal install; the wheel path is untouched.
+  devSourcePath?: string;
 }
 export type ComponentStatus = "pending" | "running" | "done" | "failed" | "skipped";
 export interface ComponentProgress { id: ComponentId; status: ComponentStatus; detail?: string }
@@ -195,11 +201,23 @@ export class RuntimeInstaller {
       // without it, every index build logged "lancedb is required for semantic retrieval."
       // PEP 508 direct-reference syntax ("name[extras] @ url") is required to combine an
       // extras marker with a URL install.
-      const target = spec.urls?.any
-        ? `crucible-agentd[memory,semantic] @ ${spec.urls.any}`
-        : `crucible-agentd[memory,semantic]==${spec.version}`;
-      const pip = await this.deps.exec(
-        uv, ["pip", "install", "--python", venvPython(this.deps.runtimeDir, this.platform), target]);
+      // Editable from a checkout when devSourcePath is set, else the released wheel
+      // (PEP 508 direct-reference "name[extras] @ url") or a pinned PyPI version.
+      // The extras ride along either way — dropping them silently degrades the memory
+      // harness's embedder and semantic retrieval, which is how they were missed once.
+      const devPkg = this.deps.devSourcePath
+        ? join(this.deps.devSourcePath, "services", "agentd-py")
+        : null;
+      const target = devPkg
+        ? `${devPkg}[memory,semantic]`
+        : spec.urls?.any
+          ? `crucible-agentd[memory,semantic] @ ${spec.urls.any}`
+          : `crucible-agentd[memory,semantic]==${spec.version}`;
+      const pipArgs = ["pip", "install", "--python",
+                       venvPython(this.deps.runtimeDir, this.platform)];
+      if (devPkg) pipArgs.push("-e");
+      pipArgs.push(target);
+      const pip = await this.deps.exec(uv, pipArgs);
       if (pip.code !== 0) throw new Error(`uv pip install failed: ${pip.stderr.slice(0, 400)}`);
       return { id, status: "done" };
     }

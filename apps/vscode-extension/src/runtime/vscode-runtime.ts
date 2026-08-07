@@ -150,6 +150,15 @@ export class RuntimeManager {
       exec: (cmd, args, opts) => execCollecting(cmd, args, opts?.cwd),
       hasNode: async () => (await execCollecting("node", ["--version"])).code === 0,
       extract: extractArchive,
+      // Development escape hatch: an editable agentd install from a local checkout.
+      // Empty string (the default) means "unset" — a falsy value must not be passed
+      // through, or every normal install would try to `pip install -e ""`.
+      ...((): { devSourcePath?: string } => {
+        const p = vscode.workspace.getConfiguration()
+          .get<string>("crucible.devSourcePath", "").trim();
+        if (p) this.output.appendLine(`[install] dev source: editable agentd from ${p}`);
+        return p ? { devSourcePath: p } : {};
+      })(),
     };
     return new RuntimeInstaller(deps).installAll((p) => {
       this.output.appendLine(`[install] ${p.id}: ${p.status}${p.detail ? ` — ${p.detail}` : ""}`);
