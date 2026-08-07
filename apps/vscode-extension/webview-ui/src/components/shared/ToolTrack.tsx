@@ -11,6 +11,16 @@ import { COL_GAP, SIDE_PAD, packRows } from "./tool-track-layout";
  */
 const widthCache = new Map<string, number>();
 
+/**
+ * Test-only escape hatch. `widthCache` is module-level (deliberately — it
+ * outlives any one ToolTrack mount for the session), which means it also
+ * outlives any one test. Without a reset, a test that renders without
+ * `measureWidths` would silently reuse widths a previous test recorded.
+ */
+export function resetToolTrackWidthCacheForTests(): void {
+  widthCache.clear();
+}
+
 type PillState = "run" | "err" | "ok";
 
 function pillState(event: ToolEventView): PillState {
@@ -38,7 +48,14 @@ interface Props {
  * pill sits directly beneath it.
  */
 export function ToolTrack({ events, measureWidths }: Props) {
-  const trackRef = useRef<HTMLDivElement | null>(null);
+  // A plain ref wouldn't re-fire the measurement effect: `events` starts empty
+  // for both current call sites, the component returns null for empty events
+  // (below), so the div — and the ref — never exist on first mount. If that
+  // same instance later gets a non-empty `events` array, a ref-object effect
+  // keyed on `[]` never reruns, and the track is stuck at width 0 forever. A
+  // callback ref stored in state makes attachment itself a state change, so
+  // the effect (keyed on the node) reruns exactly when there's a node to read.
+  const [trackNode, setTrackNode] = useState<HTMLDivElement | null>(null);
   const probeRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   // The value is never read — only the re-render it forces matters. Naming the
@@ -48,13 +65,12 @@ export function ToolTrack({ events, measureWidths }: Props) {
   // Track the container width. useLayoutEffect so the first real measurement
   // lands before paint and the user never sees a mis-packed frame.
   useLayoutEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
-    setWidth(el.clientWidth);
-    const observer = new ResizeObserver(() => setWidth(el.clientWidth));
-    observer.observe(el);
+    if (!trackNode) return;
+    setWidth(trackNode.clientWidth);
+    const observer = new ResizeObserver(() => setWidth(trackNode.clientWidth));
+    observer.observe(trackNode);
     return () => observer.disconnect();
-  }, []);
+  }, [trackNode]);
 
   // Plain per-render computation rather than useMemo: these are O(events) over a
   // few dozen items, and memoising them would need a fake dependency just to
@@ -76,20 +92,41 @@ export function ToolTrack({ events, measureWidths }: Props) {
 
   useLayoutEffect(() => {
     if (!needsProbe || !probeRef.current) return;
+    let recordedAny = false;
     for (const child of Array.from(probeRef.current.children)) {
       const key = (child as HTMLElement).dataset.key;
-      if (key) widthCache.set(key, Math.ceil(child.getBoundingClientRect().width));
+      if (!key) continue;
+      const measured = Math.ceil(child.getBoundingClientRect().width);
+      // A hidden webview (backgrounded VS Code tab) lays out every child at 0.
+      // Caching that would pin the width forever — since the cache is only
+      // ever filled, never re-measured, once a key gets a 0 it stays 0 for
+      // the rest of the session and the track crushes into one row. Leave a
+      // 0-measured key out of the cache so it stays in `missing` and gets
+      // probed again on the next opportunity (see the `width` dependency
+      // below — the ResizeObserver firing when the panel becomes visible
+      // again is exactly that opportunity).
+      if (measured > 0) {
+        widthCache.set(key, measured);
+        recordedAny = true;
+      }
     }
-    // The cache is module-level, so React cannot see that it changed. Force the
-    // re-render that reads the fresh widths; it clears `missing`, so this effect
-    // no-ops on its next run.
-    bumpMeasuredWidths((v) => v + 1);
-  }, [needsProbe, missing.join("|")]);
+    // The cache is module-level, so React cannot see that it changed. Force
+    // the re-render that reads the fresh widths — but ONLY if something was
+    // actually recorded. If every child measured 0 (hidden panel), bumping
+    // unconditionally would re-render with the exact same missing keys, which
+    // reruns this same effect, which measures 0 again, forever. Skipping the
+    // bump breaks that loop: nothing here changed, so nothing here re-renders,
+    // and the component sits quietly at `groups = []` until something OUTSIDE
+    // this effect changes `width` (the container regaining a real size),
+    // which is a real re-render for an unrelated reason and gives this effect
+    // (re-run via the `width` dep) another honest attempt.
+    if (recordedAny) bumpMeasuredWidths((v) => v + 1);
+  }, [needsProbe, missing.join("|"), width]);
 
   if (events.length === 0) return null;
 
   return (
-    <div ref={trackRef} className="relative">
+    <div ref={setTrackNode} className="relative">
       <div className="flex flex-col gap-6">
         {groups.map((indices, rowIndex) => {
           const dirRight = rowIndex % 2 === 0;
@@ -103,10 +140,17 @@ export function ToolTrack({ events, measureWidths }: Props) {
               data-dir={dirRight ? "r" : "l"}
               data-fill={String(fill)}
               className={[
-                "flex items-start gap-[14px] px-7",
+                "flex items-start",
                 dirRight ? "" : "flex-row-reverse",
                 fill ? "justify-between" : "",
               ].join(" ")}
+              // SIDE_PAD/COL_GAP drive the packing math above (`packRows(...,
+              // width - SIDE_PAD * 2, COL_GAP)`); restating them as bare
+              // Tailwind classes (px-7, gap-[14px]) would let the two silently
+              // desync the moment either constant changes. Task 6 also builds
+              // the SVG rail directly on these row boundaries, so the rendered
+              // padding/gap must stay provably identical to the packed geometry.
+              style={{ columnGap: COL_GAP, paddingLeft: SIDE_PAD, paddingRight: SIDE_PAD }}
             >
               {indices.map((i) => (
                 <ToolPill
