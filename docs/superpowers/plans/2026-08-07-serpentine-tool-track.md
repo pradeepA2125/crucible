@@ -1225,9 +1225,8 @@ Add the drawing effect after the caret effect. It depends on `expandedId` too, b
   // through refs rather than state keeps this to one render per layout change.
   useLayoutEffect(() => {
     const host = rowsRef.current;
-    const track = trackRef.current;
     const path = pathRef.current;
-    if (!host || !track || !path) return;
+    if (!host || !path || width === 0) return;
 
     const rowEls = Array.from(host.querySelectorAll<HTMLElement>("[data-row]"));
     const geometry: RowGeometry[] = rowEls.map((row, index) => {
@@ -1244,9 +1243,12 @@ Add the drawing effect after the caret effect. It depends on `expandedId` too, b
       };
     });
 
-    const result = buildTrackPath(geometry, track.clientWidth);
+    // `width` is the container's own clientWidth, so the rails are drawn
+    // against exactly the width packRows packed the rows against. Re-reading
+    // the node here could disagree with it mid-resize.
+    const result = buildTrackPath(geometry, width);
     path.setAttribute("d", result.d);
-    svgRef.current?.setAttribute("viewBox", `0 0 ${track.clientWidth} ${host.offsetHeight}`);
+    svgRef.current?.setAttribute("viewBox", `0 0 ${width} ${host.offsetHeight}`);
 
     if (result.startCap && startCapRef.current) {
       startCapRef.current.setAttribute("cx", String(result.startCap.cx));
@@ -1262,7 +1264,7 @@ Add the drawing effect after the caret effect. It depends on `expandedId` too, b
 Render the SVG as the first child of the track wrapper, before the rows:
 
 ```tsx
-    <div ref={trackRef} className="relative">
+    <div ref={setTrackNode} className="relative">
       {groups.length > 0 && (
         <svg
           ref={svgRef}
