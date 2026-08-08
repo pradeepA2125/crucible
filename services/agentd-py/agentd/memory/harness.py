@@ -8,7 +8,7 @@ import threading
 
 from agentd.memory.compactor import AnchorSummarizer, Compactor
 from agentd.memory.config import MemoryConfig
-from agentd.memory.models import History, RecallTrace, TurnPreparation
+from agentd.memory.models import History, ObservedPrompt, RecallTrace, TurnPreparation
 from agentd.memory.store import MemoryStore
 from agentd.providers.contracts import ModelJsonTransport
 
@@ -114,6 +114,7 @@ class MemoryHarness:
 
     async def prepare_turn(
         self, history: History, run_id: str, query: str = "",
+        observed: ObservedPrompt | None = None,
     ) -> TurnPreparation:
         if not self._enabled:
             return TurnPreparation(history=history, recalled_memories=[], compacted=False)
@@ -121,7 +122,7 @@ class MemoryHarness:
         result = None
         if self._compactor is not None:
             try:
-                result = await self._compactor.maybe_compact(history, run_id)
+                result = await self._compactor.maybe_compact(history, run_id, observed=observed)
             except Exception:  # best-effort: memory must never break a loop iteration
                 logger.warning("[memory] compaction failed for run=%s", run_id, exc_info=True)
         prep = TurnPreparation(

@@ -11,6 +11,7 @@ from agentd.memory.harness import (
     build_memory_harness,
     make_engine_summarizer,
 )
+from agentd.memory.models import CompactionResult, ObservedPrompt
 from agentd.memory.store import MemoryStore
 
 
@@ -197,3 +198,33 @@ async def test_build_memory_harness_enabled_end_to_end(tmp_path):
     assert prep.compacted is True
     assert "SUMMARY" in prep.history[0]["content"]  # real summarizer path exercised
     assert transport.calls  # transport.generate_text was actually invoked
+
+
+@pytest.mark.asyncio
+async def test_prepare_turn_forwards_the_observation_to_the_compactor(tmp_path):
+    """The harness is the only path between the loop and the compactor, so an
+    observation it drops is an observation that silently never applies."""
+    seen: list[object] = []
+
+    class _SpyCompactor:
+        async def maybe_compact(self, history, run_id, observed=None):
+            seen.append(observed)
+            return CompactionResult(compacted=False, history=history)
+
+    harness = MemoryHarness(enabled=True, compactor=_SpyCompactor())
+    observed = ObservedPrompt(tokens=1234, message_count=2)
+    await harness.prepare_turn([{"role": "user", "content": "hi"}], "r1", observed=observed)
+
+    assert seen == [observed]
+
+
+@pytest.mark.asyncio
+async def test_no_op_harness_still_accepts_an_observation(tmp_path):
+    """The disabled harness must stay a byte-identical passthrough — a caller
+    that always passes the kwarg cannot be allowed to break it."""
+    history = [{"role": "user", "content": "hi"}]
+    prep = await NO_OP_HARNESS.prepare_turn(
+        history, "r1", observed=ObservedPrompt(tokens=99, message_count=1)
+    )
+    assert prep.history is history
+    assert prep.compacted is False
