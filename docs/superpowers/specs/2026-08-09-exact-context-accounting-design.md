@@ -173,6 +173,27 @@ models actually exercised here — because a wrong entry is worse than an obviou
 default the user corrects. It is a **declared** value, not a detected one; the
 non-goals above establish there is nothing to detect it from.
 
+### Asking for the real number
+
+Because the value is declared, the UI must ask for it properly rather than let a
+default ride. The field carries help text telling the user to take the number
+from the model's own source — its model card, or the provider's model
+documentation — not from memory, and stating what each direction of error costs:
+
+- **Too small** — compaction fires earlier than it needs to. History is evicted
+  and a summarization call is paid for while the window is still half empty.
+  Wasteful and degrading, but safe and self-correcting once fixed.
+- **Too large** — the prompt overruns the real window. On a provider that
+  validates, that is an error. On NVIDIA NIM it is worse: measured here, a
+  600,058-token prompt returned HTTP 200, billed every token, and answered with
+  `completion_tokens: 1` and empty content. No error, no warning — the agent
+  simply starts producing nothing useful, and the cause is invisible.
+
+That asymmetry is the argument for the Test button: too-small is merely
+inefficient, while too-large can fail silently, so the value is worth confirming
+rather than assuming. The help text says exactly that, so the user understands
+why they are being asked to look it up.
+
 ### The Test button
 
 An **opt-in** button beside the field, never run automatically on save.
