@@ -197,3 +197,31 @@ describe("MessageRow", () => {
     expect(line.className).toContain("text-text-3");
   });
 });
+
+// ── ThinkingBlock: the live pane follows the stream ──────────────────────────
+
+describe("ThinkingBlock", () => {
+  it("opens by default while streaming and exposes a scrollable body", () => {
+    const { container } = render(
+      <ThinkingBlock entries={["step one"]} activeChunk="thinking…" streaming />
+    );
+    const body = container.querySelector("[data-thinking-body]");
+    expect(body).not.toBeNull();
+    expect(body!.className).toContain("overflow-y-auto");
+  });
+
+  it("stays collapsed for a finished turn's persisted log", () => {
+    const { container } = render(<ThinkingBlock entries={["step one"]} />);
+    expect(container.querySelector("[data-thinking-body]")).toBeNull();
+    expect(screen.getByText(/Thinking \(1 step\)/)).toBeTruthy();
+  });
+
+  it("respects a collapse while the stream is still running", () => {
+    const { container, rerender } = render(
+      <ThinkingBlock entries={["one"]} activeChunk="" streaming />
+    );
+    fireEvent.click(screen.getByRole("button"));
+    rerender(<ThinkingBlock entries={["one", "two"]} activeChunk="more" streaming />);
+    expect(container.querySelector("[data-thinking-body]")).toBeNull();
+  });
+});

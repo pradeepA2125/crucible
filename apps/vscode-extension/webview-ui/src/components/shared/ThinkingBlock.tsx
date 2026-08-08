@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { Icon } from "../Icon";
+import { isPinnedToBottom } from "./scroll-pinning";
 
 interface Props {
   entries: string[];
@@ -22,6 +23,36 @@ export function ThinkingBlock({ entries, activeChunk, streaming }: Props) {
   useEffect(() => {
     if (!streaming) setOpen(false);
   }, [streaming]);
+
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  // Whether the reader is still following the stream. A ref, not state: it is
+  // read inside a layout effect and must never itself trigger a render.
+  const pinnedRef = useRef(true);
+  const wasOpenRef = useRef(false);
+
+  function handleScroll() {
+    const el = bodyRef.current;
+    if (!el) return;
+    pinnedRef.current = isPinnedToBottom({
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    });
+  }
+
+  // Follow the stream. Only while pinned — someone who scrolled up to re-read an
+  // earlier step would otherwise be dragged back on every token. Re-opening the
+  // pane counts as asking to follow again.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!open || !el) {
+      wasOpenRef.current = open;
+      return;
+    }
+    if (!wasOpenRef.current) pinnedRef.current = true;
+    wasOpenRef.current = true;
+    if (pinnedRef.current) el.scrollTop = el.scrollHeight;
+  }, [open, entries.length, activeChunk]);
 
   const hasContent = entries.length > 0 || !!activeChunk || !!streaming;
   if (!hasContent) return null;
@@ -71,6 +102,9 @@ export function ThinkingBlock({ entries, activeChunk, streaming }: Props) {
       {/* Detail panel */}
       {open && (
         <div
+          ref={bodyRef}
+          data-thinking-body=""
+          onScroll={handleScroll}
           className="anim-rise border-l-2 border-border-strong pl-3 ml-1.5 max-h-40 overflow-y-auto text-[11px] text-text-3 leading-relaxed"
         >
           {entries.map((entry, i) => (

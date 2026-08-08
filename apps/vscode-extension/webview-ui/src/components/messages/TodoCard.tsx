@@ -1,5 +1,7 @@
+import { useLayoutEffect, useRef } from "react";
 import { Icon } from "../Icon";
 import { CardShell } from "../shared/CardShell";
+import { scrollOffsetToReveal } from "../shared/scroll-pinning";
 import type { TodoItem } from "../../types";
 
 type Status = TodoItem["status"];
@@ -69,6 +71,25 @@ export function TodoCard({ items }: { items: TodoItem[] }) {
   const done = counted.filter((i) => i.status === "done").length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const activeRef = useRef<HTMLLIElement | null>(null);
+  const activeIndex = items.findIndex((i) => i.status === "in_progress");
+
+  // Capping the list is only an improvement if the row the agent is actually
+  // working on stays visible — otherwise the cap reliably hides the one line
+  // worth reading. Keyed on the index so this fires when the work moves on,
+  // not on every unrelated re-render.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const active = activeRef.current;
+    if (!list || !active) return;
+    const next = scrollOffsetToReveal(
+      { scrollTop: list.scrollTop, clientHeight: list.clientHeight },
+      { offsetTop: active.offsetTop, offsetHeight: active.offsetHeight },
+    );
+    if (next !== null) list.scrollTop = next;
+  }, [activeIndex]);
+
   return (
     <CardShell
       icon="list"
@@ -93,10 +114,22 @@ export function TodoCard({ items }: { items: TodoItem[] }) {
         </div>
       </div>
 
-      {/* items */}
-      <ul className="flex flex-col border-t border-border py-0.5">
+      {/* Items. Bounded and scrollable: a 30-item ledger would otherwise push the
+          whole transcript off screen. The header and progress bar sit outside this
+          box, so they stay pinned while the items scroll. `relative` makes this the
+          offsetParent, without which a row's offsetTop is measured against some
+          ancestor and the reveal math above scrolls to the wrong place. */}
+      <ul
+        ref={listRef}
+        data-todo-list=""
+        className="relative flex max-h-[40vh] flex-col overflow-y-auto border-t border-border py-0.5"
+      >
         {items.map((it, idx) => (
-          <li key={`${idx}:${it.title}`} className="flex items-start gap-2 px-3 py-[5px]">
+          <li
+            key={`${idx}:${it.title}`}
+            ref={idx === activeIndex ? activeRef : undefined}
+            className="flex items-start gap-2 px-3 py-[5px]"
+          >
             <span className="mt-[2px] flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center">
               <StatusPip status={it.status} />
             </span>
