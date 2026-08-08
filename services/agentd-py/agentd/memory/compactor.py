@@ -4,7 +4,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
-from agentd.memory.models import CompactionResult, CompactionSegment, History
+from agentd.memory.models import CompactionResult, CompactionSegment, History, ObservedPrompt
 from agentd.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,40 @@ def estimate_tokens(text: str) -> int:
 
 def _history_tokens(history: History) -> int:
     return sum(estimate_tokens(str(m.get("content", ""))) for m in history)
+
+
+def _is_usable(history: History, observed: ObservedPrompt | None) -> bool:
+    # A count longer than the history it claims to describe cannot be trusted —
+    # that is exactly the shape a compaction leaves behind after rewriting it.
+    return observed is not None and observed.message_count <= len(history)
+
+
+def input_tokens(history: History, observed: ObservedPrompt | None) -> int:
+    """Total input tokens the next call will send: system prompt, schemas and
+    history together.
+
+    The window holds all of it, so all of it counts against the trigger. The
+    character estimate could only ever see message contents, missing the system
+    prompt entirely — about 14.5k tokens on a real controller turn.
+    """
+    if not _is_usable(history, observed):
+        return _history_tokens(history)
+    assert observed is not None  # narrowed by _is_usable
+    return observed.tokens + _history_tokens(history[observed.message_count:])
+
+
+def fixed_overhead(history: History, observed: ObservedPrompt | None) -> int:
+    """Tokens the input carries that are NOT history — system prompt and schemas.
+
+    Needed because the eviction floor budgets retained HISTORY, while the trigger
+    now measures total input. Derived by subtraction, so it inherits the
+    chars-per-token error on the measured slice: the trigger is exact, this is
+    not. Clamped at zero because the estimate can exceed the real count.
+    """
+    if not _is_usable(history, observed):
+        return 0
+    assert observed is not None  # narrowed by _is_usable
+    return max(0, observed.tokens - _history_tokens(history[:observed.message_count]))
 
 
 def _render(messages: History) -> str:

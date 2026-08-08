@@ -64,6 +64,23 @@ class TurnPreparation:
     recall_trace: RecallTrace | None = None  # Phase 3 — inspector trace (forward-ref)
 
 
+@dataclass(frozen=True)
+class ObservedPrompt:
+    """The provider's exact prompt_tokens for one call, pinned to the slice of
+    history it measured.
+
+    `prompt_tokens` describes the call already made, while compaction decides
+    what to send next — so the count alone is not enough. `message_count` records
+    how long `history` was when that call was built, which is what lets the
+    compactor estimate only the messages appended since and take the rest exact.
+    It is also how a stale observation is detected: after compaction rewrites
+    history, the pinned count no longer refers to anything.
+    """
+
+    tokens: int
+    message_count: int
+
+
 class Memory(BaseModel):
     """A distilled, retrievable long-term memory (L3 / durable L2)."""
 
