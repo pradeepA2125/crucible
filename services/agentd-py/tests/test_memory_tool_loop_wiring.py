@@ -51,9 +51,9 @@ async def test_tool_loop_invokes_harness_with_task_id(tmp_path):
         return "A"
 
     class SpyCompactor(Compactor):
-        async def maybe_compact(self, history, run_id):
+        async def maybe_compact(self, history, run_id, observed=None):
             calls.append(run_id)
-            return await super().maybe_compact(history, run_id)
+            return await super().maybe_compact(history, run_id, observed=observed)
 
     comp = SpyCompactor(
         store, summ, window_tokens=100000, trigger_frac=0.65, hot_token_frac=0.4, hot_turns=10
