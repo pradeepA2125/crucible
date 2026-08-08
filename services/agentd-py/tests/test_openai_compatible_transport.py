@@ -655,6 +655,7 @@ async def test_stream_open_failure_still_downgrades() -> None:
     transport, fake = _transport([
         _StatusError(400),
         _StatusError(400),
+        _StatusError(400),
         _GoodStream(json.dumps({"ok": 1})),
         _GoodStream(json.dumps({"ok": 2})),
     ], max_retries=0, supports_oneof=True)
@@ -666,10 +667,11 @@ async def test_stream_open_failure_still_downgrades() -> None:
         model="m", schema_name="s", schema={"type": "object"},
         system_instructions="", user_payload={}, on_thinking=lambda _c: None)
 
-    assert len(fake.calls) == 4
-    assert "stream_options" in fake.calls[0]        # probed once
-    assert "stream_options" not in fake.calls[1]    # dropped, still rejected
-    assert fake.calls[3]["response_format"]["type"] == "json_object"
+    assert len(fake.calls) == 5
+    assert "continuous_usage_stats" in fake.calls[0]["stream_options"]
+    assert fake.calls[1]["stream_options"] == {"include_usage": True}
+    assert "stream_options" not in fake.calls[2]    # ladder exhausted, still rejected
+    assert fake.calls[4]["response_format"]["type"] == "json_object"
     assert transport.supports_oneof_grammar is False
 
 
@@ -1602,7 +1604,9 @@ async def test_asks_for_usage_on_the_streaming_call() -> None:
         {"model": "m", "messages": []}, on_thinking=lambda _c: None,
     )
     assert fake.calls, "harness did not record kwargs"
-    assert fake.calls[-1].get("stream_options") == {"include_usage": True}
+    assert fake.calls[-1].get("stream_options") == {
+        "include_usage": True, "continuous_usage_stats": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -1618,9 +1622,11 @@ async def test_drops_stream_options_when_the_endpoint_rejects_it() -> None:
     )
 
     assert text == "hi"
-    assert len(fake.seen) == 2, f"expected one retry, got {len(fake.seen)} attempts"
-    assert "stream_options" in fake.seen[0]
-    assert "stream_options" not in fake.seen[1]
+    # Two probes: the vLLM extension, then include_usage alone, then bare.
+    assert len(fake.seen) == 3, f"expected the full ladder, got {len(fake.seen)}"
+    assert "continuous_usage_stats" in fake.seen[0]["stream_options"]
+    assert fake.seen[1]["stream_options"] == {"include_usage": True}
+    assert "stream_options" not in fake.seen[2]
 
 
 @pytest.mark.asyncio
@@ -1636,5 +1642,104 @@ async def test_stream_options_rejection_is_sticky_for_the_process() -> None:
     await transport._stream_with_finish_reason(
         {"model": "m", "messages": []}, on_thinking=lambda _c: None,
     )
-    assert len(fake.seen) == 3, f"retried the probe again: {len(fake.seen)} attempts"
-    assert "stream_options" not in fake.seen[2]
+    # 3 for the first call's full ladder, 1 for the second — the ladder is not
+    # re-walked once it has bottomed out.
+    assert len(fake.seen) == 4, f"re-probed the ladder: {len(fake.seen)} attempts"
+    assert "stream_options" not in fake.seen[3]
+
+
+# ── per-chunk usage: exact live counts, exact split ───────────────────────────
+# Measured on NVIDIA NIM: with continuous_usage_stats every one of 1968 chunks
+# carried a running completion_tokens, and reasoning/content chunks never
+# overlapped (432 reasoning-only, 1533 content-only, 0 both). So each chunk's
+# increment is attributable to the phase that chunk carried, and the split needs
+# no completion_tokens_details — which NIM does not publish.
+
+
+class _ChunkWithUsage:
+    def __init__(self, delta: object | None, completion_tokens: int) -> None:
+        self.choices = [_StreamChoice(None, delta=delta)] if delta is not None else []
+        self.usage = _Usage(completion_tokens=completion_tokens)
+
+
+class _ContinuousStream:
+    def __init__(self, items: list[tuple[object | None, int]]) -> None:
+        self._items = items
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for delta, total in self._items:
+            yield _ChunkWithUsage(delta, total)
+
+
+@pytest.mark.asyncio
+async def test_per_chunk_usage_attributes_each_increment_to_its_phase() -> None:
+    transport, _ = _transport([])
+    stream = _ContinuousStream([
+        (_StreamDelta(None, reasoning_content="think "), 10),
+        (_StreamDelta(None, reasoning_content="more "), 25),
+        (_StreamDelta("out "), 40),
+        (_StreamDelta("more out"), 60),
+    ])
+    seen = await _run_progress(transport, stream)
+    # 25 reasoning (10 + 15), 35 content (15 + 20) — exact, summing to 60.
+    assert seen[-1] == (25, 35), seen[-1]
+
+
+@pytest.mark.asyncio
+async def test_per_chunk_usage_climbs_live_rather_than_landing_at_the_end() -> None:
+    """The whole point: a number that increases while the model works."""
+    transport, _ = _transport([])
+    stream = _ContinuousStream([
+        (_StreamDelta("a"), 10), (_StreamDelta("b"), 20),
+        (_StreamDelta("c"), 30), (_StreamDelta("d"), 40),
+    ])
+    seen = await _run_progress(transport, stream)
+    contents = [c for _r, c in seen]
+    assert contents == sorted(contents), contents
+    assert contents[-1] == 40, contents
+
+
+@pytest.mark.asyncio
+async def test_trailing_usage_only_chunk_is_reconciled_into_content() -> None:
+    """The closing chunk carries neither phase, so its tokens are unattributed;
+    content absorbs the remainder so the parts sum to the provider's total."""
+    transport, _ = _transport([])
+    stream = _ContinuousStream([
+        (_StreamDelta(None, reasoning_content="t "), 10),
+        (_StreamDelta("out"), 30),
+        (None, 34),          # usage-only closing chunk
+    ])
+    seen = await _run_progress(transport, stream)
+    reasoning, content = seen[-1]
+    assert reasoning + content == 34, seen[-1]
+    assert reasoning == 10 and content == 24, seen[-1]
+
+
+@pytest.mark.asyncio
+async def test_stream_options_ladder_falls_back_to_include_usage_only() -> None:
+    """An endpoint that knows include_usage but not the vLLM extension must not
+    lose usage reporting altogether."""
+    transport, _ = _transport([])
+
+    class _RejectContinuousOnly:
+        def __init__(self) -> None:
+            self.seen: list[dict] = []
+
+        async def create(self, **kwargs):
+            self.seen.append(kwargs)
+            opts = kwargs.get("stream_options") or {}
+            if "continuous_usage_stats" in opts:
+                raise _StatusError(400)
+            return _DeltaStream([_StreamDelta("hi")])
+
+    fake = _RejectContinuousOnly()
+    transport._completions = fake
+    text, _ = await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None,
+    )
+    assert text == "hi"
+    assert len(fake.seen) == 2
+    assert fake.seen[1]["stream_options"] == {"include_usage": True}

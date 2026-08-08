@@ -48,6 +48,17 @@ _PROGRESS_INTERVAL_SEC = 0.15
 # magnitude different number.
 _CHARS_PER_TOKEN = 4
 
+# Usage-reporting rungs, richest first. `continuous_usage_stats` is a vLLM
+# extension (NVIDIA NIM is built on vLLM): it puts a running completion_tokens on
+# EVERY chunk instead of only the last, which is the difference between a counter
+# that climbs with the model's own exact numbers and one that guesses until the
+# call ends. Measured on NIM: 1968 of 1968 chunks carried usage.
+_STREAM_USAGE_LADDER: dict[str, dict[str, bool]] = {
+    "continuous": {"include_usage": True, "continuous_usage_stats": True},
+    "final": {"include_usage": True},
+}
+_NEXT_USAGE_MODE = {"continuous": "final", "final": "off"}
+
 
 def _approx_tokens(chars: int) -> int:
     """Characters to an approximate token count, rounding up so any produced
@@ -281,10 +292,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         self._json_max_tokens = json_max_tokens
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
-        # Ask streamed calls for the final usage chunk. Cleared permanently for
-        # this instance the first time an endpoint rejects the parameter — see
+        # How much usage reporting this endpoint tolerates. Steps down a rung the
+        # first time a request is rejected, permanently for this instance — see
         # _open_stream for why that rejection must never escape.
-        self._send_stream_options = True
+        self._stream_usage_mode = "continuous"
         # Instance attribute, NOT a class attribute: OpenRouter must keep the
         # contracts default (False) while openai_compatible opts in to True.
         self.supports_oneof_grammar = supports_oneof
@@ -783,8 +794,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         backoff still owns them and a rate limit never disables usage
         reporting for the process.
         """
-        if self._send_stream_options:
-            probe = {**kwargs, "stream_options": {"include_usage": True}}
+        while self._stream_usage_mode != "off":
+            probe = {**kwargs, "stream_options": _STREAM_USAGE_LADDER[self._stream_usage_mode]}
             try:
                 return await asyncio.wait_for(
                     self._completions.create(**probe), timeout=self._timeout_sec
@@ -794,11 +805,12 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             except Exception as exc:
                 if _is_retryable(exc):
                     raise
+                nxt = _NEXT_USAGE_MODE[self._stream_usage_mode]
                 logger.info(
-                    "%s: endpoint rejected stream_options — exact token counts "
-                    "unavailable, falling back to estimates: %s", self._label, exc,
+                    "%s: endpoint rejected stream usage mode %r, falling back to %r: %s",
+                    self._label, self._stream_usage_mode, nxt, exc,
                 )
-                self._send_stream_options = False
+                self._stream_usage_mode = nxt
         return await asyncio.wait_for(
             self._completions.create(**kwargs), timeout=self._timeout_sec
         )
@@ -869,6 +881,12 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # Characters, not deltas — see _approx_tokens.
                 reasoning_chars = content_chars = 0
                 usage_payload: Any = None
+                # Exact accounting, when the endpoint reports running totals.
+                # Each chunk's increment belongs to the phase that chunk carried;
+                # measured on NIM, reasoning and content never share a chunk.
+                usage_total: int | None = None
+                counted_total = 0
+                reasoning_tokens = content_tokens = 0
                 last_progress = 0.0
                 async for chunk in stream:
                     # A usage-reporting stream ends with one extra chunk that has
@@ -878,6 +896,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     chunk_usage = getattr(chunk, "usage", None)
                     if chunk_usage is not None:
                         usage_payload = chunk_usage
+                        reported, _ = _usage_token_counts(chunk_usage)
+                        if reported is not None:
+                            usage_total = reported
                     choices = getattr(chunk, "choices", None) or []
                     if not choices:
                         continue
@@ -898,14 +919,25 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     if content:
                         content_chars += len(content)
                         content_parts.append(content)
+                    # Attribute this chunk's share of the running total.
+                    if usage_total is not None and usage_total > counted_total:
+                        gained = usage_total - counted_total
+                        counted_total = usage_total
+                        if reasoning:
+                            reasoning_tokens += gained
+                        elif content:
+                            content_tokens += gained
                     if on_progress is not None and (reasoning or content):
                         now = time.monotonic()
                         if now - last_progress >= _PROGRESS_INTERVAL_SEC:
                             last_progress = now
-                            on_progress(
-                                _approx_tokens(reasoning_chars),
-                                _approx_tokens(content_chars),
-                            )
+                            if reasoning_tokens or content_tokens:
+                                on_progress(reasoning_tokens, content_tokens)
+                            else:
+                                on_progress(
+                                    _approx_tokens(reasoning_chars),
+                                    _approx_tokens(content_chars),
+                                )
                 # Final emit: throttling can swallow the last tick, and the closing
                 # number is the one a user actually reads. It also carries the only
                 # count a single-delta response ever produces — and, when the
@@ -914,17 +946,27 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # per-delta token counts, so there is nothing exact to show until
                 # the stream ends.
                 if on_progress is not None and (reasoning_chars or content_chars):
-                    exact = (
-                        _exact_counts(usage_payload, reasoning_chars, content_chars)
-                        if usage_payload is not None
-                        else None
-                    )
-                    if exact is not None:
-                        on_progress(*exact)
+                    if reasoning_tokens or content_tokens:
+                        # Per-chunk attribution ran. The closing chunk carries
+                        # neither phase, so its tokens are unattributed — content
+                        # absorbs the remainder so the parts sum to the provider's
+                        # own total rather than drifting a few tokens under it.
+                        if usage_total is not None:
+                            content_tokens = max(0, usage_total - reasoning_tokens)
+                        on_progress(reasoning_tokens, content_tokens)
                     else:
-                        on_progress(
-                            _approx_tokens(reasoning_chars), _approx_tokens(content_chars)
+                        exact = (
+                            _exact_counts(usage_payload, reasoning_chars, content_chars)
+                            if usage_payload is not None
+                            else None
                         )
+                        if exact is not None:
+                            on_progress(*exact)
+                        else:
+                            on_progress(
+                                _approx_tokens(reasoning_chars),
+                                _approx_tokens(content_chars),
+                            )
                 return "".join(content_parts).strip(), finish_reason
             except TimeoutError as exc:
                 raise TransientTransportError(
