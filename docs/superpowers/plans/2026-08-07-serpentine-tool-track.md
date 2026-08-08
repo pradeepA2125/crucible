@@ -1,5 +1,13 @@
 # Serpentine Tool Track Implementation Plan
 
+> **Status: executed**, on branch `feat/serpentine-tool-track`. This plan was patched mid-flight
+> several times, but review fixes kept landing after each patch and the document drifted from
+> the shipped code regardless. Do not transcribe implementation detail out of this file — the
+> **shipped source under `apps/vscode-extension/webview-ui/src/`** is the source of truth for
+> that. This plan (and the spec it points to) stays the source of truth for **design intent** —
+> why the track exists, what the two rules are, what was deliberately rejected. If you are
+> re-running or extending this work, read the current source first.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the flat `flex-wrap` grid of chat tool pills with a serpentine track — one continuous line threading the pills, turning at the row edge, where reading order follows the road and the road ends on a dot.
@@ -18,7 +26,7 @@
 - No `any`. No untyped returns. Strict typing throughout.
 - The rendered pill button must stay visually identical to today: same markup, icon map, status colours, hover, running shimmer, chevron rotation.
 - Colours come from existing CSS custom properties only — `var(--color-border-strong)`, `var(--color-panel)`, `var(--color-surface)`, `var(--accent-brd)`. Do not introduce new tokens or hex literals.
-- Geometry constants are fixed by the spec: `SIDE_PAD` 28, `COL_GAP` 14, `ROW_GAP` 24, `TURN_RADIUS` 12, `TURN_INSET` 9, `RAIL_OVERSHOOT` 8, `CAP_RADIUS` 3.5.
+- Geometry constants are fixed by the spec: `SIDE_PAD` 28, `COL_GAP` 14, `ROW_GAP` 24, `TURN_RADIUS` 12, `TURN_INSET` 9, `RAIL_OVERSHOOT` 8, `CAP_RADIUS` 3.5. **(Post-execution amendment, see the status block above:** `SIDE_PAD`/`COL_GAP`/`TURN_INSET` are no longer flat constants at call sites — `metricsForWidth(trackWidth)` in `tool-track-layout.ts` picks a wide tier (these exact values, at and above `NARROW_TRACK_WIDTH` = 420) or a narrow tier (8/8/4) below it, so a docked sidebar doesn't degrade to one pill per row. `ROW_GAP`/`TURN_RADIUS`/`RAIL_OVERSHOOT`/`CAP_RADIUS` are unaffected.)
 - Comments explain **why**, not what. English only.
 - Commit after every task. Never `git push`.
 
@@ -341,6 +349,13 @@ git commit -m "feat(chat): pure rail path builder for the tool track"
   - `ToolPill({ event, expanded, onToggle }: { event: ToolEventView; expanded: boolean; onToggle: () => void })` — renders a bare `<button>`, no wrapper, no panel. The button carries `data-event-id={event.id}`: `ToolTrack` needs to find a specific pill's box to aim the panel caret, and a stable identity attribute on the element itself beats a wrapper element that exists only to hold one. Task 4 renders it; Task 5 renders `ToolDetailPanel`.
 
 **Note:** `AgentRow.tsx` and `DiffCard.tsx` still render `<ToolPill event={…}/>` and will not typecheck after this task. That is expected and fixed in Task 7. Run tests, not `typecheck`, at this task's gate.
+
+**Post-execution amendment (see the status block at the top of this plan):** the shipped
+`ToolPill` takes a fourth required prop, `panelId: string` — the id of the sibling panel this
+pill discloses. The button renders `aria-controls={event.done ? panelId : undefined}`
+alongside `aria-expanded`, so a screen reader can follow the disclosure relationship explicitly
+instead of relying on DOM adjacency alone. The id itself is minted by a `toolPanelId(eventId)`
+helper that lives in `ToolTrack.tsx` (see Task 5's amendment below), not in this file.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -910,7 +925,7 @@ export function ToolTrack({ events, measureWidths }: Props) {
 
   return (
     <div ref={setTrackNode} className="relative">
-      <div className="flex flex-col gap-6">
+      <div className="relative flex flex-col" style={{ rowGap: ROW_GAP }}>
         {groups.map((indices, rowIndex) => {
           const dirRight = rowIndex % 2 === 0;
           // The last row keeps its natural packing so the road can end on a
@@ -1087,8 +1102,16 @@ directly would re-run on every render:
 
 ```tsx
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const layoutKey = groups.map((g) => g.join(",")).join("|");
+  const layoutKey = groups.map((g) => g.map((i) => keys[i]).join(",")).join("|");
 ```
+
+**Post-execution amendment:** the shipped `layoutKey` folds pill *identity*, not just row
+membership, through `keys[i]` (the `(tool, state)` cache key from earlier in the component):
+`groups.map((g) => g.map((i) => keys[i]).join(",")).join("|")`. A pill's measured width changes
+the instant it finishes (a running pill has no chevron; a done pill adds a check, a chevron, and
+another internal gap), so a call that completes without crossing a row boundary — same index,
+same row, just wider now — still needs the rail effects to re-run and re-aim. Keying on indices
+alone would miss exactly that case and leave the geometry pointing at the pre-completion layout.
 
 Replace the `groups.map(...)` body so each row can be followed by its panel. The row `<div>` and the panel are returned together from a fragment:
 
@@ -1181,7 +1204,7 @@ Finally, point the caret at the pill it belongs to. Add a ref for the rows conta
 and attach it to the rows container:
 
 ```tsx
-      <div ref={rowsRef} className="flex flex-col gap-6">
+      <div ref={rowsRef} className="relative flex flex-col" style={{ rowGap: ROW_GAP }}>
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1228,9 +1251,27 @@ Append inside the existing `describe("ToolTrack", …)` block in `src/test/ToolT
     expect(container.querySelector('[data-cap="end"]')).not.toBeNull();
   });
 
-  it("draws no rails when there are no rows", () => {
-    const { container } = render(<ToolTrack events={[]} measureWidths={fixedWidths} />);
-    expect(container.querySelector("[data-rails]")).toBeNull();
+  it("draws no rails while widths are packed against a zero-width container", () => {
+    // events={[]} would hit the `events.length === 0` early return and never
+    // reach the `groups.length > 0` gate at all — the first test in this file
+    // ("renders nothing for no events") already covers that path. The gate
+    // that actually matters is a real transient: events present, but the
+    // container hasn't reported a usable width yet.
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => 0,
+    });
+    try {
+      const { container } = render(
+        <ToolTrack events={makeEvents(5)} measureWidths={fixedWidths} />
+      );
+      expect(container.querySelector("[data-rails]")).toBeNull();
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+        configurable: true,
+        get: () => CONTAINER_WIDTH,
+      });
+    }
   });
 ```
 
@@ -1337,7 +1378,7 @@ Render the SVG as the first child of the track wrapper, before the rows:
         </svg>
       )}
 
-      <div ref={rowsRef} className="flex flex-col gap-6">
+      <div ref={rowsRef} className="relative flex flex-col" style={{ rowGap: ROW_GAP }}>
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
