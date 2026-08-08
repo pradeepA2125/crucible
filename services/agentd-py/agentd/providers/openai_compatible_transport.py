@@ -71,23 +71,38 @@ def _usage_token_counts(usage: Any) -> tuple[int | None, int | None]:
     )
 
 
-def _exact_counts(usage: Any, saw_reasoning: bool) -> tuple[int, int] | None:
-    """Exact (reasoning, content) token counts from a stream's usage totals, or
-    None when the split cannot be attributed and the estimates should stand.
+def _exact_counts(
+    usage: Any, reasoning_chars: int, content_chars: int
+) -> tuple[int, int] | None:
+    """(reasoning, content) token counts anchored to a stream's usage totals, or
+    None when there is no usable total and the estimates should stand.
 
-    `completion_tokens` is the whole output INCLUDING reasoning, so it can be
-    used as the content count only when the response had no reasoning at all.
-    Otherwise the breakdown is required: attributing a reasoning model's entire
-    output to the content counter would put a wildly wrong number under it.
+    `completion_tokens` is the whole output INCLUDING reasoning, so it is only
+    the content count outright when the response had no reasoning at all. Three
+    cases, in descending order of confidence:
+
+    1. The provider broke reasoning out — exact on both counters.
+    2. No reasoning happened — the total IS the content count, exact.
+    3. Reasoning happened with no breakdown (measured on NVIDIA NIM, which
+       reports completion_tokens and no completion_tokens_details): apportion
+       the exact total by the character ratio actually seen on the wire. The
+       total is then right and only its division is derived — strictly better
+       than discarding the one exact number in the call and showing two
+       independent guesses.
     """
     completion, reasoning = _usage_token_counts(usage)
     if completion is None:
         return None
     if reasoning is not None:
         return reasoning, max(0, completion - reasoning)
-    if not saw_reasoning:
+    if reasoning_chars <= 0:
         return 0, completion
-    return None
+    total_chars = reasoning_chars + content_chars
+    if total_chars <= 0:
+        return None
+    reasoning_share = round(completion * reasoning_chars / total_chars)
+    # Subtract rather than round twice, so the parts always sum to the exact total.
+    return reasoning_share, max(0, completion - reasoning_share)
 
 # Streamed reasoning is not in the OpenAI spec, so the ecosystem settled on two
 # different delta field names: `reasoning` (OpenRouter, Groq) and
@@ -266,6 +281,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         self._json_max_tokens = json_max_tokens
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
+        # Ask streamed calls for the final usage chunk. Cleared permanently for
+        # this instance the first time an endpoint rejects the parameter — see
+        # _open_stream for why that rejection must never escape.
+        self._send_stream_options = True
         # Instance attribute, NOT a class attribute: OpenRouter must keep the
         # contracts default (False) while openai_compatible opts in to True.
         self.supports_oneof_grammar = supports_oneof
@@ -745,6 +764,45 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         )
         return text
 
+    async def _open_stream(self, kwargs: dict[str, Any]) -> Any:
+        """Open the stream, asking for the exact-usage chunk.
+
+        `stream_options` is the only way to get that chunk — without it a
+        spec-compliant endpoint sends no usage at all (verified against NVIDIA
+        NIM: 0 usage chunks without the parameter, 1 with it). But it is an
+        extra request parameter, and a strict endpoint can reject it.
+
+        That rejection must not escape. It would travel up to
+        `proves_json_schema_unsupported`, which reads a rejected request as
+        evidence the endpoint cannot honour `response_format` and PERMANENTLY
+        downgrades JSON mode for the rest of the process. A parameter added for
+        a progress counter must never be able to degrade every later call, so
+        it is dropped and retried here, once, before anyone can judge it.
+
+        Retryable failures (429/5xx) are re-raised untouched so the caller's
+        backoff still owns them and a rate limit never disables usage
+        reporting for the process.
+        """
+        if self._send_stream_options:
+            probe = {**kwargs, "stream_options": {"include_usage": True}}
+            try:
+                return await asyncio.wait_for(
+                    self._completions.create(**probe), timeout=self._timeout_sec
+                )
+            except TimeoutError:
+                raise
+            except Exception as exc:
+                if _is_retryable(exc):
+                    raise
+                logger.info(
+                    "%s: endpoint rejected stream_options — exact token counts "
+                    "unavailable, falling back to estimates: %s", self._label, exc,
+                )
+                self._send_stream_options = False
+        return await asyncio.wait_for(
+            self._completions.create(**kwargs), timeout=self._timeout_sec
+        )
+
     async def _stream_with_finish_reason(
         self,
         create_kwargs: dict[str, Any],
@@ -790,10 +848,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     on_retry(attempt, self._max_retries, reason, message)
                 await asyncio.sleep(delay)
             try:
-                stream = await asyncio.wait_for(
-                    self._completions.create(**kwargs),
-                    timeout=self._timeout_sec,
-                )
+                stream = await self._open_stream(kwargs)
             except TimeoutError as exc:
                 # TransientTransportError subclasses RuntimeError: same type for
                 # every existing handler, but distinguishable by the downgrade check.
@@ -860,7 +915,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # the stream ends.
                 if on_progress is not None and (reasoning_chars or content_chars):
                     exact = (
-                        _exact_counts(usage_payload, reasoning_chars > 0)
+                        _exact_counts(usage_payload, reasoning_chars, content_chars)
                         if usage_payload is not None
                         else None
                     )

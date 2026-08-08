@@ -347,6 +347,8 @@ async def test_bad_request_does_downgrade() -> None:
     await transport.generate_json(model="m", schema_name="s", schema={"type": "object"},
                                   system_instructions="", user_payload={})
 
+    # No on_thinking/on_progress here, so this takes the NON-streaming path and
+    # never sends stream_options — one call, not a probe plus a retry.
     assert len(fake.calls) == 3
     assert fake.calls[2]["response_format"]["type"] == "json_object"
     assert transport.supports_oneof_grammar is False
@@ -444,6 +446,8 @@ async def test_prose_instead_of_json_does_downgrade() -> None:
     await transport.generate_json(model="m", schema_name="s", schema={"type": "object"},
                                   system_instructions="", user_payload={})
 
+    # No on_thinking/on_progress here, so this takes the NON-streaming path and
+    # never sends stream_options — one call, not a probe plus a retry.
     assert len(fake.calls) == 3
     assert fake.calls[2]["response_format"]["type"] == "json_object"
     assert transport.supports_oneof_grammar is False
@@ -639,8 +643,17 @@ async def test_truncated_stream_does_not_downgrade() -> None:
 async def test_stream_open_failure_still_downgrades() -> None:
     """The counterpart to the mid-stream case: if the request is rejected before
     a single byte comes back, that CAN be a genuine response_format rejection and
-    must stay probative. Splitting the try must not blunt the feature."""
+    must stay probative. Splitting the try must not blunt the feature.
+
+    The 400 is scripted TWICE because a response_format rejection recurs: the
+    stream opener drops `stream_options` and retries once on any non-retryable
+    open failure (it cannot tell which parameter was refused, and must not let a
+    counter's parameter reach the downgrade check), but dropping it does not fix
+    a response_format the endpoint still hates. So a genuinely unsupported
+    endpoint costs one extra probe call, once per process, and then downgrades
+    exactly as before."""
     transport, fake = _transport([
+        _StatusError(400),
         _StatusError(400),
         _GoodStream(json.dumps({"ok": 1})),
         _GoodStream(json.dumps({"ok": 2})),
@@ -653,8 +666,10 @@ async def test_stream_open_failure_still_downgrades() -> None:
         model="m", schema_name="s", schema={"type": "object"},
         system_instructions="", user_payload={}, on_thinking=lambda _c: None)
 
-    assert len(fake.calls) == 3
-    assert fake.calls[2]["response_format"]["type"] == "json_object"
+    assert len(fake.calls) == 4
+    assert "stream_options" in fake.calls[0]        # probed once
+    assert "stream_options" not in fake.calls[1]    # dropped, still rejected
+    assert fake.calls[3]["response_format"]["type"] == "json_object"
     assert transport.supports_oneof_grammar is False
 
 
@@ -1515,20 +1530,24 @@ async def test_usage_splits_reasoning_from_content_when_details_are_present() ->
 
 
 @pytest.mark.asyncio
-async def test_unsplittable_usage_keeps_the_estimates() -> None:
-    """Reasoning happened but the provider gave no breakdown — attributing the
-    whole total to content would report a wildly wrong output count, so the
-    estimates stand rather than inventing a split."""
+async def test_usage_without_a_breakdown_apportions_the_exact_total() -> None:
+    """Measured live on NVIDIA NIM: a reasoning model reports an exact
+    completion_tokens and NO completion_tokens_details. Bailing to independent
+    estimates there would waste the one exact number in the call, so the total
+    is split on the character ratio actually observed on the wire — exact in
+    total, derived in split."""
     transport, _ = _transport([])
     seen = await _run_progress(
         transport,
         _StreamThenUsage(
-            [_StreamDelta(None, reasoning_content="x" * 400), _StreamDelta("y" * 40)],
-            _Usage(completion_tokens=140),
+            [_StreamDelta(None, reasoning_content="x" * 400), _StreamDelta("y" * 100)],
+            _Usage(completion_tokens=137),
         ),
     )
     reasoning, content = seen[-1]
-    assert reasoning == 100 and content == 10, f"estimates were disturbed: {seen[-1]}"
+    # 400:100 chars => 80% reasoning. The parts must sum to the exact total.
+    assert reasoning + content == 137, f"total not preserved: {seen[-1]}"
+    assert reasoning == 110 and content == 27, f"bad apportionment: {seen[-1]}"
 
 
 @pytest.mark.asyncio
@@ -1554,3 +1573,68 @@ async def test_no_usage_chunk_still_reports_the_estimate() -> None:
         on_progress=lambda r, c: seen.append((r, c)),
     )
     assert seen[-1] == (0, 100), f"estimate lost: {seen[-1]}"
+
+
+# ── Stage 2: asking for the usage chunk, safely ───────────────────────────────
+
+
+class _RejectThenAccept:
+    """An endpoint that 400s on the unknown stream_options parameter, then works
+    once it is dropped. Records the kwargs of every attempt."""
+
+    def __init__(self, stream: object) -> None:
+        self.seen: list[dict] = []
+        self._stream = stream
+
+    async def create(self, **kwargs: object) -> object:
+        self.seen.append(kwargs)
+        if "stream_options" in kwargs:
+            raise _StatusError(400)
+        return self._stream
+
+
+@pytest.mark.asyncio
+async def test_asks_for_usage_on_the_streaming_call() -> None:
+    transport, _ = _transport([])
+    fake = _FakeCompletions([_DeltaStream([_StreamDelta("hi")])])
+    transport._completions = fake
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None,
+    )
+    assert fake.calls, "harness did not record kwargs"
+    assert fake.calls[-1].get("stream_options") == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_drops_stream_options_when_the_endpoint_rejects_it() -> None:
+    """And never lets that rejection escape — a 400 reaching the caller would be
+    fed to proves_json_schema_unsupported and permanently downgrade JSON mode."""
+    transport, _ = _transport([])
+    fake = _RejectThenAccept(_DeltaStream([_StreamDelta("hi")]))
+    transport._completions = fake
+
+    text, _ = await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None,
+    )
+
+    assert text == "hi"
+    assert len(fake.seen) == 2, f"expected one retry, got {len(fake.seen)} attempts"
+    assert "stream_options" in fake.seen[0]
+    assert "stream_options" not in fake.seen[1]
+
+
+@pytest.mark.asyncio
+async def test_stream_options_rejection_is_sticky_for_the_process() -> None:
+    """One wasted call per process, not one per turn."""
+    transport, _ = _transport([])
+    fake = _RejectThenAccept(_DeltaStream([_StreamDelta("hi")]))
+    transport._completions = fake
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None,
+    )
+    fake._stream = _DeltaStream([_StreamDelta("again")])
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None,
+    )
+    assert len(fake.seen) == 3, f"retried the probe again: {len(fake.seen)} attempts"
+    assert "stream_options" not in fake.seen[2]
