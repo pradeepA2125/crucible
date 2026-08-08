@@ -789,15 +789,34 @@ class ControllerLoop:
             self._broadcaster.broadcast(self._channel_id, {
                 "type": "tool_thinking_chunk", "payload": {"chunk": chunk}})
 
+        # Token counts are cumulative for the TURN, not per model call. A turn is
+        # many calls, so per-call counts reset to near-zero on every sub-turn —
+        # reading as progress going backwards, and doing it beside a turn-scoped
+        # elapsed timer that never resets. `call_tokens` holds the in-flight
+        # call's latest numbers so they can be folded into the turn total once it
+        # finishes, whether it returned or raised.
+        turn_tokens = {"reasoning": 0, "content": 0}
+        call_tokens = {"reasoning": 0, "content": 0}
+
+        def _fold_call_tokens_into_turn() -> None:
+            turn_tokens["reasoning"] += call_tokens["reasoning"]
+            turn_tokens["content"] += call_tokens["content"]
+            call_tokens["reasoning"] = call_tokens["content"] = 0
+
         def _on_progress(reasoning_n: int, content_n: int) -> None:
             # Live token counts DURING a call. Its own channel, not the thinking pane:
             # a progress counter is not model reasoning (same rule as _on_retry and
             # edit_failed). Reasoning already streams via _on_thinking, but CONTENT
             # deltas are accumulated silently and only surface when the call returns —
             # so a long generation looks identical to a hang until this lands.
+            call_tokens["reasoning"] = reasoning_n
+            call_tokens["content"] = content_n
             self._broadcaster.broadcast(self._channel_id, {
                 "type": "token_progress",
-                "payload": {"thinking": reasoning_n, "output": content_n},
+                "payload": {
+                    "thinking": turn_tokens["reasoning"] + reasoning_n,
+                    "output": turn_tokens["content"] + content_n,
+                },
             })
 
         def _on_salvage(discarded_chars: int, discarded_text: str) -> None:
@@ -967,6 +986,12 @@ class ControllerLoop:
                     ),
                 })
                 continue
+            finally:
+                # Runs on the `continue` paths too, so a call that raised still
+                # contributes the tokens it burned before failing — otherwise a
+                # retry would silently rewind the turn's counter.
+                _fold_call_tokens_into_turn()
+
             atype = str(resp.get("type", ""))
             logger.info("[controller] iter=%d phase=%s action=%s", iteration, self._sm.phase, atype)
             # Drain any salvage notice BEFORE dispatching: the model must see that its

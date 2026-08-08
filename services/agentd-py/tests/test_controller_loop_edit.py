@@ -423,3 +423,55 @@ async def test_syntax_preflight_failure_requests_one_unconstrained_retry(tmp_pat
     assert seen[0] is False, "the first call must use the grammar"
     assert seen[1] is True, "after a syntax rejection, retry unconstrained once"
     assert len(seen) < 3 or seen[2] is False, "and revert to the grammar after"
+
+
+@pytest.mark.asyncio
+async def test_token_progress_accumulates_across_the_whole_turn(tmp_path: Path):
+    """A turn is many model calls. Reporting each call's own counts made the
+    number reset to near-zero on every sub-turn — reading as progress going
+    backwards, and sitting beside a turn-scoped elapsed timer that never did.
+    The counts are cumulative for the turn, so they only ever climb."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    reg = AggregatingToolRegistry(
+        [BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
+
+    class _TwoCallEngine:
+        """First call explores, second answers — two streams, one turn."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def create_controller_step(self, plan_context, history, tool_definitions,
+                                         *, phase, on_thinking=None, on_retry=None,
+                                         on_progress=None, on_salvage=None,
+                                         unconstrained=False):
+            self.calls += 1
+            if self.calls == 1:
+                if on_progress is not None:
+                    on_progress(10, 0)
+                    on_progress(30, 20)      # call 1 ends at 30 reasoning / 20 output
+                return {"type": "tool_call", "thought": "t", "tool": "list_directory",
+                        "args": {"path": "."}}
+            if on_progress is not None:
+                on_progress(5, 0)            # call 2 restarts its own counters at 5/0
+                on_progress(7, 40)
+            return {"type": "answer", "thought": "t", "answer": "done"}
+
+    bc = EventBroadcaster()
+    q = bc.subscribe("c")
+    loop = ControllerLoop(_TwoCallEngine(), reg, bc, channel_id="c",
+                          phase_sm=ControllerPhaseSM())
+    await loop.run({"goal": "x", "workspace_path": str(real)}, max_iters=4,
+                   auto_accept_edits=True)
+
+    prog = [e["payload"] for e in _drain(q) if e["type"] == "token_progress"]
+    assert len(prog) >= 4, prog
+
+    thinking = [p["thinking"] for p in prog]
+    output = [p["output"] for p in prog]
+    assert thinking == sorted(thinking), f"reasoning went backwards: {thinking}"
+    assert output == sorted(output), f"output went backwards: {output}"
+
+    # Turn totals: reasoning 30 + 7, output 20 + 40.
+    assert prog[-1] == {"thinking": 37, "output": 60}, prog
