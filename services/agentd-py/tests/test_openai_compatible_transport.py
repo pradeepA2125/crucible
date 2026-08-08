@@ -1466,11 +1466,17 @@ class _UsageDetails:
 
 
 class _Usage:
-    def __init__(self, completion_tokens: int, reasoning_tokens: int | None = None) -> None:
+    def __init__(
+        self,
+        completion_tokens: int,
+        reasoning_tokens: int | None = None,
+        prompt_tokens: int = 0,
+    ) -> None:
         self.completion_tokens = completion_tokens
         self.completion_tokens_details = (
             _UsageDetails(reasoning_tokens) if reasoning_tokens is not None else None
         )
+        self.prompt_tokens = prompt_tokens
 
 
 class _UsageChunk:
@@ -1743,3 +1749,42 @@ async def test_stream_options_ladder_falls_back_to_include_usage_only() -> None:
     assert text == "hi"
     assert len(fake.seen) == 2
     assert fake.seen[1]["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_on_usage_reports_prompt_tokens_once() -> None:
+    """The compaction trigger needs the size of what we SENT. It is on the same
+    usage object the counters already read, and it fires exactly once — unlike
+    on_progress, which is throttled and fires many times per call."""
+    transport, _ = _transport([])
+    seen: list[tuple[int, int]] = []
+    stream = _StreamThenUsage(
+        [_StreamDelta("hello there")],
+        _Usage(completion_tokens=17, prompt_tokens=4242),
+    )
+    transport._completions = _FakeCompletions([stream])
+
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert seen == [(4242, 17)], seen
+
+
+@pytest.mark.asyncio
+async def test_on_usage_is_silent_when_the_endpoint_reports_nothing() -> None:
+    """Most endpoints report no usage at all. A zero would be indistinguishable
+    from a real measurement and would poison the trigger."""
+    transport, _ = _transport([])
+    seen: list[tuple[int, int]] = []
+    transport._completions = _FakeCompletions([_DeltaStream([_StreamDelta("hi")])])
+
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert seen == [], seen

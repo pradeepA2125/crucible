@@ -82,6 +82,20 @@ def _usage_token_counts(usage: Any) -> tuple[int | None, int | None]:
     )
 
 
+def _usage_prompt_tokens(usage: Any) -> int | None:
+    """prompt_tokens off a usage payload of either shape, or None when absent.
+
+    Separate from _usage_token_counts because that one answers "what did the
+    model generate"; this answers "how big was what we sent", which is the
+    number the compaction trigger runs on.
+    """
+    if isinstance(usage, dict):
+        value = usage.get("prompt_tokens")
+    else:
+        value = getattr(usage, "prompt_tokens", None)
+    return value if isinstance(value, int) else None
+
+
 def _exact_counts(
     usage: Any, reasoning_chars: int, content_chars: int
 ) -> tuple[int, int] | None:
@@ -405,6 +419,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_thinking: Any = None,
         on_retry: Any = None,
         on_progress: Any = None,
+        on_usage: Any = None,
         on_salvage: Any = None,
         unconstrained: bool = False,
     ) -> dict[str, object]:
@@ -417,6 +432,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             on_thinking=on_thinking,
             on_retry=on_retry,
             on_progress=on_progress,
+            on_usage=on_usage,
             on_salvage=on_salvage,
             unconstrained=unconstrained,
         )
@@ -442,6 +458,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     on_thinking=on_thinking,
                     on_retry=on_retry,
                     on_progress=on_progress,
+                    on_usage=on_usage,
                     on_salvage=on_salvage,
                     unconstrained=unconstrained,
                 )
@@ -449,7 +466,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
 
     async def _get_completion_output(
         self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
-        on_progress: Any = None,
+        on_progress: Any = None, on_usage: Any = None,
     ) -> tuple[str, str | None]:
         """Route through the streaming path (forwarding reasoning deltas to
         on_thinking live, as they arrive) when a callback is given, else the plain
@@ -467,20 +484,20 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         if callable(on_thinking) or callable(on_progress):
             return await self._stream_with_finish_reason(
                 create_kwargs, on_thinking=on_thinking, on_retry=on_retry,
-                on_progress=on_progress,
+                on_progress=on_progress, on_usage=on_usage,
             )
         response = await self._call_with_retry(create_kwargs, on_retry=on_retry)
         return self._extract_text(response), _response_finish_reason(response)
 
     async def _get_completion_text(
         self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
-        on_progress: Any = None,
+        on_progress: Any = None, on_usage: Any = None,
     ) -> str:
         """Text-only view of _get_completion_output, for callers that have no use
         for the finish_reason (the json_object fallback — it never decides a
         downgrade, so truncation there is just a malformed-JSON retry)."""
         text, _finish_reason = await self._get_completion_output(
-            create_kwargs, on_thinking, on_retry, on_progress
+            create_kwargs, on_thinking, on_retry, on_progress, on_usage
         )
         return text
 
@@ -495,6 +512,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_thinking: Any = None,
         on_retry: Any = None,
         on_progress: Any = None,
+        on_usage: Any = None,
         on_salvage: Any = None,
         unconstrained: bool = False,
     ) -> dict[str, object]:
@@ -543,7 +561,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             finish_reason: str | None = None
             try:
                 output_text, finish_reason = await self._get_completion_output(
-                    create_kwargs, on_thinking, on_retry, on_progress
+                    create_kwargs, on_thinking, on_retry, on_progress, on_usage
                 )
                 return self._parse_output_object(
                     output_text, schema_name, on_salvage)
@@ -578,6 +596,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             on_thinking=on_thinking,
             on_retry=on_retry,
             on_progress=on_progress,
+            on_usage=on_usage,
             on_salvage=on_salvage,
             unconstrained=unconstrained,
         )
@@ -624,6 +643,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_thinking: Any = None,
         on_retry: Any = None,
         on_progress: Any = None,
+        on_usage: Any = None,
         on_salvage: Any = None,
         unconstrained: bool = False,
     ) -> dict[str, object]:
@@ -685,7 +705,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 await asyncio.sleep(delay)
             try:
                 output_text = await self._get_completion_text(
-                    fallback_kwargs, on_thinking, on_retry, on_progress
+                    fallback_kwargs, on_thinking, on_retry, on_progress, on_usage
                 )
                 return self._parse_output_object(
                     output_text, schema_name, on_salvage)
@@ -822,6 +842,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_thinking: Any,
         on_retry: Any = None,
         on_progress: Any = None,
+        on_usage: Any = None,
     ) -> tuple[str, str | None]:
         """Stream response forwarding reasoning chunks to on_thinking callback.
 
@@ -967,6 +988,14 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                                 _approx_tokens(reasoning_chars),
                                 _approx_tokens(content_chars),
                             )
+                # Accounting, not display: one call, unthrottled, and only when the
+                # endpoint actually reported. A zero here would be indistinguishable
+                # from a real measurement of an empty prompt.
+                if on_usage is not None and usage_payload is not None:
+                    prompt_n = _usage_prompt_tokens(usage_payload)
+                    completion_n, _ = _usage_token_counts(usage_payload)
+                    if prompt_n is not None:
+                        on_usage(prompt_n, completion_n or 0)
                 return "".join(content_parts).strip(), finish_reason
             except TimeoutError as exc:
                 raise TransientTransportError(

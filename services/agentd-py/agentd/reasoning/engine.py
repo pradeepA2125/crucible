@@ -262,6 +262,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         on_thinking: Callable[[str], None] | None = None,
         on_retry: Callable[[int, int, str, str], None] | None = None,
         on_progress: Callable[[int, int], None] | None = None,
+        on_usage: Callable[[int, int], None] | None = None,
         on_salvage: Callable[[int, str], None] | None = None,
         unconstrained: bool = False,
     ) -> dict[str, object]:
@@ -310,6 +311,12 @@ class DefaultReasoningEngine(ReasoningEngine):
             # idiom as supports_oneof_grammar above).
             **({"on_progress": on_progress}
                if on_progress is not None
+               and getattr(self._transport, "supports_token_progress", False)
+               else {}),
+            # Same capability gate as on_progress: only openai_compatible reports
+            # usage, and the other eight transports must not see the kwarg.
+            **({"on_usage": on_usage}
+               if on_usage is not None
                and getattr(self._transport, "supports_token_progress", False)
                else {}),
             # Same capability gate: only openai_compatible salvages a trailing action.
