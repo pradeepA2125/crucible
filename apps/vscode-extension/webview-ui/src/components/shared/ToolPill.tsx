@@ -4,6 +4,8 @@ import { toolIcon } from "./tool-icon";
 
 interface Props {
   event: ToolEventView;
+  /** Id of the sibling panel this pill discloses; see `aria-controls` below. */
+  panelId: string;
   expanded: boolean;
   onToggle: () => void;
 }
@@ -18,7 +20,7 @@ interface Props {
  * Expansion state is owned by ToolTrack, which mounts the detail panel below
  * the row rather than inside this component.
  */
-export function ToolPill({ event, expanded, onToggle }: Props) {
+export function ToolPill({ event, panelId, expanded, onToggle }: Props) {
   const running = !event.done;
   const isError = event.isError === true;
 
@@ -54,6 +56,7 @@ export function ToolPill({ event, expanded, onToggle }: Props) {
       style={pillStyle}
       onClick={handleClick}
       aria-expanded={event.done ? expanded : undefined}
+      aria-controls={event.done ? panelId : undefined}
     >
       <Icon name={icon} size={10} />
       <span>{event.tool}</span>

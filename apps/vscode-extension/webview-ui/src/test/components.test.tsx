@@ -27,7 +27,7 @@ describe("ToolPill", () => {
   it("running: shows the tool name and does not call onToggle when clicked", () => {
     const onToggle = vi.fn();
     const event = makeEvent({ done: false });
-    render(<ToolPill event={event} expanded={false} onToggle={onToggle} />);
+    render(<ToolPill event={event} panelId="tool-panel-1" expanded={false} onToggle={onToggle} />);
 
     expect(screen.getByText("read_file")).toBeTruthy();
     fireEvent.click(screen.getByRole("button"));
@@ -37,7 +37,7 @@ describe("ToolPill", () => {
   it("done: clicking calls onToggle", () => {
     const onToggle = vi.fn();
     const event = makeEvent({ done: true, output: "line 1\nline 2" });
-    render(<ToolPill event={event} expanded={false} onToggle={onToggle} />);
+    render(<ToolPill event={event} panelId="tool-panel-1" expanded={false} onToggle={onToggle} />);
 
     fireEvent.click(screen.getByRole("button"));
     expect(onToggle).toHaveBeenCalledTimes(1);
@@ -46,17 +46,17 @@ describe("ToolPill", () => {
   it("done: reflects expanded state on aria-expanded", () => {
     const event = makeEvent({ done: true });
     const { rerender } = render(
-      <ToolPill event={event} expanded={false} onToggle={() => {}} />
+      <ToolPill event={event} panelId="tool-panel-1" expanded={false} onToggle={() => {}} />
     );
     expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("false");
 
-    rerender(<ToolPill event={event} expanded={true} onToggle={() => {}} />);
+    rerender(<ToolPill event={event} panelId="tool-panel-1" expanded={true} onToggle={() => {}} />);
     expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true");
   });
 
   it("never renders the detail panel itself", () => {
     const event = makeEvent({ done: true, output: "line 1" });
-    render(<ToolPill event={event} expanded={true} onToggle={() => {}} />);
+    render(<ToolPill event={event} panelId="tool-panel-1" expanded={true} onToggle={() => {}} />);
     expect(screen.queryByText("INPUT")).toBeNull();
     expect(screen.queryByText("OUTPUT")).toBeNull();
   });

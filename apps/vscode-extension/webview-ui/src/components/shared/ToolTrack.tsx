@@ -5,6 +5,7 @@ import { ToolPill } from "./ToolPill";
 import {
   CAP_RADIUS,
   COL_GAP,
+  ROW_GAP,
   SIDE_PAD,
   buildTrackPath,
   packRows,
@@ -38,6 +39,17 @@ function pillState(event: ToolEventView): PillState {
 
 function pillKey(event: ToolEventView): string {
   return `${event.tool}|${pillState(event)}`;
+}
+
+/**
+ * The panel lives as a sibling of the whole row rather than inside the pill's
+ * own subtree (see ToolDetailPanel), which drops the DOM adjacency a
+ * screen reader relies on to connect a disclosure button to what it reveals.
+ * A shared id, referenced by both the panel wrapper and the triggering pill's
+ * `aria-controls`, restores that link explicitly.
+ */
+function toolPanelId(eventId: number): string {
+  return `tool-panel-${eventId}`;
 }
 
 interface Props {
@@ -100,9 +112,15 @@ export function ToolTrack({ events, measureWidths }: Props) {
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // groups is a fresh array every render; deriving a string key lets the
-  // caret-positioning effect below depend on the row layout without
-  // re-running on every unrelated render.
-  const layoutKey = groups.map((g) => g.join(",")).join("|");
+  // caret- and rail-positioning effects below depend on row membership AND
+  // pill identity, without re-running on every unrelated render. Identity
+  // matters as much as membership: a pill's width changes when it finishes
+  // (ToolPill: running has no chevron, done adds a check plus a chevron plus
+  // another gap), so a call finishing in place — same index, same row, wider
+  // pill — must still re-aim the rails even though no index crossed a row
+  // boundary. Keying on indices alone would miss exactly that case and leave
+  // the geometry pointing at the pre-completion layout.
+  const layoutKey = groups.map((g) => g.map((i) => keys[i]).join(",")).join("|");
 
   useLayoutEffect(() => {
     if (!needsProbe || !probeRef.current) return;
@@ -230,7 +248,11 @@ export function ToolTrack({ events, measureWidths }: Props) {
         </svg>
       )}
 
-      <div ref={rowsRef} className="flex flex-col gap-6">
+      {/* `relative` (not a background/z-index trick — see ToolTrack design notes)
+          puts this in the same auto-z-index stacking context as the rails
+          <svg> above, so DOM order decides paint order and the opaque pills
+          paint over the road instead of the road painting over their faces. */}
+      <div ref={rowsRef} className="relative flex flex-col" style={{ rowGap: ROW_GAP }}>
         {groups.map((indices, rowIndex) => {
           const dirRight = rowIndex % 2 === 0;
           // The last row keeps its natural packing so the road can end on a
@@ -261,6 +283,7 @@ export function ToolTrack({ events, measureWidths }: Props) {
                   <ToolPill
                     key={events[i].id}
                     event={events[i]}
+                    panelId={toolPanelId(events[i].id)}
                     expanded={events[i].id === expandedId}
                     onToggle={() =>
                       setExpandedId((current) =>
@@ -273,6 +296,7 @@ export function ToolTrack({ events, measureWidths }: Props) {
 
               {openIndex !== undefined && (
                 <div
+                  id={toolPanelId(events[openIndex].id)}
                   data-rowpanel=""
                   className="relative"
                   style={{ marginLeft: SIDE_PAD, marginRight: SIDE_PAD }}
@@ -305,7 +329,12 @@ export function ToolTrack({ events, measureWidths }: Props) {
             const event = events[keys.indexOf(key)];
             return (
               <span key={key} data-key={key} className="inline-block">
-                <ToolPill event={event} expanded={false} onToggle={() => {}} />
+                <ToolPill
+                  event={event}
+                  panelId={toolPanelId(event.id)}
+                  expanded={false}
+                  onToggle={() => {}}
+                />
               </span>
             );
           })}

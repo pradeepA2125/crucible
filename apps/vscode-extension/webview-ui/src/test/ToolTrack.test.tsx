@@ -158,9 +158,29 @@ describe("ToolTrack", () => {
     expect(container.querySelector('[data-cap="end"]')).not.toBeNull();
   });
 
-  it("draws no rails when there are no rows", () => {
-    const { container } = render(<ToolTrack events={[]} measureWidths={fixedWidths} />);
-    expect(container.querySelector("[data-rails]")).toBeNull();
+  it("draws no rails while widths are packed against a zero-width container", () => {
+    // events={[]} would hit the `events.length === 0` early return and never
+    // reach the `groups.length > 0` gate at all — the first test in this file
+    // ("renders nothing for no events") already covers that path. The gate
+    // that actually matters is a real transient: events present, but the
+    // container hasn't reported a usable width yet (unmeasured, or — as here
+    // — a genuine 0 mid-resize), so `packRows` can't run and `groups` is `[]`.
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => 0,
+    });
+    try {
+      const { container } = render(
+        <ToolTrack events={makeEvents(5)} measureWidths={fixedWidths} />
+      );
+      expect(container.querySelector("[data-rails]")).toBeNull();
+    } finally {
+      // Restore the file-level stub so later tests keep a deterministic width.
+      Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+        configurable: true,
+        get: () => CONTAINER_WIDTH,
+      });
+    }
   });
 });
 
