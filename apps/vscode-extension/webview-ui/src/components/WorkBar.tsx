@@ -55,11 +55,11 @@ function TokenCounter({ progress }: { progress: TokenProgressView }) {
       aria-label={`${thinking} thinking tokens, ${output} output tokens`}
     >
       {thinking > 0 && (
-        <span title="reasoning tokens">🧠 {formatCount(thinking)}</span>
+        <span title="reasoning tokens (approximate)">🧠 {formatCount(thinking)}</span>
       )}
       {output > 0 && (
         <span
-          title="output tokens"
+          title="output tokens (approximate)"
           style={{ color: "var(--color-green)" }}
         >
           ↓ {formatCount(output)}

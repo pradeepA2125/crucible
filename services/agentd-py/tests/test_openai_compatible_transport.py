@@ -878,12 +878,16 @@ class _CountingProgress:
 @pytest.mark.asyncio
 async def test_stream_progress_reports_reasoning_and_content_separately() -> None:
     """The split is the point: 'still thinking' and 'writing output' are different
-    states to a waiting user. The delta loop already distinguishes them."""
+    states to a waiting user. The delta loop already distinguishes them.
+
+    Counts are approximate tokens (~4 chars each), not delta counts — the two
+    sides are deliberately different lengths so the assertion shows they are
+    accumulated independently rather than coinciding."""
     transport, _ = _transport([])
     transport._completions = _FakeCompletions([
         _DeltaStream([
-            _StreamDelta(None, reasoning_content="think "),
-            _StreamDelta(None, reasoning_content="more "),
+            _StreamDelta(None, reasoning_content="think about it carefully "),
+            _StreamDelta(None, reasoning_content="and then some more "),
             _StreamDelta("out1"),
             _StreamDelta("out2"),
             _StreamDelta("out3"),
@@ -897,7 +901,7 @@ async def test_stream_progress_reports_reasoning_and_content_separately() -> Non
 
     assert text == "out1out2out3"
     assert progress.calls, "on_progress was never called"
-    assert progress.calls[-1] == (2, 3), progress.calls
+    assert progress.calls[-1] == (11, 3), progress.calls
 
 
 @pytest.mark.asyncio
@@ -914,7 +918,7 @@ async def test_stream_progress_is_throttled_not_one_call_per_delta() -> None:
     )
 
     assert len(progress.calls) < 40, f"not throttled: {len(progress.calls)} calls"
-    assert progress.calls[-1] == (0, 40), progress.calls
+    assert progress.calls[-1] == (0, 28), progress.calls   # 110 chars of content
 
 
 @pytest.mark.asyncio
@@ -958,7 +962,7 @@ async def test_json_mode_none_still_reports_token_progress() -> None:
 
     assert result == {"ok": True}
     assert progress.calls, "on_progress never fired on the json_object/none path"
-    assert progress.calls[-1] == (1, 2), progress.calls
+    assert progress.calls[-1] == (1, 3), progress.calls
 
 
 # ------------------------------------------------- malformed JSON: repair + fail fast
@@ -1332,3 +1336,100 @@ async def test_unconstrained_does_not_persist_to_the_next_call() -> None:
     assert "response_format" not in fake.calls[0]
     assert fake.calls[1]["response_format"]["type"] == "json_schema", fake.calls[1]
     assert transport.json_mode == "strict", "one unconstrained call must not downgrade"
+
+
+# ── on_progress reports token-ish counts, not delta counts ────────────────────
+# A structured-output endpoint routinely returns the whole JSON action in ONE
+# content delta. Counting deltas then reports "1" for a 300-char tool call while
+# the UI labels it "output tokens" — the number is meaningless exactly where the
+# user is watching it. These pin the counts to the produced text, not to how the
+# server happened to chunk it.
+
+
+@pytest.mark.asyncio
+async def test_progress_counts_output_tokens_not_deltas() -> None:
+    action = '{"type":"tool_call","tool":"read_file","args":{"path":"a.py"}}'
+    transport, _ = _transport([_GoodStream(action)])
+    seen: list[tuple[int, int]] = []
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_progress=lambda r, c: seen.append((r, c)),
+    )
+    assert seen, "on_progress never fired"
+    _reasoning, content = seen[-1]
+    # The whole action arrived as a single delta; a delta count would report 1.
+    assert content > 1, f"counted deltas, not tokens: {content}"
+    # ~4 chars per token, so a 61-char action is roughly 15 tokens — assert the
+    # order of magnitude rather than an exact tokenizer result.
+    assert 8 <= content <= 30, f"implausible token estimate for {len(action)} chars: {content}"
+
+
+@pytest.mark.asyncio
+async def test_progress_counts_reasoning_tokens_not_deltas() -> None:
+    reasoning = "I need to read the file first. " * 8   # 248 chars, one delta
+    stream = _DeltaStream([_StreamDelta(None, reasoning=reasoning)])
+    transport, _ = _transport([stream])
+    seen: list[tuple[int, int]] = []
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_progress=lambda r, c: seen.append((r, c)),
+    )
+    assert seen, "on_progress never fired"
+    reasoning_n, _content = seen[-1]
+    assert reasoning_n > 1, f"counted deltas, not tokens: {reasoning_n}"
+
+
+@pytest.mark.asyncio
+async def test_progress_accumulates_across_deltas() -> None:
+    """A server that DOES chunk must still produce a monotonically rising count."""
+    stream = _DeltaStream([
+        _StreamDelta("word one here "),
+        _StreamDelta("word two here "),
+        _StreamDelta("word three here "),
+    ])
+    transport, _ = _transport([stream])
+    seen: list[tuple[int, int]] = []
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_progress=lambda r, c: seen.append((r, c)),
+    )
+    counts = [c for _r, c in seen]
+    assert counts == sorted(counts), f"output count went backwards: {counts}"
+    assert counts[-1] > 1
+
+
+@pytest.mark.asyncio
+async def test_streams_for_progress_even_without_a_thinking_callback() -> None:
+    """The streaming branch was gated on on_thinking, not on on_progress, so a
+    caller wanting only the counter silently got the NON-streaming path: no
+    deltas, no progress, and the whole response landing in one lump at the end.
+    Nothing hits that combination today, which is exactly why it would rot."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([_DeltaStream([_StreamDelta("hello there")])])
+    progress = _CountingProgress()
+
+    text, _ = await transport._get_completion_output(
+        {"model": "m", "messages": []}, None, None, progress,
+    )
+
+    assert text == "hello there"
+    assert progress.calls, "no progress: the call did not stream"
+
+
+@pytest.mark.asyncio
+async def test_generate_text_streaming_forwards_progress() -> None:
+    """_stream_with_thinking dropped on_progress on the floor, so generate_text
+    could never report a count however long it ran."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([_DeltaStream([_StreamDelta("some answer text")])])
+    progress = _CountingProgress()
+
+    result = await transport._stream_with_thinking(
+        {"model": "m", "messages": []}, on_thinking=lambda _c: None, on_progress=progress,
+    )
+
+    assert result == "some answer text"
+    assert progress.calls, "generate_text's streaming path reported no progress"

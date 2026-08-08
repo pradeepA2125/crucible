@@ -35,6 +35,25 @@ _CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
 # counter a human reads a few times a second. ~6/sec reads as continuous.
 _PROGRESS_INTERVAL_SEC = 0.15
 
+# Characters per token. A rough constant on purpose: the counts it feeds are a
+# live progress readout, not billing, and a real tokenizer would mean loading a
+# per-model vocabulary just to animate a number.
+#
+# What it replaces matters more than its accuracy. The counts used to be the
+# number of stream DELTAS, which is not a property of the response at all — it
+# is a property of how the server chose to chunk. A structured-output endpoint
+# returns a whole JSON action in ONE delta, so every tool call reported "1"
+# under a label reading "output tokens", while a long edit that happened to be
+# chunked counted into the thousands. Same code, same call, 3-orders-of-
+# magnitude different number.
+_CHARS_PER_TOKEN = 4
+
+
+def _approx_tokens(chars: int) -> int:
+    """Characters to an approximate token count, rounding up so any produced
+    text reads as at least one token."""
+    return (chars + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+
 # Streamed reasoning is not in the OpenAI spec, so the ecosystem settled on two
 # different delta field names: `reasoning` (OpenRouter, Groq) and
 # `reasoning_content` (DeepSeek, vLLM, NVIDIA NIM — confirmed live against
@@ -377,7 +396,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         Returns (text, finish_reason). The finish_reason is what lets the caller
         tell a truncated response apart from a genuinely malformed one.
         """
-        if callable(on_thinking):
+        # Gate on EITHER callback. Gating on on_thinking alone meant a caller that
+        # wanted only the token counter got the non-streaming path — no deltas, so
+        # no progress, and the whole response arriving in one lump at the end.
+        if callable(on_thinking) or callable(on_progress):
             return await self._stream_with_finish_reason(
                 create_kwargs, on_thinking=on_thinking, on_retry=on_retry,
                 on_progress=on_progress,
@@ -675,11 +697,16 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         *,
         on_thinking: Any,
         on_retry: Any = None,
+        on_progress: Any = None,
     ) -> str:
         """Text-only view of _stream_with_finish_reason (generate_text's entry
-        point, and the long-standing public-ish shape of this method)."""
+        point, and the long-standing public-ish shape of this method).
+
+        on_progress is forwarded rather than dropped: without it this path could
+        never report a count no matter how long the generation ran."""
         text, _finish_reason = await self._stream_with_finish_reason(
-            create_kwargs, on_thinking=on_thinking, on_retry=on_retry
+            create_kwargs, on_thinking=on_thinking, on_retry=on_retry,
+            on_progress=on_progress,
         )
         return text
 
@@ -749,7 +776,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             try:
                 content_parts: list[str] = []
                 finish_reason: str | None = None
-                reasoning_n = content_n = 0
+                # Characters, not deltas — see _approx_tokens.
+                reasoning_chars = content_chars = 0
                 last_progress = 0.0
                 async for chunk in stream:
                     choices = getattr(chunk, "choices", None) or []
@@ -763,21 +791,30 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         continue
                     reasoning = _first_reasoning_chunk(delta)
                     if reasoning:
-                        reasoning_n += 1
-                        on_thinking(reasoning)
+                        reasoning_chars += len(reasoning)
+                        # Guarded: this path is now also reachable for a caller
+                        # that wants progress but not the reasoning text itself.
+                        if callable(on_thinking):
+                            on_thinking(reasoning)
                     content = getattr(delta, "content", None) or ""
                     if content:
-                        content_n += 1
+                        content_chars += len(content)
                         content_parts.append(content)
                     if on_progress is not None and (reasoning or content):
                         now = time.monotonic()
                         if now - last_progress >= _PROGRESS_INTERVAL_SEC:
                             last_progress = now
-                            on_progress(reasoning_n, content_n)
+                            on_progress(
+                                _approx_tokens(reasoning_chars),
+                                _approx_tokens(content_chars),
+                            )
                 # Final emit: throttling can swallow the last tick, and the closing
-                # number is the one a user actually reads.
-                if on_progress is not None and (reasoning_n or content_n):
-                    on_progress(reasoning_n, content_n)
+                # number is the one a user actually reads. It also carries the only
+                # count a single-delta response ever produces.
+                if on_progress is not None and (reasoning_chars or content_chars):
+                    on_progress(
+                        _approx_tokens(reasoning_chars), _approx_tokens(content_chars)
+                    )
                 return "".join(content_parts).strip(), finish_reason
             except TimeoutError as exc:
                 raise TransientTransportError(
