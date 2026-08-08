@@ -1433,3 +1433,124 @@ async def test_generate_text_streaming_forwards_progress() -> None:
 
     assert result == "some answer text"
     assert progress.calls, "generate_text's streaming path reported no progress"
+
+
+# ── exact token counts from the stream's usage chunk ──────────────────────────
+# A provider that reports usage sends ONE extra final chunk with empty choices
+# and a usage object. The delta loop's `if not choices: continue` skipped exactly
+# that chunk, so an exact count we were already being handed was thrown away.
+# The live climb stays estimated (no per-delta counts exist in the format); only
+# the closing number — the one left on screen — becomes exact.
+
+
+class _UsageDetails:
+    def __init__(self, reasoning_tokens: int) -> None:
+        self.reasoning_tokens = reasoning_tokens
+
+
+class _Usage:
+    def __init__(self, completion_tokens: int, reasoning_tokens: int | None = None) -> None:
+        self.completion_tokens = completion_tokens
+        self.completion_tokens_details = (
+            _UsageDetails(reasoning_tokens) if reasoning_tokens is not None else None
+        )
+
+
+class _UsageChunk:
+    """Final chunk of a usage-reporting stream: no choices, just totals."""
+
+    def __init__(self, usage: object) -> None:
+        self.choices = []
+        self.usage = usage
+
+
+class _StreamThenUsage:
+    def __init__(self, deltas: list[object], usage: object) -> None:
+        self._deltas = deltas
+        self._usage = usage
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for d in self._deltas:
+            yield _StreamChunk(None, delta=d)
+        yield _UsageChunk(self._usage)
+
+
+async def _run_progress(transport: object, stream: object) -> list[tuple[int, int]]:
+    transport._completions = _FakeCompletions([stream])   # type: ignore[attr-defined]
+    seen: list[tuple[int, int]] = []
+    await transport._stream_with_finish_reason(   # type: ignore[attr-defined]
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_progress=lambda r, c: seen.append((r, c)),
+    )
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_exact_content_tokens_replace_the_estimate() -> None:
+    """No reasoning in the response, so completion_tokens is all content."""
+    transport, _ = _transport([])
+    seen = await _run_progress(
+        transport,
+        _StreamThenUsage([_StreamDelta("a" * 400)], _Usage(completion_tokens=57)),
+    )
+    assert seen[-1] == (0, 57), f"estimate not replaced by exact usage: {seen[-1]}"
+
+
+@pytest.mark.asyncio
+async def test_usage_splits_reasoning_from_content_when_details_are_present() -> None:
+    """completion_tokens INCLUDES reasoning tokens; the details break them out."""
+    transport, _ = _transport([])
+    seen = await _run_progress(
+        transport,
+        _StreamThenUsage(
+            [_StreamDelta(None, reasoning_content="x" * 300), _StreamDelta("y" * 80)],
+            _Usage(completion_tokens=100, reasoning_tokens=80),
+        ),
+    )
+    assert seen[-1] == (80, 20), f"bad split: {seen[-1]}"
+
+
+@pytest.mark.asyncio
+async def test_unsplittable_usage_keeps_the_estimates() -> None:
+    """Reasoning happened but the provider gave no breakdown — attributing the
+    whole total to content would report a wildly wrong output count, so the
+    estimates stand rather than inventing a split."""
+    transport, _ = _transport([])
+    seen = await _run_progress(
+        transport,
+        _StreamThenUsage(
+            [_StreamDelta(None, reasoning_content="x" * 400), _StreamDelta("y" * 40)],
+            _Usage(completion_tokens=140),
+        ),
+    )
+    reasoning, content = seen[-1]
+    assert reasoning == 100 and content == 10, f"estimates were disturbed: {seen[-1]}"
+
+
+@pytest.mark.asyncio
+async def test_usage_as_a_plain_dict_is_read() -> None:
+    """Not every SDK/server surfaces usage as an attribute object."""
+    transport, _ = _transport([])
+    seen = await _run_progress(
+        transport,
+        _StreamThenUsage([_StreamDelta("a" * 400)], {"completion_tokens": 33}),
+    )
+    assert seen[-1] == (0, 33), f"dict-shaped usage ignored: {seen[-1]}"
+
+
+@pytest.mark.asyncio
+async def test_no_usage_chunk_still_reports_the_estimate() -> None:
+    """The overwhelming majority of endpoints send no usage at all."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([_DeltaStream([_StreamDelta("a" * 400)])])
+    seen: list[tuple[int, int]] = []
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_progress=lambda r, c: seen.append((r, c)),
+    )
+    assert seen[-1] == (0, 100), f"estimate lost: {seen[-1]}"

@@ -54,6 +54,41 @@ def _approx_tokens(chars: int) -> int:
     text reads as at least one token."""
     return (chars + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
 
+
+def _usage_token_counts(usage: Any) -> tuple[int | None, int | None]:
+    """(completion_tokens, reasoning_tokens) out of a usage payload of either
+    shape — an SDK object or a plain dict — with missing pieces as None."""
+
+    def _get(obj: Any, name: str) -> Any:
+        return obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+
+    completion = _get(usage, "completion_tokens")
+    details = _get(usage, "completion_tokens_details")
+    reasoning = _get(details, "reasoning_tokens") if details is not None else None
+    return (
+        completion if isinstance(completion, int) else None,
+        reasoning if isinstance(reasoning, int) else None,
+    )
+
+
+def _exact_counts(usage: Any, saw_reasoning: bool) -> tuple[int, int] | None:
+    """Exact (reasoning, content) token counts from a stream's usage totals, or
+    None when the split cannot be attributed and the estimates should stand.
+
+    `completion_tokens` is the whole output INCLUDING reasoning, so it can be
+    used as the content count only when the response had no reasoning at all.
+    Otherwise the breakdown is required: attributing a reasoning model's entire
+    output to the content counter would put a wildly wrong number under it.
+    """
+    completion, reasoning = _usage_token_counts(usage)
+    if completion is None:
+        return None
+    if reasoning is not None:
+        return reasoning, max(0, completion - reasoning)
+    if not saw_reasoning:
+        return 0, completion
+    return None
+
 # Streamed reasoning is not in the OpenAI spec, so the ecosystem settled on two
 # different delta field names: `reasoning` (OpenRouter, Groq) and
 # `reasoning_content` (DeepSeek, vLLM, NVIDIA NIM — confirmed live against
@@ -778,8 +813,16 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 finish_reason: str | None = None
                 # Characters, not deltas — see _approx_tokens.
                 reasoning_chars = content_chars = 0
+                usage_payload: Any = None
                 last_progress = 0.0
                 async for chunk in stream:
+                    # A usage-reporting stream ends with one extra chunk that has
+                    # NO choices and carries the exact totals. Read it before the
+                    # empty-choices skip below, which would otherwise discard the
+                    # only exact number the provider ever hands us.
+                    chunk_usage = getattr(chunk, "usage", None)
+                    if chunk_usage is not None:
+                        usage_payload = chunk_usage
                     choices = getattr(chunk, "choices", None) or []
                     if not choices:
                         continue
@@ -810,11 +853,23 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                             )
                 # Final emit: throttling can swallow the last tick, and the closing
                 # number is the one a user actually reads. It also carries the only
-                # count a single-delta response ever produces.
+                # count a single-delta response ever produces — and, when the
+                # provider reported usage, the one exact count in the whole call.
+                # The live ticks above stay estimated: the format carries no
+                # per-delta token counts, so there is nothing exact to show until
+                # the stream ends.
                 if on_progress is not None and (reasoning_chars or content_chars):
-                    on_progress(
-                        _approx_tokens(reasoning_chars), _approx_tokens(content_chars)
+                    exact = (
+                        _exact_counts(usage_payload, reasoning_chars > 0)
+                        if usage_payload is not None
+                        else None
                     )
+                    if exact is not None:
+                        on_progress(*exact)
+                    else:
+                        on_progress(
+                            _approx_tokens(reasoning_chars), _approx_tokens(content_chars)
+                        )
                 return "".join(content_parts).strip(), finish_reason
             except TimeoutError as exc:
                 raise TransientTransportError(
