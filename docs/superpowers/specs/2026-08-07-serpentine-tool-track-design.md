@@ -39,6 +39,38 @@ turn — was prototyped and rejected.)
 The approved wireframe is the source of truth for geometry and states:
 `https://claude.ai/code/artifact/ca7c76ea-3377-4649-bfa2-dba4e5c7fda4`
 
+### Two geometry tiers
+
+Amended 2026-08-08, after the final whole-branch review measured the narrow case.
+
+The wireframe was approved against a wide, near-full-width panel. At a docked ~300px
+sidebar the same constants fall apart: `SIDE_PAD` claims 56px of the width and `DiffCard`
+another 24px, leaving ~220px — less than two finished `read_file` pills plus a gap
+(127 + 14 + 127 = 268). The track degrades to one pill per row, making a 28-call turn
+*taller* than the wall it replaced, and an interior row holding a single pill leaves a long
+empty rail running out to its turn.
+
+So the geometry has two tiers, chosen from the measured track width:
+
+| | wide | narrow |
+|---|---|---|
+| `SIDE_PAD` | 28 | 8 |
+| `COL_GAP` | 14 | 8 |
+| `TURN_INSET` | 9 | 4 |
+
+Wide panels keep exactly the approved wireframe. Narrow panels trade the roomy turn lane
+for density, and fit two to three pills per row again.
+
+`TURN_INSET` has to shrink with `SIDE_PAD`, not independently: the turn axis sits at
+`width - TURN_INSET` and the row's content edge at `width - SIDE_PAD`, so leaving the inset
+at 9 while the pad drops to 8 would put the vertical run *inside* the content, cutting
+through the last pill instead of turning beyond it.
+
+Rejected alternatives: falling back to the flat wrap below the threshold (ships and
+maintains two layouts, and leaves the narrow case with the exact wall this feature exists to
+fix); tightening the constants globally (denser than the approved wireframe at every width);
+and accepting one pill per row.
+
 ## What alternating direction forces
 
 `flex-wrap` cannot alternate direction per wrapped line. The browser therefore can no longer
