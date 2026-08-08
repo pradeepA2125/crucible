@@ -33,7 +33,7 @@
 | `src/components/shared/ToolPill.tsx` (modify) | Loses its `expanded` state and its panel JSX; becomes a controlled button. |
 | `src/components/messages/AgentRow.tsx` (modify) | Swaps its `flex flex-wrap` wrapper for `<ToolTrack>`. |
 | `src/components/messages/DiffCard.tsx` (modify) | Same swap. |
-| `src/test/setup.ts` (modify) | Stubs `ResizeObserver`, which jsdom does not implement. |
+| `src/test/setup.ts` (modify) | Stubs `ResizeObserver` (Task 4) and globally overrides `clientWidth`/`getBoundingClientRect` with layout-plausible values (Task 7) — jsdom implements neither. |
 | `src/test/tool-track-layout.test.ts` (create) | The substantive tests — pure geometry, no DOM. |
 | `src/test/ToolTrack.test.tsx` (create) | Structural tests with injected widths and a stubbed `clientWidth`. |
 | `src/test/components.test.tsx` (modify) | Existing `ToolPill` tests updated for the controlled props. |
@@ -831,7 +831,14 @@ interface Props {
  * pill sits directly beneath it.
  */
 export function ToolTrack({ events, measureWidths }: Props) {
-  const trackRef = useRef<HTMLDivElement | null>(null);
+  // A plain ref wouldn't re-fire the measurement effect: `events` starts empty
+  // for both current call sites, the component returns null for empty events
+  // (below), so the div — and the ref — never exist on first mount. If that
+  // same instance later gets a non-empty `events` array, a ref-object effect
+  // keyed on `[]` never reruns, and the track is stuck at width 0 forever. A
+  // callback ref stored in state makes attachment itself a state change, so
+  // the effect (keyed on the node) reruns exactly when there's a node to read.
+  const [trackNode, setTrackNode] = useState<HTMLDivElement | null>(null);
   const probeRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   // The value is never read — only the re-render it forces matters. Naming the
@@ -841,13 +848,12 @@ export function ToolTrack({ events, measureWidths }: Props) {
   // Track the container width. useLayoutEffect so the first real measurement
   // lands before paint and the user never sees a mis-packed frame.
   useLayoutEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
-    setWidth(el.clientWidth);
-    const observer = new ResizeObserver(() => setWidth(el.clientWidth));
-    observer.observe(el);
+    if (!trackNode) return;
+    setWidth(trackNode.clientWidth);
+    const observer = new ResizeObserver(() => setWidth(trackNode.clientWidth));
+    observer.observe(trackNode);
     return () => observer.disconnect();
-  }, []);
+  }, [trackNode]);
 
   // Plain per-render computation rather than useMemo: these are O(events) over a
   // few dozen items, and memoising them would need a fake dependency just to
@@ -869,20 +875,41 @@ export function ToolTrack({ events, measureWidths }: Props) {
 
   useLayoutEffect(() => {
     if (!needsProbe || !probeRef.current) return;
+    let recordedAny = false;
     for (const child of Array.from(probeRef.current.children)) {
       const key = (child as HTMLElement).dataset.key;
-      if (key) widthCache.set(key, Math.ceil(child.getBoundingClientRect().width));
+      if (!key) continue;
+      const measured = Math.ceil(child.getBoundingClientRect().width);
+      // A hidden webview (backgrounded VS Code tab) lays out every child at 0.
+      // Caching that would pin the width forever — since the cache is only
+      // ever filled, never re-measured, once a key gets a 0 it stays 0 for
+      // the rest of the session and the track crushes into one row. Leave a
+      // 0-measured key out of the cache so it stays in `missing` and gets
+      // probed again on the next opportunity (see the `width` dependency
+      // below — the ResizeObserver firing when the panel becomes visible
+      // again is exactly that opportunity).
+      if (measured > 0) {
+        widthCache.set(key, measured);
+        recordedAny = true;
+      }
     }
-    // The cache is module-level, so React cannot see that it changed. Force the
-    // re-render that reads the fresh widths; it clears `missing`, so this effect
-    // no-ops on its next run.
-    bumpMeasuredWidths((v) => v + 1);
-  }, [needsProbe, missing.join("|")]);
+    // The cache is module-level, so React cannot see that it changed. Force
+    // the re-render that reads the fresh widths — but ONLY if something was
+    // actually recorded. If every child measured 0 (hidden panel), bumping
+    // unconditionally would re-render with the exact same missing keys, which
+    // reruns this same effect, which measures 0 again, forever. Skipping the
+    // bump breaks that loop: nothing here changed, so nothing here re-renders,
+    // and the component sits quietly at `groups = []` until something OUTSIDE
+    // this effect changes `width` (the container regaining a real size),
+    // which is a real re-render for an unrelated reason and gives this effect
+    // (re-run via the `width` dep) another honest attempt.
+    if (recordedAny) bumpMeasuredWidths((v) => v + 1);
+  }, [needsProbe, missing.join("|"), width]);
 
   if (events.length === 0) return null;
 
   return (
-    <div ref={trackRef} className="relative">
+    <div ref={setTrackNode} className="relative">
       <div className="flex flex-col gap-6">
         {groups.map((indices, rowIndex) => {
           const dirRight = rowIndex % 2 === 0;
@@ -934,6 +961,24 @@ export function ToolTrack({ events, measureWidths }: Props) {
   );
 }
 ```
+
+**Why `trackNode`/`setTrackNode` instead of a plain `useRef` here:** Task 6's
+patch below renders `<div ref={setTrackNode} className="relative">` — that
+symbol has to come from somewhere, and this is where. A plain ref object
+wouldn't re-fire the measurement effect in the case that actually matters:
+`events` starts empty at both call sites (Task 7), the component returns
+`null` for empty events, so on first mount the div — and the ref — never
+exist at all. When that same instance later receives a non-empty `events`
+array, a ref-object effect keyed on `[]` never reruns, and the track is stuck
+at `width` 0 forever. A callback ref stored in state makes attachment itself
+a state change, so the width effect (keyed on `trackNode`, not `[]`) reruns
+exactly when there's a node to measure. The probe effect's `recordedAny`
+guard and its `width` dependency exist for the same reason the comment above
+gives: a backgrounded VS Code tab measures every probe child at 0, and
+without the guard that would either pin the cache at 0 forever or bump the
+re-render trigger in an unconditional loop; gating the bump on
+`recordedAny`, and re-running the effect when `width` changes, is what lets
+a later real measurement (e.g. the tab regaining focus) retry cleanly.
 
 - [ ] **Step 4: Run test to verify it passes**
 
