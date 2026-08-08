@@ -1313,6 +1313,7 @@ git commit -m "feat(chat): draw the serpentine rails behind the tool pills"
 ### Task 7: Wire the track into both render sites
 
 **Files:**
+- Modify: `apps/vscode-extension/webview-ui/src/test/setup.ts` (layout stubs — must come first)
 - Modify: `apps/vscode-extension/webview-ui/src/components/messages/AgentRow.tsx:72-78`
 - Modify: `apps/vscode-extension/webview-ui/src/components/messages/DiffCard.tsx:115-121`
 - Modify: `apps/vscode-extension/webview-ui/src/test/components.test.tsx`
@@ -1321,7 +1322,47 @@ git commit -m "feat(chat): draw the serpentine rails behind the tool pills"
 - Consumes: `ToolTrack` (Tasks 4–6).
 - Produces: nothing further. This is the last task.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1a: Give jsdom enough layout to render a track**
+
+`ToolTrack` packs its rows from two measurements — the container's `clientWidth`
+and each probe pill's `getBoundingClientRect().width`. jsdom reports 0 for both,
+so the component renders **zero rows**, and every existing test that merely
+touches a tool pill fails for the wrong reason. `src/test/DiffCard.test.tsx`
+already does exactly that, in two tests.
+
+Append to `apps/vscode-extension/webview-ui/src/test/setup.ts` (same class of
+test infrastructure as the `ResizeObserver` stub already there):
+
+```ts
+
+// jsdom has no layout engine: every element reports clientWidth 0 and a
+// zero-sized getBoundingClientRect. ToolTrack derives its row packing from
+// exactly those two measurements, so without a stub it renders no rows at all
+// and every test that merely touches a tool pill fails for the wrong reason.
+// Give elements a plausible chat-panel width, and a width proportional to their
+// text so distinct pills measure differently. ToolTrack's own test file
+// overrides both with stricter deterministic values.
+Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+  configurable: true,
+  get: () => 600,
+});
+
+Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
+  const width = (this.textContent?.length ?? 0) * 7 + 30;
+  const height = 20;
+  return {
+    x: 0, y: 0, top: 0, left: 0, right: width, bottom: height, width, height,
+    toJSON: () => ({}),
+  } as DOMRect;
+};
+```
+
+Do NOT build the returned object by spreading the real rect — this jsdom
+version's rect has no `toJSON` method, and calling it throws inside React's
+commit phase, which surfaces as an unrelated-looking `rect.toJSON is not a
+function` failure. Construct the shape directly, as above.
+
+- [ ] **Step 1b: Write the failing test**
 
 Append to `apps/vscode-extension/webview-ui/src/test/components.test.tsx`, inside the existing `describe("AgentRow", …)` block:
 
@@ -1387,7 +1428,11 @@ Run each and confirm the stated result before moving on:
 ```bash
 cd apps/vscode-extension/webview-ui && npx vitest run
 ```
-Expected: PASS, all suites. Note the total count.
+Expected: PASS, all suites, **zero failures** — 399 tests across 51 files. The
+two `src/test/DiffCard.test.tsx` tests that have been red since Task 3 go green
+here with **no edit to that file**: they are behaviour-level (click a pill,
+assert the panel's text appears), so wiring `ToolTrack` into `DiffCard` restores
+them. If either still fails, the wiring is wrong — do not edit the test.
 
 ```bash
 cd apps/vscode-extension/webview-ui && npm run typecheck
@@ -1412,7 +1457,8 @@ Expected: Vite build succeeds. The webview is a separate bundle — a green test
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/vscode-extension/webview-ui/src/components/messages/AgentRow.tsx \
+git add apps/vscode-extension/webview-ui/src/test/setup.ts \
+        apps/vscode-extension/webview-ui/src/components/messages/AgentRow.tsx \
         apps/vscode-extension/webview-ui/src/components/messages/DiffCard.tsx \
         apps/vscode-extension/webview-ui/src/test/components.test.tsx
 git commit -m "feat(chat): render tool pills on a serpentine track"
