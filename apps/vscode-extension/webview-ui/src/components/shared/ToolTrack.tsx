@@ -4,10 +4,9 @@ import { ToolDetailPanel } from "./ToolDetailPanel";
 import { ToolPill } from "./ToolPill";
 import {
   CAP_RADIUS,
-  COL_GAP,
   ROW_GAP,
-  SIDE_PAD,
   buildTrackPath,
+  metricsForWidth,
   packRows,
   type RowGeometry,
 } from "./tool-track-layout";
@@ -105,9 +104,16 @@ export function ToolTrack({ events, measureWidths }: Props) {
       ? null
       : keys.map((k) => widthCache.get(k) ?? 0);
 
+  // Derived once per render from the measured width: at and above
+  // NARROW_TRACK_WIDTH this is exactly the approved wireframe's constants; a
+  // docked ~300px sidebar drops below the threshold and gets the denser
+  // narrow tier instead. Every value below that reads from this rather than
+  // the flat SIDE_PAD/COL_GAP/TURN_INSET constants — see metricsForWidth.
+  const metrics = metricsForWidth(width);
+
   const groups =
     widths && width > 0
-      ? packRows(widths, Math.max(120, width - SIDE_PAD * 2), COL_GAP)
+      ? packRows(widths, Math.max(120, width - metrics.sidePad * 2), metrics.colGap)
       : [];
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -202,8 +208,10 @@ export function ToolTrack({ events, measureWidths }: Props) {
 
     // `width` is the container's own clientWidth, so the rails are drawn
     // against exactly the width packRows packed the rows against. Re-reading
-    // the node here could disagree with it mid-resize.
-    const result = buildTrackPath(geometry, width);
+    // the node here could disagree with it mid-resize. `metrics.turnInset`
+    // is the same tier that produced `sidePad`/`colGap` for these rows —
+    // passing a mismatched inset would put the turn inside the content lane.
+    const result = buildTrackPath(geometry, width, metrics.turnInset);
     path.setAttribute("d", result.d);
     svgRef.current?.setAttribute("viewBox", `0 0 ${width} ${host.offsetHeight}`);
 
@@ -271,13 +279,18 @@ export function ToolTrack({ events, measureWidths }: Props) {
                   dirRight ? "" : "flex-row-reverse",
                   fill ? "justify-between" : "",
                 ].join(" ")}
-                // SIDE_PAD/COL_GAP drive the packing math above (`packRows(...,
-                // width - SIDE_PAD * 2, COL_GAP)`); restating them as bare
-                // Tailwind classes (px-7, gap-[14px]) would let the two silently
-                // desync the moment either constant changes. Task 6 also builds
-                // the SVG rail directly on these row boundaries, so the rendered
-                // padding/gap must stay provably identical to the packed geometry.
-                style={{ columnGap: COL_GAP, paddingLeft: SIDE_PAD, paddingRight: SIDE_PAD }}
+                // `metrics` drives the packing math above (`packRows(...,
+                // width - metrics.sidePad * 2, metrics.colGap)`); restating
+                // either value as a bare Tailwind class (px-7, gap-[14px])
+                // would let the two silently desync the moment the tier
+                // changes. The rail SVG is also built directly on these row
+                // boundaries, so the rendered padding/gap must stay provably
+                // identical to the packed geometry.
+                style={{
+                  columnGap: metrics.colGap,
+                  paddingLeft: metrics.sidePad,
+                  paddingRight: metrics.sidePad,
+                }}
               >
                 {indices.map((i) => (
                   <ToolPill
@@ -299,7 +312,7 @@ export function ToolTrack({ events, measureWidths }: Props) {
                   id={toolPanelId(events[openIndex].id)}
                   data-rowpanel=""
                   className="relative"
-                  style={{ marginLeft: SIDE_PAD, marginRight: SIDE_PAD }}
+                  style={{ marginLeft: metrics.sidePad, marginRight: metrics.sidePad }}
                 >
                   <span
                     data-caret=""

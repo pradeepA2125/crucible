@@ -3,8 +3,11 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { ToolTrack, resetToolTrackWidthCacheForTests } from "../components/shared/ToolTrack";
 import type { ToolEventView } from "../types";
 
-// jsdom has no layout engine. Pin the container width so packing is deterministic.
-const CONTAINER_WIDTH = 300;
+// jsdom has no layout engine. Pin the container width so packing is
+// deterministic. This must sit at or above NARROW_TRACK_WIDTH so the bulk of
+// this file exercises the wide tier — a docked-sidebar width is exercised
+// separately below, where the narrower tier is the point of the test.
+const CONTAINER_WIDTH = 420;
 
 beforeAll(() => {
   Object.defineProperty(HTMLElement.prototype, "clientWidth", {
@@ -34,9 +37,9 @@ function makeEvents(count: number): ToolEventView[] {
   }));
 }
 
-/** Every pill 80 wide => with SIDE_PAD 28 both sides and COL_GAP 14,
- *  avail = 300 - 56 = 244 => 80 + 14 + 80 + 14 + 80 = 268 > 244, so 2 per row. */
-const fixedWidths = (events: ToolEventView[]) => events.map(() => 80);
+/** Every pill 170 wide => wide-tier SIDE_PAD 28 both sides and COL_GAP 14,
+ *  avail = 420 - 56 = 364 => 170 + 14 + 170 + 14 + 170 = 538 > 364, so 2 per row. */
+const fixedWidths = (events: ToolEventView[]) => events.map(() => 170);
 
 describe("ToolTrack", () => {
   it("renders nothing for no events", () => {
@@ -182,6 +185,32 @@ describe("ToolTrack", () => {
       });
     }
   });
+
+  it("fits more pills per row at a narrow width than the wide tier's padding would allow", () => {
+    // Mirrors the design doc's own numbers: two finished read_file pills
+    // (127px) plus a gap need 268px. At a 300px track the wide tier's 28px
+    // side padding leaves only 244px — 268 > 244, so only one pill would fit
+    // per row. The narrow tier's 8px padding leaves 284px, which fits both.
+    const readFilePillWidths = (events: ToolEventView[]) => events.map(() => 127);
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get: () => 300,
+    });
+    try {
+      const { container } = render(
+        <ToolTrack events={makeEvents(2)} measureWidths={readFilePillWidths} />
+      );
+      const rows = container.querySelectorAll("[data-row]");
+      expect(rows.length).toBe(1);
+      expect(rows[0].querySelectorAll("button").length).toBe(2);
+    } finally {
+      // Restore the file-level stub so later tests keep a deterministic width.
+      Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+        configurable: true,
+        get: () => CONTAINER_WIDTH,
+      });
+    }
+  });
 });
 
 // The five tests above all inject `measureWidths`, so `needsProbe` is always
@@ -244,9 +273,9 @@ describe("ToolTrack — real measurement (no measureWidths)", () => {
   it("probes the DOM and packs rows from the measured widths", () => {
     const spy = stubMeasuredTextWidths();
     try {
-      // ls=54, read_file=138, run_command=162; avail = 300 - 56 = 244.
-      // ls + gap + read_file = 54 + 14 + 138 = 206 <= 244, fits one row.
-      // + gap + run_command = 206 + 14 + 162 = 382 > 244, new row.
+      // ls=54, read_file=138, run_command=162; wide-tier avail = 420 - 56 = 364.
+      // ls + gap + read_file = 54 + 14 + 138 = 206 <= 364, fits one row.
+      // + gap + run_command = 206 + 14 + 162 = 382 > 364, new row.
       const events = makeNamedEvents(["ls", "read_file", "run_command"]);
       const { container } = render(<ToolTrack events={events} />);
       const rows = container.querySelectorAll("[data-row]");

@@ -22,6 +22,43 @@ export const RAIL_OVERSHOOT = 8;
 export const CAP_RADIUS = 3.5;
 
 /**
+ * Side padding, column gap, and turn inset scale together with the measured
+ * track width — everything else (row gap, turn radius, overshoot, cap
+ * radius) stays fixed across both tiers.
+ */
+export interface TrackMetrics {
+  sidePad: number;
+  colGap: number;
+  turnInset: number;
+}
+
+/** Wide tier: exactly the approved wireframe's values, unchanged. */
+const WIDE_METRICS: TrackMetrics = { sidePad: SIDE_PAD, colGap: COL_GAP, turnInset: TURN_INSET };
+
+/**
+ * Narrow tier, for a docked sidebar. `turnInset` shrinks in lockstep with
+ * `sidePad` rather than independently: the turn axis sits at
+ * `width - turnInset` and a row's content edge sits at `width - sidePad`.
+ * Leaving the inset at the wide tier's 9 while the pad drops to 8 would put
+ * the vertical run *inside* the content lane, so the road would cut through
+ * the last pill instead of turning beyond it.
+ */
+const NARROW_METRICS: TrackMetrics = { sidePad: 8, colGap: 8, turnInset: 4 };
+
+/**
+ * Track width at and above which the wide tier applies. Below it, `SIDE_PAD`
+ * alone claims more width than a docked ~300px sidebar has to give — less
+ * than two finished pills plus a gap — and the track degrades to one pill
+ * per row, taller than the flat wall this feature replaces.
+ */
+export const NARROW_TRACK_WIDTH = 420;
+
+/** Choose the geometry tier from the measured track width. */
+export function metricsForWidth(trackWidth: number): TrackMetrics {
+  return trackWidth >= NARROW_TRACK_WIDTH ? WIDE_METRICS : NARROW_METRICS;
+}
+
+/**
  * Greedy-pack pill widths into rows that fit `avail`.
  *
  * Returns indices into `widths`, grouped by row, in call order. A pill wider
@@ -76,12 +113,16 @@ export interface TrackPath {
  * and turn on the left, so the call after a row's last pill is the next row's
  * first pill directly beneath it. The final row never runs on to an edge — it
  * stops at its last pill, where the caller draws the end dot.
+ *
+ * `turnInset` is required, not defaulted: it must come from the same
+ * `TrackMetrics` tier as the row padding that produced `rows`, and a default
+ * would let a caller silently mix a narrow layout with the wide inset.
  */
-export function buildTrackPath(rows: RowGeometry[], width: number): TrackPath {
+export function buildTrackPath(rows: RowGeometry[], width: number, turnInset: number): TrackPath {
   if (rows.length === 0) return { d: "", startCap: null, endCap: null };
 
-  const axisRight = width - TURN_INSET;
-  const axisLeft = TURN_INSET;
+  const axisRight = width - turnInset;
+  const axisLeft = turnInset;
   const lead = (row: RowGeometry) => (row.dirRight ? -RAIL_OVERSHOOT : RAIL_OVERSHOOT);
   const tail = (row: RowGeometry) => (row.dirRight ? RAIL_OVERSHOOT : -RAIL_OVERSHOOT);
 
