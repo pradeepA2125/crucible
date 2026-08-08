@@ -3,7 +3,7 @@ import type { ToolEventView } from "../../types";
 import { Avatar } from "../shared/Avatar";
 import { MarkdownContent } from "../shared/MarkdownContent";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
-import { ToolPill } from "../shared/ToolPill";
+import { ToolTrack } from "../shared/ToolTrack";
 import { Icon } from "../Icon";
 
 interface Props {
@@ -68,14 +68,8 @@ export function AgentRow({
           />
         )}
 
-        {/* Tool pills row */}
-        {pills.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {pills.map((event) => (
-              <ToolPill key={event.id} event={event} />
-            ))}
-          </div>
-        )}
+        {/* Tool pills, threaded onto a serpentine track */}
+        {pills.length > 0 && <ToolTrack events={pills} />}
 
         {/* Content. Finished messages get the same markdown treatment as
             QAMessage (a turn with pills must not lose answer formatting);

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Icon } from "../Icon";
 import { DiffPanes } from "../shared/DiffPanes";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
-import { ToolPill } from "../shared/ToolPill";
+import { ToolTrack } from "../shared/ToolTrack";
 import { vscode } from "../../vscodeApi";
 import { BtnPrimary, BtnDanger } from "../shared/buttons";
 import { FileRow } from "../shared/FileRow";
@@ -113,10 +113,8 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
 
       {/* ── Persisted tool pills (explore + execution trace of this change) ── */}
       {toolEvents && toolEvents.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 px-3 pb-2">
-          {toolEvents.map((event) => (
-            <ToolPill key={event.id} event={event} />
-          ))}
+        <div className="px-3 pb-2">
+          <ToolTrack events={toolEvents} />
         </div>
       )}
 

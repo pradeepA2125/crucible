@@ -141,6 +141,20 @@ describe("AgentRow", () => {
     // The literal "✓" should NOT appear in the text node.
     expect(textEl.textContent).not.toContain("✓");
   });
+
+  it("renders tool events on a track rather than a flat wrap", () => {
+    const events: ToolEventView[] = [
+      makeEvent({ id: 1, done: true, isError: false, output: "ok" }),
+      makeEvent({ id: 2, tool: "search_code", done: true, isError: false, output: "ok" }),
+    ];
+    const { container } = render(<AgentRow content="" toolEvents={events} />);
+    expect(container.querySelectorAll("[data-row]").length).toBeGreaterThan(0);
+  });
+
+  it("renders no track when the turn made no tool calls", () => {
+    const { container } = render(<AgentRow content="done" />);
+    expect(container.querySelector("[data-row]")).toBeNull();
+  });
 });
 
 // ── 4. UserMessage backtick rendering ────────────────────────────────────────
