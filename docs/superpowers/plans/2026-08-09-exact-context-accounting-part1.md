@@ -490,9 +490,8 @@ async def test_on_usage_reports_prompt_tokens_once() -> None:
     seen: list[tuple[int, int]] = []
     stream = _StreamThenUsage(
         [_StreamDelta("hello there")],
-        _Usage(completion_tokens=17),
+        _Usage(completion_tokens=17, prompt_tokens=4242),
     )
-    stream._usage.prompt_tokens = 4242          # type: ignore[attr-defined]
     transport._completions = _FakeCompletions([stream])
 
     await transport._stream_with_finish_reason(
@@ -521,7 +520,7 @@ async def test_on_usage_is_silent_when_the_endpoint_reports_nothing() -> None:
     assert seen == [], seen
 ```
 
-`_Usage` (defined earlier in this file) has no `prompt_tokens` attribute; add one so the fixture is honest rather than monkeypatched at the call site — change its `__init__` to accept `prompt_tokens: int = 0` and assign `self.prompt_tokens = prompt_tokens`, then construct it as `_Usage(completion_tokens=17, prompt_tokens=4242)` and drop the `# type: ignore` line above.
+`_Usage` (defined earlier in this file) has no `prompt_tokens` attribute yet, so the test above will not construct. Add one first: give its `__init__` a `prompt_tokens: int = 0` keyword and assign `self.prompt_tokens = prompt_tokens`. Defaulting to 0 keeps every existing `_Usage(...)` call in the file working unchanged.
 
 - [ ] **Step 2: Run test to verify it fails**
 
