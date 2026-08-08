@@ -142,15 +142,26 @@ class Compactor:
         self._hot_token_frac = hot_token_frac
         self._hot_turns = hot_turns
 
-    async def maybe_compact(self, history: History, run_id: str) -> CompactionResult:
+    async def maybe_compact(
+        self, history: History, run_id: str, observed: ObservedPrompt | None = None
+    ) -> CompactionResult:
         # Pure token-trigger check (no count short-circuit: a short history of oversized
         # turns can be over budget and must still compact). Below threshold is the common
         # per-iteration case — return without touching the store (no hot-path DB read).
-        if _history_tokens(history) < self._window_tokens * self._trigger_frac:
+        #
+        # `observed` is the provider's exact count for the last call when there is
+        # one; input_tokens degrades to the old estimate when there is not, so the
+        # eight transports that report no usage are unaffected.
+        if input_tokens(history, observed) < self._window_tokens * self._trigger_frac:
             return CompactionResult(compacted=False, history=history)
         now = datetime.now(UTC)
         ms = int(now.timestamp() * 1000)
-        hot_budget = int(self._window_tokens * self._hot_token_frac)
+        # The floor budgets retained HISTORY, but the trigger measures total input,
+        # so the system prompt's share has to come off the top — otherwise
+        # compaction targets a number the input can never reach. Floored at 1 so a
+        # pathological overhead cannot ask for a negative budget.
+        hot_budget = max(1, int(self._window_tokens * self._hot_token_frac)
+                          - fixed_overhead(history, observed))
         evicted, hot, hot_used = _select_hot(history, hot_budget, self._hot_turns)
         base = self._store.next_seq(run_id)  # run-monotonic seq across compaction rounds
         degraded = False

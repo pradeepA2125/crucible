@@ -8,6 +8,7 @@ from agentd.memory.compactor import (
     _truncate_to_tokens,
     estimate_tokens,
 )
+from agentd.memory.models import ObservedPrompt
 from agentd.memory.store import MemoryStore
 
 
@@ -225,3 +226,80 @@ async def test_summarizer_failure_falls_back(tmp_path):
     assert result.history[-2:] == history[-2:]  # hot preserved (2 messages of ~26 tok each)
     assert len(store.get_segments("r1")) == 4  # evicted still persisted (lossless)
     assert store.get_anchor("r1") is None  # no anchor written on failure
+
+
+@pytest.mark.asyncio
+async def test_observation_makes_the_trigger_fire_on_real_occupancy(tmp_path):
+    """The estimate sees message contents only. A history that looks small can
+    still be sitting behind a large system prompt, and the provider's count is
+    the only thing that knows."""
+    store = MemoryStore(tmp_path / "m.sqlite3")
+
+    async def summ(old, evicted):
+        return "A"
+
+    # threshold = 100 * 0.65 = 65 tokens of input
+    comp = Compactor(
+        store, summ, window_tokens=100, trigger_frac=0.65, hot_token_frac=0.4, hot_turns=2
+    )
+    # Estimated at 30 tokens — well under the threshold on its own.
+    history = [
+        {"role": "user", "content": "a" * 30},
+        {"role": "assistant", "content": "b" * 60},
+    ]
+
+    without = await comp.maybe_compact(list(history), "r-no-obs")
+    assert without.compacted is False, "estimate alone should stay under threshold"
+
+    # The provider says this same history really costs 80 tokens of input.
+    observed = ObservedPrompt(tokens=80, message_count=2)
+    with_obs = await comp.maybe_compact(list(history), "r-obs", observed=observed)
+    assert with_obs.compacted is True, "measured input is over threshold and must compact"
+
+
+@pytest.mark.asyncio
+async def test_stale_observation_does_not_trigger_compaction(tmp_path):
+    """After a compaction rewrites history the pinned count is meaningless; using
+    it would compact again immediately, every turn, forever."""
+    store = MemoryStore(tmp_path / "m.sqlite3")
+
+    async def summ(old, evicted):
+        return "A"
+
+    comp = Compactor(
+        store, summ, window_tokens=100, trigger_frac=0.65, hot_token_frac=0.4, hot_turns=2
+    )
+    history = [
+        {"role": "user", "content": "a" * 30},
+        {"role": "assistant", "content": "b" * 60},
+    ]
+    stale = ObservedPrompt(tokens=5000, message_count=99)
+    result = await comp.maybe_compact(history, "r-stale", observed=stale)
+    assert result.compacted is False
+
+
+@pytest.mark.asyncio
+async def test_eviction_floor_leaves_room_for_the_fixed_overhead(tmp_path):
+    """hot_token_frac budgets retained HISTORY, but the trigger now measures total
+    input. A large system prompt must shrink the history that survives, or
+    compaction cannot actually get back under the window."""
+    store = MemoryStore(tmp_path / "m.sqlite3")
+
+    async def summ(old, evicted):
+        return "A"
+
+    # hot floor = 1000 * 0.4 = 400 tokens of input.
+    comp = Compactor(
+        store, summ, window_tokens=1000, trigger_frac=0.1, hot_token_frac=0.4, hot_turns=50
+    )
+    history = [{"role": "user", "content": "q" * 300} for _ in range(10)]   # 100 tokens each
+
+    # 300 tokens of that 400 floor is system prompt: measured 1300 total against
+    # 1000 tokens of history.
+    observed = ObservedPrompt(tokens=1300, message_count=10)
+    result = await comp.maybe_compact(list(history), "r-floor", observed=observed)
+
+    assert result.compacted is True
+    retained = sum(len(str(m.get("content", ""))) // 3
+                   for m in result.history if not str(m.get("content", "")).startswith("[MEMORY]"))
+    assert retained <= 100, f"kept {retained} tokens of history against a 100-token budget"
