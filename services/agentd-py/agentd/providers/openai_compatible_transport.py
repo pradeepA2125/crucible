@@ -423,46 +423,68 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_salvage: Any = None,
         unconstrained: bool = False,
     ) -> dict[str, object]:
-        result = await self._generate_json_once(
-            model=model,
-            schema_name=schema_name,
-            schema=schema,
-            system_instructions=system_instructions,
-            user_payload=user_payload,
-            on_thinking=on_thinking,
-            on_retry=on_retry,
-            on_progress=on_progress,
-            on_usage=on_usage,
-            on_salvage=on_salvage,
-            unconstrained=unconstrained,
-        )
-        # Type-specific narrowing: the tight anyOf schema enforces each variant's
-        # required fields at the token level, but if the grammar was ignored (an
-        # underlying provider that silently dropped response_format, or the json_object
-        # fallback fired), the model can still return a valid `type` with its action
-        # fields missing. Narrow `required` to just that type's fields and retry once.
-        if schema_name == "controller_step_response":
-            narrowed = narrow_schema_for_type(schema, result)
-            if narrowed is not None:
-                logger.warning(
-                    "%s: %s returned type=%r but missing action fields — "
-                    "retrying with narrowed schema",
-                    self._vendor, schema_name, result.get("type"),
-                )
-                result = await self._generate_json_once(
-                    model=model,
-                    schema_name=schema_name,
-                    schema=narrowed,
-                    system_instructions=system_instructions,
-                    user_payload=user_payload,
-                    on_thinking=on_thinking,
-                    on_retry=on_retry,
-                    on_progress=on_progress,
-                    on_usage=on_usage,
-                    on_salvage=on_salvage,
-                    unconstrained=unconstrained,
-                )
-        return result
+        # on_usage is per LOGICAL call, but one call can stream more than once: a
+        # strict attempt can complete, fail to parse, and fall back to json_object
+        # (a second stream) — and controller_step_response can additionally retry
+        # with a narrowed schema (up to two more). Each attempt measures a
+        # DIFFERENT prompt — the fallback injects the schema into the system
+        # prompt — so reporting every attempt would hand the compaction trigger a
+        # size for a call whose result we discarded. Record every attempt under a
+        # local recorder and fire the caller's callback exactly once, below, for
+        # the attempt that actually produced the result being returned.
+        attempts: list[tuple[int, int]] = []
+        recorder = (lambda p, c: attempts.append((p, c))) if on_usage is not None else None
+        succeeded = False
+        try:
+            result = await self._generate_json_once(
+                model=model,
+                schema_name=schema_name,
+                schema=schema,
+                system_instructions=system_instructions,
+                user_payload=user_payload,
+                on_thinking=on_thinking,
+                on_retry=on_retry,
+                on_progress=on_progress,
+                on_usage=recorder,
+                on_salvage=on_salvage,
+                unconstrained=unconstrained,
+            )
+            # Type-specific narrowing: the tight anyOf schema enforces each variant's
+            # required fields at the token level, but if the grammar was ignored (an
+            # underlying provider that silently dropped response_format, or the json_object
+            # fallback fired), the model can still return a valid `type` with its action
+            # fields missing. Narrow `required` to just that type's fields and retry once.
+            if schema_name == "controller_step_response":
+                narrowed = narrow_schema_for_type(schema, result)
+                if narrowed is not None:
+                    logger.warning(
+                        "%s: %s returned type=%r but missing action fields — "
+                        "retrying with narrowed schema",
+                        self._vendor, schema_name, result.get("type"),
+                    )
+                    result = await self._generate_json_once(
+                        model=model,
+                        schema_name=schema_name,
+                        schema=narrowed,
+                        system_instructions=system_instructions,
+                        user_payload=user_payload,
+                        on_thinking=on_thinking,
+                        on_retry=on_retry,
+                        on_progress=on_progress,
+                        on_usage=recorder,
+                        on_salvage=on_salvage,
+                        unconstrained=unconstrained,
+                    )
+            succeeded = True
+            return result
+        finally:
+            # succeeded is set only right before `return result` above, so an
+            # exception propagating out of either _generate_json_once call (every
+            # attempt exhausted, no result produced) leaves it False and skips the
+            # firing entirely — there is no call left standing to attribute a
+            # prompt size to.
+            if succeeded and on_usage is not None and attempts:
+                on_usage(*attempts[-1])
 
     async def _get_completion_output(
         self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
@@ -478,10 +500,11 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         Returns (text, finish_reason). The finish_reason is what lets the caller
         tell a truncated response apart from a genuinely malformed one.
         """
-        # Gate on EITHER callback. Gating on on_thinking alone meant a caller that
-        # wanted only the token counter got the non-streaming path — no deltas, so
-        # no progress, and the whole response arriving in one lump at the end.
-        if callable(on_thinking) or callable(on_progress):
+        # Gate on ANY callback. Gating on on_thinking alone meant a caller that
+        # wanted only the token counter (or only usage accounting) got the
+        # non-streaming path — no deltas, so no progress, and the whole response
+        # arriving in one lump at the end with no usage ever observed.
+        if callable(on_thinking) or callable(on_progress) or callable(on_usage):
             return await self._stream_with_finish_reason(
                 create_kwargs, on_thinking=on_thinking, on_retry=on_retry,
                 on_progress=on_progress, on_usage=on_usage,

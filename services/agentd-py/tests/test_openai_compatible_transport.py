@@ -1788,3 +1788,96 @@ async def test_on_usage_is_silent_when_the_endpoint_reports_nothing() -> None:
     )
 
     assert seen == [], seen
+
+
+@pytest.mark.asyncio
+async def test_on_usage_is_silent_when_usage_has_no_prompt_tokens() -> None:
+    """A usage object can be PRESENT and still lack prompt_tokens — the dict
+    shape from test_usage_as_a_plain_dict_is_read, which reports only
+    completion_tokens. _usage_prompt_tokens already handles this correctly; this
+    pins that against a plausible-wrong implementation (e.g.
+    usage.get("prompt_tokens", 0)) that would report a fabricated zero."""
+    transport, _ = _transport([])
+    seen: list[tuple[int, int]] = []
+    stream = _StreamThenUsage([_StreamDelta("a" * 400)], {"completion_tokens": 33})
+    transport._completions = _FakeCompletions([stream])
+
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert seen == [], seen
+
+
+# ── on_usage fires per LOGICAL call, not per stream attempt ──────────────────
+# A single generate_json call can stream more than once: a strict json_schema
+# attempt can complete and then fail to PARSE, falling back to json_object (a
+# second stream); controller_step_response can additionally retry with a
+# narrowed schema after that (up to two more). Each attempt measures a
+# DIFFERENT prompt — the fallback injects the schema into the system prompt —
+# so firing on_usage per attempt would hand the compaction trigger a size for
+# a call whose result was discarded, not the one actually returned.
+
+
+@pytest.mark.asyncio
+async def test_on_usage_fires_once_for_strict_then_fallback_attempt() -> None:
+    """Strict streams and reports usage, its output fails to parse, and the
+    json_object fallback streams (and reports usage) again. on_usage must fire
+    exactly once, carrying the FALLBACK's numbers — the attempt that actually
+    produced the result generate_json returns."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([
+        _StreamThenUsage(
+            [_StreamDelta("not json")],
+            _Usage(completion_tokens=10, prompt_tokens=100),
+        ),
+        _StreamThenUsage(
+            [_StreamDelta('{"ok": 1}')],
+            _Usage(completion_tokens=20, prompt_tokens=250),
+        ),
+    ])
+    seen: list[tuple[int, int]] = []
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="", user_payload={},
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert result == {"ok": 1}
+    assert seen == [(250, 20)], seen
+
+
+@pytest.mark.asyncio
+async def test_on_usage_fires_once_for_narrowed_schema_retry() -> None:
+    """controller_step_response can call _generate_json_once a SECOND time (see
+    test_downgrade_during_first_call_applies_to_narrowing_retry) when the first
+    reply is missing required action fields for its declared type. Same
+    call-count-vs-firing-count hazard as the strict/fallback path — on_usage
+    must fire exactly once, carrying the RETRY's numbers."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([
+        _StreamThenUsage(
+            [_StreamDelta(json.dumps({"type": "tool_call", "thought": "x"}))],
+            _Usage(completion_tokens=5, prompt_tokens=300),
+        ),
+        _StreamThenUsage(
+            [_StreamDelta(json.dumps({
+                "type": "tool_call", "thought": "x",
+                "tool": "read_file", "args": {"path": "p"},
+            }))],
+            _Usage(completion_tokens=8, prompt_tokens=340),
+        ),
+    ])
+    seen: list[tuple[int, int]] = []
+
+    result = await transport.generate_json(
+        model="m", schema_name="controller_step_response",
+        schema={"type": "object"}, system_instructions="", user_payload={},
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert result["tool"] == "read_file"
+    assert seen == [(340, 8)], seen
