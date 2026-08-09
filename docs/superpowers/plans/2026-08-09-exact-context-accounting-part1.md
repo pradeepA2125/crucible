@@ -543,9 +543,15 @@ def _usage_prompt_tokens(usage: Any) -> int | None:
     return value if isinstance(value, int) else None
 ```
 
-Thread an `on_usage: Any = None` keyword through, in the same positions the existing `on_progress` keyword occupies, on each of: `generate_json`, `_generate_json_once`, `_json_object_fallback`, `_get_completion_output`, `_get_completion_text`, `_stream_with_finish_reason`. Pass it down at every call between them exactly as `on_progress` is passed.
+Thread an `on_usage: Any = None` keyword through, in the same positions the existing `on_progress` keyword occupies, on each of: `generate_json`, `_generate_json_once`, `_json_object_fallback`, `_get_completion_output`, `_get_completion_text`, `_stream_with_finish_reason`. Pass it down at every call between them exactly as `on_progress` is passed — **with one exception**: `on_usage` must fire once per LOGICAL call (one `generate_json` invocation), not once per stream attempt.
 
-Then, in `_stream_with_finish_reason`, immediately after the final `on_progress` emit block, add:
+**Do not wire the caller's `on_usage` straight into `_stream_with_finish_reason`'s emit block and stop there.** `_stream_with_finish_reason` streams once, but a single `generate_json` call can invoke it more than once, and each invocation is a genuinely different prompt:
+- Inside `_generate_json_once`, a strict `json_schema` attempt that streams fine but fails to *parse* falls back to `json_object` — a second stream attempt against a different system prompt (the schema gets injected into it).
+- Inside `generate_json` itself, a `controller_step_response` result missing its action fields triggers one narrowed-schema retry — another full attempt, one level up from the fallback.
+
+A prior round of this plan fired `on_usage` directly from the innermost emit block with no attempt boundary in between; review classified that Critical, because it hands the compaction trigger the size of whichever attempt happened to report — including a strict attempt whose result was discarded when the fallback fired. Two rounds were needed to replace it. The correct shape is a **two-level recorder**: at each boundary (`generate_json`'s narrowed-retry boundary, and `_generate_json_once`'s strict/fallback boundary), thread a *local* list-recorder as the `on_usage` argument passed down to that level's own sub-calls, append `(prompt_tokens, completion_tokens)` to it, and clear it at the start of each new attempt within that level (so a stale earlier attempt's entry never survives to be misreported as the new attempt's). Fire the CALLER's real `on_usage` exactly once, in a `finally`, guarded by a `succeeded` flag set only immediately before the level's own `return` — never for an attempt whose output was discarded, and never at all if every attempt in that level raised. `_generate_json_once`'s finally reports into `generate_json`'s own recorder (passed in as ITS `on_usage` argument); `generate_json`'s finally is the one that reaches the actual caller. See `agentd/providers/openai_compatible_transport.py`'s `generate_json` and `_generate_json_once` for the shipped shape of both levels.
+
+Then, in `_stream_with_finish_reason` — the innermost primitive, which really does just report once per stream and needs no boundary logic of its own — immediately after the final `on_progress` emit block, add:
 
 ```python
                 # Accounting, not display: one call, unthrottled, and only when the
@@ -728,7 +734,7 @@ Expected: only the four pre-existing `E501` line-length errors in `agentd/chat/c
 ```bash
 cd services/agentd-py && source .venv/bin/activate && mypy agentd/memory/compactor.py agentd/memory/harness.py agentd/chat/controller_loop.py
 ```
-Expected: `controller_loop.py` has four pre-existing errors (one `dict` type-arg, three `create_controller_step` kwargs the Protocol does not declare). `compactor.py` and `harness.py` must have none.
+Expected: `controller_loop.py` has five pre-existing errors (one `dict` type-arg, four `create_controller_step` kwargs the Protocol does not declare — `on_progress`, `on_salvage`, `on_usage`, `unconstrained`). Task 4 adds `on_usage` to that call and to the Protocol-mismatch count, so this rises from four to five once Task 4 lands, not from anything in this task's own diff. `compactor.py` and `harness.py` must have none.
 
 - [ ] **Step 6: Commit**
 
