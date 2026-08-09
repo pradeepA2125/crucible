@@ -104,8 +104,12 @@ async def test_controller_loop_broadcasts_memory_compacted(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_loop_feeds_the_measured_prompt_into_the_next_compaction(tmp_path: Path):
-    """The circuit: the transport reports what the last call cost, and the next
-    turn's compaction decision runs on that number instead of a guess."""
+    """The circuit within a single turn: iteration 1's call reports its prompt
+    size via on_usage, and iteration 2's compaction decision (the next
+    prepare_turn call, still inside this same run()) runs on that number instead
+    of the character estimate. This does NOT cover the turn boundary — see
+    test_observed_prompt_carries_across_turn_boundary for the cross-turn circuit
+    (a fresh run() per turn, threaded through ChatController)."""
     from agentd.memory.models import TurnPreparation
 
     real = tmp_path / "ws"
@@ -146,5 +150,63 @@ async def test_loop_feeds_the_measured_prompt_into_the_next_compaction(tmp_path:
 
     # First iteration has nothing measured yet; the second runs on the report.
     assert observed_seen[0] is None
+    assert observed_seen[1] is not None
+    assert observed_seen[1].tokens == 7777
+
+
+@pytest.mark.asyncio
+async def test_observed_prompt_carries_across_turn_boundary(tmp_path: Path):
+    """Finding 1 (final whole-branch review): ``history`` is not turn-scoped —
+    ChatController._seed_for replays the WHOLE prior conversation as seed_history —
+    but a fresh ControllerLoop built each turn used to reset its observation to
+    None regardless. Turn N+1's FIRST compaction decision must see what turn N's
+    last call measured, not fall back to the character estimate on the largest
+    history the thread has ever had (which is what made the feature a no-op for
+    ordinary multi-turn chat)."""
+    from agentd.chat.controller import ChatController
+    from agentd.chat.storage import ChatThreadStore
+    from agentd.memory.models import TurnPreparation
+
+    real = tmp_path / "ws"
+    real.mkdir()
+    store = ChatThreadStore(tmp_path / "chat.sqlite3")
+    thread = store.create_thread(str(real), title="t")
+
+    observed_seen: list[object] = []
+
+    class _SpyHarness:
+        async def prepare_turn(self, history, run_id, query="", observed=None):
+            observed_seen.append(observed)
+            return TurnPreparation(history=history)
+
+        def memory_tool_source(self):
+            return None
+
+    class _ReportingEngine:
+        """Reports usage on turn 1's only call; every later call just answers."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def create_controller_step(self, plan_context, history, tool_definitions,
+                                          *, phase, on_thinking=None, on_retry=None,
+                                          on_progress=None, on_salvage=None,
+                                          on_usage=None, unconstrained=False):
+            self.calls += 1
+            if self.calls == 1 and on_usage is not None:
+                on_usage(7777, 20)
+            return {"type": "answer", "thought": "t", "answer": f"reply {self.calls}"}
+
+    ctrl = ChatController(
+        workspace_path=str(real), reasoning_engine=_ReportingEngine(),
+        thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
+        retrieval_client=None, memory_harness=_SpyHarness())  # type: ignore[arg-type]
+
+    await ctrl.handle_message(thread.thread_id, "first", channel_id="c1")
+    await ctrl.handle_message(thread.thread_id, "second", channel_id="c1")
+
+    # Turn 1's first (only) iteration had nothing carried in from before it.
+    assert observed_seen[0] is None
+    # Turn 2's FIRST iteration must see turn 1's measurement, not None.
     assert observed_seen[1] is not None
     assert observed_seen[1].tokens == 7777

@@ -1811,6 +1811,30 @@ async def test_on_usage_is_silent_when_usage_has_no_prompt_tokens() -> None:
     assert seen == [], seen
 
 
+@pytest.mark.asyncio
+async def test_on_usage_is_silent_when_prompt_tokens_is_zero() -> None:
+    """A real prompt is never 0 tokens (the system prompt alone is ~14.5k) — some
+    proxies/vLLM builds emit {"prompt_tokens": 0, "completion_tokens": 0} on the
+    terminal chunk when they genuinely don't know. Trusting that 0 as an exact
+    measurement zeroes out input_tokens() and permanently stops the compaction
+    trigger from firing for the rest of the turn, however far the context grows —
+    the exact failure the feature exists to prevent."""
+    transport, _ = _transport([])
+    seen: list[tuple[int, int]] = []
+    stream = _StreamThenUsage(
+        [_StreamDelta("hi")], _Usage(completion_tokens=0, prompt_tokens=0),
+    )
+    transport._completions = _FakeCompletions([stream])
+
+    await transport._stream_with_finish_reason(
+        {"model": "m", "messages": []},
+        on_thinking=lambda _c: None,
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert seen == [], seen
+
+
 # ── on_usage fires per LOGICAL call, not per stream attempt ──────────────────
 # A single generate_json call can stream more than once: a strict json_schema
 # attempt can complete and then fail to PARSE, falling back to json_object (a

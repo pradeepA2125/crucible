@@ -571,6 +571,19 @@ class ControllerLoop:
         # the clean entry hint (write_todos-as-tool_call) instead of the mid-turn reconcile
         # hint, so the first-action case isn't mis-routed.
         self._edit_applied = False
+        # The provider's exact size for the last call this loop made, pinned to the
+        # history length it measured (see ObservedPrompt). Seeded from run()'s
+        # observed_prompt param — the caller's carried cross-turn state — updated in
+        # place by _on_usage every call, and invalidated (None) whenever compaction
+        # rewrites history. `history` is NOT turn-scoped (ChatController._seed_for
+        # replays the whole prior conversation as seed_history), so a purely
+        # run()-local value made the exact-accounting circuit a no-op on ordinary
+        # multi-turn chat: every turn's first iteration decided with observed=None on
+        # the largest history the thread had ever had (final whole-branch review,
+        # finding 1). partial_observed_prompt() exposes this after run() returns
+        # (any exit path) so ChatController can carry it into the NEXT turn the same
+        # way it already threads _histories.
+        self._observed_prompt: ObservedPrompt | None = None
 
     def mark_pills_boundary(self) -> None:
         """A durable message just landed in the transcript mid-turn — close the current
@@ -689,12 +702,22 @@ class ControllerLoop:
         before that — the caller reads this to persist the partial."""
         return self._history
 
+    def partial_observed_prompt(self) -> ObservedPrompt | None:
+        """The loop's carried prompt-size observation as of right now.
+
+        Valid whether the turn completed normally, raised, or was cancelled — unlike
+        partial_history() this is read on EVERY exit path (not only the unwind cases),
+        since it is simpler for the caller to read one accessor after run() than to
+        thread the value through every ControllerOutcome construction site."""
+        return self._observed_prompt
+
     async def run(
         self,
         plan_context: dict[str, object],
         *,
         max_iters: int = 32,
         seed_history: list[dict[str, object]] | None = None,
+        observed_prompt: ObservedPrompt | None = None,
         auto_accept_edits: bool = False,
         edit_decision_cb: EditDecisionCb | None = None,
         edit_record_cb: EditRecordCb | None = None,
@@ -706,6 +729,10 @@ class ControllerLoop:
         # Expose the live list NOW (before _iterate can raise) so a cancel mid-turn still
         # leaves the caller a readable partial (Q2). _iterate mutates this same object.
         self._history = history
+        # Seed with the caller's carried observation (prefix-valid: seed_history is
+        # last turn's history plus one appended message, and message_count only ever
+        # points at a prefix of it) — see partial_observed_prompt().
+        self._observed_prompt = observed_prompt
         seen: dict[str, int] = {}
         # Bail only after this many CONSECUTIVE malformed responses (mirror PlanningLoop).
         _MAX_MALFORMED = 3
@@ -837,14 +864,16 @@ class ControllerLoop:
                 "balanced brackets and every \" inside a string escaped. If those "
                 "characters were a second action you still intend, issue it now.")
 
-        # The provider's exact size for the LAST call, pinned to the history length
-        # it measured. Compaction decides before the next call is built, so this is
-        # necessarily one call behind — `message_count` is what lets the compactor
-        # take the measured part exact and estimate only what arrived since.
-        observed_prompt: list[ObservedPrompt | None] = [None]
-
         def _on_usage(prompt_tokens: int, _completion_tokens: int) -> None:
-            observed_prompt[0] = ObservedPrompt(
+            # self._observed_prompt is the provider's exact size for the LAST call,
+            # pinned to the history length it measured. Compaction decides before the
+            # next call is built, so this is necessarily one call behind —
+            # `message_count` is what lets the compactor take the measured part exact
+            # and estimate only what arrived since. Carried on `self` rather than a
+            # plain closure var because run() seeds it from the caller's cross-turn
+            # state and the caller reads it back after run() returns (see
+            # partial_observed_prompt / self.__init__'s field comment).
+            self._observed_prompt = ObservedPrompt(
                 tokens=prompt_tokens, message_count=len(history))
 
         def _on_retry(attempt: int, max_attempts: int, reason: str, message: str) -> None:
@@ -900,11 +929,11 @@ class ControllerLoop:
             # the message lives in plan_context, not yet in history.
             _prep = await self._memory_harness.prepare_turn(
                 history, run_id, query=str(plan_context.get("goal", "")),
-                observed=observed_prompt[0])
+                observed=self._observed_prompt)
             history[:] = _prep.history
             if _prep.compacted:
                 # The pinned message_count no longer refers to this history.
-                observed_prompt[0] = None
+                self._observed_prompt = None
             # Recalled long-term memories → the payload tail (KV-safe). Empty list omits it.
             plan_context["recalled_memories"] = _prep.recalled_memories
             # Phase 3: persist the recall trace next to the controller-turn artifacts (inspector).

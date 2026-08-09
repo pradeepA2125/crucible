@@ -156,12 +156,27 @@ class Compactor:
             return CompactionResult(compacted=False, history=history)
         now = datetime.now(UTC)
         ms = int(now.timestamp() * 1000)
-        # The floor budgets retained HISTORY, but the trigger measures total input,
-        # so the system prompt's share has to come off the top — otherwise
-        # compaction targets a number the input can never reach. Floored at 1 so a
-        # pathological overhead cannot ask for a negative budget.
-        hot_budget = max(1, int(self._window_tokens * self._hot_token_frac)
-                          - fixed_overhead(history, observed))
+        # The floor budgets retained HISTORY, but the trigger measures total input, so
+        # in principle the system prompt's share has to come off the top — otherwise
+        # compaction could target a number the input can never reach. In practice this
+        # only ever SUBTRACTS something when the char-estimate under-counts the
+        # measured history slice (fixed_overhead = max(0, observed.tokens -
+        # estimate(history[:message_count]))). The char/3 ratio over-counts by
+        # design (see _CHARS_PER_TOKEN above), and that over-count grows with history
+        # size while the system prompt it would need to outrun is fixed (~14.5k
+        # tokens) — so at the history sizes large enough to trip the trigger, the
+        # estimate for the history slice ALONE routinely already exceeds the
+        # measured TOTAL (history + system + schemas), the max(0, ...) clamp fires,
+        # and this subtraction is inert. It only engages for a history whose real
+        # tokens-per-char run under 3 (denser text than the estimate assumes).
+        # Clamped to a quarter of the nominal floor, not to 1: at 1, _select_hot
+        # keeps a single message and the backstop below truncates it to
+        # _truncate_to_tokens's own 8-char floor, destroying the user's newest
+        # message instead of merely being conservative about how much history
+        # survives (final whole-branch review, finding 3).
+        nominal_hot_budget = int(self._window_tokens * self._hot_token_frac)
+        hot_budget = max(nominal_hot_budget // 4,
+                          nominal_hot_budget - fixed_overhead(history, observed))
         evicted, hot, hot_used = _select_hot(history, hot_budget, self._hot_turns)
         base = self._store.next_seq(run_id)  # run-monotonic seq across compaction rounds
         degraded = False

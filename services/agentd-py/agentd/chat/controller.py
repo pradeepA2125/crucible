@@ -26,6 +26,7 @@ from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.domain.models import CommandDecision, McpToolDecision, ShellPolicy
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
+from agentd.memory.models import ObservedPrompt
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
@@ -127,6 +128,17 @@ class ChatController:
         # Per-thread retrieval seed — computed once, never rewritten (spec §6 cache
         # discipline: a frozen pointer-set placed before history).
         self._seeds: dict[str, dict[str, object] | None] = {}
+        # Per-thread carried prompt-size observation — closes the same turn-boundary
+        # gap _histories/_seeds already close for their own state. Without this, a
+        # fresh ControllerLoop resets its observation to None every run(), so every
+        # turn's first compaction decision fell back to the character estimate on the
+        # largest history the thread had ever accumulated, and the exact provider
+        # count could only ever matter inside a single long turn (final whole-branch
+        # review, finding 1). Threaded through ControllerLoop.run()'s observed_prompt
+        # param and read back via loop.partial_observed_prompt(); None until the first
+        # usage-reporting call, and cleared whenever a compaction rewrites history
+        # (ControllerLoop invalidates it internally — see its _iterate).
+        self._observed_prompts: dict[str, ObservedPrompt | None] = {}
         # Per-thread per-edit review future (held-open gate; mirrors the engine's
         # _pending_step_decisions). resolve_edit fires it.
         self._pending_edit: dict[str, asyncio.Future[dict[str, object]]] = {}
@@ -494,6 +506,7 @@ class ChatController:
         try:
             outcome = await loop.run(
                 plan_context, max_iters=max_iters, seed_history=seed_history,
+                observed_prompt=self._observed_prompts.get(thread_id),
                 auto_accept_edits=(not is_review), edit_decision_cb=edit_cb,
                 edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
                 on_pills_update=pills_cb)
@@ -511,6 +524,10 @@ class ChatController:
             if partial_hist:
                 self._histories[thread_id] = partial_hist
                 self._store.set_controller_history(thread_id, partial_hist)
+            # Captured explicitly (not left to the shared line after this try/except):
+            # a re-raise skips everything below, so this branch is the only place that
+            # would ever record it.
+            self._observed_prompts[thread_id] = loop.partial_observed_prompt()
             self._store.set_controller_todos(
                 thread_id, ledger.to_json() if ledger.items else None)
             raise
@@ -551,6 +568,12 @@ class ChatController:
             # out-of-turn breadcrumb can never mark a dead loop's boundary.
             self._active_loops.pop(thread_id, None)
         self._histories[thread_id] = outcome.history or []
+        # Reached for the normal-completion AND generic-exception branches (the
+        # cancellation branch already recorded its own and re-raised past this point).
+        # loop.partial_observed_prompt() is read here rather than duplicated in the
+        # exception branch above because loop.run() itself sets it before returning —
+        # one accessor covers both live paths.
+        self._observed_prompts[thread_id] = loop.partial_observed_prompt()
         # Turn trace artifact (controller analog of tool-trace.json): the whole turn's
         # info in one file for offline debugging — phase, verbatim history, pills,
         # thinking, outcome. Best-effort, never fails the turn.

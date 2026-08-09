@@ -4,6 +4,7 @@ import pytest
 
 from agentd.memory.compactor import (
     Compactor,
+    _render,
     _select_hot,
     _truncate_to_tokens,
     estimate_tokens,
@@ -303,3 +304,38 @@ async def test_eviction_floor_leaves_room_for_the_fixed_overhead(tmp_path):
     retained = sum(len(str(m.get("content", ""))) // 3
                    for m in result.history if not str(m.get("content", "")).startswith("[MEMORY]"))
     assert retained <= 100, f"kept {retained} tokens of history against a 100-token budget"
+
+
+@pytest.mark.asyncio
+async def test_pathological_overhead_cannot_collapse_the_eviction_floor(tmp_path):
+    """A wildly over-stated fixed_overhead (an `observed` count far above what the
+    estimator sees for the same slice — the `_CHARS_PER_TOKEN` comment documents
+    this ratio can be off in either direction) must not collapse the hot budget
+    all the way to 1: at 1, _select_hot keeps a single message and the oversize
+    backstop truncates it to _truncate_to_tokens's own 8-char floor, destroying
+    the user's newest message instead of just retaining less history. The clamp
+    is a quarter of the nominal floor (final whole-branch review, finding 3)."""
+    store = MemoryStore(tmp_path / "m.sqlite3")
+
+    async def summ(old, evicted):
+        return "A"
+
+    # nominal hot floor = 128000 * 0.4 = 51200 tokens; the fix clamps to
+    # nominal // 4 = 12800 tokens even under a pathological overhead.
+    comp = Compactor(
+        store, summ, window_tokens=128000, trigger_frac=0.01, hot_token_frac=0.4, hot_turns=50
+    )
+    history = [{"role": "user", "content": "x" * 9000} for _ in range(8)]  # ~3000 tok each
+
+    # A provider reporting 5,000,000 total input tokens for this same slice is the
+    # pathological case: fixed_overhead = 5,000,000 - estimate(~24000) is enormous,
+    # and the old max(1, ...) clamp collapsed hot_budget to 1.
+    observed = ObservedPrompt(tokens=5_000_000, message_count=len(history))
+    result = await comp.maybe_compact(list(history), "r-pathological", observed=observed)
+
+    assert result.compacted is True
+    assert "…[truncated]…" not in _render(result.history), (
+        "the newest message was truncated to a handful of characters — the "
+        "eviction floor collapsed toward 1 instead of clamping to a fraction "
+        "of the nominal floor")
+    assert len(result.history) > 1, "only the single-message degenerate case survived"

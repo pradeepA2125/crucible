@@ -1055,7 +1055,15 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 if on_usage is not None and usage_payload is not None:
                     prompt_n = _usage_prompt_tokens(usage_payload)
                     completion_n, _ = _usage_token_counts(usage_payload)
-                    if prompt_n is not None:
+                    # Truthy, not `is not None`: a real prompt is never 0 tokens (the
+                    # system prompt alone is ~14.5k), so a reported 0 is the endpoint
+                    # saying "I don't know" (some proxies/vLLM builds emit
+                    # {"prompt_tokens": 0, "completion_tokens": 0} on the terminal
+                    # chunk), not a measurement of an empty prompt — the case the
+                    # comment above already argues for. Trusting it would zero out
+                    # input_tokens() and stop the compaction trigger from ever firing
+                    # again this turn.
+                    if prompt_n:
                         on_usage(prompt_n, completion_n or 0)
                 return "".join(content_parts).strip(), finish_reason
             except TimeoutError as exc:
