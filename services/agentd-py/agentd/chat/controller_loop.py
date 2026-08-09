@@ -16,6 +16,7 @@ from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.tool_events import trace_to_tool_events
 from agentd.domain.models import AgentToolTrace, PatchFailureCode, ToolCall, ToolResult
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
+from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.reasoning.react_common import MALFORMED_CORRECTION, assistant_turn, dedup_key
 from agentd.skills.config import skills_body_max_chars
@@ -836,6 +837,16 @@ class ControllerLoop:
                 "balanced brackets and every \" inside a string escaped. If those "
                 "characters were a second action you still intend, issue it now.")
 
+        # The provider's exact size for the LAST call, pinned to the history length
+        # it measured. Compaction decides before the next call is built, so this is
+        # necessarily one call behind — `message_count` is what lets the compactor
+        # take the measured part exact and estimate only what arrived since.
+        observed_prompt: list[ObservedPrompt | None] = [None]
+
+        def _on_usage(prompt_tokens: int, _completion_tokens: int) -> None:
+            observed_prompt[0] = ObservedPrompt(
+                tokens=prompt_tokens, message_count=len(history))
+
         def _on_retry(attempt: int, max_attempts: int, reason: str, message: str) -> None:
             # Distinct channel from _on_thinking — a retry is not model reasoning
             # and must never be baked into the permanent thinking log (see design
@@ -888,8 +899,12 @@ class ControllerLoop:
             # Pass the current user message (goal) so recall has a query even on turn 1, when
             # the message lives in plan_context, not yet in history.
             _prep = await self._memory_harness.prepare_turn(
-                history, run_id, query=str(plan_context.get("goal", "")))
+                history, run_id, query=str(plan_context.get("goal", "")),
+                observed=observed_prompt[0])
             history[:] = _prep.history
+            if _prep.compacted:
+                # The pinned message_count no longer refers to this history.
+                observed_prompt[0] = None
             # Recalled long-term memories → the payload tail (KV-safe). Empty list omits it.
             plan_context["recalled_memories"] = _prep.recalled_memories
             # Phase 3: persist the recall trace next to the controller-turn artifacts (inspector).
@@ -952,6 +967,7 @@ class ControllerLoop:
                     tool_definitions=tool_defs, phase=self._sm.phase,
                     on_thinking=_on_thinking, on_retry=_on_retry,
                     on_progress=_on_progress, on_salvage=_on_salvage,
+                    on_usage=_on_usage,
                     unconstrained=retry_unconstrained,
                 )
                 retry_unconstrained = False   # one call only, always

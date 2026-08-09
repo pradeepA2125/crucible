@@ -200,7 +200,8 @@ async def test_loop_broadcasts_live_token_progress(tmp_path: Path):
 
         async def create_controller_step(self, plan_context, history, tool_definitions,
                                          *, phase, on_thinking=None, on_retry=None,
-                                         on_progress=None, on_salvage=None, unconstrained=False):
+                                         on_progress=None, on_salvage=None,
+                                         on_usage=None, unconstrained=False):
             if on_progress is not None:
                 on_progress(2, 5)
                 on_progress(2, 17)
@@ -240,7 +241,8 @@ async def test_parse_failure_detail_reaches_the_model(tmp_path: Path):
     class _ParseFailThenAnswer:
         async def create_controller_step(self, plan_context, history, tool_definitions,
                                          *, phase, on_thinking=None, on_retry=None,
-                                         on_progress=None, on_salvage=None, unconstrained=False):
+                                         on_progress=None, on_salvage=None,
+                                         on_usage=None, unconstrained=False):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError(
@@ -359,7 +361,8 @@ async def test_loop_tells_the_model_when_a_trailing_action_was_discarded(tmp_pat
     class _SalvagingEngine:
         async def create_controller_step(self, plan_context, history, tool_definitions,
                                          *, phase, on_thinking=None, on_retry=None,
-                                         on_progress=None, on_salvage=None, unconstrained=False):
+                                         on_progress=None, on_salvage=None,
+                                         on_usage=None, unconstrained=False):
             calls["n"] += 1
             if calls["n"] == 1 and on_salvage is not None:
                 on_salvage(52, '{"type":"edit","thought":"Creating game_loop.py"}')
@@ -410,7 +413,7 @@ async def test_syntax_preflight_failure_requests_one_unconstrained_retry(tmp_pat
         async def create_controller_step(self, plan_context, history, tool_definitions,
                                          *, phase, on_thinking=None, on_retry=None,
                                          on_progress=None, on_salvage=None,
-                                         unconstrained=False):
+                                         on_usage=None, unconstrained=False):
             seen.append(unconstrained)
             return next(steps)
 
@@ -445,7 +448,7 @@ async def test_token_progress_accumulates_across_the_whole_turn(tmp_path: Path):
         async def create_controller_step(self, plan_context, history, tool_definitions,
                                          *, phase, on_thinking=None, on_retry=None,
                                          on_progress=None, on_salvage=None,
-                                         unconstrained=False):
+                                         on_usage=None, unconstrained=False):
             self.calls += 1
             if self.calls == 1:
                 if on_progress is not None:

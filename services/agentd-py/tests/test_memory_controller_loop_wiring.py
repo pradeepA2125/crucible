@@ -59,7 +59,7 @@ async def test_controller_loop_broadcasts_memory_compacted(tmp_path: Path):
     class _CompactingHarness:
         """Returns a compacted prep so we can assert the loop broadcasts the event."""
 
-        async def prepare_turn(self, history, run_id, query=""):
+        async def prepare_turn(self, history, run_id, query="", observed=None):
             return TurnPreparation(
                 history=history, compacted=True, evicted_count=3, anchor_version=2
             )
@@ -100,3 +100,51 @@ async def test_controller_loop_broadcasts_memory_compacted(tmp_path: Path):
     assert compacted, "expected a memory_compacted event to be broadcast"
     assert compacted[0]["payload"]["evicted"] == 3
     assert compacted[0]["payload"]["anchor_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_loop_feeds_the_measured_prompt_into_the_next_compaction(tmp_path: Path):
+    """The circuit: the transport reports what the last call cost, and the next
+    turn's compaction decision runs on that number instead of a guess."""
+    from agentd.memory.models import TurnPreparation
+
+    real = tmp_path / "ws"
+    real.mkdir()
+    reg = AggregatingToolRegistry(
+        [BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
+
+    observed_seen: list[object] = []
+
+    class _SpyHarness:
+        # prepare_turn is the ONLY thing the loop calls on the harness.
+        async def prepare_turn(self, history, run_id, query="", observed=None):
+            observed_seen.append(observed)
+            return TurnPreparation(history=history)
+
+    class _ReportingEngine:
+        """Reports usage on call 1, then answers on call 2."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def create_controller_step(self, plan_context, history, tool_definitions,
+                                         *, phase, on_thinking=None, on_retry=None,
+                                         on_progress=None, on_salvage=None,
+                                         on_usage=None, unconstrained=False):
+            self.calls += 1
+            if self.calls == 1:
+                if on_usage is not None:
+                    on_usage(7777, 20)
+                return {"type": "tool_call", "thought": "t", "tool": "list_directory",
+                        "args": {"path": "."}}
+            return {"type": "answer", "thought": "t", "answer": "done"}
+
+    loop = ControllerLoop(_ReportingEngine(), reg, EventBroadcaster(), channel_id="c",
+                          phase_sm=ControllerPhaseSM(), memory_harness=_SpyHarness())
+    await loop.run({"goal": "x", "workspace_path": str(real)}, max_iters=4,
+                   auto_accept_edits=True)
+
+    # First iteration has nothing measured yet; the second runs on the report.
+    assert observed_seen[0] is None
+    assert observed_seen[1] is not None
+    assert observed_seen[1].tokens == 7777

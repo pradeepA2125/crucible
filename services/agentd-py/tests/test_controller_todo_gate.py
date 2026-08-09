@@ -114,7 +114,7 @@ class _RecordingPlanCtx:
         self.plan_contexts: list[dict] = []
 
     async def create_controller_step(self, *, plan_context, history, tool_definitions,
-                                     phase, on_thinking=None, on_retry=None, on_progress=None, on_salvage=None, unconstrained=False):
+                                     phase, on_thinking=None, on_retry=None, on_progress=None, on_salvage=None, on_usage=None, unconstrained=False):
         self.plan_contexts.append(dict(plan_context))
         resp = self._responses[self._i]
         self._i += 1

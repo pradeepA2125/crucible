@@ -131,6 +131,7 @@ class ScriptedReasoningEngine:
         on_retry: object = None,
         on_progress: object = None,
         on_salvage: object = None,
+        on_usage: object = None,
         unconstrained: bool = False,
     ) -> dict[str, object]:
         _ = (plan_context, history, tool_definitions, phase, on_thinking, on_retry)

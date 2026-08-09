@@ -90,7 +90,7 @@ async def test_loop_streams_thinking_via_on_thinking(tmp_path: Path):
     class _ThinkingEngine:
         async def create_controller_step(
             self, *, plan_context, history, tool_definitions, phase, on_thinking=None, on_retry=None,
-        on_progress=None, on_salvage=None, unconstrained=False):
+        on_progress=None, on_salvage=None, on_usage=None, unconstrained=False):
             if on_thinking:
                 on_thinking("weighing options")
             return {"type": "answer", "thought": "t", "answer": "hi"}
