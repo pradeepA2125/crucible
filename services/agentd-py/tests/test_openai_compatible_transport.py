@@ -1881,3 +1881,67 @@ async def test_on_usage_fires_once_for_narrowed_schema_retry() -> None:
 
     assert result["tool"] == "read_file"
     assert seen == [(340, 8)], seen
+
+
+@pytest.mark.asyncio
+async def test_on_usage_never_fires_when_the_winning_attempt_is_silent() -> None:
+    """attempts[-1] is chronology, not "which attempt won". The strict attempt
+    reports usage; its output fails to parse. The json_object fallback — the
+    attempt that actually produces the returned result — reports NO usage
+    (e.g. the endpoint rejected stream_options on this differently-shaped
+    request, a real and sticky degradation path via _stream_usage_mode). An
+    earlier, discarded attempt's number must never stand in for a later,
+    silent one: on_usage must not fire at all, and — worse than merely wrong —
+    firing here would UNDER-report the input size (fallback prompts are larger
+    than strict ones, not smaller), delaying compaction past the point it was
+    needed."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([
+        _StreamThenUsage(
+            [_StreamDelta("not json")],
+            _Usage(completion_tokens=10, prompt_tokens=100),
+        ),
+        _DeltaStream([_StreamDelta('{"ok": 1}')]),
+    ])
+    seen: list[tuple[int, int]] = []
+
+    result = await transport.generate_json(
+        model="m", schema_name="s", schema={"type": "object"},
+        system_instructions="", user_payload={},
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert result == {"ok": 1}
+    assert seen == [], seen
+
+
+@pytest.mark.asyncio
+async def test_on_usage_never_fires_when_the_narrowed_retry_is_silent() -> None:
+    """Same hazard, the OTHER attempt boundary: the first _generate_json_once
+    call reports usage; controller_step_response narrows and retries, and the
+    retry — the attempt that actually produces the returned result — reports
+    none. The first call's number must not leak through generate_json's own
+    bookkeeping to stand in for the retry's silence. A fix that only covers
+    the strict/fallback boundary inside _generate_json_once and not this one
+    (the narrowed-schema retry, one layer up in generate_json) is incomplete."""
+    transport, _ = _transport([])
+    transport._completions = _FakeCompletions([
+        _StreamThenUsage(
+            [_StreamDelta(json.dumps({"type": "tool_call", "thought": "x"}))],
+            _Usage(completion_tokens=5, prompt_tokens=300),
+        ),
+        _DeltaStream([_StreamDelta(json.dumps({
+            "type": "tool_call", "thought": "x",
+            "tool": "read_file", "args": {"path": "p"},
+        }))]),
+    ])
+    seen: list[tuple[int, int]] = []
+
+    result = await transport.generate_json(
+        model="m", schema_name="controller_step_response",
+        schema={"type": "object"}, system_instructions="", user_payload={},
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert result["tool"] == "read_file"
+    assert seen == [], seen

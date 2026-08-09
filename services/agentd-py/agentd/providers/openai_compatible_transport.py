@@ -429,9 +429,14 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # with a narrowed schema (up to two more). Each attempt measures a
         # DIFFERENT prompt — the fallback injects the schema into the system
         # prompt — so reporting every attempt would hand the compaction trigger a
-        # size for a call whose result we discarded. Record every attempt under a
-        # local recorder and fire the caller's callback exactly once, below, for
-        # the attempt that actually produced the result being returned.
+        # size for a call whose result we discarded. `attempts` is not a log to
+        # take the last entry of — it is cleared at each attempt boundary (here,
+        # before the narrowed retry; the strict/fallback boundary is handled the
+        # same way one level down in _generate_json_once) so a silent WINNING
+        # attempt is never masked by an earlier attempt that happened to report.
+        # Record under a local recorder and fire the caller's callback exactly
+        # once, below, for the attempt that actually produced the returned result
+        # — or not at all, if that attempt was silent.
         attempts: list[tuple[int, int]] = []
         recorder = (lambda p, c: attempts.append((p, c))) if on_usage is not None else None
         succeeded = False
@@ -462,6 +467,11 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         "retrying with narrowed schema",
                         self._vendor, schema_name, result.get("type"),
                     )
+                    # The narrowed retry is a fresh attempt. If the FIRST call
+                    # already recorded usage but this one's own attempt is silent,
+                    # attempts must not still hold the first call's now-stale
+                    # entry — clear before the retry, not just take-the-last.
+                    attempts.clear()
                     result = await self._generate_json_once(
                         model=model,
                         schema_name=schema_name,
@@ -562,67 +572,95 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             "extra_body": extra_body,
         }
 
-        # One-shot escape hatch: the caller saw evidence that the grammar corrupted
-        # the last response (preflight rejected the generated code), so skip it for
-        # THIS call only. Per-call, never sticky — `self._json_mode` is untouched, so
-        # the next call is constrained again and a false positive costs one call.
-        if self._json_mode == "strict" and not unconstrained:
-            create_kwargs = {
-                **base_kwargs,
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": safe_schema_name,
-                        "strict": True,
-                        "schema": schema,
+        # on_usage is per LOGICAL call at THIS layer too: strict and fallback are
+        # two separate stream attempts inside a single _generate_json_once call,
+        # and only one of them produces the result actually returned. Own a
+        # recorder scoped to just this call (distinct from generate_json's own
+        # recorder one level up, which this reports into via the caller's
+        # on_usage) and fire exactly once, in the finally below, for whichever
+        # attempt won — never a stale earlier attempt whose output was discarded.
+        attempt_usage: list[tuple[int, int]] = []
+        recorder = (lambda p, c: attempt_usage.append((p, c))) if on_usage is not None else None
+        succeeded = False
+        try:
+            # One-shot escape hatch: the caller saw evidence that the grammar
+            # corrupted the last response (preflight rejected the generated code),
+            # so skip it for THIS call only. Per-call, never sticky —
+            # `self._json_mode` is untouched, so the next call is constrained
+            # again and a false positive costs one call.
+            if self._json_mode == "strict" and not unconstrained:
+                create_kwargs = {
+                    **base_kwargs,
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": safe_schema_name,
+                            "strict": True,
+                            "schema": schema,
+                        },
                     },
-                },
-            }
-            self._dump_debug_request(create_kwargs, safe_schema_name)
-            # Bound before the try so the except can still read it when the parse
-            # (not the request) is what failed; stays None if we never got a response.
-            finish_reason: str | None = None
-            try:
-                output_text, finish_reason = await self._get_completion_output(
-                    create_kwargs, on_thinking, on_retry, on_progress, on_usage
-                )
-                return self._parse_output_object(
-                    output_text, schema_name, on_salvage)
-            except Exception as e:
-                # Fall back to json_object with schema injected into system prompt.
-                # Some models/providers don't support json_schema strict mode.
-                # The fallback itself is unconditional (unchanged behavior); only
-                # the PERMANENT downgrade needs the failure to be probative.
-                if proves_json_schema_unsupported(e, finish_reason=finish_reason):
-                    logger.warning(
-                        "%s: strict json_schema failed for %s — downgrading to "
-                        "json_object for the rest of this process: %s",
-                        self._label, schema_name, e,
+                }
+                self._dump_debug_request(create_kwargs, safe_schema_name)
+                # Bound before the try so the except can still read it when the parse
+                # (not the request) is what failed; stays None if we never got a response.
+                finish_reason: str | None = None
+                try:
+                    output_text, finish_reason = await self._get_completion_output(
+                        create_kwargs, on_thinking, on_retry, on_progress, recorder
                     )
-                    self._downgrade_json_mode()
-                else:
-                    logger.warning(
-                        "%s json_schema call failed transiently for %s, falling back "
-                        "to json_object for this call only: %s",
-                        self._label, schema_name, e,
-                    )
+                    result = self._parse_output_object(
+                        output_text, schema_name, on_salvage)
+                    succeeded = True
+                    return result
+                except Exception as e:
+                    # Fall back to json_object with schema injected into system prompt.
+                    # Some models/providers don't support json_schema strict mode.
+                    # The fallback itself is unconditional (unchanged behavior); only
+                    # the PERMANENT downgrade needs the failure to be probative.
+                    if proves_json_schema_unsupported(e, finish_reason=finish_reason):
+                        logger.warning(
+                            "%s: strict json_schema failed for %s — downgrading to "
+                            "json_object for the rest of this process: %s",
+                            self._label, schema_name, e,
+                        )
+                        self._downgrade_json_mode()
+                    else:
+                        logger.warning(
+                            "%s json_schema call failed transiently for %s, falling back "
+                            "to json_object for this call only: %s",
+                            self._label, schema_name, e,
+                        )
+                    # The fallback below is a SEPARATE stream attempt from the
+                    # strict one just abandoned (strict streamed fine here; only
+                    # the PARSE failed). If strict already recorded usage, that
+                    # entry must not survive to be reported as if it described
+                    # the fallback's — possibly silent — attempt.
+                    attempt_usage.clear()
 
-        return await self._json_object_fallback(
-            base_kwargs=base_kwargs,
-            model=model,
-            is_reasoning=is_reasoning,
-            schema=schema,
-            schema_name=schema_name,
-            safe_schema_name=safe_schema_name,
-            system_instructions=system_instructions,
-            user_payload=user_payload,
-            on_thinking=on_thinking,
-            on_retry=on_retry,
-            on_progress=on_progress,
-            on_usage=on_usage,
-            on_salvage=on_salvage,
-            unconstrained=unconstrained,
-        )
+            result = await self._json_object_fallback(
+                base_kwargs=base_kwargs,
+                model=model,
+                is_reasoning=is_reasoning,
+                schema=schema,
+                schema_name=schema_name,
+                safe_schema_name=safe_schema_name,
+                system_instructions=system_instructions,
+                user_payload=user_payload,
+                on_thinking=on_thinking,
+                on_retry=on_retry,
+                on_progress=on_progress,
+                on_usage=recorder,
+                on_salvage=on_salvage,
+                unconstrained=unconstrained,
+            )
+            succeeded = True
+            return result
+        finally:
+            # Same exception-safety shape as generate_json's own finally: succeeded
+            # is set only right before each return, so an exception out of either
+            # attempt (nothing left standing) skips the firing entirely.
+            if succeeded and on_usage is not None and attempt_usage:
+                on_usage(*attempt_usage[-1])
 
     def _downgrade_json_mode(self) -> None:
         """The single place `_json_mode` is ever written after construction.
