@@ -812,6 +812,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: object = None,
+        on_usage: Any = None,
     ) -> str:
         is_reasoning, temperature = await self._reasoning_config(model)
 
@@ -829,10 +830,22 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             create_kwargs["extra_body"] = extra_body
 
         if callable(on_thinking):
-            return await self._stream_with_thinking(create_kwargs, on_thinking=on_thinking)
+            return await self._stream_with_thinking(
+                create_kwargs, on_thinking=on_thinking, on_usage=on_usage
+            )
 
         try:
             response = await self._call_with_retry(create_kwargs)
+            # The non-streaming response already carries usage; it was simply being
+            # dropped. Reading it is what lets the context test print the provider's
+            # OWN prompt_tokens beside its verdict instead of only our estimate.
+            if on_usage is not None:
+                usage = getattr(response, "usage", None)
+                if usage is not None:
+                    on_usage(
+                        int(getattr(usage, "prompt_tokens", 0) or 0),
+                        int(getattr(usage, "completion_tokens", 0) or 0),
+                    )
             return self._extract_text(response)
         except Exception as e:
             raise RuntimeError(f"{self._label} API error: {e}") from e
@@ -844,15 +857,18 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_thinking: Any,
         on_retry: Any = None,
         on_progress: Any = None,
+        on_usage: Any = None,
     ) -> str:
         """Text-only view of _stream_with_finish_reason (generate_text's entry
         point, and the long-standing public-ish shape of this method).
 
         on_progress is forwarded rather than dropped: without it this path could
-        never report a count no matter how long the generation ran."""
+        never report a count no matter how long the generation ran. on_usage rides
+        along for the same reason — the exact count exists, and dropping it here
+        would make the caller re-derive an estimate it does not need to."""
         text, _finish_reason = await self._stream_with_finish_reason(
             create_kwargs, on_thinking=on_thinking, on_retry=on_retry,
-            on_progress=on_progress,
+            on_progress=on_progress, on_usage=on_usage,
         )
         return text
 

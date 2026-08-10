@@ -13,9 +13,14 @@ and silence is evidence it cannot.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import random
 import re
+from dataclasses import dataclass
+
+from agentd.providers.factory import build_transport, resolve_model
 
 # Mid-range of the 3.71-4.40 chars/token that Part 1 measured against real
 # responses on the configured provider. Sizing the filler is unavoidably an
@@ -125,3 +130,93 @@ def recalled(answer: str, passphrase: str) -> bool:
     if not answer.strip():
         return False
     return _normalize(passphrase) in _normalize(answer)
+
+
+@dataclass(frozen=True)
+class ContextTestResult:
+    """What one context test learned.
+
+    `ok` and `recalled` answer different questions, and conflating them is the
+    failure this whole module exists to avoid: `ok` is "the call completed",
+    `recalled` is "the model could actually use a context that size". The NIM
+    measurement in this module's docstring is ok=True, recalled=False.
+
+    `exact` says whether `prompt_tokens` came from the provider or from our own
+    chars-per-token estimate, so the UI can label it honestly rather than
+    presenting a guess as a measurement.
+    """
+
+    ok: bool
+    recalled: bool
+    prompt_tokens: int | None = None
+    exact: bool = False
+    error: str | None = None
+
+
+def context_test_timeout_sec() -> float:
+    try:
+        return float(os.getenv("CRUCIBLE_CONTEXT_TEST_TIMEOUT_SEC", "300"))
+    except ValueError:
+        return 300.0
+
+
+async def run_context_test(
+    *,
+    backend: str,
+    model: str | None,
+    credentials: dict[str, str] | None,
+    window_tokens: int,
+    timeout_sec: float | None = None,
+) -> ContextTestResult:
+    """Send one prompt of the declared size and judge by passphrase recall.
+
+    Deliberately expensive: it consumes approximately one full window of input
+    tokens in a single request. It is opt-in from the UI and is never run as part
+    of a save.
+    """
+    limit = timeout_sec if timeout_sec is not None else context_test_timeout_sec()
+    try:
+        transport = build_transport(backend, credentials=credentials)
+        resolved = model or resolve_model(backend)
+    except Exception as exc:
+        # Same reasoning as ping_provider's: a transport that refuses to construct
+        # carries the actionable message ("…_BASE_URL is required"), and that is
+        # what the user should read — not a stack trace.
+        return ContextTestResult(ok=False, recalled=False, error=str(exc))
+
+    passphrase = new_passphrase()
+    system, payload = build_probe(window_tokens, passphrase)
+
+    observed: list[int] = []
+    kwargs: dict[str, object] = {}
+    # Gated exactly as reasoning/engine.py gates its progress callbacks: the eight
+    # transports that do not declare this capability must never see the kwarg.
+    if getattr(transport, "supports_token_progress", False):
+        kwargs["on_usage"] = lambda prompt_tokens, _completion: observed.append(
+            prompt_tokens
+        )
+
+    try:
+        answer = await asyncio.wait_for(
+            transport.generate_text(
+                model=resolved,
+                system_instructions=system,
+                user_payload=payload,
+                **kwargs,  # type: ignore[arg-type]
+            ),
+            timeout=limit,
+        )
+    except TimeoutError:
+        return ContextTestResult(
+            ok=False, recalled=False,
+            error=f"Provider did not respond within {limit:.0f}s",
+        )
+    except Exception as exc:  # surface the provider's own message — it names the fix
+        return ContextTestResult(ok=False, recalled=False, error=str(exc))
+
+    return ContextTestResult(
+        ok=True,
+        recalled=recalled(answer, passphrase),
+        prompt_tokens=observed[-1] if observed else estimated_prompt_tokens(system, payload),
+        exact=bool(observed),
+    )

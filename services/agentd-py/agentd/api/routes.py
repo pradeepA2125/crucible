@@ -56,6 +56,13 @@ class ProviderValidateRequest(BaseModel):
     credentials: dict[str, str] = {}
 
 
+class ProviderContextTestRequest(BaseModel):
+    backend: str
+    model: str | None = None
+    credentials: dict[str, str] = {}
+    context_window: int = Field(ge=1024, le=10_000_000)
+
+
 class ProviderSwapRequest(BaseModel):
     backend: str
     model: str | None = None
@@ -302,6 +309,36 @@ def build_router(
             payload["json_mode"] = result.json_mode
         if result.warning is not None:
             payload["warning"] = result.warning
+        return payload
+
+    @router.post("/providers/context-test")
+    async def context_test(body: ProviderContextTestRequest) -> dict[str, object]:
+        """Verify a DECLARED context window by passphrase recall.
+
+        Always 200, like validate — `ok` says the call completed and `recalled`
+        says the window is real. They are separate because a provider can return
+        HTTP 200 with an empty answer for an over-long prompt (measured on NVIDIA
+        NIM: a 600,058-token prompt, every token billed, completion_tokens: 1).
+
+        Expensive and opt-in: one full window of input tokens per call. Never
+        invoked as part of a save. Credentials are request-scoped, never persisted.
+        """
+        from agentd.providers.context_probe import run_context_test
+
+        result = await run_context_test(
+            backend=body.backend,
+            model=body.model,
+            credentials=body.credentials or None,
+            window_tokens=body.context_window,
+        )
+        # Omit-when-nothing-to-say, mirroring validate_provider: an absent key reads
+        # unambiguously as "no information" on the client.
+        payload: dict[str, object] = {"ok": result.ok, "recalled": result.recalled}
+        if result.prompt_tokens is not None:
+            payload["prompt_tokens"] = result.prompt_tokens
+            payload["exact"] = result.exact
+        if result.error is not None:
+            payload["error"] = result.error
         return payload
 
     def _mcp_server_listing() -> dict[str, object]:
