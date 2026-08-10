@@ -1,6 +1,8 @@
 import json
 import random
 
+import pytest
+
 from agentd.providers.context_probe import (
     PROBE_CHARS_PER_TOKEN,
     build_probe,
@@ -36,6 +38,17 @@ def test_probe_is_sized_to_the_declared_window():
     _system, payload = build_probe(50_000, "a-b-c")
     estimated = estimated_prompt_tokens(_system, payload)
     assert 0.85 * 50_000 <= estimated <= 50_000
+
+
+@pytest.mark.parametrize("window", [4_096, 8_192, 32_768, 128_000])
+def test_small_windows_are_filled_as_completely_as_large_ones(window):
+    """Headroom is proportional, so the fill ratio must not collapse at the bottom
+    of the range. A flat reserve left a declared 4,096 window only 52% full, and
+    under-filling is the FALSE-PASS direction: the probe would confirm a window it
+    never actually tested."""
+    system, payload = build_probe(window, "a-b-c")
+    ratio = estimated_prompt_tokens(system, payload) / window
+    assert 0.85 <= ratio <= 1.0, f"window {window} filled to {ratio:.3f}"
 
 
 def test_probe_json_serializes():

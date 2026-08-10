@@ -27,8 +27,9 @@ PROBE_CHARS_PER_TOKEN = 4.0
 
 # Ordinary words, not hex: a recall target like "9f3a71c2" invites tokenizer
 # mangling and would produce a wrong verdict for a reason that has nothing to do
-# with the context window. 48^3 = 110,592 combinations is far more than enough to
-# stop a cached or echoed response from faking a pass.
+# with the context window. new_passphrase samples without replacement, so the
+# space is 48x47x46 = 103,776 combinations — far more than enough to stop a
+# cached or echoed response from faking a pass.
 _WORDS = (
     "velvet", "harbor", "quasar", "lantern", "cobalt", "meadow", "cinder", "harrow",
     "pewter", "willow", "basalt", "kestrel", "marlin", "nimbus", "orchard", "plover",
@@ -60,7 +61,18 @@ _FILLER_LINE = (
 # Room for the system prompt, the JSON envelope, the chat template's own tokens
 # and the answer. Without it a probe sized exactly to the window would overrun it
 # by construction and fail every time.
-_HEADROOM_TOKENS = 2048
+#
+# PROPORTIONAL, not flat. A flat reserve is a fixed cost against a variable
+# budget, so it dominates small windows: at a flat 2048 a declared 4,096 window
+# was filled to only 52% and everything at or below 2,304 collapsed to the same
+# 256-token floor, making a 1,024-window model indistinguishable from a 2,300 one.
+# That under-fill is the FALSE-PASS direction — the probe would confirm a window
+# it never actually tested. Five percent holds the fill ratio at ~0.95 from 4,096
+# tokens upward, and at the top end it reserves MORE than the flat value did
+# (6,400 at 128k), which both covers the completion budget the transport requests
+# and absorbs the newline JSON-escaping overshoot.
+_HEADROOM_FRAC = 0.05
+_MIN_HEADROOM_TOKENS = 256
 
 
 def new_passphrase(rng: random.Random | None = None) -> str:
@@ -73,7 +85,8 @@ def build_probe(
     window_tokens: int, passphrase: str
 ) -> tuple[str, dict[str, object]]:
     """(system_instructions, user_payload) for a prompt of the declared size."""
-    budget_tokens = max(256, window_tokens - _HEADROOM_TOKENS)
+    headroom = max(_MIN_HEADROOM_TOKENS, int(window_tokens * _HEADROOM_FRAC))
+    budget_tokens = max(256, window_tokens - headroom)
     target_chars = int(budget_tokens * PROBE_CHARS_PER_TOKEN)
     head = f"PASSPHRASE: {passphrase}\n\n"
     parts = [head]
