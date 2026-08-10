@@ -26,8 +26,15 @@ class _FakeChoice:
 
 
 class _FakeResponse:
-    def __init__(self, content: str, finish_reason: str | None = None) -> None:
+    def __init__(
+        self, content: str, finish_reason: str | None = None, usage: object = None
+    ) -> None:
         self.choices = [_FakeChoice(content, finish_reason)]
+        # Attribute set ONLY when a caller opts in — every other existing use of
+        # this fake must keep producing a response with NO usage attribute at
+        # all, matching what most real endpoints/existing tests already assume.
+        if usage is not None:
+            self.usage = usage
 
 
 class _NoChoicesResponse:
@@ -1969,3 +1976,87 @@ async def test_on_usage_never_fires_when_the_narrowed_retry_is_silent() -> None:
 
     assert result["tool"] == "read_file"
     assert seen == [], seen
+
+
+# ── generate_text's own on_usage (non-streaming path) ────────────────────────
+# Everything above exercises generate_json's STREAMING usage read. generate_text
+# has a second, separate read: the non-streaming response object already carries
+# usage, and it was simply being dropped before this feature. This is what lets
+# the context-window test print the provider's OWN prompt_tokens beside its
+# verdict instead of only our chars-per-token estimate — a silent regression
+# here would turn a measurement back into a guess without anyone noticing.
+
+
+@pytest.mark.asyncio
+async def test_generate_text_on_usage_reports_prompt_and_completion_tokens() -> None:
+    """A non-streaming response carrying usage fires on_usage exactly once with
+    the provider's own counts, not our estimate."""
+    transport, _ = _transport([
+        _FakeResponse(
+            "velvet-harbor-quasar",
+            usage=_Usage(completion_tokens=8, prompt_tokens=31_500),
+        ),
+    ])
+    seen: list[tuple[int, int]] = []
+
+    text = await transport.generate_text(
+        model="m", system_instructions="", user_payload={},
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert text == "velvet-harbor-quasar"
+    assert seen == [(31_500, 8)], seen
+
+
+@pytest.mark.asyncio
+async def test_generate_text_on_usage_is_silent_without_a_usage_attribute() -> None:
+    """A response with NO usage attribute at all (the plain _FakeResponse shape
+    every other generate_text test already uses) must not fire on_usage and must
+    not raise — getattr's default has to absorb this quietly."""
+    transport, _ = _transport(["hi"])  # scripted str -> plain _FakeResponse, no usage
+    seen: list[tuple[int, int]] = []
+
+    text = await transport.generate_text(
+        model="m", system_instructions="", user_payload={},
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert text == "hi"
+    assert seen == [], seen
+
+
+@pytest.mark.asyncio
+async def test_generate_text_without_on_usage_is_a_true_no_op() -> None:
+    """Every existing caller (chat/agent.py, memory/harness.py, validate.py)
+    omits on_usage entirely and must keep working unchanged: a response WITH
+    usage present must not explode just because nobody asked to read it."""
+    transport, _ = _transport([
+        _FakeResponse("hi", usage=_Usage(completion_tokens=1, prompt_tokens=2)),
+    ])
+
+    text = await transport.generate_text(model="m", system_instructions="", user_payload={})
+
+    assert text == "hi"
+
+
+@pytest.mark.asyncio
+async def test_generate_text_streaming_branch_forwards_on_usage() -> None:
+    """generate_text's on_thinking branch routes through _stream_with_thinking to
+    _stream_with_finish_reason; on_usage must ride along rather than get dropped
+    at that seam the way on_progress already had to be forwarded explicitly."""
+    transport, _ = _transport([])
+    seen: list[tuple[int, int]] = []
+    stream = _StreamThenUsage(
+        [_StreamDelta("hello")],
+        _Usage(completion_tokens=5, prompt_tokens=999),
+    )
+    transport._completions = _FakeCompletions([stream])
+
+    text = await transport.generate_text(
+        model="m", system_instructions="", user_payload={},
+        on_thinking=lambda _c: None,
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert text == "hello"
+    assert seen == [(999, 5)], seen
