@@ -86,6 +86,7 @@ def test_put_route_and_config_report(
     assert client.get("/v1/config").json()["provider"] == {
         "backend": "groq",
         "model": "m2",
+        "context_window": None,
     }
 
 
@@ -190,3 +191,49 @@ async def test_failed_swap_does_not_apply_the_window(
     with pytest.raises(ProviderValidationError):
         await rt.swap(backend="groq", model="m2", context_window=8192)
     assert sink.window is None and rt.context_window == 128_000
+
+
+@pytest.mark.asyncio
+async def test_put_provider_applies_the_context_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sink = _WindowSink()
+    rt = ProviderRuntime(
+        backend="openai", model="old-model",
+        engines=[DefaultReasoningEngine(model="old-model", transport=_Transport("old"))],
+        window_sinks=[sink], context_window=128_000,
+    )
+    monkeypatch.setattr(
+        runtime_mod, "build_transport", lambda b, credentials=None: _Transport("new")
+    )
+    client = _client(tmp_path, rt)
+    response = client.put(
+        "/v1/config/provider",
+        json={"backend": "groq", "model": "m2", "context_window": 32768},
+    )
+    assert response.status_code == 200
+    assert response.json()["context_window"] == 32768
+    assert sink.window == 32768
+
+
+def test_put_provider_rejects_a_nonsense_window(tmp_path: Path) -> None:
+    rt = ProviderRuntime(
+        backend="openai", model="old-model",
+        engines=[DefaultReasoningEngine(model="old-model", transport=_Transport("old"))],
+    )
+    client = _client(tmp_path, rt)
+    assert client.put(
+        "/v1/config/provider", json={"backend": "groq", "context_window": 0}
+    ).status_code == 422
+
+
+def test_config_reports_the_effective_context_window(tmp_path: Path) -> None:
+    rt = ProviderRuntime(
+        backend="openai", model="gpt-5",
+        engines=[DefaultReasoningEngine(model="gpt-5", transport=_Transport())],
+        context_window=200_000,
+    )
+    payload = _client(tmp_path, rt).get("/v1/config").json()
+    assert payload["provider"] == {
+        "backend": "openai", "model": "gpt-5", "context_window": 200_000
+    }

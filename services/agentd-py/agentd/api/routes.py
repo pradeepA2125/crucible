@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agentd.domain.models import (
     AbortRequest,
@@ -60,6 +60,11 @@ class ProviderSwapRequest(BaseModel):
     backend: str
     model: str | None = None
     credentials: dict[str, str] = {}
+    # Absent means "leave the window as it is" — a model-only hot-swap must not
+    # reset what the user declared in Settings. Bounds are sanity rails, not model
+    # facts: 0 would make every turn compact forever, and the ceiling catches a
+    # fat-fingered extra digit before it silently disables compaction entirely.
+    context_window: int | None = Field(default=None, ge=1024, le=10_000_000)
 
 
 class McpUpsertRequest(BaseModel):
@@ -243,6 +248,11 @@ def build_router(
                 {
                     "backend": provider_runtime.backend,  # type: ignore[attr-defined]
                     "model": provider_runtime.model,  # type: ignore[attr-defined]
+                    # The effective window — seeded from CRUCIBLE_MEMORY_WINDOW_TOKENS
+                    # at startup, overwritten by a settings-panel save. The panel
+                    # pre-fills its field from this, so what it shows is what the
+                    # running process is actually using.
+                    "context_window": provider_runtime.context_window,  # type: ignore[attr-defined]
                 }
                 if provider_runtime is not None
                 else None
@@ -265,6 +275,7 @@ def build_router(
                 backend=body.backend,
                 model=body.model,
                 credentials=body.credentials or None,
+                context_window=body.context_window,
             )
         except (ProviderValidationError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
