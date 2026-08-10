@@ -644,6 +644,17 @@ def test_probe_is_sized_to_the_declared_window():
     assert 0.85 * 50_000 <= estimated <= 50_000
 
 
+@pytest.mark.parametrize("window", [4_096, 8_192, 32_768, 128_000])
+def test_small_windows_are_filled_as_completely_as_large_ones(window):
+    """Headroom is proportional, so the fill ratio must not collapse at the bottom
+    of the range. A flat reserve left a declared 4,096 window only 52% full, and
+    under-filling is the FALSE-PASS direction: the probe would confirm a window it
+    never actually tested."""
+    system, payload = build_probe(window, "a-b-c")
+    ratio = estimated_prompt_tokens(system, payload) / window
+    assert 0.85 <= ratio <= 1.0, f"window {window} filled to {ratio:.3f}"
+
+
 def test_probe_json_serializes():
     """The payload is sent as JSON by every transport; a non-serializable value
     would fail at the boundary, far from here."""
@@ -747,7 +758,18 @@ _FILLER_LINE = (
 # Room for the system prompt, the JSON envelope, the chat template's own tokens
 # and the answer. Without it a probe sized exactly to the window would overrun it
 # by construction and fail every time.
-_HEADROOM_TOKENS = 2048
+#
+# PROPORTIONAL, not flat. A flat reserve is a fixed cost against a variable
+# budget, so it dominates small windows: at a flat 2048 a declared 4,096 window
+# was filled to only 52% and everything at or below 2,304 collapsed to the same
+# 256-token floor, making a 1,024-window model indistinguishable from a 2,300 one.
+# That under-fill is the FALSE-PASS direction — the probe would confirm a window
+# it never actually tested. Five percent holds the fill ratio at ~0.95 from 4,096
+# tokens upward, and at the top end it reserves MORE than the flat value did
+# (6,400 at 128k), which both covers the completion budget the transport requests
+# and absorbs the newline JSON-escaping overshoot.
+_HEADROOM_FRAC = 0.05
+_MIN_HEADROOM_TOKENS = 256
 
 
 def new_passphrase(rng: random.Random | None = None) -> str:
@@ -760,7 +782,8 @@ def build_probe(
     window_tokens: int, passphrase: str
 ) -> tuple[str, dict[str, object]]:
     """(system_instructions, user_payload) for a prompt of the declared size."""
-    budget_tokens = max(256, window_tokens - _HEADROOM_TOKENS)
+    headroom = max(_MIN_HEADROOM_TOKENS, int(window_tokens * _HEADROOM_FRAC))
+    budget_tokens = max(256, window_tokens - headroom)
     target_chars = int(budget_tokens * PROBE_CHARS_PER_TOKEN)
     head = f"PASSPHRASE: {passphrase}\n\n"
     parts = [head]
@@ -848,6 +871,21 @@ git commit -m "feat(providers): pure passphrase probe for a declared context win
 **Context for the implementer:** mirror `POST /v1/providers/validate` exactly — always 200, `ok` is the signal, the provider's own error message is rendered verbatim by the UI, credentials are request-scoped and never persisted or logged. The one genuine addition is `on_usage` on `generate_text`: Part 1 put `on_usage` on `generate_json` and its streaming internals, but `generate_text`'s non-streaming path returns a response object carrying `.usage` and simply drops it. Reading it here is what makes the verdict auditable — the user sees the real token count next to the pass/fail, so a false pass caused by under-filling is visible rather than invisible. Gate the kwarg on `supports_token_progress`, exactly as `reasoning/engine.py` lines 314-330 already do; the other eight transports never see it.
 
 `CRUCIBLE_CONTEXT_TEST_TIMEOUT_SEC` defaults to `300` — a full-window upload is multi-megabyte, and the spec says it may take a minute.
+
+- [ ] **Step 0: Carry over the headroom fix Task 4's review produced**
+
+Task 4 shipped with a **flat** `_HEADROOM_TOKENS = 2048`. Its review showed that a fixed reserve against a variable budget collapses small windows — a declared 4,096 filled to only 52%, and everything at or below 2,304 collapsed to the same 256-token floor — which is the FALSE-PASS direction the whole probe exists to prevent. Make headroom proportional before building on the module.
+
+In `agentd/providers/context_probe.py`, replace the `_HEADROOM_TOKENS` constant with the `_HEADROOM_FRAC` / `_MIN_HEADROOM_TOKENS` pair and the `budget_tokens` line shown in Task 4's Step 3 (the plan text there is now the corrected version — copy it verbatim, comment included). Then add the parametrized `test_small_windows_are_filled_as_completely_as_large_ones` from Task 4's Step 1 to `tests/test_context_probe.py`.
+
+Run `pytest tests/test_context_probe.py` and confirm the new parametrized cases pass at 4,096 / 8,192 / 32,768 / 128,000 and that the pre-existing sizing test at 50,000 still passes. Commit this as its own change before starting the runner:
+
+```bash
+git add services/agentd-py/agentd/providers/context_probe.py services/agentd-py/tests/test_context_probe.py
+git commit -m "fix(providers): scale probe headroom with the window so small ones still fill"
+```
+
+While you are in that file, correct the `_WORDS` comment's arithmetic: `new_passphrase` uses `sample()` (no replacement), so the space is 48x47x46 = 103,776 permutations, not 48^3.
 
 - [ ] **Step 1: Write the failing test**
 
