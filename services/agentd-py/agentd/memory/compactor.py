@@ -142,6 +142,17 @@ class Compactor:
         self._hot_token_frac = hot_token_frac
         self._hot_turns = hot_turns
 
+    def set_window_tokens(self, window_tokens: int) -> None:
+        """Re-point the trigger at a new context window mid-process.
+
+        Only two places read it — the trigger comparison and the eviction floor —
+        and both read it per call, so there is no derived state to invalidate and
+        the change lands on the next loop iteration. This exists so the settings
+        panel's context-window field can hot-apply the same way the provider
+        hot-swap does, instead of requiring a backend restart.
+        """
+        self._window_tokens = window_tokens
+
     async def maybe_compact(
         self, history: History, run_id: str, observed: ObservedPrompt | None = None
     ) -> CompactionResult:

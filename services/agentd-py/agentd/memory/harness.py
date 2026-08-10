@@ -149,6 +149,16 @@ class MemoryHarness:
             prep.recall_trace = trace
         return prep
 
+    def set_window_tokens(self, window_tokens: int) -> None:
+        """Forward a settings-panel window change to the compactor.
+
+        A harness with no compactor (memory disabled — NO_OP_HARNESS) accepts and
+        ignores it: ProviderRuntime holds a plain list of sinks and must not have
+        to know which processes have memory switched on.
+        """
+        if self._compactor is not None:
+            self._compactor.set_window_tokens(window_tokens)
+
     async def _fill_recall(
         self, history: History, run_id: str, query: str = "",
     ) -> tuple[list[str], RecallTrace | None]:
