@@ -735,8 +735,12 @@ _SYSTEM = (
 
 # Filler that is cheap to build and hard to skim: a model cannot infer the
 # passphrase from the body, so recall really does require having read the front.
+# ASCII only, deliberately: the payload is sent through json.dumps, which escapes
+# a non-ASCII character to a \uXXXX sequence — an em-dash here would cost 6 wire
+# characters instead of 1 on EVERY filler line, overshooting the declared window
+# by roughly 10% and turning a passing window into a false failure.
 _FILLER_LINE = (
-    "{n:07d} reference record — inventory checksum, no semantic content, "
+    "{n:07d} reference record - inventory checksum, no semantic content, "
     "retained for context-length measurement only.\n"
 )
 
