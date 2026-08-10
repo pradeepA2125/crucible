@@ -1828,7 +1828,9 @@ git commit -m "feat(runtime): carry the declared context window into the spawn e
 
 **Interfaces:**
 - Consumes: the message protocol from Task 7 (mirrored locally — the webview is a separate Vite bundle and never imports the extension's `src/`).
-- Produces: `defaultContextWindow(model: string): number` and `DEFAULT_CONTEXT_WINDOW: number`; the Provider section sends `contextWindow` with `settings/setProvider`. Task 10 adds the Test button beside the same field.
+- Produces: `defaultContextWindow(model: string): number`, `DEFAULT_CONTEXT_WINDOW: number`, `MIN_CONTEXT_WINDOW: number`, `MAX_CONTEXT_WINDOW: number`, and `contextWindowError(raw: string): string | null`; the Provider section sends `contextWindow` with `settings/setProvider`. Task 10 adds the Test button beside the same field.
+
+**Why the client validates too (decided during Task 3's review).** The backend's bounds live on a pydantic `Field`, so a violation returns FastAPI's **422**, and `HttpBackendClient.fetchJson` (`http-backend-client.ts:753-760`) never reads the error body — it throws `Backend request failed (422 Unprocessable Entity) for /v1/config/provider` and discards `detail`. `validateProvider` does not check the window either, so a user who types `500` passes validation and then gets that cryptic message with no mention of the window or its minimum. The backend rail stays exactly as it is (defense in depth); this check makes the 422 unreachable from the UI and puts the explanation next to the field the user is looking at.
 
 **Context for the implementer — read this before writing the table.** The window is a *declared* value. The spec's non-goals rule out detecting it, so this table exists only to pre-fill a field the user is expected to correct. Two rules follow, and they are not negotiable:
 
@@ -1865,7 +1867,34 @@ describe("defaultContextWindow", () => {
     expect(defaultContextWindow("qwen3.6:35b-a3b-q4_K_M")).toBeGreaterThan(0);
   });
 });
+
+describe("contextWindowError", () => {
+  it("accepts a value inside the backend's rails", () => {
+    expect(contextWindowError("128000")).toBeNull();
+    expect(contextWindowError("1024")).toBeNull();          // inclusive floor
+    expect(contextWindowError("10000000")).toBeNull();      // inclusive ceiling
+  });
+
+  it("rejects below the floor with a message naming the minimum", () => {
+    /* Without this the value reaches PUT /v1/config/provider, pydantic 422s, and
+       fetchJson discards the body — the user sees only "Backend request failed
+       (422)" with no mention of the window. */
+    const err = contextWindowError("500");
+    expect(err).toMatch(/1,?024/);
+  });
+
+  it("rejects above the ceiling", () => {
+    expect(contextWindowError("10000001")).not.toBeNull();
+  });
+
+  it("rejects empty and zero", () => {
+    expect(contextWindowError("")).not.toBeNull();
+    expect(contextWindowError("0")).not.toBeNull();
+  });
+});
 ```
+
+Import `contextWindowError`, `MIN_CONTEXT_WINDOW` and `MAX_CONTEXT_WINDOW` alongside the two existing symbols at the top of this test file.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1916,6 +1945,27 @@ export function defaultContextWindow(model: string): number {
     if (name.includes(key)) return tokens;
   }
   return DEFAULT_CONTEXT_WINDOW;
+}
+
+// Mirrors the pydantic rails on ProviderSwapRequest.context_window (routes.py).
+// Duplicated deliberately: the backend keeps its own check as defense in depth,
+// but a violation there returns a 422 whose body HttpBackendClient.fetchJson
+// discards, so the user would see only "Backend request failed (422)". Catching
+// it here puts the reason next to the field they are typing in.
+export const MIN_CONTEXT_WINDOW = 1024;
+export const MAX_CONTEXT_WINDOW = 10_000_000;
+
+/** null when the raw field value is an acceptable window, else why it is not. */
+export function contextWindowError(raw: string): string | null {
+  const tokens = Number(raw);
+  if (!raw.trim() || !Number.isInteger(tokens)) return "Enter a whole number of tokens.";
+  if (tokens < MIN_CONTEXT_WINDOW) {
+    return `Too small — the minimum is ${MIN_CONTEXT_WINDOW.toLocaleString()} tokens.`;
+  }
+  if (tokens > MAX_CONTEXT_WINDOW) {
+    return `Too large — the maximum is ${MAX_CONTEXT_WINDOW.toLocaleString()} tokens.`;
+  }
+  return null;
 }
 ```
 
@@ -1971,6 +2021,19 @@ describe("context window field", () => {
     expect(screen.getByText(/Too small/i)).toBeTruthy();
     expect(screen.getByText(/Too large/i)).toBeTruthy();
   });
+
+  it("blocks the save and explains why when the window is below the backend floor", () => {
+    /* Without this the value reaches the route, pydantic 422s, and the client
+       discards the body — the user would see only "Backend request failed (422)". */
+    const send = vi.fn();
+    render(<ProviderSection state={state} busy={false} send={send} />);
+    fireEvent.change(screen.getByLabelText(/Context window/), { target: { value: "500" } });
+    expect(screen.getByText(/minimum is 1,024 tokens/i)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Save & validate/ }) as HTMLButtonElement).disabled)
+      .toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /Save & validate/ }));
+    expect(send).not.toHaveBeenCalled();
+  });
 });
 ```
 
@@ -1983,7 +2046,7 @@ In `apps/vscode-extension/webview-ui/src/settings/types.ts`, apply the same thre
 In `ProviderSection.tsx`, add the import:
 
 ```typescript
-import { defaultContextWindow } from "../contextWindows";
+import { contextWindowError, defaultContextWindow } from "../contextWindows";
 ```
 
 Add state beside the existing `model` state:
@@ -1994,6 +2057,9 @@ Add state beside the existing `model` state:
   const [contextWindow, setContextWindow] = useState(
     String(state.provider?.contextWindow ?? defaultContextWindow(state.provider?.model ?? "")),
   );
+  // Blocks the save before it can reach the route — see the note in contextWindows.ts
+  // for why a backend 422 would reach the user as an unreadable message.
+  const windowError = contextWindowError(contextWindow);
 ```
 
 In the Provider `<select>`'s `onChange`, alongside `setModel(next.defaultModel)`:
@@ -2015,6 +2081,9 @@ Add the field after the Model input:
               placeholder="128000"
             />
           </label>
+          {windowError && (
+            <p className="text-xs" style={{ color: "var(--color-red)" }}>{windowError}</p>
+          )}
           <p className="text-[11px] leading-relaxed text-text-3">
             Take this from the model's own model card or the provider's
             documentation — it cannot be detected, and a remembered number is
@@ -2030,8 +2099,16 @@ Add the field after the Model input:
 In the Save button's `send({...})` call, add:
 
 ```typescript
-                  ...(Number(contextWindow) > 0 ? { contextWindow: Number(contextWindow) } : {}),
+                  contextWindow: Number(contextWindow),
 ```
+
+and gate the button on the field being valid — change its `disabled` from `busy || !model` to:
+
+```typescript
+              disabled={busy || !model || windowError !== null}
+```
+
+The window is now always sent (the button cannot be pressed while it is invalid), so no conditional spread is needed here.
 
 - [ ] **Step 9: Run the UI tests**
 
@@ -2191,7 +2268,7 @@ Add the control after the help paragraph from Task 9:
           <div className="flex flex-col gap-2">
             {!confirmingTest ? (
               <BtnGhost
-                disabled={busy || !(Number(contextWindow) > 0)}
+                disabled={busy || windowError !== null}
                 onClick={() => { setTestResult(null); setConfirmingTest(true); }}
               >
                 Test
