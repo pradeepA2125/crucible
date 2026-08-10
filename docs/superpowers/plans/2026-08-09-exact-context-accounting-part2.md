@@ -220,7 +220,7 @@ git commit -m "feat(memory): let the compaction window change at runtime"
 
 **Interfaces:**
 - Consumes: `MemoryHarness.set_window_tokens(int)` from Task 1.
-- Produces: `ProviderRuntime(backend, model, engines, window_sinks=(), context_window=None)` with a public `self.context_window: int | None`, and `swap(*, backend, model=None, credentials=None, context_window=None) -> dict[str, str | int]` whose returned dict carries `"context_window"` when one is in effect. Task 3 calls it from the route.
+- Produces: `ProviderRuntime(backend, model, engines, window_sinks=(), context_window=None)` with a public `self.context_window: int | None`, and `swap(*, backend, model=None, credentials=None, context_window=None) -> dict[str, object]` whose returned dict carries `"context_window"` when one is in effect. Task 3 calls it from the route, which already returns `dict[str, object]` and spreads this as `{"ok": True, **result}` — so `object` costs the caller nothing and matches the route's own annotation.
 
 **Context for the implementer:** `ProviderRuntime` is the existing hot-swap seam — `main.py` builds exactly one, holding every live `DefaultReasoningEngine`. Its contract is *validate first, mutate second*: a failed swap must leave everything untouched. The context window follows the same rule, applied only after `ping_transport` returns, so a bad key does not silently change how compaction behaves. Window sinks are duck-typed (`set_window_tokens`) rather than typed as `MemoryHarness` for the same reason `engines` is `Sequence[object]`: importing the memory package into the providers package would be a new dependency edge for one method call.
 
