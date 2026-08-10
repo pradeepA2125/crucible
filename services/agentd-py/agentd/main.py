@@ -310,8 +310,20 @@ if reasoning_backend != "scripted":
     _ctrl_engine = getattr(_chat_agent, "_reasoning", None)
     if isinstance(_ctrl_engine, DefaultReasoningEngine) and _ctrl_engine is not reasoning_engine:
         _engines.append(_ctrl_engine)
+    # Both harnesses in one process compact against the same window: the task loop's
+    # (_task_memory_harness) and the chat controller's own (built inside
+    # select_chat_handler). A NO_OP_HARNESS accepts set_window_tokens and ignores it,
+    # so neither needs a guard here.
+    _window_sinks: list[object] = [_task_memory_harness]
+    _ctrl_harness = getattr(_chat_agent, "_memory_harness", None)
+    if _ctrl_harness is not None and _ctrl_harness is not _task_memory_harness:
+        _window_sinks.append(_ctrl_harness)
     provider_runtime = ProviderRuntime(
-        backend=reasoning_backend, model=_chat_model, engines=_engines
+        backend=reasoning_backend,
+        model=_chat_model,
+        engines=_engines,
+        window_sinks=_window_sinks,
+        context_window=MemoryConfig.from_env(os.environ).window_tokens,
     )
 
 app.include_router(

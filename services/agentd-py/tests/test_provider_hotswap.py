@@ -116,3 +116,77 @@ def test_put_route_409_when_no_runtime(tmp_path: Path) -> None:
     client = _client(tmp_path, None)
     assert client.put("/v1/config/provider", json={"backend": "groq"}).status_code == 409
     assert client.get("/v1/config").json()["provider"] is None
+
+
+class _WindowSink:
+    def __init__(self) -> None:
+        self.window: int | None = None
+
+    def set_window_tokens(self, window_tokens: int) -> None:
+        self.window = window_tokens
+
+
+@pytest.mark.asyncio
+async def test_swap_applies_the_context_window_to_every_sink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = DefaultReasoningEngine(model="old-model", transport=_Transport("old"))
+    sink_a, sink_b = _WindowSink(), _WindowSink()
+    rt = ProviderRuntime(
+        backend="openai", model="old-model", engines=[engine],
+        window_sinks=[sink_a, sink_b], context_window=128_000,
+    )
+    monkeypatch.setattr(
+        runtime_mod, "build_transport", lambda b, credentials=None: _Transport("new")
+    )
+    result = await rt.swap(backend="groq", model="m2", context_window=32_768)
+    assert sink_a.window == 32_768 and sink_b.window == 32_768
+    assert rt.context_window == 32_768
+    assert result["context_window"] == 32_768
+
+
+@pytest.mark.asyncio
+async def test_swap_without_a_window_leaves_the_existing_one_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model-only hot-swap (the composer's model menu) must not reset the window
+    the user declared in Settings."""
+    sink = _WindowSink()
+    rt = ProviderRuntime(
+        backend="openai", model="old-model",
+        engines=[DefaultReasoningEngine(model="old-model", transport=_Transport("old"))],
+        window_sinks=[sink], context_window=200_000,
+    )
+    monkeypatch.setattr(
+        runtime_mod, "build_transport", lambda b, credentials=None: _Transport("new")
+    )
+    result = await rt.swap(backend="groq", model="m2")
+    assert sink.window is None  # never touched
+    assert rt.context_window == 200_000
+    assert result["context_window"] == 200_000
+
+
+@pytest.mark.asyncio
+async def test_failed_swap_does_not_apply_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validate-then-mutate: a bad key must not silently change compaction."""
+    from agentd.providers.validate import ProviderValidationError
+
+    sink = _WindowSink()
+    rt = ProviderRuntime(
+        backend="openai", model="old-model",
+        engines=[DefaultReasoningEngine(model="old-model", transport=_Transport("old"))],
+        window_sinks=[sink], context_window=128_000,
+    )
+
+    async def _boom(transport, model, timeout_sec=30.0):
+        raise ProviderValidationError("bad key")
+
+    monkeypatch.setattr(
+        runtime_mod, "build_transport", lambda b, credentials=None: _Transport()
+    )
+    monkeypatch.setattr(runtime_mod, "ping_transport", _boom)
+    with pytest.raises(ProviderValidationError):
+        await rt.swap(backend="groq", model="m2", context_window=8192)
+    assert sink.window is None and rt.context_window == 128_000

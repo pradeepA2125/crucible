@@ -12,10 +12,28 @@ from agentd.providers.validate import ProviderValidationError, ping_transport
 
 
 class ProviderRuntime:
-    def __init__(self, *, backend: str, model: str, engines: Sequence[object]) -> None:
+    def __init__(
+        self,
+        *,
+        backend: str,
+        model: str,
+        engines: Sequence[object],
+        window_sinks: Sequence[object] = (),
+        context_window: int | None = None,
+    ) -> None:
         self.backend = backend
         self.model = model
+        # The window in effect right now. Seeded in main.py from MemoryConfig — i.e.
+        # from CRUCIBLE_MEMORY_WINDOW_TOKENS or its 128000 default — so GET /v1/config
+        # reports the real number from the first request, before anyone has saved
+        # anything in the settings panel. That seeding IS the spec's resolution order:
+        # provider window > env var > default, collapsed into one value.
+        self.context_window = context_window
         self._engines = list(engines)
+        # Duck-typed on set_window_tokens rather than typed as MemoryHarness: the
+        # providers package should not grow a dependency on the memory package for
+        # one method call, and the same reasoning already governs `engines`.
+        self._window_sinks = list(window_sinks)
 
     async def swap(
         self,
@@ -23,7 +41,8 @@ class ProviderRuntime:
         backend: str,
         model: str | None = None,
         credentials: dict[str, str] | None = None,
-    ) -> dict[str, str]:
+        context_window: int | None = None,
+    ) -> dict[str, object]:
         try:
             transport = build_transport(backend, credentials=credentials)
             resolved = model or resolve_model(backend)
@@ -39,4 +58,15 @@ class ProviderRuntime:
         for engine in self._engines:
             engine.set_provider(model=resolved, transport=transport)  # type: ignore[attr-defined]
         self.backend, self.model = backend, resolved
-        return {"backend": backend, "model": resolved}
+        # Applied only after validation succeeds, for the same reason the engines
+        # are: a rejected swap must leave the process exactly as it was. Absent
+        # means "unchanged", not "reset" — a model-only hot-swap from the composer
+        # must not discard the window the user declared in Settings.
+        if context_window is not None:
+            self.context_window = context_window
+            for sink in self._window_sinks:
+                sink.set_window_tokens(context_window)  # type: ignore[attr-defined]
+        result: dict[str, object] = {"backend": backend, "model": resolved}
+        if self.context_window is not None:
+            result["context_window"] = self.context_window
+        return result
