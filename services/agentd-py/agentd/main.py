@@ -303,6 +303,7 @@ warn_if_incoherent_flags(logging.getLogger("agentd.startup"))
 # The legacy ChatAgent holds a raw transport (not an engine) — getattr yields None
 # there; the controller path is the live one.
 from agentd.providers.runtime import ProviderRuntime
+from agentd.providers.window_sinks import collect_window_sinks
 
 provider_runtime: ProviderRuntime | None = None
 if reasoning_backend != "scripted":
@@ -313,11 +314,9 @@ if reasoning_backend != "scripted":
     # Both harnesses in one process compact against the same window: the task loop's
     # (_task_memory_harness) and the chat controller's own (built inside
     # select_chat_handler). A NO_OP_HARNESS accepts set_window_tokens and ignores it,
-    # so neither needs a guard here.
-    _window_sinks: list[object] = [_task_memory_harness]
-    _ctrl_harness = getattr(_chat_agent, "_memory_harness", None)
-    if _ctrl_harness is not None and _ctrl_harness is not _task_memory_harness:
-        _window_sinks.append(_ctrl_harness)
+    # so neither needs a guard here. See providers/window_sinks.py for why this is a
+    # separately unit-tested pure function rather than inline getattr here.
+    _window_sinks = collect_window_sinks(_task_memory_harness, _chat_agent)
     provider_runtime = ProviderRuntime(
         backend=reasoning_backend,
         model=_chat_model,
