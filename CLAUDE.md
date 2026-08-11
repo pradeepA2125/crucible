@@ -409,7 +409,8 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
   passphrase at the FRONT and judges by recall, **not** by HTTP status — the
   measured NIM failure is HTTP 200 with `completion_tokens: 1` and empty content,
   so `ok` (the call completed) and `recalled` (the window is real) are separate
-  fields all the way to the UI. `CRUCIBLE_CONTEXT_TEST_TIMEOUT_SEC` (default 300).
+  fields all the way to the UI. `CRUCIBLE_CONTEXT_TEST_TIMEOUT_SEC` (default 240 — see
+  "Key Configuration" for why it sits 60s under undici's default headersTimeout).
   **MCP servers** section: list/add/remove/reconnect/enable-toggle (toggle both updates
   the user-local disabled list AND calls `reconnectMcpServer` — no restart). **Skills**
   and **policy/memory** env-flag changes flag `restartRequired: true`, applied via the
@@ -647,6 +648,9 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 
 **Validation**
 - `CRUCIBLE_VALIDATION_COMMANDS_JSON` — JSON array of validation commands to run after execution; overrides auto-detection
+
+**Provider validate / context-window test**
+- `CRUCIBLE_CONTEXT_TEST_TIMEOUT_SEC` — seconds `run_context_test` (the Settings panel's opt-in Test button, `agentd/providers/context_probe.py`) waits for the provider's answer before reporting a timeout (default `240`). Deliberately under undici's default `headersTimeout` (300000ms) — the settings webview's request travels through Node's `fetch`, and a backend timeout landing at or after 300s would race that client-side abort and could surface an opaque `UND_ERR_HEADERS_TIMEOUT` instead of this module's own "Provider did not respond within Ns" message.
 
 ### VS Code extension settings (package.json contributes.configuration)
 - `crucible.backendBaseUrl` — default `http://127.0.0.1:8000`. Leave default for the managed backend; set explicitly to attach to a dev backend (e.g. `start-backend.sh`) instead — an explicit value always wins over managed spawn.
