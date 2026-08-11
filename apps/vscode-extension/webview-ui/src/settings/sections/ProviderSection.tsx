@@ -121,7 +121,18 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
           </label>
           <label className="flex flex-col gap-1 text-xs text-text-2">
             Model
-            <input className={FIELD} value={model} onChange={(e) => setModel(e.target.value)} />
+            <input
+              className={FIELD}
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+                // A verdict describes a specific (model, window) pair; editing the
+                // model out from under a green "Passphrase recalled" tick would
+                // otherwise leave that tick beside a model it never tested.
+                setTestResult(null);
+                setConfirmingTest(false);
+              }}
+            />
           </label>
           <label className="flex flex-col gap-1 text-xs text-text-2">
             Context window (tokens)

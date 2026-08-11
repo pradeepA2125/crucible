@@ -226,4 +226,16 @@ describe("context window Test button", () => {
     fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "anthropic" } });
     expect(screen.queryByText(/recalled/i)).toBeNull();
   });
+
+  it("clears a stale verdict when the model changes after it renders", () => {
+    /* Same bug class as the window/provider cases above: declare 200,000 for a
+       Claude model, Test -> green "Passphrase recalled", then type a different
+       model into the Model field. Without this the tick stays lit beside a
+       model it never actually tested. */
+    render(<ProviderSection state={state} busy={false} send={vi.fn()} />);
+    postResult({ ok: true, recalled: true, promptTokens: 998_123, exact: true });
+    expect(screen.getByText(/recalled/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "qwen3-32b" } });
+    expect(screen.queryByText(/recalled/i)).toBeNull();
+  });
 });
