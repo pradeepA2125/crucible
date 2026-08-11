@@ -813,6 +813,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: object = None,
         on_usage: Any = None,
+        max_tokens: int | None = None,
     ) -> str:
         is_reasoning, temperature = await self._reasoning_config(model)
 
@@ -822,7 +823,13 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": json.dumps(user_payload)},
             ],
-            "max_completion_tokens": self._max_tokens,
+            # Keyword-only override, default None = self._max_tokens (today's
+            # behaviour unchanged for every existing caller). Exists for the
+            # context-window probe: it needs ~10 output tokens, and sending the
+            # anti-runaway default (4096) on top of a near-full-window prompt is
+            # what makes an endpoint that validates prompt + max_tokens <=
+            # context_length reject a CORRECTLY declared window.
+            "max_completion_tokens": max_tokens if max_tokens is not None else self._max_tokens,
             "temperature": temperature,
         }
         extra_body = self._build_extra_body(model, is_reasoning, for_json=False)
@@ -839,13 +846,21 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             # The non-streaming response already carries usage; it was simply being
             # dropped. Reading it is what lets the context test print the provider's
             # OWN prompt_tokens beside its verdict instead of only our estimate.
+            #
+            # _usage_prompt_tokens (not a bare getattr) for the same reason the
+            # streaming path already uses it: a reported prompt_tokens of 0 means
+            # the endpoint doesn't know, not that the prompt was empty (some
+            # proxies/vLLM builds emit an all-zero usage on paths they don't fully
+            # account for). Trusting a 0 here would render the context test's
+            # verdict as an exact "0 tokens sent" instead of falling back to our
+            # own chars-per-token estimate.
             if on_usage is not None:
                 usage = getattr(response, "usage", None)
                 if usage is not None:
-                    on_usage(
-                        int(getattr(usage, "prompt_tokens", 0) or 0),
-                        int(getattr(usage, "completion_tokens", 0) or 0),
-                    )
+                    prompt_tokens = _usage_prompt_tokens(usage)
+                    completion_tokens, _ = _usage_token_counts(usage)
+                    if prompt_tokens:
+                        on_usage(prompt_tokens, completion_tokens or 0)
             return self._extract_text(response)
         except Exception as e:
             raise RuntimeError(f"{self._label} API error: {e}") from e

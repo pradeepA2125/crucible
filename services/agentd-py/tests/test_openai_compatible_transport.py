@@ -109,6 +109,22 @@ async def test_generate_text_uses_max_tokens_not_json_max_tokens() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_text_max_tokens_kwarg_overrides_the_configured_budget() -> None:
+    """The context-window probe needs ~10 output tokens, not the anti-runaway
+    default (4096) — sending the default budget on top of a near-full-window
+    prompt is exactly what makes a correctly declared window fail an endpoint
+    that validates prompt + max_tokens <= context_length. The override is a
+    per-call kwarg, not a constructor option, because every other caller of
+    this transport must keep getting the constructor's self._max_tokens
+    unchanged."""
+    transport, fake = _transport(["hello"], max_tokens=77, json_max_tokens=4242)
+    await transport.generate_text(
+        model="m", system_instructions="", user_payload={}, max_tokens=16,
+    )
+    assert fake.calls[0]["max_completion_tokens"] == 16
+
+
+@pytest.mark.asyncio
 async def test_openrouter_generate_text_sends_no_require_parameters_guard() -> None:
     """The `for_json` seam, from the caller's side: provider.require_parameters
     guards response_format routing, which only a structured-output call sends.
@@ -2022,6 +2038,32 @@ async def test_generate_text_on_usage_is_silent_without_a_usage_attribute() -> N
     )
 
     assert text == "hi"
+    assert seen == [], seen
+
+
+@pytest.mark.asyncio
+async def test_generate_text_on_usage_skips_a_falsy_or_unknown_prompt_token_count() -> None:
+    """A reported prompt_tokens of 0 (or an unparseable/missing value) means the
+    endpoint doesn't know, not that the prompt was empty — the same rule
+    _usage_prompt_tokens already enforces for the streaming path (see the
+    comment above its call site ~line 1074). The old code here read
+    `int(getattr(usage, "prompt_tokens", 0) or 0)`, which coalesced "unknown"
+    into a confident 0 and would have rendered the context test's verdict as
+    "0 tokens sent — exact" instead of falling back to our own estimate."""
+    transport, _ = _transport([
+        _FakeResponse(
+            "velvet-harbor-quasar",
+            usage=_Usage(completion_tokens=8, prompt_tokens=0),
+        ),
+    ])
+    seen: list[tuple[int, int]] = []
+
+    text = await transport.generate_text(
+        model="m", system_instructions="", user_payload={},
+        on_usage=lambda p, c: seen.append((p, c)),
+    )
+
+    assert text == "velvet-harbor-quasar"
     assert seen == [], seen
 
 
