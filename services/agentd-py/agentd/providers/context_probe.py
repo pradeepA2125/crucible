@@ -79,6 +79,15 @@ _FILLER_LINE = (
 _HEADROOM_FRAC = 0.05
 _MIN_HEADROOM_TOKENS = 256
 
+# The probe's answer is three words ("velvet-harbor-quasar"), never more than a
+# handful of tokens. Requesting the transport's anti-runaway default (4096, see
+# OpenAICompatibleTransport's max_tokens) on top of a prompt sized to the full
+# declared window is what made a CORRECTLY declared window fail on any endpoint
+# that validates prompt + max_tokens <= context_length (vLLM, OpenAI, Anthropic
+# all do) — see this module's docstring measurement table. Small but not
+# minimal: real answers run a little long ("The passphrase is: ...").
+_PROBE_COMPLETION_TOKENS = 16
+
 
 def new_passphrase(rng: random.Random | None = None) -> str:
     """Three hyphenated words, fresh per test run."""
@@ -154,10 +163,17 @@ class ContextTestResult:
 
 
 def context_test_timeout_sec() -> float:
+    # 240, not 300: the settings webview's request to the backend route travels
+    # through Node's fetch (undici), whose default headersTimeout is exactly
+    # 300000ms. A backend timeout that also lands at 300s races that client-side
+    # abort — whichever fires first decides what the user sees, and losing the
+    # race surfaces an opaque UND_ERR_HEADERS_TIMEOUT instead of this module's
+    # own "Provider did not respond within 240s". 240 keeps a 60s margin so the
+    # backend's own clean timeout always wins.
     try:
-        return float(os.getenv("CRUCIBLE_CONTEXT_TEST_TIMEOUT_SEC", "300"))
+        return float(os.getenv("CRUCIBLE_CONTEXT_TEST_TIMEOUT_SEC", "240"))
     except ValueError:
-        return 300.0
+        return 240.0
 
 
 async def run_context_test(
@@ -190,11 +206,16 @@ async def run_context_test(
     observed: list[int] = []
     kwargs: dict[str, object] = {}
     # Gated exactly as reasoning/engine.py gates its progress callbacks: the eight
-    # transports that do not declare this capability must never see the kwarg.
+    # transports that do not declare this capability must never see either kwarg
+    # — their generate_text signatures don't accept on_usage OR max_tokens, and
+    # supports_token_progress is the one capability flag that already tells us
+    # which transport (OpenAICompatibleTransport and its OpenRouter subclass)
+    # accepts both.
     if getattr(transport, "supports_token_progress", False):
         kwargs["on_usage"] = lambda prompt_tokens, _completion: observed.append(
             prompt_tokens
         )
+        kwargs["max_tokens"] = _PROBE_COMPLETION_TOKENS
 
     try:
         answer = await asyncio.wait_for(

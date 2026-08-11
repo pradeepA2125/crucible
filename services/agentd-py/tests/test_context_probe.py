@@ -54,10 +54,26 @@ def test_small_windows_are_filled_as_completely_as_large_ones(window):
     """Headroom is proportional, so the fill ratio must not collapse at the bottom
     of the range. A flat reserve left a declared 4,096 window only 52% full, and
     under-filling is the FALSE-PASS direction: the probe would confirm a window it
-    never actually tested."""
+    never actually tested.
+
+    The lower bound is DERIVED from build_probe's own headroom formula
+    (window - headroom) / window, not a fixed constant like the old `>= 0.85` —
+    that fixed constant is what let this test keep passing while
+    run_context_test still asked generate_text for the transport's 4096-token
+    completion default on top of the filled prompt, overrunning small windows
+    by nearly 2x (see context_probe.py's module docstring). The second
+    assertion is the direct regression guard for that bug: prompt + the
+    probe's actual completion budget must never exceed the declared window.
+    """
+    headroom = max(probe_mod._MIN_HEADROOM_TOKENS, int(window * probe_mod._HEADROOM_FRAC))
+    expected_floor = (window - headroom) / window
+
     system, payload = build_probe(window, "a-b-c")
-    ratio = estimated_prompt_tokens(system, payload) / window
-    assert 0.85 <= ratio <= 1.0, f"window {window} filled to {ratio:.3f}"
+    prompt_tokens = estimated_prompt_tokens(system, payload)
+    ratio = prompt_tokens / window
+
+    assert expected_floor <= ratio <= 1.0, f"window {window} filled to {ratio:.3f}"
+    assert prompt_tokens + probe_mod._PROBE_COMPLETION_TOKENS <= window
 
 
 def test_probe_json_serializes():
@@ -96,12 +112,14 @@ class _RecallingTransport:
     def __init__(self, *, prompt_tokens: int | None = 31_500) -> None:
         self.prompt_tokens = prompt_tokens
         self.seen_chars = 0
+        self.seen_kwargs: dict[str, object] = {}
 
     async def generate_text(
         self, *, model, system_instructions, user_payload, on_usage=None, **_kw
     ):
         document = str(user_payload["document"])
         self.seen_chars = len(document)
+        self.seen_kwargs = _kw
         if on_usage is not None and self.prompt_tokens is not None:
             on_usage(self.prompt_tokens, 8)
         return document.split("\n")[0].removeprefix("PASSPHRASE: ")
@@ -113,6 +131,18 @@ class _AmnesiacTransport:
     supports_token_progress = False
 
     async def generate_text(self, *, model, system_instructions, user_payload, **_kw):
+        return ""
+
+
+class _StrictNoProgressTransport:
+    """Declares no supports_token_progress capability AND, unlike the fakes
+    above, accepts no catch-all **_kw — so it raises TypeError on ANY kwarg
+    the probe is not entitled to send it. Proves max_tokens is gated exactly
+    like on_usage, not just that the happy path tolerates it."""
+
+    supports_token_progress = False
+
+    async def generate_text(self, *, model, system_instructions, user_payload):
         return ""
 
 
@@ -132,6 +162,44 @@ async def test_recall_passes_and_reports_the_providers_own_count(monkeypatch):
     )
     assert result.ok is True and result.recalled is True
     assert result.prompt_tokens == 31_500 and result.exact is True
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_probe_requests_a_small_completion_budget_not_the_transport_default(
+    monkeypatch,
+):
+    """The probe's answer is three words — it must not ask for the transport's
+    anti-runaway default (4096), which is what made prompt + max_tokens overrun a
+    correctly declared window on any endpoint that validates the sum."""
+    transport = _RecallingTransport()
+    monkeypatch.setattr(
+        probe_mod, "build_transport", lambda b, credentials=None: transport
+    )
+    await run_context_test(
+        backend="openai_compatible", model="m", credentials=None, window_tokens=32_768
+    )
+    assert "max_tokens" in transport.seen_kwargs
+    assert transport.seen_kwargs["max_tokens"] <= 32
+
+
+@pytest.mark.asyncio
+async def test_transport_without_token_progress_is_not_sent_max_tokens_either(
+    monkeypatch,
+):
+    """Gated exactly like on_usage: a transport that hasn't declared
+    supports_token_progress must not receive a max_tokens kwarg it never
+    promised to accept. _StrictNoProgressTransport has no **_kw catch-all, so
+    this raises TypeError (via run_context_test's own except Exception, which
+    would surface it as a failed result, not a clean ok=True) if the gate is
+    ever removed."""
+    monkeypatch.setattr(
+        probe_mod, "build_transport", lambda b, credentials=None: _StrictNoProgressTransport()
+    )
+    result = await run_context_test(
+        backend="gemini", model="m", credentials=None, window_tokens=32_768
+    )
+    assert result.ok is True
     assert result.error is None
 
 
