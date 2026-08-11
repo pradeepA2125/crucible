@@ -186,6 +186,14 @@ describe("context window Test button", () => {
     // verdict text is lowercase mid-sentence ("...so this window is too
     // large."). The case-sensitive form targets the verdict specifically.
     expect(screen.getByText(/too large/)).toBeTruthy();
+    // Pin against the green wording too — not just "amber text is present".
+    // TestVerdict's branches are early-return and mutually exclusive today,
+    // but that's an implementation detail a future refactor could break
+    // silently; this is the single most important behaviour in the feature
+    // (a silent provider failure must never read as success), so the test
+    // should defend it directly rather than rely on someone re-reading the
+    // component.
+    expect(screen.queryByText(/passphrase recalled/i)).toBeNull();
   });
 
   it("labels an estimated token count as an estimate", () => {

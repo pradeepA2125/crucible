@@ -4,6 +4,7 @@ import { BtnGhost, BtnPrimary } from "../../components/shared/buttons";
 import { Icon } from "../../components/Icon";
 import { SectionHeader } from "../SectionHeader";
 import { PROVIDERS } from "../types";
+import type { SettingsOutMsg } from "../types";
 import { FIELD } from "../ui";
 import { contextWindowError, defaultContextWindow } from "../contextWindows";
 import type { SectionProps } from "./meta";
@@ -70,9 +71,12 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
   // advisory, per-session, and never persisted — so it rides its own message
   // rather than a prop.
   useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
+    const onMessage = (event: MessageEvent<SettingsOutMsg>) => {
       const msg = event.data;
-      if (msg?.type === "settings/contextTestResult") {
+      // Bare `MessageEvent` types `.data` as `any` — the `<SettingsOutMsg>`
+      // parameter plus this discriminant narrow gives `msg.result` its real
+      // type, matching the `no any` constraint the rest of this file follows.
+      if (msg && typeof msg === "object" && msg.type === "settings/contextTestResult") {
         setConfirmingTest(false);
         setTestResult(msg.result);
       }

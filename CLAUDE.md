@@ -401,7 +401,8 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
   default 128000) and never detected — NIM's `/v1/models` exposes no capability
   data and NIM accepts a 600k-token prompt with HTTP 200. It rides `setProvider`
   to `PUT /v1/config/provider` as `context_window`, which `ProviderRuntime` applies
-  to every registered window sink (both memory harnesses) after validation
+  to every registered window sink — the task-loop harness, plus the chat
+  controller's own when it has a distinct one — after validation
   succeeds; absent means "leave it alone", so a composer model-only swap never
   clears it. The opt-in **Test** button (`POST /v1/providers/context-test`,
   `agentd/providers/context_probe.py`) sends one prompt of the declared size with a
