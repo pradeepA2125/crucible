@@ -82,6 +82,14 @@ export function buildBackendEnv(
   if (settings.skillsDisabled?.length) {
     built.CRUCIBLE_SKILLS_DISABLED = settings.skillsDisabled.join(",");
   }
+  // The declared context window from the settings panel. Written into the SAME env
+  // var a hand-configured deployment uses, which is what collapses the spec's
+  // "provider window > env var > 128000" order into one value the backend never
+  // has to arbitrate. Absent means absent: a user who set only the env var and
+  // never opened the panel keeps exactly today's behaviour.
+  if (settings.contextWindow !== undefined) {
+    built.CRUCIBLE_MEMORY_WINDOW_TOKENS = String(settings.contextWindow);
+  }
   return { ...built, ...settings.extraEnv };
 }
 

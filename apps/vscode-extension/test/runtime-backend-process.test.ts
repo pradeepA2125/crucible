@@ -198,3 +198,44 @@ describe("BackendProcess.start", () => {
       .rejects.toThrow(/healthy within 60s/);
   });
 });
+
+describe("context window in the spawn env", () => {
+  it("writes CRUCIBLE_MEMORY_WINDOW_TOKENS when a window is declared", () => {
+    const env = buildBackendEnv(
+      "/ws",
+      { backend: "groq", model: "m", contextWindow: 32768 },
+      "/rt", 8123, "darwin-arm64",
+    );
+    expect(env.CRUCIBLE_MEMORY_WINDOW_TOKENS).toBe("32768");
+  });
+
+  it("omits it entirely when none is declared", () => {
+    /* A deployment that sets only CRUCIBLE_MEMORY_WINDOW_TOKENS by hand must keep
+       working unchanged — writing a default here would silently override it. */
+    const env = buildBackendEnv(
+      "/ws", { backend: "groq", model: "m" }, "/rt", 8123, "darwin-arm64",
+    );
+    expect("CRUCIBLE_MEMORY_WINDOW_TOKENS" in env).toBe(false);
+  });
+
+  it("does not swallow 0 as a falsy value", () => {
+    /* The guard uses !==undefined, not truthiness, so 0 is a valid declared window. */
+    const env = buildBackendEnv(
+      "/ws", { backend: "groq", model: "m", contextWindow: 0 }, "/rt", 8123, "darwin-arm64",
+    );
+    expect(env.CRUCIBLE_MEMORY_WINDOW_TOKENS).toBe("0");
+  });
+
+  it("allows extraEnv to override the built-in window", () => {
+    /* The spread order {...built, ...settings.extraEnv} means extraEnv wins. */
+    const env = buildBackendEnv(
+      "/ws",
+      {
+        backend: "groq", model: "m", contextWindow: 32768,
+        extraEnv: { CRUCIBLE_MEMORY_WINDOW_TOKENS: "999999" },
+      },
+      "/rt", 8123, "darwin-arm64",
+    );
+    expect(env.CRUCIBLE_MEMORY_WINDOW_TOKENS).toBe("999999");
+  });
+});
