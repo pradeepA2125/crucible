@@ -328,7 +328,13 @@ export const BackendConfigSchema = z.object({
   skillsEnabled: z.boolean(),
   mcpEnabled: z.boolean(),
   // Current reasoning provider (null when the backend runs scripted / pre-P4).
-  provider: z.object({ backend: z.string(), model: z.string() }).nullable().optional(),
+  // contextWindow is the window compaction is actually using right now — seeded
+  // from CRUCIBLE_MEMORY_WINDOW_TOKENS at startup, overwritten by a settings save.
+  provider: z.object({
+    backend: z.string(),
+    model: z.string(),
+    contextWindow: z.number().nullable().optional(),
+  }).nullable().optional(),
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;
 
@@ -347,6 +353,20 @@ export const ProviderValidateResultSchema = z.object({
   warning: z.string().optional(),
 });
 export type ProviderValidateResult = z.infer<typeof ProviderValidateResultSchema>;
+
+// The context-window Test button's verdict. `ok` and `recalled` are separate on
+// purpose: a provider can return HTTP 200 with an empty answer for an over-long
+// prompt, so ok=true/recalled=false is the "your window is too big" case, not an
+// error. `exact` says whether promptTokens came from the provider or from the
+// backend's chars-per-token estimate.
+export const ContextTestResultSchema = z.object({
+  ok: z.boolean(),
+  recalled: z.boolean(),
+  promptTokens: z.number().optional(),
+  exact: z.boolean().optional(),
+  error: z.string().optional(),
+});
+export type ContextTestResult = z.infer<typeof ContextTestResultSchema>;
 
 export const McpServerViewSchema = z.object({
   name: z.string(),
@@ -454,7 +474,8 @@ export interface BackendTaskClient {
   listSkills(workspace: string): Promise<SkillSummary[]>;
   // Settings surfaces (P4): provider validation/hot-swap + MCP server management.
   validateProvider(req: { backend: string; model?: string; credentials?: Record<string, string> }): Promise<ProviderValidateResult>;
-  setProvider(req: { backend: string; model?: string; credentials?: Record<string, string> }): Promise<{ backend: string; model: string }>;
+  setProvider(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow?: number }): Promise<{ backend: string; model: string }>;
+  testContextWindow(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow: number }): Promise<ContextTestResult>;
   listMcpServers(): Promise<McpServerList>;
   upsertMcpServer(name: string, entry: Record<string, unknown>, disabled: string[]): Promise<McpServerList>;
   deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;

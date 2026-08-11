@@ -91,4 +91,66 @@ describe("settings client methods", () => {
     expect(sent[1].url).toContain("/v1/mcp/servers/web/reconnect");
     expect(sent[1].body).toEqual({ disabled: ["a", "b"] });
   });
+
+  test("getConfig maps context_window to contextWindow", async () => {
+    const res = await clientWith({
+      task_subsystem_enabled: false, chat_controller_enabled: true,
+      memory_enabled: true, skills_enabled: true, mcp_enabled: true,
+      provider: { backend: "openai", model: "gpt-5", context_window: 200000 },
+    }).getConfig();
+    expect(res.provider?.contextWindow).toBe(200000);
+  });
+
+  test("getConfig tolerates a backend that reports no context_window", async () => {
+    const res = await clientWith({
+      task_subsystem_enabled: false, chat_controller_enabled: true,
+      memory_enabled: true, skills_enabled: true, mcp_enabled: true,
+      provider: { backend: "openai", model: "gpt-5" },
+    }).getConfig();
+    expect(res.provider?.contextWindow).toBeUndefined();
+  });
+
+  test("getConfig tolerates a null context_window", async () => {
+    // The live backend always sends the key and it can genuinely be null (no
+    // window configured for the process) — this must not throw a Zod error.
+    const res = await clientWith({
+      task_subsystem_enabled: false, chat_controller_enabled: true,
+      memory_enabled: true, skills_enabled: true, mcp_enabled: true,
+      provider: { backend: "openai", model: "gpt-5", context_window: null },
+    }).getConfig();
+    expect(res.provider?.contextWindow).toBeNull();
+  });
+
+  test("setProvider sends contextWindow as context_window", async () => {
+    const sent: Sent[] = [];
+    await clientWith({ ok: true, backend: "groq", model: "m2", context_window: 32768 }, sent)
+      .setProvider({ backend: "groq", model: "m2", contextWindow: 32768 });
+    expect((sent[0].body as { context_window: number }).context_window).toBe(32768);
+  });
+
+  test("setProvider omits context_window entirely when not supplied", async () => {
+    /* Absent means "leave the window alone" on the route — a null would read as a
+       value and is not the same thing. */
+    const sent: Sent[] = [];
+    await clientWith({ ok: true, backend: "groq", model: "m2" }, sent)
+      .setProvider({ backend: "groq", model: "m2" });
+    expect("context_window" in (sent[0].body as object)).toBe(false);
+  });
+
+  test("testContextWindow posts to the route and maps prompt_tokens", async () => {
+    const sent: Sent[] = [];
+    const res = await clientWith(
+      { ok: true, recalled: false, prompt_tokens: 141234, exact: true }, sent,
+    ).testContextWindow({ backend: "openai_compatible", contextWindow: 128000 });
+    expect(sent[0].method).toBe("POST");
+    expect(sent[0].url).toContain("/v1/providers/context-test");
+    expect((sent[0].body as { context_window: number }).context_window).toBe(128000);
+    expect(res).toEqual({ ok: true, recalled: false, promptTokens: 141234, exact: true });
+  });
+
+  test("testContextWindow keeps ok and recalled distinct on a failed call", async () => {
+    const res = await clientWith({ ok: false, recalled: false, error: "429 rate limited" })
+      .testContextWindow({ backend: "groq", contextWindow: 128000 });
+    expect(res).toEqual({ ok: false, recalled: false, error: "429 rate limited" });
+  });
 });

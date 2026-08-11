@@ -23,6 +23,8 @@ import {
   type SkillSummary,
   ProviderValidateResultSchema,
   type ProviderValidateResult,
+  ContextTestResultSchema,
+  type ContextTestResult,
   McpServerListSchema,
   type McpServerList,
   type BackendTaskClient,
@@ -569,8 +571,19 @@ export class HttpBackendClient implements BackendTaskClient {
       memoryEnabled: raw["memory_enabled"] ?? false,
       skillsEnabled: raw["skills_enabled"] ?? false,
       mcpEnabled: raw["mcp_enabled"] ?? false,
-      provider: raw["provider"] ?? null,
+      provider: HttpBackendClient.mapProvider(raw["provider"]),
     });
+  }
+
+  private static mapProvider(raw: unknown): unknown {
+    if (raw === null || typeof raw !== "object") return null;
+    const p = raw as Record<string, unknown>;
+    return {
+      backend: p["backend"],
+      model: p["model"],
+      // Absent on an older backend; null when the process has no window configured.
+      ...(p["context_window"] !== undefined ? { contextWindow: p["context_window"] } : {}),
+    };
   }
 
   async listSkills(workspace: string): Promise<SkillSummary[]> {
@@ -606,6 +619,7 @@ export class HttpBackendClient implements BackendTaskClient {
     backend: string;
     model?: string;
     credentials?: Record<string, string>;
+    contextWindow?: number;
   }): Promise<{ backend: string; model: string }> {
     const raw = await this.fetchJson("/v1/config/provider", {
       method: "PUT",
@@ -613,9 +627,34 @@ export class HttpBackendClient implements BackendTaskClient {
         backend: req.backend,
         model: req.model ?? null,
         credentials: req.credentials ?? {},
+        // Omitted, not nulled, when the caller has nothing to say: the route reads
+        // absent as "leave the window alone", which is what a model-only hot-swap
+        // from the composer needs.
+        ...(req.contextWindow !== undefined ? { context_window: req.contextWindow } : {}),
       }),
     }) as Record<string, unknown>;
     return { backend: String(raw["backend"]), model: String(raw["model"]) };
+  }
+
+  async testContextWindow(req: {
+    backend: string;
+    model?: string;
+    credentials?: Record<string, string>;
+    contextWindow: number;
+  }): Promise<ContextTestResult> {
+    const raw = await this.fetchJson("/v1/providers/context-test", {
+      method: "POST",
+      body: JSON.stringify({
+        backend: req.backend,
+        model: req.model ?? null,
+        credentials: req.credentials ?? {},
+        context_window: req.contextWindow,
+      }),
+    }) as Record<string, unknown>;
+    return ContextTestResultSchema.parse({
+      ...raw,
+      ...(raw["prompt_tokens"] !== undefined ? { promptTokens: raw["prompt_tokens"] } : {}),
+    });
   }
 
   async listMcpServers(): Promise<McpServerList> {
