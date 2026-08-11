@@ -10,6 +10,31 @@ So the probe puts a passphrase at the very FRONT of a prompt sized to the declar
 window and asks for it back. The front is what falls off when the window is
 overrun, so recall is evidence the model can genuinely use a context that size,
 and silence is evidence it cannot.
+
+The completion budget is squeezed from BOTH directions at once, and both are real
+bugs this module has shipped and fixed:
+
+- Too large, and `prompt_tokens + max_tokens` overruns the declared window on any
+  endpoint that validates the sum (vLLM, OpenAI, Anthropic all do) — a CORRECTLY
+  declared window fails the test for a reason that has nothing to do with the
+  window. This was `_PROBE_COMPLETION_TOKENS`'s original bug (fixed by shrinking
+  it off the transport's 4096-token default, see the constant's own comment).
+- Too small, and a reasoning model (one that emits hidden "thinking" tokens before
+  its visible answer, e.g. anything `_is_reasoning_model` in
+  openai_compatible_transport.py matches — "nemotron" among them) spends the
+  ENTIRE completion budget on that thinking and never emits the answer, so the
+  probe reports `recalled=False` — "your window is too large" — for a window that
+  was never actually the problem. Measured live against NVIDIA NIM's
+  nvidia/nemotron-3-ultra-550b-a55b at a fixed, trivially in-window 5,000-token
+  prompt: a 16-token budget produced the truncated reasoning fragment
+  `'The user is asking for the passphrase from the'` (never reaching the answer)
+  for BOTH filler styles tested; a 512-token budget produced the correct
+  three-word passphrase for both. The failure at 16 tokens was a starved
+  completion budget, not a real window limit — see `_PROBE_COMPLETION_TOKENS`.
+
+Satisfying both at once means the headroom formula must reserve room for the
+completion budget explicitly, not just take a fraction of the window — see
+`_HEADROOM_FRAC` / `_PROBE_COMPLETION_TOKENS`.
 """
 from __future__ import annotations
 
@@ -63,30 +88,57 @@ _FILLER_LINE = (
     "retained for context-length measurement only.\n"
 )
 
-# Room for the system prompt, the JSON envelope, the chat template's own tokens
-# and the answer. Without it a probe sized exactly to the window would overrun it
-# by construction and fail every time.
+# The probe's visible answer is three words ("velvet-harbor-quasar"), but a
+# REASONING model (one that emits hidden "thinking" tokens sharing the same
+# completion budget as its visible answer — see openai_compatible_transport.py's
+# _is_reasoning_model, which matches "nemotron" among others) spends that budget
+# on thinking FIRST. Measured live against NVIDIA NIM's
+# nvidia/nemotron-3-ultra-550b-a55b at a fixed, trivially in-window 5,000-token
+# prompt: 16 tokens produced only a truncated reasoning fragment
+# ('The user is asking for the passphrase from the') and never reached the
+# answer, for both filler styles tested; 512 tokens produced the correct
+# three-word passphrase for both. So 512 is not a stylistic margin the way "real
+# answers run a little long" would suggest — it is the measured floor below
+# which a reasoning model cannot finish thinking and answer inside the budget,
+# which reads back as a false "window too large" failure. Do not shrink this
+# below 512 without a live re-measurement on a reasoning model; there is a
+# regression test pinning the floor (test_context_probe.py).
+_PROBE_COMPLETION_TOKENS = 512
+
+# Room for the system prompt, the JSON envelope, the chat template's own tokens,
+# and the completion budget above. Without it a probe sized exactly to the
+# window would overrun it by construction and fail every time.
 #
-# PROPORTIONAL, not flat. A flat reserve is a fixed cost against a variable
-# budget, so it dominates small windows: at a flat 2048 a declared 4,096 window
-# was filled to only 52% and everything at or below 2,304 collapsed to the same
-# 256-token floor, making a 1,024-window model indistinguishable from a 2,300 one.
-# That under-fill is the FALSE-PASS direction — the probe would confirm a window
-# it never actually tested. Five percent holds the fill ratio at ~0.95 from 4,096
-# tokens upward, and at the top end it reserves MORE than the flat value did
-# (6,400 at 128k), which both covers the completion budget the transport requests
-# and absorbs the newline JSON-escaping overshoot.
+# PROPORTIONAL, not flat, AND floored at the completion budget plus slack —
+# three lower bounds, the largest wins:
+#   1. _MIN_HEADROOM_TOKENS: a flat absolute floor.
+#   2. window * _HEADROOM_FRAC: a flat reserve dominates small windows (at a
+#      flat 2048 a declared 4,096 window was filled to only 52%), so this scales
+#      with the window instead. Under-filling is the FALSE-PASS direction — the
+#      probe would confirm a window it never actually tested.
+#   3. _PROBE_COMPLETION_TOKENS + _NON_DOCUMENT_SLACK_TOKENS: at small declared
+#      windows (near the route's 1,024 floor), 5% of the window is far smaller
+#      than the 512-token completion budget alone — reserving only the
+#      proportional amount would let prompt_tokens + max_tokens exceed the
+#      window again, the exact bug _PROBE_COMPLETION_TOKENS was shrunk to fix.
+#      This bound guarantees the completion budget is ALWAYS covered regardless
+#      of how small the declared window is.
+# The fill ratio is necessarily lower at the smallest windows now than it was
+# under the old formula — the completion budget is a real fixed cost that has to
+# come from somewhere, and reserving too little for it is exactly the bug this
+# module exists to avoid repeating in the other direction.
 _HEADROOM_FRAC = 0.05
 _MIN_HEADROOM_TOKENS = 256
 
-# The probe's answer is three words ("velvet-harbor-quasar"), never more than a
-# handful of tokens. Requesting the transport's anti-runaway default (4096, see
-# OpenAICompatibleTransport's max_tokens) on top of a prompt sized to the full
-# declared window is what made a CORRECTLY declared window fail on any endpoint
-# that validates prompt + max_tokens <= context_length (vLLM, OpenAI, Anthropic
-# all do) — see this module's docstring measurement table. Small but not
-# minimal: real answers run a little long ("The passphrase is: ...").
-_PROBE_COMPLETION_TOKENS = 16
+# Covers the system prompt (~66 estimated tokens, see _SYSTEM) and the JSON
+# envelope's quoting/key overhead (~21 estimated tokens for the "document"/
+# "question" keys and escaping) that build_probe adds ON TOP OF the document it
+# sizes to budget_tokens — both measured live via build_probe/estimated_prompt_
+# tokens against the real _SYSTEM string and payload shape. 256 rounds that
+# ~87-token overhead up generously (headroom is cheap; a false "too large"
+# result from under-reserving is not) and doubles as the chat-template/
+# JSON-escaping absorption the old flat comment described.
+_NON_DOCUMENT_SLACK_TOKENS = 256
 
 
 def new_passphrase(rng: random.Random | None = None) -> str:
@@ -99,7 +151,11 @@ def build_probe(
     window_tokens: int, passphrase: str
 ) -> tuple[str, dict[str, object]]:
     """(system_instructions, user_payload) for a prompt of the declared size."""
-    headroom = max(_MIN_HEADROOM_TOKENS, int(window_tokens * _HEADROOM_FRAC))
+    headroom = max(
+        _MIN_HEADROOM_TOKENS,
+        int(window_tokens * _HEADROOM_FRAC),
+        _PROBE_COMPLETION_TOKENS + _NON_DOCUMENT_SLACK_TOKENS,
+    )
     budget_tokens = max(256, window_tokens - headroom)
     target_chars = int(budget_tokens * PROBE_CHARS_PER_TOKEN)
     head = f"PASSPHRASE: {passphrase}\n\n"

@@ -49,23 +49,37 @@ def test_probe_is_sized_to_the_declared_window():
     assert 0.85 * 50_000 <= estimated <= 50_000
 
 
-@pytest.mark.parametrize("window", [4_096, 8_192, 32_768, 128_000])
+@pytest.mark.parametrize("window", [1_024, 4_096, 8_192, 32_768, 128_000])
 def test_small_windows_are_filled_as_completely_as_large_ones(window):
-    """Headroom is proportional, so the fill ratio must not collapse at the bottom
-    of the range. A flat reserve left a declared 4,096 window only 52% full, and
-    under-filling is the FALSE-PASS direction: the probe would confirm a window it
-    never actually tested.
+    """Headroom is proportional (with a floor), so the fill ratio must not
+    collapse arbitrarily at the bottom of the range. A flat reserve left a
+    declared 4,096 window only 52% full, and under-filling is the FALSE-PASS
+    direction: the probe would confirm a window it never actually tested.
 
-    The lower bound is DERIVED from build_probe's own headroom formula
-    (window - headroom) / window, not a fixed constant like the old `>= 0.85` —
-    that fixed constant is what let this test keep passing while
-    run_context_test still asked generate_text for the transport's 4096-token
-    completion default on top of the filled prompt, overrunning small windows
-    by nearly 2x (see context_probe.py's module docstring). The second
-    assertion is the direct regression guard for that bug: prompt + the
-    probe's actual completion budget must never exceed the declared window.
+    The lower bound is DERIVED from build_probe's own headroom formula — the max
+    of the flat floor, the proportional fraction, AND
+    `_PROBE_COMPLETION_TOKENS + _NON_DOCUMENT_SLACK_TOKENS` — not a fixed
+    constant. A fixed constant is exactly what let this test keep passing while
+    run_context_test asked generate_text for a completion budget that, combined
+    with the filled prompt, overran the declared window: first the transport's
+    4096-token default (fixed in an earlier round), then later a 16-token budget
+    that was too SMALL to let a reasoning model finish thinking and answer,
+    which read back as a false "window too large" (see context_probe.py's module
+    docstring for both measurements). The second assertion below is the direct
+    regression guard for the too-large direction: prompt + the probe's actual
+    completion budget must never exceed the declared window, at any window down
+    to the route's 1,024 floor.
+
+    The fill ratio is NOT asserted to approach ~0.95 at the smallest windows
+    anymore — a 512-token completion budget is a real fixed cost, and at a
+    1,024-token window it dominates. This only asserts what the headroom formula
+    actually guarantees, not an aspirational ratio.
     """
-    headroom = max(probe_mod._MIN_HEADROOM_TOKENS, int(window * probe_mod._HEADROOM_FRAC))
+    headroom = max(
+        probe_mod._MIN_HEADROOM_TOKENS,
+        int(window * probe_mod._HEADROOM_FRAC),
+        probe_mod._PROBE_COMPLETION_TOKENS + probe_mod._NON_DOCUMENT_SLACK_TOKENS,
+    )
     expected_floor = (window - headroom) / window
 
     system, payload = build_probe(window, "a-b-c")
@@ -102,6 +116,21 @@ def test_partial_recall_is_not_recall():
 
 def test_chars_per_token_sits_inside_the_measured_range():
     assert 3.71 <= PROBE_CHARS_PER_TOKEN <= 4.40
+
+
+def test_probe_completion_budget_is_not_shrunk_below_the_measured_reasoning_floor():
+    """A reasoning model (e.g. NVIDIA NIM's nvidia/nemotron-3-ultra-550b-a55b)
+    spends its completion budget on hidden thinking BEFORE its visible answer.
+    Measured live at a fixed, trivially in-window 5,000-token prompt: a 16-token
+    budget was consumed entirely by thinking and returned the truncated
+    reasoning fragment 'The user is asking for the passphrase from the' — never
+    reaching the answer — for both filler styles tested. A 512-token budget
+    produced the correct three-word passphrase for both. That false
+    "window too large" result is exactly the failure this module exists to
+    avoid, just from the opposite direction of the too-large bug. Do not shrink
+    _PROBE_COMPLETION_TOKENS below 512 without a live re-measurement on a
+    reasoning model."""
+    assert probe_mod._PROBE_COMPLETION_TOKENS >= 512
 
 
 class _RecallingTransport:
@@ -169,9 +198,12 @@ async def test_recall_passes_and_reports_the_providers_own_count(monkeypatch):
 async def test_probe_requests_a_small_completion_budget_not_the_transport_default(
     monkeypatch,
 ):
-    """The probe's answer is three words — it must not ask for the transport's
-    anti-runaway default (4096), which is what made prompt + max_tokens overrun a
-    correctly declared window on any endpoint that validates the sum."""
+    """The probe's visible answer is three words, but the budget must still be big
+    enough for a reasoning model to finish thinking before it answers (see
+    test_probe_completion_budget_is_not_shrunk_below_the_measured_reasoning_floor).
+    It must not ask for the transport's much larger anti-runaway default (4096),
+    which is what made prompt + max_tokens overrun a correctly declared window on
+    any endpoint that validates the sum."""
     transport = _RecallingTransport()
     monkeypatch.setattr(
         probe_mod, "build_transport", lambda b, credentials=None: transport
@@ -180,7 +212,8 @@ async def test_probe_requests_a_small_completion_budget_not_the_transport_defaul
         backend="openai_compatible", model="m", credentials=None, window_tokens=32_768
     )
     assert "max_tokens" in transport.seen_kwargs
-    assert transport.seen_kwargs["max_tokens"] <= 32
+    assert transport.seen_kwargs["max_tokens"] == probe_mod._PROBE_COMPLETION_TOKENS
+    assert transport.seen_kwargs["max_tokens"] < 4096
 
 
 @pytest.mark.asyncio
