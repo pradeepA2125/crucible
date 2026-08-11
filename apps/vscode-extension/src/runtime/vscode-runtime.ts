@@ -176,6 +176,8 @@ export class RuntimeManager {
       extraEnv: this.extraEnvFromSettings(),
       skillsDisabled: this.skillsDisabled(),
     };
+    const contextWindow = this.contextWindow();
+    if (contextWindow !== undefined) settings.contextWindow = contextWindow;
     const envVar = PROVIDER_KEY_ENV[backend];
     if (envVar) {
       const value = await this.context.secrets.get(`crucible.providerKey.${backend}`);
@@ -199,6 +201,17 @@ export class RuntimeManager {
     if (extraCredentials) {
       await this._persistExtraCredentials(backend, extraCredentials);
     }
+  }
+
+  /** The declared context window, in tokens. Stored under its own key rather than
+   * inside the provider record so a model-only hot-swap (composer model menu)
+   * cannot clear it. Read back into the spawn env by getProviderSettings. */
+  contextWindow(): number | undefined {
+    return this.context.globalState.get<number>("crucible.provider.contextWindow");
+  }
+
+  async saveContextWindow(tokens: number): Promise<void> {
+    await this.context.globalState.update("crucible.provider.contextWindow", tokens);
   }
 
   /** Secret-only write (settings panel's hot-swap path stores the key separately

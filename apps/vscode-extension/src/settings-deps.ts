@@ -57,6 +57,7 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
       upsertMcpServer: (name, entry, disabled) => client().upsertMcpServer(name, entry, disabled),
       deleteMcpServer: (name, disabled) => client().deleteMcpServer(name, disabled),
       reconnectMcpServer: (name, disabled) => client().reconnectMcpServer(name, disabled),
+      testContextWindow: (req) => client().testContextWindow(req),
     },
     workspace: workspacePath,
     readRuntimeJson: () => runtimeManager.installedRuntime(),
@@ -86,5 +87,6 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
     readInstructions: () => loadInstructions(workspacePath),
     writeInstructions: (content) => saveInstructions(workspacePath, content),
     restartBackend: () => runtimeManager.restart(workspacePath),
+    saveContextWindow: (tokens) => runtimeManager.saveContextWindow(tokens),
   };
 }

@@ -41,6 +41,7 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
       upsertMcpServer: async () => ({ enabled: true, servers: [] }),
       deleteMcpServer: async () => ({ enabled: true, servers: [] }),
       reconnectMcpServer: vi.fn(async () => ({ enabled: true, servers: [] })),
+      testContextWindow: async () => ({ ok: true, recalled: true }),
     },
     workspace: "/ws",
     readRuntimeJson: () => ({ releaseTag: "v0.1.0", components: {} }),
@@ -61,6 +62,7 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
     readInstructions: () => ({ content: "", exists: false }),
     writeInstructions: () => {},
     restartBackend: async () => {},
+    saveContextWindow: async () => {},
     disabled: box.disabled,
     skillsBox: box.skills,
     ...overrides,
@@ -209,5 +211,65 @@ describe("createSettingsHandler", () => {
     });
     expect(written).toEqual(["# new"]);
     expect(posted).toContainEqual({ type: "settings/instructions", content: "# new", exists: true });
+  });
+});
+
+describe("context window", () => {
+  it("forwards contextWindow to setProvider and persists it", async () => {
+    const setProvider = vi.fn(async () => ({ backend: "groq", model: "m2" }));
+    const saveContextWindow = vi.fn(async () => {});
+    const d = deps({ saveContextWindow });
+    d.client.setProvider = setProvider;
+    const posted: SettingsOutMsg[] = [];
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({
+      type: "settings/setProvider", backend: "groq", model: "m2", contextWindow: 32768,
+    });
+    expect(setProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ contextWindow: 32768 }),
+    );
+    expect(saveContextWindow).toHaveBeenCalledWith(32768);
+  });
+
+  it("does not persist the window when validation fails", async () => {
+    const saveContextWindow = vi.fn(async () => {});
+    const d = deps({ saveContextWindow });
+    d.client.validateProvider = async () => ({ ok: false, error: "bad key" });
+    const handle = createSettingsHandler(d, () => {});
+    await handle({
+      type: "settings/setProvider", backend: "groq", model: "m2", contextWindow: 32768,
+    });
+    expect(saveContextWindow).not.toHaveBeenCalled();
+  });
+
+  it("posts the context-test verdict on its own message", async () => {
+    const d = deps();
+    d.client.testContextWindow = async () => ({
+      ok: true, recalled: false, promptTokens: 141234, exact: true,
+    });
+    const posted: SettingsOutMsg[] = [];
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({
+      type: "settings/testContextWindow", backend: "groq", model: "m2", contextWindow: 128000,
+    });
+    const verdicts = posted.filter((m) => m.type === "settings/contextTestResult");
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ result: { recalled: false, promptTokens: 141234 } });
+  });
+
+  it("reports a failed test on the verdict message, not the error banner", async () => {
+    /* The route returns 200 with ok:false — that belongs next to the field, not in
+       the panel-wide red banner reserved for things that actually broke. */
+    const d = deps();
+    d.client.testContextWindow = async () => ({ ok: false, recalled: false, error: "429 rate limited" });
+    const posted: SettingsOutMsg[] = [];
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({
+      type: "settings/testContextWindow", backend: "groq", model: "m2", contextWindow: 128000,
+    });
+    expect(posted.some((m) => m.type === "settings/error")).toBe(false);
+    expect(posted.find((m) => m.type === "settings/contextTestResult")).toMatchObject({
+      result: { ok: false, error: "429 rate limited" },
+    });
   });
 });

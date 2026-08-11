@@ -17,6 +17,7 @@ export interface BackendSettings {
   apiKey?: { envVar: string; value: string };   // from SecretStorage, spawn-env only
   extraEnv?: Record<string, string>;   // policies/flags from VS Code settings
   skillsDisabled?: string[];           // → CRUCIBLE_SKILLS_DISABLED (comma-joined)
+  contextWindow?: number; // → CRUCIBLE_MEMORY_WINDOW_TOKENS
 }
 export interface ChildHandle {
   pid: number;

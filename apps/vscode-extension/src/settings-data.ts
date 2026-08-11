@@ -10,7 +10,10 @@ export interface McpServerRow extends McpServerView {
 }
 
 export interface SettingsState {
-  provider: { backend: string; model: string } | null;
+  // contextWindow is the window compaction is using right now, read back from
+  // GET /v1/config so the field shows what the process actually has, not what the
+  // panel last sent.
+  provider: { backend: string; model: string; contextWindow?: number | null } | null;
   // Non-fatal note from the last successful provider validate (e.g. an
   // openai_compatible endpoint that only supports json_object, not strict JSON
   // schema). null once no validate has produced one yet.
@@ -25,11 +28,15 @@ export interface SettingsState {
 // webview → host
 export type SettingsInMsg =
   | { type: "settings/load" }
-  | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
+  | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string>; contextWindow?: number }
   // Explicit delete of a backend's stored API key. A blank API-key field means
   // "keep the stored key" (setProvider only writes a non-empty one), so this is
   // the ONLY way to get rid of it — see the openai_compatible note in SettingsDeps.
   | { type: "settings/clearProviderKey"; backend: string }
+  // Opt-in, expensive (~one full window of input tokens per call), never part of
+  // a save. Carries the same credentials as a save so the user can test an
+  // endpoint before committing to it.
+  | { type: "settings/testContextWindow"; backend: string; model: string; contextWindow: number; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "settings/mcpUpsert"; name: string; entry: Record<string, unknown> }
   | { type: "settings/mcpDelete"; name: string }
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
@@ -45,7 +52,10 @@ export type SettingsOutMsg =
   | { type: "settings/state"; state: SettingsState }
   | { type: "settings/instructions"; content: string; exists: boolean }
   | { type: "settings/error"; message: string }
-  | { type: "settings/navigate"; section: SettingsSectionId };
+  | { type: "settings/navigate"; section: SettingsSectionId }
+  // Deliberately NOT folded into settings/state: a verdict about a value is not a
+  // change to one, and it must not survive the next snapshot rebuild.
+  | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } };
 
 export interface SettingsDeps {
   client: {
@@ -61,6 +71,7 @@ export interface SettingsDeps {
       backend: string;
       model?: string;
       credentials?: Record<string, string>;
+      contextWindow?: number;
     }): Promise<{ backend: string; model: string }>;
     upsertMcpServer(
       name: string,
@@ -69,6 +80,12 @@ export interface SettingsDeps {
     ): Promise<McpServerList>;
     deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
     reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
+    testContextWindow(req: {
+      backend: string;
+      model?: string;
+      credentials?: Record<string, string>;
+      contextWindow: number;
+    }): Promise<{ ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined }>;
   };
   workspace: string;
   readRuntimeJson(): { releaseTag: string; components: Record<string, string> } | null;
@@ -93,6 +110,10 @@ export interface SettingsDeps {
   readInstructions(): { content: string; exists: boolean };
   writeInstructions(content: string): void;
   restartBackend(): Promise<void>;
+  /** Persist the declared context window for the next managed spawn. Separate from
+   * saveProvider for the same reason storeSecret is: a composer model hot-swap
+   * writes backend/model and must not disturb the window. */
+  saveContextWindow(tokens: number): Promise<void>;
 }
 
 async function buildState(
@@ -181,7 +202,13 @@ export function createSettingsHandler(
             backend: msg.backend,
             model: msg.model,
             ...(credentials ? { credentials } : {}),
+            ...(msg.contextWindow !== undefined ? { contextWindow: msg.contextWindow } : {}),
           });
+          // After the hot-swap succeeds, so a rejected provider never leaves a
+          // stale window persisted for the next managed spawn.
+          if (msg.contextWindow !== undefined) {
+            await deps.saveContextWindow(msg.contextWindow);
+          }
           await postState();
           return;
         }
@@ -192,6 +219,24 @@ export function createSettingsHandler(
           // does not stop it being sent. Surface the existing restart banner.
           restartRequired = true;
           await postState();
+          return;
+        }
+        case "settings/testContextWindow": {
+          const envVar = deps.keyEnvVar(msg.backend);
+          const primaryCred = envVar && msg.apiKey ? { [envVar]: msg.apiKey } : undefined;
+          const credentials = (primaryCred || msg.extraCredentials)
+            ? { ...primaryCred, ...msg.extraCredentials }
+            : undefined;
+          const result = await deps.client.testContextWindow({
+            backend: msg.backend,
+            model: msg.model,
+            contextWindow: msg.contextWindow,
+            ...(credentials ? { credentials } : {}),
+          });
+          // No postState(): the verdict is not part of the settings snapshot, and
+          // a failed test (ok:false) is a 200 from the route — it belongs beside
+          // the field, not in the panel-wide error banner.
+          post({ type: "settings/contextTestResult", result });
           return;
         }
         case "settings/mcpUpsert": {
