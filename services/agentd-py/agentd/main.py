@@ -103,6 +103,10 @@ def _bool_env(name: str, default: bool) -> bool:
 
 reasoning_backend = os.getenv("CRUCIBLE_REASONING_BACKEND", "openai").strip().lower()
 reasoning_engine: ReasoningEngine
+# Why the configured provider could not be built, if it could not. Surfaced on
+# GET /v1/config so the settings UI can say what is wrong instead of the user
+# meeting a dead backend. None on the scripted path and on every healthy start.
+_provider_error: str | None = None
 if reasoning_backend == "scripted":
     reasoning_engine = ScriptedReasoningEngine(
         plan={
@@ -138,10 +142,31 @@ if reasoning_backend == "scripted":
     )
 else:
     from agentd.providers.factory import build_transport, resolve_model
+    from agentd.providers.unconfigured import build_transport_or_placeholder
 
-    transport = build_transport(reasoning_backend)
+    # Degrade, don't abort. A provider missing its key or base URL used to raise
+    # here and kill uvicorn at import — the extension saw a 60s health timeout
+    # and the user a raw traceback, with no way back: correcting the provider
+    # happens in Settings, which needs a live backend to validate against. Now
+    # the app boots, /v1/config reports the reason, and the existing hot-swap
+    # (which builds a fresh transport) is the recovery path.
+    transport, _provider_error = build_transport_or_placeholder(
+        reasoning_backend, build_transport
+    )
+    if _provider_error is not None:
+        logging.getLogger("agentd.startup").error(
+            "[provider] %s is not configured: %s — the backend is running but "
+            "cannot reach a model. Fix it in Crucible Settings → Provider.",
+            reasoning_backend, _provider_error,
+        )
+    try:
+        _resolved_model = resolve_model(reasoning_backend)
+    except Exception as exc:  # openai_compatible raises when no model is set
+        if _provider_error is None:
+            _provider_error = str(exc)
+        _resolved_model = ""
     reasoning_engine = DefaultReasoningEngine(
-        model=resolve_model(reasoning_backend), transport=transport
+        model=_resolved_model, transport=transport
     )
 
 validator = CommandValidator.from_env()
@@ -323,6 +348,7 @@ if reasoning_backend != "scripted":
         engines=_engines,
         window_sinks=_window_sinks,
         context_window=MemoryConfig.from_env(os.environ).window_tokens,
+        config_error=_provider_error,
     )
 
 app.include_router(

@@ -260,6 +260,15 @@ def build_router(
                     # pre-fills its field from this, so what it shows is what the
                     # running process is actually using.
                     "context_window": provider_runtime.context_window,  # type: ignore[attr-defined]
+                    # Present only when the configured provider could not be
+                    # built at startup. The backend runs anyway so this route
+                    # (and the settings UI that fixes it) stay reachable —
+                    # see providers/unconfigured.py.
+                    **(
+                        {"error": provider_runtime.config_error}  # type: ignore[attr-defined]
+                        if getattr(provider_runtime, "config_error", None)
+                        else {}
+                    ),
                 }
                 if provider_runtime is not None
                 else None

@@ -20,9 +20,15 @@ class ProviderRuntime:
         engines: Sequence[object],
         window_sinks: Sequence[object] = (),
         context_window: int | None = None,
+        config_error: str | None = None,
     ) -> None:
         self.backend = backend
         self.model = model
+        # Why the startup transport could not be built, when it could not. The
+        # backend still runs (see providers/unconfigured.py); this is what lets
+        # GET /v1/config tell the UI why nothing works. A successful swap clears
+        # it, because a swap builds a real transport — that IS the recovery.
+        self.config_error = config_error
         # The window in effect right now. Seeded in main.py from MemoryConfig — i.e.
         # from CRUCIBLE_MEMORY_WINDOW_TOKENS or its 128000 default — so GET /v1/config
         # reports the real number from the first request, before anyone has saved
@@ -58,6 +64,9 @@ class ProviderRuntime:
         for engine in self._engines:
             engine.set_provider(model=resolved, transport=transport)  # type: ignore[attr-defined]
         self.backend, self.model = backend, resolved
+        # A real transport now exists, so whatever failed at startup no longer
+        # describes this process.
+        self.config_error = None
         # Applied only after validation succeeds, for the same reason the engines
         # are: a rejected swap must leave the process exactly as it was. Absent
         # means "unchanged", not "reset" — a model-only hot-swap from the composer

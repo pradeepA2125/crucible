@@ -237,3 +237,47 @@ def test_config_reports_the_effective_context_window(tmp_path: Path) -> None:
     assert payload["provider"] == {
         "backend": "openai", "model": "gpt-5", "context_window": 200_000
     }
+
+
+@pytest.mark.asyncio
+async def test_a_successful_swap_clears_the_startup_config_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point of degrading instead of aborting: the backend stays up so
+    the user can swap to a working provider, and that swap must stop reporting a
+    failure that no longer describes the process."""
+    rt = ProviderRuntime(
+        backend="openai_compatible", model="m",
+        engines=[DefaultReasoningEngine(model="m", transport=_Transport("old"))],
+        config_error="CRUCIBLE_OPENAI_COMPAT_BASE_URL is required",
+    )
+    assert rt.config_error is not None
+    monkeypatch.setattr(
+        runtime_mod, "build_transport", lambda b, credentials=None: _Transport("new")
+    )
+    await rt.swap(backend="gemini", model="gemini-flash-latest")
+    assert rt.config_error is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_swap_leaves_the_startup_error_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agentd.providers.validate import ProviderValidationError
+
+    rt = ProviderRuntime(
+        backend="openai_compatible", model="m",
+        engines=[DefaultReasoningEngine(model="m", transport=_Transport("old"))],
+        config_error="base url missing",
+    )
+
+    async def _boom(transport, model, timeout_sec=30.0):
+        raise ProviderValidationError("still broken")
+
+    monkeypatch.setattr(
+        runtime_mod, "build_transport", lambda b, credentials=None: _Transport()
+    )
+    monkeypatch.setattr(runtime_mod, "ping_transport", _boom)
+    with pytest.raises(ProviderValidationError):
+        await rt.swap(backend="gemini", model="m2")
+    assert rt.config_error == "base url missing"
