@@ -13,7 +13,10 @@ export interface McpServerRow {
 }
 
 export interface SettingsState {
-  provider: { backend: string; model: string } | null;
+  // contextWindow is the window compaction is using right now, read back from
+  // GET /v1/config so the field shows what the process actually has, not what the
+  // panel last sent.
+  provider: { backend: string; model: string; contextWindow?: number | null | undefined } | null;
   // Non-fatal note from the last successful provider validate (e.g. an
   // openai_compatible endpoint that only supports json_object, not strict JSON
   // schema). null once no validate has produced one yet.
@@ -28,10 +31,14 @@ export interface SettingsState {
 // webview → host
 export type SettingsInMsg =
   | { type: "settings/load" }
-  | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
+  | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string>; contextWindow?: number }
   // Explicit delete of a backend's stored API key — a blank API-key field means
   // "keep the stored key", so this is the only way to remove one.
   | { type: "settings/clearProviderKey"; backend: string }
+  // Opt-in, expensive (~one full window of input tokens per call), never part of
+  // a save. Carries the same credentials as a save so the user can test an
+  // endpoint before committing to it.
+  | { type: "settings/testContextWindow"; backend: string; model: string; contextWindow: number; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "settings/mcpUpsert"; name: string; entry: Record<string, unknown> }
   | { type: "settings/mcpDelete"; name: string }
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
@@ -47,7 +54,10 @@ export type SettingsOutMsg =
   | { type: "settings/state"; state: SettingsState }
   | { type: "settings/instructions"; content: string; exists: boolean }
   | { type: "settings/error"; message: string }
-  | { type: "settings/navigate"; section: SectionId };
+  | { type: "settings/navigate"; section: SectionId }
+  // Deliberately NOT folded into settings/state: a verdict about a value is not a
+  // change to one, and it must not survive the next snapshot rebuild.
+  | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } };
 
 export interface ExtraField {
   envVar: string;

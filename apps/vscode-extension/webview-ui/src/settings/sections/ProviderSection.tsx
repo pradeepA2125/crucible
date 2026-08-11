@@ -5,6 +5,7 @@ import { Icon } from "../../components/Icon";
 import { SectionHeader } from "../SectionHeader";
 import { PROVIDERS } from "../types";
 import { FIELD } from "../ui";
+import { contextWindowError, defaultContextWindow } from "../contextWindows";
 import type { SectionProps } from "./meta";
 
 /**
@@ -15,6 +16,14 @@ import type { SectionProps } from "./meta";
 export function ProviderSection({ state, busy, send }: SectionProps) {
   const [backend, setBackend] = useState(state.provider?.backend ?? PROVIDERS[0].id);
   const [model, setModel] = useState(state.provider?.model ?? PROVIDERS[0].defaultModel);
+  // The live backend value wins over the table: it is what compaction is actually
+  // using, and showing the table's guess over the top of it would be a lie.
+  const [contextWindow, setContextWindow] = useState(
+    String(state.provider?.contextWindow ?? defaultContextWindow(state.provider?.model ?? "")),
+  );
+  // Blocks the save before it can reach the route — see the note in contextWindows.ts
+  // for why a backend 422 would reach the user as an unreadable message.
+  const windowError = contextWindowError(contextWindow);
   const [apiKey, setApiKey] = useState("");
   const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [savedFlash, setSavedFlash] = useState(false);
@@ -62,6 +71,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
                 const next = PROVIDERS.find((p) => p.id === e.target.value)!;
                 setBackend(next.id);
                 setModel(next.defaultModel);
+                setContextWindow(String(defaultContextWindow(next.defaultModel)));
                 setApiKey("");
                 setExtraValues({});
                 // The "key deleted" note is scoped to one provider — it must not
@@ -78,6 +88,29 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
             Model
             <input className={FIELD} value={model} onChange={(e) => setModel(e.target.value)} />
           </label>
+          <label className="flex flex-col gap-1 text-xs text-text-2">
+            Context window (tokens)
+            <input
+              className={FIELD}
+              inputMode="numeric"
+              value={contextWindow}
+              onChange={(e) => setContextWindow(e.target.value.replace(/[^0-9]/g, ""))}
+              placeholder="128000"
+            />
+          </label>
+          {windowError && (
+            <p className="text-xs" style={{ color: "var(--color-red)" }}>{windowError}</p>
+          )}
+          <p className="text-[11px] leading-relaxed text-text-3">
+            Take this from the model's own model card or the provider's
+            documentation — it cannot be detected, and a remembered number is
+            usually wrong.{" "}
+            <strong>Too small</strong> and history is evicted (and a summary paid
+            for) while the window is still half empty — wasteful, but safe.{" "}
+            <strong>Too large</strong> and the prompt overruns the real window: some
+            providers return no error at all, bill every token, and answer with
+            nothing. Use Test to confirm.
+          </p>
           {provider.keyEnvVar && (
             <>
               <label className="flex flex-col gap-1 text-xs text-text-2">
@@ -128,7 +161,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
           ))}
           <div className="flex items-center gap-2">
             <BtnPrimary
-              disabled={busy || !model}
+              disabled={busy || !model || windowError !== null}
               onClick={() => {
                 pendingSave.current = true;
                 setClearedFlash(false);
@@ -136,6 +169,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
                   type: "settings/setProvider",
                   backend,
                   model,
+                  contextWindow: Number(contextWindow),
                   ...(provider.local || !apiKey ? {} : { apiKey }),
                   ...(extraCredentials ? { extraCredentials } : {}),
                 });
