@@ -232,6 +232,13 @@ export class RuntimeManager {
     await this._persistExtraCredentials(backend, extraCredentials);
   }
 
+  /** Env-var names whose values are already in SecretStorage for this backend.
+   * The setup wizard's required-field guard needs it to tell "the user left this
+   * blank because it is already stored" from "this was never supplied". */
+  storedExtraEnvVars(backend: string): string[] {
+    return this.context.globalState.get<string[]>(`crucible.provider.extraEnvVars.${backend}`, []);
+  }
+
   /** Write the extra-credential secrets and record their env-var names. Any secret
    * from a previous save whose env var is no longer present is deleted, so a removed
    * field (or a provider whose extra fields shrank) never leaves an orphaned secret. */

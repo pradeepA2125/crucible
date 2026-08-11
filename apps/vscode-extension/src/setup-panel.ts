@@ -82,6 +82,7 @@ export class SetupPanel {
       },
       openChat: () => this.openChatCommand(),
       keyEnvVar: (backend) => PROVIDER_KEY_ENV[backend],
+      storedExtraEnvVars: (backend) => this.runtimeManager.storedExtraEnvVars(backend),
     };
   }
 

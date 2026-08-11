@@ -18,6 +18,13 @@ export interface SetupDeps {
   ): Promise<{ port: number; jsonMode?: string; warning?: string }>;
   openChat(): void;
   keyEnvVar(backend: string): string | undefined; // PROVIDER_KEY_ENV mirror
+  /**
+   * Env vars whose values are already in SecretStorage for this backend, from an
+   * earlier run. Needed because a blank field means "keep the stored value" — a
+   * guard that could not tell those apart would block a returning user who has
+   * nothing left to type.
+   */
+  storedExtraEnvVars(backend: string): string[];
 }
 
 // webview → host
@@ -93,6 +100,42 @@ export const PROVIDERS: ProviderInfo[] = [
   },
 ];
 
+/**
+ * Config the wizard must have before it may spawn a backend, expressed as the
+ * human labels of whatever is still missing (empty = safe to start).
+ *
+ * This exists because the wizard's save path is save -> SPAWN -> validate: an
+ * incomplete provider is not caught by a failed validate, it kills the backend
+ * at import. Live example — picking OpenAI-compatible without a Base URL made
+ * agentd raise "CRUCIBLE_OPENAI_COMPAT_BASE_URL is required" from
+ * build_transport, and the user saw a raw Python traceback where a field-level
+ * message belonged. The Settings panel cannot do this (it validates BEFORE it
+ * swaps, so a bad value never reaches a process); the wizard can, so the wizard
+ * needs the guard.
+ *
+ * Deliberately does NOT check the API key: `keyOptional` and local providers
+ * legitimately have none, and telling a stored key from an absent one needs a
+ * SecretStorage read this pure function has no business doing. A missing key
+ * still surfaces through the backend's own error.
+ */
+export function missingRequiredFields(
+  backend: string,
+  model: string,
+  extraCredentials: Record<string, string> | undefined,
+  storedEnvVars: string[],
+): string[] {
+  const provider = PROVIDERS.find((p) => p.id === backend);
+  if (!provider) return []; // unknown to us — say nothing rather than guess
+  const missing: string[] = [];
+  if (!model.trim()) missing.push("Model");
+  for (const field of provider.extraFields ?? []) {
+    if (field.optional) continue;
+    const supplied = extraCredentials?.[field.envVar]?.trim();
+    if (!supplied && !storedEnvVars.includes(field.envVar)) missing.push(field.label);
+  }
+  return missing;
+}
+
 export function createSetupHandler(
   deps: SetupDeps,
   post: (msg: SetupOutMsg) => void,
@@ -134,6 +177,25 @@ export function createSetupHandler(
           return;
         }
         case "setup/save": {
+          // Refuse before saveAndStart, not after: it persists the provider and
+          // spawns the backend before anything validates it, so an incomplete
+          // config becomes a dead backend plus a stored setting that reproduces
+          // the crash on every subsequent start.
+          const missing = missingRequiredFields(
+            msg.backend, msg.model, msg.extraCredentials,
+            deps.storedExtraEnvVars(msg.backend),
+          );
+          if (missing.length > 0) {
+            post({
+              type: "setup/error",
+              message:
+                `${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} required for `
+                + `${PROVIDERS.find((p) => p.id === msg.backend)?.label ?? msg.backend}. `
+                + `Fill ${missing.length > 1 ? "them" : "it"} in and try again — `
+                + "the backend cannot start without it.",
+            });
+            return;
+          }
           const { port, jsonMode, warning } = await deps.saveAndStart(
             msg.backend, msg.model, msg.apiKey, msg.extraCredentials,
           );
