@@ -242,7 +242,26 @@ describe("context window", () => {
     expect(saveContextWindow).not.toHaveBeenCalled();
   });
 
-  it("posts the context-test verdict on its own message", async () => {
+  it("does not persist the window when setProvider throws after a successful validate", async () => {
+    // The ordering guarantee (save happens strictly after the hot-swap succeeds)
+    // today holds only by statement order inside the case body. This pins it: a
+    // later "eager save" that moves saveContextWindow above the setProvider call
+    // would fail this test.
+    const saveContextWindow = vi.fn(async () => {});
+    const d = deps({ saveContextWindow });
+    d.client.setProvider = async () => {
+      throw new Error("hot-swap rejected");
+    };
+    const posted: SettingsOutMsg[] = [];
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({
+      type: "settings/setProvider", backend: "groq", model: "m2", contextWindow: 32768,
+    });
+    expect(saveContextWindow).not.toHaveBeenCalled();
+    expect(posted).toEqual([{ type: "settings/error", message: "hot-swap rejected" }]);
+  });
+
+  it("posts the context-test verdict on its own message, without a settings/state rebuild", async () => {
     const d = deps();
     d.client.testContextWindow = async () => ({
       ok: true, recalled: false, promptTokens: 141234, exact: true,
@@ -255,6 +274,9 @@ describe("context window", () => {
     const verdicts = posted.filter((m) => m.type === "settings/contextTestResult");
     expect(verdicts).toHaveLength(1);
     expect(verdicts[0]).toMatchObject({ result: { recalled: false, promptTokens: 141234 } });
+    // Pins the deliberate skip of postState(): a verdict is not a change to the
+    // settings snapshot, so an accidental postState() added to this case must fail here.
+    expect(posted.some((m) => m.type === "settings/state")).toBe(false);
   });
 
   it("reports a failed test on the verdict message, not the error banner", async () => {
@@ -271,5 +293,20 @@ describe("context window", () => {
     expect(posted.find((m) => m.type === "settings/contextTestResult")).toMatchObject({
       result: { ok: false, error: "429 rate limited" },
     });
+  });
+
+  it("a thrown testContextWindow still reaches the catch-all as settings/error", async () => {
+    // The other direction of the ok:false split: a genuine exception (backend
+    // unreachable) must NOT be silently swallowed into a contextTestResult verdict.
+    const d = deps();
+    d.client.testContextWindow = async () => {
+      throw new Error("backend unreachable");
+    };
+    const posted: SettingsOutMsg[] = [];
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({
+      type: "settings/testContextWindow", backend: "groq", model: "m2", contextWindow: 128000,
+    });
+    expect(posted).toEqual([{ type: "settings/error", message: "backend unreachable" }]);
   });
 });

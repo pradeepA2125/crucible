@@ -13,7 +13,7 @@ export interface SettingsState {
   // contextWindow is the window compaction is using right now, read back from
   // GET /v1/config so the field shows what the process actually has, not what the
   // panel last sent.
-  provider: { backend: string; model: string; contextWindow?: number | null } | null;
+  provider: { backend: string; model: string; contextWindow?: number | null | undefined } | null;
   // Non-fatal note from the last successful provider validate (e.g. an
   // openai_compatible endpoint that only supports json_object, not strict JSON
   // schema). null once no validate has produced one yet.
@@ -59,7 +59,7 @@ export type SettingsOutMsg =
 
 export interface SettingsDeps {
   client: {
-    getConfig(): Promise<{ provider?: { backend: string; model: string } | null | undefined }>;
+    getConfig(): Promise<{ provider?: { backend: string; model: string; contextWindow?: number | null | undefined } | null | undefined }>;
     listMcpServers(): Promise<McpServerList>;
     listSkills(workspace: string): Promise<{ name: string; description: string }[]>;
     validateProvider(req: {
