@@ -219,7 +219,12 @@ describe("context window in the spawn env", () => {
   });
 
   it("does not swallow 0 as a falsy value", () => {
-    /* The guard uses !==undefined, not truthiness, so 0 is a valid declared window. */
+    /* 0 is NOT a valid declared window — routes.py floors it at 1024, and a 0
+       reaching MemoryConfig would make every turn compact forever. This test
+       only pins that the guard here is `!== undefined`, not truthiness: this
+       function's job is to pass contextWindow through unmodified when it was
+       explicitly set, and let the backend own the floor, not to validate the
+       number itself. */
     const env = buildBackendEnv(
       "/ws", { backend: "groq", model: "m", contextWindow: 0 }, "/rt", 8123, "darwin-arm64",
     );
