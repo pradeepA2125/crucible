@@ -395,6 +395,20 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
   choice to `globalState` for the next managed restart (`RuntimeManager.saveProvider`,
   called from the panel's `setProvider` wrapper — separate from `storeProviderKey`,
   which the panel's `storeSecret` dep uses for the SecretStorage-only write).
+  The Provider section also carries the **Context window** field (Part 2 of the
+  exact-context-accounting spec): a DECLARED token count, pre-filled from a small
+  substring-keyed starter table (`webview-ui/src/settings/contextWindows.ts`,
+  default 128000) and never detected — NIM's `/v1/models` exposes no capability
+  data and NIM accepts a 600k-token prompt with HTTP 200. It rides `setProvider`
+  to `PUT /v1/config/provider` as `context_window`, which `ProviderRuntime` applies
+  to every registered window sink (both memory harnesses) after validation
+  succeeds; absent means "leave it alone", so a composer model-only swap never
+  clears it. The opt-in **Test** button (`POST /v1/providers/context-test`,
+  `agentd/providers/context_probe.py`) sends one prompt of the declared size with a
+  passphrase at the FRONT and judges by recall, **not** by HTTP status — the
+  measured NIM failure is HTTP 200 with `completion_tokens: 1` and empty content,
+  so `ok` (the call completed) and `recalled` (the window is real) are separate
+  fields all the way to the UI. `CRUCIBLE_CONTEXT_TEST_TIMEOUT_SEC` (default 300).
   **MCP servers** section: list/add/remove/reconnect/enable-toggle (toggle both updates
   the user-local disabled list AND calls `reconnectMcpServer` — no restart). **Skills**
   and **policy/memory** env-flag changes flag `restartRequired: true`, applied via the
@@ -603,7 +617,7 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 **Memory harness (see "Memory harness" under Architecture)**
 - `CRUCIBLE_MEMORY_ENABLED` — master switch, default **ON** since 2026-07-08 (truthy = `1/true/yes/on`; set to `0/false/no/off` to disable). When off, `prepare_turn` is a byte-identical passthrough. (Phase-2 recall/consolidation additionally needs a workspace scope, which the factories pass.) The managed runtime installer (`apps/vscode-extension/src/runtime/installer.ts`) installs the `crucible-agentd[memory]` extra (pulls in `sentence-transformers`/PyTorch, ~500MB-1GB+) specifically so this default works out of the box instead of silently degrading the embedder.
 - `CRUCIBLE_MEMORY_DB_PATH` — SQLite path (segments + anchors + memories) (default `.crucible/state/memory.sqlite3`)
-- `CRUCIBLE_MEMORY_WINDOW_TOKENS` — effective context window the fracs are taken against (default `128000`)
+- `CRUCIBLE_MEMORY_WINDOW_TOKENS` — effective context window the fracs are taken against (default `128000`). Normally set for you: the settings panel's Provider section has a **Context window** field whose value the extension persists to `globalState` and injects here on the next managed spawn, and `PUT /v1/config/provider {context_window}` hot-applies it to every live compactor without a restart. A hand-set env var still works and is what a non-managed backend uses.
 - `CRUCIBLE_MEMORY_COMPACT_TRIGGER_FRAC` — fire compaction at this × window (default `0.65`)
 - `CRUCIBLE_MEMORY_HOT_TOKEN_FRAC` — evict down to this × window of newest whole turns (default `0.4`)
 - `CRUCIBLE_MEMORY_HOT_TURNS` — cap on **messages** (not logical turns) kept hot (default `10`)

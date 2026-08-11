@@ -18,8 +18,13 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
   const [model, setModel] = useState(state.provider?.model ?? PROVIDERS[0].defaultModel);
   // The live backend value wins over the table: it is what compaction is actually
   // using, and showing the table's guess over the top of it would be a lie.
+  // Falls back from the SAME model string the Model field above initializes
+  // from (not state.provider?.model ?? "") — otherwise the two fields silently
+  // diverge the moment a table entry exists for PROVIDERS[0].defaultModel but
+  // not for "" (both currently resolve to 128,000, which is why this was
+  // invisible until now).
   const [contextWindow, setContextWindow] = useState(
-    String(state.provider?.contextWindow ?? defaultContextWindow(state.provider?.model ?? "")),
+    String(state.provider?.contextWindow ?? defaultContextWindow(state.provider?.model ?? PROVIDERS[0].defaultModel)),
   );
   // Blocks the save before it can reach the route — see the note in contextWindows.ts
   // for why a backend 422 would reach the user as an unreadable message.
@@ -28,6 +33,13 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
   const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [savedFlash, setSavedFlash] = useState(false);
   const [clearedFlash, setClearedFlash] = useState(false);
+  // Two-step, not window.confirm: a browser modal blocks the webview's message
+  // pipeline and can wedge the panel. The first click reveals the cost, the
+  // second runs it.
+  const [confirmingTest, setConfirmingTest] = useState(false);
+  const [testResult, setTestResult] = useState<
+    { ok: boolean; recalled: boolean; promptTokens?: number; exact?: boolean; error?: string } | null
+  >(null);
 
   const provider = useMemo(
     () => PROVIDERS.find((p) => p.id === backend) ?? PROVIDERS[0],
@@ -54,6 +66,21 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
     return () => clearTimeout(id);
   }, [providerSig]);
 
+  // The verdict is not part of the settings snapshot (state.provider) — it is
+  // advisory, per-session, and never persisted — so it rides its own message
+  // rather than a prop.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const msg = event.data;
+      if (msg?.type === "settings/contextTestResult") {
+        setConfirmingTest(false);
+        setTestResult(msg.result);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
   return (
     <div>
       <SectionHeader
@@ -77,6 +104,10 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
                 // The "key deleted" note is scoped to one provider — it must not
                 // linger over a different slot's key field.
                 setClearedFlash(false);
+                // A verdict describes a specific (provider, window) pair; switching
+                // provider makes it stale immediately.
+                setTestResult(null);
+                setConfirmingTest(false);
               }}
             >
               {PROVIDERS.map((p) => (
@@ -94,7 +125,12 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
               className={FIELD}
               inputMode="numeric"
               value={contextWindow}
-              onChange={(e) => setContextWindow(e.target.value.replace(/[^0-9]/g, ""))}
+              onChange={(e) => {
+                setContextWindow(e.target.value.replace(/[^0-9]/g, ""));
+                // A verdict describes the number the user has since edited away from.
+                setTestResult(null);
+                setConfirmingTest(false);
+              }}
               placeholder="128000"
             />
           </label>
@@ -111,6 +147,46 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
             providers return no error at all, bill every token, and answer with
             nothing. Use Test to confirm.
           </p>
+          <div className="flex flex-col gap-2">
+            {!confirmingTest ? (
+              <BtnGhost
+                disabled={busy || windowError !== null}
+                onClick={() => { setTestResult(null); setConfirmingTest(true); }}
+              >
+                Test
+              </BtnGhost>
+            ) : (
+              <div className="flex flex-col gap-2 rounded-md border border-border-strong p-2">
+                <p className="text-[11px] leading-relaxed text-text-3">
+                  <Icon name="warn" size={11} /> This sends about{" "}
+                  {Number(contextWindow).toLocaleString()} input tokens in a single
+                  request — a multi-megabyte upload that may take a minute, billed
+                  in full by metered providers.
+                </p>
+                <div className="flex items-center gap-2">
+                  <BtnPrimary
+                    disabled={busy}
+                    onClick={() =>
+                      send({
+                        type: "settings/testContextWindow",
+                        backend,
+                        model,
+                        contextWindow: Number(contextWindow),
+                        ...(provider.local || !apiKey ? {} : { apiKey }),
+                        ...(extraCredentials ? { extraCredentials } : {}),
+                      })
+                    }
+                  >
+                    {busy ? "Testing…" : "Run test"}
+                  </BtnPrimary>
+                  <BtnGhost disabled={busy} onClick={() => setConfirmingTest(false)}>
+                    Cancel
+                  </BtnGhost>
+                </div>
+              </div>
+            )}
+            {testResult && <TestVerdict result={testResult} />}
+          </div>
           {provider.keyEnvVar && (
             <>
               <label className="flex flex-col gap-1 text-xs text-text-2">
@@ -194,5 +270,38 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
         </div>
       </CardShell>
     </div>
+  );
+}
+
+/** Three outcomes, deliberately not collapsed into pass/fail: a call that
+ * SUCCEEDS without recall is the silent-overflow case this whole feature exists
+ * to expose, and it must not read as a green tick. Advisory only — nothing here
+ * changes the stored value. */
+function TestVerdict({ result }: {
+  result: { ok: boolean; recalled: boolean; promptTokens?: number; exact?: boolean; error?: string };
+}) {
+  const count = result.promptTokens?.toLocaleString();
+  const label = result.exact ? "sent" : "sent (estimated)";
+  if (!result.ok) {
+    return (
+      <p className="text-xs" style={{ color: "var(--color-red)" }}>
+        ✗ Test failed: {result.error ?? "unknown error"}
+      </p>
+    );
+  }
+  if (result.recalled) {
+    return (
+      <p className="text-xs" style={{ color: "var(--color-green)" }}>
+        <Icon name="check" size={11} /> Passphrase recalled
+        {count ? ` — ${count} tokens ${label}` : ""}. This window is usable.
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs leading-relaxed" style={{ color: "var(--color-amber)" }}>
+      ⚠ The call succeeded but the passphrase came back wrong or empty
+      {count ? ` — ${count} tokens ${label}` : ""}. The front of the prompt is not
+      reaching the model, so this window is too large. Lower it and test again.
+    </p>
   );
 }

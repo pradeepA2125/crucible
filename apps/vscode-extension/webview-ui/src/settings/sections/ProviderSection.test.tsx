@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { ProviderSection } from "./ProviderSection";
 import type { SettingsState } from "../types";
@@ -122,5 +122,100 @@ describe("context window field", () => {
       .toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Save & validate/ }));
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+function postResult(result: Record<string, unknown>) {
+  // Wrapped in act() — matching the `deliver` helper in SettingsApp.test.tsx —
+  // because React 18's automatic batching defers the state update from a raw
+  // window.dispatchEvent to a microtask; asserting immediately after an
+  // unwrapped dispatch is a real flake (observed here: it read as pass/fail
+  // depending on unrelated timing, not on the assertion itself).
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { type: "settings/contextTestResult", result } }),
+    );
+  });
+}
+
+describe("context window Test button", () => {
+  it("warns with the cost before running anything", () => {
+    const send = vi.fn();
+    render(<ProviderSection state={state} busy={false} send={send} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Test$/ }));
+    expect(send).not.toHaveBeenCalled();  // first click only warns
+    expect(screen.getByText(/1,000,000/)).toBeTruthy();  // the cost, spelled out
+    expect(screen.getByText(/single request/i)).toBeTruthy();
+  });
+
+  it("runs only on the second, confirming click", () => {
+    const send = vi.fn();
+    render(<ProviderSection state={state} busy={false} send={send} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Test$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Run test/ }));
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "settings/testContextWindow", backend: "gemini", contextWindow: 1_000_000,
+      }),
+    );
+  });
+
+  it("can be cancelled without sending", () => {
+    const send = vi.fn();
+    render(<ProviderSection state={state} busy={false} send={send} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Test$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Run test/ })).toBeNull();
+  });
+
+  it("reports recall as a pass, with the real token count", () => {
+    render(<ProviderSection state={state} busy={false} send={vi.fn()} />);
+    postResult({ ok: true, recalled: true, promptTokens: 998_123, exact: true });
+    expect(screen.getByText(/998,123/)).toBeTruthy();
+    expect(screen.getByText(/recalled/i)).toBeTruthy();
+  });
+
+  it("reports a successful call with no recall as a too-large window", () => {
+    /* The silent-failure case: HTTP 200, tokens billed, nothing usable back. */
+    render(<ProviderSection state={state} busy={false} send={vi.fn()} />);
+    postResult({ ok: true, recalled: false, promptTokens: 998_123, exact: true });
+    // Case-sensitive: the Task 9 help paragraph already contains "Too large"
+    // (capitalized, sentence-initial); /too large/i collides with it and
+    // throws "multiple elements found" — not a real ambiguity, since the
+    // verdict text is lowercase mid-sentence ("...so this window is too
+    // large."). The case-sensitive form targets the verdict specifically.
+    expect(screen.getByText(/too large/)).toBeTruthy();
+  });
+
+  it("labels an estimated token count as an estimate", () => {
+    render(<ProviderSection state={state} busy={false} send={vi.fn()} />);
+    postResult({ ok: true, recalled: true, promptTokens: 990_000, exact: false });
+    expect(screen.getByText(/estimated/i)).toBeTruthy();
+  });
+
+  it("shows the provider's own error verbatim", () => {
+    render(<ProviderSection state={state} busy={false} send={vi.fn()} />);
+    postResult({ ok: false, recalled: false, error: "429 Too Many Requests" });
+    expect(screen.getByText(/429 Too Many Requests/)).toBeTruthy();
+  });
+
+  it("clears a stale verdict when the window value changes after it renders", () => {
+    /* A verdict describes a specific declared number. If it survives an edit
+       to that number, it now describes a window the user has already moved
+       away from — actively misleading, not merely stale. */
+    render(<ProviderSection state={state} busy={false} send={vi.fn()} />);
+    postResult({ ok: true, recalled: true, promptTokens: 998_123, exact: true });
+    expect(screen.getByText(/recalled/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Context window/), { target: { value: "500000" } });
+    expect(screen.queryByText(/recalled/i)).toBeNull();
+  });
+
+  it("clears a stale verdict when the provider changes after it renders", () => {
+    render(<ProviderSection state={state} busy={false} send={vi.fn()} />);
+    postResult({ ok: true, recalled: true, promptTokens: 998_123, exact: true });
+    expect(screen.getByText(/recalled/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "anthropic" } });
+    expect(screen.queryByText(/recalled/i)).toBeNull();
   });
 });
