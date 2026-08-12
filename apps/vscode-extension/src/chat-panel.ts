@@ -1,6 +1,13 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
-import type { ChatMessage, ChatThreadSummary, CommandDecision, McpToolDecision } from "@crucible/editor-client";
+import type {
+  ChatMessage,
+  ChatThreadSummary,
+  CommandDecision,
+  EffortSupport,
+  McpToolDecision,
+  ReasoningEffort,
+} from "@crucible/editor-client";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
 
@@ -59,9 +66,19 @@ export type McpDecisionHandler = (threadId: string, decision: McpToolDecision) =
 export interface ComposerModelState {
   current: { backend: string; model: string } | null;
   options: unknown[];
+  // Reasoning-effort dial state, carried on the same modelList round-trip since
+  // capability (EffortSupport) is per-(backend, model) — it's stale the instant
+  // the model swaps, so it has to refresh in lockstep with the model list.
+  effort?: {
+    level: ReasoningEffort | null;
+    support: EffortSupport | null;
+  };
 }
 export type ListModelsHandler = () => Promise<ComposerModelState>;
 export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
+export type SetReasoningEffortHandler = (
+  level: ReasoningEffort,
+) => Promise<ComposerModelState & { effortNote?: string | null }>;
 export type OpenSettingsHandler = (section?: string) => void;
 export type OpenMemoryPanelHandler = () => void;
 export type OpenGraphPanelHandler = () => void;
@@ -113,6 +130,10 @@ export class ChatPanel {
     private readonly onMcpDecision: McpDecisionHandler = async () => {},
     private readonly onListModels: ListModelsHandler = async () => ({ current: null, options: [] }),
     private readonly onSetModel: SetModelHandler = async () => ({ current: null, options: [] }),
+    private readonly onSetReasoningEffort: SetReasoningEffortHandler = async () => ({
+      current: null,
+      options: [],
+    }),
     private readonly onOpenSettings: OpenSettingsHandler = () => {},
     private readonly onOpenMemoryPanel: OpenMemoryPanelHandler = () => {},
     private readonly onListWorkspaceFiles: ListWorkspaceFilesHandler = async () => [],
@@ -346,6 +367,18 @@ export class ChatPanel {
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.panel?.webview.postMessage({ type: "modelSwapError", message });
+          }
+        })();
+      } else if (m["type"] === "setReasoningEffort") {
+        // Handles its own errors so a swap failure never re-enables input via
+        // the generic p.catch — mirrors the setModel branch above.
+        p = (async () => {
+          try {
+            const result = await this.onSetReasoningEffort(m["level"] as ReasoningEffort);
+            this.panel?.webview.postMessage({ type: "modelList", ...result });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.panel?.webview.postMessage({ type: "effortSwapError", message });
           }
         })();
       } else if (m["type"] === "openSettings") {

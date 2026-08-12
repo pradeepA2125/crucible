@@ -399,6 +399,8 @@ echo "uvicorn_log=$LOG_FILE"
   # UX decision (chat UI redesign): the step gate is the conscious approval moment
   # on the large path — review every step by default. Override via env to opt out.
   export CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT="${CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT:-false}"
+  # off | low | medium | high | max — unset leaves each provider's own dial alone.
+  export CRUCIBLE_REASONING_EFFORT="${CRUCIBLE_REASONING_EFFORT:-}"
   if [[ "$VALIDATION_COMMANDS_JSON" == "__AUTO_DETECT__" ]]; then
     unset CRUCIBLE_VALIDATION_COMMANDS_JSON
   else

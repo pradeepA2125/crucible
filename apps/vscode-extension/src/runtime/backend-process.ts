@@ -18,6 +18,7 @@ export interface BackendSettings {
   extraEnv?: Record<string, string>;   // policies/flags from VS Code settings
   skillsDisabled?: string[];           // → CRUCIBLE_SKILLS_DISABLED (comma-joined)
   contextWindow?: number; // → CRUCIBLE_MEMORY_WINDOW_TOKENS
+  reasoningEffort?: string; // → CRUCIBLE_REASONING_EFFORT
 }
 export interface ChildHandle {
   pid: number;
@@ -89,6 +90,12 @@ export function buildBackendEnv(
   // never opened the panel keeps exactly today's behaviour.
   if (settings.contextWindow !== undefined) {
     built.CRUCIBLE_MEMORY_WINDOW_TOKENS = String(settings.contextWindow);
+  }
+  // Third of the three env sites a new backend flag needs (start-backend.sh and
+  // the repo-root .env are the other two); the managed spawn reads neither of
+  // those, so omitting this here is how a persisted dial silently does nothing.
+  if (settings.reasoningEffort) {
+    built.CRUCIBLE_REASONING_EFFORT = settings.reasoningEffort;
   }
   return { ...built, ...settings.extraEnv };
 }

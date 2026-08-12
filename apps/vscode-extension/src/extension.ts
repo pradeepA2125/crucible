@@ -1,4 +1,4 @@
-import { HttpBackendClient } from "@crucible/editor-client";
+import { HttpBackendClient, type ReasoningEffort } from "@crucible/editor-client";
 import * as vscode from "vscode";
 import * as path from "node:path";
 
@@ -93,7 +93,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (p.keyEnvVar && (await runtimeManager.getProviderKey(p.id)) !== undefined) keyed.push(p.id);
     }
     const current = config.provider ?? null;
-    return { current, options: buildModelOptions(current, keyed, PROVIDERS) };
+    return {
+      current,
+      options: buildModelOptions(current, keyed, PROVIDERS),
+      effort: {
+        level: config.provider?.reasoningEffort ?? null,
+        support: config.provider?.reasoningEffortSupport ?? null,
+      },
+    };
+  };
+
+  // Reasoning-effort dial quick-swap: mirrors the composer model swap above —
+  // reads the persisted rung back into the SAME modelList shape so the webview
+  // has one refresh path for both.
+  const setReasoningEffort = async (level: ReasoningEffort) => {
+    const config = await controller.configClient().getConfig();
+    const backend = config.provider?.backend;
+    if (!backend) throw new Error("no provider configured");
+    const res = await controller.configClient().setProvider({ backend, reasoningEffort: level });
+    // Persist what the backend ACTUALLY applied, not what was asked — a clamped
+    // rung must not come back on the next managed spawn as the unclamped one.
+    await runtimeManager.saveReasoningEffort(res.reasoningEffort ?? level);
+    return { ...(await composerModelState()), effortNote: res.reasoningEffortNote ?? null };
   };
 
   const chatPanel = new ChatPanel(
@@ -136,6 +157,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await runtimeManager.saveProvider(backend, model);
       return composerModelState();
     },
+    (level: ReasoningEffort) => setReasoningEffort(level),
     (section?: string) => {
       void vscode.commands.executeCommand("crucible.openSettingsPanel", section);
     },

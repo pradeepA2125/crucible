@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildModelOptions } from "../src/composer-models.js";
+import { buildEffortRows, buildModelOptions } from "../src/composer-models.js";
 import { PROVIDERS } from "../src/setup-data.js";
 
 describe("buildModelOptions", () => {
@@ -25,5 +25,25 @@ describe("buildModelOptions", () => {
     expect(withCurrent).toEqual([{ backend: "ollama", label: "Ollama (local)", model: "qwen3:8b", active: true }]);
     const without = buildModelOptions(null, [], PROVIDERS);
     expect(without).toEqual([]);
+  });
+});
+
+describe("buildEffortRows", () => {
+  it("marks each rung supported, unsupported, or unknown", () => {
+    const rows = buildEffortRows({
+      supported: ["off", "low", "high"],
+      unsupported: { max: "tops out at high" },
+    });
+    expect(rows.map((r) => r.level)).toEqual(["off", "low", "medium", "high", "max"]);
+    expect(rows.find((r) => r.level === "low")?.state).toBe("supported");
+    expect(rows.find((r) => r.level === "max")?.state).toBe("unsupported");
+    expect(rows.find((r) => r.level === "max")?.reason).toBe("tops out at high");
+    // Not listed either way: unverified, still selectable.
+    expect(rows.find((r) => r.level === "medium")?.state).toBe("unknown");
+  });
+
+  it("treats a null support map as entirely unknown rather than unsupported", () => {
+    const rows = buildEffortRows(null);
+    expect(rows.every((r) => r.state === "unknown")).toBe(true);
   });
 });
