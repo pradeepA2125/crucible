@@ -111,3 +111,26 @@ def test_an_unrecognized_level_is_rejected(tmp_path: Path) -> None:
         "/v1/config/provider", json={"backend": "b", "reasoning_effort": "banana"}
     )
     assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_a_seeded_rung_reaches_the_transport_only_after_it_is_applied() -> None:
+    """ProviderRuntime.__init__ is sync and cannot await, so a rung passed in at
+    construction (e.g. the CRUCIBLE_REASONING_EFFORT env seed in main.py) is only
+    a raw attribute assignment until something calls apply_reasoning_effort. Before
+    main.py's startup hook was added, nothing ever did — GET /v1/config reported
+    the seeded level while the transport never received it."""
+    transport = _Transport()
+    rt = ProviderRuntime(
+        backend="b",
+        model="m",
+        engines=[],
+        transport=transport,
+        reasoning_effort=ReasoningEffort.HIGH,
+    )
+    assert rt.reasoning_effort == ReasoningEffort.HIGH
+    assert transport.effort is None
+
+    await rt.apply_reasoning_effort(rt.reasoning_effort)
+
+    assert transport.effort == ReasoningEffort.HIGH
