@@ -1,7 +1,7 @@
 import pytest
 
 from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
-from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
+from agentd.providers.reasoning_effort import ReasoningEffort
 
 
 def _transport() -> OpenAICompatibleTransport:
@@ -49,7 +49,8 @@ def test_none_clears_a_previously_set_effort():
 def test_effort_is_sent_on_text_calls_too():
     t = _transport()
     t.set_reasoning_effort(ReasoningEffort.LOW)
-    assert t._build_extra_body("nvidia/nemotron-3", True, for_json=False)["reasoning_effort"] == "low"
+    body = t._build_extra_body("nvidia/nemotron-3", True, for_json=False)
+    assert body["reasoning_effort"] == "low"
 
 
 @pytest.mark.asyncio
