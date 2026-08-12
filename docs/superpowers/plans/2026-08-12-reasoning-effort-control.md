@@ -639,7 +639,14 @@ In `generate_text`, replace the existing `except Exception as e:` block that wra
                 retry_extra = self._build_extra_body(model, is_reasoning, for_json=False)
                 if retry_extra:
                     create_kwargs["extra_body"] = retry_extra
-                response = await self._call_with_retry(create_kwargs)
+                try:
+                    response = await self._call_with_retry(create_kwargs)
+                except Exception as retry_exc:
+                    # The retry gets the SAME wrapping as every other failure path
+                    # out of generate_text. Without this the second failure escapes
+                    # raw, so the one error the user sees on a rejecting endpoint is
+                    # the only one missing the provider label.
+                    raise RuntimeError(f"{self._label} API error: {retry_exc}") from retry_exc
                 return self._extract_text(response)
             raise RuntimeError(f"{self._label} API error: {e}") from e
 ```
