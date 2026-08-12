@@ -9,6 +9,7 @@ from typing import Any
 from openai import APIConnectionError, AsyncOpenAI
 
 from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
+from agentd.providers.reasoning_effort import LADDER, EffortSupport, ReasoningEffort
 from agentd.runtime.artifacts import provider_debug_root
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,20 @@ def _is_reasoning_model(model: str) -> bool:
 
 
 _CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
+
+# vLLM (which NVIDIA NIM is built on) reads a top-level `reasoning_effort` and
+# auto-injects the low-level chat_template_kwargs.enable_thinking from it, so this
+# is the front door for the whole OpenAI-compatible family. The ladder tops out at
+# "high" there, which is why MAX maps onto "high" and is declared unsupported —
+# the runtime clamps MAX to HIGH before it reaches this map, and the map stays
+# total so a missed clamp still sends something valid rather than raising.
+_OPENAI_COMPAT_EFFORT_WIRE: dict[ReasoningEffort, str] = {
+    ReasoningEffort.OFF: "none",
+    ReasoningEffort.LOW: "low",
+    ReasoningEffort.MEDIUM: "medium",
+    ReasoningEffort.HIGH: "high",
+    ReasoningEffort.MAX: "high",
+}
 
 # Minimum gap between on_progress emissions. Live-measured delta rate is ~29/sec;
 # emitting per delta would put ~29 SSE frames/sec on the chat channel for a
@@ -317,6 +332,15 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # other transport having to grow the kwarg (same getattr-defensive idiom as
         # supports_oneof_grammar / requires_all_fields).
         self.supports_token_progress = True
+        # The EFFECTIVE rung (already clamped by ProviderRuntime), or None to send
+        # no effort field at all — which is both the default and the escape hatch
+        # back to pre-feature behavior.
+        self._reasoning_effort: ReasoningEffort | None = None
+        # Rungs this endpoint has PROVEN it rejects, learned from probative 400s
+        # (Task 3). Per rung, never whole-capability: the sticky JSON-mode
+        # downgrade's documented flaw is collapsing "cannot honor THIS" into
+        # "cannot honor ANY", and the rungs here are independent.
+        self._effort_rejected: dict[ReasoningEffort, str] = {}
         # "strict" | "json_object" | "none". Every generate_json starts by probing
         # strict json_schema; the first failure that PROVES the endpoint can't honor it
         # flips this for the rest of the process (see _downgrade_json_mode).
@@ -395,12 +419,42 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         extra_body: dict[str, Any] = {}
         if is_reasoning:
             extra_body["reasoning"] = {"enabled": True}
+        if self._reasoning_effort is not None:
+            extra_body["reasoning_effort"] = _OPENAI_COMPAT_EFFORT_WIRE[self._reasoning_effort]
         return extra_body
 
     async def _reasoning_config(self, model: str) -> tuple[bool, float]:
         """(is_reasoning, temperature). Base uses the name-substring heuristic."""
         is_reasoning = _is_reasoning_model(model)
         return is_reasoning, (1.0 if is_reasoning else 0.0)
+
+    def set_reasoning_effort(self, level: ReasoningEffort | None) -> None:
+        """Store the effective rung. None sends no effort field at all."""
+        self._reasoning_effort = level
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        """What this endpoint can express for `model`.
+
+        Deliberately pessimistic about knowledge, not about capability: an
+        arbitrary base URL could be vLLM, LM Studio, Together, or DeepInfra, so
+        every rung we have not disproven stays UNKNOWN and gets sent. MAX is the
+        one rung we can rule out from the protocol alone.
+        """
+        is_reasoning, _ = await self._reasoning_config(model)
+        if not is_reasoning:
+            return EffortSupport(
+                supported=frozenset({ReasoningEffort.OFF}),
+                unsupported={
+                    level: "this model does not expose reasoning"
+                    for level in LADDER
+                    if level is not ReasoningEffort.OFF
+                },
+            )
+        unsupported = {
+            ReasoningEffort.MAX: "OpenAI-compatible endpoints top out at 'high'",
+            **self._effort_rejected,
+        }
+        return EffortSupport(unsupported=unsupported)
 
     async def aclose(self) -> None:
         """Subclasses with owned resources override this."""
