@@ -20,8 +20,20 @@ from typing import Any
 import httpx
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
 logger = logging.getLogger(__name__)
+
+# Ollama's `think` is a TOP-LEVEL request field (not an `options` entry) and takes
+# either a bool or a level string, depending on the model. MAX has no distinct
+# expression and maps onto "high".
+_OLLAMA_EFFORT_WIRE: dict[ReasoningEffort, bool | str] = {
+    ReasoningEffort.OFF: False,
+    ReasoningEffort.LOW: "low",
+    ReasoningEffort.MEDIUM: "medium",
+    ReasoningEffort.HIGH: "high",
+    ReasoningEffort.MAX: "high",
+}
 
 # HTTP statuses that warrant a retry (Ollama itself doesn't rate-limit since it's
 # local, but a model load or request flood can transiently 503; 5xx in general).
@@ -97,6 +109,9 @@ class OllamaJsonTransport(ModelJsonTransport):
         # deployment rather than a default that could silently do nothing for one
         # model family while working for another.
         self._think = think
+        # The unified dial. Kept separate from _think so an unset dial leaves the
+        # per-deployment CRUCIBLE_OLLAMA_THINK behavior exactly as it is today.
+        self._effort: ReasoningEffort | None = None
         # num_ctx bounds prompt + output combined, so num_predict must leave headroom
         # for the prompt rather than equal num_ctx outright (the pre-fix flat 32768 for
         # both meant the model's real output budget was already num_ctx minus whatever
@@ -108,6 +123,29 @@ class OllamaJsonTransport(ModelJsonTransport):
         self._json_num_predict = max(1, int(self._num_ctx * json_predict_frac))
         self._owns_client = http_client is None
         self._client = http_client or httpx.AsyncClient(timeout=timeout_sec)
+
+    def set_reasoning_effort(self, level: ReasoningEffort | None) -> None:
+        self._effort = level
+
+    def _effort_think_value(self) -> bool | str | None:
+        """The dial wins when set; otherwise the constructor/env `think` stands.
+        None means omit the field entirely — the model decides."""
+        if self._effort is not None:
+            return _OLLAMA_EFFORT_WIRE[self._effort]
+        return self._think
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        return EffortSupport(
+            supported=frozenset(
+                {
+                    ReasoningEffort.OFF,
+                    ReasoningEffort.LOW,
+                    ReasoningEffort.MEDIUM,
+                    ReasoningEffort.HIGH,
+                }
+            ),
+            unsupported={ReasoningEffort.MAX: "Ollama's think levels top out at 'high'"},
+        )
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -219,10 +257,10 @@ class OllamaJsonTransport(ModelJsonTransport):
             body["format"] = json_format
         if self._keep_alive is not None:
             body["keep_alive"] = self._keep_alive
-        if self._think is not None:
-            # Top-level field (not inside `options`) per Ollama's chat API — see
-            # __init__ for why this defaults to omitted rather than a blanket False.
-            body["think"] = self._think
+        think = self._effort_think_value()
+        if think is not None:
+            # Top level, NOT inside options — that is where Ollama reads it.
+            body["think"] = think
         return body
 
     async def _call_with_retry(

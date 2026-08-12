@@ -1,6 +1,7 @@
 import pytest
 
 from agentd.providers.groq_transport import GroqJsonTransport
+from agentd.providers.ollama_transport import OllamaJsonTransport
 from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 from agentd.providers.reasoning_effort import ReasoningEffort
@@ -149,3 +150,53 @@ def test_groq_wire_values(level, wire):
     t = _groq()
     t.set_reasoning_effort(level)
     assert t._effort_wire_value() == wire
+
+
+def _ollama() -> OllamaJsonTransport:
+    return OllamaJsonTransport(host="http://localhost:11434")
+
+
+@pytest.mark.parametrize(
+    ("level", "wire"),
+    [
+        (ReasoningEffort.OFF, False),
+        (ReasoningEffort.LOW, "low"),
+        (ReasoningEffort.MEDIUM, "medium"),
+        (ReasoningEffort.HIGH, "high"),
+        (ReasoningEffort.MAX, "high"),
+    ],
+)
+def test_ollama_think_values(level, wire):
+    t = _ollama()
+    t.set_reasoning_effort(level)
+    assert t._effort_think_value() == wire
+
+
+def test_ollama_unset_dial_preserves_the_env_configured_think():
+    t = OllamaJsonTransport(host="http://localhost:11434", think="medium")
+    assert t._effort_think_value() == "medium"
+
+
+def test_ollama_think_rides_the_body_top_level_not_options():
+    t = _ollama()
+    t.set_reasoning_effort(ReasoningEffort.LOW)
+    # _build_body is KEYWORD-ONLY (verified against the real signature).
+    body = t._build_body(
+        model="qwen3", system="sys", user_content="user", json_format=None, num_predict=100
+    )
+    assert body["think"] == "low"
+    assert "think" not in body["options"]
+
+
+def test_ollama_omits_think_entirely_when_nothing_is_set():
+    body = _ollama()._build_body(
+        model="qwen3", system="sys", user_content="user", json_format=None, num_predict=100
+    )
+    assert "think" not in body
+
+
+@pytest.mark.asyncio
+async def test_ollama_supports_the_whole_ladder_except_max():
+    support = await _ollama().reasoning_effort_support("qwen3")
+    assert support.state(ReasoningEffort.OFF) == "supported"
+    assert support.state(ReasoningEffort.MAX) == "unsupported"
