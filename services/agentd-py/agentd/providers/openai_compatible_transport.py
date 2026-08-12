@@ -45,6 +45,26 @@ _OPENAI_COMPAT_EFFORT_WIRE: dict[ReasoningEffort, str] = {
     ReasoningEffort.MAX: "high",
 }
 
+# Statuses that prove nothing about capability. Mirrors _RETRYABLE_STATUS_CODES in
+# spirit and for the same reason the sticky JSON downgrade excludes them: a
+# rate-limit blip that permanently pinned the session to a lower rung would be the
+# same silent-degradation bug wearing a different hat.
+_NON_PROBATIVE_STATUS: frozenset[int] = frozenset({408, 409, 429, 500, 502, 503, 504})
+
+
+def _is_probative_effort_rejection(exc: Exception) -> bool:
+    """True only when the endpoint PROVED it rejects the effort value we sent.
+
+    Requires both a 4xx that is not in the transient set AND the parameter named
+    in the message — a 400 about context length says nothing about effort.
+    """
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int) or status in _NON_PROBATIVE_STATUS or status >= 500:
+        return False
+    text = str(exc).lower()
+    return "reasoning_effort" in text or "reasoning effort" in text
+
+
 # Minimum gap between on_progress emissions. Live-measured delta rate is ~29/sec;
 # emitting per delta would put ~29 SSE frames/sec on the chat channel for a
 # counter a human reads a few times a second. ~6/sec reads as continuous.
@@ -455,6 +475,26 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             **self._effort_rejected,
         }
         return EffortSupport(unsupported=unsupported)
+
+    def _note_effort_rejection(self, exc: Exception) -> bool:
+        """Record a proven-bad rung and drop the field. True when it fired.
+
+        Marks ONLY the rung that was in flight. The effort is cleared to None so
+        the immediate retry (and every call until the next swap re-resolves) omits
+        the field entirely rather than guessing at a replacement — the runtime owns
+        clamping, and it will pick the right neighbour on the next resolve.
+        """
+        level = self._reasoning_effort
+        if level is None or not _is_probative_effort_rejection(exc):
+            return False
+        self._effort_rejected[level] = f"this endpoint rejected '{level}'"
+        self._reasoning_effort = None
+        logger.warning(
+            "[effort] %s rejected reasoning_effort=%s; dropping it for this process",
+            self._label,
+            level,
+        )
+        return True
 
     async def aclose(self) -> None:
         """Subclasses with owned resources override this."""
@@ -917,6 +957,15 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         on_usage(prompt_tokens, completion_tokens or 0)
             return self._extract_text(response)
         except Exception as e:
+            if self._note_effort_rejection(e):
+                # One bare retry with the field gone. The rung is now recorded, so
+                # this cannot loop: a second failure has no effort left to blame.
+                create_kwargs.pop("extra_body", None)
+                retry_extra = self._build_extra_body(model, is_reasoning, for_json=False)
+                if retry_extra:
+                    create_kwargs["extra_body"] = retry_extra
+                response = await self._call_with_retry(create_kwargs)
+                return self._extract_text(response)
             raise RuntimeError(f"{self._label} API error: {e}") from e
 
     async def _stream_with_thinking(
