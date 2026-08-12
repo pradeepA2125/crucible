@@ -1740,6 +1740,27 @@ and import `parse_effort` alongside the other provider imports at line ~144:
 
 Leaving `CRUCIBLE_REASONING_EFFORT` unset yields `None`, so `set_reasoning_effort` is never called and each transport keeps its own env-configured behavior untouched. That is the spec's per-provider fallback, achieved with no extra code.
 
+**Amended after Task 9's review.** The constructor assignment alone is NOT enough: `__init__`
+is sync and cannot await, `apply_reasoning_effort` is only called from `swap()`, so a boot
+with `CRUCIBLE_REASONING_EFFORT=high` reported `high` on `GET /v1/config` while the transport
+was never told — the dial silently did nothing until the first provider swap, and the config
+route actively misreported it. A startup hook closes it, using the same
+`app.router.add_event_handler("startup", …)` pattern main.py already uses three times:
+
+```python
+    async def _apply_startup_reasoning_effort() -> None:
+        # __init__ cannot await, and apply_reasoning_effort is otherwise only reached
+        # through swap(). Without this the seeded rung would be reported by
+        # GET /v1/config but never sent, which is worse than not working.
+        await provider_runtime.apply_reasoning_effort(provider_runtime.reasoning_effort)
+
+    if provider_runtime.reasoning_effort is not None:
+        app.router.add_event_handler("startup", _apply_startup_reasoning_effort)
+```
+
+The `is not None` guard keeps the no-dial path byte-identical — no capability lookup at boot
+when nobody set the var.
+
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `cd services/agentd-py && pytest tests/test_provider_effort_route.py tests/test_provider_hotswap.py`
