@@ -1,6 +1,7 @@
 import pytest
 
 from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
+from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 from agentd.providers.reasoning_effort import ReasoningEffort
 
 
@@ -68,3 +69,34 @@ async def test_non_reasoning_model_supports_only_off():
     support = await t.reasoning_effort_support("some-plain-chat-model")
     assert support.state(ReasoningEffort.OFF) == "supported"
     assert support.state(ReasoningEffort.HIGH) == "unsupported"
+
+
+def _openrouter() -> OpenRouterJsonTransport:
+    return OpenRouterJsonTransport(api_key="k", completions_client=object())
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [
+        (ReasoningEffort.OFF, {"enabled": False}),
+        (ReasoningEffort.LOW, {"effort": "low"}),
+        (ReasoningEffort.MEDIUM, {"effort": "medium"}),
+        (ReasoningEffort.HIGH, {"effort": "high"}),
+        (ReasoningEffort.MAX, {"effort": "max"}),
+    ],
+)
+def test_openrouter_uses_the_nested_reasoning_object(level, expected):
+    t = _openrouter()
+    t.set_reasoning_effort(level)
+    body = t._build_extra_body("deepseek/deepseek-r1", True, for_json=True)
+    assert body["reasoning"] == expected
+    # The base class's blanket {"enabled": True} must not survive alongside it.
+    assert "reasoning_effort" not in body
+
+
+@pytest.mark.asyncio
+async def test_openrouter_supports_the_whole_ladder_for_a_reasoning_model():
+    t = _openrouter()
+    support = await t.reasoning_effort_support("deepseek/deepseek-r1")
+    for level in ReasoningEffort:
+        assert support.state(level) == "supported"
