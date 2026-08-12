@@ -142,6 +142,7 @@ if reasoning_backend == "scripted":
     )
 else:
     from agentd.providers.factory import build_transport, resolve_model
+    from agentd.providers.reasoning_effort import parse_effort
     from agentd.providers.unconfigured import build_transport_or_placeholder
 
     # Degrade, don't abort. A provider missing its key or base URL used to raise
@@ -349,6 +350,8 @@ if reasoning_backend != "scripted":
         window_sinks=_window_sinks,
         context_window=MemoryConfig.from_env(os.environ).window_tokens,
         config_error=_provider_error,
+        transport=transport,
+        reasoning_effort=parse_effort(os.getenv("CRUCIBLE_REASONING_EFFORT")),
     )
 
 app.include_router(
