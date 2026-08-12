@@ -320,6 +320,17 @@ export const ThreadLiveStateSchema = z.object({
 });
 export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 
+export const ReasoningEffortSchema = z.enum(["off", "low", "medium", "high", "max"]);
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
+
+// Tri-state by omission: a rung in neither collection is UNKNOWN — the endpoint's
+// capability is unverified, which the chip renders differently from "unsupported".
+export const EffortSupportSchema = z.object({
+  supported: z.array(ReasoningEffortSchema),
+  unsupported: z.record(z.string(), z.string()),
+});
+export type EffortSupport = z.infer<typeof EffortSupportSchema>;
+
 // Backend feature-flag capabilities (GET /v1/config) — drives task-path UI gating.
 export const BackendConfigSchema = z.object({
   taskSubsystemEnabled: z.boolean(),
@@ -334,6 +345,8 @@ export const BackendConfigSchema = z.object({
     backend: z.string(),
     model: z.string(),
     contextWindow: z.number().nullable().optional(),
+    reasoningEffort: ReasoningEffortSchema.nullable().optional(),
+    reasoningEffortSupport: EffortSupportSchema.optional(),
   }).nullable().optional(),
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;
@@ -474,7 +487,7 @@ export interface BackendTaskClient {
   listSkills(workspace: string): Promise<SkillSummary[]>;
   // Settings surfaces (P4): provider validation/hot-swap + MCP server management.
   validateProvider(req: { backend: string; model?: string; credentials?: Record<string, string> }): Promise<ProviderValidateResult>;
-  setProvider(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow?: number }): Promise<{ backend: string; model: string }>;
+  setProvider(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow?: number; reasoningEffort?: ReasoningEffort }): Promise<{ backend: string; model: string; reasoningEffort?: ReasoningEffort | null; reasoningEffortNote?: string | null; reasoningEffortSupport?: EffortSupport }>;
   testContextWindow(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow: number }): Promise<ContextTestResult>;
   listMcpServers(): Promise<McpServerList>;
   upsertMcpServer(name: string, entry: Record<string, unknown>, disabled: string[]): Promise<McpServerList>;

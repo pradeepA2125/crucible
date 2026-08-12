@@ -892,3 +892,70 @@ describe("HttpBackendClient — SSE idle-read timeout", () => {
     }
   });
 });
+
+function jsonClient(payload: unknown, captured: { body?: string }) {
+  return new HttpBackendClient({
+    baseUrl: "http://localhost:8000",
+    fetchFn: async (_url, init) => {
+      captured.body = (init?.body as string) ?? "";
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+}
+
+describe("HttpBackendClient reasoning effort", () => {
+  test("maps the snake_case config payload onto camelCase", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient(
+      {
+        task_subsystem_enabled: false,
+        chat_controller_enabled: true,
+        memory_enabled: true,
+        skills_enabled: false,
+        mcp_enabled: false,
+        provider: {
+          backend: "openai_compatible",
+          model: "nvidia/nemotron-3",
+          reasoning_effort: "high",
+          reasoning_effort_support: {
+            supported: ["off", "low", "high"],
+            unsupported: { max: "tops out at high" },
+          },
+        },
+      },
+      captured
+    );
+    const config = await client.getConfig();
+    expect(config.provider?.reasoningEffort).toBe("high");
+    expect(config.provider?.reasoningEffortSupport?.supported).toEqual(["off", "low", "high"]);
+    expect(config.provider?.reasoningEffortSupport?.unsupported["max"]).toBe("tops out at high");
+  });
+
+  test("omits reasoning_effort from the PUT body when the caller has nothing to say", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient({ backend: "b", model: "m" }, captured);
+    await client.setProvider({ backend: "b" });
+    expect("reasoning_effort" in JSON.parse(captured.body ?? "{}")).toBe(false);
+  });
+
+  test("sends the level and reads back the effective one", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient(
+      {
+        backend: "b",
+        model: "m",
+        reasoning_effort: "high",
+        reasoning_effort_note: "max unavailable here",
+        reasoning_effort_support: { supported: ["high"], unsupported: {} },
+      },
+      captured
+    );
+    const res = await client.setProvider({ backend: "b", reasoningEffort: "max" });
+    expect(JSON.parse(captured.body ?? "{}").reasoning_effort).toBe("max");
+    expect(res.reasoningEffort).toBe("high");
+    expect(res.reasoningEffortNote).toContain("unavailable");
+  });
+});
