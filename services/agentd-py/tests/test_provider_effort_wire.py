@@ -1,5 +1,6 @@
 import pytest
 
+from agentd.providers.groq_transport import GroqJsonTransport
 from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 from agentd.providers.reasoning_effort import ReasoningEffort
@@ -100,3 +101,51 @@ async def test_openrouter_supports_the_whole_ladder_for_a_reasoning_model():
     support = await t.reasoning_effort_support("deepseek/deepseek-r1")
     for level in ReasoningEffort:
         assert support.state(level) == "supported"
+
+
+def _groq() -> GroqJsonTransport:
+    return GroqJsonTransport(api_key="k", completions_client=object())
+
+
+@pytest.mark.asyncio
+async def test_groq_declares_off_unsupported_because_it_400s():
+    t = _groq()
+    support = await t.reasoning_effort_support("openai/gpt-oss-120b")
+    assert support.state(ReasoningEffort.OFF) == "unsupported"
+    assert "none" in support.unsupported[ReasoningEffort.OFF]
+    assert support.state(ReasoningEffort.MAX) == "unsupported"
+    for level in (ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH):
+        assert support.state(level) == "supported"
+
+
+@pytest.mark.asyncio
+async def test_groq_off_clamps_upward_to_low():
+    support = await _groq().reasoning_effort_support("openai/gpt-oss-120b")
+    effective, note = support.resolve(ReasoningEffort.OFF)
+    assert effective == ReasoningEffort.LOW
+    assert note is not None
+
+
+def test_groq_never_emits_none_on_the_wire():
+    # Regression guard for a verified provider fact: Groq rejects
+    # reasoning_effort="none" with a 400.
+    t = _groq()
+    for level in ReasoningEffort:
+        t.set_reasoning_effort(level)
+        assert t._effort_wire_value() != "none"
+
+
+@pytest.mark.parametrize(
+    ("level", "wire"),
+    [
+        (ReasoningEffort.LOW, "low"),
+        (ReasoningEffort.MEDIUM, "medium"),
+        (ReasoningEffort.HIGH, "high"),
+        (ReasoningEffort.MAX, "high"),
+        (ReasoningEffort.OFF, "low"),
+    ],
+)
+def test_groq_wire_values(level, wire):
+    t = _groq()
+    t.set_reasoning_effort(level)
+    assert t._effort_wire_value() == wire
