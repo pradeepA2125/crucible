@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from agentd.providers.factory import build_transport, resolve_model
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 from agentd.providers.validate import ProviderValidationError, ping_transport
 
 
@@ -21,6 +22,8 @@ class ProviderRuntime:
         window_sinks: Sequence[object] = (),
         context_window: int | None = None,
         config_error: str | None = None,
+        transport: object | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> None:
         self.backend = backend
         self.model = model
@@ -40,6 +43,46 @@ class ProviderRuntime:
         # providers package should not grow a dependency on the memory package for
         # one method call, and the same reasoning already governs `engines`.
         self._window_sinks = list(window_sinks)
+        # Capability is a property of the transport, and swap() previously threw
+        # away the one it built. Held here so GET /v1/config can answer "which
+        # rungs does the CURRENT provider actually expose".
+        self._transport = transport
+        # The effective (post-clamp) rung, and why it differs from the request when
+        # it does. None means "send nothing" — the pre-feature default, which is
+        # also what leaves each transport's own env-configured behavior in place.
+        self.reasoning_effort = reasoning_effort
+        self.reasoning_effort_note: str | None = None
+
+    async def effort_support(self) -> EffortSupport:
+        """What the current transport can express for the current model.
+
+        Degrade-not-raise: a transport without the optional member, or one whose
+        capability lookup fails (e.g. OpenRouter's registry fetch), yields
+        all-UNKNOWN rather than blocking the config route.
+        """
+        resolver = getattr(self._transport, "reasoning_effort_support", None)
+        if resolver is None:
+            return EffortSupport()
+        try:
+            return await resolver(self.model)
+        except Exception:
+            return EffortSupport()
+
+    async def apply_reasoning_effort(self, level: ReasoningEffort | None) -> None:
+        """Clamp against the live capability, then push onto the transport."""
+        setter = getattr(self._transport, "set_reasoning_effort", None)
+        if level is None:
+            self.reasoning_effort = None
+            self.reasoning_effort_note = None
+            if setter is not None:
+                setter(None)
+            return
+        support = await self.effort_support()
+        effective, note = support.resolve(level)
+        self.reasoning_effort = effective
+        self.reasoning_effort_note = note
+        if setter is not None:
+            setter(effective)
 
     async def swap(
         self,
@@ -48,6 +91,7 @@ class ProviderRuntime:
         model: str | None = None,
         credentials: dict[str, str] | None = None,
         context_window: int | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> dict[str, object]:
         try:
             transport = build_transport(backend, credentials=credentials)
@@ -67,6 +111,14 @@ class ProviderRuntime:
         # A real transport now exists, so whatever failed at startup no longer
         # describes this process.
         self.config_error = None
+        # The freshly built transport starts with no effort. Re-apply after the
+        # ping so an unsupported rung can never block a legitimate model swap —
+        # the rung is clamped against the NEW model's capability, which is the
+        # whole reason this is re-resolved rather than copied.
+        self._transport = transport
+        await self.apply_reasoning_effort(
+            reasoning_effort if reasoning_effort is not None else self.reasoning_effort
+        )
         # Applied only after validation succeeds, for the same reason the engines
         # are: a rejected swap must leave the process exactly as it was. Absent
         # means "unchanged", not "reset" — a model-only hot-swap from the composer
@@ -78,4 +130,13 @@ class ProviderRuntime:
         result: dict[str, object] = {"backend": backend, "model": resolved}
         if self.context_window is not None:
             result["context_window"] = self.context_window
+        support = await self.effort_support()
+        result["reasoning_effort"] = (
+            self.reasoning_effort.value if self.reasoning_effort is not None else None
+        )
+        result["reasoning_effort_note"] = self.reasoning_effort_note
+        result["reasoning_effort_support"] = {
+            "supported": sorted(level.value for level in support.supported),
+            "unsupported": {level.value: why for level, why in support.unsupported.items()},
+        }
         return result
