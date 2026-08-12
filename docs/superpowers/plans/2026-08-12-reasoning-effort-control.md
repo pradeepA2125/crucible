@@ -968,13 +968,18 @@ def test_ollama_unset_dial_preserves_the_env_configured_think():
 def test_ollama_think_rides_the_body_top_level_not_options():
     t = _ollama()
     t.set_reasoning_effort(ReasoningEffort.LOW)
-    body = t._build_body("qwen3", "sys", "user", None, num_predict=100)
+    # _build_body is KEYWORD-ONLY (verified against the real signature).
+    body = t._build_body(
+        model="qwen3", system="sys", user_content="user", json_format=None, num_predict=100
+    )
     assert body["think"] == "low"
     assert "think" not in body["options"]
 
 
 def test_ollama_omits_think_entirely_when_nothing_is_set():
-    body = _ollama()._build_body("qwen3", "sys", "user", None, num_predict=100)
+    body = _ollama()._build_body(
+        model="qwen3", system="sys", user_content="user", json_format=None, num_predict=100
+    )
     assert "think" not in body
 
 
@@ -1072,7 +1077,15 @@ git commit -m "feat(providers): map reasoning effort onto Ollama's think field"
 
 ---
 
-### Task 7: Gemini and TurboQuant capability and wire mapping
+### Task 7: Gemini wire mapping, and TurboQuant declared unsupported
+
+> **Amended 2026-08-12 after a pre-flight dry run.** TurboQuant was originally
+> scoped to a full budget-based ladder. Reading the real `_build_body` showed it
+> applies the strict JSON grammar only when `thinking_budget == 0`, so any rung
+> above Off would silently disable grammar enforcement; the profile is also a
+> frozen dataclass. v1 therefore declares the dial unavailable there, with the
+> reason surfaced on the chip.
+
 
 **Files:**
 - Modify: `services/agentd-py/agentd/providers/gemini_transport.py` (constructor ~line 52, `_build_thinking_config` at 289), `services/agentd-py/agentd/providers/turboquant_transport.py` (`_build_body` ~line 102)
@@ -1196,78 +1209,63 @@ Note: if the attribute holding "should thoughts be surfaced" is named differentl
 - [ ] **Step 4: Write the TurboQuant test (append)**
 
 ```python
-from agentd.providers.turboquant_transport import TurboQuantTransport
+from agentd.providers.turboquant_transport import PROFILES, TurboQuantTransport
 
 
-@pytest.mark.parametrize(
-    ("level", "enable_thinking", "budget"),
-    [
-        (ReasoningEffort.OFF, False, None),
-        (ReasoningEffort.LOW, True, 1024),
-        (ReasoningEffort.MEDIUM, True, 4096),
-        (ReasoningEffort.HIGH, True, 16384),
-        (ReasoningEffort.MAX, True, 32768),
-    ],
-)
-def test_turboquant_maps_effort_onto_a_thinking_budget(level, enable_thinking, budget):
-    t = TurboQuantTransport(base_url="http://localhost:8080")
-    t.set_reasoning_effort(level)
-    body = t._build_body(model="qwen3", messages=[], schema=None)
-    assert body["chat_template_kwargs"]["enable_thinking"] is enable_thinking
-    if budget is None:
-        assert "thinking_budget_tokens" not in body
-    else:
-        assert body["thinking_budget_tokens"] == budget
+@pytest.mark.asyncio
+async def test_turboquant_declares_the_whole_ladder_unsupported():
+    # TurboQuant applies its JSON-schema GBNF grammar ONLY when thinking is off
+    # (_build_body gates on self._profile.thinking_budget == 0, working around
+    # llama.cpp#20345). Raising effort there would silently disable grammar
+    # enforcement on the one provider whose grammar is the main defense against
+    # malformed edits, so v1 declares the dial unavailable and says why.
+    t = TurboQuantTransport(profile=PROFILES["qwen3"])
+    support = await t.reasoning_effort_support("qwen3")
+    for level in ReasoningEffort:
+        assert support.state(level) == "unsupported"
+        assert "grammar" in support.unsupported[level]
+
+
+def test_turboquant_has_no_effort_setter_so_nothing_is_ever_sent():
+    # The runtime's setter call is getattr-guarded; absent means the transport is
+    # never asked, which is exactly the intended no-op.
+    assert not hasattr(TurboQuantTransport, "set_reasoning_effort")
 ```
 
-If `TurboQuantTransport`'s class name or `_build_body` signature differs, adjust the call to match the real signature — read `agentd/providers/turboquant_transport.py` first and keep the assertions.
+If `PROFILES` has no `"qwen3"` key, use `sorted(PROFILES)[0]` — the profile choice is irrelevant to this assertion.
 
-- [ ] **Step 5: Implement TurboQuant**
+- [ ] **Step 5: Declare TurboQuant unsupported**
 
 Add near the top of `turboquant_transport.py`:
 
 ```python
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
-# TurboQuant (local llama.cpp fork) takes a raw thinking-token budget rather than
-# a level, so the ladder is expressed as budgets. The steps are the same geometric
-# shape OpenRouter uses when it normalizes effort onto a budget for budget-only
-# models — roughly a 4x step per rung.
-_TURBOQUANT_EFFORT_BUDGET: dict[ReasoningEffort, int] = {
-    ReasoningEffort.OFF: 0,
-    ReasoningEffort.LOW: 1024,
-    ReasoningEffort.MEDIUM: 4096,
-    ReasoningEffort.HIGH: 16384,
-    ReasoningEffort.MAX: 32768,
-}
+# Why the dial is unavailable here rather than mapped onto thinking_budget:
+# _build_body applies the strict json_schema GBNF grammar only when
+# self._profile.thinking_budget == 0, because llama.cpp silently disables grammar
+# enforcement once thinking is on (ggml-org/llama.cpp#20345). Any rung above Off
+# would therefore trade the strongest malformed-output defense in the stack for a
+# latency dial. The profile is also a frozen dataclass, so per-rung budgets would
+# mean rebuilding it per call.
+_TURBOQUANT_NO_EFFORT = "llama.cpp drops JSON grammar enforcement when thinking is on"
 ```
 
-Add to the transport class:
+Add ONLY the capability member to the transport class — deliberately no
+`set_reasoning_effort`, so the runtime's `getattr` guard skips it and no effort
+field is ever emitted:
 
 ```python
-    def set_reasoning_effort(self, level: ReasoningEffort | None) -> None:
-        self._effort = level
-
     async def reasoning_effort_support(self, model: str) -> EffortSupport:
-        # A raw token budget expresses every rung exactly.
-        return EffortSupport(supported=frozenset(ReasoningEffort))
+        return EffortSupport(
+            unsupported={level: _TURBOQUANT_NO_EFFORT for level in ReasoningEffort}
+        )
 ```
 
-Initialize `self._effort: ReasoningEffort | None = None` in `__init__`, and in `_build_body`, before the existing `thinking_budget` branch:
-
-```python
-        if self._effort is not None:
-            budget = _TURBOQUANT_EFFORT_BUDGET[self._effort]
-            if budget > 0:
-                body["thinking_budget_tokens"] = budget
-                body["chat_template_kwargs"] = {
-                    "enable_thinking": True,
-                    "preserve_thinking": True,
-                }
-            else:
-                body["chat_template_kwargs"] = {"enable_thinking": False}
-            return body
-```
+This lands in `EffortSupport.resolve`'s degenerate branch (Task 1), which keeps the
+requested rung and returns a note — and with no setter, nothing reaches the wire.
+The chip shows all five rungs disabled with the reason, which is the honest
+rendering.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
@@ -1278,7 +1276,7 @@ Expected: PASS, 39 passed
 
 ```bash
 git add services/agentd-py/agentd/providers/gemini_transport.py services/agentd-py/agentd/providers/turboquant_transport.py services/agentd-py/tests/test_provider_effort_wire.py
-git commit -m "feat(providers): map reasoning effort onto Gemini levels and TurboQuant budgets"
+git commit -m "feat(providers): map effort onto Gemini levels; declare TurboQuant unsupported"
 ```
 
 ---
@@ -1936,14 +1934,29 @@ git commit -m "test(providers): probe NIM live and pin the nemotron effort mappi
 
 ```ts
 // apps/editor-client/test/http-backend-client.test.ts (append)
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { HttpBackendClient } from "../src/client/http-backend-client.js";
 
-describe("reasoning effort", () => {
-  it("maps the snake_case config payload onto camelCase", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+// The constructor takes an options OBJECT ({baseUrl, fetchFn}) and fetchFn must
+// return a real Response — this is the idiom the existing tests in this file use.
+function jsonClient(payload: unknown, captured: { body?: string }) {
+  return new HttpBackendClient({
+    baseUrl: "http://localhost:8000",
+    fetchFn: async (_url, init) => {
+      captured.body = (init?.body as string) ?? "";
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+}
+
+describe("HttpBackendClient reasoning effort", () => {
+  test("maps the snake_case config payload onto camelCase", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient(
+      {
         task_subsystem_enabled: false,
         chat_controller_enabled: true,
         memory_enabled: true,
@@ -1958,48 +1971,41 @@ describe("reasoning effort", () => {
             unsupported: { max: "tops out at high" },
           },
         },
-      }),
-    });
-    const client = new HttpBackendClient("http://x", fetchMock as never);
+      },
+      captured
+    );
     const config = await client.getConfig();
     expect(config.provider?.reasoningEffort).toBe("high");
     expect(config.provider?.reasoningEffortSupport?.supported).toEqual(["off", "low", "high"]);
     expect(config.provider?.reasoningEffortSupport?.unsupported["max"]).toBe("tops out at high");
   });
 
-  it("omits reasoning_effort from the PUT body when the caller has nothing to say", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ backend: "b", model: "m" }),
-    });
-    const client = new HttpBackendClient("http://x", fetchMock as never);
+  test("omits reasoning_effort from the PUT body when the caller has nothing to say", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient({ backend: "b", model: "m" }, captured);
     await client.setProvider({ backend: "b" });
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect("reasoning_effort" in body).toBe(false);
+    expect("reasoning_effort" in JSON.parse(captured.body ?? "{}")).toBe(false);
   });
 
-  it("sends the level and reads back the effective one", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+  test("sends the level and reads back the effective one", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient(
+      {
         backend: "b",
         model: "m",
         reasoning_effort: "high",
         reasoning_effort_note: "max unavailable here",
         reasoning_effort_support: { supported: ["high"], unsupported: {} },
-      }),
-    });
-    const client = new HttpBackendClient("http://x", fetchMock as never);
+      },
+      captured
+    );
     const res = await client.setProvider({ backend: "b", reasoningEffort: "max" });
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.reasoning_effort).toBe("max");
+    expect(JSON.parse(captured.body ?? "{}").reasoning_effort).toBe("max");
     expect(res.reasoningEffort).toBe("high");
     expect(res.reasoningEffortNote).toContain("unavailable");
   });
 });
 ```
-
-If `HttpBackendClient`'s constructor signature differs from `(baseUrl, fetch)`, match the shape used by the neighbouring tests in that file.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
