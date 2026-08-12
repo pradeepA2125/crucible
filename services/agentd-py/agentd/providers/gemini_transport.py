@@ -14,11 +14,22 @@ except ImportError:
     google_genai_errors = None  # type: ignore[assignment]
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
 logger = logging.getLogger(__name__)
 
 # Status codes that indicate transient server-side pressure — safe to retry.
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 503})
+
+# Gemini 3's thinking_level vocabulary is minimal|medium|high. LOW maps onto
+# "minimal" (its close-to-zero tier) and MAX onto "high" (its ceiling). OFF is not
+# a level at all — it is thinking_enabled=False, handled separately.
+_GEMINI_EFFORT_WIRE: dict[ReasoningEffort, str] = {
+    ReasoningEffort.LOW: "minimal",
+    ReasoningEffort.MEDIUM: "medium",
+    ReasoningEffort.HIGH: "high",
+    ReasoningEffort.MAX: "high",
+}
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -53,6 +64,7 @@ class GeminiJsonTransport(ModelJsonTransport):
         self._thinking_budget = thinking_budget
         self._thinking_level = normalize_thinking_level(thinking_level)
         self._include_thoughts = include_thoughts
+        self._effort: ReasoningEffort | None = None
         self._timeout_sec = timeout_sec
         self._max_retries = max(0, max_retries)
         # Gemini's response_json_schema accepts anyOf (verified live) but oneOf behaviour
@@ -286,7 +298,36 @@ class GeminiJsonTransport(ModelJsonTransport):
 
         return payload
 
+    def set_reasoning_effort(self, level: ReasoningEffort | None) -> None:
+        self._effort = level
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        return EffortSupport(
+            supported=frozenset(
+                {
+                    ReasoningEffort.OFF,
+                    ReasoningEffort.LOW,
+                    ReasoningEffort.MEDIUM,
+                    ReasoningEffort.HIGH,
+                }
+            ),
+            unsupported={ReasoningEffort.MAX: "Gemini thinking levels top out at 'high'"},
+        )
+
     def _build_thinking_config(self) -> dict[str, object] | None:
+        if self._effort is ReasoningEffort.OFF:
+            return None
+        if self._effort is not None:
+            # thinking_level and thinking_budget are mutually exclusive on Gemini 3 —
+            # sending both is a documented error, so the dial replaces the budget
+            # rather than joining it.
+            config: dict[str, object] = {
+                "thinking_level": _GEMINI_EFFORT_WIRE[self._effort]
+            }
+            if self._include_thoughts:
+                config["include_thoughts"] = True
+            return config
+
         if not self._thinking_enabled:
             return None
 

@@ -42,8 +42,18 @@ from typing import Any
 import httpx
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
 logger = logging.getLogger(__name__)
+
+# Why the dial is unavailable here rather than mapped onto thinking_budget:
+# _build_body applies the strict json_schema GBNF grammar only when
+# self._profile.thinking_budget == 0, because llama.cpp silently disables grammar
+# enforcement once thinking is on (ggml-org/llama.cpp#20345). Any rung above Off
+# would therefore trade the strongest malformed-output defense in the stack for a
+# latency dial. The profile is also a frozen dataclass, so per-rung budgets would
+# mean rebuilding it per call.
+_TURBOQUANT_NO_EFFORT = "llama.cpp drops JSON grammar enforcement when thinking is on"
 
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
@@ -276,6 +286,13 @@ class TurboQuantTransport(ModelJsonTransport):
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+    # Deliberately no `set_reasoning_effort` — the runtime's `getattr` guard skips
+    # transports that lack it, which is exactly how the dial stays off the wire here.
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        return EffortSupport(
+            unsupported={level: _TURBOQUANT_NO_EFFORT for level in ReasoningEffort}
+        )
 
     async def generate_json(
         self,

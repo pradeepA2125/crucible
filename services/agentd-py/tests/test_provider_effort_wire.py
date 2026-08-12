@@ -1,10 +1,12 @@
 import pytest
 
+from agentd.providers.gemini_transport import GeminiJsonTransport
 from agentd.providers.groq_transport import GroqJsonTransport
 from agentd.providers.ollama_transport import OllamaJsonTransport
 from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 from agentd.providers.reasoning_effort import ReasoningEffort
+from agentd.providers.turboquant_transport import PROFILES, TurboQuantTransport
 
 
 def _transport() -> OpenAICompatibleTransport:
@@ -200,3 +202,58 @@ async def test_ollama_supports_the_whole_ladder_except_max():
     support = await _ollama().reasoning_effort_support("qwen3")
     assert support.state(ReasoningEffort.OFF) == "supported"
     assert support.state(ReasoningEffort.MAX) == "unsupported"
+
+
+def _gemini() -> GeminiJsonTransport:
+    return GeminiJsonTransport(api_key="k", thinking_enabled=True)
+
+
+@pytest.mark.parametrize(
+    ("level", "expected_level"),
+    [
+        (ReasoningEffort.LOW, "minimal"),
+        (ReasoningEffort.MEDIUM, "medium"),
+        (ReasoningEffort.HIGH, "high"),
+        (ReasoningEffort.MAX, "high"),
+    ],
+)
+def test_gemini_sets_thinking_level(level, expected_level):
+    t = _gemini()
+    t.set_reasoning_effort(level)
+    config = t._build_thinking_config()
+    assert config["thinking_level"] == expected_level
+
+
+def test_gemini_off_disables_thinking_outright():
+    t = _gemini()
+    t.set_reasoning_effort(ReasoningEffort.OFF)
+    assert t._build_thinking_config() is None
+
+
+def test_gemini_never_sends_level_and_budget_together():
+    # Verified provider fact: Gemini 3 returns an error when both are present.
+    t = GeminiJsonTransport(api_key="k", thinking_enabled=True, thinking_budget=8000)
+    t.set_reasoning_effort(ReasoningEffort.HIGH)
+    config = t._build_thinking_config()
+    assert "thinking_level" in config
+    assert "thinking_budget" not in config
+
+
+@pytest.mark.asyncio
+async def test_turboquant_declares_the_whole_ladder_unsupported():
+    # TurboQuant applies its JSON-schema GBNF grammar ONLY when thinking is off
+    # (_build_body gates on self._profile.thinking_budget == 0, working around
+    # llama.cpp#20345). Raising effort there would silently disable grammar
+    # enforcement on the one provider whose grammar is the main defense against
+    # malformed edits, so v1 declares the dial unavailable and says why.
+    t = TurboQuantTransport(profile=PROFILES["qwen3"])
+    support = await t.reasoning_effort_support("qwen3")
+    for level in ReasoningEffort:
+        assert support.state(level) == "unsupported"
+        assert "grammar" in support.unsupported[level]
+
+
+def test_turboquant_has_no_effort_setter_so_nothing_is_ever_sent():
+    # The runtime's setter call is getattr-guarded; absent means the transport is
+    # never asked, which is exactly the intended no-op.
+    assert not hasattr(TurboQuantTransport, "set_reasoning_effort")
