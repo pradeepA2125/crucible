@@ -27,13 +27,13 @@ const HEAD = "text-ink font-medium";
 
 const STAGES: Stage[] = [
   {
-    id: "decide",
+    id: "explore",
     step: "01",
-    label: "Decide",
+    label: "Explore",
     blurb:
-      "Each chat turn is one reactive loop: explore with real tools, then commit to exactly one action — answer, clarify, propose, or edit.",
+      "Each chat turn is one reactive loop: read the repo with real tools, then commit to exactly one action — answer, clarify, propose, or edit.",
     file: "controller · this turn",
-    status: "exploring · deciding",
+    status: "active · exploring",
     statusClass: "text-sky bg-sky/10 border-sky/30",
     lines: [
       [
@@ -56,7 +56,7 @@ const STAGES: Stage[] = [
       ],
       [{ t: "" }],
       [
-        { t: "decide: ", c: KW },
+        { t: "action: ", c: KW },
         { t: "edit — wire a TokenBucket into the tasks route" },
       ],
       [{ t: "one decisive action per turn · no silent side quests", c: DIM }],
@@ -67,8 +67,8 @@ const STAGES: Stage[] = [
     step: "02",
     label: "Propose",
     blurb:
-      "Ambitious asks raise a mode gate — a plan sketch with model-authored options. Unclear ones raise a clarify card. Nothing runs until you pick.",
-    file: "mode gate · live card",
+      "Flip on Plan Mode and it reads without writing, then raises a mode gate — a plan sketch with model-authored options. Unclear asks raise a clarify card. Nothing runs until you pick.",
+    file: "plan mode · mode gate",
     status: "awaiting your pick",
     statusClass: "text-accent-ink bg-accent/10 border-accent/30",
     lines: [
@@ -89,8 +89,8 @@ const STAGES: Stage[] = [
         { t: " — burst · refill · isolation" },
       ],
       [{ t: "" }],
-      [{ t: "▸ Edit now — recommended", c: "text-accent-ink font-medium" }],
-      [{ t: "▸ Just explain the approach", c: DIM }],
+      [{ t: "▸ Implement it now — recommended", c: "text-accent-ink font-medium" }],
+      [{ t: "▸ Chat about this approach…", c: DIM }],
       [{ t: "" }],
       [{ t: "zero bytes written while this card is open", c: "text-accent-ink" }],
     ],

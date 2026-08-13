@@ -18,14 +18,14 @@ const ENTRIES: Entry[] = [
     body: "A curl one-liner installs the extension; the setup wizard provisions the whole runtime — backend, indexer, ripgrep, language servers — supervised per workspace.",
   },
   {
-    date: "jul '26",
-    title: "MCP client",
-    body: "Connect any MCP tool server, stdio or HTTP, from .crucible/mcp.json or the settings panel. Every call pauses at an approval card — remembered per workspace if you say so.",
+    date: "aug '26",
+    title: "Reasoning-effort dial",
+    body: "Off · Low · Medium · High · Max next to the model picker. Providers express thinking completely differently, so each rung is declared per provider — and a rung yours can't express clamps down, never up, and tells you it did.",
   },
   {
     date: "jul '26",
-    title: "write_doc + web search",
-    body: "Gated doc and data writes straight from chat — diff preview, per-write approval — and a bundled web-search MCP server for web_search / web_fetch out of the box.",
+    title: "MCP client + web search",
+    body: "Connect any MCP tool server, stdio or HTTP, from .crucible/mcp.json or the settings panel — including the bundled web-search server for web_search / web_fetch. Every call pauses at an approval card, remembered per workspace if you say so.",
   },
   {
     date: "jun '26",

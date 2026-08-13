@@ -2,6 +2,7 @@ const TERMS = [
   "shadow workspace",
   "mode gate",
   "clarify gate",
+  "reasoning effort",
   "todo ledger",
   "instant promote",
   "axon dependency space",

@@ -21,7 +21,7 @@ const stroke = {
 const FEATURES: Feature[] = [
   {
     title: "It proposes. You choose.",
-    body: "A big ask raises a mode gate: a plan sketch with model-authored options — edit now or just explain — and a recommendation. The gate stays closed until you pick.",
+    body: "Turn on Plan Mode and it explores without writing, then raises a mode gate: a plan sketch, model-authored options, and a recommendation. The gate stays closed until you pick.",
     tint: "text-accent",
     chipBg: "bg-accent/12",
     icon: (
@@ -73,7 +73,7 @@ const FEATURES: Feature[] = [
   },
   {
     title: "Gated side effects",
-    body: "Shell commands, MCP tool calls, and doc writes all pause at approval cards before running. Approve once, or remember the exact tool per workspace — never a blanket yes.",
+    body: "Shell commands and external MCP tool calls pause at approval cards before running. Approve once, or remember the exact command or tool per workspace — never a blanket yes.",
     tint: "text-red",
     chipBg: "bg-red/12",
     icon: (
@@ -85,7 +85,7 @@ const FEATURES: Feature[] = [
   },
   {
     title: "Any model. Even offline.",
-    body: "Anthropic, OpenAI, Gemini, Groq and friends — or fully local through Ollama, where nothing ever leaves your machine. Hot-swap providers from settings; it applies on the very next turn.",
+    body: "Ten transports behind one interface — Anthropic, OpenAI, Gemini, Groq, OpenRouter, any OpenAI-compatible endpoint — or fully local through Ollama and TurboQuant, where nothing ever leaves your machine. Hot-swap from the composer; it applies on the very next turn.",
     tint: "text-accent-ink",
     chipBg: "bg-accent/12",
     icon: (

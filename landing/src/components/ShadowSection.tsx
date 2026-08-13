@@ -19,7 +19,7 @@ const GUARANTEES = [
   },
   {
     title: "Side effects ask first",
-    body: "Shell commands, MCP tool calls, and doc writes each pause at an approval gate. Approve once, or remember the decision per workspace.",
+    body: "Shell commands and external MCP tool calls each pause at an approval gate. Approve once, or remember the decision per workspace.",
   },
   {
     title: "It asks instead of guessing",
