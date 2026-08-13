@@ -1,0 +1,77 @@
+Crucible
+Copyright 2026 Pradeep Kumar
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+This repository does not vendor third-party runtimes. Two separate things happen
+with them, and only the second is redistribution:
+
+  1. At install time, the extension DOWNLOADS each component from its upstream
+     publisher onto the user's machine. Crucible is not a distributor there.
+
+  2. GitHub Release artifacts RE-HOST several of these binaries so that install
+     is a single fetch. That is redistribution, and the attributions below exist
+     for it.
+
+Each component remains under its own license. None is modified.
+
+  uv
+    Upstream: https://github.com/astral-sh/uv
+    License:  MIT OR Apache-2.0
+
+  ripgrep
+    Upstream: https://github.com/BurntSushi/ripgrep
+    License:  MIT OR Unlicense
+
+  rust-analyzer
+    Upstream: https://github.com/rust-lang/rust-analyzer
+    License:  MIT OR Apache-2.0
+
+  gopls (golang.org/x/tools)
+    Upstream: https://github.com/golang/tools
+    License:  BSD-3-Clause
+
+  Eclipse JDT Language Server (jdtls)
+    Upstream: https://github.com/eclipse-jdtls/eclipse.jdt.ls
+    License:  EPL-2.0
+    Note:     The Eclipse Public License requires that recipients be able to
+              obtain the source. It is available from the upstream project.
+
+  Eclipse Temurin JRE 21
+    Upstream: https://github.com/adoptium/temurin21-binaries
+    License:  GPL-2.0 WITH Classpath-exception-2.0
+    Note:     The Classpath Exception is what permits linking and shipping
+              alongside code under other licenses without extending GPL terms to
+              that code. Source is available from the Adoptium project.
+
+  pyright
+    Upstream: https://github.com/microsoft/pyright
+    License:  MIT
+    Note:     Installed from npm on the user's machine; not re-hosted.
+
+  typescript-language-server
+    Upstream: https://github.com/typescript-language-server/typescript-language-server
+    License:  Apache-2.0
+    Note:     Installed from npm on the user's machine; not re-hosted.
+
+Python and Node dependencies are resolved from PyPI and npm at install time and
+are not redistributed here. At the time of writing, the direct Python
+dependencies are MIT, BSD-3-Clause, or Apache-2.0; none are copyleft.
+
+Model weights (for example BAAI/bge-small-en-v1.5 and BAAI/bge-reranker-base,
+used by the memory subsystem) are downloaded from their publishers on first use
+and carry their own licenses. They are neither vendored nor re-hosted.
