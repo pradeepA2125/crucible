@@ -87,6 +87,22 @@ describe("EffortMenu", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "setReasoningEffort", level: "medium" });
   });
 
+  it("shows the target rung as in-progress on the chip while a swap is in flight", () => {
+    render(<EffortMenu />);
+    sendModelList({
+      level: "high",
+      support: { supported: ["off", "low", "medium", "high"], unsupported: { max: "tops out at high" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /high/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /medium/i }));
+
+    // The chip now surfaces the TARGET rung (medium), not the stale current
+    // one (high), and its accessible name announces the in-flight check.
+    expect(
+      screen.getByRole("button", { name: /switching reasoning effort to medium.*checking with the provider/i }),
+    ).toBeTruthy();
+  });
+
   it("regression: stays open and shows the error after a swap fails", () => {
     render(<EffortMenu />);
     sendModelList({

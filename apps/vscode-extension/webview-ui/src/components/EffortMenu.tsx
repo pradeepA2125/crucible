@@ -106,7 +106,12 @@ export function EffortMenu() {
 
   // "max unavailable here; using high." collapses to a chip-sized "no max".
   const clampHint = note ? note.split(" ")[0] : null;
-  const chipLabel = level ? LABEL[level] : "Effort";
+  // While a swap is in flight the chip tracks the TARGET rung (not the stale
+  // current one) so a click reads as acknowledged instead of doing nothing.
+  const chipLabel = swapping ? LABEL[swapping] : level ? LABEL[level] : "Effort";
+  const swapLabel = swapping
+    ? `Switching reasoning effort to ${LABEL[swapping]} — checking with the provider`
+    : null;
 
   return (
     <div ref={rootRef} className="relative">
@@ -116,9 +121,19 @@ export function EffortMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={
-          clampHint ? `Reasoning effort: ${chipLabel}, no ${clampHint}` : `Reasoning effort: ${chipLabel}`
+          swapLabel
+            ? swapLabel
+            : clampHint
+              ? `Reasoning effort: ${chipLabel}, no ${clampHint}`
+              : `Reasoning effort: ${chipLabel}`
         }
-        title={clampHint ? `Reasoning effort: ${chipLabel} (no ${clampHint})` : `Reasoning effort: ${chipLabel}`}
+        title={
+          swapLabel
+            ? swapLabel
+            : clampHint
+              ? `Reasoning effort: ${chipLabel} (no ${clampHint})`
+              : `Reasoning effort: ${chipLabel}`
+        }
         className="flex h-6 items-center gap-1 rounded-[7px] border px-1.5 text-[10px] cursor-pointer transition-colors duration-150 hover:text-text"
         style={{
           background: "var(--color-surface-2)",
@@ -128,8 +143,23 @@ export function EffortMenu() {
       >
         <span style={{ color: "var(--color-accent)" }}><Icon name="chip" size={9} /></span>
         <span>{chipLabel}</span>
-        {clampHint ? <span style={{ color: "var(--color-text-4)" }}>· no {clampHint}</span> : null}
-        <Icon name="chev-d" size={8} />
+        {swapping ? (
+          <span
+            aria-hidden="true"
+            className="inline-block flex-shrink-0 rounded-full border-2"
+            style={{
+              width: 9,
+              height: 9,
+              borderColor: "var(--color-accent-ink) var(--accent-bg) var(--accent-bg) var(--accent-bg)",
+              animation: "spin 0.75s linear infinite",
+            }}
+          />
+        ) : (
+          <>
+            {clampHint ? <span style={{ color: "var(--color-text-4)" }}>· no {clampHint}</span> : null}
+            <Icon name="chev-d" size={8} />
+          </>
+        )}
       </button>
 
       {open ? (
@@ -163,12 +193,15 @@ export function EffortMenu() {
                     />
                   )}
                 </span>
-                {state === "unsupported" ? (
+                {swapping === candidate ? (
+                  <span className="block" style={{ color: "var(--color-text-4)" }}>
+                    checking with the provider…
+                  </span>
+                ) : state === "unsupported" ? (
                   <span className="block" style={{ color: "var(--color-text-4)" }}>
                     {support?.unsupported[candidate]}
                   </span>
-                ) : null}
-                {state === "unknown" ? (
+                ) : state === "unknown" ? (
                   <span className="block" style={{ color: "var(--color-text-4)" }}>
                     unverified for this endpoint
                   </span>
