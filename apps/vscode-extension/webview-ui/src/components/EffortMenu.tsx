@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Icon } from "./Icon";
 import { vscode } from "../vscodeApi";
 
 type Level = "off" | "low" | "medium" | "high" | "max";
@@ -30,14 +31,23 @@ interface Support {
  * State arrives on the existing `modelList` message rather than a channel of its
  * own, because capability is per-(backend, model) and must refresh on model swap
  * anyway.
+ *
+ * Selecting a rung mirrors ModelMenu's swap pattern: the popover stays OPEN with
+ * a pending indicator on the chosen row until the host replies — a refreshed
+ * `modelList` (success → close) or `effortSwapError` (error line, stays open).
+ * Closing before the reply lands would strand the error message off-screen,
+ * which is exactly the silent-failure symptom this control exists to avoid.
  */
 export function EffortMenu() {
   const [open, setOpen] = useState(false);
   const [level, setLevel] = useState<Level | null>(null);
   const [support, setSupport] = useState<Support | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [swapping, setSwapping] = useState<Level | null>(null); // rung in flight
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const swappingRef = useRef<Level | null>(null);
+  swappingRef.current = swapping;
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
@@ -52,7 +62,12 @@ export function EffortMenu() {
           setNote(effort.note ?? null);
         }
         setError(null);
+        if (swappingRef.current !== null) {
+          setSwapping(null);
+          setOpen(false); // successful swap → close
+        }
       } else if (m?.["type"] === "effortSwapError") {
+        setSwapping(null);
         setError(m["message"] as string);
       }
     }
@@ -83,8 +98,9 @@ export function EffortMenu() {
   }
 
   function choose(candidate: Level) {
-    if (stateOf(candidate) === "unsupported") return;
-    setOpen(false);
+    if (stateOf(candidate) === "unsupported" || swapping) return;
+    setSwapping(candidate);
+    setError(null);
     vscode.postMessage({ type: "setReasoningEffort", level: candidate });
   }
 
@@ -103,15 +119,17 @@ export function EffortMenu() {
           clampHint ? `Reasoning effort: ${chipLabel}, no ${clampHint}` : `Reasoning effort: ${chipLabel}`
         }
         title={clampHint ? `Reasoning effort: ${chipLabel} (no ${clampHint})` : `Reasoning effort: ${chipLabel}`}
-        className="menu-item flex h-6 items-center gap-1 rounded-[7px] border px-1.5 text-[10px] cursor-pointer"
+        className="flex h-6 items-center gap-1 rounded-[7px] border px-1.5 text-[10px] cursor-pointer transition-colors duration-150 hover:text-text"
         style={{
           background: "var(--color-surface-2)",
           borderColor: "var(--color-border-strong)",
           color: "var(--color-text-2)",
         }}
       >
+        <span style={{ color: "var(--color-accent)" }}><Icon name="chip" size={9} /></span>
         <span>{chipLabel}</span>
         {clampHint ? <span style={{ color: "var(--color-text-4)" }}>· no {clampHint}</span> : null}
+        <Icon name="chev-d" size={8} />
       </button>
 
       {open ? (
@@ -131,7 +149,20 @@ export function EffortMenu() {
                 className="menu-item flex w-full flex-col items-start gap-0.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-left text-[11px] disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ color: "var(--color-text)" }}
               >
-                <span>{LABEL[candidate]}</span>
+                <span className="flex w-full items-center gap-1.5">
+                  <span className="flex-1">{LABEL[candidate]}</span>
+                  {swapping === candidate && (
+                    <span
+                      className="inline-block rounded-full border-2"
+                      style={{
+                        width: 9,
+                        height: 9,
+                        borderColor: "var(--color-accent-ink) var(--accent-bg) var(--accent-bg) var(--accent-bg)",
+                        animation: "spin 0.75s linear infinite",
+                      }}
+                    />
+                  )}
+                </span>
                 {state === "unsupported" ? (
                   <span className="block" style={{ color: "var(--color-text-4)" }}>
                     {support?.unsupported[candidate]}

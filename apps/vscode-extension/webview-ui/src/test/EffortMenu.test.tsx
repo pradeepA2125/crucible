@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EffortMenu } from "../components/EffortMenu";
+import { vscode } from "../vscodeApi";
 
 // window.dispatchEvent is a raw native dispatch (unlike RTL's fireEvent, which
 // wraps itself in act()) — without act() here, the resulting setState is
@@ -70,5 +71,40 @@ describe("EffortMenu", () => {
     // carrying the SAME effort object must not clear the note.
     sendModelList(effort);
     expect(screen.getByRole("button", { name: /no max/i })).toBeTruthy();
+  });
+
+  it("does not close the popover on selection, and posts setReasoningEffort", () => {
+    render(<EffortMenu />);
+    sendModelList({
+      level: "high",
+      support: { supported: ["off", "low", "medium", "high"], unsupported: { max: "tops out at high" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /high/i }));
+    const postMessage = vi.spyOn(vscode, "postMessage");
+    fireEvent.click(screen.getByRole("menuitem", { name: /medium/i }));
+
+    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(postMessage).toHaveBeenCalledWith({ type: "setReasoningEffort", level: "medium" });
+  });
+
+  it("regression: stays open and shows the error after a swap fails", () => {
+    render(<EffortMenu />);
+    sendModelList({
+      level: "high",
+      support: { supported: ["off", "low", "medium", "high"], unsupported: { max: "tops out at high" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /high/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /medium/i }));
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "effortSwapError", message: "provider unreachable" },
+        }),
+      );
+    });
+
+    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(screen.getByText(/provider unreachable/i)).toBeTruthy();
   });
 });
