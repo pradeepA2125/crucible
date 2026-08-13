@@ -439,8 +439,16 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         extra_body: dict[str, Any] = {}
         if is_reasoning:
             extra_body["reasoning"] = {"enabled": True}
-        if self._reasoning_effort is not None:
-            extra_body["reasoning_effort"] = _OPENAI_COMPAT_EFFORT_WIRE[self._reasoning_effort]
+            # Gated on is_reasoning: `reasoning_effort` is only a valid parameter for
+            # a reasoning model (OpenAI's own API 400s it on a plain chat model). For
+            # a non-reasoning model reasoning_effort_support declares everything but
+            # OFF unsupported, so any picked rung clamps to OFF — which would
+            # otherwise put reasoning_effort="none" on the wire to a model that has
+            # no such parameter. Omit the field entirely instead.
+            if self._reasoning_effort is not None:
+                extra_body["reasoning_effort"] = (
+                    _OPENAI_COMPAT_EFFORT_WIRE[self._reasoning_effort]
+                )
         return extra_body
 
     async def _reasoning_config(self, model: str) -> tuple[bool, float]:
@@ -707,11 +715,31 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     succeeded = True
                     return result
                 except Exception as e:
+                    # Effort rejection is checked FIRST and short-circuits the schema
+                    # verdict entirely. `proves_json_schema_unsupported` is a DENYLIST
+                    # of non-probative failures, and a 400 naming `reasoning_effort`
+                    # matches none of them — so without this branch a rejected effort
+                    # rung would permanently downgrade json_mode and clear the grammar
+                    # flags for a reason that has nothing to do with schemas. This is
+                    # ALSO the only place the learning path can fire for real traffic:
+                    # every reasoning call goes through generate_json, never
+                    # generate_text.
+                    #
+                    # _note_effort_rejection clears self._reasoning_effort, so the
+                    # fallback below rebuilds extra_body without the field — that IS
+                    # the "one bare retry with the field omitted".
+                    if self._note_effort_rejection(e):
+                        logger.warning(
+                            "%s: strict json_schema call for %s was rejected over "
+                            "reasoning_effort — retrying without it (json_mode "
+                            "untouched): %s",
+                            self._label, schema_name, e,
+                        )
                     # Fall back to json_object with schema injected into system prompt.
                     # Some models/providers don't support json_schema strict mode.
                     # The fallback itself is unconditional (unchanged behavior); only
                     # the PERMANENT downgrade needs the failure to be probative.
-                    if proves_json_schema_unsupported(e, finish_reason=finish_reason):
+                    elif proves_json_schema_unsupported(e, finish_reason=finish_reason):
                         logger.warning(
                             "%s: strict json_schema failed for %s — downgrading to "
                             "json_object for the rest of this process: %s",

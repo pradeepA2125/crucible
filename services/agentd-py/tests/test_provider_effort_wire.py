@@ -51,6 +51,17 @@ def test_none_clears_a_previously_set_effort():
     assert "reasoning_effort" not in body
 
 
+def test_no_effort_field_for_a_non_reasoning_model():
+    # reasoning_effort_support declares everything but OFF unsupported for a plain
+    # chat model, so any picked rung clamps to OFF — which must NOT then send
+    # reasoning_effort="none" to a model that has no such parameter (OpenAI's own
+    # API rejects it).
+    t = _transport()
+    t.set_reasoning_effort(ReasoningEffort.OFF)
+    body = t._build_extra_body("some-plain-chat-model", False, for_json=True)
+    assert "reasoning_effort" not in body
+
+
 def test_effort_is_sent_on_text_calls_too():
     t = _transport()
     t.set_reasoning_effort(ReasoningEffort.LOW)
@@ -136,6 +147,16 @@ def test_groq_never_emits_none_on_the_wire():
     for level in ReasoningEffort:
         t.set_reasoning_effort(level)
         assert t._effort_wire_value() != "none"
+
+
+def test_groq_unset_dial_preserves_the_env_configured_effort():
+    # The env-fallback path must stay byte-identical to pre-feature behavior. Both
+    # branches of _effort_wire_value return a str, so a reordering that made the
+    # dial's default win would be silent — this is the only test that pins it.
+    t = GroqJsonTransport(
+        api_key="k", reasoning_effort="medium", completions_client=object()
+    )
+    assert t._effort_wire_value() == "medium"
 
 
 @pytest.mark.parametrize(
@@ -224,10 +245,14 @@ def test_gemini_sets_thinking_level(level, expected_level):
     assert config["thinking_level"] == expected_level
 
 
-def test_gemini_off_disables_thinking_outright():
+def test_gemini_off_puts_an_explicit_zero_budget_on_the_wire():
+    # Returning None would OMIT thinking_config, leaving the model on its own
+    # default — which for the Gemini thinking families is thinking ON, making the
+    # rung a placebo while support declares it verified. OFF must disable
+    # explicitly.
     t = _gemini()
     t.set_reasoning_effort(ReasoningEffort.OFF)
-    assert t._build_thinking_config() is None
+    assert t._build_thinking_config() == {"thinking_budget": 0}
 
 
 def test_gemini_never_sends_level_and_budget_together():

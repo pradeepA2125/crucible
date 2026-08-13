@@ -316,7 +316,16 @@ class GeminiJsonTransport(ModelJsonTransport):
 
     def _build_thinking_config(self) -> dict[str, object] | None:
         if self._effort is ReasoningEffort.OFF:
-            return None
+            # An EXPLICIT disable, not an omission. Returning None omits thinking_config
+            # from the request, which leaves the model on its own default — and for the
+            # Gemini thinking families that default is thinking ON, so OFF would be a
+            # placebo while reasoning_effort_support declares it a verified rung. The
+            # legacy branch below already relies on this distinction (it writes
+            # thinking_budget = -1 rather than omitting the config).
+            config: dict[str, object] = {"thinking_budget": 0}
+            if self._include_thoughts:
+                config["include_thoughts"] = True
+            return config
         if self._effort is not None:
             # thinking_level and thinking_budget are mutually exclusive on Gemini 3 —
             # sending both is a documented error, so the dial replaces the budget

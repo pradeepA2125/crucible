@@ -139,6 +139,41 @@ async def test_generate_text_retries_once_after_a_probative_rejection():
 
 
 @pytest.mark.asyncio
+async def test_generate_json_learns_from_a_rejection_without_downgrading_json_mode():
+    """The seam that actually carries reasoning traffic.
+
+    reasoning/engine.py calls generate_json seven times and generate_text zero
+    times, so a learning path that only existed in generate_text was dead for
+    100% of real traffic. Worse, the strict-attempt handler consults
+    proves_json_schema_unsupported, a DENYLIST — a 400 naming reasoning_effort
+    matches nothing in it, so it read as "this endpoint can't do json_schema" and
+    PERMANENTLY downgraded json_mode plus the grammar flags.
+    """
+    fake = _FakeCompletions(
+        [_Err("400 invalid value 'none' for reasoning_effort", 400), '{"ok": true}']
+    )
+    t = OpenAICompatibleTransport(base_url="http://localhost:9/v1", completions_client=fake)
+    t.set_reasoning_effort(ReasoningEffort.OFF)
+
+    result = await t.generate_json(
+        model="nvidia/nemotron-3",
+        schema_name="controller_step",
+        schema={"type": "object"},
+        system_instructions="sys",
+        user_payload={"goal": "x"},
+    )
+
+    assert result == {"ok": True}
+    assert ReasoningEffort.OFF in t._effort_rejected
+    assert len(fake.calls) == 2
+    assert "reasoning_effort" not in fake.calls[1].get("extra_body", {})
+    # The regression guard for the collateral damage: an effort rejection says
+    # NOTHING about response_format support, so strict mode must survive it.
+    assert t.json_mode == "strict"
+    assert t.supports_anyof_grammar is True
+
+
+@pytest.mark.asyncio
 async def test_generate_text_wraps_a_second_failure_after_the_retry():
     """Regression guard for the Critical finding: when the retry ALSO fails, the
     raised error must still be a RuntimeError carrying the transport label — not

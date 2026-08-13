@@ -110,7 +110,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const config = await controller.configClient().getConfig();
     const backend = config.provider?.backend;
     if (!backend) throw new Error("no provider configured");
-    const res = await controller.configClient().setProvider({ backend, reasoningEffort: level });
+    // model and credentials are NOT optional here, for the same reasons the model
+    // swap below passes them: ProviderRuntime.swap resolves `model or
+    // resolve_model(backend)`, and resolve_model reads the PROCESS ENV — so
+    // omitting the live model silently reverts a hot-swapped one, and on
+    // openai_compatible (a backend spawned as something else has no
+    // CRUCIBLE_OPENAI_COMPAT_MODEL in its env) it raises and the chip 400s.
+    // credentials likewise: the running backend's env may predate this key.
+    const key = await runtimeManager.getProviderKey(backend);
+    const envVar = PROVIDER_KEY_ENV[backend];
+    const credentials = envVar && key ? { [envVar]: key } : undefined;
+    const model = config.provider?.model;
+    const res = await controller.configClient().setProvider({
+      backend,
+      ...(model ? { model } : {}),
+      reasoningEffort: level,
+      ...(credentials ? { credentials } : {}),
+    });
     // Persist what the backend ACTUALLY applied, not what was asked — a clamped
     // rung must not come back on the next managed spawn as the unclamped one.
     await runtimeManager.saveReasoningEffort(res.reasoningEffort ?? level);
