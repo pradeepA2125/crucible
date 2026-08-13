@@ -99,6 +99,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       effort: {
         level: config.provider?.reasoningEffort ?? null,
         support: config.provider?.reasoningEffortSupport ?? null,
+        // Sourced from GET /v1/config so it rides EVERY modelList refresh (not
+        // just the swap that produced it) — a plain listModels poll must not
+        // clear it. See CLAUDE.md's reasoning-effort-note durability fix.
+        note: config.provider?.reasoningEffortNote ?? null,
       },
     };
   };
@@ -130,7 +134,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Persist what the backend ACTUALLY applied, not what was asked — a clamped
     // rung must not come back on the next managed spawn as the unclamped one.
     await runtimeManager.saveReasoningEffort(res.reasoningEffort ?? level);
-    return { ...(await composerModelState()), effortNote: res.reasoningEffortNote ?? null };
+    // The note itself now comes from composerModelState() (sourced off GET
+    // /v1/config), which is already current since setProvider just applied it —
+    // no need to thread it through this response separately.
+    return composerModelState();
   };
 
   const chatPanel = new ChatPanel(

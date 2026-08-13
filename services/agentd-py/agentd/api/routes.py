@@ -285,6 +285,7 @@ def build_router(
                     "reasoning_effort_support": _effort_support_payload(
                         await provider_runtime.effort_support()  # type: ignore[attr-defined]
                     ),
+                    "reasoning_effort_note": provider_runtime.reasoning_effort_note,  # type: ignore[attr-defined]
                     # Present only when the configured provider could not be
                     # built at startup. The backend runs anyway so this route
                     # (and the settings UI that fixes it) stay reachable —

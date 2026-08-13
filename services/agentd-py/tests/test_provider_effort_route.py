@@ -60,6 +60,33 @@ def test_get_config_reports_the_level_and_the_support_map(tmp_path: Path) -> Non
     assert provider["reasoning_effort_support"]["unsupported"]["max"] == "tops out at high"
 
 
+@pytest.mark.asyncio
+async def test_get_config_reports_the_clamp_note_so_it_survives_a_reload(tmp_path: Path) -> None:
+    """The note is what makes a silent rung substitution visible after a model
+    swap or a plain page reload (neither replays the PUT response that first
+    carried it) — GET /v1/config must be sourced from the SAME durable place
+    (ProviderRuntime.reasoning_effort_note) rather than only the swap response."""
+    transport = _Transport()
+    rt = ProviderRuntime(backend="b", model="m", engines=[], transport=transport)
+    await rt.apply_reasoning_effort(ReasoningEffort.MAX)  # unsupported -> clamps to high
+
+    body = _client(tmp_path, rt).get("/v1/config").json()
+    provider = body["provider"]
+    assert provider["reasoning_effort"] == "high"
+    assert provider["reasoning_effort_note"] is not None
+    assert "tops out at high" in provider["reasoning_effort_note"]
+
+
+@pytest.mark.asyncio
+async def test_get_config_reports_no_note_when_nothing_clamped(tmp_path: Path) -> None:
+    transport = _Transport()
+    rt = ProviderRuntime(backend="b", model="m", engines=[], transport=transport)
+    await rt.apply_reasoning_effort(ReasoningEffort.HIGH)  # supported -> no clamp
+
+    body = _client(tmp_path, rt).get("/v1/config").json()
+    assert body["provider"]["reasoning_effort_note"] is None
+
+
 def test_put_clamps_and_returns_the_effective_level(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

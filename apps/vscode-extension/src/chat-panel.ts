@@ -72,13 +72,18 @@ export interface ComposerModelState {
   effort?: {
     level: ReasoningEffort | null;
     support: EffortSupport | null;
+    // Sourced from GET /v1/config (ProviderRuntime.reasoning_effort_note), so it
+    // rides every modelList refresh — including a plain listModels poll, not just
+    // the swap that produced it. This is what makes the clamp explanation durable
+    // across a model swap or reload instead of clearing on the next refresh.
+    note?: string | null;
   };
 }
 export type ListModelsHandler = () => Promise<ComposerModelState>;
 export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
 export type SetReasoningEffortHandler = (
   level: ReasoningEffort,
-) => Promise<ComposerModelState & { effortNote?: string | null }>;
+) => Promise<ComposerModelState>;
 export type OpenSettingsHandler = (section?: string) => void;
 export type OpenMemoryPanelHandler = () => void;
 export type OpenGraphPanelHandler = () => void;

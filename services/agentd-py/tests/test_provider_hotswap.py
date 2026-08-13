@@ -95,6 +95,7 @@ def test_put_route_and_config_report(
         "context_window": None,
         "reasoning_effort": None,
         "reasoning_effort_support": {"supported": [], "unsupported": {}},
+        "reasoning_effort_note": None,
     }
 
 
@@ -248,6 +249,7 @@ def test_config_reports_the_effective_context_window(tmp_path: Path) -> None:
         "context_window": 200_000,
         "reasoning_effort": None,
         "reasoning_effort_support": {"supported": [], "unsupported": {}},
+        "reasoning_effort_note": None,
     }
 
 

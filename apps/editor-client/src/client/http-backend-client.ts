@@ -587,6 +587,9 @@ export class HttpBackendClient implements BackendTaskClient {
       // Absent on an older backend; null when the process has no window configured.
       ...(p["context_window"] !== undefined ? { contextWindow: p["context_window"] } : {}),
       ...(p["reasoning_effort"] !== undefined ? { reasoningEffort: p["reasoning_effort"] } : {}),
+      ...(p["reasoning_effort_note"] !== undefined
+        ? { reasoningEffortNote: p["reasoning_effort_note"] }
+        : {}),
       ...(p["reasoning_effort_support"] !== undefined
         ? { reasoningEffortSupport: p["reasoning_effort_support"] }
         : {}),

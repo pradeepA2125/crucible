@@ -346,6 +346,7 @@ export const BackendConfigSchema = z.object({
     model: z.string(),
     contextWindow: z.number().nullable().optional(),
     reasoningEffort: ReasoningEffortSchema.nullable().optional(),
+    reasoningEffortNote: z.string().nullable().optional(),
     reasoningEffortSupport: EffortSupportSchema.optional(),
   }).nullable().optional(),
 });

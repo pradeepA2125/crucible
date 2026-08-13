@@ -42,17 +42,33 @@ describe("EffortMenu", () => {
 
   it("surfaces a clamp note on the chip", () => {
     render(<EffortMenu />);
-    act(() => {
-      window.dispatchEvent(
-        new MessageEvent("message", {
-          data: {
-            type: "modelList",
-            effort: { level: "high", support: { supported: ["high"], unsupported: { max: "x" } } },
-            effortNote: "max unavailable here; using high.",
-          },
-        })
-      );
+    sendModelList({
+      level: "high",
+      support: { supported: ["high"], unsupported: { max: "x" } },
+      note: "max unavailable here; using high.",
     });
+    expect(screen.getByRole("button", { name: /no max/i })).toBeTruthy();
+  });
+
+  it("keeps the clamp note visible across a later modelList refresh carrying the same effort", () => {
+    // Regression for the note-clearing bug: EffortMenu used to read a top-level
+    // `effortNote` field and clear it on EVERY modelList message (e.g. the
+    // plain listModels poll ModelMenu fires on mount), so the note vanished the
+    // instant anything else refreshed the model list. The note now rides
+    // inside `effort.note` (sourced from GET /v1/config), so a second message
+    // carrying the identical effort object must still show it.
+    render(<EffortMenu />);
+    const effort = {
+      level: "high",
+      support: { supported: ["high"], unsupported: { max: "x" } },
+      note: "max unavailable here; using high.",
+    };
+    sendModelList(effort);
+    expect(screen.getByRole("button", { name: /no max/i })).toBeTruthy();
+
+    // A second, unrelated modelList refresh (e.g. ModelMenu's mount-time poll)
+    // carrying the SAME effort object must not clear the note.
+    sendModelList(effort);
     expect(screen.getByRole("button", { name: /no max/i })).toBeTruthy();
   });
 });

@@ -43,12 +43,14 @@ export function EffortMenu() {
     function onMessage(e: MessageEvent) {
       const m = e.data as Record<string, unknown>;
       if (m?.["type"] === "modelList") {
-        const effort = m["effort"] as { level: Level | null; support: Support | null } | undefined;
+        const effort = m["effort"] as
+          | { level: Level | null; support: Support | null; note?: string | null }
+          | undefined;
         if (effort) {
           setLevel(effort.level);
           setSupport(effort.support);
+          setNote(effort.note ?? null);
         }
-        setNote((m["effortNote"] as string | null) ?? null);
         setError(null);
       } else if (m?.["type"] === "effortSwapError") {
         setError(m["message"] as string);
