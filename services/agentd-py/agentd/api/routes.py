@@ -72,6 +72,11 @@ class ProviderSwapRequest(BaseModel):
     # facts: 0 would make every turn compact forever, and the ceiling catches a
     # fat-fingered extra digit before it silently disables compaction entirely.
     context_window: int | None = Field(default=None, ge=1024, le=10_000_000)
+    # Absent means "leave the rung as it is", matching context_window: a model-only
+    # hot-swap from the composer must not reset the dial. An unrecognized value is
+    # a 400 rather than a silent fallback — the user picked something, and quietly
+    # ignoring it is how a dial becomes a placebo.
+    reasoning_effort: str | None = None
 
 
 class McpUpsertRequest(BaseModel):
@@ -81,6 +86,18 @@ class McpUpsertRequest(BaseModel):
 
 class McpDisabledRequest(BaseModel):
     disabled: list[str] = []
+
+
+def _effort_support_payload(support: object) -> dict[str, object]:
+    """EffortSupport to JSON. Sorted so the payload is stable across restarts and
+    the frontend's dedup/diffing never sees spurious churn."""
+    return {
+        "supported": sorted(level.value for level in support.supported),  # type: ignore[attr-defined]
+        "unsupported": {
+            level.value: why
+            for level, why in support.unsupported.items()  # type: ignore[attr-defined]
+        },
+    }
 
 
 def _to_task_result(task: TaskRecord) -> TaskResult:
@@ -260,6 +277,15 @@ def build_router(
                     # pre-fills its field from this, so what it shows is what the
                     # running process is actually using.
                     "context_window": provider_runtime.context_window,  # type: ignore[attr-defined]
+                    "reasoning_effort": (
+                        provider_runtime.reasoning_effort.value  # type: ignore[attr-defined]
+                        if getattr(provider_runtime, "reasoning_effort", None) is not None
+                        else None
+                    ),
+                    "reasoning_effort_support": _effort_support_payload(
+                        await provider_runtime.effort_support()  # type: ignore[attr-defined]
+                    ),
+                    "reasoning_effort_note": provider_runtime.reasoning_effort_note,  # type: ignore[attr-defined]
                     # Present only when the configured provider could not be
                     # built at startup. The backend runs anyway so this route
                     # (and the settings UI that fixes it) stay reachable —
@@ -282,16 +308,27 @@ def build_router(
         Known v1 limitation: the memory-harness summarizer keeps its
         construction-time transport until the next restart.
         """
+        from agentd.providers.reasoning_effort import parse_effort
         from agentd.providers.validate import ProviderValidationError
 
         if provider_runtime is None:
             raise HTTPException(status_code=409, detail="provider hot-swap unavailable")
+
+        requested_effort = None
+        if body.reasoning_effort is not None:
+            requested_effort = parse_effort(body.reasoning_effort)
+            if requested_effort is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"unknown reasoning_effort {body.reasoning_effort!r}",
+                )
         try:
             result = await provider_runtime.swap(  # type: ignore[attr-defined]
                 backend=body.backend,
                 model=body.model,
                 credentials=body.credentials or None,
                 context_window=body.context_window,
+                reasoning_effort=requested_effort,
             )
         except (ProviderValidationError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

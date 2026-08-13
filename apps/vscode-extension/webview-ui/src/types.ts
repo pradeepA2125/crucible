@@ -226,6 +226,9 @@ export type WebviewMessage =
   // Composer model quick-swap (ModelMenu) + settings shortcut.
   | { type: "listModels" }
   | { type: "setModel"; backend: string; model: string }
+  // Composer reasoning-effort quick-swap (EffortMenu) — rides the same modelList
+  // round-trip as setModel since capability is per-(backend, model).
+  | { type: "setReasoningEffort"; level: "off" | "low" | "medium" | "high" | "max" }
   // section (optional) deep-links the Settings pane to a section (from the chat drawer).
   | { type: "openSettings"; section?: string }
   // Chat-window shortcut to the standalone Memory Inspector panel/command.

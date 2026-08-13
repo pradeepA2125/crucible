@@ -50,7 +50,13 @@ async def test_swap_mutates_every_engine(monkeypatch: pytest.MonkeyPatch) -> Non
     result = await rt.swap(backend="groq", model="m2")
     assert engine._model == "m2" and engine._transport is new_transport
     assert (rt.backend, rt.model) == ("groq", "m2")
-    assert result == {"backend": "groq", "model": "m2"}
+    assert result == {
+        "backend": "groq",
+        "model": "m2",
+        "reasoning_effort": None,
+        "reasoning_effort_note": None,
+        "reasoning_effort_support": {"supported": [], "unsupported": {}},
+    }
 
 
 @pytest.mark.asyncio
@@ -87,6 +93,9 @@ def test_put_route_and_config_report(
         "backend": "groq",
         "model": "m2",
         "context_window": None,
+        "reasoning_effort": None,
+        "reasoning_effort_support": {"supported": [], "unsupported": {}},
+        "reasoning_effort_note": None,
     }
 
 
@@ -235,7 +244,12 @@ def test_config_reports_the_effective_context_window(tmp_path: Path) -> None:
     )
     payload = _client(tmp_path, rt).get("/v1/config").json()
     assert payload["provider"] == {
-        "backend": "openai", "model": "gpt-5", "context_window": 200_000
+        "backend": "openai",
+        "model": "gpt-5",
+        "context_window": 200_000,
+        "reasoning_effort": None,
+        "reasoning_effort_support": {"supported": [], "unsupported": {}},
+        "reasoning_effort_note": None,
     }
 
 

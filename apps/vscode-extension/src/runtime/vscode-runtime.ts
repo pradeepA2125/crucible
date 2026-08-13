@@ -178,6 +178,8 @@ export class RuntimeManager {
     };
     const contextWindow = this.contextWindow();
     if (contextWindow !== undefined) settings.contextWindow = contextWindow;
+    const reasoningEffort = this.getReasoningEffort();
+    if (reasoningEffort !== undefined) settings.reasoningEffort = reasoningEffort;
     const envVar = PROVIDER_KEY_ENV[backend];
     if (envVar) {
       const value = await this.context.secrets.get(`crucible.providerKey.${backend}`);
@@ -212,6 +214,19 @@ export class RuntimeManager {
 
   async saveContextWindow(tokens: number): Promise<void> {
     await this.context.globalState.update("crucible.provider.contextWindow", tokens);
+  }
+
+  /** The reasoning-effort rung, stored under its own key (mirrors contextWindow)
+   * so a model-only hot-swap cannot clear it. Always the EFFECTIVE rung the
+   * backend last reported — see the setReasoningEffort host handler in
+   * extension.ts for why the requested rung is never what's persisted here.
+   * Read back into the spawn env by getProviderSettings. */
+  getReasoningEffort(): string | undefined {
+    return this.context.globalState.get<string>("crucible.reasoningEffort");
+  }
+
+  async saveReasoningEffort(level: string): Promise<void> {
+    await this.context.globalState.update("crucible.reasoningEffort", level);
   }
 
   /** Secret-only write (settings panel's hot-swap path stores the key separately

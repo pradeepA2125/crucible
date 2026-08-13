@@ -142,6 +142,7 @@ if reasoning_backend == "scripted":
     )
 else:
     from agentd.providers.factory import build_transport, resolve_model
+    from agentd.providers.reasoning_effort import parse_effort
     from agentd.providers.unconfigured import build_transport_or_placeholder
 
     # Degrade, don't abort. A provider missing its key or base URL used to raise
@@ -349,7 +350,18 @@ if reasoning_backend != "scripted":
         window_sinks=_window_sinks,
         context_window=MemoryConfig.from_env(os.environ).window_tokens,
         config_error=_provider_error,
+        transport=transport,
+        reasoning_effort=parse_effort(os.getenv("CRUCIBLE_REASONING_EFFORT")),
     )
+
+    async def _apply_startup_reasoning_effort() -> None:
+        # __init__ cannot await, and apply_reasoning_effort is otherwise only reached
+        # through swap(). Without this the seeded rung would be reported by
+        # GET /v1/config but never sent, which is worse than not working.
+        await provider_runtime.apply_reasoning_effort(provider_runtime.reasoning_effort)
+
+    if provider_runtime.reasoning_effort is not None:
+        app.router.add_event_handler("startup", _apply_startup_reasoning_effort)
 
 app.include_router(
     build_router(

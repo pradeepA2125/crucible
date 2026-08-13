@@ -12,6 +12,7 @@ except ImportError:
     AsyncGroqClient = None
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 from agentd.runtime.artifacts import provider_debug_root
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,19 @@ def _is_retryable(exc: Exception) -> bool:
     return False
 
 
+# Groq accepts low|medium|high and REJECTS "none" with a 400 (verified against
+# provider docs 2026-08-12). OFF therefore maps upward onto "low" and is declared
+# unsupported so the user is told rather than silently given more thinking than
+# they asked for; MAX has no expression and maps down onto "high".
+_GROQ_EFFORT_WIRE: dict[ReasoningEffort, str] = {
+    ReasoningEffort.OFF: "low",
+    ReasoningEffort.LOW: "low",
+    ReasoningEffort.MEDIUM: "medium",
+    ReasoningEffort.HIGH: "high",
+    ReasoningEffort.MAX: "high",
+}
+
+
 class GroqJsonTransport(ModelJsonTransport):
     supports_anyof_grammar: bool = True
 
@@ -58,6 +72,10 @@ class GroqJsonTransport(ModelJsonTransport):
         self._reasoning_effort = reasoning_effort or os.getenv(
             "CRUCIBLE_GROQ_REASONING_EFFORT", "high"
         )
+        # The unified dial, when one is set. Kept separate from the legacy env
+        # string above so an unset dial preserves today's env-driven behavior
+        # exactly (see _effort_wire_value).
+        self._effort: ReasoningEffort | None = None
 
         if completions_client is not None:
             self._completions: Any = completions_client
@@ -77,6 +95,26 @@ class GroqJsonTransport(ModelJsonTransport):
 
         client = AsyncGroqClient(**client_kwargs)
         self._completions = client.chat.completions
+
+    def set_reasoning_effort(self, level: ReasoningEffort | None) -> None:
+        self._effort = level
+
+    def _effort_wire_value(self) -> str | None:
+        """The dial wins when set; otherwise the legacy env string stands."""
+        if self._effort is not None:
+            return _GROQ_EFFORT_WIRE[self._effort]
+        return self._reasoning_effort
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        return EffortSupport(
+            supported=frozenset(
+                {ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH}
+            ),
+            unsupported={
+                ReasoningEffort.OFF: 'Groq rejects reasoning_effort "none"',
+                ReasoningEffort.MAX: "Groq's ladder tops out at 'high'",
+            },
+        )
 
     async def generate_json(
         self,
@@ -110,8 +148,9 @@ class GroqJsonTransport(ModelJsonTransport):
         }
         if _is_gpt_oss(model):
             create_kwargs["include_reasoning"] = False
-            if self._reasoning_effort:
-                create_kwargs["reasoning_effort"] = self._reasoning_effort
+            effort = self._effort_wire_value()
+            if effort:
+                create_kwargs["reasoning_effort"] = effort
 
         # Debug: dump request
         out_dir = provider_debug_root("groq")
@@ -170,8 +209,9 @@ class GroqJsonTransport(ModelJsonTransport):
             "max_completion_tokens": self._max_tokens,
             "temperature": 0,
         }
-        if self._reasoning_effort and _is_gpt_oss(model):
-            create_kwargs["reasoning_effort"] = self._reasoning_effort
+        effort = self._effort_wire_value()
+        if effort and _is_gpt_oss(model):
+            create_kwargs["reasoning_effort"] = effort
 
         if callable(on_thinking):
             return await self._stream_with_thinking(create_kwargs, model=model, on_thinking=on_thinking)

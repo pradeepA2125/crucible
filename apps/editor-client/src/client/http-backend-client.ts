@@ -15,6 +15,9 @@ import {
   type SessionTranscript,
   BackendConfigSchema,
   type BackendConfig,
+  EffortSupportSchema,
+  type EffortSupport,
+  type ReasoningEffort,
   RecallTraceSchema,
   type RecallTrace,
   MemoryViewSchema,
@@ -583,6 +586,13 @@ export class HttpBackendClient implements BackendTaskClient {
       model: p["model"],
       // Absent on an older backend; null when the process has no window configured.
       ...(p["context_window"] !== undefined ? { contextWindow: p["context_window"] } : {}),
+      ...(p["reasoning_effort"] !== undefined ? { reasoningEffort: p["reasoning_effort"] } : {}),
+      ...(p["reasoning_effort_note"] !== undefined
+        ? { reasoningEffortNote: p["reasoning_effort_note"] }
+        : {}),
+      ...(p["reasoning_effort_support"] !== undefined
+        ? { reasoningEffortSupport: p["reasoning_effort_support"] }
+        : {}),
     };
   }
 
@@ -620,7 +630,14 @@ export class HttpBackendClient implements BackendTaskClient {
     model?: string;
     credentials?: Record<string, string>;
     contextWindow?: number;
-  }): Promise<{ backend: string; model: string }> {
+    reasoningEffort?: ReasoningEffort;
+  }): Promise<{
+    backend: string;
+    model: string;
+    reasoningEffort?: ReasoningEffort | null;
+    reasoningEffortNote?: string | null;
+    reasoningEffortSupport?: EffortSupport;
+  }> {
     const raw = await this.fetchJson("/v1/config/provider", {
       method: "PUT",
       body: JSON.stringify({
@@ -631,9 +648,22 @@ export class HttpBackendClient implements BackendTaskClient {
         // absent as "leave the window alone", which is what a model-only hot-swap
         // from the composer needs.
         ...(req.contextWindow !== undefined ? { context_window: req.contextWindow } : {}),
+        ...(req.reasoningEffort !== undefined ? { reasoning_effort: req.reasoningEffort } : {}),
       }),
     }) as Record<string, unknown>;
-    return { backend: String(raw["backend"]), model: String(raw["model"]) };
+    return {
+      backend: String(raw["backend"]),
+      model: String(raw["model"]),
+      ...(raw["reasoning_effort"] !== undefined
+        ? { reasoningEffort: raw["reasoning_effort"] as ReasoningEffort | null }
+        : {}),
+      ...(raw["reasoning_effort_note"] !== undefined
+        ? { reasoningEffortNote: raw["reasoning_effort_note"] as string | null }
+        : {}),
+      ...(raw["reasoning_effort_support"] !== undefined
+        ? { reasoningEffortSupport: EffortSupportSchema.parse(raw["reasoning_effort_support"]) }
+        : {}),
+    };
   }
 
   async testContextWindow(req: {

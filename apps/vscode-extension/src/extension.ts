@@ -1,4 +1,4 @@
-import { HttpBackendClient } from "@crucible/editor-client";
+import { HttpBackendClient, type ReasoningEffort } from "@crucible/editor-client";
 import * as vscode from "vscode";
 import * as path from "node:path";
 
@@ -93,7 +93,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (p.keyEnvVar && (await runtimeManager.getProviderKey(p.id)) !== undefined) keyed.push(p.id);
     }
     const current = config.provider ?? null;
-    return { current, options: buildModelOptions(current, keyed, PROVIDERS) };
+    return {
+      current,
+      options: buildModelOptions(current, keyed, PROVIDERS),
+      effort: {
+        level: config.provider?.reasoningEffort ?? null,
+        support: config.provider?.reasoningEffortSupport ?? null,
+        // Sourced from GET /v1/config so it rides EVERY modelList refresh (not
+        // just the swap that produced it) — a plain listModels poll must not
+        // clear it. See CLAUDE.md's reasoning-effort-note durability fix.
+        note: config.provider?.reasoningEffortNote ?? null,
+      },
+    };
+  };
+
+  // Reasoning-effort dial quick-swap: mirrors the composer model swap above —
+  // reads the persisted rung back into the SAME modelList shape so the webview
+  // has one refresh path for both.
+  const setReasoningEffort = async (level: ReasoningEffort) => {
+    const config = await controller.configClient().getConfig();
+    const backend = config.provider?.backend;
+    if (!backend) throw new Error("no provider configured");
+    // model and credentials are NOT optional here, for the same reasons the model
+    // swap below passes them: ProviderRuntime.swap resolves `model or
+    // resolve_model(backend)`, and resolve_model reads the PROCESS ENV — so
+    // omitting the live model silently reverts a hot-swapped one, and on
+    // openai_compatible (a backend spawned as something else has no
+    // CRUCIBLE_OPENAI_COMPAT_MODEL in its env) it raises and the chip 400s.
+    // credentials likewise: the running backend's env may predate this key.
+    const key = await runtimeManager.getProviderKey(backend);
+    const envVar = PROVIDER_KEY_ENV[backend];
+    const credentials = envVar && key ? { [envVar]: key } : undefined;
+    const model = config.provider?.model;
+    const res = await controller.configClient().setProvider({
+      backend,
+      ...(model ? { model } : {}),
+      reasoningEffort: level,
+      ...(credentials ? { credentials } : {}),
+    });
+    // Persist what the backend ACTUALLY applied, not what was asked — a clamped
+    // rung must not come back on the next managed spawn as the unclamped one.
+    await runtimeManager.saveReasoningEffort(res.reasoningEffort ?? level);
+    // The note itself now comes from composerModelState() (sourced off GET
+    // /v1/config), which is already current since setProvider just applied it —
+    // no need to thread it through this response separately.
+    return composerModelState();
   };
 
   const chatPanel = new ChatPanel(
@@ -136,6 +180,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await runtimeManager.saveProvider(backend, model);
       return composerModelState();
     },
+    (level: ReasoningEffort) => setReasoningEffort(level),
     (section?: string) => {
       void vscode.commands.executeCommand("crucible.openSettingsPanel", section);
     },

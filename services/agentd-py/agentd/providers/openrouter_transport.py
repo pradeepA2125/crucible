@@ -8,11 +8,24 @@ from typing import Any
 import httpx
 
 from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
 logger = logging.getLogger(__name__)
 
 _MODELS_ENDPOINT = "https://openrouter.ai/api/v1/models"
 _MODEL_CAPS_TTL_SEC = 3600.0
+
+# OpenRouter takes a nested `reasoning` object and accepts the full ladder,
+# normalizing effort onto a token budget for models that only expose one
+# (max/xhigh ~95% of available tokens, high 80%, medium 50%, low 20%). That
+# normalization is why every rung here is genuinely expressible.
+_OPENROUTER_EFFORT_WIRE: dict[ReasoningEffort, dict[str, object]] = {
+    ReasoningEffort.OFF: {"enabled": False},
+    ReasoningEffort.LOW: {"effort": "low"},
+    ReasoningEffort.MEDIUM: {"effort": "medium"},
+    ReasoningEffort.HIGH: {"effort": "high"},
+    ReasoningEffort.MAX: {"effort": "max"},
+}
 
 
 class _ModelCapabilityCache:
@@ -139,6 +152,12 @@ class OpenRouterJsonTransport(OpenAICompatibleTransport):
         # narrow routing with nothing to protect, and the json_object fallback needs
         # it dropped so it can route anywhere after the strict call already failed.
         extra_body = super()._build_extra_body(model, is_reasoning, for_json=for_json)
+        # Replace both the base's blanket {"enabled": True} and its top-level
+        # reasoning_effort: OpenRouter reads neither, and leaving the flat key in
+        # place would be an unread parameter that require_parameters could route on.
+        extra_body.pop("reasoning_effort", None)
+        if self._reasoning_effort is not None:
+            extra_body["reasoning"] = dict(_OPENROUTER_EFFORT_WIRE[self._reasoning_effort])
         if for_json and self._require_parameters:
             extra_body["provider"] = {"require_parameters": True}
         return extra_body
@@ -161,6 +180,22 @@ class OpenRouterJsonTransport(OpenAICompatibleTransport):
                 )
                 return is_reasoning, temperature
         return await super()._reasoning_config(model)
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        """Registry-first: the live model list is the authority on whether this
+        model reasons at all. When it says yes, every rung is expressible, because
+        OpenRouter normalizes effort onto a budget for budget-only models."""
+        is_reasoning, _ = await self._reasoning_config(model)
+        if not is_reasoning:
+            return EffortSupport(
+                supported=frozenset({ReasoningEffort.OFF}),
+                unsupported={
+                    level: "this model does not expose reasoning"
+                    for level in ReasoningEffort
+                    if level is not ReasoningEffort.OFF
+                },
+            )
+        return EffortSupport(supported=frozenset(ReasoningEffort))
 
     async def aclose(self) -> None:
         if self._model_caps is not None:

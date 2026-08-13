@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { ModelMenu } from "./ModelMenu";
+import { EffortMenu } from "./EffortMenu";
 import { vscode } from "../vscodeApi";
 import { parseSlashCommand, resolveSkillCommand, buildSlashDropdownItems } from "../slash";
 import { detectTrigger } from "../composerTrigger";
@@ -333,7 +334,8 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
 
       {/* Footer row */}
       <div className="flex items-center gap-1.5 pt-1">
-        {/* Model hot-swap chip + settings shortcut. */}
+        {/* Reasoning-effort chip + model hot-swap chip + settings shortcut. */}
+        <EffortMenu />
         <ModelMenu />
         <button
           type="button"
