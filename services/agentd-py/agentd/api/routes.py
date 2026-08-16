@@ -1758,4 +1758,99 @@ def build_router(
             ok = await stop(thread_id)  # type: ignore[misc]
             return {"ok": ok}
 
+        # ── Chat rewind ──────────────────────────────────────────────────────
+        # There is no is_terminal_status helper in domain/state_machine.py; the
+        # terminal set is spelled out here rather than invented elsewhere.
+        _REWIND_TERMINAL = {
+            TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.ABORTED,
+        }
+
+        def _require_rewind(thread_id: str):
+            """The rewind store and the thread, or a 404 when either is missing."""
+            rewind = getattr(_chat_agent, "_rewind", None)
+            if rewind is None:
+                raise HTTPException(status_code=404, detail="rewind unavailable")
+            thread = _chat_agent._store.get_thread(thread_id)
+            if thread is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            return rewind, thread
+
+        def _blocking_task_id(thread, anchor_message_id: str) -> str | None:
+            """A task referenced by the rewound span, if any.
+
+            Exec sessions are deliberately NOT blocking — they are background shells,
+            left running and merely named in the confirm dialog. A task is different:
+            it holds its own shadow and promotes into the real workspace when it
+            finishes, so one still running after a rewind would re-write the very
+            files the rewind just reverted.
+            """
+            index = next((i for i, m in enumerate(thread.messages)
+                          if m.id == anchor_message_id), None)
+            if index is None:
+                return None
+            return next((m.task_id for m in thread.messages[index:] if m.task_id), None)
+
+        async def _live_task_in_span(thread, message_id: str) -> str | None:
+            blocking = _blocking_task_id(thread, message_id)
+            if not blocking:
+                return None
+            try:
+                task = await store.get(blocking)
+            except KeyError:
+                return None  # pruned task cannot still be writing
+            return blocking if task.status not in _REWIND_TERMINAL else None
+
+        @router.get("/chat/threads/{thread_id}/rewind-preview")
+        async def get_rewind_preview(thread_id: str, message_id: str) -> dict:
+            rewind, thread = _require_rewind(thread_id)
+            preview = rewind.preview(thread_id, message_id)
+            if preview is None:
+                raise HTTPException(status_code=404, detail="No rewind point for that message")
+            preview.blocked_by_task = await _live_task_in_span(thread, message_id)
+            sessions = []
+            _exec_mgr = getattr(_chat_agent, "_exec_sessions", None)
+            if _exec_mgr is not None:
+                sessions = [{"id": s.get("id"), "command": s.get("command", "")}
+                            for s in (_exec_mgr.live_summaries(thread_id) or [])]
+            return {**preview.model_dump(), "sessions": sessions}
+
+        @router.post("/chat/threads/{thread_id}/rewind")
+        async def post_rewind(thread_id: str, request: dict) -> dict:
+            rewind, thread = _require_rewind(thread_id)
+            message_id = str(request.get("message_id") or "")
+            if thread_id in getattr(_chat_agent, "_active_turns", {}):
+                raise HTTPException(
+                    status_code=409,
+                    detail="A turn is in flight for this thread — stop it before rewinding.")
+            live_task = await _live_task_in_span(thread, message_id)
+            if live_task:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"This span started task {live_task}, which is still running. "
+                            "Cancel or abort it before rewinding."))
+
+            # Read the anchor snapshot BEFORE restoring: restore() deletes the checkpoint
+            # row, so reading it afterwards always yields None and would silently clear
+            # the anchor instead of putting the right one back.
+            checkpoint = _chat_agent._store.get_checkpoint_by_anchor(thread_id, message_id)
+            anchor_md = checkpoint.memory_anchor_md if checkpoint else None
+
+            outcome = rewind.restore(thread_id, message_id)
+            if outcome is None:
+                raise HTTPException(status_code=404, detail="No rewind point for that message")
+
+            # Memory is best-effort: it must never fail a rewind that already moved files.
+            retired = 0
+            harness = getattr(_chat_agent, "_memory_harness", None)
+            if harness is not None and outcome.target_created_at is not None:
+                try:
+                    retired = harness.retire_since(
+                        thread_id, outcome.target_created_at.isoformat())
+                    harness.restore_anchor(thread_id, anchor_md)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "[rewind] memory cleanup failed", exc_info=True)
+            return {**outcome.model_dump(mode="json"), "retired_memories": retired}
+
     return router
