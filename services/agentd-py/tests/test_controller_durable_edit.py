@@ -67,7 +67,7 @@ async def test_loop_invokes_edit_record_cb_on_each_edit(tmp_path: Path):
     ]
     recorded: list[tuple[str, str, list[str]]] = []
 
-    async def rec(diff, decision, reason):
+    async def rec(diff, decision, reason, was_gated):
         recorded.append((decision, reason, [d.path for d in diff]))
 
     bc = EventBroadcaster()
@@ -121,7 +121,7 @@ async def test_edit_record_auto_accept_persists_inert_card_and_renders_live(tmp_
         thread_store=store, orchestrator=None, broadcaster=bc, retrieval_client=None)
 
     await ctrl._edit_record_cb(
-        th.thread_id, f"chat:{th.thread_id}", False, _diff(), "accept", "")
+        th.thread_id, f"chat:{th.thread_id}", _diff(), "accept", "", False)
 
     cards = [m for m in store.get_thread(th.thread_id).messages if m.type == "diff_card"]
     assert len(cards) == 1
@@ -146,7 +146,7 @@ async def test_edit_record_review_persists_card_and_breadcrumb_no_live_diff(tmp_
         thread_store=store, orchestrator=None, broadcaster=bc, retrieval_client=None)
 
     await ctrl._edit_record_cb(
-        th.thread_id, f"chat:{th.thread_id}", True, _diff(), "reject", "not what I meant")
+        th.thread_id, f"chat:{th.thread_id}", _diff(), "reject", "not what I meant", True)
 
     msgs = store.get_thread(th.thread_id).messages
     cards = [m for m in msgs if m.type == "diff_card"]

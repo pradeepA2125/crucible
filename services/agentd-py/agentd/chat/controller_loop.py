@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.tool_events import trace_to_tool_events
+from agentd.chat.turn_control import ChatTurnControl
 from agentd.domain.models import AgentToolTrace, PatchFailureCode, ToolCall, ToolResult
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
@@ -36,7 +37,10 @@ if TYPE_CHECKING:
     # The controller owns the durable diff_card record + transcript broadcast; the
     # loop no longer broadcasts diff_ready itself (Class-A: the record cb is the one
     # writer, so every edit survives a reload — smoke-found gap #2/#5).
-    EditRecordCb = Callable[[list[DiffEntry], str, str], Awaitable[None]]
+    # `was_gated` is per-edit, NOT the turn's starting preference: the review pref is
+    # live-mutable (ChatTurnControl), so within one turn some edits gate and others
+    # auto-accept. The breadcrumb decision keys off what actually happened.
+    EditRecordCb = Callable[[list[DiffEntry], str, str, bool], Awaitable[None]]
     # Given the files an accepted edit touched, return a compact retrieval-refresh
     # note (pointers only, no bodies) to append to history — or None.
     RetrievalDeltaCb = Callable[[list[str]], Awaitable[str | None]]
@@ -732,6 +736,7 @@ class ControllerLoop:
         seed_history: list[dict[str, object]] | None = None,
         observed_prompt: ObservedPrompt | None = None,
         auto_accept_edits: bool = False,
+        turn_control: ChatTurnControl | None = None,
         edit_decision_cb: EditDecisionCb | None = None,
         edit_record_cb: EditRecordCb | None = None,
         retrieval_delta_cb: RetrievalDeltaCb | None = None,
@@ -764,7 +769,12 @@ class ControllerLoop:
             outcome = await self._iterate(
                 plan_context, history, tool_defs, seen, max_iters,
                 _MAX_MALFORMED, consecutive_malformed,
-                auto_accept_edits=auto_accept_edits,
+                # `auto_accept_edits` is only the STARTING value: callers that want the
+                # preference to stay live for the turn hand in a control instead, and the
+                # edit dispatch re-reads it. (Same fallback shape as engine.py's
+                # `_ctrl.step_review_auto_accept if _ctrl is not None else task....`)
+                turn_control=turn_control or ChatTurnControl(
+                    auto_accept_edits=auto_accept_edits),
                 edit_decision_cb=edit_decision_cb,
                 edit_record_cb=edit_record_cb,
                 retrieval_delta_cb=retrieval_delta_cb,
@@ -808,7 +818,7 @@ class ControllerLoop:
         _MAX_MALFORMED: int,
         consecutive_malformed: int,
         *,
-        auto_accept_edits: bool,
+        turn_control: ChatTurnControl,
         edit_decision_cb: EditDecisionCb | None,
         edit_record_cb: EditRecordCb | None,
         retrieval_delta_cb: RetrievalDeltaCb | None,
@@ -1409,7 +1419,13 @@ class ControllerLoop:
                 # the /live EditGate (review mode only). The loop does NOT broadcast
                 # diff_ready — edit_record_cb is the single transcript writer (durable
                 # diff_card + the auto-accept live render), so nothing dangles on reload.
-                if auto_accept_edits or edit_decision_cb is None:
+                #
+                # Re-read the preference HERE, per edit — never a value captured at turn
+                # start. The composer checkbox is live (POST /chat/threads/{id}/review-pref
+                # mutates this same object), so one turn can legitimately gate its first
+                # edit and auto-accept its third.
+                was_gated = not turn_control.auto_accept_edits and edit_decision_cb is not None
+                if not was_gated:
                     await self._edit.accept()
                     accepted = True
                     reason = ""
@@ -1422,7 +1438,8 @@ class ControllerLoop:
                     else:
                         await self._edit.reject()  # restore shadow from real (shadow==real)
                 if edit_record_cb is not None:
-                    await edit_record_cb(diff, "accept" if accepted else "reject", reason)
+                    await edit_record_cb(
+                        diff, "accept" if accepted else "reject", reason, was_gated)
                 history.append(assistant_turn(resp))
                 if accepted:
                     touched = [d.path for d in diff]

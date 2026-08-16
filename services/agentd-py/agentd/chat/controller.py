@@ -25,6 +25,7 @@ from agentd.chat.rewind import RewindStore
 from agentd.chat.models import ChatMessage, PendingGate
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
+from agentd.chat.turn_control import ChatTurnControl
 from agentd.domain.models import CommandDecision, McpToolDecision, ShellPolicy
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
@@ -178,6 +179,11 @@ class ChatController:
         # every out-of-turn breadcrumb (a restart-orphan crumb, ✗ Stopped, and the
         # mode/clarify decision crumbs, which precede a brand-new loop).
         self._active_loops: dict[str, ControllerLoop] = {}
+        # Live preferences for the one in-flight turn per thread (chat-side sibling of
+        # the orchestrator's _task_controls). Registered/released alongside
+        # _active_loops; absent between turns, which is exactly how set_review_pref
+        # tells "no turn running" (→ 409) from a live one.
+        self._turn_controls: dict[str, ChatTurnControl] = {}
 
     def launch_turn(
         self, thread_id: str, coro, *, channel_id: str | None = None,
@@ -513,12 +519,19 @@ class ChatController:
         if seed:
             plan_context["retrieval_seed"] = seed
         # "Review each edit" on → hold each patch for a decision; off → instant promote.
+        # LIVE for the whole turn: the composer checkbox posts /review-pref, which mutates
+        # this control, and the loop re-reads it before every edit. The message's
+        # step_review is only the STARTING value.
         is_review = step_review is True
-        edit_cb = partial(self._edit_decision_cb, thread_id, channel_id) \
-            if is_review else None
+        control = ChatTurnControl(auto_accept_edits=not is_review)
+        # Always wired, even when the turn starts in auto-accept — otherwise a mid-turn
+        # flip TO review would have no gate to call and would silently keep promoting.
+        edit_cb = partial(self._edit_decision_cb, thread_id, channel_id)
         # Single durable-record writer for every edit resolution (both modes): persists
-        # an inert diff_card, + a breadcrumb (review) or a live render (auto-accept).
-        record_cb = partial(self._edit_record_cb, thread_id, channel_id, is_review)
+        # an inert diff_card, + a breadcrumb (gated) or a live render (auto-accepted).
+        # Whether an edit was gated is decided per edit BY THE LOOP (trailing arg), not
+        # frozen here — mid-turn flips make it vary within one turn.
+        record_cb = partial(self._edit_record_cb, thread_id, channel_id)
         # Incremental durable pill persistence (finding 5): upsert the in-flight pills
         # message per tool result so a switch/reopen mid-turn reconstructs them.
         pills_cb = partial(self._persist_inflight_pills, thread_id, turn_id) \
@@ -526,11 +539,13 @@ class ChatController:
         max_iters = int(os.environ.get("CRUCIBLE_CONTROLLER_MAX_ITERS", "500"))
         # Reachable by the mid-turn durable writers for exactly the loop's lifetime.
         self._active_loops[thread_id] = loop
+        # Same lifetime, for the same reason: /review-pref reaches in here mid-turn.
+        self._turn_controls[thread_id] = control
         try:
             outcome = await loop.run(
                 plan_context, max_iters=max_iters, seed_history=seed_history,
                 observed_prompt=self._observed_prompts.get(thread_id),
-                auto_accept_edits=(not is_review), edit_decision_cb=edit_cb,
+                turn_control=control, edit_decision_cb=edit_cb,
                 edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
                 on_pills_update=pills_cb)
         except asyncio.CancelledError:
@@ -588,8 +603,11 @@ class ChatController:
             )
         finally:
             # Released on EVERY exit (including the re-raised cancel) so a later
-            # out-of-turn breadcrumb can never mark a dead loop's boundary.
+            # out-of-turn breadcrumb can never mark a dead loop's boundary, and so a
+            # /review-pref arriving after the turn ends answers 409 instead of
+            # mutating a control nothing reads.
             self._active_loops.pop(thread_id, None)
+            self._turn_controls.pop(thread_id, None)
         self._histories[thread_id] = outcome.history or []
         # Reached for the normal-completion AND generic-exception branches (the
         # cancellation branch already recorded its own and re-raised past this point).
@@ -798,18 +816,23 @@ class ChatController:
             self._store.set_controller_gate(thread_id, None)
 
     async def _edit_record_cb(
-        self, thread_id: str, channel_id: str, was_review: bool,
-        diff: list[DiffEntry], decision: str, reason: str,
+        self, thread_id: str, channel_id: str,
+        diff: list[DiffEntry], decision: str, reason: str, was_gated: bool,
     ) -> None:
         """Durably record a resolved edit (the loop's single transcript writer).
 
         Persists an inert diff_card (renders Applied/Discarded on reload, never
         interactive — mirrors engine._write_chat_step_diff_record). temp_path is
         omitted: the edit is instant-promoted (shadow==real) so a native diff is
-        meaningless, and the turn-shadow is rmtree'd at turn end. In review mode the
-        live EditGate already showed the diff, so we add a breadcrumb (the card
-        materializes on reload); in auto-accept there was no gate, so we render the
-        inert card live too."""
+        meaningless, and the turn-shadow is rmtree'd at turn end. When the edit was
+        gated the live EditGate already showed the diff, so we add a breadcrumb (the
+        card materializes on reload); when it auto-accepted there was no gate, so we
+        render the inert card live too.
+
+        `was_gated` is what happened to THIS edit, decided per edit by the loop against
+        the live preference — not the turn's starting mode, which a mid-turn
+        /review-pref may have flipped since (a gated edit would lose its breadcrumb,
+        and an auto-accepted one would get a false ✓)."""
         diff_payload = [
             {"path": d.path, "additions": d.additions,
              "deletions": d.deletions, "unified_diff": d.unified_diff}
@@ -828,7 +851,7 @@ class ChatController:
             "type": "diff_ready",
             "payload": {"diff_entries": diff_payload, "resolved": resolved}})
         files = ", ".join(d.path for d in diff) or "(no files)"
-        if was_review:
+        if was_gated:
             if decision == "accept":
                 text = f"✓ Edit accepted: {files}"
             else:
@@ -836,6 +859,40 @@ class ChatController:
                 if reason:
                     text += f" — {reason}"  # surface the user's reason in the record
             self._write_breadcrumb(thread_id, channel_id, text)
+
+    async def set_review_pref(self, thread_id: str, *, auto_accept: bool) -> bool:
+        """Live-mutable "Review each edit" preference for an IN-FLIGHT turn (chat-side
+        twin of POST /tasks/{id}/review-pref). Returns False when no turn is running,
+        which the route answers 409 with — the value still governs the next message,
+        since the composer sends it with every send.
+
+        Flipping to auto-accept while an edit gate is open resolves that gate as accept
+        too, for the same consistent-intent reason the task route resolves a pending
+        step review: the diff on screen would otherwise contradict the switch just
+        flipped. The other direction only governs future edits — it never retroactively
+        gates an edit that already promoted.
+
+        Race-safe without a lock: single-process asyncio, and the mutation + the future's
+        set_result happen with no `await` in between, so the loop can never observe a
+        half-applied flip.
+        """
+        # Record it for a mode/clarify RESUME first. Those gates end the loop (chat_done),
+        # so a flip made while one is on screen finds no live control — yet the gate pause
+        # is exactly where "fine, stop asking me about each edit" gets clicked, and
+        # resolve_mode/resolve_clarify re-enter from this map, not from the POST (neither
+        # decision route carries step_review). Harmless when nothing is pending: the next
+        # message overwrites this entry with its own value.
+        self._step_review_by_thread[thread_id] = not auto_accept
+        control = self._turn_controls.get(thread_id)
+        if control is None:
+            return False
+        control.auto_accept_edits = auto_accept
+        if auto_accept:
+            future = self._pending_edit.get(thread_id)
+            if future is not None and not future.done():
+                future.set_result({
+                    "decision": "accept", "reason": "auto-accept turned on"})
+        return True
 
     async def resolve_edit(self, thread_id: str, decision: dict[str, object]) -> bool:
         """Resolve the per-edit gate (POST /edit-decision). Fires the future when a
