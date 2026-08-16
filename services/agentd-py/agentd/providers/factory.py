@@ -257,7 +257,15 @@ def build_transport(
             api_key=env.get("CRUCIBLE_OPENAI_COMPAT_API_KEY"),
             base_url=base_url,
             max_tokens=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_MAX_TOKENS", 4096),
-            json_max_tokens=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_JSON_MAX_TOKENS", 16384),
+            # max_completion_tokens is THINKING + output on a reasoning endpoint, not
+            # output alone. At 16384 a high-effort model writing a document-sized
+            # `content` (an implementation plan, a large new file) spends the whole
+            # budget reasoning and the stream is cut before the JSON opens — the caller
+            # then sees raw chain-of-thought at char 0 and reports "malformed JSON".
+            # Small actions fit and succeed, so the failure looks selective rather than
+            # like the budget ceiling it is. Lower it per-endpoint via the env var if a
+            # server rejects a cap above its own max_model_len.
+            json_max_tokens=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_JSON_MAX_TOKENS", 65536),
             timeout_sec=_float_env(env, "CRUCIBLE_OPENAI_COMPAT_TIMEOUT_SEC", 120.0),
             max_retries=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_MAX_RETRIES", 4),
             # Verified live against NVIDIA NIM: strict json_schema honors oneOf

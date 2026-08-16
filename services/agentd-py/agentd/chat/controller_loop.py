@@ -844,12 +844,28 @@ class ControllerLoop:
             turn_tokens["content"] += call_tokens["content"]
             call_tokens["reasoning"] = call_tokens["content"] = 0
 
-        def _on_progress(reasoning_n: int, content_n: int) -> None:
+        def _on_progress(
+            reasoning_n: int,
+            content_n: int,
+            *,
+            input_n: int | None = None,
+            exact: bool = False,
+        ) -> None:
             # Live token counts DURING a call. Its own channel, not the thinking pane:
             # a progress counter is not model reasoning (same rule as _on_retry and
             # edit_failed). Reasoning already streams via _on_thinking, but CONTENT
             # deltas are accumulated silently and only surface when the call returns —
             # so a long generation looks identical to a hang until this lands.
+            #
+            # `input_n` is the prompt size, known BEFORE the first delta. Without it the
+            # counter reads zero for the whole prefill, which is most of the wall time on
+            # a large prompt — a 372k-token prompt against a 262k-window model looked
+            # exactly like a hang. `exact` separates the live chars/4 estimates from the
+            # provider's own usage figure on the closing tick, so the UI can stop
+            # presenting a moving guess as if it were settled.
+            #
+            # Keyword-only so a transport passing just the two positional counts keeps
+            # working unchanged.
             call_tokens["reasoning"] = reasoning_n
             call_tokens["content"] = content_n
             self._broadcaster.broadcast(self._channel_id, {
@@ -857,6 +873,8 @@ class ControllerLoop:
                 "payload": {
                     "thinking": turn_tokens["reasoning"] + reasoning_n,
                     "output": turn_tokens["content"] + content_n,
+                    "input": input_n,
+                    "exact": exact,
                 },
             })
 
@@ -1003,6 +1021,9 @@ class ControllerLoop:
             # plan_entry (PLAN): unchanged semantics from the old DECIDE branch, just
             # renamed to the PLAN phase value — the first model call of THIS run only.
             plan_context["plan_entry"] = self._sm.phase == "PLAN" and iteration == 0
+            # THIS turn's step count. The payload builder otherwise infers it from
+            # len(history), which carries the whole thread and so never resets per turn.
+            plan_context["iteration"] = iteration
             try:
                 resp = await self._reasoning.create_controller_step(
                     plan_context=plan_context, history=history,

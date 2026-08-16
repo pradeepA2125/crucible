@@ -12,6 +12,7 @@ except ImportError:
     AsyncGroqClient = None
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.token_progress import ProgressTicker, approx_prompt_tokens
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 from agentd.runtime.artifacts import provider_debug_root
 
@@ -53,6 +54,11 @@ _GROQ_EFFORT_WIRE: dict[ReasoningEffort, str] = {
 
 
 class GroqJsonTransport(ModelJsonTransport):
+    # Live token counting. NOTE: unlike gemini/ollama/turboquant, generate_json
+    # here was NOT streaming — only generate_text was — so enabling the counter
+    # also routes JSON calls through the streaming path below.
+    supports_token_progress: bool = True
+
     supports_anyof_grammar: bool = True
 
     def __init__(
@@ -126,6 +132,7 @@ class GroqJsonTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: object = None,
         on_retry: object = None,
+        on_progress: object = None,
     ) -> dict[str, object]:
         # Normalize schema name to alphanumeric for Groq
         safe_schema_name = "".join(c for c in schema_name if c.isalnum())
@@ -172,8 +179,16 @@ class GroqJsonTransport(ModelJsonTransport):
                 )
                 await asyncio.sleep(delay)
             try:
-                response = await self._call_with_retry(create_kwargs)
-                output_text = self._extract_text(response)
+                # generate_json was non-streaming, so on_thinking was accepted and
+                # silently ignored on this path and no delta ever existed to count.
+                # Streaming is what makes both possible.
+                if callable(on_thinking) or callable(on_progress):
+                    output_text = await self._stream_with_thinking(
+                        create_kwargs, model=model, on_thinking=on_thinking,
+                        on_progress=on_progress)
+                else:
+                    response = await self._call_with_retry(create_kwargs)
+                    output_text = self._extract_text(response)
                 return self._parse_output_object(output_text, schema_name)
             except RuntimeError as exc:
                 if "not valid JSON" in str(exc) or "must be a JSON object" in str(exc):
@@ -228,6 +243,7 @@ class GroqJsonTransport(ModelJsonTransport):
         *,
         model: str,
         on_thinking: Any,
+        on_progress: Any = None,
     ) -> str:
         """Stream response, calling on_thinking(chunk) for each reasoning chunk.
 
@@ -253,6 +269,14 @@ class GroqJsonTransport(ModelJsonTransport):
                 await asyncio.sleep(delay)
             try:
                 content_parts: list[str] = []
+                ticker = ProgressTicker(
+                    on_progress if callable(on_progress) else None,
+                    input_n=approx_prompt_tokens(
+                        *[str(m.get("content", ""))
+                          for m in kwargs.get("messages", [])
+                          if isinstance(m, dict)]),
+                )
+                ticker.start()
                 stream = await asyncio.wait_for(
                     self._completions.create(**kwargs),
                     timeout=self._timeout_sec,
@@ -266,10 +290,14 @@ class GroqJsonTransport(ModelJsonTransport):
                         continue
                     reasoning = getattr(delta, "reasoning", None)
                     if reasoning:
-                        on_thinking(reasoning)
+                        if callable(on_thinking):
+                            on_thinking(reasoning)
+                        ticker.thinking(reasoning)
                     content = getattr(delta, "content", None) or ""
                     if content:
                         content_parts.append(content)
+                        ticker.output(content)
+                ticker.finish()
                 return "".join(content_parts).strip()
             except TimeoutError as exc:
                 msg = f"Groq streaming timed out after {self._timeout_sec}s"

@@ -14,6 +14,11 @@ except ImportError:
     google_genai_errors = None  # type: ignore[assignment]
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.token_progress import (
+    ProgressTicker,
+    approx_prompt_tokens,
+    int_or_none,
+)
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
 logger = logging.getLogger(__name__)
@@ -47,6 +52,12 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 class GeminiJsonTransport(ModelJsonTransport):
+    # Live token counting: the stream loop below already separates thought parts
+    # from output parts, so counts cost only the accumulation. Without this flag
+    # the reasoning engine's capability gate never passes on_progress and the
+    # WorkBar's counter stays blank for the whole turn.
+    supports_token_progress: bool = True
+
     def __init__(
         self,
         *,
@@ -101,6 +112,7 @@ class GeminiJsonTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: object = None,
         on_retry: object = None,
+        on_progress: object = None,
     ) -> dict[str, object]:
         config: dict[str, object] = {
             "temperature": 0,
@@ -126,9 +138,15 @@ class GeminiJsonTransport(ModelJsonTransport):
                 )
                 await asyncio.sleep(delay)
             try:
-                if callable(on_thinking) and self._thinking_enabled:
+                # Gate on ANY callback, not on_thinking alone: a caller that wants
+                # only the token counter would otherwise get the non-streaming path,
+                # where there are no deltas to count and the whole response lands in
+                # one lump at the end (same fix as openai_compatible).
+                if (callable(on_thinking) and self._thinking_enabled) or callable(on_progress):
                     response = await self._stream_with_thinking(
-                        model=model, contents=contents, config=config, on_thinking=on_thinking
+                        model=model, contents=contents, config=config,
+                        on_thinking=on_thinking, on_progress=on_progress,
+                        system_instructions=system_instructions,
                     )
                 else:
                     response = await self._call_with_retry(model=model, contents=contents, config=config)
@@ -192,6 +210,8 @@ class GeminiJsonTransport(ModelJsonTransport):
         contents: str,
         config: dict[str, object],
         on_thinking: Any,
+        on_progress: Any = None,
+        system_instructions: str = "",
     ) -> Any:
         """Stream response, calling on_thinking(chunk) for each thinking part.
 
@@ -210,12 +230,25 @@ class GeminiJsonTransport(ModelJsonTransport):
             try:
                 thinking_buf: list[str] = []
                 output_buf: list[str] = []
+                ticker = ProgressTicker(
+                    on_progress if callable(on_progress) else None,
+                    input_n=approx_prompt_tokens(system_instructions, contents),
+                )
+                ticker.start()
+                stream_usage: Any = None
                 async for chunk in await asyncio.wait_for(
                     self._models.generate_content_stream(
                         model=model, contents=contents, config=config
                     ),
                     timeout=self._timeout_sec,
                 ):
+                    # Gemini reports usage on chunks as it goes; the LAST one carries
+                    # the final totals. Kept so the closing tick can report exact
+                    # numbers instead of the chars/4 estimate, and so _log_usage sees
+                    # real values rather than the None this path used to synthesise.
+                    chunk_usage = read_value(chunk, "usage_metadata")
+                    if chunk_usage is not None:
+                        stream_usage = chunk_usage
                     # Extract parts to separate thinking from output
                     candidates = read_value(chunk, "candidates") or []
                     for cand in (candidates if isinstance(candidates, list) else [candidates]):
@@ -227,14 +260,24 @@ class GeminiJsonTransport(ModelJsonTransport):
                                 continue
                             if read_value(part, "thought"):
                                 thinking_buf.append(text)
-                                on_thinking(text)
+                                if callable(on_thinking):
+                                    on_thinking(text)
+                                ticker.thinking(text)
                             else:
                                 output_buf.append(text)
+                                ticker.output(text)
+
+                ticker.finish(
+                    output_tokens=int_or_none(
+                        read_value(stream_usage, "candidates_token_count")),
+                    input_tokens=int_or_none(
+                        read_value(stream_usage, "prompt_token_count")),
+                )
 
                 # Return a simple object that _extract_text / _log_usage can consume
                 class _FakeResponse:
                     text = "".join(output_buf)
-                    usage_metadata = None
+                    usage_metadata = stream_usage
 
                 return _FakeResponse()
             except TimeoutError as exc:

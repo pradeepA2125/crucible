@@ -42,6 +42,7 @@ from typing import Any
 import httpx
 
 from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.token_progress import ProgressTicker, approx_prompt_tokens
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,12 @@ def _infer_family(model: str) -> str:
 # ---------------------------------------------------------------------------
 
 class TurboQuantTransport(ModelJsonTransport):
+    # Live token counting: generate_json already streams reasoning_content and
+    # content as separate deltas, so counting costs only the accumulation. Without
+    # this flag the reasoning engine's capability gate never passes on_progress and
+    # the WorkBar's counter stays blank for the whole turn.
+    supports_token_progress: bool = True
+
     """JSON transport backed by a llama-cpp-turboquant server.
 
     Receives a ModelProfile via constructor — does not know or care which model
@@ -303,6 +310,7 @@ class TurboQuantTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
+        on_progress: Callable[..., None] | None = None,
         on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, object]:
         # Constrained decoding: when thinking is OFF (our default) we send the schema as
@@ -335,7 +343,7 @@ class TurboQuantTransport(ModelJsonTransport):
                 )
                 await asyncio.sleep(delay)
             try:
-                thinking_buf, output_text = await self._stream_with_retry(body, schema_name, on_thinking)
+                thinking_buf, output_text = await self._stream_with_retry(body, schema_name, on_thinking, on_progress)
                 if thinking_buf:
                     logger.info("turboquant think (%s): %s", schema_name, thinking_buf[:300])
                 logger.info(
@@ -428,6 +436,7 @@ class TurboQuantTransport(ModelJsonTransport):
         body: dict[str, object],
         schema_name: str,
         on_thinking: Callable[[str], None] | None,
+        on_progress: Callable[..., None] | None = None,
     ) -> tuple[str, str]:
         """Stream a completion. Returns (thinking_content, output_content)."""
         stream_body = {**body, "stream": True}
@@ -445,6 +454,14 @@ class TurboQuantTransport(ModelJsonTransport):
             try:
                 thinking_parts: list[str] = []
                 content_parts: list[str] = []
+                ticker = ProgressTicker(
+                    on_progress,
+                    input_n=approx_prompt_tokens(
+                        *[str(m.get("content", ""))
+                          for m in (body.get("messages") or [])  # type: ignore[union-attr]
+                          if isinstance(m, dict)]),
+                )
+                ticker.start()
                 async with self._client.stream("POST", url, json=stream_body,
                                                timeout=timeout) as response:
                     if response.status_code in _RETRYABLE_STATUS_CODES:
@@ -484,8 +501,11 @@ class TurboQuantTransport(ModelJsonTransport):
                             thinking_parts.append(reasoning)
                             if on_thinking:
                                 on_thinking(reasoning)
+                            ticker.thinking(reasoning)
                         if text := delta.get("content"):
                             content_parts.append(text)
+                            ticker.output(text)
+                ticker.finish()
                 return "".join(thinking_parts), "".join(content_parts)
 
             except httpx.ReadTimeout as exc:

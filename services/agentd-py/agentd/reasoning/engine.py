@@ -352,6 +352,14 @@ class DefaultReasoningEngine(ReasoningEngine):
                 {
                     "phase": phase,
                     "tight_schema": tight,
+                    # Which structured-output mode produced this turn. Not cosmetic:
+                    # a strict grammar that cannot emit \n silently strips newlines
+                    # from every file body, and without this recorded, a run where
+                    # that happened is indistinguishable in the artifacts from one
+                    # where it did not. Answering "which mode was this turn in?"
+                    # otherwise means correlating undated log lines against mtimes.
+                    # getattr: only openai_compatible-family transports have a mode.
+                    "json_mode": getattr(self._transport, "json_mode", None),
                     "original_goal": original_goal,
                     "system_instructions": system_instructions,
                     "user_payload": user_payload,

@@ -67,10 +67,19 @@ class _FakeCompletions:
         return item
 
 
-def _transport(contents: list[object], **kw) -> tuple[OpenAICompatibleTransport, _FakeCompletions]:
+def _transport(contents: list[object], *, probe_done: bool = False, **kw
+               ) -> tuple[OpenAICompatibleTransport, _FakeCompletions]:
+    """`probe_done` marks the newline capability probe as already run.
+
+    The probe is a STARTUP hook, not part of generate_json, so it never consumes a
+    queued response here — the parameter exists only so probe tests can be explicit
+    about the pre-state they are exercising.
+    """
     fake = _FakeCompletions(contents)
     kw.setdefault("base_url", "https://example.test/v1")
-    return OpenAICompatibleTransport(completions_client=fake, **kw), fake
+    t = OpenAICompatibleTransport(completions_client=fake, **kw)
+    t._newline_probe_done = probe_done
+    return t, fake
 
 
 def test_openrouter_is_a_subclass() -> None:
@@ -908,11 +917,19 @@ async def test_default_json_mode_still_probes_strict() -> None:
 
 
 class _CountingProgress:
+    """Records the two counts. `input_n`/`exact` are keyword-only extras the
+    transport now also reports (prompt size, and estimate-vs-provider-usage); they
+    are captured separately so the existing (reasoning, content) assertions below
+    keep reading the same tuple shape."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[int, int]] = []
+        self.meta: list[tuple[int | None, bool]] = []
 
-    def __call__(self, reasoning_n: int, content_n: int) -> None:
+    def __call__(self, reasoning_n: int, content_n: int, *,
+                 input_n: int | None = None, exact: bool = False) -> None:
         self.calls.append((reasoning_n, content_n))
+        self.meta.append((input_n, exact))
 
 
 @pytest.mark.asyncio
@@ -1394,7 +1411,7 @@ async def test_progress_counts_output_tokens_not_deltas() -> None:
     await transport._stream_with_finish_reason(
         {"model": "m", "messages": []},
         on_thinking=lambda _c: None,
-        on_progress=lambda r, c: seen.append((r, c)),
+        on_progress=lambda r, c, **_kw: seen.append((r, c)),
     )
     assert seen, "on_progress never fired"
     _reasoning, content = seen[-1]
@@ -1414,7 +1431,7 @@ async def test_progress_counts_reasoning_tokens_not_deltas() -> None:
     await transport._stream_with_finish_reason(
         {"model": "m", "messages": []},
         on_thinking=lambda _c: None,
-        on_progress=lambda r, c: seen.append((r, c)),
+        on_progress=lambda r, c, **_kw: seen.append((r, c)),
     )
     assert seen, "on_progress never fired"
     reasoning_n, _content = seen[-1]
@@ -1434,7 +1451,7 @@ async def test_progress_accumulates_across_deltas() -> None:
     await transport._stream_with_finish_reason(
         {"model": "m", "messages": []},
         on_thinking=lambda _c: None,
-        on_progress=lambda r, c: seen.append((r, c)),
+        on_progress=lambda r, c, **_kw: seen.append((r, c)),
     )
     counts = [c for _r, c in seen]
     assert counts == sorted(counts), f"output count went backwards: {counts}"
@@ -1530,7 +1547,7 @@ async def _run_progress(transport: object, stream: object) -> list[tuple[int, in
     await transport._stream_with_finish_reason(   # type: ignore[attr-defined]
         {"model": "m", "messages": []},
         on_thinking=lambda _c: None,
-        on_progress=lambda r, c: seen.append((r, c)),
+        on_progress=lambda r, c, **_kw: seen.append((r, c)),
     )
     return seen
 
@@ -1601,7 +1618,7 @@ async def test_no_usage_chunk_still_reports_the_estimate() -> None:
     await transport._stream_with_finish_reason(
         {"model": "m", "messages": []},
         on_thinking=lambda _c: None,
-        on_progress=lambda r, c: seen.append((r, c)),
+        on_progress=lambda r, c, **_kw: seen.append((r, c)),
     )
     assert seen[-1] == (0, 100), f"estimate lost: {seen[-1]}"
 
@@ -2102,3 +2119,109 @@ async def test_generate_text_streaming_branch_forwards_on_usage() -> None:
 
     assert text == "hello"
     assert seen == [(999, 5)], seen
+
+
+def test_truncated_output_is_named_as_truncation_not_a_syntax_error() -> None:
+    """A response cut off at max_completion_tokens must SAY so.
+
+    Truncation lands mid-JSON, so the decoder reports whatever token it happened to
+    stop on — 'Unterminated string', "Expecting ',' delimiter". The guidance table
+    then matches that symptom and tells the model to check its quote escaping, which
+    is wrong and unactionable: the emitted JSON was fine, there was simply no budget
+    left to finish it. finish_reason == 'length' is the provider stating the cause
+    outright, and it was being discarded.
+
+    Same failure shape the edit-guidance boilerplate was already fixed for: advice
+    matched to a symptom instead of to the cause.
+    """
+    transport, _ = _transport([])
+    truncated = '{"type": "edit", "patch_ops": [{"file": "a.py", "content": "def f(): pa'
+
+    with pytest.raises(RuntimeError) as ei:
+        transport._parse_output_object(truncated, "controller_step_response",
+                                       finish_reason="length")
+
+    assert "TRUNCATED" in str(ei.value)
+    assert "65536" not in str(ei.value)  # no invented numbers, just the cause
+
+
+def test_untruncated_parse_failure_keeps_its_own_diagnosis() -> None:
+    """finish_reason='stop' means the model finished and simply emitted bad JSON —
+    that IS a syntax error and must keep the decoder's own message."""
+    transport, _ = _transport([])
+    with pytest.raises(RuntimeError) as ei:
+        transport._parse_output_object('{"a": "b" "c"}', "s", finish_reason="stop")
+    assert "TRUNCATED" not in str(ei.value)
+
+
+def test_mid_stream_disconnect_names_the_exception_type_when_it_has_no_message() -> None:
+    """A bare httpx/SDK disconnect stringifies to "" — the message became
+    'stream failed mid-response: ' with a dangling colon and no cause, which is what
+    the model AND the logs both got. Observed live across 141 failures: the one
+    question worth answering ("what actually broke?") had no answer anywhere.
+    Fall back to the exception's class name, which is always present."""
+    class _Nameless(Exception):
+        def __str__(self) -> str:
+            return ""
+
+    from agentd.providers.openai_compatible_transport import _describe_exception
+
+    assert _describe_exception(_Nameless()) == "_Nameless"
+    assert _describe_exception(ValueError("boom")) == "boom"
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_that_cannot_emit_newlines_is_downgraded() -> None:
+    """A grammar that forbids \\n inside strings is invisible to every other guard.
+
+    Measured on NVIDIA NIM: strict json_schema produced 0 newlines and filler like
+    '<br>', '<caret>' and literally "wait need proper newline" where line breaks
+    belonged, while json_object on the same model/prompt produced them correctly.
+    The JSON is well-formed and schema-valid throughout, so nothing raises and the
+    sticky downgrade never fires — the only symptom is a written file with no line
+    breaks. Confirmed on disk: a 1001-line spec written under json_object, and a
+    0-line/256-byte plan written under strict.
+    """
+    transport, fake = _transport([json.dumps({"s": "alphabeta"})], probe_done=False)  # newline swallowed
+    await transport._ensure_newline_capability("m")
+    assert transport.json_mode == "json_object"
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_that_round_trips_a_newline_is_left_alone() -> None:
+    transport, _ = _transport([json.dumps({"s": "alpha\nbeta"})], probe_done=False)
+    await transport._ensure_newline_capability("m")
+    assert transport.json_mode == "strict"
+
+
+@pytest.mark.asyncio
+async def test_probe_runs_at_most_once_per_process() -> None:
+    transport, fake = _transport(
+        [json.dumps({"s": "alpha\nbeta"}), json.dumps({"s": "alpha\nbeta"})],
+        probe_done=False)
+    await transport._ensure_newline_capability("m")
+    await transport._ensure_newline_capability("m")
+    assert len(fake.calls) == 1, "the probe must not run per call"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_probe_never_costs_the_stronger_mode() -> None:
+    """Inconclusive is not the same as broken. A transient blip must not permanently
+    downgrade — the opposite mistake to the one this probe exists to catch."""
+    class _Boom:
+        calls: list[object] = []
+        async def create(self, **kw):
+            raise RuntimeError("connection reset")
+
+    transport = OpenAICompatibleTransport(
+        completions_client=_Boom(), base_url="https://example.test/v1", max_retries=0)
+    await transport._ensure_newline_capability("m")
+    assert transport.json_mode == "strict"
+
+
+@pytest.mark.asyncio
+async def test_probe_is_skipped_when_already_downgraded() -> None:
+    transport, fake = _transport([], probe_done=False)
+    transport._downgrade_json_mode()
+    await transport._ensure_newline_capability("m")
+    assert fake.calls == [], "nothing to probe once json_object is already in force"

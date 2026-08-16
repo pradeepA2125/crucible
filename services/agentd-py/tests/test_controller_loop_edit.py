@@ -477,4 +477,86 @@ async def test_token_progress_accumulates_across_the_whole_turn(tmp_path: Path):
     assert output == sorted(output), f"output went backwards: {output}"
 
     # Turn totals: reasoning 30 + 7, output 20 + 40.
-    assert prog[-1] == {"thinking": 37, "output": 60}, prog
+    # Subset, not dict equality: the payload also carries `input`/`exact`, and this
+    # test is about cross-call ACCUMULATION, not the payload's full shape.
+    assert prog[-1]["thinking"] == 37, prog
+    assert prog[-1]["output"] == 60, prog
+
+
+@pytest.mark.asyncio
+async def test_token_progress_carries_input_size_and_exactness(tmp_path: Path):
+    """Two gaps the counter had, both of which made a live turn unreadable.
+
+    (1) INPUT SIZE. During prefill no deltas exist, so the counter sat at zero for
+    the entire wait — a 372k-token prompt against a 262k-window model looked
+    identical to a hang. The prompt size is known before the first delta, so it is
+    reported immediately and the silence becomes legible.
+
+    (2) EXACTNESS. Live ticks are chars/4 estimates; only the final emit carries the
+    provider's own usage. They rendered identically, so a user could not tell a
+    moving guess from the settled number.
+    """
+    real = tmp_path / "ws"
+    real.mkdir()
+    reg = AggregatingToolRegistry(
+        [BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
+
+    class _ProgressEngine:
+        async def create_controller_step(self, plan_context, history, tool_definitions,
+                                         *, phase, on_thinking=None, on_retry=None,
+                                         on_progress=None, on_salvage=None,
+                                         on_usage=None, unconstrained=False):
+            if on_progress is not None:
+                on_progress(0, 0, input_n=372_000)              # prefill, nothing generated
+                on_progress(2, 5, input_n=372_000)              # live estimate
+                on_progress(2, 17, input_n=372_000, exact=True)  # provider usage
+            return {"type": "answer", "thought": "t", "answer": "done"}
+
+    bc = EventBroadcaster()
+    q = bc.subscribe("c")
+    loop = ControllerLoop(_ProgressEngine(), reg, bc, channel_id="c",
+                          phase_sm=ControllerPhaseSM())
+    await loop.run({"goal": "x", "workspace_path": str(real)}, max_iters=3,
+                   auto_accept_edits=True)
+
+    prog = [e for e in _drain(q) if e["type"] == "token_progress"]
+    assert prog, "no token_progress events"
+
+    # Input size is present from the very first tick — before any output exists.
+    assert prog[0]["payload"]["input"] == 372_000, prog[0]
+    assert prog[0]["payload"]["output"] == 0, prog[0]
+
+    # Estimated vs exact is distinguishable.
+    assert prog[1]["payload"]["exact"] is False, prog[1]
+    assert prog[-1]["payload"]["exact"] is True, prog[-1]
+    assert prog[-1]["payload"]["output"] == 17, prog[-1]
+
+
+@pytest.mark.asyncio
+async def test_token_progress_defaults_stay_backward_compatible(tmp_path: Path):
+    """A transport that only passes the two positional counts must still work —
+    `exact` defaults to False (an estimate) and `input` to None (unknown)."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    reg = AggregatingToolRegistry(
+        [BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
+
+    class _OldEngine:
+        async def create_controller_step(self, plan_context, history, tool_definitions,
+                                         *, phase, on_thinking=None, on_retry=None,
+                                         on_progress=None, on_salvage=None,
+                                         on_usage=None, unconstrained=False):
+            if on_progress is not None:
+                on_progress(1, 2)
+            return {"type": "answer", "thought": "t", "answer": "done"}
+
+    bc = EventBroadcaster()
+    q = bc.subscribe("c")
+    loop = ControllerLoop(_OldEngine(), reg, bc, channel_id="c",
+                          phase_sm=ControllerPhaseSM())
+    await loop.run({"goal": "x", "workspace_path": str(real)}, max_iters=3,
+                   auto_accept_edits=True)
+
+    prog = [e for e in _drain(q) if e["type"] == "token_progress"]
+    assert prog[-1]["payload"]["exact"] is False
+    assert prog[-1]["payload"]["input"] is None

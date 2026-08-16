@@ -17,7 +17,15 @@ migrate_legacy_dirs(Path(os.getenv("CRUCIBLE_WORKSPACE_PATH", str(Path.cwd()))))
 _agentd_logger = logging.getLogger("agentd")
 _agentd_logger.setLevel(logging.INFO)
 if not _agentd_logger.handlers:
-    _fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    # Date included, not just the clock. The log is append-only across days and the
+    # backend is restarted constantly, so a bare HH:MM:SS cannot be correlated with
+    # anything dated — artifact mtimes, a file on disk, a user's report of "this
+    # morning". Diagnosing a live incident meant guessing which day a line belonged
+    # to, and a run that spans midnight silently reorders.
+    _fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     _h_stdout = logging.StreamHandler(sys.stdout)
     _h_stdout.setFormatter(_fmt)
     _agentd_logger.addHandler(_h_stdout)
@@ -362,6 +370,27 @@ if reasoning_backend != "scripted":
 
     if provider_runtime.reasoning_effort is not None:
         app.router.add_event_handler("startup", _apply_startup_reasoning_effort)
+
+    async def _probe_newline_capability() -> None:
+        """Check once at boot whether strict json_schema can emit a newline.
+
+        A grammar that forbids \\n inside string values produces valid, schema-passing
+        JSON, so nothing raises and the sticky downgrade never fires — the only symptom
+        is every written file arriving as one line. Measured on NVIDIA NIM. Probing at
+        startup rather than lazily inside generate_json keeps it off the request path,
+        matches the other capability probes, and means the first real turn does not pay
+        for it. Best-effort: a failure leaves strict mode untouched.
+        """
+        probe = getattr(transport, "_ensure_newline_capability", None)
+        if probe is None or not _resolved_model:
+            return
+        try:
+            await probe(_resolved_model)
+        except Exception:
+            logging.getLogger("agentd.startup").debug(
+                "newline capability probe skipped", exc_info=True)
+
+    app.router.add_event_handler("startup", _probe_newline_capability)
 
 app.include_router(
     build_router(

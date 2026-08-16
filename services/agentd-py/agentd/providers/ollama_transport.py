@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -67,6 +68,12 @@ def _classify_retry_reason(exc: Exception | None) -> str:
     return "network_error"
 
 
+# Throttle for live token-progress ticks. Ollama emits one NDJSON delta per
+# token; one broadcast each would flood the SSE channel. Matches the
+# openai_compatible transport's interval so the two feel identical in the UI.
+_PROGRESS_INTERVAL_SEC = 0.15
+
+
 class OllamaJsonTransport(ModelJsonTransport):
     """JSON transport backed by a local Ollama server."""
 
@@ -74,6 +81,15 @@ class OllamaJsonTransport(ModelJsonTransport):
     # identical GBNF path as TurboQuant. llama.cpp's GBNF converter enforces oneOf
     # cleanly (no deadlock, zero cross-variant bleed), same as measured for TurboQuant.
     supports_oneof_grammar: bool = True
+
+    # Live token counting. Ollama already streams NDJSON with `content` and
+    # `thinking` separated per delta and reports exact prompt_eval_count/eval_count
+    # on the terminal chunk, so it can report progress at the same fidelity as
+    # openai_compatible. Without this flag the reasoning engine's capability gate
+    # never passes on_progress and the WorkBar's counter stays blank for the whole
+    # turn — observed live on Ollama-hosted nemotron-3-ultra, where the thinking
+    # label moved but no numbers ever appeared.
+    supports_token_progress: bool = True
 
     def __init__(
         self,
@@ -161,6 +177,7 @@ class OllamaJsonTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
         on_retry: Callable[[int, int, str, str], None] | None = None,
+        on_progress: Callable[..., None] | None = None,
     ) -> dict[str, object]:
         contents = json.dumps(user_payload)
         body = self._build_body(
@@ -173,7 +190,8 @@ class OllamaJsonTransport(ModelJsonTransport):
         # on_chunk forwards each streamed `message.thinking` delta live, as it
         # arrives — this is what lets the UI show real progress during a call that
         # can take minutes, instead of a blank "Working…" wait (see _stream_chat).
-        response = await self._call_with_retry(body, on_chunk=on_thinking, on_retry=on_retry)
+        response = await self._call_with_retry(
+            body, on_chunk=on_thinking, on_retry=on_retry, on_progress=on_progress)
         self._log_usage(model, schema_name, system_instructions, contents, response)
         output_text = self._extract_text(response)
         logger.warning("ollama raw output (%s): %s", schema_name, output_text[:600])
@@ -269,6 +287,7 @@ class OllamaJsonTransport(ModelJsonTransport):
         *,
         on_chunk: Callable[[str], None] | None = None,
         on_retry: Callable[[int, int, str, str], None] | None = None,
+        on_progress: Callable[..., None] | None = None,
     ) -> dict[str, Any]:
         """POST /api/chat (streamed) with timeout + exponential backoff on transient
         errors. See _stream_chat for the line-parsing/merge; on_chunk is threaded
@@ -300,7 +319,7 @@ class OllamaJsonTransport(ModelJsonTransport):
 
             try:
                 return await asyncio.wait_for(
-                    self._stream_chat(url, body, on_chunk),
+                    self._stream_chat(url, body, on_chunk, on_progress),
                     timeout=self._timeout_sec,
                 )
             except TimeoutError as exc:
@@ -325,6 +344,7 @@ class OllamaJsonTransport(ModelJsonTransport):
         url: str,
         body: dict[str, object],
         on_chunk: Callable[[str], None] | None,
+        on_progress: Callable[..., None] | None = None,
     ) -> dict[str, Any]:
         """Consume Ollama's streamed /api/chat response: newline-delimited JSON,
         each line a partial {message: {content, thinking}, done} object. Chunks are
@@ -345,42 +365,82 @@ class OllamaJsonTransport(ModelJsonTransport):
                 text = (await response.aread()).decode("utf-8", errors="replace")
                 raise RuntimeError(f"Ollama returned {response.status_code}: {text[:500]}")
 
-            content_parts: list[str] = []
-            thinking_parts: list[str] = []
-            final: dict[str, Any] = {}
-            saw_any_line = False
-            async for line in response.aiter_lines():
-                line = line.strip()
-                if not line:
-                    continue
-                saw_any_line = True
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                message = chunk.get("message") if isinstance(chunk, dict) else None
-                if isinstance(message, dict):
-                    c = message.get("content")
-                    if isinstance(c, str) and c:
-                        content_parts.append(c)
-                    t = message.get("thinking")
-                    if isinstance(t, str) and t:
-                        thinking_parts.append(t)
-                        if on_chunk is not None:
-                            on_chunk(t)
-                if isinstance(chunk, dict) and chunk.get("done"):
-                    final = chunk
+            return await self._stream_chat_lines(
+                response, on_chunk=on_chunk, on_progress=on_progress)
 
-            if not saw_any_line:
-                raise RuntimeError("Ollama returned an empty streamed response")
+    async def _stream_chat_lines(
+        self,
+        response: Any,
+        *,
+        on_chunk: Callable[[str], None] | None = None,
+        on_progress: Callable[..., None] | None = None,
+    ) -> dict[str, Any]:
+        """The NDJSON line loop, split out from the HTTP plumbing so it is testable
+        without a live server (and so progress counting has one home)."""
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        final: dict[str, Any] = {}
+        saw_any_line = False
+        # Characters here, tokens only at the end: the stream carries no per-delta
+        # token counts, so live ticks are ~4-chars-per-token estimates and the
+        # terminal chunk's prompt_eval_count/eval_count are the only exact numbers.
+        thinking_chars = content_chars = 0
+        last_progress = 0.0
+        async for line in response.aiter_lines():
+            line = line.strip()
+            if not line:
+                continue
+            saw_any_line = True
+            try:
+                chunk = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            message = chunk.get("message") if isinstance(chunk, dict) else None
+            if isinstance(message, dict):
+                c = message.get("content")
+                if isinstance(c, str) and c:
+                    content_parts.append(c)
+                    content_chars += len(c)
+                t = message.get("thinking")
+                if isinstance(t, str) and t:
+                    thinking_parts.append(t)
+                    thinking_chars += len(t)
+                    if on_chunk is not None:
+                        on_chunk(t)
+                # Throttled: Ollama emits a delta per token, and one broadcast each
+                # would flood the SSE channel (same reason as openai_compatible).
+                if on_progress is not None and (c or t):
+                    now = time.monotonic()
+                    if now - last_progress >= _PROGRESS_INTERVAL_SEC:
+                        last_progress = now
+                        on_progress(thinking_chars // 4, content_chars // 4,
+                                    exact=False)
+            if isinstance(chunk, dict) and chunk.get("done"):
+                final = chunk
 
-            merged: dict[str, Any] = dict(final)
-            merged["message"] = {
-                "role": "assistant",
-                "content": "".join(content_parts),
-                "thinking": "".join(thinking_parts),
-            }
-            return merged
+        if not saw_any_line:
+            raise RuntimeError("Ollama returned an empty streamed response")
+
+        # Closing tick: throttling can swallow the last update, and this is the only
+        # place exact numbers exist. eval_count is output tokens; thinking is folded
+        # into it by Ollama, so the estimate is kept for the thinking split.
+        if on_progress is not None:
+            prompt_n = final.get("prompt_eval_count")
+            eval_n = final.get("eval_count")
+            on_progress(
+                thinking_chars // 4,
+                eval_n if isinstance(eval_n, int) else content_chars // 4,
+                input_n=prompt_n if isinstance(prompt_n, int) else None,
+                exact=isinstance(eval_n, int),
+            )
+
+        merged: dict[str, Any] = dict(final)
+        merged["message"] = {
+            "role": "assistant",
+            "content": "".join(content_parts),
+            "thinking": "".join(thinking_parts),
+        }
+        return merged
 
     @staticmethod
     def _extract_text(response: dict[str, Any]) -> str:

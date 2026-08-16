@@ -172,6 +172,19 @@ def _exact_counts(
 _REASONING_DELTA_FIELDS: tuple[str, ...] = ("reasoning", "reasoning_content")
 
 
+def _describe_exception(exc: BaseException) -> str:
+    """`str(exc)`, falling back to the class name when it is empty.
+
+    httpx/SDK disconnects routinely stringify to "" — an interpolated `{exc}` then
+    produced "stream failed mid-response: ", a dangling colon naming no cause. That
+    text is what both the log and the model-facing correction carried, so across 141
+    observed failures neither a human nor the model could tell a dropped connection
+    from a timeout from a reset. The class name is never empty and is usually the
+    whole diagnosis (RemoteProtocolError vs ReadTimeout).
+    """
+    return str(exc) or type(exc).__name__
+
+
 def _first_reasoning_chunk(delta: Any) -> str | None:
     """The one non-empty reasoning chunk on a stream delta, or None.
 
@@ -383,6 +396,11 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # malformed output and ControllerLoop has its own correct-and-continue path —
         # but it IS a real robustness downgrade. Do not make it a default.
         self._json_mode: str = json_mode
+        # Whether the newline round-trip probe has run this process. See
+        # _ensure_newline_capability: strict grammars on some endpoints silently
+        # forbid \n inside string values, which is invisible to every other check
+        # because the JSON it produces is perfectly valid.
+        self._newline_probe_done: bool = False
 
         if completions_client is not None:
             self._completions: Any = completions_client
@@ -450,6 +468,74 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     _OPENAI_COMPAT_EFFORT_WIRE[self._reasoning_effort]
                 )
         return extra_body
+
+    async def _ensure_newline_capability(self, model: str) -> None:
+        """Verify strict mode can round-trip a newline; downgrade once if it cannot.
+
+        Some endpoints compile `response_format: json_schema` to a grammar that does
+        not admit the two-character \\n escape inside string values. The model wants a
+        line break, the grammar masks the token, and it emits filler instead —
+        observed live on NVIDIA NIM producing `<br>`, `<caret>` and, memorably,
+        "wait need proper newline" inside a file body.
+
+        This is invisible to every existing guard: the JSON is well-formed, the schema
+        validates, nothing raises. The damage only shows up as a written file with no
+        line breaks. So it needs its own probe rather than another parse-failure hook.
+
+        Deliberately narrow. It proves exactly ONE thing — whether \\n survives — and
+        acts only on that, unlike the existing sticky downgrade whose documented flaw
+        is collapsing "cannot honor THIS schema" into "cannot honor ANY schema". Any
+        error at all leaves the mode untouched: a transient blip must never cost the
+        stronger mode, and a token counter's worth of diagnostics is not worth failing
+        a call over.
+        """
+        if self._newline_probe_done or self._json_mode != "strict":
+            return
+        self._newline_probe_done = True  # one attempt per process, success or not
+        try:
+            probe = await self._call_with_retry({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content":
+                     "Return only JSON matching the schema. The value of `s` must "
+                     "contain a real line break, escaped as \\n."},
+                    {"role": "user", "content":
+                     '{"task": "Return {\\"s\\": \\"alpha\\\\nbeta\\"} exactly."}'},
+                ],
+                # Not 64. On a reasoning endpoint this budget is thinking + output,
+                # and a tight one is spent entirely on thinking — the probe then
+                # returns empty content and reports "inconclusive" for a reason that
+                # has nothing to do with newlines (measured live on NIM at 64).
+                # Generous relative to a 16-character answer, still trivial in cost.
+                "max_completion_tokens": 2048,
+                "temperature": 0,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "NewlineProbe", "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {"s": {"type": "string"}},
+                            "required": ["s"], "additionalProperties": False,
+                        },
+                    },
+                },
+            })
+            text = self._extract_text(probe)
+            value = str(json.loads(_strip_json_code_fences(text)).get("s", ""))
+        except Exception as exc:
+            logger.info(
+                "%s: newline capability probe was inconclusive, keeping strict "
+                "json_schema: %s", self._label, _describe_exception(exc))
+            return
+        if "\n" in value:
+            return
+        logger.warning(
+            "%s: strict json_schema on this endpoint cannot emit newlines inside "
+            "string values (probe returned %r) — downgrading to json_object for the "
+            "rest of this process. Multi-line file edits are impossible in strict "
+            "mode here.", self._label, value[:60])
+        self._downgrade_json_mode()
 
     async def _reasoning_config(self, model: str) -> tuple[bool, float]:
         """(is_reasoning, temperature). Base uses the name-substring heuristic."""
@@ -711,7 +797,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         create_kwargs, on_thinking, on_retry, on_progress, recorder
                     )
                     result = self._parse_output_object(
-                        output_text, schema_name, on_salvage)
+                        output_text, schema_name, on_salvage,
+                        finish_reason=finish_reason)
                     succeeded = True
                     return result
                 except Exception as e:
@@ -887,11 +974,16 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     )
                 await asyncio.sleep(delay)
             try:
-                output_text = await self._get_completion_text(
+                # _get_completion_OUTPUT, not _get_completion_text: the text-only view
+                # drops finish_reason on the floor, so this path — the one a downgraded
+                # process lives in permanently — could never tell a truncated response
+                # from a malformed one, and reported the wrong cause every time.
+                output_text, fb_finish_reason = await self._get_completion_output(
                     fallback_kwargs, on_thinking, on_retry, on_progress, on_usage
                 )
                 return self._parse_output_object(
-                    output_text, schema_name, on_salvage)
+                    output_text, schema_name, on_salvage,
+                    finish_reason=fb_finish_reason)
             except TransientTransportError as e2:
                 # MUST precede `except RuntimeError` — TransientTransportError is a
                 # RuntimeError subclass, so the base handler would shadow it.
@@ -1129,6 +1221,17 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             try:
                 content_parts: list[str] = []
                 finish_reason: str | None = None
+                # Prompt size, known before a single delta arrives. Prefill is most of
+                # the wall time on a large prompt and produces no deltas at all, so
+                # without this the counter reads zero for minutes and a slow call is
+                # indistinguishable from a wedged one. Estimated from the request we are
+                # about to send; the provider's exact prompt_tokens replaces it on the
+                # closing tick when reported.
+                input_n: int | None = _approx_tokens(
+                    sum(len(str(m.get("content", ""))) for m in kwargs.get("messages", []))
+                ) or None
+                if on_progress is not None and input_n:
+                    on_progress(0, 0, input_n=input_n, exact=False)
                 # Characters, not deltas — see _approx_tokens.
                 reasoning_chars = content_chars = 0
                 usage_payload: Any = None
@@ -1183,11 +1286,14 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         if now - last_progress >= _PROGRESS_INTERVAL_SEC:
                             last_progress = now
                             if reasoning_tokens or content_tokens:
-                                on_progress(reasoning_tokens, content_tokens)
+                                on_progress(reasoning_tokens, content_tokens,
+                                            input_n=input_n, exact=False)
                             else:
                                 on_progress(
                                     _approx_tokens(reasoning_chars),
                                     _approx_tokens(content_chars),
+                                    input_n=input_n,
+                                    exact=False,
                                 )
                 # Final emit: throttling can swallow the last tick, and the closing
                 # number is the one a user actually reads. It also carries the only
@@ -1197,6 +1303,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # per-delta token counts, so there is nothing exact to show until
                 # the stream ends.
                 if on_progress is not None and (reasoning_chars or content_chars):
+                    # The provider's own prompt count beats our estimate when present.
+                    reported_prompt = _usage_prompt_tokens(usage_payload) if usage_payload else None
+                    final_input = reported_prompt or input_n
                     if reasoning_tokens or content_tokens:
                         # Per-chunk attribution ran. The closing chunk carries
                         # neither phase, so its tokens are unattributed — content
@@ -1204,7 +1313,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         # own total rather than drifting a few tokens under it.
                         if usage_total is not None:
                             content_tokens = max(0, usage_total - reasoning_tokens)
-                        on_progress(reasoning_tokens, content_tokens)
+                        on_progress(reasoning_tokens, content_tokens,
+                                    input_n=final_input, exact=usage_total is not None)
                     else:
                         exact = (
                             _exact_counts(usage_payload, reasoning_chars, content_chars)
@@ -1212,11 +1322,13 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                             else None
                         )
                         if exact is not None:
-                            on_progress(*exact)
+                            on_progress(*exact, input_n=final_input, exact=True)
                         else:
                             on_progress(
                                 _approx_tokens(reasoning_chars),
                                 _approx_tokens(content_chars),
+                                input_n=final_input,
+                                exact=False,
                             )
                 # Accounting, not display: one call, unthrottled, and only when the
                 # endpoint actually reported. A zero here would be indistinguishable
@@ -1250,7 +1362,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # This is the PRIMARY chat path: every controller turn passes
                 # on_thinking, so every controller turn streams.
                 raise TransientTransportError(
-                    f"{self._label} stream failed mid-response: {exc}"
+                    f"{self._label} stream failed mid-response: "
+                    f"{_describe_exception(exc)}"
                 ) from exc
 
         assert last_exc is not None
@@ -1320,6 +1433,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
 
     def _parse_output_object(
         self, output_text: str, schema_name: str, on_salvage: Any = None,
+        finish_reason: str | None = None,
     ) -> dict[str, object]:
         payload_text = _strip_json_code_fences(output_text)
         try:
@@ -1373,6 +1487,19 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             # Those transports carry file content in JSON strings too and have the
             # same latent bug. Report the payload AS THE MODEL WROTE IT — it can only
             # fix what it actually emitted.
+            # finish_reason == "length" is the provider telling us the cause outright:
+            # the output ran out of budget mid-object. Without this the decoder's
+            # symptom ("Unterminated string", "Expecting ',' delimiter") is all the
+            # caller sees, and the guidance table matches THAT — advising the model to
+            # fix quote escaping in JSON that was never malformed, only unfinished.
+            # Name the cause first so the correction can be acted on.
+            if finish_reason == "length":
+                raise RuntimeError(
+                    f"{self._label} output for {schema_name} was TRUNCATED — the "
+                    f"response hit the output token budget before the JSON was "
+                    f"finished ({exc}). The JSON itself was not malformed, there was "
+                    f"no room left to complete it."
+                ) from exc
             raise RuntimeError(
                 f"{self._label} output is not valid JSON for {schema_name} "
                 f"({exc}). Near the error: {_error_window(payload_text, exc.pos)}"
