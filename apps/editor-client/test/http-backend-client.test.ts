@@ -959,3 +959,74 @@ describe("HttpBackendClient reasoning effort", () => {
     expect(res.reasoningEffortNote).toContain("unavailable");
   });
 });
+
+describe("HttpBackendClient rewind", () => {
+  test("getChatThread preserves the message id (the rewind anchor)", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient(
+      {
+        thread_id: "chat-1",
+        workspace_path: "/ws",
+        title: "t",
+        messages: [
+          { role: "user", content: "hi", type: "text", id: "m1",
+            timestamp: "2026-08-16T00:00:00Z", metadata: {} },
+          { role: "agent", content: "yo", type: "text",
+            timestamp: "2026-08-16T00:00:01Z", metadata: {} },
+        ],
+        touched_files: [],
+      },
+      captured
+    );
+    const thread = await client.getChatThread("chat-1");
+    expect(thread.messages[0].id).toBe("m1");
+    expect(thread.messages[1].id).toBeNull();
+  });
+
+  test("maps rewind preview snake_case to camelCase", async () => {
+    const captured: { body?: string } = {};
+    let url = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (u, init) => {
+        url = String(u);
+        captured.body = (init?.body as string) ?? "";
+        return new Response(
+          JSON.stringify({
+            messages: 3, files: 2, commands_run: 1, blocked_by_task: null,
+            sessions: [{ id: "s1", command: "npm test" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+    });
+
+    const preview = await client.previewRewind("chat-1", "m1");
+
+    expect(preview.commandsRun).toBe(1);
+    expect(preview.blockedByTask).toBeNull();
+    expect(preview.sessions[0].command).toBe("npm test");
+    expect(url).toContain("/v1/chat/threads/chat-1/rewind-preview?message_id=m1");
+  });
+
+  test("maps rewind result snake_case to camelCase", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient(
+      {
+        restored_files: ["a.py"], deleted_files: [], oversize_files: [],
+        failed: [{ path: "b.py", error: "boom" }],
+        removed_messages: 2, prefill_text: "do it", retired_memories: 4,
+      },
+      captured
+    );
+
+    const result = await client.rewindThread("chat-1", "m1");
+
+    expect(result.restoredFiles).toEqual(["a.py"]);
+    expect(result.removedMessages).toBe(2);
+    expect(result.prefillText).toBe("do it");
+    expect(result.retiredMemories).toBe(4);
+    expect(result.failed[0].path).toBe("b.py");
+    expect(JSON.parse(captured.body ?? "{}").message_id).toBe("m1");
+  });
+});

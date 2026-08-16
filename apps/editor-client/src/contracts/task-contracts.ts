@@ -266,6 +266,33 @@ export const ChatThreadSchema = z.object({
 });
 export type ChatThread = z.infer<typeof ChatThreadSchema>;
 
+// ── Chat rewind ───────────────────────────────────────────────────────────
+// A rewind is destructive, so preview and execute are separate calls: the confirm
+// dialog cannot be built from a request that already did the work.
+
+export const RewindPreviewSchema = z.object({
+  messages: z.number(),
+  files: z.number(),
+  commandsRun: z.number(),
+  // Non-null means the POST will 409 — a task in the span is still running.
+  blockedByTask: z.string().nullable().default(null),
+  // Named, never killed: exec sessions are background shells.
+  sessions: z.array(z.object({ id: z.string(), command: z.string() })).default([]),
+});
+export type RewindPreview = z.infer<typeof RewindPreviewSchema>;
+
+export const RewindResultSchema = z.object({
+  restoredFiles: z.array(z.string()).default([]),
+  deletedFiles: z.array(z.string()).default([]),
+  // Captured-as-too-large: reported as not restored rather than restored wrong.
+  oversizeFiles: z.array(z.string()).default([]),
+  failed: z.array(z.object({ path: z.string(), error: z.string() })).default([]),
+  removedMessages: z.number(),
+  prefillText: z.string().default(""),
+  retiredMemories: z.number().default(0),
+});
+export type RewindResult = z.infer<typeof RewindResultSchema>;
+
 export const ChatEventSchema = z.object({
   type: z.string(),
   payload: z.record(z.unknown()).default({}),
@@ -488,6 +515,8 @@ export interface BackendTaskClient {
   listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]>;
   createChatThread(workspacePath: string, title?: string): Promise<ChatThreadSummary>;
   getChatThread(threadId: string): Promise<ChatThread>;
+  previewRewind(threadId: string, messageId: string): Promise<RewindPreview>;
+  rewindThread(threadId: string, messageId: string): Promise<RewindResult>;
   getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
   getSessionTranscript(threadId: string, sessionId: string): Promise<SessionTranscript>;
   getConfig(): Promise<BackendConfig>;

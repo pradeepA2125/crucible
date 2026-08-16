@@ -9,6 +9,10 @@ import {
   CommandDecisionResponseSchema,
   ChatThreadSummarySchema,
   ChatThreadSchema,
+  RewindPreviewSchema,
+  RewindResultSchema,
+  type RewindPreview,
+  type RewindResult,
   ChatEventSchema,
   ThreadLiveStateSchema,
   SessionTranscriptSchema,
@@ -520,6 +524,9 @@ export class HttpBackendClient implements BackendTaskClient {
         role: m["role"],
         content: m["content"],
         type: m["type"] ?? "text",
+        // The rewind anchor. This mapping is explicit, not passthrough — omitting
+        // the field here silently drops it no matter what the schema allows.
+        id: m["id"] ?? null,
         taskId: m["task_id"] ?? null,
         timestamp: typeof m["timestamp"] === "string"
           ? m["timestamp"]
@@ -594,6 +601,36 @@ export class HttpBackendClient implements BackendTaskClient {
         ? { reasoningEffortSupport: p["reasoning_effort_support"] }
         : {}),
     };
+  }
+
+  async previewRewind(threadId: string, messageId: string): Promise<RewindPreview> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/rewind-preview`
+      + `?message_id=${encodeURIComponent(messageId)}`
+    ) as Record<string, unknown>;
+    return RewindPreviewSchema.parse({
+      messages: raw["messages"],
+      files: raw["files"],
+      commandsRun: raw["commands_run"],
+      blockedByTask: raw["blocked_by_task"] ?? null,
+      sessions: raw["sessions"] ?? [],
+    });
+  }
+
+  async rewindThread(threadId: string, messageId: string): Promise<RewindResult> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/rewind`,
+      { method: "POST", body: JSON.stringify({ message_id: messageId }) }
+    ) as Record<string, unknown>;
+    return RewindResultSchema.parse({
+      restoredFiles: raw["restored_files"] ?? [],
+      deletedFiles: raw["deleted_files"] ?? [],
+      oversizeFiles: raw["oversize_files"] ?? [],
+      failed: raw["failed"] ?? [],
+      removedMessages: raw["removed_messages"],
+      prefillText: raw["prefill_text"] ?? "",
+      retiredMemories: raw["retired_memories"] ?? 0,
+    });
   }
 
   async listSkills(workspace: string): Promise<SkillSummary[]> {
