@@ -205,6 +205,19 @@ def _reserved_tool_name_correction(resp: dict[str, object], atype: str) -> str |
 # Matched against json.JSONDecodeError's message text, which the transport now
 # interpolates into the exception it raises.
 _PARSE_GUIDANCE: tuple[tuple[str, str], ...] = (
+    # FIRST on purpose. Truncation stops mid-object, so the decoder reports whatever
+    # token it happened to land on — 'Unterminated string', "Expecting ','" — and any
+    # of the symptom matchers below would otherwise claim it first and hand back
+    # advice about quote escaping for JSON that was never malformed, only unfinished.
+    # The transport only emits this marker when the provider itself said
+    # finish_reason == "length", so it is a stated cause, not an inference.
+    ("was TRUNCATED", (
+        "Your response was cut off by the output token budget before the JSON was "
+        "complete — the JSON you emitted was not malformed, there was simply no room "
+        "left to finish it. Do NOT re-send the same thing: it will be cut at the same "
+        "point. Emit a SMALLER response — write one file instead of several, split a "
+        "large file across multiple edits in separate turns, or shorten the body you "
+        "were about to write.")),
     ("Invalid control character", (
         "A string value contains a literal newline, tab or control character. Inside "
         "JSON these MUST be escaped as \\n and \\t — never written raw. This usually "
