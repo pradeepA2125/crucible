@@ -159,16 +159,21 @@ class RewindStore:
         return [c for c in self._store.list_checkpoints(thread_id) if c.seq >= target.seq]
 
     @staticmethod
-    def _fold(span: list[Checkpoint]) -> dict[str, CapturedFile]:
-        """Fold the span into one entry per path, FIRST-SEEN WINS.
+    def _fold(span: list[Checkpoint]) -> dict[str, tuple[int, CapturedFile]]:
+        """Fold the span into one (seq, entry) per path, FIRST-SEEN WINS.
 
         The oldest recorded pre-state is the correct one to restore; this is what makes
         multi-turn rewind correct without storing a full workspace snapshot per turn.
+
+        The seq travels WITH the entry deliberately. Restoring once re-derived the owning
+        checkpoint separately ("the first one containing this path"), which agreed with
+        the entry only because both meant "first" — two derivations of one fact, free to
+        drift into restoring one checkpoint's flags with another's bytes.
         """
-        folded: dict[str, CapturedFile] = {}
+        folded: dict[str, tuple[int, CapturedFile]] = {}
         for cp in span:
             for f in cp.files:
-                folded.setdefault(f.path, f)
+                folded.setdefault(f.path, (cp.seq, f))
         return folded
 
     def preview(self, thread_id: str, anchor_message_id: str) -> RewindPreview | None:
@@ -202,15 +207,14 @@ class RewindStore:
 
         # 1. Files. Per-path failures are COLLECTED, never raised: a rewind that
         #    half-worked must report it rather than stop silently partway.
-        for path, entry in self._fold(span).items():
-            # The checkpoint that captured this path is the one holding its bytes.
-            owner = next(cp for cp in span if any(f.path == path for f in cp.files))
+        for path, (seq, entry) in self._fold(span).items():
             try:
                 real = self._root / path
                 if entry.oversize:
                     outcome.oversize_files.append(path)
                 elif entry.existed:
-                    stored = self._files_dir(thread_id, owner.seq) / path
+                    # Same checkpoint the entry came from — flags and bytes cannot diverge.
+                    stored = self._files_dir(thread_id, seq) / path
                     real.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(stored, real)
                     outcome.restored_files.append(path)
