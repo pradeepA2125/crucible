@@ -4,6 +4,7 @@ import {
   RecallTraceSchema,
   MemoryViewSchema,
   BackendConfigSchema,
+  ChatMessageSchema,
 } from "../src/contracts/task-contracts.js";
 
 describe("schema validation", () => {
@@ -102,5 +103,19 @@ describe("memory inspector schemas (Phase 3-B)", () => {
       mcpEnabled: false,
     });
     expect(c.memoryEnabled).toBe(true);
+  });
+
+  test("accepts a chat message with no id (pre-rewind message)", () => {
+    const parsed = ChatMessageSchema.parse({
+      role: "user", content: "hi", timestamp: "2026-08-16T00:00:00Z",
+    });
+    expect(parsed.id).toBeUndefined();
+  });
+
+  test("preserves a chat message id when present", () => {
+    const parsed = ChatMessageSchema.parse({
+      role: "user", content: "hi", timestamp: "2026-08-16T00:00:00Z", id: "abc123",
+    });
+    expect(parsed.id).toBe("abc123");
   });
 });

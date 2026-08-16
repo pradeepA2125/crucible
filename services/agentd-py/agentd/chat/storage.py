@@ -213,7 +213,10 @@ class ChatThreadStore:
         )
         self._conn.commit()
 
-    def append_message(self, thread_id: str, message: ChatMessage) -> None:
+    def append_message(self, thread_id: str, message: ChatMessage) -> str | None:
+        """Append a message, stamping it with a rewind anchor id. Returns that id."""
+        if message.id is None:
+            message = message.model_copy(update={"id": uuid.uuid4().hex})
         row = self._conn.execute(
             "SELECT messages_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
         ).fetchone()
@@ -224,6 +227,7 @@ class ChatThreadStore:
             (json.dumps(messages), thread_id),
         )
         self._conn.commit()
+        return message.id
 
     def upsert_inflight_pills(
         self,

@@ -29,6 +29,12 @@ class IntentClassification(BaseModel):
 class ChatMessage(BaseModel):
     role: Literal["user", "agent"]
     content: str
+    # Stable per-message anchor for chat rewind. Deliberately nullable with NO
+    # default_factory: model_validate runs against raw dicts out of messages_json,
+    # so a factory would mint a fresh random id on every read of every message
+    # persisted before this feature existed. Nullable means those carry None and
+    # simply do not offer a rewind anchor.
+    id: str | None = None
     type: Literal["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card"] = "text"
     task_id: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

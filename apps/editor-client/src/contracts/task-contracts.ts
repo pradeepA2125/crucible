@@ -235,6 +235,8 @@ export type PatchStreamEvent = StreamEvent;
 export const ChatMessageSchema = z.object({
   role: z.enum(["user", "agent"]),
   content: z.string(),
+  // Stable rewind anchor. Absent/null on messages persisted before rewind shipped.
+  id: z.string().nullable().optional(),
   type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card", "validation_card", "command_card"]).default("text"),
   taskId: z.string().nullable().optional(),
   timestamp: z.string(),

@@ -11,6 +11,8 @@ export interface ModelOption {
 export interface ChatMsg {
   role: "user" | "agent";
   content: string;
+  /** Stable rewind anchor. Absent/null on messages persisted before rewind shipped. */
+  id?: string | null;
   type: "text" | "plan_card" | "diff_card" | "diff_summary" | "task_card"
       | "scope_card" | "validation_card" | "command_card";
   taskId?: string | null;
