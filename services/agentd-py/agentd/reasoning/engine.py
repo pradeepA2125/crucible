@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Callable
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from agentd.domain.models import (
@@ -60,6 +62,36 @@ def _chat_debug_dump(
         )
     except Exception:
         pass
+
+
+@lru_cache(maxsize=64)
+def _generate_json_params(fn: object) -> frozenset[str] | None:
+    """The kwarg names a transport's generate_json declares; None = accepts anything.
+
+    Cached on the bound method, so signature inspection happens once per transport
+    rather than on every model call.
+    """
+    try:
+        params = inspect.signature(fn).parameters  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None  # un-inspectable (C callable, mock): assume it copes
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return None  # **kwargs: everything is accepted
+    return frozenset(params)
+
+
+def _accepts(transport: object, name: str) -> bool:
+    """True when the transport's generate_json declares `name`.
+
+    Asking the callee beats a hand-maintained capability flag: a flag that gates
+    several kwargs at once means declaring one capability silently promises all of
+    them, and the promise is only checked at runtime, on a real turn.
+    """
+    fn = getattr(transport, "generate_json", None)
+    if fn is None:
+        return False
+    params = _generate_json_params(fn)
+    return params is None or name in params
 
 
 class DefaultReasoningEngine(ReasoningEngine):
@@ -306,28 +338,26 @@ class DefaultReasoningEngine(ReasoningEngine):
             user_payload=user_payload,
             on_thinking=on_thinking,
             on_retry=on_retry,
-            # Capability-gated: only openai_compatible advertises this, so the other
-            # eight transports never see an unexpected kwarg (same getattr-defensive
-            # idiom as supports_oneof_grammar above).
+            # Forwarded only when the transport's own signature declares them.
+            #
+            # These four were once gated on a single `supports_token_progress` flag, so
+            # setting that flag silently promised FOUR kwargs. TurboQuant sets it and
+            # accepts on_progress but not the rest, so every controller turn on it died
+            # with "unexpected keyword argument 'on_usage'" after the retry budget —
+            # found only by driving a real turn, because scripted test transports take
+            # **kwargs and swallow the mismatch. Asking the callee what it accepts
+            # cannot drift the way a hand-maintained flag can.
             **({"on_progress": on_progress}
-               if on_progress is not None
-               and getattr(self._transport, "supports_token_progress", False)
+               if on_progress is not None and _accepts(self._transport, "on_progress")
                else {}),
-            # Same capability gate as on_progress: only openai_compatible reports
-            # usage, and the other eight transports must not see the kwarg.
             **({"on_usage": on_usage}
-               if on_usage is not None
-               and getattr(self._transport, "supports_token_progress", False)
+               if on_usage is not None and _accepts(self._transport, "on_usage")
                else {}),
-            # Same capability gate: only openai_compatible salvages a trailing action.
             **({"on_salvage": on_salvage}
-               if on_salvage is not None
-               and getattr(self._transport, "supports_token_progress", False)
+               if on_salvage is not None and _accepts(self._transport, "on_salvage")
                else {}),
-            # Same capability gate — only openai_compatible has the escape hatch.
             **({"unconstrained": True}
-               if unconstrained
-               and getattr(self._transport, "supports_token_progress", False)
+               if unconstrained and _accepts(self._transport, "unconstrained")
                else {}),
         )
         result = result if isinstance(result, dict) else {}

@@ -309,6 +309,7 @@ class ChatController:
         forced_skills: list[str] | None = None,
         mentioned_files: list[dict[str, str]] | None = None,
         plan_mode: bool | None = None,
+        message_id: str | None = None,
     ) -> None:
         thread = self._store.get_thread(thread_id)
         if thread is None:
@@ -345,8 +346,13 @@ class ChatController:
         # One id for this turn's in-flight pills message AND its rewind checkpoint.
         # Assigned here (not just before _run_loop) because open_checkpoint needs it.
         turn_id = uuid4().hex
+        # The client may supply the id: the webview echoes the user's message
+        # optimistically, before this call persists it, so letting it choose the id keeps
+        # the echoed bubble and the stored message in agreement — otherwise the echo has
+        # no rewind anchor and the affordance is missing on the message you just sent
+        # until the thread is reloaded. None (any other client) still gets a fresh uuid.
         anchor_message_id = self._store.append_message(thread_id, ChatMessage(
-            role="user", content=message,
+            role="user", content=message, id=message_id,
             metadata={"mentioned_files": mentioned_paths} if mentioned_paths else {}))
         if self._rewind is not None and anchor_message_id is not None:
             # `thread` is the object read at the top of this function — pre-turn history,

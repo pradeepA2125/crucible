@@ -311,6 +311,7 @@ class TurboQuantTransport(ModelJsonTransport):
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
         on_progress: Callable[..., None] | None = None,
+        on_usage: Callable[[int, int], None] | None = None,
         on_retry: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, object]:
         # Constrained decoding: when thinking is OFF (our default) we send the schema as
@@ -343,7 +344,7 @@ class TurboQuantTransport(ModelJsonTransport):
                 )
                 await asyncio.sleep(delay)
             try:
-                thinking_buf, output_text = await self._stream_with_retry(body, schema_name, on_thinking, on_progress)
+                thinking_buf, output_text = await self._stream_with_retry(body, schema_name, on_thinking, on_progress, on_usage)
                 if thinking_buf:
                     logger.info("turboquant think (%s): %s", schema_name, thinking_buf[:300])
                 logger.info(
@@ -437,6 +438,7 @@ class TurboQuantTransport(ModelJsonTransport):
         schema_name: str,
         on_thinking: Callable[[str], None] | None,
         on_progress: Callable[..., None] | None = None,
+        on_usage: Callable[[int, int], None] | None = None,
     ) -> tuple[str, str]:
         """Stream a completion. Returns (thinking_content, output_content)."""
         stream_body = {**body, "stream": True}
@@ -493,6 +495,20 @@ class TurboQuantTransport(ModelJsonTransport):
                                 schema_name, tm.get("prompt_n"), tm.get("cache_n"),
                                 tm.get("prompt_ms", 0.0), tm.get("predicted_n"),
                             )
+                            # The provider's own count, so the UI can stop showing an
+                            # estimate. llama.cpp splits the prompt into tokens it had
+                            # to evaluate (prompt_n) and tokens served from the KV
+                            # prefix cache (cache_n) — the real prompt size is BOTH,
+                            # and reporting only prompt_n would undercount a cached
+                            # turn to near zero.
+                            if on_usage is not None:
+                                try:
+                                    on_usage(
+                                        int(tm.get("prompt_n") or 0) + int(tm.get("cache_n") or 0),
+                                        int(tm.get("predicted_n") or 0),
+                                    )
+                                except Exception:  # telemetry must never kill a stream
+                                    logger.debug("on_usage callback failed", exc_info=True)
                         choices = chunk.get("choices")
                         if not choices:
                             continue

@@ -88,3 +88,34 @@ async def test_session_without_checkpoint_cb_still_works(tmp_path):
                                     "search": "before", "replace": "after", "reason": "r"}])
     await session.close()
     assert [e.path for e in entries] == ["a.py"]
+
+
+@pytest.mark.asyncio
+async def test_client_supplied_message_id_becomes_the_anchor(tmp_path):
+    """The webview echoes the user's message optimistically, before the server has
+    persisted it. Without a client-supplied id that echo carries none, so the rewind
+    affordance is missing on the very message you just sent until a reload — found by
+    driving a real turn in the dev host."""
+    from agentd.chat.controller import ChatController
+    from agentd.orchestrator.broadcaster import EventBroadcaster
+    from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+
+    store = ChatThreadStore(tmp_path / "chat.sqlite3")
+    thread = store.create_thread(str(tmp_path), title="t")
+    rewind = RewindStore(store, tmp_path)
+    ctrl = ChatController(
+        workspace_path=str(tmp_path),
+        reasoning_engine=ScriptedReasoningEngine(
+            None, [], controller_step_responses=[
+                {"type": "answer", "thought": "t", "answer": "hello"}]),
+        thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
+        retrieval_client=None, rewind_store=rewind)
+
+    await ctrl.handle_message(thread.thread_id, "hi", channel_id="c1",
+                              message_id="client-chosen-id")
+
+    reloaded = store.get_thread(thread.thread_id)
+    user_msg = next(m for m in reloaded.messages if m.role == "user")
+    assert user_msg.id == "client-chosen-id"
+    checkpoints = store.list_checkpoints(thread.thread_id)
+    assert checkpoints[0].anchor_message_id == "client-chosen-id"

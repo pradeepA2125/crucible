@@ -807,7 +807,7 @@ export class HttpBackendClient implements BackendTaskClient {
     return raw.map((m) => MemoryViewSchema.parse(mapMemoryView(m)));
   }
 
-  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[]; mentionedFiles?: { path: string; content: string }[]; planMode?: boolean }): AsyncIterable<StreamEvent> {
+  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[]; mentionedFiles?: { path: string; content: string }[]; planMode?: boolean; messageId?: string }): AsyncIterable<StreamEvent> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
       {
@@ -823,6 +823,9 @@ export class HttpBackendClient implements BackendTaskClient {
             ? { mentioned_files: options.mentionedFiles }
             : {}),
           ...(options?.planMode !== undefined ? { plan_mode: options.planMode } : {}),
+          // Lets the caller's optimistic echo share the persisted message's id, so a
+          // rewind anchor exists on the message you just sent without a reload.
+          ...(options?.messageId ? { message_id: options.messageId } : {}),
         }),
         signal: signal ?? null,
       }

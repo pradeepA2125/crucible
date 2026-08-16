@@ -19,6 +19,7 @@ import type {
 import * as path from "path";
 import type { MemoryDataSource } from "./memory-data.js";
 import { listPromptNames, loadPromptBody, substitutePrompt } from "./prompt-files.js";
+import { randomUUID } from "crypto";
 import { readMentionedFiles } from "./mentioned-files.js";
 import { buildReviewFileEntries } from "./review-files.js";
 import { SessionStore } from "./session-store.js";
@@ -703,10 +704,16 @@ export class CrucibleController {
         ? readMentionedFiles(workspacePath, mentionedPaths)
         : undefined;
 
+    // The echoed bubble and the persisted message must share an id, or the rewind
+    // affordance is missing on the message you just sent until the thread reloads
+    // (the same optimistic-echo gap that once hid @-mention links). We choose the id
+    // here and hand it to the backend, which honours it.
+    const messageId = randomUUID().replace(/-/g, "");
     this.ui.appendChatMessage({
       role: "user",
       content: text,
       type: "text",
+      id: messageId,
       timestamp: this.now(),
       metadata: mentionedPaths?.length ? { mentioned_files: mentionedPaths } : {},
     });
@@ -718,14 +725,13 @@ export class CrucibleController {
         threadId,
         text,
         this.turnAbort.signal,
-        stepReview !== undefined || forcedSkills?.length || mentionedFiles?.length || planMode !== undefined
-          ? {
-              ...(stepReview !== undefined ? { stepReview } : {}),
-              ...(forcedSkills?.length ? { forcedSkills } : {}),
-              ...(mentionedFiles?.length ? { mentionedFiles } : {}),
-              ...(planMode !== undefined ? { planMode } : {}),
-            }
-          : undefined,
+        {
+          ...(stepReview !== undefined ? { stepReview } : {}),
+          ...(forcedSkills?.length ? { forcedSkills } : {}),
+          ...(mentionedFiles?.length ? { mentionedFiles } : {}),
+          ...(planMode !== undefined ? { planMode } : {}),
+          messageId,
+        },
       ),
     );
   }

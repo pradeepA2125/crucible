@@ -1471,6 +1471,10 @@ def build_router(
 
         @router.post("/chat/threads/{thread_id}/message")
         async def post_chat_message(thread_id: str, request: dict) -> StreamingResponse:
+            # Client-chosen id keeps the webview's optimistic echo and the persisted
+            # message in agreement, so the rewind anchor exists without a reload.
+            _message_id = request.get("message_id")
+            _message_id = _message_id if isinstance(_message_id, str) and _message_id else None
             import asyncio as _asyncio_chat
             import json as _json
             message = request.get("content") or request.get("message", "")
@@ -1511,7 +1515,8 @@ def build_router(
                     _chat_agent.handle_message(
                         thread_id, message, channel_id=channel_id,
                         step_review=step_review, forced_skills=forced_skills,
-                        mentioned_files=mentioned_files, plan_mode=plan_mode),
+                        mentioned_files=mentioned_files, plan_mode=plan_mode,
+                        message_id=_message_id),
                     channel_id=channel_id,
                 )
                 queue = _chat_agent._broadcaster.subscribe(channel_id)
