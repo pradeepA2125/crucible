@@ -42,6 +42,19 @@ def read_lock(workspace: str | Path) -> LockInfo | None:
 
 
 def clear_lock(workspace: str | Path) -> None:
+    """Remove OUR lock. A lock recorded by a different pid is left alone.
+
+    The ownership check is not defensive padding — it is the whole correctness of
+    this function when more than one backend shares a workspace. Observed live: two
+    stale backends and one live backend all had CRUCIBLE_WORKSPACE_PATH pointing at
+    the same directory, so killing a stale one ran its shutdown hook and deleted the
+    LIVE backend's lockfile. The extension then found no lock, spawned another
+    backend, and orphaned the healthy one — turning a cleanup into exactly the
+    duplicate-backend state this file exists to prevent.
+    """
+    info = read_lock(workspace)
+    if info is not None and info.pid != os.getpid():
+        return
     try:
         _lock_path(workspace).unlink()
     except OSError:
