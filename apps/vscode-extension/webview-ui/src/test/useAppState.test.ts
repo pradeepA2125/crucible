@@ -439,7 +439,7 @@ describe("useAppState", () => {
   // token_progress is throttled to ~6.7/sec, so the counter was nulled ~4x for
   // every time it was set — a strobe, not a readable number.
 
-  const PROGRESS = { thinking: 147, output: 32 };
+  const PROGRESS = { thinking: 147, output: 32, input: 372_000, exact: false };
 
   it.each([
     ["appendThinkingChunk", { type: "appendThinkingChunk", chunk: "reasoning" }],
@@ -478,7 +478,12 @@ describe("useAppState", () => {
     expect(result.current.state.tokenProgress).toBeNull();
   });
 
-  it("liveStatus controllerTurnEnded clears tokenProgress", () => {
+  it("liveStatus controllerTurnEnded KEEPS tokenProgress (final count must stay readable)", () => {
+    // Reversed deliberately. The closing tick carries the provider's exact usage —
+    // the only non-estimated number in the whole call. Clearing it at turn end
+    // unmounted it the instant it became correct, so the figure flashed and vanished
+    // and "what did that turn cost?" had no answer. The host now clears at the NEXT
+    // turn's start, which still prevents a stale count carrying across turns.
     const { result } = renderHook(() => useAppState());
 
     act(() => {
@@ -487,6 +492,6 @@ describe("useAppState", () => {
       fireMessage({ type: "liveStatus", status: null, turnActive: false });
     });
 
-    expect(result.current.state.tokenProgress).toBeNull();
+    expect(result.current.state.tokenProgress).toEqual(PROGRESS);
   });
 });

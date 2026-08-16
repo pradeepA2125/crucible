@@ -537,7 +537,14 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "updateRetryStatus", status });
   }
 
-  updateTokenProgress(progress: { thinking: number; output: number } | null): void {
+  updateTokenProgress(
+    progress: {
+      thinking: number;
+      output: number;
+      input: number | null;
+      exact: boolean;
+    } | null,
+  ): void {
     this.panel?.webview.postMessage({ type: "updateTokenProgress", progress });
   }
 

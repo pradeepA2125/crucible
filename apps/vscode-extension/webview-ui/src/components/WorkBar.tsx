@@ -1,5 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import type { WorkbarInfo, TokenProgressView } from "../types";
+import {
+  statusWordAt,
+  stallMessage,
+  formatTokens,
+  STALL_THRESHOLD_SEC,
+} from "../statusWords";
 
 // Status-to-label map (tier 3 of the label precedence hierarchy).
 const STATUS_LABELS: Record<string, string> = {
@@ -46,23 +52,44 @@ function formatCount(n: number): string {
  * indicator rather than a billing figure.
  */
 function TokenCounter({ progress }: { progress: TokenProgressView }) {
-  const { thinking, output } = progress;
-  if (!thinking && !output) return null;
+  const { thinking, output, input, exact } = progress;
+  // `input` alone is worth rendering: during prefill it is the ONLY number that
+  // exists, and it is precisely the window that used to look like a hang.
+  if (!thinking && !output && !input) return null;
+
+  // Estimated counts are marked with `~` and dimmed; the exact closing figure is
+  // shown plain and solid. Without this the live guess and the provider's real
+  // usage were visually identical, so a moving number and a settled one read the
+  // same — you could not tell whether what you were looking at was final.
+  const tilde = exact ? "" : "~";
+  const dim = exact ? "var(--color-text-3)" : "var(--color-text-4)";
+  const suffix = exact ? "reported by provider" : "approximate, still streaming";
+
   return (
     <span
       className="flex-shrink-0 flex items-center gap-2 font-mono tabular-nums"
-      style={{ fontSize: "10px", color: "var(--color-text-4)" }}
-      aria-label={`${thinking} thinking tokens, ${output} output tokens`}
+      style={{ fontSize: "10px", color: dim }}
+      aria-label={
+        `${input ?? 0} input tokens, ${thinking} thinking tokens, ` +
+        `${output} output tokens (${exact ? "exact" : "estimated"})`
+      }
     >
+      {input ? (
+        <span title={`prompt size (${suffix})`}>↑ {formatTokens(input)}</span>
+      ) : null}
       {thinking > 0 && (
-        <span title="reasoning tokens (approximate)">🧠 {formatCount(thinking)}</span>
+        <span title={`reasoning tokens (${suffix})`}>
+          🧠 {tilde}
+          {formatCount(thinking)}
+        </span>
       )}
       {output > 0 && (
         <span
-          title="output tokens (approximate)"
+          title={`output tokens (${suffix})`}
           style={{ color: "var(--color-green)" }}
         >
-          ↓ {formatCount(output)}
+          ↓ {tilde}
+          {formatCount(output)}
         </span>
       )}
     </span>
@@ -95,7 +122,50 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, vi
     return () => clearInterval(id);
   }, [visible]);
 
-  if (!visible) return null;
+  // Per-turn seed so consecutive turns don't always open on the same word.
+  const seed = useMemo(() => Math.floor(Math.random() * 1000), [visible]);
+
+  // Seconds since the token counter last moved. This is the ONLY liveness signal
+  // tied to the backend rather than to the webview's own clock: a rotating word and
+  // a spinning dot both keep animating happily through a wedged turn, which is
+  // exactly how a 4-hour livelock went unnoticed.
+  const lastProgressRef = useRef(0);
+  const progressKey = tokenProgress
+    ? `${tokenProgress.input}:${tokenProgress.thinking}:${tokenProgress.output}`
+    : "none";
+  useEffect(() => {
+    lastProgressRef.current = elapsed;
+    // `elapsed` intentionally omitted: this must run when progress CHANGES, not
+    // every tick, or the stall timer could never accumulate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progressKey]);
+  const silentFor = elapsed - lastProgressRef.current;
+  // Gated on tokenProgress EXISTING, not just on it being stale. Only
+  // openai_compatible (and openrouter, by inheritance) set supports_token_progress —
+  // the other eight transports never pass on_progress, so tokenProgress stays null
+  // for the entire turn. Without this gate the stall would fire on every Ollama,
+  // Gemini or Anthropic turn past the threshold, which is a false alarm, not a
+  // diagnosis: absence of a signal is not evidence of a wedge. On those providers
+  // the bar keeps rotating and simply never escalates.
+  const stalled =
+    visible && tokenProgress != null && silentFor >= STALL_THRESHOLD_SEC;
+
+  if (!visible && !tokenProgress) return null;
+
+  // The turn is over but a final count survives (the host clears it at the next
+  // turn's start). Render a static, spinner-free summary so the one exact number
+  // the provider gave us stays readable instead of vanishing the instant it lands.
+  if (!visible && tokenProgress) {
+    return (
+      <div
+        className="relative flex items-center gap-2 px-3 py-1 flex-shrink-0"
+        style={{ borderTop: "1px solid var(--color-border)", background: "var(--color-surface)" }}
+      >
+        <span className="flex-1 min-w-0" />
+        <TokenCounter progress={tokenProgress} />
+      </div>
+    );
+  }
 
   // Compute label (tier 1 → 2 → 3 → 4).
   let label: React.ReactNode;
@@ -131,10 +201,28 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, vi
         {STATUS_LABELS[liveStatus]}
       </span>
     );
+  } else if (thinkingStatus) {
+    label = <span style={{ color: "var(--color-text-2)" }}>{thinkingStatus}</span>;
   } else {
+    // Tier 4 — nothing real to report yet. This is the prefill window, and it used
+    // to render a frozen "Working…" beside a spinning dot for minutes on a large
+    // prompt, which reads as a hung process. Rotate a word every ~4s so the bar is
+    // visibly alive. The instant ANY real signal arrives one of the branches above
+    // wins and rotation stops — decoration never competes with information.
     label = (
       <span style={{ color: "var(--color-text-2)" }}>
-        {thinkingStatus ?? "Working…"}
+        {statusWordAt(seed, Math.floor(elapsed / 4))}…
+      </span>
+    );
+  }
+
+  // A stall outranks every label above. Past the threshold the playful word is not
+  // merely uninformative, it is actively misleading — it implies healthy progress
+  // during exactly the silence the user needs to notice.
+  if (stalled) {
+    label = (
+      <span style={{ color: "var(--color-amber, var(--color-text-2))" }}>
+        {stallMessage(silentFor, tokenProgress?.input ?? null)}
       </span>
     );
   }

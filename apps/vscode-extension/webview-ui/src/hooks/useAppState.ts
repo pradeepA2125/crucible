@@ -403,7 +403,11 @@ function reducer(state: AppState, action: Action): AppState {
         !turnActive && msg.status == null && (state.streaming != null || !state.inputEnabled);
       if (controllerTurnEnded) {
         const sealed = state.streaming ? sealStreaming(state, at) : state;
-        return { ...sealed, liveStatus: msg.status, turnActive, inputEnabled: true, retryStatus: null, tokenProgress: null, editFailure: null };
+        // tokenProgress deliberately SURVIVES turn end: the closing tick is the only
+        // exact count the provider reports, and clearing it here unmounted the number
+        // at the moment it became correct. The host clears it at the next turn's start
+        // instead, which is what prevents a stale count carrying over.
+        return { ...sealed, liveStatus: msg.status, turnActive, inputEnabled: true, retryStatus: null, editFailure: null };
       }
       return { ...state, liveStatus: msg.status, turnActive };
     }

@@ -131,6 +131,13 @@ export interface WorkbarInfo {
 export interface TokenProgressView {
   thinking: number;
   output: number;
+  /** Prompt size, reported before the first delta. Prefill generates nothing, so
+   * without this the counter reads zero for most of a large call's wall time and a
+   * slow turn looks identical to a wedged one. Null when the provider is unknown. */
+  input: number | null;
+  /** False while the counts are chars/4 estimates; true once the provider's own
+   * usage figure lands on the closing tick. */
+  exact: boolean;
 }
 
 export interface RetryStatusView {

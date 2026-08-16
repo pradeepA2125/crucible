@@ -209,7 +209,19 @@ export type StreamEvent =
   // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
   // reasoning, then `output` climbs — the transition that otherwise looks like
   // a hang, since content deltas are accumulated silently until the call returns.
-  | { type: "token_progress"; payload: { thinking: number; output: number } }
+  // `input` is the prompt size, reported before the first delta — prefill produces
+  // none, so without it the counter reads zero for most of a large call's wall time
+  // and a slow turn is indistinguishable from a wedged one. `exact` is false while
+  // the counts are chars/4 estimates and true once the provider's own usage lands.
+  | {
+      type: "token_progress";
+      payload: {
+        thinking: number;
+        output: number;
+        input: number | null;
+        exact: boolean;
+      };
+    }
   // A failed edit has its own channel rather than chat_agent_thinking: a
   // preflight/engine error is not model reasoning and must not render as a
   // numbered reasoning step (same rule as retry_status).

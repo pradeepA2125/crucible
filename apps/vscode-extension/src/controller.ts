@@ -85,7 +85,14 @@ export interface ControllerUI {
   appendToolResult(id: number, output: string, isError: boolean): void;
   updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void;
   updateRetryStatus(status: { attempt: number; max_attempts: number; reason: string; message: string } | null): void;
-  updateTokenProgress(progress: { thinking: number; output: number } | null): void;
+  updateTokenProgress(
+    progress: {
+      thinking: number;
+      output: number;
+      input: number | null;
+      exact: boolean;
+    } | null,
+  ): void;
   updateEditFailure(failure: { reason: string; ops: number } | null): void;
   renderLiveReview(review: { taskId: string; modifiedFiles: string[]; shadowWorkspacePath: string | null; stepsCompleted: number | null; stepsTotal: number | null; deviations: string[]; narrative?: { headline: string; points: string[] } }): void;
   clearLiveReview(): void;
@@ -716,6 +723,13 @@ export class CrucibleController {
     let currentTaskId: string | undefined;
     try {
       this.openToolEvent = {}; // defensive: clear any stale ids from a previous turn
+      // Clear the token counter HERE, at turn start — NOT in the finally below. The
+      // closing tick carries the only exact count the provider ever reports, and
+      // clearing on turn END unmounted it at the moment it became correct: the number
+      // flashed and vanished, leaving "what did that cost?" unanswerable. Clearing on
+      // the next turn's start still prevents a stale count carrying over, which is what
+      // the turn-end clear was actually protecting against.
+      this.ui.updateTokenProgress(null);
       for await (const event of stream) {
         if (event.type === "chat_agent_thinking") {
           const message = (event.payload["message"] as string) ?? "Thinking…";
@@ -727,10 +741,17 @@ export class CrucibleController {
           const chunk = (event.payload["chunk"] as string) ?? "";
           if (chunk) this.ui.appendChatThinkingChunk(chunk);
         } else if (event.type === "token_progress") {
-          const p = event.payload as { thinking?: number; output?: number };
+          const p = event.payload as {
+            thinking?: number;
+            output?: number;
+            input?: number | null;
+            exact?: boolean;
+          };
           this.ui.updateTokenProgress({
             thinking: p.thinking ?? 0,
             output: p.output ?? 0,
+            input: p.input ?? null,
+            exact: p.exact ?? false,
           });
         } else if (event.type === "edit_failed") {
           const p = event.payload as { reason?: string; ops?: number };
@@ -906,7 +927,7 @@ export class CrucibleController {
       this.turnAbort = null;
       this.ui.hideChatThinking();
       this.ui.updateRetryStatus(null);
-      this.ui.updateTokenProgress(null);
+      // tokenProgress is deliberately NOT cleared here — see the turn-start clear above.
       this.ui.updateEditFailure(null);
       this.ui.finalizeAgentMessage();
       this.ui.setChatInputEnabled(true);
