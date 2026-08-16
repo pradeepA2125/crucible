@@ -298,6 +298,20 @@ export class HttpBackendClient implements BackendTaskClient {
     );
   }
 
+  // Live "Review each edit" preference for an in-flight controller turn — the chat twin
+  // of setReviewPref (which targets a task). The loop re-reads it before every edit, so
+  // this lands mid-turn; flipping it on also accepts an already-open edit gate. 409 when
+  // no turn is running, which the caller treats as benign.
+  async setChatReviewPref(
+    threadId: string,
+    options: { autoAccept: boolean }
+  ): Promise<void> {
+    await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/review-pref`,
+      { method: "POST", body: JSON.stringify({ auto_accept: options.autoAccept }) }
+    );
+  }
+
   // Controller run_command gate (Phase F): a plain JSON ack — the loop's continuation
   // rides the already-open message SSE stream. Mirrors postEditDecision but carries a
   // CommandDecision (camelCase ruleValue → snake_case rule_value, like sendCommandDecision).

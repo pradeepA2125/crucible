@@ -53,3 +53,19 @@ describe("mode/edit decision clients", () => {
     expect(body).toEqual({ approve: true, remember: true, scope: "binary", rule_value: "pytest" });
   });
 });
+
+describe("chat review preference client", () => {
+  it("posts review-pref to the chat thread endpoint with a snake_case body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
+    await c.setChatReviewPref("th1", { autoAccept: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://x/v1/chat/threads/th1/review-pref",
+      expect.objectContaining({ method: "POST" })
+    );
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toEqual({ auto_accept: true });
+  });
+});

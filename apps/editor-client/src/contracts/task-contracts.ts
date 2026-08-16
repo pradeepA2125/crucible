@@ -502,6 +502,9 @@ export interface BackendTaskClient {
   abortTask(taskId: string, options: { revert: boolean }): Promise<TaskView>;
   // Live-mutable "Review each step" preference for a running task (Tier B).
   setReviewPref(taskId: string, options: { autoAccept: boolean }): Promise<TaskView>;
+  // The same preference for an in-flight CHAT turn, where edits (not steps) are what
+  // gets gated. Separate from setReviewPref because a controller turn has no task.
+  setChatReviewPref(threadId: string, options: { autoAccept: boolean }): Promise<void>;
   acceptPatch(taskId: string): Promise<TaskResult>;
   rejectPatch(taskId: string, reason: string): Promise<TaskResult>;
   providePlanFeedback(taskId: string, feedback: string | null): Promise<TaskView>;
