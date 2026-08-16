@@ -41,6 +41,40 @@ class ChatMessage(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CapturedFile(BaseModel):
+    """One path's pre-edit state inside a rewind checkpoint.
+
+    `existed=False` means the turn created it (nothing was copied; restoring deletes
+    it). `oversize=True` means it was too large to snapshot, so a rewind reports it
+    as not-restored rather than restoring it wrong.
+    """
+    path: str
+    existed: bool
+    oversize: bool = False
+
+
+class Checkpoint(BaseModel):
+    """A rewind point: the state of a thread just before one turn started.
+
+    The four controller_* blobs are snapshotted WHOLE rather than truncated at rewind
+    time. controller_history_json is a flat list of assistant-action / tool-result
+    pairs with no alignment to transcript messages, so "truncate the history to match
+    the transcript" has no correct implementation; restoring a verbatim earlier copy
+    sidesteps alignment and picks up todos, active skill and the pinned seed for free.
+    """
+    thread_id: str
+    seq: int
+    anchor_message_id: str
+    turn_id: str
+    created_at: datetime
+    files: list[CapturedFile] = Field(default_factory=list)
+    controller_history_json: str | None = None
+    controller_seed_json: str | None = None
+    controller_todo_json: str | None = None
+    controller_active_skill_json: str | None = None
+    memory_anchor_md: str | None = None
+
+
 class PendingGate(BaseModel):
     """The one gate a thread is waiting on, if any.
 

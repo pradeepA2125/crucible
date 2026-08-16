@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agentd.chat.models import ChatMessage, ChatThread, PendingGate
+from agentd.chat.models import CapturedFile, ChatMessage, ChatThread, Checkpoint, PendingGate
 
 
 class ChatThreadStore:
@@ -48,6 +48,24 @@ class ChatThreadStore:
         if "controller_active_skill_json" not in existing:
             self._conn.execute(
                 "ALTER TABLE chat_threads ADD COLUMN controller_active_skill_json TEXT")
+        # Rewind checkpoints: one row per turn, holding the thread state from just
+        # before it started. File bytes live on disk under .crucible/state/rewind/.
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_checkpoints (
+                thread_id                     TEXT NOT NULL,
+                seq                           INTEGER NOT NULL,
+                anchor_message_id             TEXT NOT NULL,
+                turn_id                       TEXT NOT NULL,
+                created_at                    TEXT NOT NULL,
+                files_json                    TEXT NOT NULL DEFAULT '[]',
+                controller_history_json       TEXT,
+                controller_seed_json          TEXT,
+                controller_todo_json          TEXT,
+                controller_active_skill_json  TEXT,
+                memory_anchor_md              TEXT,
+                PRIMARY KEY (thread_id, seq)
+            );
+        """)
         self._conn.commit()
 
     @staticmethod
@@ -429,6 +447,79 @@ class ChatThreadStore:
                     "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
                     (json.dumps(messages), row["thread_id"]),
                 )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Rewind checkpoints
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _checkpoint_from_row(row: sqlite3.Row) -> Checkpoint:
+        return Checkpoint(
+            thread_id=row["thread_id"], seq=row["seq"],
+            anchor_message_id=row["anchor_message_id"], turn_id=row["turn_id"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            files=[CapturedFile.model_validate(f) for f in json.loads(row["files_json"])],
+            controller_history_json=row["controller_history_json"],
+            controller_seed_json=row["controller_seed_json"],
+            controller_todo_json=row["controller_todo_json"],
+            controller_active_skill_json=row["controller_active_skill_json"],
+            memory_anchor_md=row["memory_anchor_md"],
+        )
+
+    def next_checkpoint_seq(self, thread_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT MAX(seq) AS m FROM chat_checkpoints WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        return 0 if row["m"] is None else row["m"] + 1
+
+    def insert_checkpoint(self, cp: Checkpoint) -> None:
+        self._conn.execute(
+            "INSERT INTO chat_checkpoints (thread_id, seq, anchor_message_id, turn_id, "
+            "created_at, files_json, controller_history_json, controller_seed_json, "
+            "controller_todo_json, controller_active_skill_json, memory_anchor_md) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (cp.thread_id, cp.seq, cp.anchor_message_id, cp.turn_id,
+             cp.created_at.isoformat(),
+             json.dumps([f.model_dump(mode="json") for f in cp.files]),
+             cp.controller_history_json, cp.controller_seed_json, cp.controller_todo_json,
+             cp.controller_active_skill_json, cp.memory_anchor_md),
+        )
+        self._conn.commit()
+
+    def list_checkpoints(self, thread_id: str) -> list[Checkpoint]:
+        rows = self._conn.execute(
+            "SELECT * FROM chat_checkpoints WHERE thread_id = ? ORDER BY seq", (thread_id,)
+        ).fetchall()
+        return [self._checkpoint_from_row(r) for r in rows]
+
+    def get_checkpoint_by_anchor(
+        self, thread_id: str, anchor_message_id: str
+    ) -> Checkpoint | None:
+        row = self._conn.execute(
+            "SELECT * FROM chat_checkpoints WHERE thread_id = ? AND anchor_message_id = ?",
+            (thread_id, anchor_message_id),
+        ).fetchone()
+        return self._checkpoint_from_row(row) if row else None
+
+    def set_checkpoint_files(
+        self, thread_id: str, seq: int, files: list[CapturedFile]
+    ) -> None:
+        self._conn.execute(
+            "UPDATE chat_checkpoints SET files_json = ? WHERE thread_id = ? AND seq = ?",
+            (json.dumps([f.model_dump(mode="json") for f in files]), thread_id, seq),
+        )
+        self._conn.commit()
+
+    def delete_checkpoints_from(self, thread_id: str, seq: int) -> None:
+        self._conn.execute(
+            "DELETE FROM chat_checkpoints WHERE thread_id = ? AND seq >= ?", (thread_id, seq)
+        )
+        self._conn.commit()
+
+    def delete_checkpoints_before(self, thread_id: str, seq: int) -> None:
+        self._conn.execute(
+            "DELETE FROM chat_checkpoints WHERE thread_id = ? AND seq < ?", (thread_id, seq)
+        )
         self._conn.commit()
 
     def add_touched_file(self, thread_id: str, file_path: str) -> None:
