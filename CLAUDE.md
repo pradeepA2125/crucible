@@ -252,6 +252,53 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   config (community SearXNG/Tavily/Brave MCP servers), not code. Spec/plan:
   `docs/superpowers/specs|plans/2026-07-02-doc-write-tool-web-search-defaults*`.
 
+#### Chat rewind
+
+Rewind a thread to an earlier user message: restores the files the agent touched,
+truncates the transcript + controller history, retires the memories those turns wrote.
+Spec/plan: `docs/superpowers/specs|plans/2026-08-16-chat-rewind*`.
+
+- **Capture is copy-on-first-write at the `TurnEditSession.apply()` seam**
+  (`chat/rewind.py`), BEFORE `_ensure_shadow` — the real workspace is the clean
+  before-state there (the `shadow == real` invariant in `edit_session.py`'s docstring).
+  Chat edits are instant-promoted and the turn shadow is `rmtree`'d at `close()`, so
+  this is the only moment pre-edit content exists. Reverse-applying the persisted
+  `unified_diff` does NOT work as an alternative: `patch/diffing.py` caps diffs at 400
+  lines / 24k chars, so it would restore large files wrong.
+- **One checkpoint per turn**, keyed on the user message that started it
+  (`ChatMessage.id`). Continuations (`resolve_mode` → implement, `resolve_clarify`) fold
+  into the thread's HIGHEST seq — same anchor, no open/closed bookkeeping. No checkpoint
+  → capture is a silent no-op (the `_promote_orphaned_edit` restart-recovery path).
+- **`ChatMessage.id` is `str | None`, NOT a `default_factory`** — `model_validate` runs
+  on raw dicts from `messages_json`, so a factory would mint a fresh id per read and
+  every rewind anchor would 404 differently each poll. Legacy messages carry None and
+  offer no affordance. Mirrored in editor-client Zod + webview `types.ts` (the
+  `PendingGate.kind` footgun class). **`HttpBackendClient.getChatThread` maps message
+  fields EXPLICITLY**, so `id` had to be added there too — the schema alone would have
+  dropped it silently.
+- **Restore folds the span first-seen-wins** — the OLDEST pre-state per path is the
+  right one, which is what makes multi-turn rewind correct without full snapshots.
+  Per-file failures are collected and reported, never aborted on.
+- **The four `controller_*` blobs are snapshotted whole, not truncated.**
+  `controller_history_json` has no alignment to transcript messages, so truncating it to
+  match has no correct implementation; a verbatim earlier copy sidesteps it and picks up
+  todos/active skill/pinned seed for free.
+- **Memory:** `retire_since(source_ref, cutoff)` keys on `source_ref` = the controller's
+  `run_id` = the `thread_id`, catching thread- AND workspace-scoped memories with no
+  schema change (`RecallEngine` already filters `valid_to IS NULL`). The compaction
+  anchor is snapshotted per checkpoint and restored — a **null snapshot deletes** the
+  anchor, since leaving a newer one keeps summarizing turns that no longer exist. The
+  route reads the anchor BEFORE `restore()`, which deletes the checkpoint row. Stale
+  `compaction_segments` are accepted (downstream of the restored anchor). `remember()`
+  now threads `run_id` so explicit memories are rewindable too. Best-effort throughout:
+  memory never fails a rewind.
+- **Refusals:** 409 while a turn is in flight; 409 when the span holds a non-terminal
+  task (it holds its own shadow and promotes on completion, re-writing what was just
+  reverted). Exec sessions are deliberately NOT blocking — background shells, left
+  running and named in the confirm dialog. Commands already run are not undone, stated
+  in the dialog.
+- Env: `CRUCIBLE_REWIND_RETENTION_TURNS` (50) · `CRUCIBLE_REWIND_MAX_FILE_BYTES` (10000000).
+
 #### write_doc — REMOVED (2026-07-16)
 
 The one-shot `write_doc(path, content)` tool (single-call, full-file-content-only,
@@ -608,6 +655,8 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` — per-server connect wait at startup before continuing without it (default `30`).
 - `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
 - `CRUCIBLE_PORT` — when set, writes `<workspace>/.crucible/state/agentd.lock` (`{pid, port, started_at}`) at startup and clears it at shutdown. Only the extension's managed spawn sets this; `start-backend.sh`/manual runs don't, so they never write a lockfile. See "P4 — Install, managed runtime & settings UI".
+- `CRUCIBLE_REWIND_RETENTION_TURNS` — rewind checkpoints retained per chat thread (default `50`; oldest pruned, their file snapshots deleted with them).
+- `CRUCIBLE_REWIND_MAX_FILE_BYTES` — files larger than this are not snapshotted for rewind (default `10000000`); they are recorded `oversize` and reported as not-restored rather than restored wrong.
 - `CRUCIBLE_SKILLS_DISABLED` — comma-separated skill names to exclude from the catalog (user-local disable, set by the extension's settings panel; not cached with the catalog's mtime signature).
 - `CRUCIBLE_REASONING_EFFORT` — `off|low|medium|high|max`, unset by default. Unset sends NO effort field to the transport at all, which is what leaves each provider's own legacy dial (`CRUCIBLE_GEMINI_THINKING_LEVEL`, `CRUCIBLE_GROQ_REASONING_EFFORT`, `CRUCIBLE_OLLAMA_THINK`) exactly as it is today — the backward-compatibility guarantee, achieved with no extra code. Normally set from a composer chip beside the model picker, which persists the EFFECTIVE (post-clamp) rung to `globalState` and injects it on the next managed spawn; `PUT /v1/config/provider {reasoning_effort}` hot-applies it to every live transport with no restart, and `GET /v1/config` reports the current rung plus the capability map. See `providers/reasoning_effort.py` above and `docs/superpowers/specs/2026-08-12-reasoning-effort-control-design.md`.
 - **`start-backend.sh` defaults ON (2026-07-02):** `CRUCIBLE_CHAT_CONTROLLER`, `CRUCIBLE_SKILLS_ENABLED`, `CRUCIBLE_MCP_ENABLED` (+ `CRUCIBLE_SEMANTIC_RETRIEVAL=true`) — the engine defaults above stay OFF, but the script opts in (`${VAR:-1}`, override via env to opt out; same pattern as the scope-policy note). The repo-root `.env` sets the same flags for manual runs.
