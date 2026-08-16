@@ -230,7 +230,7 @@ class MemoryHarness:
         segs = [s for s in self._store.get_segments(run_id) if seq_lo <= s.seq <= seq_hi]
         return "\n".join(s.content for s in segs)
 
-    def memory_tool_source(self) -> object | None:
+    def memory_tool_source(self, run_id: str = "") -> object | None:
         """A MemoryToolSource (remember + recall) for the controller registry, or None when
         memory has no consolidator wired (disabled / compaction-only)."""
         if self._consolidator is None:
@@ -238,8 +238,36 @@ class MemoryHarness:
         from agentd.memory.tool_source import MemoryToolSource
         return MemoryToolSource(
             self._consolidator, self._scope_kind, self._scope_id,
-            recall_engine=self._recall_engine, store=self._store,
+            recall_engine=self._recall_engine, store=self._store, run_id=run_id,
         )
+
+    # ------------------------------------------------------------------
+    # Chat rewind support. All three degrade to a no-op without a store
+    # (NO_OP_HARNESS / compaction-only), so a rewind never depends on memory
+    # being enabled.
+    # ------------------------------------------------------------------
+    def anchor_markdown(self, run_id: str) -> str | None:
+        """The run's current compaction anchor text, for snapshotting into a checkpoint."""
+        if self._store is None:
+            return None
+        anchor = self._store.get_anchor(run_id)
+        return anchor.summary_md if anchor else None
+
+    def restore_anchor(self, run_id: str, summary_md: str | None) -> None:
+        """Put the anchor back to a checkpoint's copy. None means the checkpoint predates
+        any compaction, so the anchor is DELETED — leaving a newer one in place would keep
+        summarizing turns the rewind just removed."""
+        if self._store is None:
+            return
+        if summary_md is None:
+            self._store.clear_anchor(run_id)
+        else:
+            self._store.upsert_anchor(run_id, summary_md)
+
+    def retire_since(self, source_ref: str, cutoff_iso: str) -> int:
+        if self._store is None:
+            return 0
+        return self._store.retire_since(source_ref, cutoff_iso)
 
     async def recall(self, query: str, run_id: str) -> History:
         return []  # Phase 2 (recall slot filled in Plan 2C)

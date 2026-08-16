@@ -148,6 +148,10 @@ class MemoryStore:
             updated_at=datetime.fromisoformat(r["updated_at"]),
         )
 
+    def clear_anchor(self, run_id: str) -> None:
+        self._conn.execute("DELETE FROM anchored_summaries WHERE run_id=?", (run_id,))
+        self._conn.commit()
+
     # ------------------------------------------------------------------
     # Phase 2: long-term memories
     # ------------------------------------------------------------------
@@ -273,6 +277,23 @@ class MemoryStore:
             args.append(kind)
         sql += " ORDER BY importance DESC, valid_from DESC"
         return [self._row_to_memory(r) for r in self._conn.execute(sql, args).fetchall()]
+
+    def retire_since(self, source_ref: str, cutoff_iso: str) -> int:
+        """Retire live memories written by one run at or after a cutoff.
+
+        `source_ref` is the consolidator's run_id, which for the chat controller IS the
+        thread_id — so this one predicate catches both thread- and workspace-scoped
+        memories a rewound span produced, with no schema change. RecallEngine already
+        filters `valid_to IS NULL` before scoring, so retirement takes effect with no
+        recall-path change and no vec/FTS index surgery.
+        """
+        cur = self._conn.execute(
+            "UPDATE memories SET valid_to = ? "
+            "WHERE source_ref = ? AND valid_to IS NULL AND created_at >= ?",
+            (datetime.now(UTC).isoformat(), source_ref, cutoff_iso),
+        )
+        self._conn.commit()
+        return cur.rowcount or 0
 
     def get_supersede_chain(self, memory_id: str) -> list[Memory]:
         # Walk back to the oldest (the row nobody supersedes), then forward via superseded_by.

@@ -173,10 +173,14 @@ class Consolidator:
 
     async def write_explicit(
         self, content: str, kind: str, entities: list[str], scope_kind: str, scope_id: str,
+        run_id: str = "",
     ) -> str:
+        # run_id tags the memory with the run (= thread_id) that wrote it, which is what
+        # makes an explicit remember rewindable; untagged it carries source_ref="" and
+        # escapes retire_since entirely.
         c = CandidateMemory(kind=kind, content=content, entities=entities, importance=8)
         emb = await self._embed(content)  # FIX #3
-        mem = self._build_memory(c, run_id="", scope_kind=scope_kind, scope_id=scope_id,
+        mem = self._build_memory(c, run_id=run_id, scope_kind=scope_kind, scope_id=scope_id,
                                  source_kind="agent_tool", seq_lo=None, seq_hi=None)
         self._store.insert_memory(mem, emb)
         return mem.id

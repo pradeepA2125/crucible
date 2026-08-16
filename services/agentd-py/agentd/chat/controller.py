@@ -217,6 +217,7 @@ class ChatController:
         active_skill_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
         mcp_approval_cb: object | None = None,
         exec_session_source: object | None = None,
+        thread_id: str = "",
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -226,7 +227,8 @@ class ChatController:
         )]
         if todo_ledger is not None:
             sources.append(TodoToolSource(todo_ledger, on_mutate=todo_persist_cb))
-        mts = self._memory_harness.memory_tool_source()  # remember + recall (None unless enabled)
+        # run_id = thread_id tags explicit remembers so a rewind can retire them.
+        mts = self._memory_harness.memory_tool_source(thread_id)  # None unless enabled
         if mts is not None:
             sources.append(mts)
         if is_skills_enabled() and active_skills is not None:
@@ -451,6 +453,7 @@ class ChatController:
             self._build_registry(command_cb, ledger, todo_persist_cb,
                                   active_skills=active_skills,
                                   active_skill_persist_cb=active_skill_persist_cb,
+                                  thread_id=thread_id,
                                   mcp_approval_cb=mcp_cb,
                                   exec_session_source=exec_source), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session_factory=edit_session_factory,

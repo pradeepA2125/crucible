@@ -8,9 +8,11 @@ from tests.test_memory_store_phase2 import _mem
 class _SpyConsolidator:
     def __init__(self):
         self.explicit = []
+        self.run_ids = []
 
-    async def write_explicit(self, content, kind, entities, scope_kind, scope_id):
+    async def write_explicit(self, content, kind, entities, scope_kind, scope_id, run_id=""):
         self.explicit.append((content, kind, entities, scope_kind, scope_id))
+        self.run_ids.append(run_id)
         return "mem-1"
 
 

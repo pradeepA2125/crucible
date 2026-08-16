@@ -49,12 +49,16 @@ class MemoryToolSource:
     def __init__(
         self, consolidator: object, scope_kind: str, scope_id: str,
         *, recall_engine: object | None = None, store: object | None = None,
+        run_id: str = "",
     ) -> None:
         self._consolidator = consolidator
         self._scope_kind = scope_kind
         self._scope_id = scope_id
         self._recall_engine = recall_engine
         self._store = store
+        # Tagging explicit remembers with the run (= thread_id) makes them rewindable;
+        # an untagged memory carries source_ref="" and escapes retire_since entirely.
+        self._run_id = run_id
 
     def definitions(self) -> list[ToolDefinition]:
         defs = [_REMEMBER_DEF]
@@ -81,7 +85,7 @@ class MemoryToolSource:
         entities = [str(e) for e in raw_entities] if isinstance(raw_entities, list) else []
         scope_kind = "thread" if args.get("scope") == "thread" else self._scope_kind
         mid = await self._consolidator.write_explicit(  # type: ignore[attr-defined]
-            content, kind, entities, scope_kind, self._scope_id)
+            content, kind, entities, scope_kind, self._scope_id, run_id=self._run_id)
         return ToolOutput(output=f"Remembered ({kind}): {content}  [{mid}]")
 
     async def _recall(self, args: dict[str, object]) -> ToolOutput:

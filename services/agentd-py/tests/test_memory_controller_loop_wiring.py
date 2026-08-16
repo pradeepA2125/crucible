@@ -179,7 +179,7 @@ async def test_observed_prompt_carries_across_turn_boundary(tmp_path: Path):
             observed_seen.append(observed)
             return TurnPreparation(history=history)
 
-        def memory_tool_source(self):
+        def memory_tool_source(self, run_id: str = ""):
             return None
 
     class _ReportingEngine:
