@@ -452,6 +452,47 @@ class ChatThreadStore:
     # ------------------------------------------------------------------
     # Rewind checkpoints
     # ------------------------------------------------------------------
+    def truncate_messages_at(self, thread_id: str, anchor_message_id: str) -> tuple[int, str]:
+        """Drop the anchor message and everything after it.
+
+        Returns (removed_count, anchor_text). The anchor's own text is returned so the
+        composer can prefill it — that is the persisted display content, NOT the
+        @-mention-expanded turn_message (turn-scoped, deliberately never stored).
+        """
+        row = self._conn.execute(
+            "SELECT messages_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return 0, ""
+        messages: list[dict[str, object]] = json.loads(row["messages_json"])
+        index = next(
+            (i for i, m in enumerate(messages) if m.get("id") == anchor_message_id), None)
+        if index is None:
+            return 0, ""
+        removed = messages[index:]
+        kept = messages[:index]
+        self._conn.execute(
+            "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
+            (json.dumps(kept), thread_id),
+        )
+        self._conn.commit()
+        return len(removed), str(removed[0].get("content") or "")
+
+    def restore_controller_state(
+        self, thread_id: str, *, history_json: str | None, seed_json: str | None,
+        todo_json: str | None, active_skill_json: str | None,
+    ) -> None:
+        """Overwrite the four controller blobs with a checkpoint's verbatim copies and
+        clear any pending gate (a gate from a turn that no longer exists is
+        unresolvable — its in-memory waiter is gone with the turn)."""
+        self._conn.execute(
+            "UPDATE chat_threads SET controller_history_json = ?, controller_seed_json = ?, "
+            "controller_todo_json = ?, controller_active_skill_json = ?, "
+            "controller_gate_json = NULL WHERE thread_id = ?",
+            (history_json, seed_json, todo_json, active_skill_json, thread_id),
+        )
+        self._conn.commit()
+
     @staticmethod
     def _checkpoint_from_row(row: sqlite3.Row) -> Checkpoint:
         return Checkpoint(

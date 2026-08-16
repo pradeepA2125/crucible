@@ -19,6 +19,8 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import BaseModel, Field
+
 from agentd.chat.models import CapturedFile, ChatThread, Checkpoint
 from agentd.chat.storage import ChatThreadStore
 
@@ -35,6 +37,26 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, "") or default)
     except ValueError:
         return default
+
+
+class RewindPreview(BaseModel):
+    """What a rewind would cost, for the confirm dialog. Read-only."""
+    messages: int
+    files: int
+    commands_run: int
+    blocked_by_task: str | None = None
+
+
+class RewindOutcome(BaseModel):
+    """What a rewind actually did. `failed` and `oversize_files` are the honest half:
+    a destructive operation that half-worked has to report which half."""
+    restored_files: list[str] = Field(default_factory=list)
+    deleted_files: list[str] = Field(default_factory=list)
+    oversize_files: list[str] = Field(default_factory=list)
+    failed: list[dict[str, str]] = Field(default_factory=list)
+    removed_messages: int = 0
+    prefill_text: str = ""
+    target_created_at: datetime | None = None
 
 
 class RewindStore:
@@ -127,6 +149,95 @@ class RewindStore:
             # captured" — a rewind must not claim to restore bytes it never took.
             logger.warning("[rewind] could not capture %s", rel, exc_info=True)
             return CapturedFile(path=rel, existed=True, oversize=True)
+
+    def _span(self, thread_id: str, anchor_message_id: str) -> list[Checkpoint]:
+        """Checkpoints from the target forward, ascending. Empty when the anchor is
+        unknown — which is how both preview and restore report "no rewind point"."""
+        target = self._store.get_checkpoint_by_anchor(thread_id, anchor_message_id)
+        if target is None:
+            return []
+        return [c for c in self._store.list_checkpoints(thread_id) if c.seq >= target.seq]
+
+    @staticmethod
+    def _fold(span: list[Checkpoint]) -> dict[str, CapturedFile]:
+        """Fold the span into one entry per path, FIRST-SEEN WINS.
+
+        The oldest recorded pre-state is the correct one to restore; this is what makes
+        multi-turn rewind correct without storing a full workspace snapshot per turn.
+        """
+        folded: dict[str, CapturedFile] = {}
+        for cp in span:
+            for f in cp.files:
+                folded.setdefault(f.path, f)
+        return folded
+
+    def preview(self, thread_id: str, anchor_message_id: str) -> RewindPreview | None:
+        span = self._span(thread_id, anchor_message_id)
+        if not span:
+            return None
+        thread = self._store.get_thread(thread_id)
+        messages = 0
+        commands = 0
+        if thread is not None:
+            index = next((i for i, m in enumerate(thread.messages)
+                          if m.id == anchor_message_id), None)
+            if index is not None:
+                dropped = thread.messages[index:]
+                messages = len(dropped)
+                for m in dropped:
+                    events = m.metadata.get("tool_events") or []
+                    commands += sum(
+                        1 for e in events
+                        if isinstance(e, dict)
+                        and str(e.get("tool", "")) in {"run_command", "session_start"})
+        return RewindPreview(
+            messages=messages, files=len(self._fold(span)), commands_run=commands)
+
+    def restore(self, thread_id: str, anchor_message_id: str) -> RewindOutcome | None:
+        span = self._span(thread_id, anchor_message_id)
+        if not span:
+            return None
+        target = span[0]
+        outcome = RewindOutcome(target_created_at=target.created_at)
+
+        # 1. Files. Per-path failures are COLLECTED, never raised: a rewind that
+        #    half-worked must report it rather than stop silently partway.
+        for path, entry in self._fold(span).items():
+            # The checkpoint that captured this path is the one holding its bytes.
+            owner = next(cp for cp in span if any(f.path == path for f in cp.files))
+            try:
+                real = self._root / path
+                if entry.oversize:
+                    outcome.oversize_files.append(path)
+                elif entry.existed:
+                    stored = self._files_dir(thread_id, owner.seq) / path
+                    real.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(stored, real)
+                    outcome.restored_files.append(path)
+                else:
+                    if real.exists():
+                        real.unlink()
+                    outcome.deleted_files.append(path)
+            except OSError as exc:
+                outcome.failed.append({"path": path, "error": str(exc)})
+
+        # 2. Transcript + controller state.
+        removed, prefill = self._store.truncate_messages_at(thread_id, anchor_message_id)
+        outcome.removed_messages = removed
+        outcome.prefill_text = prefill
+        self._store.restore_controller_state(
+            thread_id,
+            history_json=target.controller_history_json,
+            seed_json=target.controller_seed_json,
+            todo_json=target.controller_todo_json,
+            active_skill_json=target.controller_active_skill_json,
+        )
+
+        # 3. Drop the rewound checkpoints. Permanent, by design.
+        for cp in span:
+            shutil.rmtree(self._files_dir(thread_id, cp.seq).parent, ignore_errors=True)
+        self._store.delete_checkpoints_from(thread_id, target.seq)
+        return outcome
 
     def _prune(self, thread_id: str) -> None:
         checkpoints = self._store.list_checkpoints(thread_id)
