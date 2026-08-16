@@ -1341,13 +1341,26 @@ export class CrucibleController {
     }
   }
 
-  /** Live-mutable "Review each step" preference for the running task (Tier B). A 409 (no
-   * task running) is benign — the toggle only governs creation-time default in that case. */
+  /** Live-mutable "Review each step/edit" preference, sent to BOTH live surfaces.
+   *
+   * A controller chat turn has no task, so the task route alone (the only call this
+   * used to make) meant flipping the checkbox mid-turn reached nothing and the change
+   * waited for the next message. The chat route reaches the in-flight turn's control,
+   * which the loop re-reads before every edit.
+   *
+   * A 409 from either is benign — it just means that surface has nothing running, and
+   * the value still governs the next task's creation default / the next message. */
   async setReviewPref(autoAccept: boolean): Promise<void> {
+    const threadId = this.activeThreadId;
     const taskId = this.latestLiveState?.activeTaskId;
-    if (!taskId) return;
+    if (!threadId && !taskId) return;
     try {
-      await this.clientForChat().setReviewPref(taskId, { autoAccept });
+      if (threadId) {
+        await this.clientForChat().setChatReviewPref(threadId, { autoAccept });
+      }
+      if (taskId) {
+        await this.clientForChat().setReviewPref(taskId, { autoAccept });
+      }
       this.lastLiveSignature = null;
       void this.pollThreadLiveState();
     } catch (error) {

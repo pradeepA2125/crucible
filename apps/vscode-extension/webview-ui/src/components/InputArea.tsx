@@ -401,9 +401,11 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
               // No local setState: the host persists and echoes reviewPrefState back,
               // which updates this controlled prop. The round-trip is required, not
               // decorative — same contract as setPlanMode.
-              // Live-mutable: a running task re-reads this before each step gate. Checked =
-              // "review each step" = auto_accept false. A 409 (no task running) is benign on
-              // the extension side — the value still governs the next task's creation default.
+              // Live-mutable in BOTH surfaces: a running task re-reads it before each step
+              // gate, and an in-flight chat turn re-reads it before each edit (flipping it
+              // on also accepts the edit gate currently on screen). Checked = "review each
+              // step" = auto_accept false. A 409 (nothing running) is benign on the
+              // extension side — the value still governs the next task/message.
               vscode.postMessage({ type: "setReviewPref", autoAccept: !checked });
             }}
             className="accent-[var(--color-accent)] w-3 h-3"

@@ -52,6 +52,7 @@ interface StubBackendState {
   liveCalls?: string[];
   abortCalls?: Array<{ taskId: string; revert: boolean }>;
   reviewPrefCalls?: Array<{ taskId: string; autoAccept: boolean }>;
+  chatReviewPrefCalls?: Array<{ threadId: string; autoAccept: boolean }>;
 }
 
 const NULL_LIVE_STATE: ThreadLiveState = {
@@ -119,6 +120,9 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
     setReviewPref: async (taskId, options) => {
       state.reviewPrefCalls?.push({ taskId, autoAccept: options.autoAccept });
       return { taskId, goal: "goal", status: "EXECUTING", modifiedFiles: [], diagnostics: [] as Diagnostic[] };
+    },
+    setChatReviewPref: async (threadId, options) => {
+      state.chatReviewPrefCalls?.push({ threadId, autoAccept: options.autoAccept });
     },
     acceptPatch: async (taskId) => {
       state.acceptCalls.push(taskId);
@@ -1678,6 +1682,30 @@ describe("CrucibleController — command-decision", () => {
     await controller.setReviewPref(false);
     controller.dispose();
     expect(state.reviewPrefCalls).toEqual([{ taskId: "task-run", autoAccept: false }]);
+  });
+
+  test("setReviewPref posts to the chat thread so a controller turn picks it up mid-flight", async () => {
+    // A controller chat turn has no task, so the task route alone left the toggle inert
+    // until the next message — the chat route is what makes it live.
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      reviewPrefCalls: [], chatReviewPrefCalls: [],
+      liveResponse: { activeTaskId: null, status: null, pendingGate: null, plan: null, turnActive: true },
+    };
+    const backend = createStubBackend(state);
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-pref-live");
+    await controller.setReviewPref(true);
+    controller.dispose();
+    expect(state.chatReviewPrefCalls).toEqual([
+      { threadId: "chat-pref-live", autoAccept: true },
+    ]);
+    expect(state.reviewPrefCalls).toEqual([]);  // no task is running
   });
 
   test("durable run_summary supersedes ephemeral counts in renderLiveReview", async () => {

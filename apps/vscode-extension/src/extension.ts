@@ -163,7 +163,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (taskId, stage) => controller.resumeTaskById(taskId, stage),
     () => controller.stopActiveTurn(),
     (revert) => controller.abortActiveTask(revert),
-    (autoAccept) => controller.setReviewPref(autoAccept),
+    // Persist AND push live. The persist half was missing entirely: getStepReview()
+    // hydrated the checkbox from globalState but setStepReview() had no caller, so the
+    // box silently reset to the default on every webview reload.
+    async (autoAccept) => {
+      await runtimeManager.setStepReview(!autoAccept);
+      await controller.setReviewPref(autoAccept);
+    },
     () => controller.listPrompts(),
     (name: string, args: string) => controller.expandPrompt(name, args),
     () => controller.listSkills(),
