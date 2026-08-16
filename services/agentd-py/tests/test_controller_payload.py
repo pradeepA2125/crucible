@@ -217,3 +217,35 @@ def test_no_checkpoint_without_active_list():
          "reconcile_item": {"title": "A", "status": "in_progress"}},
         history=seeded, tool_definitions=[], phase="ACTIVE")
     assert "CHECKPOINT" not in str(payload["instruction"])
+
+
+def test_step_budget_counts_this_turn_not_carried_thread_history():
+    """A long-lived thread must not start every new turn already out of budget.
+
+    `iteration` was derived as `len(history) // 2`, but `history` carries the WHOLE
+    thread across turns (controller_history_json), so once a thread passed
+    ~2*max_iters messages every turn opened at "⚠ FINAL STEP … No more edits after
+    this" on its very first action. Combined with submit_changes being hard-blocked
+    while todo items are open, that is a deadlock: the model is told not to edit, and
+    cannot submit until it edits. Measured live at 737/500 on a 1,474-message thread.
+    """
+    carried = [{"role": "assistant", "content": "{}"} for _ in range(1474)]
+    payload = build_controller_step_payload(
+        {"goal": "write the plan", "workspace_path": "/w",
+         "max_iters": 500, "iteration": 3},
+        history=carried,
+        tool_definitions=[],
+        phase="ACTIVE",
+    )
+    assert payload["budget_status"] == "3/500 steps used"
+    assert "FINAL STEP" not in str(payload["instruction"])
+
+
+def test_step_budget_still_lands_the_turn_when_this_turn_is_spent():
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w", "max_iters": 500, "iteration": 499},
+        history=[{"role": "assistant", "content": "{}"}],
+        tool_definitions=[],
+        phase="ACTIVE",
+    )
+    assert "FINAL STEP" in str(payload["instruction"])

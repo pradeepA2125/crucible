@@ -595,7 +595,14 @@ def build_controller_step_payload(
         payload["retrieval_seed"] = seed  # FROZEN; never mutated in place
     raw_max = plan_context.get("max_iters", _DEFAULT_MAX_ITERS)
     max_iters = raw_max if isinstance(raw_max, int) else _DEFAULT_MAX_ITERS
-    iteration = len(history) // 2
+    # THIS turn's step count, supplied by the loop. The `len(history) // 2` fallback is
+    # only for callers that don't pass one: `history` carries the whole THREAD across
+    # turns (controller_history_json), so on a long-lived thread it overshoots wildly and
+    # pins `final_call` True from a new turn's very first action — measured live at
+    # 737/500 on a 1,474-message thread, which deadlocks ACTIVE ("No more edits after
+    # this") against submit_changes being blocked while todo items are still open.
+    raw_iter = plan_context.get("iteration")
+    iteration = raw_iter if isinstance(raw_iter, int) else len(history) // 2
     if history:
         payload["conversation_history"] = history
     # TAIL (per-turn-varying): the current request + instruction + budget. Placed
