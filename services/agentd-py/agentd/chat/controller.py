@@ -21,6 +21,7 @@ from agentd.chat.controller_factory import is_skills_enabled, is_task_subsystem_
 from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
+from agentd.chat.rewind import RewindStore
 from agentd.chat.models import ChatMessage, PendingGate
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
@@ -104,6 +105,7 @@ class ChatController:
         memory_harness: MemoryHarness = NO_OP_HARNESS,
         mcp_manager: object | None = None,
         exec_session_manager: object | None = None,
+        rewind_store: RewindStore | None = None,
     ) -> None:
         self._workspace_path = workspace_path
         self._reasoning = reasoning_engine
@@ -112,6 +114,9 @@ class ChatController:
         self._broadcaster = broadcaster
         self._retrieval = retrieval_client
         self._memory_harness = memory_harness
+        # Rewind checkpoints. None when no store is wired (tests, legacy factories) —
+        # every call site guards on it, so rewind is purely additive.
+        self._rewind = rewind_store
         # Task subsystem flag (default OFF): gates create_task/resume mode handoff and the
         # task-mode prompt injection. Process-fixed — resolved once, like the controller flag.
         self._task_subsystem_enabled = is_task_subsystem_enabled()
@@ -337,9 +342,18 @@ class ChatController:
             )
             if blocks:
                 turn_message = f"{message}\n\n---\nReferenced files:\n{blocks}"
-        self._store.append_message(thread_id, ChatMessage(
+        # One id for this turn's in-flight pills message AND its rewind checkpoint.
+        # Assigned here (not just before _run_loop) because open_checkpoint needs it.
+        turn_id = uuid4().hex
+        anchor_message_id = self._store.append_message(thread_id, ChatMessage(
             role="user", content=message,
             metadata={"mentioned_files": mentioned_paths} if mentioned_paths else {}))
+        if self._rewind is not None and anchor_message_id is not None:
+            # `thread` is the object read at the top of this function — pre-turn history,
+            # todos, skill and seed, which is exactly what a rewind to here restores.
+            self._rewind.open_checkpoint(
+                thread_id, anchor_message_id, turn_id, thread=thread,
+                memory_anchor_md=self._memory_harness.anchor_markdown(thread_id))
         # A new turn invalidates any prior in-flight pills marker (a stopped/orphaned
         # earlier turn). Drop it so this turn's switch-back dedup is scoped to its own
         # message (finding 5); the orphan's pills stay as a normal message.
@@ -359,9 +373,6 @@ class ChatController:
         # sticky Plan Mode toggle selects (NEW-I6 — this MUST be the plan_mode
         # computation, never a stray None, or the toggle silently has no effect).
         resume_phase = "PLAN" if plan_mode else "ACTIVE"
-        # One id for this turn's in-flight pills message — lets the loop upsert it per
-        # tool result and _finish finalize the SAME message (no duplicate). Finding 5.
-        turn_id = uuid4().hex
         outcome = await self._run_loop(
             thread_id, channel_id, turn_message, seed_history=seed_history,
             step_review=step_review, phase=resume_phase, turn_id=turn_id,
@@ -400,7 +411,10 @@ class ChatController:
             (lambda: TurnEditSession(
                 turn_id=thread_id, real_path=Path(self._workspace_path),
                 workspace_manager=self._orchestrator._workspace_manager,
-                patch_engine=self._orchestrator._patch_engine))
+                patch_engine=self._orchestrator._patch_engine,
+                checkpoint_cb=(
+                    partial(self._rewind.capture, thread_id)
+                    if self._rewind is not None else None)))
             if self._orchestrator is not None else None)
         # run_command (ACTIVE-only; PLAN rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.

@@ -9,6 +9,7 @@ and discarded at turn end.
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from agentd.domain.models import DiffEntry
@@ -94,6 +95,7 @@ class TurnEditSession:
         real_path: Path,
         workspace_manager: ShadowWorkspaceManager,
         patch_engine: PatchEngine,
+        checkpoint_cb: Callable[[list[str]], None] | None = None,
     ) -> None:
         self._turn_id = turn_id
         self._real = real_path
@@ -102,6 +104,10 @@ class TurnEditSession:
         self._shadow: Path | None = None
         self._touched_ever: set[str] = set()  # files the shadow has ever held this turn
         self._pending_touched: list[str] = []
+        # Rewind capture. Called BEFORE _ensure_shadow so the copy is taken while the
+        # real workspace is still the clean before-state (the `shadow == real` invariant
+        # in this module's docstring). Sync, like the shutil copies in _ensure_shadow.
+        self._checkpoint_cb = checkpoint_cb
 
     async def _ensure_shadow(self, touched: list[str]) -> Path:
         if self._shadow is None:
@@ -123,6 +129,8 @@ class TurnEditSession:
     async def apply(self, patch_ops: list[dict[str, object]]) -> list[DiffEntry]:
         _validate_patch_ops(patch_ops)
         touched = [str(op["file"]) for op in patch_ops if "file" in op]
+        if self._checkpoint_cb is not None:
+            self._checkpoint_cb(touched)
         shadow = await self._ensure_shadow(touched)
         applied = await apply_ops(self._patch, shadow, patch_ops, allowed_files=set(touched))
         self._pending_touched = applied

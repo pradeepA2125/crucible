@@ -134,6 +134,13 @@ def select_chat_handler(
             from agentd.exec_sessions.manager import SessionManager
 
             exec_manager = SessionManager(Path(workspace_path))
+        # Rewind checkpoints ride the frozen workspace_path, same as every other
+        # workspace-scoped collaborator here.
+        from pathlib import Path as _Path
+
+        from agentd.chat.rewind import RewindStore
+
+        rewind_store = RewindStore(thread_store, _Path(workspace_path))
         return ChatController(
             workspace_path=workspace_path,
             reasoning_engine=DefaultReasoningEngine(
@@ -151,6 +158,7 @@ def select_chat_handler(
             memory_harness=memory_harness,
             mcp_manager=mcp_manager,
             exec_session_manager=exec_manager,
+            rewind_store=rewind_store,
         )
 
     from agentd.chat.agent import ChatAgent
