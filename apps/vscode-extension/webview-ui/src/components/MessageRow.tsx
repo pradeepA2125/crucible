@@ -6,10 +6,15 @@ import { QAMessage } from "./messages/QAMessage";
 import { UserMessage } from "./messages/UserMessage";
 import { CardShell } from "./shared/CardShell";
 import { Icon } from "./Icon";
+import { vscode } from "../vscodeApi";
 
 interface Props {
   msg: ChatMsg;
   planVersion?: number;
+  /** A turn in flight blocks rewind (the backend 409s), so the affordance hides. */
+  turnActive?: boolean;
+  /** Records which message the confirm dialog is about. */
+  onRewindRequest?: (messageId: string) => void;
 }
 
 // ── TaskCreatedRow ────────────────────────────────────────────────────────────
@@ -101,7 +106,7 @@ function LegacyGateSummary({ msg }: { msg: ChatMsg }) {
  * CRITICAL: switch on msg.type FIRST, role second.
  * Dispatching on role first was a real bug (cards rendered as text forever).
  */
-export function MessageRow({ msg, planVersion }: Props) {
+export function MessageRow({ msg, planVersion, turnActive, onRewindRequest }: Props) {
   switch (msg.type) {
     case "plan_card":
       return (
@@ -140,10 +145,19 @@ export function MessageRow({ msg, planVersion }: Props) {
     case "text":
     default: {
       if (msg.role === "user") {
+        const messageId = msg.id;
         return (
           <UserMessage
             content={msg.content}
             mentionedFiles={msg.metadata?.mentioned_files as string[] | undefined}
+            onRewind={
+              messageId && !turnActive && onRewindRequest
+                ? () => {
+                    onRewindRequest(messageId);
+                    vscode.postMessage({ type: "rewindPreview", messageId });
+                  }
+                : undefined
+            }
           />
         );
       }

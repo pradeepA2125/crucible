@@ -11,7 +11,8 @@ import { SettingsDrawer } from "./SettingsDrawer";
 import { ChatSettingsOverlay } from "./ChatSettingsOverlay";
 import { inputAvailability } from "../inputAvailability";
 import type { SectionId } from "../settings/sections/meta";
-import type { AppState, ChatMsg } from "../types";
+import type { AppState, ChatMsg, RewindPreviewView } from "../types";
+import { RewindDialog } from "./RewindDialog";
 
 // Gate statuses where the workbar should be HIDDEN (user is deciding something).
 const WAITING_STATUSES = new Set([
@@ -38,9 +39,30 @@ interface Props {
 export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError }: Props) {
   const [draft, setDraft] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Chat rewind is local UI state, not app state: the draft lives here too, and the
+  // dialog is transient. Driven by host messages, mirroring InputArea's promptExpanded
+  // listener.
+  const [rewindPreview, setRewindPreview] = useState<RewindPreviewView | null>(null);
+  const [rewindMessageId, setRewindMessageId] = useState<string | null>(null);
   // Which settings section the floating popup is open at; null = closed.
   const [settingsSection, setSettingsSection] = useState<SectionId | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onHostMessage(event: MessageEvent) {
+      const m = event.data as { type?: string; preview?: RewindPreviewView; text?: string };
+      if (m?.type === "rewindPreviewResult" && m.preview) {
+        setRewindPreview(m.preview);
+      } else if (m?.type === "composerPrefill") {
+        // The rewind landed: clear the dialog and hand the message back for editing.
+        setRewindPreview(null);
+        setRewindMessageId(null);
+        setDraft(m.text ?? "");
+      }
+    }
+    window.addEventListener("message", onHostMessage);
+    return () => window.removeEventListener("message", onHostMessage);
+  }, []);
 
   // UX Rule 3: navLocked while input is disabled (local SSE loop appending) OR while a
   // detached controller turn is in flight — turnActive is durable across a webview reload,
@@ -284,7 +306,13 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         ) : (
           <>
             {state.messages.map((m: ChatMsg, i: number) => (
-              <MessageRow key={i} msg={m} planVersion={planVersionMap.get(i)} />
+              <MessageRow
+                key={i}
+                msg={m}
+                planVersion={planVersionMap.get(i)}
+                turnActive={state.turnActive}
+                onRewindRequest={setRewindMessageId}
+              />
             ))}
 
             {/* Retry-status bubble — takes precedence over both the thinking
@@ -374,6 +402,23 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
       {/* Floating settings popup — over the whole chat, opened at the picked section. */}
       {settingsSection !== null && (
         <ChatSettingsOverlay section={settingsSection} onClose={() => setSettingsSection(null)} />
+      )}
+
+      {/* Confirm gate for a permanent rewind. */}
+      {rewindPreview !== null && (
+        <RewindDialog
+          preview={rewindPreview}
+          onCancel={() => {
+            setRewindPreview(null);
+            setRewindMessageId(null);
+          }}
+          onConfirm={() => {
+            if (rewindMessageId) {
+              vscode.postMessage({ type: "rewindConfirm", messageId: rewindMessageId });
+            }
+            setRewindPreview(null);
+          }}
+        />
       )}
     </div>
   );

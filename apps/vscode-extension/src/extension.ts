@@ -208,7 +208,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (sessionId: string) => controller.fetchSessionTranscript(sessionId),
     () => runtimeManager.getPlanMode(),
     (enabled: boolean) => runtimeManager.setPlanMode(enabled),
-    () => runtimeManager.getStepReview()
+    () => runtimeManager.getStepReview(),
+    (messageId) => controller.previewRewind(messageId),
+    (messageId) => controller.rewindTo(messageId)
   );
 
   const ui: ControllerUI = {
@@ -305,6 +307,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     clearChatThread: () => {
       chatPanel.clearThread();
+    },
+    showRewindPreview: (preview) => {
+      chatPanel.showRewindPreview(preview);
+    },
+    prefillComposer: (text) => {
+      chatPanel.prefillComposer(text);
     },
     resolveInlineChangeCard: (taskId, resolution) => {
       chatPanel.resolveInlineChangeCard(taskId, resolution);

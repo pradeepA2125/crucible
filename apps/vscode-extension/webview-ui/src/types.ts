@@ -142,6 +142,16 @@ export interface TokenProgressView {
   exact: boolean;
 }
 
+/** What a rewind would cost — drives the confirm dialog. Mirrors editor-client's
+ * RewindPreviewSchema. `blockedByTask` non-null means the POST will 409. */
+export interface RewindPreviewView {
+  messages: number;
+  files: number;
+  commandsRun: number;
+  blockedByTask: string | null;
+  sessions: { id: string; command: string }[];
+}
+
 export interface RetryStatusView {
   attempt: number;
   max_attempts: number;
@@ -191,12 +201,18 @@ export type ExtensionMessage =
   // Sticky Plan Mode toggle hydration (extension globalState), pushed on webviewReady
   // and whenever the composer/ModeGate posts setPlanMode back to the host.
   | { type: "planModeState"; enabled: boolean }
-  | { type: "reviewPrefState"; enabled: boolean };
+  | { type: "reviewPrefState"; enabled: boolean }
+  // Chat rewind: the preview opens the confirm dialog; the prefill lands the rewound
+  // message's text back in the composer after the server-authoritative reload.
+  | { type: "rewindPreviewResult"; preview: RewindPreviewView }
+  | { type: "composerPrefill"; text: string };
 
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
   | { type: "webviewReady" }
   | { type: "sendMessage"; text: string; stepReview?: boolean; forcedSkills?: string[]; mentionedPaths?: string[]; planMode?: boolean }
+  | { type: "rewindPreview"; messageId: string }
+  | { type: "rewindConfirm"; messageId: string }
   | { type: "implementPlan"; taskId: string }
   | { type: "planFeedback"; taskId: string; feedback: string }
   | { type: "newChat" }

@@ -12,9 +12,12 @@ import { vscode } from "../../vscodeApi";
 export function UserMessage({
   content,
   mentionedFiles = [],
+  onRewind,
 }: {
   content: string;
   mentionedFiles?: string[];
+  /** Absent when the message predates rewind (no id) or a turn is running. */
+  onRewind?: () => void;
 }) {
   const codeParts = content.split(/(`[^`]+`)/);
 
@@ -46,7 +49,7 @@ export function UserMessage({
 
   return (
     <div
-      className="self-end max-w-[86%] px-3 py-2 text-xs leading-relaxed text-text whitespace-pre-wrap break-words"
+      className="group relative self-end max-w-[86%] px-3 py-2 text-xs leading-relaxed text-text whitespace-pre-wrap break-words"
       style={{
         background: "linear-gradient(180deg, var(--color-surface-2), var(--color-surface))",
         border: "1px solid var(--color-border-strong)",
@@ -54,6 +57,17 @@ export function UserMessage({
         borderRadius: "12px 12px 4px 12px",
       }}
     >
+      {onRewind && (
+        <button
+          className="absolute -left-6 top-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          title="Rewind to here"
+          aria-label="Rewind to here"
+          onClick={onRewind}
+          style={{ color: "var(--color-text-2)" }}
+        >
+          ↺
+        </button>
+      )}
       {codeParts.map((part, i) => {
         if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
           return (

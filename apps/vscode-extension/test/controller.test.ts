@@ -211,6 +211,8 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     promptForResumeStage: async () => undefined,
     promptForMaxIterationsOverride: async () => undefined,
     promptForScopeDecision: async () => undefined,
+    showRewindPreview: () => {},
+    prefillComposer: () => {},
     showInfo: () => {},
     showWarning: () => {},
     showError: () => {},
@@ -2045,5 +2047,63 @@ describe("CrucibleController.openChat — setup routing (first-run gap)", () => 
     await h.controller.openChat();
     expect(h.setupPrompts.length).toBe(0);
     expect(h.chatOpened()).toBe(true);
+  });
+});
+
+describe("rewind", () => {
+  const REWIND_RESULT = {
+    restoredFiles: ["a.py"], deletedFiles: [], oversizeFiles: [], failed: [],
+    removedMessages: 2, prefillText: "try again", retiredMemories: 1,
+  };
+  const THREAD = {
+    threadId: "chat-1", workspacePath: "/ws", title: "t",
+    messages: [{ role: "user", content: "kept", type: "text", timestamp: "", metadata: {} }],
+    touchedFiles: [],
+  };
+
+  test("reloads the thread and prefills the composer after a rewind", async () => {
+    const prefilled: string[] = [];
+    const calls: string[][] = [];
+    let threadFetched = false;
+    const backend = {
+      rewindThread: async (t: string, m: string) => { calls.push([t, m]); return REWIND_RESULT; },
+      getChatThread: async () => { threadFetched = true; return THREAD; },
+      listChatThreads: async () => [],
+      getThreadLiveState: async () => ({}),
+    } as unknown as BackendTaskClient;
+    const ui = createUi({ prefillComposer: (t: string) => prefilled.push(t) });
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async () => {} }, () => "2026-08-16T00:00:00.000Z",
+    );
+    controller.activeThreadId = "chat-1";
+
+    await controller.rewindTo("m1");
+    controller.dispose();
+
+    expect(calls).toEqual([["chat-1", "m1"]]);
+    expect(threadFetched).toBe(true);
+    expect(prefilled).toEqual(["try again"]);
+  });
+
+  test("surfaces a rewind failure instead of silently reloading", async () => {
+    const errors: string[] = [];
+    let threadFetched = false;
+    const backend = {
+      rewindThread: async () => { throw new Error("409 turn in flight"); },
+      getChatThread: async () => { threadFetched = true; return THREAD; },
+    } as unknown as BackendTaskClient;
+    const ui = createUi({ showError: (m: string) => errors.push(m) });
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async () => {} }, () => "2026-08-16T00:00:00.000Z",
+    );
+    controller.activeThreadId = "chat-1";
+
+    await controller.rewindTo("m1");
+    controller.dispose();
+
+    expect(errors.length).toBe(1);
+    expect(threadFetched).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import type {
   TaskSubmission,
   TaskView,
   ThreadLiveState,
+  RewindPreview,
 } from "@crucible/editor-client";
 
 import * as path from "path";
@@ -70,6 +71,10 @@ export interface ControllerUI {
   setChatInputEnabled(enabled: boolean): void;
   renderChatThreadList(threads: ChatThreadSummary[], activeThreadId: string): void;
   clearChatThread(): void;
+  // Chat rewind: the preview feeds the confirm dialog, the prefill hands the rewound
+  // message's text back to the composer for edit-or-resend.
+  showRewindPreview(preview: RewindPreview): void;
+  prefillComposer(text: string): void;
   resolveInlineChangeCard(taskId: string, resolution: "applied" | "discarded"): void;
   updateThreadTitle(threadId: string, title: string): void;
   appendChatThinkingEntry(text: string): void;
@@ -637,6 +642,41 @@ export class CrucibleController {
       this.ui.appendChatMessage(message);
     }
     this.startLiveStatePolling();
+  }
+
+  async previewRewind(messageId: string): Promise<void> {
+    if (!this.activeThreadId) return;
+    const client = this.createClient(this.settings.getBackendBaseUrl());
+    try {
+      this.ui.showRewindPreview(await client.previewRewind(this.activeThreadId, messageId));
+    } catch (error) {
+      this.ui.showError(`Could not preview rewind: ${formatError(error)}`);
+    }
+  }
+
+  async rewindTo(messageId: string): Promise<void> {
+    const threadId = this.activeThreadId;
+    if (!threadId) return;
+    const client = this.createClient(this.settings.getBackendBaseUrl());
+    let result;
+    try {
+      result = await client.rewindThread(threadId, messageId);
+    } catch (error) {
+      // A refusal (409 turn in flight / live task) has to be visible. Falling through
+      // to a reload here would look exactly like a rewind that worked.
+      this.ui.showError(`Rewind failed: ${formatError(error)}`);
+      return;
+    }
+    // The server is authoritative about what survived, so reload rather than mutating
+    // the transcript locally. Mirrors switchChatThread's clear-then-append.
+    await this.switchChatThread(threadId);
+    this.ui.prefillComposer(result.prefillText);
+    if (result.failed.length > 0) {
+      this.ui.showError(
+        `Rewind restored ${result.restoredFiles.length} file(s) but ${result.failed.length} `
+        + `could not be restored: ${result.failed.map((f) => f.path).join(", ")}`,
+      );
+    }
   }
 
   async sendChatMessage(

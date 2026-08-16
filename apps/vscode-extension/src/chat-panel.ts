@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import type {
   ChatMessage,
   ChatThreadSummary,
+  RewindPreview,
   CommandDecision,
   EffortSupport,
   McpToolDecision,
@@ -95,6 +96,9 @@ export type OpenFileHandler = (relativePath: string) => void;
 // Sticky Plan Mode toggle (survives across threads/reloads via extension globalState).
 export type GetPlanModeHandler = () => boolean;
 export type GetStepReviewHandler = () => boolean;
+/** Chat rewind: preview feeds the confirm dialog, confirm performs the destructive act. */
+export type RewindPreviewHandler = (messageId: string) => Promise<void>;
+export type RewindConfirmHandler = (messageId: string) => Promise<void>;
 export type SetPlanModeHandler = (enabled: boolean) => Promise<void>;
 
 export class ChatPanel {
@@ -147,7 +151,9 @@ export class ChatPanel {
     private readonly onFetchSessionTranscript: FetchSessionTranscriptHandler = async () => null,
     private readonly onGetPlanMode: GetPlanModeHandler = () => false,
     private readonly onSetPlanMode: SetPlanModeHandler = async () => {},
-    private readonly onGetStepReview: GetStepReviewHandler = () => true
+    private readonly onGetStepReview: GetStepReviewHandler = () => true,
+    private readonly onRewindPreview: RewindPreviewHandler = async () => {},
+    private readonly onRewindConfirm: RewindConfirmHandler = async () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -292,6 +298,10 @@ export class ChatPanel {
       } else if (m["type"] === "stepDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "discard";
         p = this.onStepDecision(m["taskId"] as string, decision);
+      } else if (m["type"] === "rewindPreview") {
+        p = this.onRewindPreview(m["messageId"] as string);
+      } else if (m["type"] === "rewindConfirm") {
+        p = this.onRewindConfirm(m["messageId"] as string);
       } else if (m["type"] === "modeDecision") {
         p = this.onModeDecision(m["threadId"] as string, m["mode"] as string);
       } else if (m["type"] === "clarifyDecision") {
@@ -442,6 +452,14 @@ export class ChatPanel {
 
   clearThread(): void {
     this.panel?.webview.postMessage({ type: "clearThread" });
+  }
+
+  showRewindPreview(preview: RewindPreview): void {
+    this.panel?.webview.postMessage({ type: "rewindPreviewResult", preview });
+  }
+
+  prefillComposer(text: string): void {
+    this.panel?.webview.postMessage({ type: "composerPrefill", text });
   }
 
   resolveInlineChangeCard(taskId: string, resolution: "applied" | "discarded"): void {
