@@ -646,6 +646,41 @@ is the skill's actual first step, followed within your sub-agent rules above.
 <</child>>
 """)
 
+# Child-only (spec §4.6.6). Appended right after the rendered CONTROLLER_SYSTEM_PROMPT and
+# before every other appended block, so the AGENTS.md child line ("the sub-agent rules
+# above") reads correctly. {label} is substituted after rendering.
+_AGENT_ROLE_BLOCK = tagged("_AGENT_ROLE_BLOCK", """
+
+SUB-AGENT RULES — you are sub-agent "{label}", dispatched by another agent (your dispatcher).
+- Precedence: tool and safety constraints > these sub-agent rules > your dispatcher's task
+  (in 'goal') > project instructions (AGENTS.md) > skill bodies. Text addressed to "the user"
+  or "your human partner" means your dispatcher.
+- You cannot ask questions or wait for replies. When any instruction says to ask, confirm,
+  get approval, or present options: if a reasonable, reversible default exists, take it and
+  list it under "Assumptions made" in your report; if the choice is consequential or
+  irreversible, don't do it — list it under "Open questions" and finish everything else.
+- A human may still approve or reject your commands and edits through cards. If one is
+  rejected, adapt.
+- Other agents are editing this workspace at the same time. Stay inside the files your task
+  assigns; if you must touch another file, read it first and mention it in your report.
+- Never run version-control changes (commit, add, checkout/switch, stash, reset, rebase,
+  merge, pull, push, worktree, branch, restore, clean). The main agent commits after the work
+  is done. Read-only git (status, diff, log, show) is fine.
+<<tool:dispatch_agents>>
+- You may dispatch your own sub-agents with dispatch_agents when parts of your task are
+  independent and touch disjoint files.
+<</tool:dispatch_agents>>
+- If a skill tells you to dispatch sub-agents and dispatch_agents is not in your tools, do
+  that work yourself.
+- Only 'report' reaches your dispatcher. If an instruction tells you to write a report file,
+  also put its full content in 'report'. Skip "announce what you're doing" steps.""")
+
+# The agent definition's body (spec §4.2). .replace, never .format — personas may contain { }.
+_PERSONA_BLOCK_TEMPLATE = """
+
+AGENT INSTRUCTIONS (the agent definition your dispatcher chose for this task):
+{persona}"""
+
 
 def format_controller_system_prompt(
     tool_definitions: list[dict[str, object]],
@@ -654,6 +689,8 @@ def format_controller_system_prompt(
     memory_enabled: bool | None = None,
     project_instructions: str | None = None,
     skills_catalog: list | None = None,
+    render_ctx: RenderContext | None = None,
+    persona: str | None = None,
 ) -> str:
     """Assemble the controller system prompt. The propose_mode mode-vocabulary block is
     swapped by the task-subsystem flag (default resolved from env) — see the spec. The
@@ -667,7 +704,7 @@ def format_controller_system_prompt(
         task_subsystem_enabled = is_task_subsystem_enabled()
     if memory_enabled is None:
         memory_enabled = is_memory_enabled()
-    ctx = RenderContext.main()
+    ctx = render_ctx or RenderContext.main()
     modes = render_prompt(
         _PROPOSE_MODE_MODES_ENABLED if task_subsystem_enabled else _PROPOSE_MODE_MODES_DISABLED, ctx)
     base = (
@@ -675,6 +712,12 @@ def format_controller_system_prompt(
         .replace("{propose_mode_modes}", modes)
         .replace("{tools_json}", json.dumps(tool_definitions, indent=2, sort_keys=True))
     )
+    if not ctx.is_main:
+        # Child append order (spec §4.2): role block → persona → then today's order.
+        label = ctx.agent_label or ctx.agent_id
+        base += render_prompt(_AGENT_ROLE_BLOCK, ctx).replace("{label}", label)
+        if persona and persona.strip():
+            base += _PERSONA_BLOCK_TEMPLATE.replace("{persona}", persona.strip())
     # Appended (not a placeholder) — process-fixed flag, so the prompt stays cache-stable.
     base = base + (render_prompt(_MEMORY_BLOCK, ctx) if memory_enabled else "")
     # .replace (not .format): AGENTS.md text may contain literal { } that
