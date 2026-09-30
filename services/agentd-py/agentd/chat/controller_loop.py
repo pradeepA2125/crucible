@@ -19,7 +19,8 @@ from agentd.domain.models import AgentToolTrace, PatchFailureCode, ToolCall, Too
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
-from agentd.reasoning.react_common import MALFORMED_CORRECTION, assistant_turn, dedup_key
+from agentd.prompting.tagged import RenderContext, render_prompt, tagged
+from agentd.reasoning.react_common import assistant_turn, dedup_key, malformed_correction
 from agentd.skills.config import skills_body_max_chars
 
 if TYPE_CHECKING:
@@ -50,6 +51,8 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+_MAIN = RenderContext.main()
 
 
 class ControllerLoopExhausted(Exception):
@@ -181,21 +184,33 @@ _RESERVED_ACTION_TOOL_NAMES = frozenset(
     {"answer", "clarify", "propose_mode", "edit", "submit_changes", "progress"})
 
 
-def _reserved_tool_name_correction(resp: dict[str, object], atype: str) -> str | None:
+_RESERVED_TOOL_NAME_TEMPLATE = tagged("reserved_tool_name", (
+    "'{tool}' is not a callable tool — there is no such tool in AVAILABLE TOOLS. "
+    "'{tool}' is a top-level response TYPE, emitted as its own object — "
+    '{"type":"{tool}", ...} (see the "{tool}" variant above for its required '
+    'fields) — NEVER as {"type":"tool_call","tool":"{tool}",...}.'
+    "<<main>> If you are "
+    "trying to make a change: type='edit' is already directly available — emit it "
+    "now (Plan Mode is the only phase where you'd emit propose_mode first).<</main>>"
+    "<<child:edit>> If you are trying to make a change: type='edit' is directly available — "
+    "emit it now.<</child:edit>>"
+    "<<child:readonly>> You are read-only for this task — finish with "
+    "type='report'.<</child:readonly>>"
+))
+
+
+def _reserved_tool_name_correction(
+    resp: dict[str, object], atype: str, ctx: RenderContext = _MAIN,
+) -> str | None:
     """Reject a tool_call whose 'tool' is actually a top-level response type name."""
     if atype != "tool_call":
         return None
     tool = str(resp.get("tool", ""))
-    if tool not in _RESERVED_ACTION_TOOL_NAMES:
+    reserved = (_RESERVED_ACTION_TOOL_NAMES if ctx.is_main
+                else _RESERVED_ACTION_TOOL_NAMES | {"report"})
+    if tool not in reserved:
         return None
-    return (
-        f"'{tool}' is not a callable tool — there is no such tool in AVAILABLE TOOLS. "
-        f"'{tool}' is a top-level response TYPE, emitted as its own object — "
-        f'{{"type":"{tool}", ...}} (see the "{tool}" variant above for its required '
-        f'fields) — NEVER as {{"type":"tool_call","tool":"{tool}",...}}. If you are '
-        "trying to make a change: type='edit' is already directly available — emit it "
-        "now (Plan Mode is the only phase where you'd emit propose_mode first)."
-    )
+    return render_prompt(_RESERVED_TOOL_NAME_TEMPLATE, ctx).replace("{tool}", tool)
 
 
 # Guidance appended after a PARSE failure, chosen by the decoder's own complaint.
@@ -385,8 +400,21 @@ def _normalize_progress_note(resp: dict[str, object]) -> str:
     return str(resp.get("note", "")).strip()[:_PROGRESS_NOTE_MAX_CHARS]
 
 
+_PROGRESS_REPEAT_TEMPLATE = tagged("progress_repeat", (
+    "You already posted a progress note and took no action after it. A progress note "
+    "does NOT count as doing the work. Take the actual next action now — emit "
+    "type='tool_call'<<type:edit>> / 'edit'<</type:edit>><<main>> / 'submit_changes' (or 'answer' "
+    "if you are truly done)<</main>><<child>> (or 'report' if you are done)<</child>>."
+))
+_PROGRESS_DEDUP_TEMPLATE = tagged("progress_dedup", (
+    "You already posted that exact progress note this turn. Do not repeat it — "
+    "take the next real action instead (tool_call<<type:edit>> / edit<</type:edit>>"
+    "<<main>> / submit_changes / answer<</main>><<child>> / report<</child>>)."
+))
+
+
 def _progress_repeat_correction(
-    resp: dict[str, object], atype: str, last_was_progress: bool,
+    resp: dict[str, object], atype: str, last_was_progress: bool, ctx: RenderContext = _MAIN,
 ) -> str | None:
     """Reject a `progress` note that immediately follows another `progress` with no real
     action between — a weak model can turn a free non-terminal action into a narration
@@ -394,15 +422,11 @@ def _progress_repeat_correction(
     routes through the same _MAX_MALFORMED correction chain (no new retry primitive)."""
     if atype != "progress" or not last_was_progress:
         return None
-    return (
-        "You already posted a progress note and took no action after it. A progress note "
-        "does NOT count as doing the work. Take the actual next action now — emit "
-        "type='tool_call' / 'edit' / 'submit_changes' (or 'answer' if you are truly done)."
-    )
+    return render_prompt(_PROGRESS_REPEAT_TEMPLATE, ctx)
 
 
 def _progress_dedup_correction(
-    resp: dict[str, object], atype: str, seen_notes: set[str],
+    resp: dict[str, object], atype: str, seen_notes: set[str], ctx: RenderContext = _MAIN,
 ) -> str | None:
     """Reject an exact-duplicate progress note already emitted this turn (same attractor
     class as _progress_repeat_correction, but catches non-adjacent repeats)."""
@@ -412,11 +436,22 @@ def _progress_dedup_correction(
     # An empty note is _empty_action_correction's business (it fires earlier in the
     # chain); never let "" match a stored value here.
     if note and note in seen_notes:
-        return (
-            "You already posted that exact progress note this turn. Do not repeat it — "
-            "take the next real action instead (tool_call / edit / submit_changes / answer)."
-        )
+        return render_prompt(_PROGRESS_DEDUP_TEMPLATE, ctx)
     return None
+
+
+_EMPTY_EDIT_REDIRECT_TEMPLATE = tagged("empty_edit_redirect", (
+    "That 'edit' had no patch_ops, so NOTHING was applied. If you meant to "
+    "create or update the TODO LIST, that is a TOOL CALL — emit "
+    '{"type":"tool_call","tool":"write_todos","args":{"items":[…]}}, NOT '
+    "type='edit'. To change a file, emit type='edit' with a NON-EMPTY "
+    "patch_ops (each op: file + its op fields). To finish, emit "
+    "type='<<main>>submit_changes<</main>><<child>>report<</child>>'."
+))
+
+
+def _empty_edit_redirect(ctx: RenderContext) -> str:
+    return render_prompt(_EMPTY_EDIT_REDIRECT_TEMPLATE, ctx)
 
 
 # Matches this workspace's writing-plans skill's own plan-doc convention, e.g.:
@@ -509,6 +544,7 @@ class ControllerLoop:
         active_skill_persist_cb: Callable[[str | None], Awaitable[None]] | None = None,
         progress_note_cb: Callable[[str], Awaitable[None]] | None = None,
         pills_seal_cb: Callable[[], None] | None = None,
+        render_ctx: RenderContext | None = None,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -601,6 +637,9 @@ class ControllerLoop:
         # (any exit path) so ChatController can carry it into the NEXT turn the same
         # way it already threads _histories.
         self._observed_prompt: ObservedPrompt | None = None
+        # Which audience this loop's text is rendered for (spec §4.7). None = the main agent,
+        # whose every string stays byte-identical (tests/test_prompt_goldens.py).
+        self._render_ctx = render_ctx or RenderContext.main()
 
     def mark_pills_boundary(self) -> None:
         """A durable message just landed in the transcript mid-turn — close the current
@@ -1094,17 +1133,17 @@ class ControllerLoop:
             # flat schema permits {"type":"answer"} / empty tool_call — see
             # _empty_action_correction). Each is corrected + retried, bounded by _MAX_MALFORMED.
             correction = (
-                MALFORMED_CORRECTION
+                malformed_correction(self._render_ctx, self._allowed_action_types())
                 if atype not in self._allowed_action_types()
                 else _propose_mode_correction(resp, self._allowed_modes_for_current_phase()) if atype == "propose_mode"
-                else _reserved_tool_name_correction(resp, atype)
+                else _reserved_tool_name_correction(resp, atype, self._render_ctx)
                 or _decide_state_change_correction(resp, self._sm.phase)
                 or _empty_action_correction(resp, atype)
                 or _answer_intent_divergence_correction(resp, atype, tool_names)
                 # After _empty_action_correction on purpose: a blank note must be
                 # reported as EMPTY, not misdiagnosed as a duplicate of "".
-                or _progress_repeat_correction(resp, atype, last_was_progress)
-                or _progress_dedup_correction(resp, atype, seen_notes)
+                or _progress_repeat_correction(resp, atype, last_was_progress, self._render_ctx)
+                or _progress_dedup_correction(resp, atype, seen_notes, self._render_ctx)
             )
             if correction is not None:
                 if atype == "propose_mode":
@@ -1358,13 +1397,7 @@ class ControllerLoop:
                         {k: v for k, v in resp.items() if k != "patch_ops"}))
                     history.append({
                         "role": "tool_result", "tool": "edit",
-                        "content": (
-                            "That 'edit' had no patch_ops, so NOTHING was applied. If you meant to "
-                            "create or update the TODO LIST, that is a TOOL CALL — emit "
-                            '{"type":"tool_call","tool":"write_todos","args":{"items":[…]}}, NOT '
-                            "type='edit'. To change a file, emit type='edit' with a NON-EMPTY "
-                            "patch_ops (each op: file + its op fields). To finish, emit "
-                            "type='submit_changes'.")})
+                        "content": _empty_edit_redirect(self._render_ctx)})
                     continue
                 try:
                     diff = await self._edit.apply(ops)
