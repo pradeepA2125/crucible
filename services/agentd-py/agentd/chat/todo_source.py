@@ -9,42 +9,54 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from agentd.chat.todo_ledger import _STATUSES, TodoItem, TodoLedger
+from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
-_WRITE_TODOS_DEF = ToolDefinition(
-    name="write_todos",
-    description=(
-        "Create or update the todo list for a LARGE / multi-part change. Send the FULL "
-        "list every call (full-list rewrite): every item with its current status. Use it "
-        "when the request decomposes into multiple distinct features/steps; SKIP it for a "
-        "single small edit. To reshape (split/insert/reorder), just resend the list in the "
-        "new shape. Mark an item 'done' ONLY with evidence (cite the tool/edit result in "
-        "'note'); 'blocked' (put the unblock condition in 'note') if you cannot proceed; "
-        "'cancelled' (say why in 'note') to abandon one — never silently drop it. "
-        "A 'run tests/verify' step from the user's plan is always its OWN item, separate "
-        "from creating the file it tests; its 'done' evidence is the command output, never "
-        "an edit result. "
-        "submit_changes is BLOCKED while any item is pending or in_progress."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
+_WRITE_TODOS_DESCRIPTION = tagged("write_todos_description", (
+    "Create or update the todo list for a LARGE / multi-part change. Send the FULL "
+    "list every call (full-list rewrite): every item with its current status. Use it "
+    "when the request decomposes into multiple distinct features/steps; SKIP it for a "
+    "single small edit. To reshape (split/insert/reorder), just resend the list in the "
+    "new shape. Mark an item 'done' ONLY with evidence (cite the tool/edit result in "
+    "'note'); 'blocked' (put the unblock condition in 'note') if you cannot proceed; "
+    "'cancelled' (say why in 'note') to abandon one — never silently drop it. "
+    "A 'run tests/verify' step from <<main>>the user's plan<</main>><<child>>your task<</child>> "
+    "is always its OWN item, separate "
+    "from creating the file it tests; its 'done' evidence is the command output, never "
+    "an edit result. "
+    "<<main>>submit_changes<</main>><<child>>report<</child>> is BLOCKED while any item is "
+    "pending or in_progress."
+))
+_WRITE_TODOS_PARAMETERS: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
             "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "status": {"type": "string", "enum": list(_STATUSES)},
-                        "note": {"type": "string"},
-                    },
-                    "required": ["title", "status"],
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "status": {"type": "string", "enum": list(_STATUSES)},
+                    "note": {"type": "string"},
                 },
-            }
-        },
-        "required": ["items"],
+                "required": ["title", "status"],
+            },
+        }
     },
-)
+    "required": ["items"],
+}
+
+
+def _write_todos_def(ctx: RenderContext) -> ToolDefinition:
+    return ToolDefinition(
+        name="write_todos",
+        description=render_prompt(_WRITE_TODOS_DESCRIPTION, ctx),
+        parameters=_WRITE_TODOS_PARAMETERS,
+    )
+
+
+# Main-rendered, kept for existing importers.
+_WRITE_TODOS_DEF = _write_todos_def(RenderContext.main())
 
 
 class TodoToolSource:
@@ -54,15 +66,18 @@ class TodoToolSource:
         self,
         ledger: TodoLedger,
         on_mutate: Callable[[str | None], Awaitable[None]] | None = None,
+        *,
+        render_ctx: RenderContext | None = None,
     ) -> None:
         self._ledger = ledger
         # Awaited with ledger.to_json() right after a successful write_todos so the
         # controller can persist the in-flight ledger mid-turn (renders on /live while the
         # turn runs). None-safe: a source built without it (tests, no store) just no-ops.
         self._on_mutate = on_mutate
+        self._render_ctx = render_ctx or RenderContext.main()
 
     def definitions(self) -> list[ToolDefinition]:
-        return [_WRITE_TODOS_DEF]
+        return [_write_todos_def(self._render_ctx)]
 
     def owns(self, tool: str) -> bool:
         return tool == "write_todos"

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from agentd.prompting.tagged import RenderContext, render_prompt, tagged
+
 
 class ToolDefinition(BaseModel):
     name: str
@@ -18,6 +20,35 @@ class ToolDefinition(BaseModel):
 class ToolOutput:
     output: str
     is_error: bool = False
+
+
+# Tagged (spec §4.6.3). Main renders today's text byte-for-byte; a child is told it runs in
+# the real shared workspace and gets its permission's approval sentence.
+_RUN_COMMAND_DESCRIPTION = tagged("run_command_description", (
+    "Run a real shell command line <<main>>inside the shadow workspace<</main>><<child>>in the "
+    "real, shared workspace (other agents may be editing files concurrently, so test results "
+    "can reflect their in-progress work)<</child>> — "
+    "'command' and 'args' are joined and executed via a shell, so "
+    "pipes, redirects, and chaining work: put each token (including "
+    "the operator) as its own args entry, e.g. args: [\"file.go\", "
+    "\"|\", \"head\", \"-20\"] or [\"&&\", \"go\", \"vet\", \"./...\"]. "
+    "Every other argument is passed through literally (spaces/quotes "
+    "in a single argument are preserved). "
+    "<<main>>Each command is surfaced to "
+    "the user for approval (Accept / Accept & remember / Reject) "
+    "unless the session was started in allow_all mode. If the user "
+    "rejects, you will receive a tool-result error and should try a "
+    "different approach (e.g. a static check). <</main>>"
+    "<<perm:default>>A command may pause for a human approval card; if it is rejected you "
+    "receive a tool-result error and should try a different approach. <</perm:default>>"
+    "<<perm:acceptEdits>>A command may pause for a human approval card; if it is rejected you "
+    "receive a tool-result error and should try a different approach. <</perm:acceptEdits>>"
+    "<<perm:dontAsk>><<shell:ask>>A command runs only if a remembered rule allows it; otherwise "
+    "it is refused (nobody is asked). <</shell:ask>><<shell:allow_all>>Commands run without "
+    "approval. <</shell:allow_all>><</perm:dontAsk>>"
+    "Use to run tests, "
+    "linters, or type checkers."
+))
 
 
 class ToolRegistry:
@@ -35,6 +66,7 @@ class ToolRegistry:
         real_workspace_path: Path,
         semantic_index: object | None = None,
         command_approval_callback: object | None = None,
+        render_ctx: RenderContext | None = None,
     ) -> None:
         self._shadow_root = shadow_root
         self._real_workspace_path = real_workspace_path
@@ -45,6 +77,7 @@ class ToolRegistry:
         # consults it before executing. When None, run_command runs unguarded
         # (legacy/test path) — production wires this via the engine.
         self._command_approval_callback = command_approval_callback
+        self._render_ctx = render_ctx or RenderContext.main()
 
     def use_shadow_for_reads(self) -> None:
         """Switch read_file, search_code, list_directory to read from the shadow workspace."""
@@ -139,20 +172,7 @@ class ToolRegistry:
             ),
             ToolDefinition(
                 name="run_command",
-                description=(
-                    "Run a real shell command line inside the shadow workspace — "
-                    "'command' and 'args' are joined and executed via a shell, so "
-                    "pipes, redirects, and chaining work: put each token (including "
-                    "the operator) as its own args entry, e.g. args: [\"file.go\", "
-                    "\"|\", \"head\", \"-20\"] or [\"&&\", \"go\", \"vet\", \"./...\"]. "
-                    "Every other argument is passed through literally (spaces/quotes "
-                    "in a single argument are preserved). Each command is surfaced to "
-                    "the user for approval (Accept / Accept & remember / Reject) "
-                    "unless the session was started in allow_all mode. If the user "
-                    "rejects, you will receive a tool-result error and should try a "
-                    "different approach (e.g. a static check). Use to run tests, "
-                    "linters, or type checkers."
-                ),
+                description=render_prompt(_RUN_COMMAND_DESCRIPTION, self._render_ctx),
                 parameters={
                     "type": "object",
                     "properties": {

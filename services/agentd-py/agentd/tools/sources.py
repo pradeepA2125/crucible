@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from agentd.prompting.tagged import RenderContext
 from agentd.tools.registry import ToolDefinition, ToolOutput, ToolRegistry
 
 
@@ -34,12 +35,14 @@ class BuiltinToolSource:
         real_workspace_path: Path,
         semantic_index: object | None = None,
         command_approval_callback: object | None = None,
+        render_ctx: RenderContext | None = None,
     ) -> None:
         self._inner = ToolRegistry(
             shadow_root,
             real_workspace_path,
             semantic_index=semantic_index,
             command_approval_callback=command_approval_callback,
+            render_ctx=render_ctx,
         )
         self._phase = "explore"
 

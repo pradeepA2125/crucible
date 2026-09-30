@@ -13,6 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from agentd.mcp.config import mcp_tools_max_chars
+from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,12 @@ logger = logging.getLogger(__name__)
 _PREFIX = "mcp__"
 
 ApprovalCallback = Callable[[str, str, dict[str, object]], Awaitable[bool]]
+
+_MCP_REJECTED_TEMPLATE = tagged("mcp_rejected", (
+    "MCP tool call rejected by user: {server}.{tool}. "
+    "Do not retry the same call — adapt your approach<<main>> or ask<</main>><<child>>, or note "
+    "the blocker in your report<</child>>."
+))
 
 
 def parse_tool_name(name: str) -> tuple[str, str] | None:
@@ -34,9 +41,13 @@ def parse_tool_name(name: str) -> tuple[str, str] | None:
 class McpToolSource:
     name = "mcp"
 
-    def __init__(self, manager: object, approval_callback: ApprovalCallback) -> None:
+    def __init__(
+        self, manager: object, approval_callback: ApprovalCallback, *,
+        render_ctx: RenderContext | None = None,
+    ) -> None:
         self._manager = manager
         self._approve = approval_callback
+        self._render_ctx = render_ctx or RenderContext.main()
 
     def definitions(self) -> list[ToolDefinition]:
         defs: list[ToolDefinition] = self._manager.tool_definitions()  # type: ignore[attr-defined]
@@ -64,8 +75,8 @@ class McpToolSource:
         approved = await self._approve(server, tool_name, dict(args))
         if not approved:
             return ToolOutput(
-                output=(f"MCP tool call rejected by user: {server}.{tool_name}. "
-                        "Do not retry the same call — adapt your approach or ask."),
+                output=render_prompt(_MCP_REJECTED_TEMPLATE, self._render_ctx)
+                .replace("{server}", server).replace("{tool}", tool_name),
                 is_error=True)
         try:
             result = await self._manager.call_tool(server, tool_name, dict(args))  # type: ignore[attr-defined]
