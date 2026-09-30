@@ -25,7 +25,7 @@ class ToolOutput:
 # Tagged (spec §4.6.3). Main renders today's text byte-for-byte; a child is told it runs in
 # the real shared workspace and gets its permission's approval sentence.
 _RUN_COMMAND_DESCRIPTION = tagged("run_command_description", (
-    "Run a real shell command line <<main>>inside the shadow workspace<</main>><<child>>in the "
+    "Run a real shell command line <<main>>in the workspace<</main>><<child>>in the "
     "real, shared workspace (other agents may be editing files concurrently, so test results "
     "can reflect their in-progress work)<</child>> — "
     "'command' and 'args' are joined and executed via a shell, so "

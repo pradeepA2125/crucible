@@ -55,7 +55,7 @@ def _validate_patch_ops(patch_ops: list[dict[str, object]]) -> None:
     back through the loop's PATCH FAILED branch with actionable guidance instead.
     """
     if not patch_ops:
-        raise ValueError("no patch_ops were emitted — emit at least one op or submit_changes.")
+        raise ValueError("no patch_ops were emitted — emit at least one op.")
     for op in patch_ops:
         if not isinstance(op, dict):
             raise ValueError(f"each patch op must be a JSON object, got {type(op).__name__}.")
