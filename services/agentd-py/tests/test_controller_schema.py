@@ -65,6 +65,7 @@ def test_schema_is_flat_not_oneof():
     enum = CONTROLLER_RESPONSE_SCHEMA["properties"]["type"]["enum"]
     assert set(enum) == {
         "tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress",
+        "report",
     }
     # plan_sketch present for propose_mode
     assert "plan_sketch" in CONTROLLER_RESPONSE_SCHEMA["properties"]

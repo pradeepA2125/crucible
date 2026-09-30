@@ -14,12 +14,14 @@ non-default construction sites (see the design doc's C1/C5 entries):
   - "PLAN": only `resolve_clarify`'s PLAN-resume (a clarify raised mid-PLAN) — PLAN
     is never transitioned into from a live ACTIVE turn otherwise, only ever
     constructed fresh as a turn's toggle-derived starting phase.
+  - "AGENT": a dispatched sub-agent's loop (Plan 1A / spec §4.1); constructed only by
+    the sub-agent runtime.
 """
 from __future__ import annotations
 
 from agentd.chat.controller_prompts import _PHASE_TYPES
 
-_VALID_STARTS = ("PLAN", "ACTIVE")
+_VALID_STARTS = ("PLAN", "ACTIVE", "AGENT")
 
 
 class ControllerPhaseSM:

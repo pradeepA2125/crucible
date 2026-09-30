@@ -169,6 +169,11 @@ def _empty_action_correction(resp: dict[str, object], atype: str) -> str | None:
                 'args as a JSON object (use {} if the tool takes no arguments, or '
                 '{"path": ...} for read_file, {"pattern": ...} for search_code).'
             )
+    if atype == "report" and _blank("summary"):
+        return (
+            "Your 'report' summary was empty. The COMPLETE report goes in 'summary' — it is the "
+            "only thing your dispatcher receives. Re-emit type='report' with a non-empty 'summary'."
+        )
     return None
 
 

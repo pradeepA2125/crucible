@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Sequence
 
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 
@@ -38,7 +39,7 @@ CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
     "properties": {
         "type": {
             "type": "string",
-            "enum": ["tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress"],
+            "enum": ["tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress", "report"],
         },
         "thought": {"type": "string"},
         # tool_call
@@ -79,7 +80,7 @@ CONTROLLER_RESPONSE_SCHEMA: dict[str, object] = {
                 "required": ["op", "file", "reason"],
             },
         },
-        # submit_changes
+        # submit_changes / report
         "summary": {"type": "string"},
     },
     "required": ["type", "thought"],
@@ -97,6 +98,9 @@ _PHASE_TYPES: dict[str, list[str]] = {
     # task subsystem flag is on (Task 5 — ControllerLoop mutates its own allowed-types
     # view per-instance; this module-level table is ACTIVE's task-subsystem-OFF shape).
     "ACTIVE": ["tool_call", "answer", "clarify", "edit", "submit_changes", "progress"],
+    # AGENT: a dispatched sub-agent (spec §4.1). No user to ask (no clarify), no Plan Mode
+    # (no propose_mode), and `report` is its only terminal.
+    "AGENT": ["tool_call", "edit", "progress", "report"],
 }
 
 # Per-variant property/required specs for the TIGHT (oneOf) schema. Each entry is one
@@ -169,6 +173,7 @@ _VARIANT_SPECS: dict[str, dict[str, object]] = {
     },
     "submit_changes": {"required": ["summary"], "properties": {"summary": _STR}},
     "progress": {"required": ["note"], "properties": {"note": _STR}},
+    "report": {"required": ["summary"], "properties": {"summary": _STR}},
 }
 
 
@@ -187,11 +192,15 @@ def _tight_variant_branch(variant: str) -> dict[str, object]:
 
 
 def controller_response_schema(
-    *, phase: str, tight: bool = False, anyof: bool = False, all_fields_required: bool = False
+    *, phase: str, allowed_types: Sequence[str] | None = None, tight: bool = False,
+    anyof: bool = False, all_fields_required: bool = False,
 ) -> dict[str, object]:
     """Return the controller response schema for a phase.
 
-    `tight=False` (default) → flat schema, `type` enum trimmed to the phase's allowed actions.
+    `allowed_types` (when given) replaces `_PHASE_TYPES[phase]` as the variant set — the loop
+    always sends its own per-iteration set, which is how ACTIVE + the task subsystem offers
+    `propose_mode` and how a child's final iteration narrows to `report` (spec §4.1, §6.5).
+    `tight=False` (default) → flat schema, `type` enum trimmed to the allowed actions.
     `tight=True` → discriminated-union (`oneOf`) — use ONLY for providers whose grammar enforces
     `oneOf` (TQP/llama.cpp; Gemini deadlocks — see module docstring).
     `anyof=True` → same per-variant branches as tight but wrapped in `anyOf` instead of `oneOf`.
@@ -199,15 +208,16 @@ def controller_response_schema(
     `all_fields_required=True` → flat schema with all per-variant fields in `required` — fallback
     for providers where neither tight nor anyof is available.
     """
+    types = list(allowed_types) if allowed_types is not None else list(_PHASE_TYPES[phase])
     if tight:
-        return {"oneOf": [_tight_variant_branch(v) for v in _PHASE_TYPES[phase]]}
+        return {"oneOf": [_tight_variant_branch(v) for v in types]}
     if anyof:
-        return {"anyOf": [_tight_variant_branch(v) for v in _PHASE_TYPES[phase]]}
+        return {"anyOf": [_tight_variant_branch(v) for v in types]}
     schema = copy.deepcopy(CONTROLLER_RESPONSE_SCHEMA)
-    schema["properties"]["type"]["enum"] = list(_PHASE_TYPES[phase])  # type: ignore[index]
+    schema["properties"]["type"]["enum"] = types  # type: ignore[index]
     if all_fields_required:
         extra: list[str] = []
-        for variant in _PHASE_TYPES[phase]:
+        for variant in types:
             spec = _VARIANT_SPECS.get(variant, {})
             for field in spec.get("required", []):  # type: ignore[union-attr]
                 if field not in extra and field not in ("patch_ops",):
