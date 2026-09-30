@@ -22,6 +22,7 @@ class ScriptedReasoningEngine:
         draft_conventions_responses: list[dict[str, object]] | None = None,
         run_narrative: dict[str, object] | None = None,
         controller_step_responses: list[dict[str, object]] | None = None,
+        agent_scripts: dict[str, list[dict[str, object]]] | None = None,
     ) -> None:
         self._plan = plan
         self._patches = patches
@@ -34,6 +35,10 @@ class ScriptedReasoningEngine:
             draft_conventions_responses or []
         )
         self._run_narrative = run_narrative
+        # Per-agent scripts keyed by agent label: concurrent children can't share one index
+        # without making tests order-dependent (spec §4.4).
+        self._agent_scripts = {label: list(s) for label, s in (agent_scripts or {}).items()}
+        self._agent_indexes: dict[str, int] = {}
 
     async def summarize_run(
         self, *, goal, outcome, run_events, deviations, modified_files,
@@ -133,13 +138,26 @@ class ScriptedReasoningEngine:
         on_salvage: object = None,
         on_usage: object = None,
         unconstrained: bool = False,
+        allowed_types: object = None,
+        render_ctx: object = None,
+        persona: object = None,
     ) -> dict[str, object]:
         _ = (plan_context, history, tool_definitions, phase, on_thinking, on_retry)
+        label = getattr(render_ctx, "agent_label", "") if render_ctx is not None else ""
+        if label and label in self._agent_scripts:
+            script = self._agent_scripts[label]
+            index = self._agent_indexes.get(label, 0)
+            self._agent_indexes[label] = index + 1
+            return script[min(index, len(script) - 1)]
         if not self._controller_step_responses:
             raise RuntimeError("no controller_step_responses configured on ScriptedReasoningEngine")
         index = min(self._controller_step_index, len(self._controller_step_responses) - 1)
         self._controller_step_index += 1
         return self._controller_step_responses[index]
+
+    def with_model(self, model: str) -> ScriptedReasoningEngine:
+        _ = model
+        return self
 
     async def create_planning_step(
         self,

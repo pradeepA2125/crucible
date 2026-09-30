@@ -20,7 +20,12 @@ from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
-from agentd.reasoning.react_common import assistant_turn, dedup_key, malformed_correction
+from agentd.reasoning.react_common import (
+    accepts_kwarg,
+    assistant_turn,
+    dedup_key,
+    malformed_correction,
+)
 from agentd.skills.config import skills_body_max_chars
 
 if TYPE_CHECKING:
@@ -1079,13 +1084,22 @@ class ControllerLoop:
             # len(history), which carries the whole thread and so never resets per turn.
             plan_context["iteration"] = iteration
             try:
-                resp = await self._reasoning.create_controller_step(
+                step_fn = self._reasoning.create_controller_step
+                # New keywords only for engines that declare them — the same ask-the-callee
+                # rule as engine._accepts, so fixed-signature fakes keep working.
+                seam_kwargs: dict[str, object] = {}
+                if accepts_kwarg(step_fn, "allowed_types"):
+                    seam_kwargs["allowed_types"] = self._allowed_action_types()
+                if accepts_kwarg(step_fn, "render_ctx"):
+                    seam_kwargs["render_ctx"] = self._render_ctx
+                resp = await step_fn(
                     plan_context=plan_context, history=history,
                     tool_definitions=tool_defs, phase=self._sm.phase,
                     on_thinking=_on_thinking, on_retry=_on_retry,
                     on_progress=_on_progress, on_salvage=_on_salvage,
                     on_usage=_on_usage,
                     unconstrained=retry_unconstrained,
+                    **seam_kwargs,
                 )
                 retry_unconstrained = False   # one call only, always
             except Exception as exc:

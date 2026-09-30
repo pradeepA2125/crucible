@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -25,6 +25,7 @@ from agentd.runtime.artifacts import task_artifacts_root
 
 if TYPE_CHECKING:
     from agentd.instructions.loader import ProjectInstructionsLoader
+    from agentd.prompting.tagged import RenderContext
 
 
 def _debug_dump(
@@ -114,6 +115,14 @@ class DefaultReasoningEngine(ReasoningEngine):
         new pair. Loaders (instructions/skills) are untouched."""
         self._model = model
         self._transport = transport
+
+    def with_model(self, model: str) -> DefaultReasoningEngine:
+        """Same transport and loaders, different model id (spec §5.4). `inherit` callers
+        reuse `self` instead of calling this."""
+        return DefaultReasoningEngine(
+            model=model, transport=self._transport,
+            project_instructions_loader=self._project_instructions_loader,
+            skill_catalog_loader=self._skill_catalog_loader)
 
     async def create_plan(
         self,
@@ -297,6 +306,9 @@ class DefaultReasoningEngine(ReasoningEngine):
         on_usage: Callable[[int, int], None] | None = None,
         on_salvage: Callable[[int, str], None] | None = None,
         unconstrained: bool = False,
+        allowed_types: Sequence[str] | None = None,
+        render_ctx: RenderContext | None = None,
+        persona: str | None = None,
     ) -> dict[str, object]:
         from agentd.chat.controller_prompts import (
             build_controller_step_payload,
@@ -310,7 +322,9 @@ class DefaultReasoningEngine(ReasoningEngine):
             else None
         )
         skills_catalog = None
-        if self._skill_catalog_loader is not None:
+        # A child only sees the catalog when read_skill survived its tool filter (spec §4.2).
+        wants_catalog = render_ctx is None or render_ctx.is_main or "read_skill" in render_ctx.tools
+        if self._skill_catalog_loader is not None and wants_catalog:
             from agentd.skills.catalog import select_catalog_for_budget
             from agentd.skills.config import skills_catalog_max_chars
 
@@ -318,7 +332,8 @@ class DefaultReasoningEngine(ReasoningEngine):
             shown, _hidden = select_catalog_for_budget(full, skills_catalog_max_chars())
             skills_catalog = shown
         system_instructions = format_controller_system_prompt(
-            tool_definitions, project_instructions=instructions, skills_catalog=skills_catalog
+            tool_definitions, project_instructions=instructions, skills_catalog=skills_catalog,
+            render_ctx=render_ctx, persona=persona,
         )
         user_payload = build_controller_step_payload(
             plan_context, history, tool_definitions, phase=phase,
@@ -329,7 +344,9 @@ class DefaultReasoningEngine(ReasoningEngine):
         tight = getattr(self._transport, "supports_oneof_grammar", False)
         anyof = getattr(self._transport, "supports_anyof_grammar", False)
         all_fields_required = getattr(self._transport, "requires_all_fields", False)
-        schema = controller_response_schema(phase=phase, tight=tight, anyof=anyof, all_fields_required=all_fields_required)
+        schema = controller_response_schema(
+            phase=phase, allowed_types=allowed_types, tight=tight, anyof=anyof,
+            all_fields_required=all_fields_required)
         result = await self._transport.generate_json(
             model=self._model,
             schema_name="controller_step_response",

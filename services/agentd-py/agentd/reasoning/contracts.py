@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from agentd.domain.models import Diagnostic, PlanStep, TaskRecord
 
 if TYPE_CHECKING:
     from agentd.env.probe import ProbeResult
+    from agentd.prompting.tagged import RenderContext
 
 
 class ReasoningEngine(Protocol):
@@ -84,6 +85,9 @@ class ReasoningEngine(Protocol):
         phase: str,
         on_thinking: Callable[[str], None] | None = None,
         on_retry: Callable[[int, int, str, str], None] | None = None,
+        allowed_types: Sequence[str] | None = None,
+        render_ctx: RenderContext | None = None,
+        persona: str | None = None,
     ) -> dict[str, object]:
         """One turn of the agentic chat-controller ReAct loop.
 
@@ -94,7 +98,15 @@ class ReasoningEngine(Protocol):
         on_retry reports transport-level or corrective-retry attempts as structured
         data (attempt, max_attempts, reason, message) — distinct from on_thinking,
         which carries only genuine model reasoning text.
+
+        allowed_types narrows the response schema's variants (the loop's per-iteration set);
+        render_ctx/persona render the system prompt for a sub-agent (None = the main agent,
+        byte-identical).
         """
+        ...
+
+    def with_model(self, model: str) -> ReasoningEngine:
+        """An engine for `model` sharing this engine's transport and loaders (spec §5.4)."""
         ...
 
     async def draft_conventions(self, *, probe: ProbeResult) -> dict[str, object]:
