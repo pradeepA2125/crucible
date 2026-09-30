@@ -920,6 +920,45 @@ def build_controller_step_payload(
                 "(A) or (B) right after. A read-resistant blocker → mark the item 'blocked' or use "
                 "type='clarify'."
             )
+    elif phase == "AGENT":
+        # A dispatched sub-agent (spec §4.3). No skill check (it has no per-iteration
+        # triage), no Plan Mode, and `report` is the only terminal. The final hint fires on
+        # the same iteration the loop narrows the schema to ["report"] (spec §6.5).
+        checkpoint = ""
+        reconcile_files = plan_context.get("pending_reconcile_files")
+        reconcile_item = plan_context.get("reconcile_item")
+        if (reconcile_files and plan_context.get("todo_status")
+                and isinstance(reconcile_item, dict) and reconcile_item.get("title")):
+            files_str = (", ".join(str(f) for f in reconcile_files)
+                         if isinstance(reconcile_files, list) else str(reconcile_files))
+            title = reconcile_item.get("title")
+            checkpoint = (
+                f"CHECKPOINT — you just edited {files_str}. Your current todo item is '{title}'. "
+                "Did this edit complete it? If yes, write_todos marking it 'done' (cite this edit "
+                "in 'note'), then continue or report. If not, continue it. ")
+        if iteration == 0:
+            hint = (
+                "This is your FIRST action. Your task is in 'goal'. Ground first: LOCATE the code "
+                f"it names (search_code{_graph}) and READ it (read_file) before you change or "
+                "claim anything. Stay inside the files your task assigns. Finish with "
+                "type='report' — the only thing your dispatcher receives.")
+        elif iteration >= max_iters:
+            hint = (
+                "⚠ BUDGET REACHED: emit type='report' NOW with everything you found and changed, "
+                "and list what is unfinished under 'Unfinished'.")
+        elif iteration == max_iters - 1:
+            hint = checkpoint + "One step left: finish your current action, then report."
+        elif plan_context.get("agent_readonly"):
+            hint = checkpoint + (
+                "Reflect on what you have read so far. Continue exploring with tool_call, or emit "
+                "type='report' once you have what your task asks for. type='progress' posts a "
+                "short status line without ending your task.")
+        else:
+            hint = checkpoint + (
+                "Reflect on your last result: did an edit apply ('applied+promoted') or fail "
+                "('PATCH FAILED: …' — re-read the lines and re-emit ONE corrected op)? Then "
+                "continue with tool_call/edit, or emit type='report' when your task is done. "
+                "type='progress' posts a short status line without ending your task.")
     else:  # PLAN
         # Plan Mode is a deliberate user choice (the sticky toggle) — unlike the old
         # DECIDE, which was simply the SM's only starting state and never something
