@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Icon } from "./Icon";
 import { vscode } from "../vscodeApi";
 import { EmptyState } from "./EmptyState";
@@ -13,6 +13,8 @@ import { inputAvailability } from "../inputAvailability";
 import type { SectionId } from "../settings/sections/meta";
 import type { AppState, ChatMsg, RewindPreviewView } from "../types";
 import { RewindDialog } from "./RewindDialog";
+import { AgentsContext, type AgentsUi } from "./agents/AgentsContext";
+import { AgentWindow } from "./agents/AgentWindow";
 
 // Gate statuses where the workbar should be HIDDEN (user is deciding something).
 const WAITING_STATUSES = new Set([
@@ -47,6 +49,36 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   // Which settings section the floating popup is open at; null = closed.
   const [settingsSection, setSettingsSection] = useState<SectionId | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Sub-agent views (spec §10): rows expanded inline, and the one floating window.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [agentWindow, setAgentWindow] = useState<{ agentId: string; siblings: string[] } | null>(null);
+
+  // Another thread's agents are not ours.
+  useEffect(() => {
+    setExpanded(new Set());
+    setAgentWindow(null);
+  }, [state.activeThreadId]);
+
+  // The host keeps one live subscription per open agent: tell it the full set.
+  const openAgentsKey = [...new Set([...expanded, ...(agentWindow ? [agentWindow.agentId] : [])])]
+    .sort().join(",");
+  useEffect(() => {
+    vscode.postMessage({ type: "setOpenAgents", agentIds: openAgentsKey ? openAgentsKey.split(",") : [] });
+  }, [openAgentsKey]);
+
+  const agentsUi = useMemo<AgentsUi>(() => ({
+    agents: state.agents,
+    views: state.agentViews,
+    expanded,
+    toggleExpanded: (agentId) => setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentId)) next.delete(agentId);
+      else next.add(agentId);
+      return next;
+    }),
+    openWindow: (agentId, siblings) => setAgentWindow({ agentId, siblings }),
+  }), [state.agents, state.agentViews, expanded]);
 
   useEffect(() => {
     function onHostMessage(event: MessageEvent) {
@@ -120,6 +152,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     !state.retryStatus;
 
   return (
+    <AgentsContext.Provider value={agentsUi}>
     <div className="relative flex h-full overflow-hidden">
       {/* Settings drawer — squeezes the chat column (inline sibling, no overlay). */}
       <SettingsDrawer
@@ -420,6 +453,16 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           }}
         />
       )}
+
+      {agentWindow !== null && (
+        <AgentWindow
+          agentId={agentWindow.agentId}
+          siblings={agentWindow.siblings}
+          onSwitch={(agentId) => setAgentWindow({ ...agentWindow, agentId })}
+          onClose={() => setAgentWindow(null)}
+        />
+      )}
     </div>
+    </AgentsContext.Provider>
   );
 }
