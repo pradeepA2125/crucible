@@ -47,6 +47,7 @@ from agentd.domain.models import (
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.prompting.tagged import RenderContext
+from agentd.reasoning.react_common import assistant_turn
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource
 from agentd.subagents.config import subagent_max_concurrent, subagent_max_depth, subagent_max_iters
@@ -59,7 +60,7 @@ from agentd.subagents.permissions import (
     effective_permission,
     follows_live_review,
 )
-from agentd.subagents.tool_source import SubAgentToolSource
+from agentd.subagents.tool_source import SubAgentToolSource, format_dispatch_result
 from agentd.subagents.transcript import AgentTranscript
 from agentd.subagents.vcs_guard import vcs_refusal
 from agentd.subagents.runtime import (
@@ -205,6 +206,12 @@ class ChatController:
         self._subagents: SubAgentRuntime | None = (
             SubAgentRuntime(subagent_max_concurrent(), on_status=self._on_agent_status)
             if is_subagents_enabled() else None)
+        # The turn whose dispatch tree /live reports (spec §11.1) — registered for exactly
+        # loop.run's lifetime, like _active_loops.
+        self._live_turns: dict[str, str] = {}
+        # The main agent's dispatch that is awaiting its children, so a /stop can still
+        # tell the next turn what they did (spec §11.4).
+        self._inflight_dispatch: dict[str, list[AgentHandle]] = {}
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -609,6 +616,8 @@ class ChatController:
         max_iters = int(os.environ.get("CRUCIBLE_CONTROLLER_MAX_ITERS", "500"))
         # Reachable by the mid-turn durable writers for exactly the loop's lifetime.
         self._active_loops[thread_id] = loop
+        if turn_id:
+            self._live_turns[thread_id] = turn_id
         # Same lifetime, for the same reason: /review-pref reaches in here mid-turn.
         self._turn_controls[thread_id] = control
         try:
@@ -629,6 +638,24 @@ class ChatController:
             # Sync writes only (no further await) → the re-raised cancellation can't interrupt
             # them; then re-raise so stop_turn's own teardown/breadcrumb proceeds.
             partial_hist = loop.partial_history()
+            # A dispatch the stop interrupted (spec §11.4): its tool_call never returned,
+            # so append it and its result — each child's status, files and report — or the
+            # next turn would not know what the children already promoted.
+            interrupted = self._inflight_dispatch.pop(thread_id, None)
+            if interrupted:
+                partial_hist.append(assistant_turn({
+                    "type": "tool_call", "thought": "(dispatch interrupted by stop)",
+                    "tool": "dispatch_agents",
+                    "args": {"agents": [
+                        {"agent": h.context.name, "label": h.context.label, "prompt": h.prompt}
+                        for h in interrupted]}}))
+                partial_hist.append({
+                    "role": "tool_result", "tool": "dispatch_agents",
+                    "content": format_dispatch_result([
+                        (h, h.result or ChildResult(
+                            status="stopped", report="Stopped before it started.",
+                            files_changed=[]))
+                        for h in interrupted])})
             if partial_hist:
                 self._histories[thread_id] = partial_hist
                 self._store.set_controller_history(thread_id, partial_hist)
@@ -640,6 +667,7 @@ class ChatController:
                 thread_id, ledger.to_json() if ledger.items else None)
             raise
         except Exception as exc:
+            self._inflight_dispatch.pop(thread_id, None)
             # A provider call (or any other step of the loop) raised something we don't
             # have specific recovery for — e.g. a cloud model exhausting its whole output
             # budget on thinking and returning no text content (observed live: Ollama
@@ -678,6 +706,7 @@ class ChatController:
             # mutating a control nothing reads.
             self._active_loops.pop(thread_id, None)
             self._turn_controls.pop(thread_id, None)
+            self._live_turns.pop(thread_id, None)
         self._histories[thread_id] = outcome.history or []
         # Reached for the normal-completion AND generic-exception branches (the
         # cancellation branch already recorded its own and re-raised past this point).
@@ -1341,6 +1370,49 @@ class ChatController:
         return await self._edit_decision_cb(
             child.thread_id, f"chat:{child.thread_id}", diff, child=child)
 
+    def live_agents(self, thread_id: str) -> list[dict[str, object]]:
+        """/live's roster (spec §11.1): every agent of the in-flight turn's dispatch tree,
+        running and finished. Empty once the turn ends (the UI then reads the routes)."""
+        turn_id = self._live_turns.get(thread_id)
+        if self._subagents is None or turn_id is None:
+            return []
+        log = self._write_log_for(thread_id)
+        roster: list[dict[str, object]] = []
+        for handle in self._subagents.registry.for_turn(thread_id, turn_id):
+            calls = handle.loop.tool_calls if isinstance(handle.loop, ControllerLoop) else []
+            now = ""
+            if calls:
+                last = calls[-1]
+                target = last.arguments.get("path") or last.arguments.get("command") or ""
+                now = f"{last.tool_name} {target}".strip()
+            if handle.result is not None:
+                files = len(handle.result.files_changed)
+            elif log is not None:
+                files = len(log.files_changed_by(
+                    self._subagents.registry.subtree_ids(handle.agent_id)))
+            else:
+                files = 0
+            roster.append({
+                "agent_id": handle.agent_id, "parent_agent_id": handle.context.parent_agent_id,
+                "depth": handle.context.depth, "name": handle.context.name,
+                "label": handle.context.label, "status": handle.status, "now": now,
+                "tool_count": len(calls), "files_changed_count": files,
+                "started_at": handle.started_at.isoformat() if handle.started_at else None,
+                "ended_at": handle.ended_at.isoformat() if handle.ended_at else None,
+                # UI-only preview; the model always gets the full report (D8).
+                "report_preview": handle.result.report[:200] if handle.result else "",
+            })
+        return roster
+
+    async def stop_agent(self, thread_id: str, agent_id: str) -> bool:
+        """Stop one sub-agent and its subtree; siblings continue (spec §11.4)."""
+        if self._subagents is None:
+            return False
+        handle = self._subagents.registry.get(agent_id)
+        if handle is None or handle.thread_id != thread_id:
+            return False
+        return await self._subagents.stop_agent(agent_id)
+
     def _dispatch_source(
         self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
     ) -> SubAgentToolSource:
@@ -1373,7 +1445,12 @@ class ChatController:
                 context=context, definition=request.agent, prompt=request.prompt,
                 thread_id=thread_id, turn_id=turn_id))
         self._on_dispatch_start(thread_id, turn_id, dispatcher, handles)
+        if dispatcher is None:
+            self._inflight_dispatch[thread_id] = handles
         results = await runtime.dispatch(handles, self._run_child, dispatcher=dispatcher)
+        if dispatcher is None:
+            # Not in a finally: a cancel must leave it for _run_loop's stop branch.
+            self._inflight_dispatch.pop(thread_id, None)
         return list(zip(handles, results, strict=True))
 
     def _on_dispatch_start(

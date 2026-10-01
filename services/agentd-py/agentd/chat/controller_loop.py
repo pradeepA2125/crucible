@@ -815,6 +815,11 @@ class ControllerLoop:
                 f"- {c.tool_name} {json.dumps(c.arguments, sort_keys=True)}" for c in recent)]
         return "\n".join(lines)
 
+    @property
+    def tool_calls(self) -> list[ToolCall]:
+        """The tool calls recorded so far (a copy) — what /live's roster reads (§11.1)."""
+        return list(self._calls)
+
     def partial_history(self) -> list[dict[str, object]]:
         """The verbatim conversation accumulated so far this turn. Meaningful after a
         cancel: run()'s normal return persists history itself, but a CancelledError unwinds

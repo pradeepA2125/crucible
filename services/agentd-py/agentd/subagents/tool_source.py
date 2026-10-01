@@ -13,6 +13,16 @@ DISPATCH_TOOL_NAME = "dispatch_agents"
 Dispatch = Callable[[list[DispatchRequest]], Awaitable[list[tuple[AgentHandle, ChildResult]]]]
 
 
+def format_dispatch_result(pairs: list[tuple[AgentHandle, ChildResult]]) -> str:
+    """The dispatch_agents tool result (spec §6.3): one entry per child, full reports."""
+    return json.dumps([{
+        "agent_id": handle.agent_id, "agent": handle.context.name,
+        "label": handle.context.label, "status": result.status,
+        "report": result.report, "files_changed": result.files_changed,
+        "stale_refusals": result.stale_refusals,
+    } for handle, result in pairs], indent=2)
+
+
 class SubAgentToolSource:
     name = "subagents"
 
@@ -53,14 +63,8 @@ class SubAgentToolSource:
             valid = ", ".join(self._catalog)
             return ToolOutput(output=f"Error: {problem}. Valid agents: {valid}.", is_error=True)
         pairs = await self._dispatch(requests)
-        entries = [{
-            "agent_id": handle.agent_id, "agent": handle.context.name,
-            "label": handle.context.label, "status": result.status,
-            "report": result.report, "files_changed": result.files_changed,
-            "stale_refusals": result.stale_refusals,
-        } for handle, result in pairs]
         changed = sorted({f for _, result in pairs for f in result.files_changed})
-        return ToolOutput(output=json.dumps(entries, indent=2), workspace_changes=changed)
+        return ToolOutput(output=format_dispatch_result(pairs), workspace_changes=changed)
 
     def _parse(self, args: dict[str, object]) -> tuple[list[DispatchRequest], str | None]:
         raw = args.get("agents")
