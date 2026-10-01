@@ -494,4 +494,36 @@ describe("useAppState", () => {
 
     expect(result.current.state.tokenProgress).toEqual(PROGRESS);
   });
+
+  it("merges roster rows, opens an agent view, folds its events, and resets on clearThread", () => {
+    const { result } = renderHook(() => useAppState());
+    const row = {
+      agentId: "agent-a", parentAgentId: null, depth: 1, name: "explore", label: "survey",
+      status: "running", now: "read_file a.py", toolCount: 1, filesChangedCount: 0,
+      startedAt: null, endedAt: null, reportPreview: "",
+    };
+    act(() => { fireMessage({ type: "renderAgents", agents: [row] }); });
+    act(() => { fireMessage({ type: "renderAgents", agents: [{ ...row, toolCount: 2 }] }); });
+    expect(result.current.state.agents["agent-a"].toolCount).toBe(2);
+
+    act(() => { fireMessage({ type: "agentDetail", agentId: "agent-a", detail: {
+      ...row, prompt: "Survey the code", report: "", filesChanged: [], staleRefusals: 0,
+      transcript: [], lastSeq: 3 } }); });
+    act(() => { fireMessage({ type: "agentEvent", agentId: "agent-a", event: {
+      type: "tool_call", payload: { tool: "read_file", args: {}, call_index: 0 }, seq: 4 } }); });
+    expect(result.current.state.agentViews["agent-a"].live).toHaveLength(1);
+
+    act(() => { fireMessage({ type: "clearThread" }); });
+    expect(result.current.state.agents).toEqual({});
+    expect(result.current.state.agentViews).toEqual({});
+  });
+
+  it("appends a roster message once even when it is delivered twice", () => {
+    const { result } = renderHook(() => useAppState());
+    const message = { role: "agent" as const, content: "", type: "agent_dispatch" as const,
+      timestamp: "2026-10-01T00:00:00Z", metadata: { agent_ids: ["agent-a"] } };
+    act(() => { fireMessage({ type: "appendMessage", message }); });
+    act(() => { fireMessage({ type: "appendMessage", message }); });
+    expect(result.current.state.messages.filter((m) => m.type === "agent_dispatch")).toHaveLength(1);
+  });
 });

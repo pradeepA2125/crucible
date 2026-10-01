@@ -1,6 +1,7 @@
 import { useReducer, useEffect, useCallback } from "react";
 import type { AppState, ExtensionMessage, ChatMsg, StreamingBubble, ToolEventView } from "../types";
 import { vscode } from "../vscodeApi";
+import { appendDurable, applyAgentEvent, viewFromDetail } from "../agents";
 
 // ── Stable content signatures ────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ const INITIAL: AppState = {
   turnActive: false,
   planMode: false,
   stepReview: true,
+  agents: {},
+  agentViews: {},
 };
 
 // ── Action types ─────────────────────────────────────────────────────────────
@@ -129,6 +132,8 @@ function reducer(state: AppState, action: Action): AppState {
         retryStatus: null,
         tokenProgress: null,
         editFailure: null,
+        agents: {},
+        agentViews: {},
       };
 
     case "setInputEnabled":
@@ -293,6 +298,10 @@ function reducer(state: AppState, action: Action): AppState {
         };
       }
 
+      if (m.type === "agent_dispatch") {
+        return { ...next, messages: appendDurable(next.messages, m) };
+      }
+
       return { ...next, messages: [...next.messages, m] };
     }
 
@@ -414,6 +423,27 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "planModeState":
       return { ...state, planMode: msg.enabled };
+
+    case "renderAgents": {
+      const agents = { ...state.agents };
+      for (const agent of msg.agents) agents[agent.agentId] = agent;
+      return { ...state, agents };
+    }
+
+    case "agentDetail":
+      return {
+        ...state,
+        agentViews: { ...state.agentViews, [msg.agentId]: viewFromDetail(msg.detail) },
+      };
+
+    case "agentEvent": {
+      const view = state.agentViews[msg.agentId];
+      if (!view) return state;  // a late event for a view the backfill has not opened
+      return {
+        ...state,
+        agentViews: { ...state.agentViews, [msg.agentId]: applyAgentEvent(view, msg.event, at) },
+      };
+    }
 
     default:
       return state;

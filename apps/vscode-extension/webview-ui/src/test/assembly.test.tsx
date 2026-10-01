@@ -41,6 +41,8 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     turnActive: false,
     planMode: false,
   stepReview: true,
+    agents: {},
+    agentViews: {},
     ...overrides,
   };
 }

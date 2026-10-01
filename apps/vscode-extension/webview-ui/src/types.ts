@@ -163,6 +163,48 @@ export interface RetryStatusView {
   message: string;
 }
 
+// ── Sub-agents (mirrors editor-client AgentSummary/AgentDetail — camelCase) ─────
+export interface AgentSummaryView {
+  agentId: string;
+  turnId?: string;
+  parentAgentId: string | null;
+  depth: number;
+  name: string;
+  label: string;
+  status: string;
+  now: string;
+  toolCount: number;
+  filesChangedCount: number;
+  startedAt: string | null;
+  endedAt: string | null;
+  reportPreview: string;
+}
+
+export interface AgentDetailView extends AgentSummaryView {
+  prompt: string;
+  report: string;
+  filesChanged: string[];
+  staleRefusals: number;
+  transcript: ChatMsg[];
+  lastSeq: number;
+}
+
+/** A child-channel event as forwarded by the host (payload keys stay snake_case). */
+export interface AgentEventView {
+  type: string;
+  payload: Record<string, unknown>;
+  seq?: number;
+}
+
+/** An open agent: its backfilled transcript plus live pills not yet sealed into it. */
+export interface AgentViewState {
+  detail: AgentDetailView;
+  messages: ChatMsg[];
+  live: ToolEventView[];
+  callIds: Record<number, number>;  // call_index → live pill id
+  nextId: number;
+}
+
 // ── Extension → Webview ──────────────────────────────────────────────────────
 export type ExtensionMessage =
   | { type: "appendMessage"; message: ChatMsg }
@@ -208,6 +250,9 @@ export type ExtensionMessage =
   // Chat rewind: the preview opens the confirm dialog; the prefill lands the rewound
   // message's text back in the composer after the server-authoritative reload.
   | { type: "rewindPreviewResult"; preview: RewindPreviewView }
+  | { type: "renderAgents"; agents: AgentSummaryView[] }
+  | { type: "agentDetail"; agentId: string; detail: AgentDetailView }
+  | { type: "agentEvent"; agentId: string; event: AgentEventView }
   | { type: "composerPrefill"; text: string };
 
 // ── Webview → Extension ──────────────────────────────────────────────────────
@@ -265,6 +310,8 @@ export type WebviewMessage =
   // Exec sessions: PTY inspect fetch for an expanded session-strip row.
   | { type: "fetchSessionTranscript"; sessionId: string }
   // @-mention composer: workspace file listing + click-to-open.
+  | { type: "setOpenAgents"; agentIds: string[] }
+  | { type: "stopAgent"; agentId: string }
   | { type: "listWorkspaceFiles" }
   | { type: "openFile"; path: string };
 
@@ -307,4 +354,8 @@ export interface AppState {
   // "Review each step" — hydrated from globalState like planMode. Local webview
   // state silently reset to true on every remount, re-enabling edit gates.
   stepReview: boolean;
+  // Sub-agent roster rows (agentId → summary), merged from /live and the routes.
+  agents: Record<string, AgentSummaryView>;
+  // Open agents' transcripts (backfill + live events).
+  agentViews: Record<string, AgentViewState>;
 }

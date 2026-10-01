@@ -37,6 +37,8 @@ const base: AppState = {
   turnActive: false,
   planMode: false,
   stepReview: true,
+  agents: {},
+  agentViews: {},
 };
 
 function renderView() {
