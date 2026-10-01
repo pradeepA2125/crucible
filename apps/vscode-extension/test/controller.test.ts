@@ -1,4 +1,5 @@
 import type {
+  AgentSummary,
   BackendTaskClient,
   ChatMessage,
   ChatThreadSummary,
@@ -256,6 +257,9 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     clearLiveSessions: () => {},
     sendLiveStatus: () => {},
     promptSetup: () => {},
+    renderAgents: () => {},
+    agentDetail: () => {},
+    agentEvent: () => {},
     ...overrides,
   };
 }
@@ -2194,5 +2198,100 @@ describe("rewind", () => {
 
     expect(errors.length).toBe(1);
     expect(threadFetched).toBe(false);
+  });
+});
+
+describe("CrucibleController — sub-agents", () => {
+  const AGENT: AgentSummary = {
+    agentId: "agent-a", parentAgentId: null, depth: 1, name: "explore", label: "survey",
+    status: "running", now: "read_file a.py", toolCount: 2, filesChangedCount: 0,
+    startedAt: "2026-10-01T00:00:00Z", endedAt: null, reportPreview: "",
+  };
+
+  function setup(extra: Record<string, unknown> = {}) {
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [], liveResponse: NULL_LIVE_STATE,
+    };
+    const listCalls: string[] = [];
+    const backend = {
+      ...createStubBackend(state),
+      listAgents: async (threadId: string) => { listCalls.push(threadId); return [{ ...AGENT, status: "completed", toolCount: 9 }]; },
+      ...extra,
+    } as BackendTaskClient;
+    const rosters: AgentSummary[][] = [];
+    const appended: ChatMessage[] = [];
+    const ui = createUi({
+      renderAgents: (agents) => { rosters.push(agents); },
+      appendChatMessage: (m) => { appended.push(m); },
+    });
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-10-01T00:00:00.000Z",
+    );
+    return { state, controller, rosters, appended, listCalls };
+  }
+
+  test("switching to a thread loads its roster from the routes", async () => {
+    const { controller, rosters, listCalls } = setup();
+    await controller.switchChatThread("chat-1");
+    await Promise.resolve(); await Promise.resolve();
+    controller.dispose();
+    expect(listCalls).toEqual(["chat-1"]);
+    expect(rosters.at(-1)?.[0]).toMatchObject({ agentId: "agent-a", toolCount: 9 });
+  });
+
+  test("/live agents render, are in the dedup signature, and turn end refreshes from the routes", async () => {
+    const { state, controller, rosters, listCalls } = setup();
+    await controller.switchChatThread("chat-1");
+    await Promise.resolve();
+    controller.dispose();
+    rosters.length = 0; listCalls.length = 0;
+
+    state.liveResponse = { ...NULL_LIVE_STATE, turnActive: true, agents: [AGENT] };
+    await controller.pollThreadLiveState();
+    expect(rosters).toHaveLength(1);
+    await controller.pollThreadLiveState();
+    expect(rosters).toHaveLength(1);  // unchanged → deduped
+    state.liveResponse = { ...NULL_LIVE_STATE, turnActive: true, agents: [{ ...AGENT, toolCount: 3 }] };
+    await controller.pollThreadLiveState();
+    expect(rosters).toHaveLength(2);  // a row change re-renders: agents ARE in the signature
+
+    state.liveResponse = NULL_LIVE_STATE;  // the turn ended
+    await controller.pollThreadLiveState();
+    await Promise.resolve(); await Promise.resolve();
+    expect(listCalls).toEqual(["chat-1"]);
+  });
+
+  test("a live roster message is appended as a contract ChatMessage; agent events poke /live", async () => {
+    const { state, controller, appended } = setup({
+      sendChatMessage: async function* () {
+        yield { type: "agent_dispatch" as const, payload: { message: {
+          role: "agent", content: "", type: "agent_dispatch", task_id: null,
+          timestamp: "2026-10-01T00:00:00Z", metadata: { agent_ids: ["agent-a"] } } } };
+        yield { type: "agent_started" as const, payload: {
+          agent_id: "agent-a", parent_agent_id: null, depth: 1, name: "explore", label: "survey" } };
+        yield { type: "chat_done" as const, payload: {} as Record<string, never> };
+      },
+    });
+    await controller.switchChatThread("chat-1");
+    const before = state.liveCalls!.length;
+    await controller.sendChatMessage("go");
+    controller.dispose();
+    const roster = appended.find((m) => m.type === "agent_dispatch");
+    expect(roster).toMatchObject({ type: "agent_dispatch", taskId: null, metadata: { agent_ids: ["agent-a"] } });
+    expect(state.liveCalls!.length).toBeGreaterThan(before);
+  });
+
+  test("stopAgent posts to the agent's stop route", async () => {
+    const stops: Array<[string, string]> = [];
+    const { controller } = setup({
+      stopAgent: async (threadId: string, agentId: string) => { stops.push([threadId, agentId]); return { ok: true }; },
+    });
+    await controller.switchChatThread("chat-1");
+    await controller.stopAgent("agent-a");
+    controller.dispose();
+    expect(stops).toEqual([["chat-1", "agent-a"]]);
   });
 });

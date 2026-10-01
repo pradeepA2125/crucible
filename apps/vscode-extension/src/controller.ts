@@ -1,4 +1,6 @@
 import type {
+  AgentDetail,
+  AgentSummary,
   BackendTaskClient,
   ChatMessage,
   ChatThreadSummary,
@@ -8,6 +10,7 @@ import type {
   ResumeTaskResponse,
   SessionSummary,
   SessionTranscript,
+  SequencedStreamEvent,
   TaskResult,
   TaskStatus,
   TaskSubmission,
@@ -15,6 +18,8 @@ import type {
   ThreadLiveState,
   RewindPreview,
 } from "@crucible/editor-client";
+import { parseWireChatMessage } from "@crucible/editor-client";
+import { AgentViewManager } from "./agent-views.js";
 
 import * as path from "path";
 import type { MemoryDataSource } from "./memory-data.js";
@@ -109,6 +114,10 @@ export interface ControllerUI {
   renderLiveSessions(sessions: LiveSessionsView): void;
   clearLiveSessions(): void;
   sendLiveStatus(status: string | null, turnActive: boolean): void;
+  // Sub-agents (spec §10): roster rows, and the open agents' transcripts and live events.
+  renderAgents(agents: AgentSummary[]): void;
+  agentDetail(agentId: string, detail: AgentDetail): void;
+  agentEvent(agentId: string, event: SequencedStreamEvent): void;
 }
 
 export interface LiveGateView {
@@ -156,6 +165,13 @@ export class CrucibleController {
   private liveStateTimer: ReturnType<typeof setInterval> | null = null;
   private latestLiveState: ThreadLiveState | null = null;
   private lastLiveSignature: string | null = null;
+  private readonly agentViews = new AgentViewManager(() => this.clientForChat(), {
+    detail: (agentId, detail) => this.ui.agentDetail(agentId, detail),
+    event: (agentId, event) => this.ui.agentEvent(agentId, event),
+  });
+  // The previous poll's turnActive: a true→false edge is when /live stops reporting the
+  // turn's agents, so the final roster comes from the routes then.
+  private lastTurnActive = false;
   // Structured tool event forwarding state
   private toolEventSeq = 0;
   private openToolEvent: Partial<Record<"explore" | "execution" | "planning", number>> = {};
@@ -596,6 +612,7 @@ export class CrucibleController {
         for (const message of thread.messages) {
           this.ui.appendChatMessage(message);
         }
+        void this.refreshAgentRoster(this.activeThreadId);
       } catch {
         // non-fatal — panel opens empty
       }
@@ -623,6 +640,8 @@ export class CrucibleController {
     this.ui.clearLivePlan();
     this.lastLiveSignature = null;
     this._liveResumeThreadId = null;
+    this.agentViews.closeAll();
+    this.lastTurnActive = false;
     let threads: ChatThreadSummary[];
     try {
       threads = await client.listChatThreads(workspacePath);
@@ -643,10 +662,45 @@ export class CrucibleController {
     this.ui.clearLivePlan();
     this.lastLiveSignature = null;
     this._liveResumeThreadId = null;
+    this.agentViews.closeAll();
+    this.lastTurnActive = false;
     for (const message of thread.messages) {
       this.ui.appendChatMessage(message);
     }
+    void this.refreshAgentRoster(threadId);
     this.startLiveStatePolling();
+  }
+
+  /** The webview's full set of open agent views (inline boxes + the window). */
+  setOpenAgents(agentIds: string[]): void {
+    if (!this.activeThreadId) return;
+    this.agentViews.setOpen(this.activeThreadId, agentIds);
+  }
+
+  async stopAgent(agentId: string): Promise<void> {
+    const threadId = this.activeThreadId;
+    if (!threadId) return;
+    try {
+      await this.clientForChat().stopAgent(threadId, agentId);
+    } catch (error) {
+      this.ui.showError(`Failed to stop agent: ${formatError(error)}`);
+      return;
+    }
+    this.lastLiveSignature = null;
+    void this.pollThreadLiveState();
+  }
+
+  /** The thread's whole roster from the routes — the source once a turn is over (§11.1). */
+  private async refreshAgentRoster(threadId: string): Promise<void> {
+    let agents: AgentSummary[];
+    try {
+      agents = await this.clientForChat().listAgents(threadId);
+    } catch {
+      return; // transient, or a backend without agents: roster rows show placeholders
+    }
+    if (threadId !== this.activeThreadId) return;
+    if (agents.length > 0) this.ui.renderAgents(agents);
+    for (const agent of agents) this.agentViews.noteStatus(agent.agentId, agent.status);
   }
 
   async previewRewind(messageId: string): Promise<void> {
@@ -958,6 +1012,15 @@ export class CrucibleController {
           event.type === "env_install_done"
         ) {
           this.forwardEnvEvent({ type: event.type, payload: event.payload as Record<string, unknown> });
+        } else if (
+          event.type === "agent_started" ||
+          event.type === "agent_status" ||
+          event.type === "agent_finished"
+        ) {
+          // Low-volume roster pokes (spec §11.2): /live is the source of truth.
+          void this.pollThreadLiveState();
+        } else if (event.type === "agent_dispatch") {
+          this.ui.appendChatMessage(parseWireChatMessage(event.payload.message));
         } else if (event.type === "chat_done") {
           this.ui.updateWorkbar(null);
           this.ui.finalizeAgentMessage();
@@ -1435,6 +1498,7 @@ export class CrucibleController {
     this.stopPolling();
     this.stopStream();
     this.stopLiveStatePolling();
+    this.agentViews.closeAll();
   }
 
   async stopActiveTurn(): Promise<void> {
@@ -1915,6 +1979,8 @@ export class CrucibleController {
       // ships started_at, never a ticking age_sec/unread_bytes) or this signature
       // would differ on every 1s poll and re-fire the whole render block at 1 Hz.
       sessions: live.sessions,
+      // INVARIANT (CLAUDE.md /live dedup): roster rows are consumed after this gate.
+      agents: live.agents,
     });
     if (signature === this.lastLiveSignature) {
       return; // dedup — nothing actionable changed
@@ -2022,6 +2088,12 @@ export class CrucibleController {
       this.ui.clearLiveSessions();
     }
 
+    if (live.agents && live.agents.length > 0) {
+      this.ui.renderAgents(live.agents);
+      for (const agent of live.agents) this.agentViews.noteStatus(agent.agentId, agent.status);
+    }
+    if (this.lastTurnActive && !live.turnActive) void this.refreshAgentRoster(threadId);
+    this.lastTurnActive = live.turnActive ?? false;
     this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false);
     } finally {
       this.livePollInFlight = false;
