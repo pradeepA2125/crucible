@@ -113,7 +113,6 @@ class TurnEditSession:
         self._wm = workspace_manager
         self._patch = patch_engine
         self._shadow: Path | None = None
-        self._touched_ever: set[str] = set()  # files the shadow has ever held this turn
         self._pending_touched: list[str] = []
         # Rewind capture. Called BEFORE _ensure_shadow so the copy is taken while the
         # real workspace is still the clean before-state (the `shadow == real` invariant
@@ -126,15 +125,19 @@ class TurnEditSession:
                 f"chatturn-{self._turn_id}", str(self._real), touched
             )
             self._shadow = Path(sw.shadow_path)
-        else:
-            # Seed any newly-touched existing file into the lightweight shadow from real,
-            # so apply_ops patches current content (real is the clean before-state).
-            for rel in touched:
-                if rel not in self._touched_ever and (self._real / rel).exists():
-                    dst = self._shadow / rel
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(self._real / rel, dst)
-        self._touched_ever.update(touched)
+            return self._shadow
+        # Re-seed EVERY touched file from real on every apply, not only on first touch:
+        # real may have changed since this shadow last held the file (a formatter run via
+        # run_command, or another agent's promote), and patching a stale copy would
+        # promote over the newer content — a silent lost update (spec §7.5). A file that
+        # no longer exists in real loses its stale shadow copy, so create_file works.
+        for rel in touched:
+            src, dst = self._real / rel, self._shadow / rel
+            if src.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+            elif dst.exists():
+                dst.unlink()
         return self._shadow
 
     async def apply(self, patch_ops: list[dict[str, object]]) -> list[DiffEntry]:

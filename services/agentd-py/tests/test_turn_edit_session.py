@@ -183,3 +183,46 @@ async def test_reject_then_edit_different_file_keeps_invariant(tmp_path: Path):
     assert (real / "a.py").read_text() == "a = 1\n"  # untouched
     assert (real / "b.py").read_text() == "b = 2\n"  # promoted
     await sess.close()
+
+
+def _session(tmp_path: Path, real: Path, turn_id: str) -> TurnEditSession:
+    return TurnEditSession(
+        turn_id=turn_id, real_path=real,
+        workspace_manager=ShadowWorkspaceManager(tmp_path / "shadows"),
+        patch_engine=PatchEngine(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_file_changed_on_disk_between_edits_is_not_overwritten(tmp_path: Path):
+    """Lost update: an external change (formatter, sibling agent) between two edits of
+    the same file must survive the second edit's promote."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    (real / "f.py").write_text("a = 1\nb = 1\n")
+    sess = _session(tmp_path, real, "lost1")
+    await sess.apply(_sr("f.py", "a = 1", "a = 2"))
+    await sess.accept()
+    (real / "f.py").write_text("a = 2\nb = 1\nexternal = True\n")  # changed on disk
+    await sess.apply(_sr("f.py", "b = 1", "b = 2"))
+    await sess.accept()
+    assert (real / "f.py").read_text() == "a = 2\nb = 2\nexternal = True\n"
+    await sess.close()
+
+
+@pytest.mark.asyncio
+async def test_a_file_deleted_on_disk_between_edits_can_be_recreated(tmp_path: Path):
+    """The shadow must not keep a copy of a file real no longer has — create_file
+    would otherwise fail with 'already exists'."""
+    real = tmp_path / "ws"
+    real.mkdir()
+    (real / "g.py").write_text("x = 1\n")
+    sess = _session(tmp_path, real, "gone1")
+    await sess.apply(_sr("g.py", "x = 1", "x = 2"))
+    await sess.accept()
+    (real / "g.py").unlink()  # deleted on disk
+    await sess.apply([{"op": "create_file", "file": "g.py", "content": "y = 1\n",
+                       "reason": "r"}])
+    await sess.accept()
+    assert (real / "g.py").read_text() == "y = 1\n"
+    await sess.close()
