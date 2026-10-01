@@ -1,7 +1,12 @@
 # Sub-agents (P5) — design
 
 **Date:** 2026-09-29
-**Status:** design approved in brainstorming; spec revision 10 — **approved by review (cycle 9)**
+**Status:** design approved in brainstorming; spec revision 11 (rev 10 approved by review, cycle 9)
+
+**Rev 11 (2026-10-01):** reconciles the spec with what Phase 1 actually shipped or planned (Plan 1A, committed;
+Plan 1B, tested end to end in scratch worktrees). The design is unchanged; interfaces were adjusted where
+implementation proved the rev-10 shape wrong or unbuildable in Phase 1. Changed sections: §3 (`AgentContext`
+wiring), §4.4, §4.5, §4.6.4, §4.7.2, §7.4, §16. Each change is marked *(rev 11)*.
 **Roadmap:** P5 in `docs/superpowers/2026-06-29-feature-roadmap-copilot-parity.md`
 **UI wireframe (approved):** `.superpowers/brainstorm/11903-1790698215/content/subagent-ui-v3.html`
 
@@ -72,8 +77,10 @@ ChatController (parent turn = root agent "main", depth 0)
 kwarg for each concern. It's a frozen dataclass in `agentd/subagents/context.py`:
 `agent_id, name, label, depth, parent_agent_id, permissions, allowed_types: tuple[str,...], persona: str,
 tool_filter, skills_catalog_enabled: bool, memory_mode: "recall_only", artifact_agent_id`.
-`ControllerLoop` and `ReasoningEngine.create_controller_step` both take `agent: AgentContext | None = None`.
-`None` means the parent, and the parent's behavior stays byte-identical to today (regression-tested, §15).
+`ControllerLoop` takes `agent: AgentContext | None = None`. *(rev 11)* `ReasoningEngine.create_controller_step` does
+**not** take the `AgentContext`: it takes the two things derived from it, `render_ctx: RenderContext` and
+`persona: str | None` (§4.4). The loop builds both once via `RenderContext.for_agent(agent)` (Phase 2). `None` means
+the parent, and the parent's behavior stays byte-identical to today (regression-tested, §15).
 
 New package `services/agentd-py/agentd/subagents/`: `context.py`, `definitions.py`, `runtime.py`
 (`SubAgentRuntime`, `AgentRegistry`, slot token), `tool_source.py` (`SubAgentToolSource`), `write_log.py`,
@@ -157,11 +164,17 @@ falls into `else:  # PLAN` (`controller_prompts.py:735`), which would tell child
 
 ### 4.4 ReasoningEngine protocol
 `ReasoningEngine` (`reasoning/contracts.py`), `DefaultReasoningEngine` and `ScriptedReasoningEngine` gain:
-- `create_controller_step(..., allowed_types=None, agent: AgentContext | None = None)`;
+- *(rev 11, as shipped in Plan 1A)* `create_controller_step(..., allowed_types: Sequence[str] | None = None,
+  render_ctx: RenderContext | None = None, persona: str | None = None)`. `render_ctx=None` renders for the main agent
+  (byte-identical). The loop passes each new kwarg **only when the engine's signature accepts it**
+  (`react_common.accepts_kwarg`), so pre-existing test fakes keep working. Consequence for child tests: a fake that
+  lacks `render_ctx` silently gets main-agent behavior, so every child-path test uses a fake that accepts it.
 - `with_model(model: str) -> ReasoningEngine`. `DefaultReasoningEngine` returns a new instance that **shares its
-  transport and loaders**. `ScriptedReasoningEngine` returns `self`.
-- `ScriptedReasoningEngine` gets **per-agent scripts** (`agent_scripts: dict[str, Responder]` keyed by agent label,
-  falling back to the shared script). The shared response index (`scripted_engine.py:140`) would otherwise make
+  transport and loaders**. `ScriptedReasoningEngine` returns `self`. *(rev 11)* The returned engine is **not**
+  registered with `ProviderRuntime`, so a provider hot-swap (`PUT /v1/config/provider`) that lands mid-dispatch does
+  not reach a running child with a model override; the next dispatch picks it up. Accepted for v1.
+- `ScriptedReasoningEngine` gets **per-agent scripts** (*(rev 11)* `agent_scripts: dict[str, list[dict]]`, keyed by
+  `render_ctx.agent_label`, falling back to the shared script). The shared response index (`scripted_engine.py:140`) would otherwise make
   concurrent-children tests nondeterministic.
 
 ### 4.5 Multiple gates (replaces the single gate)
@@ -169,7 +182,11 @@ falls into `else:  # PLAN` (`controller_prompts.py:735`), which would tell child
 - `ChatThread.pending_controller_gate: PendingGate | None` becomes **`pending_controller_gates: list[PendingGate]`**.
 - `PendingGate` gains `gate_id: str` (uuid hex) and `agent: {id, label, name} | None` (`None` = parent). For edit
   gates the payload also records `shadow_key`.
-- Storage migration: a stored single gate becomes a one-item list with a minted `gate_id`.
+- Storage migration: a stored single gate becomes a one-item list. *(rev 11)* Its id is the deterministic
+  `legacy-{kind}`, not a freshly minted uuid: the migration runs on every read, so a minted id would differ per poll
+  and no decision could ever address the gate (the `ChatMessage.id` lesson, CLAUDE.md "Chat rewind"). For the same
+  reason `gate_id` is **never** a pydantic `default_factory`: `""` means "not stored yet", `add_controller_gate`
+  assigns a uuid, and callers that must key a future before storing mint one with `PendingGate.new(...)`.
 - New `ChatThreadStore` methods: `add_controller_gate(thread_id, gate)`, `remove_controller_gate(thread_id, gate_id)`,
   `clear_controller_gates(thread_id, *, agent_id=None)`. They're synchronous read-modify-write with no `await`, so race-safe.
 - `set_controller_gate` is removed; every caller migrates.
@@ -194,8 +211,25 @@ look up each future by `gate_id`. The list is the index, so no separate `gate_id
   - a missing `gate_id` with exactly one pending gate of that kind uses it (keeps `scripts/verify` working);
   - a missing `gate_id` with more than one returns **409**;
   - an unknown `gate_id` returns 404. This is **benign by design**: a card click can race an auto-accept (`/review-pref`)
-    or a child stop that just removed the gate. The extension treats a 404 on any decision POST as "already
-    resolved": re-poll `/live`, no error toast.
+    or a child stop that just removed the gate. *(rev 11)* The extension treats a 404 **or** 409 from a
+    gate-addressed chat decision (`/edit-decision`, `/command-decision`, `/mcp-decision`) as "already resolved":
+    no error toast, the next `/live` poll redraws. A 404 from any other route (e.g. "task not found") still surfaces.
+  - *(rev 11)* The chat request bodies (`ChatCommandDecisionRequest`, `ChatMcpDecisionRequest`) are imported at
+    **module level** in `routes.py`: the module uses `from __future__ import annotations`, so a model imported inside
+    `build_router` is invisible to FastAPI's annotation resolution and every call answers 422.
+- *(rev 11)* **Decision routing in the extension is by gate id**, not by guessing from `activeTaskId`: a `task:` id
+  resolves on the task route, any other id on the chat route with `gate_id`. Each rendered gate also carries its own
+  owner id — the active task for `task:` gates, the **thread** for controller gates — so a controller gate listed
+  next to a task gate still posts to the thread.
+- *(rev 11)* **Staged removal of the single-gate field.** Plan 1B ships the backend first with `/live` returning both
+  `pending_gates` and the legacy `pending_gate` (= the first gate), so the pre-1B frontend keeps working between
+  commits; the frontend then moves to the list and a final task deletes `pending_gate` everywhere. The end state is
+  exactly this section's.
+- *(rev 11)* **`shadow_key` on edit gates is Phase 2**: only the parent's shadow (`chatturn-{thread_id}`) exists in
+  Phase 1, so Phase 1 edit payloads are unchanged and Phase 2 adds `shadow_key` together with child shadow naming (§7.5).
+- *(rev 11)* **Stop.** Parent `stop_turn` needs no gate code: each raise site pops its own future and removes its own
+  gate in `finally`, which runs when the turn task is cancelled. A **child** stop (Phase 2) must cancel the child's
+  task (so those `finally` blocks run) and then call `clear_controller_gates(thread_id, agent_id=…)` as a backstop.
 - **`/live` shape:** `ThreadLiveState.pending_gate` is **replaced** by `pending_gates: list[PendingGate]`. It holds the
   controller gates plus the task-derived gate (when the task subsystem produces one), which gets a synthetic
   `gate_id = "task:{task_id}:{kind}"`. Task-derived decisions keep using the task routes.
@@ -294,15 +328,23 @@ made / Open questions for the dispatcher / Unfinished**.
 - **Command denials:** today `tools/registry.py:377-379` says "Command rejected **by user**" for every
   `CommandDecision(approve=False)`, which is false for `dontAsk` auto-denials and timeouts. The command approval
   callback instead returns an internal `ApprovalOutcome` carrying `denied_by` (defined in the MCP bullet below; kept
-  off the `CommandDecision` request model), and the registry words each case:
-  - `policy`: "Command not permitted for this agent (no remembered rule allows it); nobody was asked. Work without it
-    or note the need in your report."
-  - `timeout`: "No decision arrived in time; the command was not run."
+  off the `CommandDecision` request model), and the registry words each case. *(rev 11: exact shipped strings,
+  produced by `tools/approvals.py::denial_text(outcome, subject=…, user_text=…)`; `{cmdline}` is the command plus
+  its args)*:
+  - `user`: unchanged, byte-identical to today (`run_command`: "Command rejected by user: {cmdline}. Try a different
+    approach (e.g. a static check)."; `start_session`: "Command rejected by user: {command}. Do not retry the same
+    command — adapt or ask."; MCP: the tagged `_MCP_REJECTED_TEMPLATE`);
+  - `policy`: "Command `{cmdline}` is not permitted for this agent (no remembered rule allows it); nobody was asked.
+    Work without it or note the need in your report." (MCP: "MCP tool `{server}.{tool}` is not permitted …");
+  - `timeout`: "No decision arrived in time; command `{cmdline}` was not run." (MCP: "No decision arrived in time; MCP
+    tool `{server}.{tool}` was not run.").
 - **MCP rejection** (`mcp/tool_source.py:67-68`, "…adapt your approach or ask"), child form: "…adapt your approach,
   or note the blocker in your report." Today the MCP tool source only receives a `bool`
   (`ApprovalCallback = Callable[[str, str, dict], Awaitable[bool]]`, `mcp/tool_source.py:22`;
   `_mcp_approval_cb` returns `decision.approve`). So **`ApprovalCallback` changes to return an internal
-  `ApprovalOutcome{approved: bool, denied_by: "user"|"policy"|"timeout"|None}`**, and `_mcp_approval_cb` and
+  `ApprovalOutcome{approved: bool, denied_by: "user"|"policy"|"timeout"|None}`** *(rev 11: one model for commands and
+  MCP — `ApprovalOutcome{approved, denied_by, decision: CommandDecision | None}` in `domain/models.py`, built with
+  `ApprovalOutcome.from_command(decision, denied_by=…)`, `.allow()`, `.deny(by)`)*, and `_mcp_approval_cb` and
   `McpToolSource.execute` are updated to word policy and timeout denials truthfully.
 - **`denied_by` stays server-internal.** `CommandDecision` and `McpToolDecision` are **request bodies**
   (`/tasks/{id}/command-decision` `routes.py:1021`, chat `/command-decision` `:1751`, `/mcp-decision` `:1764`), so a
@@ -423,8 +465,12 @@ One source text per prompt/string, with audience-tagged regions, rendered by one
   (`<<main>>…<</main>><<child:edit>>…<</child:edit>><<child:readonly>>…<</child:readonly>>`).
 
 #### 4.7.2 Rendering rules (`render_prompt(template: str, ctx: RenderContext) -> str`)
-- `RenderContext` = `{agent: AgentContext | None, tools: frozenset[str], base_types: frozenset[str], shell_policy}`,
-  built once per loop. The parent's is `RenderContext.main()`.
+- *(rev 11, as shipped)* `RenderContext` is a **flat, frozen, hashable** dataclass (`prompting/tagged.py`):
+  `audience: "main" | "child"`, `permission`, `shell_policy`, `tools: frozenset[str]`, `base_types: frozenset[str]`,
+  `agent_id`, `agent_label`. It does not embed the `AgentContext` (which did not exist in Phase 1, and embedding it
+  would make the render cache key depend on unhashable fields). Built once per loop. The parent's is
+  `RenderContext.main()`; a child's is `RenderContext.for_agent(agent, tools=…)` (added in Phase 2), which copies
+  `permissions → permission`, `allowed_types → base_types`, `agent_id`, `label`.
 - **Resolution runs on the raw template before any placeholder substitution** (`{tools_json}`, `{propose_mode_modes}`,
   persona, AGENTS.md, skills catalog, skill bodies). Injected user and third-party content is never parsed for tags,
   so an AGENTS.md containing `<<main>>` is inert text.
@@ -765,9 +811,13 @@ Used for reads (after `tools/arg_aliases.py` has normalized `file`/`filepath`/`f
 - **Stale:** `last_write[path].agent_id != me and last_write[path].seq > max(spawn_seq, last_seen.get(path, -1))`.
 
 ### 7.4 Enforcement
-- New `PatchFailureCode.STALE_READ` and `StaleWriteError(Exception)` carrying
+- New `PatchFailureCode.STALE_READ` and *(rev 11)* `StaleWriteError(PatchPreflightFailed)` in `chat/edit_session.py`,
+  constructed as `StaleWriteError(path, message)` and carrying `.path` and
   `issues=[PatchPreflightIssue(code=STALE_READ, file=path, message=...)]` (the same shape `_edit_failure_guidance`
-  reads). `_EDIT_GUIDANCE_BY_CODE[STALE_READ]` = "Another agent changed this file after your last read. read_file it
+  reads). Subclassing the preflight error means a raise from `apply()` lands in the loop's existing PATCH FAILED
+  branch with no new code. **Catch-order consequence:** it is a `RuntimeError`, so any `except RuntimeError` /
+  `except Exception` wrapped around the two `accept()` call sites would swallow it — the new `"stale"` branch must
+  catch `StaleWriteError` **first** (Phase 2 pins this with a test). `_EDIT_GUIDANCE_BY_CODE[STALE_READ]` = "Another agent changed this file after your last read. read_file it
   again, then re-emit your edit against its current content."
 - **Check 1**, in `TurnEditSession.apply` before any patching: stale raises `StaleWriteError` → the loop's existing
   PATCH FAILED branch with the correct guidance.
@@ -1044,7 +1094,10 @@ So phase 5 **creates** `services/agentd-py/tests/conftest.py` (it doesn't exist 
 ## 16. Implementation phases
 The flag's code default is **OFF** through phases 1–4 (dev runs opt in via `.env`/`start-backend.sh`); **phase 5 flips
 it ON**. Each phase is green on its own.
-1. **Foundations** (§4), no children yet:
+1. **Foundations** (§4), no children yet. *(rev 11)* Shipped as two plans: **1A** prompt foundations (tagged templates,
+   goldens, leak lint, allowed-types schema, AGENT variants/payload, engine seams) and **1B** gates & approvals
+   (multi-gate, `ApprovalOutcome`, `StaleWriteError`, re-seed fix, and the frontend gate list including a basic agent
+   chip):
    - **tagged templates first** (§4.7), in the three-commit order of §4.7.4: main-matrix goldens on unchanged code →
      resolver + validator + conversion of every §4.7.6 text (goldens unchanged) → the two deliberate parent fixes;
      plus the structural leak lint;
@@ -1064,8 +1117,9 @@ it ON**. Each phase is green on its own.
 3. **Agent definitions** (§9): discovery/precedence/parse/mapping, persona wiring, catalog block + teaching + entry-hint
    mention; make `_NON_EXECUTABLE_SUBSKILLS` **conditional**: empty when the flag is on (`subagent-driven-development`
    becomes executable), unchanged when it's off (no dispatch tool exists then).
-4. **UI** (§10): roster card, inline box, floating window + tabs, per-agent channel subscription, stacked gate chips,
-   `lastLiveSignature`.
+4. **UI** (§10): roster card, inline box, floating window + tabs, per-agent channel subscription, agent-chip polish,
+   and the `agents` field in `lastLiveSignature`. *(rev 11)* Stacked gate cards keyed by `gate_id`, the `gates` field
+   in the signature, and a plain `label · name` agent chip already ship in Phase 1 (Plan 1B).
 5. **Live smoke** (§15), then **flip the default ON** (+ the §14 conftest), and update CLAUDE.md's architecture section.
 
 ## 17. Out of scope (v1)
