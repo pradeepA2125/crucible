@@ -1377,6 +1377,19 @@ class ControllerLoop:
                         logger.debug("[controller] inflight pill persist failed", exc_info=True)
                 history.append(assistant_turn(resp))
                 history.append({"role": "tool_result", "tool": tool, "content": out.output})
+                if out.workspace_changes:
+                    # Another agent promoted files on this agent's behalf (a dispatch,
+                    # spec §6.4): the same bookkeeping as this loop's own accepted edit —
+                    # repeats are no longer duplicates, the turn has edited, and the tail
+                    # gets a compact refresh note (never a seed rewrite).
+                    seen.clear()
+                    self._edit_applied = True
+                    if retrieval_delta_cb is not None:
+                        delta = await retrieval_delta_cb(list(out.workspace_changes))
+                        if delta:
+                            history.append({
+                                "role": "tool_result", "tool": "retrieval_refresh",
+                                "content": delta})
                 continue
             if atype == "clarify":
                 history.append(assistant_turn(resp))

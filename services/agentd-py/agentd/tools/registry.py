@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -21,6 +21,9 @@ class ToolDefinition(BaseModel):
 class ToolOutput:
     output: str
     is_error: bool = False
+    # Files a tool promoted on the agent's behalf (spec §6.4 — a sub-agent dispatch). The
+    # loop treats a non-empty list like its own accepted edit; never parsed from `output`.
+    workspace_changes: list[str] = field(default_factory=list)
 
 
 # Tagged (spec §4.6.3). Main renders today's text byte-for-byte; a child is told it runs in
