@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -71,6 +72,7 @@ class ToolRegistry:
         semantic_index: object | None = None,
         command_approval_callback: object | None = None,
         render_ctx: RenderContext | None = None,
+        command_guard: Callable[[str], str | None] | None = None,
     ) -> None:
         self._shadow_root = shadow_root
         self._real_workspace_path = real_workspace_path
@@ -81,6 +83,7 @@ class ToolRegistry:
         # consults it before executing. When None, run_command runs unguarded
         # (legacy/test path) — production wires this via the engine.
         self._command_approval_callback = command_approval_callback
+        self._command_guard = command_guard
         self._render_ctx = render_ctx or RenderContext.main()
 
     def use_shadow_for_reads(self) -> None:
@@ -393,6 +396,15 @@ class ToolRegistry:
             command = str(args.get("command", ""))
             cwd = str(args.get("cwd", "")) or ""  # relative to shadow_root; "" = shadow_root
             binary_name = Path(command).name  # basename used by binary-rule matching
+            if self._command_guard is not None:
+                # Sub-agent guards (the VCS guard, spec §4.6.6) see the exact line
+                # run_command would execute and refuse BEFORE any approval card.
+                from agentd.tools.shell import _build_shell_command_line, _split_command
+                line = _build_shell_command_line(
+                    *_split_command(command, cmd_args, self._real_workspace_path))
+                refusal = self._command_guard(line)
+                if refusal is not None:
+                    return ToolOutput(output=refusal, is_error=True)
             if self._command_approval_callback is not None:
                 outcome = await self._command_approval_callback(command, cmd_args, cwd)
                 if not outcome.approved:
