@@ -12,6 +12,8 @@ from agentd.mcp import tool_source as mcp_source
 from agentd.prompting.tagged import RenderContext, render_prompt
 from agentd.reasoning import react_common
 from agentd.skills.models import SkillManifest
+from agentd.subagents.definitions import BUILTIN_AGENTS
+from agentd.subagents.tool_source import SubAgentToolSource
 from agentd.tools import registry
 from agentd.tools.registry import ToolRegistry
 
@@ -19,7 +21,7 @@ TEMPLATES = {
     **{n: getattr(cp, n) for n in (
         "CONTROLLER_SYSTEM_PROMPT", "_PROPOSE_MODE_MODES_ENABLED", "_PROPOSE_MODE_MODES_DISABLED",
         "_MEMORY_BLOCK", "_INSTRUCTIONS_BLOCK_TEMPLATE", "_MCP_BLOCK", "_SESSIONS_BLOCK",
-        "_SKILLS_BLOCK_HEADER", "_AGENT_ROLE_BLOCK")},
+        "_SKILLS_BLOCK_HEADER", "_AGENT_ROLE_BLOCK", "_DISPATCH_BLOCK")},
     "reserved": cl._RESERVED_TOOL_NAME_TEMPLATE,
     "progress_repeat": cl._PROGRESS_REPEAT_TEMPLATE,
     "progress_dedup": cl._PROGRESS_DEDUP_TEMPLATE,
@@ -83,6 +85,7 @@ CHILDREN = {
 _RENDERED_BANNED = ["submit_changes", '"type":"answer"', "type='answer'", "type='clarify'",
                     "propose_mode", "Plan Mode", "retrieval seed", "ask what they want", "or ask."]
 _MCP = {"name": "mcp__gh__x", "description": "d", "parameters": {"type": "object"}}
+_DISPATCH = {"name": "dispatch_agents", "description": "d", "parameters": {"type": "object"}}
 _CATALOG = [SkillManifest(name="s", description="d", body_path=Path("/x"), dir=Path("/x"))]
 
 
@@ -90,7 +93,7 @@ _CATALOG = [SkillManifest(name="s", description="d", body_path=Path("/x"), dir=P
 def test_everything_a_child_is_shown_is_leak_free(perm: str) -> None:
     ctx = CHILDREN[perm]
     shown = [
-        format_controller_system_prompt([_MCP], task_subsystem_enabled=True, memory_enabled=True,
+        format_controller_system_prompt([_MCP, _DISPATCH], task_subsystem_enabled=True, memory_enabled=True,
                                         project_instructions="x", skills_catalog=_CATALOG,
                                         render_ctx=ctx, persona="p"),
         *(d.description
@@ -102,6 +105,7 @@ def test_everything_a_child_is_shown_is_leak_free(perm: str) -> None:
         cl._empty_edit_redirect(ctx),
         react_common.malformed_correction(ctx, sorted(ctx.base_types)),
         render_prompt(mcp_source._MCP_REJECTED_TEMPLATE, ctx),
+        SubAgentToolSource(BUILTIN_AGENTS, None).definitions()[0].description,
     ]
     leaks = [(b, s[:120]) for s in shown for b in _RENDERED_BANNED if b in s]
     assert not leaks, leaks

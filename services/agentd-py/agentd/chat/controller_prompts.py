@@ -588,6 +588,34 @@ run_command shines for quick one-shot commands that finish on their own.
 """)
 
 
+# Appended when dispatch_agents is offered (spec §6.6). The agent catalog rides the tool's
+# own description in tools_json; this block teaches how to use it.
+_DISPATCH_BLOCK = tagged("_DISPATCH_BLOCK", """
+
+SUB-AGENTS (dispatch_agents)
+dispatch_agents runs sub-agents in parallel — each in its own context window — and
+returns when all of them are done, with one full report per agent and the files each
+one changed.
+- A sub-agent starts with ONLY the prompt you write. Make each prompt self-contained:
+  the goal, the exact files that agent owns, the constraints, and how to verify.
+- Give each agent its OWN files. An agent editing a file another agent changed is
+  refused until it re-reads that file, which wastes its budget.
+- Sub-agents cannot ask you anything: put every decision in the prompt. Their reports
+  list the assumptions they made and their open questions.
+- explore is read-only (fast, parallel investigation); general-purpose can edit.
+<<main>>
+- Don't tell sub-agents to commit or use version control — they are blocked from it.
+  Commit after the batch yourself, using each result's files_changed.
+- When the parts are independent and touch disjoint files, dispatch_agents may be your
+  first action instead of write_todos; the todo list stays yours to reconcile afterwards.
+<</main>>
+- Check each result: read its report, and re-read any file in files_changed before you
+  edit it yourself.
+Example (two independent parts):
+{"type":"tool_call","thought":"two independent parts on disjoint files","tool":"dispatch_agents","args":{"agents":[{"agent":"general-purpose","label":"limiter","prompt":"Add a token-bucket limiter in api/limiter.py (you own only that file). Verify with pytest tests/test_limiter.py."},{"agent":"explore","label":"auth survey","prompt":"Find every caller of check_token under api/ and report each with path:line."}]}}
+""")
+
+
 _SKILLS_BLOCK_HEADER = tagged("_SKILLS_BLOCK_HEADER", """
 
 AVAILABLE SKILLS — specialized playbooks for this workspace. Each line is a skill's
@@ -753,6 +781,10 @@ def format_controller_system_prompt(
     if any(str((d or {}).get("name", "")) == "start_session"
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_SESSIONS_BLOCK, ctx)
+    # dispatch teaching block: keyed off the merged tool definitions, like the two above.
+    if any(str((d or {}).get("name", "")) == "dispatch_agents"
+           for d in tool_definitions if isinstance(d, dict)):
+        base += render_prompt(_DISPATCH_BLOCK, ctx)
     return base
 
 
@@ -845,6 +877,10 @@ def build_controller_step_payload(
         # edit_entry code's `or not history`) — a direct caller of this function
         # that never sets active_entry explicitly (a test, or a future caller)
         # still gets the entry hint on empty history, matching PLAN's symmetry.
+        dispatch_clause = (
+            " Or, for independent parts touching disjoint files, dispatch them in parallel "
+            "with dispatch_agents (a tool_call — see SUB-AGENTS)."
+            if plan_context.get("dispatch_available") else "")
         if plan_context.get("active_entry") or not history:
             hint = (
                 skill_check +
@@ -855,7 +891,7 @@ def build_controller_step_payload(
                 "\"status\":\"pending\"}, …]} listing EVERY part. Do NOT emit type='edit' with an "
                 "empty patch_ops to 'do the todos' — that applies nothing and wastes the turn. "
                 "After the list exists, edit items ONE AT A TIME (submit_changes is BLOCKED until "
-                "none are pending).\n"
+                "none are pending)." + dispatch_clause + "\n"
                 "• SMALL / cohesive (one file, or a few related ops): SKIP the list — emit "
                 "type='edit' now with a NON-EMPTY patch_ops, OR type='answer' if this needs no "
                 "change at all.\n"
