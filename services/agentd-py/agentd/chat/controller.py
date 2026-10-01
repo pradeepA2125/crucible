@@ -26,7 +26,14 @@ from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
 from agentd.chat.rewind import RewindStore
-from agentd.chat.models import ChatMessage, GateAmbiguousError, GateNotFoundError, PendingGate
+from agentd.chat.models import (
+    AgentRecord,
+    ChatMessage,
+    GateAgent,
+    GateAmbiguousError,
+    GateNotFoundError,
+    PendingGate,
+)
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
@@ -39,8 +46,16 @@ from agentd.domain.models import (
 )
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
+from agentd.prompting.tagged import RenderContext
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource
+from agentd.subagents.config import subagent_max_concurrent
+from agentd.subagents.runtime import (
+    TERMINAL_STATUSES,
+    AgentHandle,
+    SubAgentRuntime,
+    agent_channel,
+)
 from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
@@ -172,6 +187,10 @@ class ChatController:
         # One write log per thread for the process lifetime (spec §7.1) — only when
         # sub-agents are enabled; the parent's read watermarks persist across turns.
         self._write_logs: dict[str, WorkspaceWriteLog] = {}
+        # The sub-agent runtime (spec §6.2): process-wide, built once when enabled.
+        self._subagents: SubAgentRuntime | None = (
+            SubAgentRuntime(subagent_max_concurrent(), on_status=self._on_agent_status)
+            if is_subagents_enabled() else None)
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -818,7 +837,8 @@ class ChatController:
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
 
     async def _edit_decision_cb(
-        self, thread_id: str, channel_id: str, diff: list[DiffEntry],
+        self, thread_id: str, channel_id: str, diff: list[DiffEntry], *,
+        child: AgentHandle | None = None,
     ) -> dict[str, object]:
         """Hold the SSE stream open while a per-edit review gate is pending.
 
@@ -826,14 +846,20 @@ class ChatController:
         decision future, and awaits it — mirroring _pause_for_step_review. On a
         dropped client (no decision) it auto-rejects after the timeout so the loop
         unwinds cleanly. The gate clears in place in the finally (Class-A)."""
-        gate = self._store.add_controller_gate(thread_id, PendingGate.new("edit", {
-            "diff_entries": [
-                {"path": d.path, "additions": d.additions,
-                 "deletions": d.deletions, "unified_diff": d.unified_diff}
-                for d in diff]}))
+        payload: dict[str, object] = {"diff_entries": [
+            {"path": d.path, "additions": d.additions,
+             "deletions": d.deletions, "unified_diff": d.unified_diff}
+            for d in diff]}
+        if child is not None:
+            # A child edits in its own shadow (spec §7.5). Informational: a child gate is
+            # never recovered after a restart (§11.5).
+            payload["shadow_key"] = f"chatturn-{thread_id}-{child.agent_id}"
+        gate = self._store.add_controller_gate(
+            thread_id, PendingGate.new("edit", payload, agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[dict[str, object]] = loop.create_future()
         self._pending_edit[gate.gate_id] = fut
+        self._set_child_status(child, "waiting")
         timeout = float(os.environ.get(_EDIT_DECISION_TIMEOUT_ENV, "0") or "0")
         try:
             if timeout > 0:
@@ -844,6 +870,7 @@ class ChatController:
         finally:
             self._pending_edit.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
+            self._set_child_status(child, "running")
 
     async def _edit_record_cb(
         self, thread_id: str, channel_id: str,
@@ -1025,7 +1052,7 @@ class ChatController:
 
     async def _command_approval_cb(
         self, thread_id: str, channel_id: str,
-        command: str, args: list[str], cwd: str,
+        command: str, args: list[str], cwd: str, *, child: AgentHandle | None = None,
     ) -> ApprovalOutcome:
         """Gate a run_command in a chat EDIT turn (mirror engine._build_command_approval_
         callback on the controller's thread-gate machinery instead of task status).
@@ -1041,7 +1068,8 @@ class ChatController:
             return ApprovalOutcome.allow()
 
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
-            "command", {"command": command, "args": args, "cwd": cwd}))
+            "command", {"command": command, "args": args, "cwd": cwd},
+            agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[CommandDecision] = loop.create_future()
         self._pending_command[gate.gate_id] = fut
@@ -1049,16 +1077,19 @@ class ChatController:
         # the card still renders FROM /live (durable on reload) — this only nudges the FE
         # poll so it appears immediately instead of on the next 1s tick. Registered the
         # waiter first so a fast decision always finds it.
+        poke: dict[str, object] = {
+            "decision_id": uuid4().hex,
+            "command": command,
+            "args": args,
+            "cwd": cwd,
+            "step_id": "",
+        }
+        if child is not None:
+            poke["agent"] = {"id": child.agent_id, "label": child.context.label,
+                             "name": child.context.name}
         self._broadcaster.broadcast(channel_id, {
-            "type": "command_approval_requested",
-            "payload": {
-                "decision_id": uuid4().hex,
-                "command": command,
-                "args": args,
-                "cwd": cwd,
-                "step_id": "",
-            },
-        })
+            "type": "command_approval_requested", "payload": poke})
+        self._set_child_status(child, "waiting")
         denied_by: DeniedBy = "user"
         timeout = self._command_decision_timeout_sec
         try:
@@ -1069,14 +1100,15 @@ class ChatController:
         finally:
             self._pending_command.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
+            self._set_child_status(child, "running")
 
         rule = rule_from_decision(decision, command, args)
         if rule is not None:
             CommandRuleStore(self._workspace_path).add(rule)
-        self._write_breadcrumb(
+        self._gate_breadcrumb(
             thread_id, channel_id,
             f"✓ Command approved: {command}" if decision.approve
-            else f"✗ Command rejected: {command}")
+            else f"✗ Command rejected: {command}", child)
         return ApprovalOutcome.from_command(decision, denied_by=denied_by)
 
     async def resolve_command(
@@ -1102,7 +1134,8 @@ class ChatController:
 
     async def _mcp_approval_cb(
         self, thread_id: str, channel_id: str,
-        server: str, tool: str, args: dict[str, object],
+        server: str, tool: str, args: dict[str, object], *,
+        child: AgentHandle | None = None,
     ) -> ApprovalOutcome:
         """Gate an MCP tool call (mirror of _command_approval_cb on the same
         thread-gate machinery). A remembered (server, tool) rule auto-approves;
@@ -1114,15 +1147,19 @@ class ChatController:
             return ApprovalOutcome.allow()
 
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
-            "mcp_tool", {"server": server, "tool": tool, "args": args}))
+            "mcp_tool", {"server": server, "tool": tool, "args": args},
+            agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[McpToolDecision] = loop.create_future()
         self._pending_mcp[gate.gate_id] = fut
         # Instant-render poke — the card still renders FROM /live (durable on reload).
+        poke: dict[str, object] = {"server": server, "tool": tool, "args": args}
+        if child is not None:
+            poke["agent"] = {"id": child.agent_id, "label": child.context.label,
+                             "name": child.context.name}
         self._broadcaster.broadcast(channel_id, {
-            "type": "mcp_approval_requested",
-            "payload": {"server": server, "tool": tool, "args": args},
-        })
+            "type": "mcp_approval_requested", "payload": poke})
+        self._set_child_status(child, "waiting")
         denied_by: DeniedBy = "user"
         timeout = mcp_decision_timeout_sec()
         try:
@@ -1133,13 +1170,14 @@ class ChatController:
         finally:
             self._pending_mcp.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
+            self._set_child_status(child, "running")
 
         if decision.approve and decision.remember:
             McpRuleStore(self._workspace_path).add(server, tool)
-        self._write_breadcrumb(
+        self._gate_breadcrumb(
             thread_id, channel_id,
             f"✓ MCP tool approved: {server}.{tool}" if decision.approve
-            else f"✗ MCP tool rejected: {server}.{tool}")
+            else f"✗ MCP tool rejected: {server}.{tool}", child)
         if decision.approve:
             return ApprovalOutcome.allow()
         return ApprovalOutcome.deny(denied_by)
@@ -1201,6 +1239,86 @@ class ChatController:
         loop = self._active_loops.get(thread_id)
         if loop is not None:
             loop.mark_pills_boundary()
+
+    def _on_agent_status(self, handle: AgentHandle) -> None:
+        """Persist a sub-agent status change and announce it on the THREAD channel — the
+        low-volume events (spec §5.5, §11.2); everything else stays on the child's own."""
+        self._store.update_agent(handle.agent_id, status=handle.status,
+                                 started_at=handle.started_at, ended_at=handle.ended_at)
+        thread_channel = f"chat:{handle.thread_id}"
+        self._broadcaster.broadcast(thread_channel, {
+            "type": "agent_status",
+            "payload": {"agent_id": handle.agent_id, "status": handle.status}})
+        if handle.status in TERMINAL_STATUSES and handle.result is not None:
+            result = handle.result
+            self._store.update_agent(handle.agent_id, report=result.report,
+                                     files_changed=result.files_changed,
+                                     stale_refusals=result.stale_refusals)
+            self._broadcaster.broadcast(thread_channel, {
+                "type": "agent_finished",
+                "payload": {"agent_id": handle.agent_id, "status": result.status,
+                            "files_changed": result.files_changed}})
+
+    @staticmethod
+    def _gate_agent(child: AgentHandle | None) -> GateAgent | None:
+        if child is None:
+            return None
+        return GateAgent(id=child.agent_id, label=child.context.label, name=child.context.name)
+
+    def _set_child_status(self, child: AgentHandle | None, status: str) -> None:
+        if child is not None and self._subagents is not None:
+            self._subagents.set_status(child, status)
+
+    def _gate_breadcrumb(
+        self, thread_id: str, channel_id: str, text: str, child: AgentHandle | None,
+    ) -> None:
+        if child is None:
+            self._write_breadcrumb(thread_id, channel_id, text)
+        else:
+            self._child_breadcrumb(child, text)
+
+    def _child_breadcrumb(self, child: AgentHandle, text: str) -> None:
+        """A sub-agent's decision record goes to ITS transcript and channel, never the
+        parent's (spec §5.5); the boundary is the child loop's, not the parent's."""
+        if isinstance(child.loop, ControllerLoop):
+            child.loop.mark_pills_boundary()
+        if child.broadcaster is not None:
+            child.broadcaster.broadcast(agent_channel(child.thread_id, child.agent_id), {
+                "type": "chat_breadcrumb", "payload": {"text": text, "task_id": ""}})
+        if child.transcript is not None:
+            child.transcript.append(ChatMessage(
+                role="agent", content=text, metadata={"breadcrumb": True}))
+
+    async def _child_command_approval_cb(
+        self, child: AgentHandle, command: str, args: list[str], cwd: str,
+    ) -> ApprovalOutcome:
+        if (self._shell_policy == ShellPolicy.ALLOW_ALL
+                or CommandRuleStore(self._workspace_path).matches(command, args)):
+            return ApprovalOutcome.allow()
+        if child.context.permission == "dontAsk":
+            # dontAsk: only a remembered rule or allow_all runs a command; nobody is asked
+            # (spec §5.6), and the model is told the truth (rev 11 §4.6.4).
+            return ApprovalOutcome.deny("policy")
+        return await self._command_approval_cb(
+            child.thread_id, f"chat:{child.thread_id}", command, args, cwd, child=child)
+
+    async def _child_mcp_approval_cb(
+        self, child: AgentHandle, server: str, tool: str, args: dict[str, object],
+    ) -> ApprovalOutcome:
+        from agentd.mcp.rules import McpRuleStore
+
+        if McpRuleStore(self._workspace_path).matches(server, tool):
+            return ApprovalOutcome.allow()
+        if child.context.permission == "dontAsk":
+            return ApprovalOutcome.deny("policy")
+        return await self._mcp_approval_cb(
+            child.thread_id, f"chat:{child.thread_id}", server, tool, args, child=child)
+
+    async def _child_edit_decision_cb(
+        self, child: AgentHandle, diff: list[DiffEntry],
+    ) -> dict[str, object]:
+        return await self._edit_decision_cb(
+            child.thread_id, f"chat:{child.thread_id}", diff, child=child)
 
     def _write_breadcrumb(self, thread_id: str, channel_id: str, text: str) -> None:
         """Persist a durable transcript breadcrumb AND broadcast it live (mirror
