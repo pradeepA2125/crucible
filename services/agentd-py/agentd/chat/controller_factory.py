@@ -72,6 +72,13 @@ def warn_if_incoherent_flags(logger: logging.Logger) -> None:
             "incoherent flags: CRUCIBLE_TASK_SUBSYSTEM is off but CRUCIBLE_CHAT_CONTROLLER "
             "is also off — large changes have no path. Set CRUCIBLE_CHAT_CONTROLLER=1."
         )
+    # Sub-agents are controller-only. Warn only when explicitly turned on (spec §12) —
+    # the default is not a user decision.
+    explicit = os.getenv("CRUCIBLE_SUBAGENTS_ENABLED", "").strip().lower() in _TRUTHY
+    if explicit and not is_controller_enabled():
+        logger.warning(
+            "incoherent flags: CRUCIBLE_SUBAGENTS_ENABLED is on but CRUCIBLE_CHAT_CONTROLLER "
+            "is off — sub-agents are controller-only. Set CRUCIBLE_CHAT_CONTROLLER=1.")
 
 
 def select_chat_handler(

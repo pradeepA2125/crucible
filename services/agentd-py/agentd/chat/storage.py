@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 from agentd.chat.models import (
@@ -725,3 +725,28 @@ class ChatThreadStore:
                 "SELECT * FROM chat_agents WHERE thread_id = ? AND turn_id = ? ORDER BY rowid",
                 (thread_id, turn_id)).fetchall()
         return [self._agent_from_row(r) for r in rows]
+
+    def reap_agents(self, reason: str) -> int:
+        """Fail every row whose process is gone (spec §11.5); returns how many."""
+        cursor = self._conn.execute(
+            "UPDATE chat_agents SET status = 'failed', report = ?, ended_at = ? "
+            "WHERE status IN ('queued', 'running', 'waiting')",
+            (f"Status: failed — {reason}", datetime.now(UTC).isoformat()))
+        self._conn.commit()
+        return cursor.rowcount
+
+    def remove_child_gates(self) -> list[str]:
+        """Drop every sub-agent gate from every thread; returns the affected thread ids.
+        A child gate is never recoverable after a restart: the write log is gone, so
+        promoting its edit would bypass the staleness guard (spec §11.5)."""
+        rows = self._conn.execute(
+            "SELECT thread_id, controller_gate_json FROM chat_threads "
+            "WHERE controller_gate_json IS NOT NULL").fetchall()
+        affected: list[str] = []
+        for row in rows:
+            gates = self._gates_from_row(row)
+            kept = [g for g in gates if g.agent is None]
+            if len(kept) != len(gates):
+                self._write_gates(row["thread_id"], kept)
+                affected.append(row["thread_id"])
+        return affected

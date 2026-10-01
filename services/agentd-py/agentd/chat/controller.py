@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
@@ -1251,6 +1252,22 @@ class ChatController:
             return False
         fut.set_result(decision)
         return True
+
+    def reap_subagents(self) -> None:
+        """Startup reap (spec §11.5): children never survive a restart. Fail their rows,
+        drop their gates (with a breadcrumb), and delete their leftover shadows. The
+        parent's orphaned-edit recovery (_promote_orphaned_edit) is unchanged."""
+        reaped = self._store.reap_agents("backend restarted")
+        for thread_id in self._store.remove_child_gates():
+            self._store.append_message(thread_id, ChatMessage(
+                role="agent",
+                content="✗ Sub-agent approvals were cleared — the backend restarted.",
+                metadata={"breadcrumb": True}))
+        if self._orchestrator is not None:
+            root = self._orchestrator._workspace_manager._root_path
+            for shadow in root.glob("chatturn-*-agent-*"):
+                shutil.rmtree(shadow, ignore_errors=True)
+        logger.info("[subagent] reap rows=%d", reaped)
 
     async def stop_turn(self, thread_id: str) -> bool:
         """Cancel a detached turn (POST /stop) — a slimmer cousin of task /abort.

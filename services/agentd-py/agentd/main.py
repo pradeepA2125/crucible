@@ -314,6 +314,12 @@ if _exec_manager is not None:
     app.router.add_event_handler("startup", _reap_exec_orphans)
     app.router.add_event_handler("shutdown", _exec_manager.shutdown)
 
+# Sub-agents never survive a restart (spec §11.5): fail their rows, drop their gates,
+# delete their shadows. Flag-tolerant: the legacy ChatAgent has no reap.
+_reap_subagents = getattr(_chat_agent, "reap_subagents", None)
+if _reap_subagents is not None:
+    app.router.add_event_handler("startup", _reap_subagents)
+
 # Managed-spawn lockfile: the extension sets CRUCIBLE_PORT and reads/reaps
 # <workspace>/.crucible/state/agentd.lock. The dev script doesn't set it — no-op there.
 _lock_port_raw = os.getenv("CRUCIBLE_PORT", "").strip()
