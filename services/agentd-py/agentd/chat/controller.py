@@ -50,14 +50,16 @@ from agentd.memory.models import ObservedPrompt
 from agentd.prompting.tagged import RenderContext
 from agentd.reasoning.react_common import assistant_turn
 from agentd.skills.loader import SkillCatalogLoader
-from agentd.skills.tool_source import SkillToolSource
+from agentd.skills.tool_source import SkillToolSource, cap_skill_body
+from agentd.subagents.agent_files import AgentCatalogLoader
 from agentd.subagents.config import subagent_max_concurrent, subagent_max_depth, subagent_max_iters
 from agentd.subagents.context import AgentContext, new_agent_id
-from agentd.subagents.definitions import BUILTIN_AGENTS
+from agentd.subagents.definitions import BUILTIN_AGENTS, AgentDefinition
 from agentd.subagents.events import SequencedBroadcaster
 from agentd.subagents.permissions import (
     child_allowed_types,
     child_tool_names,
+    definition_allows_edit,
     effective_permission,
     follows_live_review,
 )
@@ -207,6 +209,10 @@ class ChatController:
         self._subagents: SubAgentRuntime | None = (
             SubAgentRuntime(subagent_max_concurrent(), on_status=self._on_agent_status)
             if is_subagents_enabled() else None)
+        # Agent definitions (spec §9): files in front of the built-ins, re-read per dispatch
+        # source so a new file takes effect next turn with no restart.
+        self._agent_catalog_loader: AgentCatalogLoader | None = (
+            AgentCatalogLoader(workspace_path) if is_subagents_enabled() else None)
         # The turn whose dispatch tree /live reports (spec §11.1) — registered for exactly
         # loop.run's lifetime, like _active_loops.
         self._live_turns: dict[str, str] = {}
@@ -1445,11 +1451,16 @@ class ChatController:
             return False
         return await self._subagents.stop_agent(agent_id)
 
+    def _agent_catalog(self) -> dict[str, AgentDefinition]:
+        if self._agent_catalog_loader is None:
+            return BUILTIN_AGENTS
+        return self._agent_catalog_loader.load()
+
     def _dispatch_source(
         self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
     ) -> SubAgentToolSource:
         return SubAgentToolSource(
-            BUILTIN_AGENTS, partial(self._dispatch, thread_id, turn_id, dispatcher))
+            self._agent_catalog(), partial(self._dispatch, thread_id, turn_id, dispatcher))
 
     async def _dispatch(
         self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
@@ -1468,7 +1479,9 @@ class ChatController:
                 agent_id=new_agent_id(), name=request.agent.name, label=request.label,
                 depth=depth,
                 parent_agent_id=dispatcher.agent_id if dispatcher is not None else None,
-                permission=permission, allowed_types=child_allowed_types(permission),
+                permission=permission, allowed_types=child_allowed_types(
+                    permission, can_edit=definition_allows_edit(
+                        request.agent.tools, request.agent.disallowed_tools)),
                 persona=request.agent.persona,
                 max_iters=request.agent.max_turns or subagent_max_iters())
             # Writes before this instant are not stale for the new agent (spec §7.3).
@@ -1534,6 +1547,8 @@ class ChatController:
         run_id = f"{thread_id}:{ctx.agent_id}"
         ledger = TodoLedger()  # in memory only: never written to thread columns (§5.2)
         active_skills: dict[str, str] = {}
+        if handle.definition.skills:
+            self._preseed_child_skills(handle, active_skills)
         may_dispatch = ctx.depth < subagent_max_depth()
 
         def sources(render_ctx: RenderContext | None) -> list[object]:
@@ -1566,7 +1581,8 @@ class ChatController:
 
         available = [d.name for d in AggregatingToolRegistry(sources(None)).definitions()]
         names = child_tool_names(available, definition_tools=handle.definition.tools,
-                                 permission=ctx.permission, may_dispatch=may_dispatch)
+                                 permission=ctx.permission, may_dispatch=may_dispatch,
+                                 definition_disallowed=handle.definition.disallowed_tools)
         render_ctx = RenderContext.for_agent(
             ctx, tools=names,
             shell_policy="allow_all" if self._shell_policy == ShellPolicy.ALLOW_ALL else "ask")
@@ -1651,6 +1667,27 @@ class ChatController:
         self._memory_harness.release_run(f"{handle.thread_id}:{ctx.agent_id}")
         self._broadcaster.clear_replay(agent_channel(handle.thread_id, ctx.agent_id))
         return result
+
+    def _preseed_child_skills(self, handle: AgentHandle, active_skills: dict[str, str]) -> None:
+        """`skills:` frontmatter pre-loads every listed skill (spec §5.2), capped like
+        read_skill. Unknown or unreadable names are skipped with a warning."""
+        name = handle.context.name
+        if not is_skills_enabled():
+            logger.warning("[subagent] agent %s lists skills but CRUCIBLE_SKILLS_ENABLED is "
+                           "off — none pre-loaded", name)
+            return
+        catalog = {m.name: m for m in SkillCatalogLoader(self._workspace_path).load_catalog()}
+        for skill in handle.definition.skills:
+            manifest = catalog.get(skill)
+            if manifest is None:
+                logger.warning("[subagent] agent %s: unknown skill %r — skipped", name, skill)
+                continue
+            try:
+                body = manifest.body_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                logger.warning("[subagent] agent %s: cannot read skill %r: %s", name, skill, exc)
+                continue
+            active_skills[skill] = cap_skill_body(skill, body)
 
     async def _child_edit_record_cb(
         self, child: AgentHandle, diff: list[DiffEntry], decision: str, reason: str,
