@@ -197,7 +197,19 @@ The controller can dispatch parallel child agents that edit the **shared** real 
   - `explore` — `plan` permission, read-only tools.
   - `general-purpose` — `default` permission, all tools.
 
-  Phase 3 adds `.crucible/agents` / `.claude/agents` discovery. Each dispatch runs `ChatController._dispatch` in this order:
+  **Agent definition files (Phase 3, `subagents/agent_files.py`):** Claude Code–compatible Markdown + YAML frontmatter; the body is the persona.
+  - **Discovery:** `AgentCatalogLoader` searches `.crucible/agents/` → `.claude/agents/` → `~/.claude/agents/` → built-ins. A name wins at its highest-precedence source, a duplicate within one root keeps the first with a warning, and the catalog is sorted by name.
+  - **Recursive `*.md`, with a per-file `(path, mtime)` cache.** A root-mtime cache like `SkillCatalogLoader`'s would miss nested edits, because a directory's mtime only moves when its direct entries change.
+  - **No restart needed:** `ChatController._dispatch_source` re-reads the catalog per call, so a new file takes effect on the next turn.
+  - **Honored fields:** `name` (`[A-Za-z0-9_.-]`, max 64), `description` (one collapsed line, max 1024), `tools`, `disallowedTools` (applied first), `model`, `permissionMode`, `maxTurns`, `skills`. Everything else is parsed and ignored.
+  - **Tool mapping:** Read→`read_file`, Grep→`search_code`, Glob/LS→`list_directory`, Bash→`run_command`, Agent/Task→`dispatch_agents`, TodoWrite→`write_todos`, Skill→`read_skill`. WebFetch/WebSearch are dropped with a warning.
+    - Edit/Write/MultiEdit/NotebookEdit map to the pseudo-tool **`edit`**, i.e. the edit *action*: a definition whose `tools` lacks it, or whose `disallowedTools` has it, loses the `edit` type (`definition_allows_edit` → `child_allowed_types(can_edit=)`).
+    - `mcp__<server>` normalizes to the wildcard `mcp__<server>__*` (`tool_matches`).
+  - **Value mapping:** `bypassPermissions` and unknown modes → `default`. The Claude Code aliases `sonnet|opus|haiku|fable` → `inherit`, with a warning.
+  - **`skills:`** pre-seeds each listed skill's capped body into the child's `active_skills` (`_preseed_child_skills`). It needs `CRUCIBLE_SKILLS_ENABLED`; otherwise one warning and nothing loaded.
+  - **`subagent-driven-development`** is force-loadable (`_non_executable_subskills()`) only while the sub-agents flag is on.
+
+  Each dispatch runs `ChatController._dispatch` in this order:
   1. Builds an `AgentContext` per request: `effective_permission` (only read-only-ness propagates), `child_allowed_types`, persona, and `max_iters` from `maxTurns` or `CRUCIBLE_SUBAGENT_MAX_ITERS`.
   2. Calls `log.register_agent` (writes before this instant are not stale for the child).
   3. Calls `_on_dispatch_start`, which persists an `agent_dispatch` chat message (rendered as nothing by `MessageRow`) and `chat_agents` rows, and broadcasts `agent_started` — all before any child runs.
