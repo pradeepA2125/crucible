@@ -14,6 +14,7 @@ import {
   type RewindPreview,
   type RewindResult,
   ChatEventSchema,
+  ChatMessageSchema,
   ThreadLiveStateSchema,
   SessionTranscriptSchema,
   type SessionTranscript,
@@ -55,6 +56,8 @@ import {
   type ChatThreadSummary,
   type ChatThread,
   type StreamEvent,
+  type ChatMessage,
+  type SequencedStreamEvent,
 } from "../contracts/task-contracts.js";
 import type { TaskStatus } from "../domain/types.js";
 
@@ -437,10 +440,11 @@ export class HttpBackendClient implements BackendTaskClient {
 
   // Subscribe-only SSE relay (no turn launch). Reuses the SSE line-parsing already
   // behind postModeDecision/streamPatch. Closes on `done`/`chat_done`.
-  async *streamChannel(channelId: string): AsyncIterable<StreamEvent> {
+  async *streamChannel(channelId: string, signal?: AbortSignal): AsyncIterable<SequencedStreamEvent> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/channels/${encodeURIComponent(channelId)}/stream`,
-      { headers: { accept: "text/event-stream" } }
+      // exactOptionalPropertyTypes: RequestInit.signal may be absent, never undefined.
+      { headers: { accept: "text/event-stream" }, ...(signal ? { signal } : {}) }
     );
     if (!response.ok) {
       throw new Error(`Channel stream failed (${response.status}) for ${channelId}`);
@@ -586,7 +590,7 @@ export class HttpBackendClient implements BackendTaskClient {
     });
   }
 
-  private static toChatMessage(m: Record<string, unknown>): Record<string, unknown> {
+  static toChatMessage(m: Record<string, unknown>): Record<string, unknown> {
     return {
       role: m["role"],
       content: m["content"],
@@ -1181,4 +1185,9 @@ function mapRecallTrace(t: Record<string, unknown>): Record<string, unknown> {
     reranked: t["reranked"],
     entries,
   };
+}
+
+/** A chat message as the backend serializes it (snake_case) → the contract shape. */
+export function parseWireChatMessage(raw: Record<string, unknown>): ChatMessage {
+  return ChatMessageSchema.parse(HttpBackendClient.toChatMessage(raw));
 }

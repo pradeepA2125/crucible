@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { HttpBackendClient } from "../src/client/http-backend-client";
+import { HttpBackendClient, parseWireChatMessage } from "../src/client/http-backend-client";
 
 function respond(body: unknown) {
   return vi.fn().mockResolvedValue({ ok: true, json: async () => body });
@@ -56,5 +56,28 @@ describe("sub-agent contracts", () => {
       task_subsystem_enabled: false, chat_controller_enabled: true, memory_enabled: false,
       skills_enabled: false, mcp_enabled: false, subagents_enabled: true, provider: null }) });
     expect((await cfg.getConfig()).subagentsEnabled).toBe(true);
+  });
+});
+
+describe("sub-agent channel streaming", () => {
+  it("keeps each event's seq and passes the abort signal to fetch", async () => {
+    const body = 'data: {"type":"tool_call","payload":{"tool":"read_file"},"seq":4}\n\n'
+      + 'data: {"type":"agent_dispatch","payload":{"message":{"role":"agent","content":"","type":"agent_dispatch","timestamp":"2026-10-01T00:00:00Z","metadata":{"agent_ids":["agent-z"]}}},"seq":5}\n\n';
+    const fetchFn = vi.fn().mockResolvedValue(new Response(body, { status: 200 }));
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn });
+    const abort = new AbortController();
+    const events = [];
+    for await (const e of c.streamChannel("chat:t:agent:a", abort.signal)) events.push(e);
+    expect(events.map((e) => [e.type, e.seq])).toEqual([["tool_call", 4], ["agent_dispatch", 5]]);
+    expect(fetchFn.mock.calls[0][0]).toBe("http://x/v1/channels/chat%3At%3Aagent%3Aa/stream");
+    expect(fetchFn.mock.calls[0][1].signal).toBe(abort.signal);
+  });
+
+  it("parses a wire chat message into the camelCase contract shape", () => {
+    const m = parseWireChatMessage({
+      role: "agent", content: "", type: "agent_dispatch", task_id: null, id: "m1",
+      timestamp: "2026-10-01T00:00:00Z", metadata: { agent_ids: ["agent-a"] } });
+    expect(m).toMatchObject({ type: "agent_dispatch", id: "m1", taskId: null,
+                              metadata: { agent_ids: ["agent-a"] } });
   });
 });

@@ -208,6 +208,7 @@ export type StreamEvent =
   | { type: "agent_started"; payload: { agent_id: string; parent_agent_id: string | null; depth: number; name: string; label: string } }
   | { type: "agent_status"; payload: { agent_id: string; status: string } }
   | { type: "agent_finished"; payload: { agent_id: string; status: string; files_changed: string[] } }
+  | { type: "agent_dispatch"; payload: { message: Record<string, unknown> } }
   | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } }
   // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
   // reasoning, then `output` climbs — the transition that otherwise looks like
@@ -229,6 +230,9 @@ export type StreamEvent =
   // preflight/engine error is not model reasoning and must not render as a
   // numbered reasoning step (same rule as retry_status).
   | { type: "edit_failed"; payload: { reason: string; ops: number } };
+
+/** What a channel subscription yields: a sub-agent channel's events carry a seq. */
+export type SequencedStreamEvent = StreamEvent & { seq?: number };
 
 // Backward-compat alias
 export type PatchStreamEvent = StreamEvent;
@@ -328,6 +332,8 @@ export type RewindResult = z.infer<typeof RewindResultSchema>;
 export const ChatEventSchema = z.object({
   type: z.string(),
   payload: z.record(z.unknown()).default({}),
+  // A sub-agent channel stamps a monotonic seq (spec §5.5); other channels omit it.
+  seq: z.number().optional(),
 });
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
@@ -608,7 +614,7 @@ export interface BackendTaskClient {
   stopAgent(threadId: string, agentId: string): Promise<{ ok: boolean }>;
   // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used
   // to resume the live overlay for a controller turn after a webview reload (chat:{id}).
-  streamChannel(channelId: string): AsyncIterable<StreamEvent>;
+  streamChannel(channelId: string, signal?: AbortSignal): AsyncIterable<SequencedStreamEvent>;
   applyInlineChange(inlineTaskId: string): Promise<void>;
   discardInlineChange(inlineTaskId: string): Promise<void>;
 }
