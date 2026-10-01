@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 from openai import APIConnectionError, AsyncOpenAI
@@ -229,6 +230,40 @@ class NonProbativeError(RuntimeError):
     """
 
 
+class StreamDeadlineExceeded(TimeoutError):
+    """A response stream was still going when its total deadline expired."""
+
+
+async def _within_deadline(stream: Any, seconds: float) -> AsyncIterator[Any]:
+    """Iterate `stream` but give up once `seconds` have passed in total, closing it.
+
+    A per-read timeout cannot catch an endpoint that keeps sending chunks without ever
+    finishing; only a deadline on the whole iteration can."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    chunks = stream.__aiter__()
+    try:
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise StreamDeadlineExceeded()
+            try:
+                chunk = await asyncio.wait_for(chunks.__anext__(), timeout=remaining)
+            except StopAsyncIteration:
+                return
+            except TimeoutError as exc:
+                raise StreamDeadlineExceeded() from exc
+            yield chunk
+    except StreamDeadlineExceeded:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            try:
+                await close()
+            except Exception:  # best effort: the stream is being abandoned anyway
+                logger.debug("closing an abandoned stream failed", exc_info=True)
+        raise
+
+
 class TransientTransportError(NonProbativeError):
     """Infrastructure failure: a timeout, or a stream that broke part-way through.
     Says nothing about the request's own shape."""
@@ -336,6 +371,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         json_max_tokens: int = 16384,
         timeout_sec: float = 120.0,
         max_retries: int = 4,
+        stream_timeout_sec: float = 600.0,
         supports_oneof: bool = False,
         json_mode: str = "strict",
         default_headers: dict[str, str] | None = None,
@@ -353,6 +389,12 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         self._max_tokens = max_tokens
         self._json_max_tokens = json_max_tokens
         self._timeout_sec = timeout_sec
+        # timeout_sec bounds OPENING the stream and each HTTP read; nothing bounded
+        # CONSUMING it. An endpoint that keeps trickling chunks (measured on NIM: no
+        # content for 9+ min, never idle long enough for a read timeout) hung the whole
+        # turn. This total deadline turns that into a transient, retried failure. Long
+        # enough for a legitimate large generation; lower it per endpoint via the env var.
+        self._stream_timeout_sec = stream_timeout_sec
         self._max_retries = max(0, max_retries)
         # How much usage reporting this endpoint tolerates. Steps down a rung the
         # first time a request is rejected, permanently for this instance — see
@@ -1242,7 +1284,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 counted_total = 0
                 reasoning_tokens = content_tokens = 0
                 last_progress = 0.0
-                async for chunk in stream:
+                async for chunk in _within_deadline(stream, self._stream_timeout_sec):
                     # A usage-reporting stream ends with one extra chunk that has
                     # NO choices and carries the exact totals. Read it before the
                     # empty-choices skip below, which would otherwise discard the
@@ -1348,8 +1390,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         on_usage(prompt_n, completion_n or 0)
                 return "".join(content_parts).strip(), finish_reason
             except TimeoutError as exc:
+                limit = (self._stream_timeout_sec if isinstance(exc, StreamDeadlineExceeded)
+                         else self._timeout_sec)
                 raise TransientTransportError(
-                    f"{self._label} streaming timed out after {self._timeout_sec}s"
+                    f"{self._label} streaming timed out after {limit:g}s"
                 ) from exc
             except Exception as exc:
                 if _is_retryable(exc):

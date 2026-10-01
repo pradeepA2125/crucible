@@ -268,6 +268,7 @@ def build_transport(
             json_max_tokens=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_JSON_MAX_TOKENS", 65536),
             timeout_sec=_float_env(env, "CRUCIBLE_OPENAI_COMPAT_TIMEOUT_SEC", 120.0),
             max_retries=_int_env(env, "CRUCIBLE_OPENAI_COMPAT_MAX_RETRIES", 4),
+            stream_timeout_sec=_float_env(env, "CRUCIBLE_OPENAI_COMPAT_STREAM_TIMEOUT_SEC", 600.0),
             # Verified live against NVIDIA NIM: strict json_schema honors oneOf
             # discriminated unions. The sticky downgrade covers endpoints that don't.
             supports_oneof=True,
