@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from agentd.chat.controller_factory import is_skills_enabled, is_task_subsystem_enabled
+from agentd.chat.controller_factory import (
+    is_skills_enabled,
+    is_subagents_enabled,
+    is_task_subsystem_enabled,
+)
 from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
@@ -37,6 +41,7 @@ from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource
+from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.workspace.promote import promote_files
@@ -164,6 +169,9 @@ class ChatController:
         # registers its startup reap + shutdown kill-all). Sessions are
         # thread-scoped and survive across turns.
         self._exec_sessions = exec_session_manager
+        # One write log per thread for the process lifetime (spec §7.1) — only when
+        # sub-agents are enabled; the parent's read watermarks persist across turns.
+        self._write_logs: dict[str, WorkspaceWriteLog] = {}
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -224,6 +232,13 @@ class ChatController:
         finally:
             self._active_turns.pop(thread_id, None)
 
+    def _write_log_for(self, thread_id: str) -> WorkspaceWriteLog | None:
+        """The thread's write log, created on first use; None when sub-agents are off
+        (no guard, no read tracking — the parent behaves exactly as before P5)."""
+        if not is_subagents_enabled():
+            return None
+        return self._write_logs.setdefault(thread_id, WorkspaceWriteLog())
+
     def _build_registry(
         self,
         command_approval_callback: object | None = None,
@@ -234,12 +249,14 @@ class ChatController:
         mcp_approval_cb: object | None = None,
         exec_session_source: object | None = None,
         thread_id: str = "",
+        read_observer: Callable[[str], None] | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
             real_workspace_path=Path(self._workspace_path),
             semantic_index=getattr(self._retrieval, "_semantic_index", None),
             command_approval_callback=command_approval_callback,
+            read_observer=read_observer,
         )]
         if todo_ledger is not None:
             sources.append(TodoToolSource(todo_ledger, on_mutate=todo_persist_cb))
@@ -424,6 +441,7 @@ class ChatController:
         # from ANY phase, not just a mode-gated entry. Build a closure unconditionally
         # (free) and let ControllerLoop construct the real session lazily, on the
         # first actual `edit` dispatch (C1) — a pure Q&A/PLAN turn never pays for it.
+        write_log = self._write_log_for(thread_id)
         edit_session_factory = (
             (lambda: TurnEditSession(
                 turn_id=thread_id, real_path=Path(self._workspace_path),
@@ -431,7 +449,10 @@ class ChatController:
                 patch_engine=self._orchestrator._patch_engine,
                 checkpoint_cb=(
                     partial(self._rewind.capture, thread_id)
-                    if self._rewind is not None else None)))
+                    if self._rewind is not None else None),
+                write_guard=(
+                    WriteGuard(write_log, MAIN_AGENT_ID, "main", "main")
+                    if write_log is not None else None),))
             if self._orchestrator is not None else None)
         # run_command (ACTIVE-only; PLAN rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
@@ -486,7 +507,11 @@ class ChatController:
                                   active_skill_persist_cb=active_skill_persist_cb,
                                   thread_id=thread_id,
                                   mcp_approval_cb=mcp_cb,
-                                  exec_session_source=exec_source), self._broadcaster,
+                                  exec_session_source=exec_source,
+                                  read_observer=(
+                                      write_log.read_observer(
+                                          Path(self._workspace_path), MAIN_AGENT_ID)
+                                      if write_log is not None else None),), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session_factory=edit_session_factory,
             todo_ledger=ledger,
             task_subsystem_enabled=self._task_subsystem_enabled,
