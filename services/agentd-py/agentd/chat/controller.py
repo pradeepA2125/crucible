@@ -1269,6 +1269,21 @@ class ChatController:
                 shutil.rmtree(shadow, ignore_errors=True)
         logger.info("[subagent] reap rows=%d", reaped)
 
+    def forget_rewound_agents(self, thread_id: str, turn_ids: list[str]) -> int:
+        """Remove what the rewound turns' children left (spec §11.6): their rows, their
+        memory runs (best-effort), and the thread's write log — reset, because a stale
+        log would refuse edits citing agents the rewind just erased; an empty one is
+        always safe (§7.1)."""
+        agent_ids = self._store.delete_agents_for_turns(thread_id, turn_ids)
+        for agent_id in agent_ids:
+            try:
+                self._memory_harness.forget_run(f"{thread_id}:{agent_id}")
+            except Exception:  # noqa: BLE001 — memory never fails a rewind
+                logger.warning("[subagent] memory cleanup failed id=%s", agent_id,
+                               exc_info=True)
+        self._write_logs.pop(thread_id, None)
+        return len(agent_ids)
+
     async def stop_turn(self, thread_id: str) -> bool:
         """Cancel a detached turn (POST /stop) — a slimmer cousin of task /abort.
 

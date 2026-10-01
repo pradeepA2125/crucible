@@ -152,6 +152,10 @@ class MemoryStore:
         self._conn.execute("DELETE FROM anchored_summaries WHERE run_id=?", (run_id,))
         self._conn.commit()
 
+    def delete_segments(self, run_id: str) -> None:
+        self._conn.execute("DELETE FROM compaction_segments WHERE run_id=?", (run_id,))
+        self._conn.commit()
+
     # ------------------------------------------------------------------
     # Phase 2: long-term memories
     # ------------------------------------------------------------------

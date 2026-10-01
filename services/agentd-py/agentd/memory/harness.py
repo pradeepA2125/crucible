@@ -283,6 +283,13 @@ class MemoryHarness:
         else:
             self._store.upsert_anchor(run_id, summary_md)
 
+    def forget_run(self, run_id: str) -> None:
+        """Drop a run's compaction anchor and segments (a rewound sub-agent, §11.6)."""
+        if self._store is None:
+            return
+        self._store.clear_anchor(run_id)
+        self._store.delete_segments(run_id)
+
     def retire_since(self, source_ref: str, cutoff_iso: str) -> int:
         if self._store is None:
             return 0

@@ -195,6 +195,18 @@ class RewindStore:
                         1 for e in events
                         if isinstance(e, dict)
                         and str(e.get("tool", "")) in {"run_command", "session_start"})
+        # Children of the rewound turns ran commands too (spec §11.6); count them so the
+        # confirm dialog states everything a rewind cannot undo.
+        span_turns = {cp.turn_id for cp in span}
+        for record in self._store.list_agents(thread_id):
+            if record.turn_id not in span_turns:
+                continue
+            for m in record.transcript:
+                events = m.metadata.get("tool_events") or []
+                commands += sum(
+                    1 for e in events
+                    if isinstance(e, dict)
+                    and str(e.get("tool", "")) in {"run_command", "session_start"})
         return RewindPreview(
             messages=messages, files=len(self._fold(span)), commands_run=commands)
 

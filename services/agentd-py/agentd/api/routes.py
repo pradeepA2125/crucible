@@ -1916,6 +1916,10 @@ def build_router(
             # the anchor instead of putting the right one back.
             checkpoint = _chat_agent._store.get_checkpoint_by_anchor(thread_id, message_id)
             anchor_md = checkpoint.memory_anchor_md if checkpoint else None
+            # The rewound turns, read BEFORE restore() deletes their checkpoints.
+            rewound_turns = (
+                [cp.turn_id for cp in _chat_agent._store.list_checkpoints(thread_id)
+                 if cp.seq >= checkpoint.seq] if checkpoint is not None else [])
 
             outcome = rewind.restore(thread_id, message_id)
             if outcome is None:
@@ -1933,6 +1937,16 @@ def build_router(
                     import logging as _logging
                     _logging.getLogger(__name__).warning(
                         "[rewind] memory cleanup failed", exc_info=True)
-            return {**outcome.model_dump(mode="json"), "retired_memories": retired}
+            removed_agents = 0
+            forget = getattr(_chat_agent, "forget_rewound_agents", None)
+            if forget is not None:
+                try:
+                    removed_agents = forget(thread_id, rewound_turns)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "[rewind] sub-agent cleanup failed", exc_info=True)
+            return {**outcome.model_dump(mode="json"), "retired_memories": retired,
+                    "removed_agents": removed_agents}
 
     return router

@@ -750,3 +750,18 @@ class ChatThreadStore:
                 self._write_gates(row["thread_id"], kept)
                 affected.append(row["thread_id"])
         return affected
+
+    def delete_agents_for_turns(self, thread_id: str, turn_ids: list[str]) -> list[str]:
+        """Delete the rows of rewound turns (spec §11.6); returns their agent ids."""
+        if not turn_ids:
+            return []
+        placeholders = ", ".join("?" for _ in turn_ids)
+        rows = self._conn.execute(
+            f"SELECT agent_id FROM chat_agents WHERE thread_id = ? "  # noqa: S608
+            f"AND turn_id IN ({placeholders})", (thread_id, *turn_ids)).fetchall()
+        ids = [r["agent_id"] for r in rows]
+        self._conn.execute(
+            f"DELETE FROM chat_agents WHERE thread_id = ? "  # noqa: S608
+            f"AND turn_id IN ({placeholders})", (thread_id, *turn_ids))
+        self._conn.commit()
+        return ids
