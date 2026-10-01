@@ -27,6 +27,7 @@ from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.patch.engine import PatchEngine
 from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
+from tests.gate_helpers import first_gate
 
 
 class _NoopReasoning:
@@ -327,12 +328,12 @@ async def test_rewind_clears_a_pending_gate(tmp_path: Path):
     thread = chat_store.create_thread(str(ws), "t")
     tid = thread.thread_id
     anchor = _turn(chat_store, controller, tid, "go", "t1")
-    chat_store.set_controller_gate(tid, PendingGate(kind="edit", payload={"diff_entries": []}))
+    chat_store.add_controller_gate(tid, PendingGate(kind="edit", payload={"diff_entries": []}))
 
     async with _client(app) as client:
         await client.post(f"/v1/chat/threads/{tid}/rewind", json={"message_id": anchor})
 
-    assert chat_store.get_thread(tid).pending_controller_gate is None
+    assert first_gate(chat_store.get_thread(tid)) is None
 
 
 @pytest.mark.asyncio

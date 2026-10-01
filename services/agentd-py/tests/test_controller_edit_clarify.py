@@ -15,6 +15,7 @@ from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.patch.engine import PatchEngine
 from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
+from tests.gate_helpers import first_gate
 
 
 class _NoopReasoning:
@@ -85,7 +86,7 @@ async def test_clarify_in_active_phase_resumes_in_active(tmp_path: Path):
     await ctrl.resolve_mode(th.thread_id, "implement", channel_id=chan, goal="add a clamp helper")
     # The ACTIVE clarify sets a durable clarify gate carrying resume_phase=ACTIVE, so the
     # answer (via resolve_clarify) resumes ACTIVE rather than restarting PLAN.
-    gate = store.get_thread(th.thread_id).pending_controller_gate
+    gate = first_gate(store.get_thread(th.thread_id))
     assert gate is not None and gate.kind == "clarify"
     assert gate.payload["resume_phase"] == "ACTIVE"
     # user answers via the card → the resumed turn runs in ACTIVE, emits the edit + submit
@@ -96,7 +97,7 @@ async def test_clarify_in_active_phase_resumes_in_active(tmp_path: Path):
     # The edit was actually applied to the real workspace (instant-promote).
     assert (ws / "util.py").read_text().startswith("def clamp(")
     # Gate cleared once the ACTIVE turn terminated cleanly.
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -117,6 +118,6 @@ async def test_plan_clarify_sets_plan_resume(tmp_path: Path):
         retrieval_client=None)
     await ctrl.handle_message(
         th.thread_id, "fix it", channel_id=f"chat:{th.thread_id}", plan_mode=True)
-    gate = store.get_thread(th.thread_id).pending_controller_gate
+    gate = first_gate(store.get_thread(th.thread_id))
     assert gate is not None and gate.kind == "clarify"
     assert gate.payload["resume_phase"] == "PLAN"

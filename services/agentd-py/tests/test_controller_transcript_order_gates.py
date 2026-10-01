@@ -35,6 +35,7 @@ from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.patch.engine import PatchEngine
 from agentd.workspace.shadow import ShadowWorkspaceManager
+from tests.gate_helpers import first_gate
 
 
 class _FakeOrch:
@@ -129,7 +130,7 @@ async def test_closing_message_lands_after_a_command_approval_breadcrumb(
         ctrl.handle_message(thread.thread_id, "run it", channel_id="c1"))
     for _ in range(200):
         await asyncio.sleep(0.01)
-        gate = store.get_thread(thread.thread_id).pending_controller_gate
+        gate = first_gate(store.get_thread(thread.thread_id))
         if gate is not None and gate.kind == "command":
             break
     assert gate is not None and gate.kind == "command"
@@ -182,7 +183,7 @@ async def test_pills_after_a_breadcrumb_start_a_fresh_message(tmp_path: Path) ->
     for _ in range(2):
         for _ in range(200):
             await asyncio.sleep(0.01)
-            gate = store.get_thread(thread.thread_id).pending_controller_gate
+            gate = first_gate(store.get_thread(thread.thread_id))
             if gate is not None and gate.kind == "command":
                 break
         assert gate is not None and gate.kind == "command"

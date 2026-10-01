@@ -7,6 +7,7 @@ from agentd.chat.models import PendingGate
 from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from tests.gate_helpers import first_gate
 
 
 class _Orch:
@@ -44,7 +45,7 @@ async def test_propose_mode_emits_card_and_stores_history(tmp_path: Path):
     ctrl = _controller(tmp_path, store, eng, _Orch())
     await ctrl.handle_message(th.thread_id, "do a big thing", channel_id=f"chat:{th.thread_id}")
     # Class-A: a durable thread gate is set (rendered by /live), NOT an SSE mode event.
-    gate = store.get_thread(th.thread_id).pending_controller_gate
+    gate = first_gate(store.get_thread(th.thread_id))
     assert gate is not None and gate.kind == "mode"
     assert gate.payload["plan_sketch"] == "add decorator"
     assert ctrl._histories[th.thread_id]  # history stored for resume/discuss
@@ -57,12 +58,12 @@ async def test_mode_decision_create_task_dispatches(tmp_path: Path):
     orch = _Orch()
     ctrl = _controller(tmp_path, store, ScriptedReasoningEngine(None, []), orch)
     ctrl._histories[th.thread_id] = [{"role": "assistant", "content": "{}"}]
-    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={}))
+    store.add_controller_gate(th.thread_id, PendingGate(kind="mode", payload={}))
     await ctrl.resolve_mode(
         th.thread_id, "create_task", channel_id=f"chat:{th.thread_id}", goal="g")
     assert orch.created is not None and orch.created["goal"] == "g"
     # The mode gate is cleared on resolution (Class-A: gates clear in place).
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -72,7 +73,7 @@ async def test_mode_decision_persists_choice_breadcrumb(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store, ScriptedReasoningEngine(None, []), _Orch())
-    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
+    store.add_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
         "options": [{"mode": "create_task", "label": "Plan it as a task"}]}))
     await ctrl.resolve_mode(
         th.thread_id, "create_task", channel_id=f"chat:{th.thread_id}", goal="g")
@@ -90,7 +91,7 @@ async def test_mode_decision_double_dispatch_guarded(tmp_path: Path):
     th = store.create_thread(str(tmp_path), title="t")
     orch = _Orch()
     ctrl = _controller(tmp_path, store, ScriptedReasoningEngine(None, []), orch)
-    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={}))
+    store.add_controller_gate(th.thread_id, PendingGate(kind="mode", payload={}))
     await ctrl.resolve_mode(
         th.thread_id, "create_task", channel_id=f"chat:{th.thread_id}", goal="g")
     first = orch.created
@@ -113,7 +114,7 @@ async def test_mode_decision_legacy_mode_maps_to_implement(tmp_path: Path):
         {"type": "answer", "thought": "t", "answer": "implemented"}])
     ctrl = _controller(tmp_path, store, eng, _Orch())
     ctrl._histories[th.thread_id] = [{"role": "assistant", "content": "{}"}]
-    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
+    store.add_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
         "options": [{"mode": "edit", "label": "Edit inline now"}]}))
     await ctrl.resolve_mode(
         th.thread_id, "edit", channel_id=f"chat:{th.thread_id}", goal="g")
@@ -121,7 +122,7 @@ async def test_mode_decision_legacy_mode_maps_to_implement(tmp_path: Path):
     # Dispatched as implement (the ACTIVE re-entry ran) — NOT the resume/unknown degrade.
     assert not any("not available yet" in m.content.lower() for m in msgs)
     assert any(m.role == "agent" and m.content == "implemented" for m in msgs)
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -136,10 +137,10 @@ async def test_mode_decision_resume_not_yet_wired_writes_breadcrumb(tmp_path: Pa
         {"type": "answer", "thought": "t", "answer": "here is what would happen"}])
     ctrl = _controller(tmp_path, store, eng, _Orch())
     ctrl._histories[th.thread_id] = [{"role": "assistant", "content": "{}"}]
-    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={}))
+    store.add_controller_gate(th.thread_id, PendingGate(kind="mode", payload={}))
     await ctrl.resolve_mode(
         th.thread_id, "resume", channel_id=f"chat:{th.thread_id}", goal="g")
     msgs = store.get_thread(th.thread_id).messages
     assert any(
         m.role == "agent" and "not available yet" in m.content.lower() for m in msgs)
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None

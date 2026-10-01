@@ -10,6 +10,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from agentd.chat.models import (
+    ChatCommandDecisionRequest,
+    ChatMcpDecisionRequest,
+    GateAmbiguousError,
+    GateNotFoundError,
+)
 from agentd.domain.models import (
     AbortRequest,
     Diagnostic,
@@ -1365,6 +1371,11 @@ def build_router(
 
     if chat_agent is not None:
         from agentd.chat.agent import ChatAgent as _ChatAgent
+        def _gate_http_error(exc: Exception) -> HTTPException:
+            # 404: the named gate is not pending (benign — a click raced an auto-accept or
+            # a stop). 409: gate_id omitted while several gates of that kind are pending.
+            status = 404 if isinstance(exc, GateNotFoundError) else 409
+            return HTTPException(status_code=status, detail=str(exc))
         _chat_agent: _ChatAgent = chat_agent  # type: ignore[assignment]
 
         @router.get("/chat/threads")
@@ -1720,10 +1731,18 @@ def build_router(
 
         @router.post("/chat/threads/{thread_id}/edit-decision")
         async def post_edit_decision(thread_id: str, request: dict) -> dict:
-            # Resolves the held-open per-edit gate. The continuation surfaces on the
+            # Resolves a held-open per-edit gate. The continuation surfaces on the
             # ALREADY-open message SSE stream (the loop resumes), so this is a plain
             # JSON ack — not a new stream. Mirrors /step-decision (future.set_result).
-            ok = await _chat_agent.resolve_edit(thread_id, request)  # type: ignore[attr-defined]
+            # gate_id addresses one of several pending gates (spec §4.5); it is routing,
+            # not part of the decision, so it is stripped before the dict reaches the loop.
+            raw_gate_id = request.pop("gate_id", None)
+            gate_id = raw_gate_id if isinstance(raw_gate_id, str) else None
+            try:
+                ok = await _chat_agent.resolve_edit(  # type: ignore[attr-defined]
+                    thread_id, request, gate_id=gate_id)
+            except (GateNotFoundError, GateAmbiguousError) as exc:
+                raise _gate_http_error(exc) from exc
             return {"ok": ok}
 
         @router.post("/chat/threads/{thread_id}/review-pref")
@@ -1748,28 +1767,34 @@ def build_router(
 
         @router.post("/chat/threads/{thread_id}/command-decision")
         async def post_chat_command_decision(
-            thread_id: str, request: CommandDecision,
+            thread_id: str, request: ChatCommandDecisionRequest,
         ) -> dict:
-            # Resolves the held-open run_command gate (EDIT turns). The continuation
-            # surfaces on the already-open message SSE stream (the loop resumes), so this
-            # is a plain JSON ack — mirrors /edit-decision (future.set_result).
+            # Resolves a held-open run_command gate. The continuation surfaces on the
+            # already-open message SSE stream (the loop resumes), so this is a plain
+            # JSON ack — mirrors /edit-decision (future.set_result).
             resolve = getattr(_chat_agent, "resolve_command", None)
             if resolve is None:
                 return {"ok": False}
-            ok = await resolve(thread_id, request)  # type: ignore[misc]
+            decision = CommandDecision(**request.model_dump(exclude={"gate_id"}))
+            try:
+                ok = await resolve(thread_id, decision, gate_id=request.gate_id)  # type: ignore[misc]
+            except (GateNotFoundError, GateAmbiguousError) as exc:
+                raise _gate_http_error(exc) from exc
             return {"ok": ok}
 
         @router.post("/chat/threads/{thread_id}/mcp-decision")
         async def post_chat_mcp_decision(
-            thread_id: str, request: McpToolDecision,
+            thread_id: str, request: ChatMcpDecisionRequest,
         ) -> dict:
-            # Resolves the held-open mcp_tool gate. The continuation surfaces on the
-            # already-open message SSE stream (the loop resumes) — plain JSON ack,
-            # mirrors /command-decision (future.set_result).
+            # Resolves a held-open mcp_tool gate — plain JSON ack, mirrors /command-decision.
             resolve = getattr(_chat_agent, "resolve_mcp", None)
             if resolve is None:
                 return {"ok": False}
-            ok = await resolve(thread_id, request)  # type: ignore[misc]
+            decision = McpToolDecision(**request.model_dump(exclude={"gate_id"}))
+            try:
+                ok = await resolve(thread_id, decision, gate_id=request.gate_id)  # type: ignore[misc]
+            except (GateNotFoundError, GateAmbiguousError) as exc:
+                raise _gate_http_error(exc) from exc
             return {"ok": ok}
 
         @router.post("/chat/threads/{thread_id}/stop")

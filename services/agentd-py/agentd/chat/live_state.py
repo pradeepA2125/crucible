@@ -131,7 +131,7 @@ def resolve_thread_live(
     A controller turn has no task, so its gate (mode/edit) lives on the thread.
     When set, it takes precedence — the controller owns the live slot. Otherwise
     we fall back to the task-derived state (command/step/scope/validation gate,
-    plan, telemetry). The controller gate clears in place via set_controller_gate
+    plan, telemetry). The controller gate clears in place via remove_controller_gate
     (Class-A: gates clear in place, see CLAUDE.md), so the slot self-heals on the
     next poll once the decision route clears it.
     """

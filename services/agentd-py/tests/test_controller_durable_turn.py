@@ -10,6 +10,7 @@ from agentd.chat.models import PendingGate
 from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from tests.gate_helpers import first_gate
 
 
 def _controller(tmp_path, store) -> ChatController:
@@ -62,7 +63,7 @@ async def test_launch_turn_clears_on_exception(tmp_path):
 async def test_handle_message_clears_stale_gate_at_start(tmp_path):
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path))
-    store.set_controller_gate(thread.thread_id, PendingGate(kind="mode", payload={}))
+    store.add_controller_gate(thread.thread_id, PendingGate(kind="mode", payload={}))
     ctrl = _controller(tmp_path, store)
 
     # Capture the gate state at the moment the turn body runs — proves the clear
@@ -72,7 +73,7 @@ async def test_handle_message_clears_stale_gate_at_start(tmp_path):
 
     async def _fake_loop(thread_id, channel_id, goal, **kwargs):
         refreshed = store.get_thread(thread_id)
-        gate_at_turn_start.append(refreshed.pending_controller_gate)
+        gate_at_turn_start.append(first_gate(refreshed))
         from agentd.chat.controller_loop import ControllerOutcome
         return ControllerOutcome(kind="answer", text="ok")
 

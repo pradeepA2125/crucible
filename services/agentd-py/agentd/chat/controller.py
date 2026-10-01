@@ -22,7 +22,7 @@ from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
 from agentd.chat.rewind import RewindStore
-from agentd.chat.models import ChatMessage, PendingGate
+from agentd.chat.models import ChatMessage, GateAmbiguousError, GateNotFoundError, PendingGate
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
@@ -145,11 +145,10 @@ class ChatController:
         # usage-reporting call, and cleared whenever a compaction rewrites history
         # (ControllerLoop invalidates it internally — see its _iterate).
         self._observed_prompts: dict[str, ObservedPrompt | None] = {}
-        # Per-thread per-edit review future (held-open gate; mirrors the engine's
-        # _pending_step_decisions). resolve_edit fires it.
+        # Held-open decision futures, keyed by gate_id (spec §4.5 — a thread can hold several
+        # gates at once). resolve_edit/resolve_command/resolve_mcp fire them; each raise
+        # site pops its own entry and removes its own gate in its finally.
         self._pending_edit: dict[str, asyncio.Future[dict[str, object]]] = {}
-        # Per-thread held-open command-approval future (run_command gate). Fired by
-        # resolve_command; same lifecycle as _pending_edit.
         self._pending_command: dict[str, asyncio.Future[CommandDecision]] = {}
         # MCP: process-scoped connection manager (None unless CRUCIBLE_MCP_ENABLED —
         # constructed in select_chat_handler, connected in main.py's startup hook).
@@ -159,7 +158,7 @@ class ChatController:
         # registers its startup reap + shutdown kill-all). Sessions are
         # thread-scoped and survive across turns.
         self._exec_sessions = exec_session_manager
-        # thread_id → future for the in-flight mcp_tool gate; same lifecycle as
+        # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
         # Per-thread "Review each edit" toggle from the message that opened the mode
@@ -170,7 +169,7 @@ class ChatController:
         # orchestrator's _running_tasks). Earns its keep three ways: the in-flight
         # 409 guard (routes), the durable `turn_active` input signal (/live), and the
         # task handle stop_turn cancels. A backend restart clears it — the orphaned
-        # turn is dead anyway (the transcript + pending_controller_gate survive in sqlite).
+        # turn is dead anyway (the transcript + pending_controller_gates survive in sqlite).
         self._active_turns: dict[str, asyncio.Task] = {}
         # The ControllerLoop currently running for a thread, so the mid-turn durable
         # writers (_write_breadcrumb, _edit_record_cb) can tell it a message just landed
@@ -324,7 +323,7 @@ class ChatController:
         # late decision on a superseded card hits `gate is None` and no-ops (resolve_mode/
         # resolve_edit already guard on this). A clarify sets no gate, so this is a no-op
         # on the clarify/EDIT-clarify resume path — no conflict.
-        self._store.set_controller_gate(thread_id, None)
+        self._store.clear_controller_gates(thread_id)
         # Auto-name the thread from its first user message (mirrors ChatAgent).
         if not any(m.role == "user" for m in thread.messages):
             title = message.strip().replace("\n", " ")[:50]
@@ -763,13 +762,13 @@ class ChatController:
         render purely from the /live poll (CLAUDE.md). Resolved by /mode-decision (F2)."""
         # Persist the exploration pills + thinking as a durable record (mirrors ChatAgent
         # writing a pills-only message before task cards) so they survive a reload; the
-        # gate itself is durable via pending_controller_gate.
+        # gate itself is durable via pending_controller_gates.
         metadata = self._turn_metadata(outcome)
         if metadata:
             self._store.append_message(thread_id, ChatMessage(
                 role="agent", content="", metadata=metadata))
-        self._store.set_controller_gate(
-            thread_id, PendingGate(kind="mode", payload=outcome.payload or {}))
+        self._store.add_controller_gate(
+            thread_id, PendingGate.new("mode", outcome.payload or {}))
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
 
     async def _present_clarify_choice(
@@ -783,8 +782,8 @@ class ChatController:
         if metadata:
             self._store.append_message(thread_id, ChatMessage(
                 role="agent", content="", metadata=metadata))
-        self._store.set_controller_gate(
-            thread_id, PendingGate(kind="clarify", payload=outcome.payload or {}))
+        self._store.add_controller_gate(
+            thread_id, PendingGate.new("clarify", outcome.payload or {}))
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
 
     async def _edit_decision_cb(
@@ -796,14 +795,14 @@ class ChatController:
         decision future, and awaits it — mirroring _pause_for_step_review. On a
         dropped client (no decision) it auto-rejects after the timeout so the loop
         unwinds cleanly. The gate clears in place in the finally (Class-A)."""
-        self._store.set_controller_gate(thread_id, PendingGate(kind="edit", payload={
+        gate = self._store.add_controller_gate(thread_id, PendingGate.new("edit", {
             "diff_entries": [
                 {"path": d.path, "additions": d.additions,
                  "deletions": d.deletions, "unified_diff": d.unified_diff}
                 for d in diff]}))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[dict[str, object]] = loop.create_future()
-        self._pending_edit[thread_id] = fut
+        self._pending_edit[gate.gate_id] = fut
         timeout = float(os.environ.get(_EDIT_DECISION_TIMEOUT_ENV, "0") or "0")
         try:
             if timeout > 0:
@@ -812,8 +811,8 @@ class ChatController:
         except TimeoutError:
             return {"decision": "reject", "reason": "decision timed out"}
         finally:
-            self._pending_edit.pop(thread_id, None)
-            self._store.set_controller_gate(thread_id, None)
+            self._pending_edit.pop(gate.gate_id, None)
+            self._store.remove_controller_gate(thread_id, gate.gate_id)
 
     async def _edit_record_cb(
         self, thread_id: str, channel_id: str,
@@ -888,21 +887,51 @@ class ChatController:
             return False
         control.auto_accept_edits = auto_accept
         if auto_accept:
-            future = self._pending_edit.get(thread_id)
-            if future is not None and not future.done():
-                future.set_result({
-                    "decision": "accept", "reason": "auto-accept turned on"})
+            thread = self._store.get_thread(thread_id)
+            for gate in (thread.pending_controller_gates if thread is not None else []):
+                if gate.kind != "edit":
+                    continue
+                future = self._pending_edit.get(gate.gate_id)
+                if future is not None and not future.done():
+                    future.set_result({
+                        "decision": "accept", "reason": "auto-accept turned on"})
         return True
 
-    async def resolve_edit(self, thread_id: str, decision: dict[str, object]) -> bool:
+    def _select_gate(
+        self, thread_id: str, kind: str, gate_id: str | None,
+    ) -> PendingGate | None:
+        """The pending gate a decision targets (spec §4.5 route semantics).
+
+        gate_id given → that gate, else GateNotFoundError (→ 404). gate_id omitted → the
+        single pending gate of that kind (keeps pre-multi-gate clients working), None when
+        there is none, GateAmbiguousError (→ 409) when there are several."""
+        thread = self._store.get_thread(thread_id)
+        gates = [g for g in (thread.pending_controller_gates if thread is not None else [])
+                 if g.kind == kind]
+        if gate_id is not None:
+            match = next((g for g in gates if g.gate_id == gate_id), None)
+            if match is None:
+                raise GateNotFoundError(f"no pending {kind} gate {gate_id!r} on {thread_id}")
+            return match
+        if len(gates) > 1:
+            raise GateAmbiguousError(
+                f"{len(gates)} {kind} gates are pending on {thread_id}; pass gate_id")
+        return gates[0] if gates else None
+
+    async def resolve_edit(
+        self, thread_id: str, decision: dict[str, object], gate_id: str | None = None,
+    ) -> bool:
         """Resolve the per-edit gate (POST /edit-decision). Fires the future when a
         live waiter exists (never mutates/persists during the await — Class-A safety).
 
         Backend-restart orphan: when the EditGate persisted in sqlite but the in-memory
-        waiter is gone (`thread_id not in _pending_edit`), clear the stale gate + write a
+        waiter is gone (no future for its gate_id), clear the stale gate + write a
         breadcrumb so the UI unwedges (turn_active is already False post-restart → input
         re-enables). The user re-issues the edit. Matches the orphaned-task degradation."""
-        fut = self._pending_edit.get(thread_id)
+        gate = self._select_gate(thread_id, "edit", gate_id)
+        if gate is None:
+            return False
+        fut = self._pending_edit.get(gate.gate_id)
         if fut is None or fut.done():
             # No live waiter (worker died mid-turn). The generation is NOT lost: the
             # edit was already applied to the shadow — only the promote didn't run —
@@ -910,16 +939,12 @@ class ChatController:
             # is reconstructible from durable state alone. Live incident: a 288-line
             # pathfinding.py was discarded here and survived only because the shadow
             # had not yet been rmtree'd by the next edit.
-            thread = self._store.get_thread(thread_id)
-            gate = thread.pending_controller_gate if thread is not None else None
-            if gate is None or gate.kind != "edit":
-                return False
             promoted: list[str] = []
             if str(decision.get("decision", "")) == "accept":
                 promoted = self._promote_orphaned_edit(thread_id, gate)
             # Clear AFTER promoting: the gate is the only record of which paths the
             # edit covered, so losing it first would strand the shadow again.
-            self._store.set_controller_gate(thread_id, None)
+            self._store.remove_controller_gate(thread_id, gate.gate_id)
             self._write_breadcrumb(
                 thread_id, f"chat:{thread_id}",
                 (f"✓ Recovered {len(promoted)} file(s) from the interrupted turn: "
@@ -979,11 +1004,11 @@ class ChatController:
         if CommandRuleStore(self._workspace_path).matches(command, args):
             return CommandDecision(approve=True)
 
-        self._store.set_controller_gate(thread_id, PendingGate(
-            kind="command", payload={"command": command, "args": args, "cwd": cwd}))
+        gate = self._store.add_controller_gate(thread_id, PendingGate.new(
+            "command", {"command": command, "args": args, "cwd": cwd}))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[CommandDecision] = loop.create_future()
-        self._pending_command[thread_id] = fut
+        self._pending_command[gate.gate_id] = fut
         # Instant-render poke (consistency with the task path's command_approval_requested):
         # the card still renders FROM /live (durable on reload) — this only nudges the FE
         # poll so it appears immediately instead of on the next 1s tick. Registered the
@@ -1004,8 +1029,8 @@ class ChatController:
         except TimeoutError:
             decision = CommandDecision(approve=False)
         finally:
-            self._pending_command.pop(thread_id, None)
-            self._store.set_controller_gate(thread_id, None)
+            self._pending_command.pop(gate.gate_id, None)
+            self._store.remove_controller_gate(thread_id, gate.gate_id)
 
         rule = rule_from_decision(decision, command, args)
         if rule is not None:
@@ -1017,21 +1042,22 @@ class ChatController:
         return decision
 
     async def resolve_command(
-        self, thread_id: str, decision: CommandDecision,
+        self, thread_id: str, decision: CommandDecision, gate_id: str | None = None,
     ) -> bool:
         """Resolve the run_command gate (POST /command-decision). Fires the live waiter;
         never mutates/persists during the await (Class-A). Restart orphan (gate in sqlite
         but the in-memory waiter died) clears the stale gate + a breadcrumb — mirrors
         resolve_edit so the UI unwedges and the user re-sends."""
-        fut = self._pending_command.get(thread_id)
+        gate = self._select_gate(thread_id, "command", gate_id)
+        if gate is None:
+            return False
+        fut = self._pending_command.get(gate.gate_id)
         if fut is None or fut.done():
-            thread = self._store.get_thread(thread_id)
-            gate = thread.pending_controller_gate if thread is not None else None
-            if gate is not None and gate.kind == "command":
-                self._store.set_controller_gate(thread_id, None)
-                self._write_breadcrumb(
-                    thread_id, f"chat:{thread_id}",
-                    "Previous turn ended — please re-send your request.")
+            # Restart orphan: the gate outlived its waiter. Clear it + breadcrumb.
+            self._store.remove_controller_gate(thread_id, gate.gate_id)
+            self._write_breadcrumb(
+                thread_id, f"chat:{thread_id}",
+                "Previous turn ended — please re-send your request.")
             return False
         fut.set_result(decision)
         return True
@@ -1049,11 +1075,11 @@ class ChatController:
         if McpRuleStore(self._workspace_path).matches(server, tool):
             return True
 
-        self._store.set_controller_gate(thread_id, PendingGate(
-            kind="mcp_tool", payload={"server": server, "tool": tool, "args": args}))
+        gate = self._store.add_controller_gate(thread_id, PendingGate.new(
+            "mcp_tool", {"server": server, "tool": tool, "args": args}))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[McpToolDecision] = loop.create_future()
-        self._pending_mcp[thread_id] = fut
+        self._pending_mcp[gate.gate_id] = fut
         # Instant-render poke — the card still renders FROM /live (durable on reload).
         self._broadcaster.broadcast(channel_id, {
             "type": "mcp_approval_requested",
@@ -1065,8 +1091,8 @@ class ChatController:
         except TimeoutError:
             decision = McpToolDecision(approve=False)
         finally:
-            self._pending_mcp.pop(thread_id, None)
-            self._store.set_controller_gate(thread_id, None)
+            self._pending_mcp.pop(gate.gate_id, None)
+            self._store.remove_controller_gate(thread_id, gate.gate_id)
 
         if decision.approve and decision.remember:
             McpRuleStore(self._workspace_path).add(server, tool)
@@ -1076,19 +1102,22 @@ class ChatController:
             else f"✗ MCP tool rejected: {server}.{tool}")
         return decision.approve
 
-    async def resolve_mcp(self, thread_id: str, decision: McpToolDecision) -> bool:
+    async def resolve_mcp(
+        self, thread_id: str, decision: McpToolDecision, gate_id: str | None = None,
+    ) -> bool:
         """Resolve the mcp_tool gate (POST /mcp-decision). Fires the live waiter;
         never mutates/persists during the await (Class-A). Restart orphan clears
         the stale gate + breadcrumb — mirrors resolve_command."""
-        fut = self._pending_mcp.get(thread_id)
+        gate = self._select_gate(thread_id, "mcp_tool", gate_id)
+        if gate is None:
+            return False
+        fut = self._pending_mcp.get(gate.gate_id)
         if fut is None or fut.done():
-            thread = self._store.get_thread(thread_id)
-            gate = thread.pending_controller_gate if thread is not None else None
-            if gate is not None and gate.kind == "mcp_tool":
-                self._store.set_controller_gate(thread_id, None)
-                self._write_breadcrumb(
-                    thread_id, f"chat:{thread_id}",
-                    "Previous turn ended — please re-send your request.")
+            # Restart orphan: the gate outlived its waiter. Clear it + breadcrumb.
+            self._store.remove_controller_gate(thread_id, gate.gate_id)
+            self._write_breadcrumb(
+                thread_id, f"chat:{thread_id}",
+                "Previous turn ended — please re-send your request.")
             return False
         fut.set_result(decision)
         return True
@@ -1168,9 +1197,8 @@ class ChatController:
         # The read→clear pair has no `await` between it (sqlite is sync), so two
         # concurrent /mode-decision posts can't both dispatch (which would double-
         # create a task). The second finds the gate already cleared and no-ops.
-        thread = self._store.get_thread(thread_id)
-        gate = thread.pending_controller_gate if thread is not None else None
-        if gate is None or gate.kind != "mode":
+        gate = self._select_gate(thread_id, "mode", None)
+        if gate is None:
             logger.info("[controller] resolve_mode no-op: no pending mode gate (thread=%s)",
                         thread_id)
             return
@@ -1204,7 +1232,7 @@ class ChatController:
         # this") the route forwards. Falls back to the raw goal if the model omitted it.
         sketch = str(gate.payload.get("plan_sketch") or "").strip()
         effective_goal = sketch or goal
-        self._store.set_controller_gate(thread_id, None)
+        self._store.remove_controller_gate(thread_id, gate.gate_id)
         # PERSIST + broadcast (mirror engine.write_chat_breadcrumb): a bare broadcast
         # dies on reload, leaving no record of what the user chose.
         self._write_breadcrumb(thread_id, channel_id, f"▸ You chose: {label}")
@@ -1272,9 +1300,8 @@ class ChatController:
         is sync), so two concurrent posts can't both re-enter; a blank answer no-ops (the
         card shouldn't submit blank, but defend)."""
         answer = (answer or "").strip()
-        thread = self._store.get_thread(thread_id)
-        gate = thread.pending_controller_gate if thread is not None else None
-        if gate is None or gate.kind != "clarify":
+        gate = self._select_gate(thread_id, "clarify", None)
+        if gate is None:
             logger.info("[controller] resolve_clarify no-op: no pending clarify gate (thread=%s)",
                         thread_id)
             return
@@ -1284,7 +1311,7 @@ class ChatController:
         question = str(gate.payload.get("question") or "")
         resume_phase = gate.payload.get("resume_phase")
         resume_phase = resume_phase if resume_phase in ("PLAN", "ACTIVE") else None
-        self._store.set_controller_gate(thread_id, None)
+        self._store.remove_controller_gate(thread_id, gate.gate_id)
         # PERSIST + broadcast (mirror write_chat_breadcrumb): a bare broadcast dies on
         # reload, leaving no record of the Q the agent asked or the A the user gave.
         self._write_breadcrumb(thread_id, channel_id, f"❓ {question} → {answer}")

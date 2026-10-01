@@ -21,6 +21,7 @@ from agentd.domain.models import CommandDecision, CommandRule, ShellPolicy
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.tools.command_rules import CommandRuleStore
+from tests.gate_helpers import first_gate
 
 
 def _controller(tmp_path, store, policy=ShellPolicy.ASK):
@@ -40,7 +41,7 @@ async def test_allow_all_skips_gate(tmp_path: Path):
     decision = await ctrl._command_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "pytest", ["-q"], "")
     assert decision.approve is True
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -51,7 +52,7 @@ async def test_ask_raises_command_gate_then_resolve_approves(tmp_path: Path):
     cb_task = asyncio.create_task(ctrl._command_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "rm", ["-rf", "x"], "sub"))
     await asyncio.sleep(0)  # let the cb set the gate and start awaiting
-    gate = store.get_thread(th.thread_id).pending_controller_gate
+    gate = first_gate(store.get_thread(th.thread_id))
     assert gate is not None and gate.kind == "command"
     assert gate.payload["command"] == "rm" and gate.payload["args"] == ["-rf", "x"]
 
@@ -59,7 +60,7 @@ async def test_ask_raises_command_gate_then_resolve_approves(tmp_path: Path):
         th.thread_id, CommandDecision(approve=True)) is True
     decision = await cb_task
     assert decision.approve is True
-    assert store.get_thread(th.thread_id).pending_controller_gate is None  # cleared in place
+    assert first_gate(store.get_thread(th.thread_id)) is None  # cleared in place
 
 
 @pytest.mark.asyncio
@@ -105,11 +106,11 @@ async def test_resolve_command_restart_orphan_clears_stale_gate(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store)
-    store.set_controller_gate(
+    store.add_controller_gate(
         th.thread_id, PendingGate(kind="command", payload={"command": "ls"}))
     assert await ctrl.resolve_command(
         th.thread_id, CommandDecision(approve=True)) is False
-    assert store.get_thread(th.thread_id).pending_controller_gate is None  # stale gate cleared
+    assert first_gate(store.get_thread(th.thread_id)) is None  # stale gate cleared
 
 
 @pytest.mark.asyncio
@@ -122,7 +123,7 @@ async def test_remembered_workspace_rule_auto_approves(tmp_path: Path):
     decision = await ctrl._command_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "pytest", ["-q"], "")
     assert decision.approve is True
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -152,7 +153,7 @@ async def test_command_decision_timeout_rejects(tmp_path: Path):
     decision = await ctrl._command_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "rm", ["-rf"], "")
     assert decision.approve is False
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -178,7 +179,7 @@ async def test_run_command_in_edit_loop_raises_command_gate(tmp_path: Path):
     gate = None
     for _ in range(100):
         await asyncio.sleep(0.01)
-        gate = store.get_thread(th.thread_id).pending_controller_gate
+        gate = first_gate(store.get_thread(th.thread_id))
         if gate is not None and gate.kind == "command":
             break
     assert gate is not None and gate.kind == "command"

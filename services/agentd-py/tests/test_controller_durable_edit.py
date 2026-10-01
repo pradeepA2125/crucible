@@ -23,6 +23,7 @@ from agentd.patch.engine import PatchEngine
 from agentd.workspace.shadow import ShadowWorkspaceManager
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.workspace.shadow import ShadowWorkspaceManager
+from tests.gate_helpers import first_gate
 
 
 def _drain(queue) -> list[dict]:
@@ -195,7 +196,7 @@ async def test_resolve_mode_edit_honors_remembered_step_review(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store, orchestrator=object())
-    store.set_controller_gate(th.thread_id, PendingGate(
+    store.add_controller_gate(th.thread_id, PendingGate(
         kind="mode", payload={"options": [{"mode": "implement", "label": "Edit inline now"}]}))
     ctrl._step_review_by_thread[th.thread_id] = True
 
@@ -244,7 +245,7 @@ async def test_resolve_mode_create_task_uses_plan_sketch_not_last_message(tmp_pa
 
     ctrl = _controller(tmp_path, store, orchestrator=_Orch())
     # A vague last message + a concrete plan_sketch from the agent's propose_mode.
-    store.set_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
+    store.add_controller_gate(th.thread_id, PendingGate(kind="mode", payload={
         "plan_sketch": "Create src/pricing/ package with discount.py and tax.py + tests",
         "options": [{"mode": "create_task", "label": "Plan it as a task"}]}))
     ctrl._step_review_by_thread[th.thread_id] = True
@@ -275,15 +276,15 @@ async def test_resolve_edit_clears_stale_gate_when_no_waiter(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path))
     # Simulate the post-restart state: gate persisted, no in-memory waiter.
-    store.set_controller_gate(thread.thread_id, PendingGate(kind="edit", payload={}))
+    store.add_controller_gate(thread.thread_id, PendingGate(kind="edit", payload={}))
     ctrl = _controller(tmp_path, store)
-    assert thread.thread_id not in ctrl._pending_edit
+    assert ctrl._pending_edit == {}
 
     ok = await ctrl.resolve_edit(thread.thread_id, {"decision": "accept"})
     assert ok is False  # nothing resumed (no waiter)
 
     refreshed = store.get_thread(thread.thread_id)
-    assert refreshed.pending_controller_gate is None  # stale gate cleared
+    assert first_gate(refreshed) is None  # stale gate cleared
     assert any(
         m.metadata.get("breadcrumb") and "re-send" in m.content.lower()
         for m in refreshed.messages)
@@ -319,7 +320,7 @@ def _orphaned(tmp_path, real, files: dict[str, str]):
         dst = shadow / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(text)
-    store.set_controller_gate(thread.thread_id, PendingGate(
+    store.add_controller_gate(thread.thread_id, PendingGate(
         kind="edit", payload={"diff_entries": [
             {"path": rel, "additions": 1, "deletions": 0, "unified_diff": "@@"}
             for rel in files]}))
@@ -328,7 +329,7 @@ def _orphaned(tmp_path, real, files: dict[str, str]):
         reasoning_engine=ScriptedReasoningEngine(None, []),
         thread_store=store, orchestrator=_WmOnlyOrchestrator(wm),
         broadcaster=EventBroadcaster(), retrieval_client=None)
-    assert thread.thread_id not in ctrl._pending_edit
+    assert ctrl._pending_edit == {}
     return ctrl, store, thread
 
 
@@ -344,7 +345,7 @@ async def test_resolve_edit_promotes_from_shadow_when_waiter_is_gone(tmp_path: P
 
     assert ok is True, "an accept with a recoverable shadow must succeed"
     assert (real / "pkg" / "new.py").read_text() == body
-    assert store.get_thread(thread.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(thread.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -358,4 +359,4 @@ async def test_resolve_edit_reject_on_orphan_discards_without_promoting(tmp_path
 
     assert ok is False
     assert not (real / "pkg" / "new.py").exists(), "reject must not promote"
-    assert store.get_thread(thread.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(thread.thread_id)) is None

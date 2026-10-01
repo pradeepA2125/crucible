@@ -12,6 +12,7 @@ from agentd.domain.models import McpToolDecision
 from agentd.mcp.rules import McpRuleStore
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from tests.gate_helpers import first_gate
 
 
 def _controller(tmp_path, store, broadcaster=None, mcp_manager=None):
@@ -31,14 +32,14 @@ async def test_gate_raised_then_approve_resolves(tmp_path: Path):
     cb_task = asyncio.create_task(ctrl._mcp_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "gh", "create_issue", {"title": "x"}))
     await asyncio.sleep(0)
-    gate = store.get_thread(th.thread_id).pending_controller_gate
+    gate = first_gate(store.get_thread(th.thread_id))
     assert gate is not None and gate.kind == "mcp_tool"
     assert gate.payload["server"] == "gh" and gate.payload["tool"] == "create_issue"
     assert gate.payload["args"] == {"title": "x"}
 
     assert await ctrl.resolve_mcp(th.thread_id, McpToolDecision(approve=True)) is True
     assert await cb_task is True
-    assert store.get_thread(th.thread_id).pending_controller_gate is None  # cleared in place
+    assert first_gate(store.get_thread(th.thread_id)) is None  # cleared in place
 
 
 @pytest.mark.asyncio
@@ -67,7 +68,7 @@ async def test_remember_persists_rule_and_auto_approves_next(tmp_path: Path):
     # Second call: no gate — remembered rule auto-approves.
     assert await ctrl._mcp_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "gh", "t", {}) is True
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -97,7 +98,7 @@ async def test_timeout_rejects(tmp_path: Path, monkeypatch):
     ctrl = _controller(tmp_path, store)
     assert await ctrl._mcp_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "gh", "t", {}) is False
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -107,10 +108,10 @@ async def test_resolve_mcp_no_pending_returns_false_and_clears_orphan(tmp_path: 
     ctrl = _controller(tmp_path, store)
     assert await ctrl.resolve_mcp(th.thread_id, McpToolDecision(approve=True)) is False
     # Restart orphan: gate persisted, no in-memory waiter → cleared + breadcrumb.
-    store.set_controller_gate(
+    store.add_controller_gate(
         th.thread_id, PendingGate(kind="mcp_tool", payload={"server": "s", "tool": "t"}))
     assert await ctrl.resolve_mcp(th.thread_id, McpToolDecision(approve=True)) is False
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio

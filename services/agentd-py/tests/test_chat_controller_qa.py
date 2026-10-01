@@ -6,6 +6,7 @@ from agentd.chat.controller import ChatController
 from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from tests.gate_helpers import first_gate
 
 
 @pytest.mark.asyncio
@@ -41,7 +42,7 @@ async def test_clarify_turn_sets_clarify_gate(tmp_path: Path):
     await ctrl.handle_message(thread.thread_id, "change the thing", channel_id="c1")
     reloaded = store.get_thread(thread.thread_id)
     assert reloaded is not None
-    gate = reloaded.pending_controller_gate
+    gate = first_gate(reloaded)
     assert gate is not None and gate.kind == "clarify"
     assert gate.payload["question"] == "which file?"
 

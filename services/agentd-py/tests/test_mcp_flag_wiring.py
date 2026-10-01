@@ -57,7 +57,7 @@ class _StubChatHandler:
         self._store = None
         self._broadcaster = None
 
-    async def resolve_mcp(self, thread_id, decision):
+    async def resolve_mcp(self, thread_id, decision, gate_id=None):
         self.calls.append((thread_id, decision))
         return True
 

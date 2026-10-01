@@ -14,6 +14,7 @@ from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.patch.engine import PatchEngine
 from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
+from tests.gate_helpers import first_gate
 
 
 class _NoopReasoning:
@@ -87,7 +88,7 @@ async def test_active_skill_survives_clarify_resume_without_reread(tmp_path: Pat
     # turn 1: activates the skill, then raises the clarify gate
     await ctrl.handle_message(th.thread_id, "build something", channel_id=chan)
     assert store.get_controller_active_skill(th.thread_id) is not None
-    gate = store.get_thread(th.thread_id).pending_controller_gate
+    gate = first_gate(store.get_thread(th.thread_id))
     assert gate is not None and gate.kind == "clarify"
 
     skill_body = (ws / ".crucible" / "skills" / "brainstorming" / "SKILL.md").read_text()

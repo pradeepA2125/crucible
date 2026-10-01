@@ -7,6 +7,7 @@ from agentd.chat.controller import ChatController
 from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from tests.gate_helpers import first_gate
 
 
 def _controller(tmp_path, store):
@@ -25,14 +26,14 @@ async def test_edit_cb_sets_gate_then_resolve_clears_and_returns(tmp_path: Path)
     cb_task = asyncio.create_task(
         ctrl._edit_decision_cb(th.thread_id, f"chat:{th.thread_id}", []))
     await asyncio.sleep(0)  # let the cb set the gate and start awaiting the future
-    gate = store.get_thread(th.thread_id).pending_controller_gate
+    gate = first_gate(store.get_thread(th.thread_id))
     assert gate is not None and gate.kind == "edit"
 
     assert await ctrl.resolve_edit(th.thread_id, {"decision": "accept"}) is True
     result = await cb_task
     assert result["decision"] == "accept"
     # Gate cleared in place on resolution (Class-A).
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None
 
 
 @pytest.mark.asyncio
@@ -51,4 +52,4 @@ async def test_edit_decision_timeout_rejects(tmp_path: Path, monkeypatch):
     ctrl = _controller(tmp_path, store)
     result = await ctrl._edit_decision_cb(th.thread_id, f"chat:{th.thread_id}", [])
     assert result["decision"] == "reject" and "timed out" in result["reason"]
-    assert store.get_thread(th.thread_id).pending_controller_gate is None
+    assert first_gate(store.get_thread(th.thread_id)) is None

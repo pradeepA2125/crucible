@@ -20,6 +20,7 @@ from agentd.domain.models import CommandDecision, ShellPolicy
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.patch.engine import PatchEngine
 from agentd.workspace.shadow import ShadowWorkspaceManager
+from tests.gate_helpers import first_gate
 
 
 class _FakeOrchestrator:
@@ -87,8 +88,8 @@ async def test_exhaustion_after_resolve_mode_reentry_is_persisted(tmp_path: Path
         thread.thread_id, "change f.py", channel_id="c1", plan_mode=True)
     reloaded = store.get_thread(thread.thread_id)
     assert reloaded is not None
-    assert reloaded.pending_controller_gate is not None
-    assert reloaded.pending_controller_gate.kind == "mode"
+    assert first_gate(reloaded) is not None
+    assert first_gate(reloaded).kind == "mode"
 
     # Turn B: resolve_mode re-enters ACTIVE with a NEW turn_id — runs as a background
     # task so we can resolve the mid-turn command-approval gate from "outside" the
@@ -98,7 +99,7 @@ async def test_exhaustion_after_resolve_mode_reentry_is_persisted(tmp_path: Path
         ctrl.resolve_mode(thread.thread_id, "implement", channel_id="c1", goal="change f.py"))
     for _ in range(50):
         await asyncio.sleep(0)
-        gate = store.get_thread(thread.thread_id).pending_controller_gate
+        gate = first_gate(store.get_thread(thread.thread_id))
         if gate is not None and gate.kind == "command":
             break
     else:

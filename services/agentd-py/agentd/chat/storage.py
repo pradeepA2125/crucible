@@ -189,7 +189,7 @@ class ChatThreadStore:
         self, thread_id: str, history: list[dict] | None
     ) -> None:
         """Persist the controller loop's verbatim turn history. Mirrors
-        set_controller_gate: an in-place durable update the next turn rehydrates
+        set_controller_seed: an in-place durable update the next turn rehydrates
         seed_history from (parity with TaskRecord.planning_conversation_history)."""
         raw = json.dumps(history) if history else None
         self._conn.execute(
@@ -226,14 +226,6 @@ class ChatThreadStore:
                 if g.agent is None or g.agent.id != agent_id]
         self._write_gates(thread_id, kept)
 
-    def set_controller_gate(self, thread_id: str, gate: PendingGate | None) -> None:
-        """TRANSITIONAL (Plan 1B Part I, removed in Task 2): replace the whole list with
-        [gate], or clear it with None."""
-        if gate is None:
-            self._write_gates(thread_id, [])
-            return
-        stored = gate if gate.gate_id else gate.model_copy(update={"gate_id": uuid.uuid4().hex})
-        self._write_gates(thread_id, [stored])
 
     def set_controller_todos(self, thread_id: str, raw: str | None) -> None:
         """Persist (raw = TodoLedger.to_json()) or clear (raw = None) the request's todo

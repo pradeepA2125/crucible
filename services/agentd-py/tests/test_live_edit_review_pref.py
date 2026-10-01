@@ -183,9 +183,9 @@ async def test_flipping_to_auto_accept_resolves_a_pending_edit_gate(tmp_path: Pa
     thread = store.create_thread(str(tmp_path), title="t")
     controller = _controller(tmp_path, store)
     controller._turn_controls[thread.thread_id] = ChatTurnControl(auto_accept_edits=False)
-    store.set_controller_gate(thread.thread_id, PendingGate(kind="edit", payload={}))
+    gate = store.add_controller_gate(thread.thread_id, PendingGate(kind="edit", payload={}))
     future: asyncio.Future[dict[str, object]] = asyncio.get_event_loop().create_future()
-    controller._pending_edit[thread.thread_id] = future
+    controller._pending_edit[gate.gate_id] = future
 
     assert await controller.set_review_pref(thread.thread_id, auto_accept=True) is True
     assert future.done()
@@ -199,8 +199,9 @@ async def test_flipping_to_review_leaves_a_pending_gate_alone(tmp_path: Path):
     thread = store.create_thread(str(tmp_path), title="t")
     controller = _controller(tmp_path, store)
     controller._turn_controls[thread.thread_id] = ChatTurnControl(auto_accept_edits=True)
+    gate = store.add_controller_gate(thread.thread_id, PendingGate(kind="edit", payload={}))
     future: asyncio.Future[dict[str, object]] = asyncio.get_event_loop().create_future()
-    controller._pending_edit[thread.thread_id] = future
+    controller._pending_edit[gate.gate_id] = future
 
     assert await controller.set_review_pref(thread.thread_id, auto_accept=False) is True
     assert not future.done()

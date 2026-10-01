@@ -20,7 +20,7 @@ async def test_mode_decision_rejects_create_task_when_disabled(tmp_path, monkeyp
     monkeypatch.setenv("CRUCIBLE_TASK_SUBSYSTEM", "0")
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
-    store.set_controller_gate(thread.thread_id, PendingGate(
+    store.add_controller_gate(thread.thread_id, PendingGate(
         kind="mode", payload={"plan_sketch": "x", "options": [
             {"mode": "create_task", "label": "Plan", "description": "d"}]}))
     ctrl = _ctrl(tmp_path, store)

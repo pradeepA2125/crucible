@@ -14,6 +14,7 @@ from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
+from tests.gate_helpers import first_gate
 
 
 def _controller(tmp_path):
@@ -74,7 +75,7 @@ async def test_present_clarify_sets_gate_not_chat_response(tmp_path: Path):
         payload={"question": "Which module?", "options": ["a.py", "b.py"],
                  "resume_phase": None})
     await ctrl._present_clarify_choice(tid, f"chat:{tid}", outcome)
-    gate = store.get_thread(tid).pending_controller_gate
+    gate = first_gate(store.get_thread(tid))
     assert gate is not None and gate.kind == "clarify"
     assert gate.payload["question"] == "Which module?"
     assert gate.payload["options"] == ["a.py", "b.py"]
@@ -85,7 +86,7 @@ async def test_present_clarify_sets_gate_not_chat_response(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_resolve_clarify_writes_combined_breadcrumb_and_clears_gate(tmp_path: Path):
     ctrl, store, tid = _controller(tmp_path)
-    store.set_controller_gate(tid, PendingGate(
+    store.add_controller_gate(tid, PendingGate(
         kind="clarify",
         payload={"question": "Which module?", "options": ["a.py", "b.py"],
                  "resume_phase": None}))
@@ -103,7 +104,7 @@ async def test_resolve_clarify_writes_combined_breadcrumb_and_clears_gate(tmp_pa
     msgs = store.get_thread(tid).messages
     crumb = next(m for m in msgs if m.metadata.get("breadcrumb"))
     assert "Which module?" in crumb.content and "a.py" in crumb.content
-    assert store.get_thread(tid).pending_controller_gate is None  # cleared in place
+    assert first_gate(store.get_thread(tid)) is None  # cleared in place
     # The answer is seeded as the user's reply; DECIDE re-entry (resume_phase None).
     assert captured["phase"] is None
     assert any(
@@ -114,7 +115,7 @@ async def test_resolve_clarify_writes_combined_breadcrumb_and_clears_gate(tmp_pa
 @pytest.mark.asyncio
 async def test_resolve_clarify_active_resume_phase(tmp_path: Path):
     ctrl, store, tid = _controller(tmp_path)
-    store.set_controller_gate(tid, PendingGate(
+    store.add_controller_gate(tid, PendingGate(
         kind="clarify",
         payload={"question": "range?", "options": [], "resume_phase": "ACTIVE"}))
     captured: dict[str, object] = {}
@@ -141,8 +142,8 @@ async def test_resolve_clarify_idempotent_no_gate(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_resolve_clarify_empty_answer_noops(tmp_path: Path):
     ctrl, store, tid = _controller(tmp_path)
-    store.set_controller_gate(tid, PendingGate(
+    store.add_controller_gate(tid, PendingGate(
         kind="clarify", payload={"question": "Q", "options": [], "resume_phase": None}))
     await ctrl.resolve_clarify(tid, "   ", channel_id=f"chat:{tid}", goal="g")
     # Gate stays (nothing resolved) — the card shouldn't submit blank, but defend.
-    assert store.get_thread(tid).pending_controller_gate is not None
+    assert first_gate(store.get_thread(tid)) is not None

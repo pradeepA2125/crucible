@@ -7,7 +7,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from agentd.domain.models import FailureSummary, RunSummary, TaskNarrative
+from agentd.domain.models import (
+    CommandDecision,
+    FailureSummary,
+    McpToolDecision,
+    RunSummary,
+    TaskNarrative,
+)
 
 
 class IntentType(StrEnum):
@@ -111,6 +117,15 @@ class PendingGate(BaseModel):
         return cls(gate_id=uuid4().hex, kind=kind, payload=payload, agent=agent)
 
 
+class GateNotFoundError(LookupError):
+    """A decision named a gate_id that is not pending on the thread (route → 404). Benign
+    by design: a card click can race an auto-accept or a stop that just removed it."""
+
+
+class GateAmbiguousError(ValueError):
+    """A decision omitted gate_id while several gates of that kind are pending (→ 409)."""
+
+
 class ChatThread(BaseModel):
     thread_id: str
     workspace_path: str
@@ -126,11 +141,6 @@ class ChatThread(BaseModel):
     # surfaced by /live via resolve_thread_live). A list: sub-agents can raise gates
     # concurrently with each other (spec §4.5).
     pending_controller_gates: list[PendingGate] = Field(default_factory=list)
-
-    @property
-    def pending_controller_gate(self) -> PendingGate | None:
-        """TRANSITIONAL (Plan 1B Part I, removed in Task 2): the first pending gate."""
-        return self.pending_controller_gates[0] if self.pending_controller_gates else None
     # The controller loop's verbatim turn history (assistant action + tool_result
     # pairs), replayed as seed_history on the next turn. Durable so a backend
     # restart doesn't drop the conversation the transcript still shows — mirrors
@@ -194,3 +204,15 @@ class ThreadLiveState(BaseModel):
     # only — no age_sec/unread_bytes, they'd churn the /live dedup signature
     # every tick (the webview computes age locally from started_at).
     sessions: list[dict[str, Any]] | None = None
+
+
+class ChatCommandDecisionRequest(CommandDecision):
+    """POST /chat/threads/{id}/command-decision body. gate_id is optional: omitted means
+    "the single pending command gate" (pre-multi-gate clients). Request-only — the route
+    hands the controller a plain CommandDecision."""
+    gate_id: str | None = None
+
+
+class ChatMcpDecisionRequest(McpToolDecision):
+    """POST /chat/threads/{id}/mcp-decision body; gate_id as ChatCommandDecisionRequest."""
+    gate_id: str | None = None
