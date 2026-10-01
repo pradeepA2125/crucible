@@ -290,11 +290,14 @@ export class HttpBackendClient implements BackendTaskClient {
   async postEditDecision(
     threadId: string,
     decision: "accept" | "reject",
-    reason?: string
+    reason?: string,
+    gateId?: string
   ): Promise<void> {
+    const body: Record<string, unknown> = { decision, reason: reason ?? "" };
+    if (gateId !== undefined) body.gate_id = gateId;
     await this.fetchJson(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/edit-decision`,
-      { method: "POST", body: JSON.stringify({ decision, reason: reason ?? "" }) }
+      { method: "POST", body: JSON.stringify(body) }
     );
   }
 
@@ -317,7 +320,8 @@ export class HttpBackendClient implements BackendTaskClient {
   // CommandDecision (camelCase ruleValue → snake_case rule_value, like sendCommandDecision).
   async postChatCommandDecision(
     threadId: string,
-    decision: CommandDecision
+    decision: CommandDecision,
+    gateId?: string
   ): Promise<void> {
     const body: Record<string, unknown> = {
       approve: decision.approve,
@@ -325,6 +329,7 @@ export class HttpBackendClient implements BackendTaskClient {
       scope: decision.scope,
     };
     if (decision.ruleValue !== undefined) body.rule_value = decision.ruleValue;
+    if (gateId !== undefined) body.gate_id = gateId;
     await this.fetchJson(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/command-decision`,
       { method: "POST", body: JSON.stringify(body) }
@@ -335,14 +340,16 @@ export class HttpBackendClient implements BackendTaskClient {
   // already-open message SSE stream. Mirrors postChatCommandDecision.
   async postChatMcpDecision(
     threadId: string,
-    decision: McpToolDecision
+    decision: McpToolDecision,
+    gateId?: string
   ): Promise<void> {
+    const body: Record<string, unknown> = {
+      approve: decision.approve, remember: decision.remember,
+    };
+    if (gateId !== undefined) body.gate_id = gateId;
     await this.fetchJson(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/mcp-decision`,
-      {
-        method: "POST",
-        body: JSON.stringify({ approve: decision.approve, remember: decision.remember }),
-      }
+      { method: "POST", body: JSON.stringify(body) }
     );
   }
 
@@ -557,13 +564,23 @@ export class HttpBackendClient implements BackendTaskClient {
     const raw = await this.fetchJson(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/live`
     ) as Record<string, unknown>;
-    const gate = raw["pending_gate"] as Record<string, unknown> | null;
+    // Gates keep their payload keys (snake_case) — same passthrough as before; only the
+    // envelope fields are mapped. agent keys (id/label/name) are already camel-safe.
+    const toGate = (g: Record<string, unknown>) => ({
+      gateId: g["gate_id"],
+      kind: g["kind"],
+      payload: g["payload"] ?? {},
+      agent: g["agent"] ?? null,
+    });
+    const rawGates = Array.isArray(raw["pending_gates"])
+      ? (raw["pending_gates"] as Record<string, unknown>[])
+      : [];
+    const legacyGate = raw["pending_gate"] as Record<string, unknown> | null;
     return ThreadLiveStateSchema.parse({
       activeTaskId: raw["active_task_id"] ?? null,
       status: raw["status"] ?? null,
-      pendingGate: gate
-        ? { kind: gate["kind"], payload: gate["payload"] ?? {} }
-        : null,
+      pendingGates: rawGates.map(toGate),
+      pendingGate: legacyGate ? toGate(legacyGate) : null,
       plan: raw["plan"] ?? null,
       turnActive: raw["turn_active"] ?? false,
       failureSummary: this.toFailureSummary(raw),

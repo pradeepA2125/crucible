@@ -69,3 +69,29 @@ describe("chat review preference client", () => {
     expect(body).toEqual({ auto_accept: true });
   });
 });
+
+describe("gate-addressed decisions (multi-gate)", () => {
+  const ok = () => vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+
+  it("sends gate_id on an edit decision only when given", async () => {
+    const fetchMock = ok();
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
+    await c.postEditDecision("th1", "accept", "", "g-edit");
+    await c.postEditDecision("th1", "accept");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(
+      { decision: "accept", reason: "", gate_id: "g-edit" });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(
+      { decision: "accept", reason: "" });
+  });
+
+  it("sends gate_id on command and MCP decisions", async () => {
+    const fetchMock = ok();
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
+    await c.postChatCommandDecision("th1", { approve: false, remember: false, scope: "exact" }, "g-cmd");
+    await c.postChatMcpDecision("th1", { approve: true, remember: false }, "g-mcp");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(
+      { approve: false, remember: false, scope: "exact", gate_id: "g-cmd" });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(
+      { approve: true, remember: false, gate_id: "g-mcp" });
+  });
+});

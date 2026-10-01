@@ -299,13 +299,25 @@ export const ChatEventSchema = z.object({
 });
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
 
-// The single gate a thread's current task is waiting on (mirrors backend PendingGate).
-// "mode"/"edit"/"clarify" are the agentic chat-controller gates (no task) — the Zod enum
-// is the RUNTIME gate: a kind missing here makes ThreadLiveStateSchema.parse() throw, which
-// pollThreadLiveState swallows, so the gate silently never renders.
+// Which sub-agent raised a gate (spec §4.5); null on the main agent's gates.
+export const GateAgentSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  name: z.string(),
+});
+export type GateAgent = z.infer<typeof GateAgentSchema>;
+
+// One gate a thread is waiting on (mirrors backend PendingGate). A thread can hold
+// several at once (spec §4.5), each addressed by gateId: a uuid for controller gates,
+// "task:{taskId}:{kind}" for task-derived gates. "mode"/"edit"/"clarify"/"mcp_tool" are
+// controller gates (no task) — the Zod enum is the RUNTIME gate: a kind missing here
+// makes ThreadLiveStateSchema.parse() throw, which pollThreadLiveState swallows, so the
+// gate silently never renders.
 export const PendingGateSchema = z.object({
+  gateId: z.string(),
   kind: z.enum(["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]),
   payload: z.record(z.unknown()).default({}),
+  agent: GateAgentSchema.nullable().default(null),
 });
 export type PendingGate = z.infer<typeof PendingGateSchema>;
 
@@ -347,6 +359,9 @@ export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
 export const ThreadLiveStateSchema = z.object({
   activeTaskId: z.string().nullable(),
   status: z.string().nullable(),
+  // Every pending gate, controller gates first (spec §4.5).
+  pendingGates: z.array(PendingGateSchema).default([]),
+  // LEGACY: the first of pendingGates. Removed once nothing reads it (Plan 1B Task 8).
   pendingGate: PendingGateSchema.nullable(),
   plan: z.record(z.unknown()).nullable(),
   // True while a controller turn / held-open controller gate is in flight (durable
@@ -547,11 +562,12 @@ export interface BackendTaskClient {
   postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent>;
   // Controller clarify gate: a STREAMED dispatch (the answer re-enters the loop).
   postClarifyDecision(threadId: string, answer: string): AsyncIterable<StreamEvent>;
-  postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string): Promise<void>;
+  postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string, gateId?: string): Promise<void>;
   // Controller run_command gate: a plain JSON ack (continuation rides the open message stream).
-  postChatCommandDecision(threadId: string, decision: CommandDecision): Promise<void>;
+  // gateId addresses one of several pending gates; omitted = the single pending one.
+  postChatCommandDecision(threadId: string, decision: CommandDecision, gateId?: string): Promise<void>;
   // Controller mcp_tool gate: a plain JSON ack (continuation rides the open message stream).
-  postChatMcpDecision(threadId: string, decision: McpToolDecision): Promise<void>;
+  postChatMcpDecision(threadId: string, decision: McpToolDecision, gateId?: string): Promise<void>;
   // Stop a detached controller turn (POST /chat/threads/{id}/stop). ok=false is benign.
   stopChatTurn(threadId: string): Promise<{ ok: boolean }>;
   // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used

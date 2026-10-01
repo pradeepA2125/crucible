@@ -426,7 +426,14 @@ describe("HttpBackendClient", () => {
           JSON.stringify({
             active_task_id: "task-1",
             status: "AWAITING_COMMAND_DECISION",
-            pending_gate: { kind: "command", payload: { command: "pytest" } },
+            pending_gates: [
+              { gate_id: "task:task-1:command", kind: "command",
+                payload: { command: "pytest" }, agent: null },
+              { gate_id: "g-2", kind: "mcp_tool", payload: {},
+                agent: { id: "agent-1", label: "impl", name: "general" } },
+            ],
+            pending_gate: { gate_id: "task:task-1:command", kind: "command",
+                            payload: { command: "pytest" }, agent: null },
             plan: null,
           }),
           { status: 200, headers: { "content-type": "application/json" } }
@@ -437,8 +444,12 @@ describe("HttpBackendClient", () => {
     expect(capturedUrl).toContain("/v1/chat/threads/chat-abc123/live");
     expect(live.activeTaskId).toBe("task-1");
     expect(live.status).toBe("AWAITING_COMMAND_DECISION");
-    expect(live.pendingGate?.kind).toBe("command");
-    expect(live.pendingGate?.payload.command).toBe("pytest");
+    expect(live.pendingGates.map((g) => g.gateId)).toEqual(["task:task-1:command", "g-2"]);
+    expect(live.pendingGates[0].kind).toBe("command");
+    expect(live.pendingGates[0].payload.command).toBe("pytest");
+    expect(live.pendingGates[0].agent).toBeNull();
+    expect(live.pendingGates[1].agent).toEqual({ id: "agent-1", label: "impl", name: "general" });
+    expect(live.pendingGate?.gateId).toBe("task:task-1:command");
     expect(live.plan).toBeNull();
   });
 
@@ -459,6 +470,7 @@ describe("HttpBackendClient", () => {
     const live = await client.getThreadLiveState("chat-idle");
     expect(live.activeTaskId).toBeNull();
     expect(live.pendingGate).toBeNull();
+    expect(live.pendingGates).toEqual([]);
     expect(live.plan).toBeNull();
   });
 
