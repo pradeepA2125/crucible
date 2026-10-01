@@ -227,11 +227,10 @@ describe("ThinkingBlock", () => {
 });
 
 describe("MessageRow — agent_dispatch", () => {
-  it("renders nothing until the roster card ships (Phase 4)", () => {
+  it("renders nothing for a roster message without agent ids", () => {
     const { container } = render(
       <MessageRow msg={{ role: "agent", content: "", type: "agent_dispatch",
-                         timestamp: "2026-10-01T00:00:00Z",
-                         metadata: { agent_ids: ["agent-a"] } }} />,
+                         timestamp: "2026-10-01T00:00:00Z", metadata: {} }} />,
     );
     expect(container.textContent).toBe("");
   });

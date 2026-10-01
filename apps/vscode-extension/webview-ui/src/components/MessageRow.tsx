@@ -6,6 +6,7 @@ import { QAMessage } from "./messages/QAMessage";
 import { UserMessage } from "./messages/UserMessage";
 import { CardShell } from "./shared/CardShell";
 import { Icon } from "./Icon";
+import { AgentRosterCard } from "./agents/AgentRosterCard";
 import { vscode } from "../vscodeApi";
 
 interface Props {
@@ -140,10 +141,13 @@ export function MessageRow({ msg, planVersion, turnActive, onRewindRequest }: Pr
     case "command_card":
       return <LegacyGateSummary msg={msg} />;
 
-    // The dispatch roster anchor (spec §6.1). Its card is Phase 4; until then it
-    // renders nothing rather than an empty agent bubble.
-    case "agent_dispatch":
-      return null;
+    // The dispatch roster anchor (spec §6.1, §10).
+    case "agent_dispatch": {
+      const ids = msg.metadata?.agent_ids;
+      return Array.isArray(ids) && ids.length > 0
+        ? <AgentRosterCard agentIds={ids as string[]} />
+        : null;
+    }
 
     // diff_summary falls through to text/role-based dispatch
     case "diff_summary":

@@ -4,7 +4,7 @@ export type IconName =
   | "spark" | "search" | "plus" | "clock" | "chev-r" | "chev-l" | "chev-d"
   | "check" | "x" | "copy" | "file" | "term" | "list" | "diff" | "warn"
   | "send" | "stop" | "retry" | "bolt" | "bug"
-  | "home" | "key" | "plug" | "book" | "shield" | "chip" | "gear" | "menu" | "db" | "orbit";
+  | "home" | "key" | "plug" | "book" | "shield" | "chip" | "gear" | "menu" | "db" | "orbit" | "fork" | "expand";
 
 interface Props {
   name: IconName;
@@ -25,6 +25,21 @@ const ICONS: Record<IconName, ReactNode> = {
       />
       <circle cx="13.2" cy="5.4" r="1.1" fill="currentColor" />
     </>
+  ),
+
+  fork: (
+    <>
+      <circle cx="4.5" cy="3.5" r="1.6" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="11.5" cy="3.5" r="1.6" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="8" cy="12.5" r="1.6" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M4.5 5.1v1.4c0 1.1.9 2 2 2h3c1.1 0 2-.9 2-2V5.1M8 8.5v2.4" fill="none"
+        stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </>
+  ),
+
+  expand: (
+    <path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" fill="none"
+      stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
   ),
 
   menu: (
