@@ -7,10 +7,12 @@ never touches the loop — only the registry's source list grows.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from agentd.prompting.tagged import RenderContext
+from agentd.tools.arg_aliases import normalize_tool_args
 from agentd.tools.registry import ToolDefinition, ToolOutput, ToolRegistry
 
 
@@ -36,6 +38,7 @@ class BuiltinToolSource:
         semantic_index: object | None = None,
         command_approval_callback: object | None = None,
         render_ctx: RenderContext | None = None,
+        read_observer: Callable[[str], None] | None = None,
     ) -> None:
         self._inner = ToolRegistry(
             shadow_root,
@@ -45,6 +48,7 @@ class BuiltinToolSource:
             render_ctx=render_ctx,
         )
         self._phase = "explore"
+        self._read_observer = read_observer
 
     def use_shadow_for_reads(self) -> None:
         self._inner.use_shadow_for_reads()
@@ -56,7 +60,14 @@ class BuiltinToolSource:
         return any(d.name == tool for d in self.definitions())
 
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
-        return await self._inner.execute(tool, args)
+        out = await self._inner.execute(tool, args)
+        if tool == "read_file" and not out.is_error and self._read_observer is not None:
+            # The write guard's read watermark (spec §7.3): only a read that actually
+            # returned content counts; an errored read proves nothing was seen.
+            raw = normalize_tool_args(tool, args).get("path")
+            if isinstance(raw, str):
+                self._read_observer(raw)
+        return out
 
 
 class AggregatingToolRegistry:
