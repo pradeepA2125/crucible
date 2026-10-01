@@ -263,6 +263,7 @@ def build_router(
             is_mcp_enabled,
             is_memory_enabled,
             is_skills_enabled,
+            is_subagents_enabled,
             is_task_subsystem_enabled,
         )
         from agentd.exec_sessions.config import is_exec_sessions_enabled
@@ -274,6 +275,7 @@ def build_router(
             "skills_enabled": is_skills_enabled(),
             "mcp_enabled": is_mcp_enabled(),
             "exec_sessions_enabled": is_exec_sessions_enabled(),
+            "subagents_enabled": is_subagents_enabled(),
             "provider": (
                 {
                     "backend": provider_runtime.backend,  # type: ignore[attr-defined]
@@ -1464,6 +1466,11 @@ def build_router(
             _exec_mgr = getattr(_chat_agent, "_exec_sessions", None)
             if _exec_mgr is not None:
                 live.sessions = _exec_mgr.live_summaries(thread_id) or None
+            # The in-flight turn's sub-agent tree (spec §11.1). Flag-tolerant: the legacy
+            # ChatAgent has no live_agents.
+            _live_agents = getattr(_chat_agent, "live_agents", None)
+            if _live_agents is not None:
+                live.agents = _live_agents(thread_id) or None
             return live.model_dump()
 
         @router.get("/chat/threads/{thread_id}/sessions/{session_id}/transcript")
@@ -1807,6 +1814,31 @@ def build_router(
                 return {"ok": False}
             ok = await stop(thread_id)  # type: ignore[misc]
             return {"ok": ok}
+
+        @router.get("/chat/threads/{thread_id}/agents")
+        async def list_thread_agents(thread_id: str, turn_id: str | None = None) -> dict:
+            if _chat_agent._store.get_thread(thread_id) is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            rows = _chat_agent._store.list_agents(thread_id, turn_id)
+            return {"agents": [r.summary() for r in rows]}
+
+        @router.get("/chat/threads/{thread_id}/agents/{agent_id}")
+        async def get_thread_agent(thread_id: str, agent_id: str) -> dict:
+            record = _chat_agent._store.get_agent(agent_id)
+            if record is None or record.thread_id != thread_id:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            # The backfill cursor (spec §5.5): the highest seq on a PERSISTED message, so an
+            # event broadcast but not yet persisted is never skipped by the client.
+            last_seq = max((int(m.metadata.get("seq", 0)) for m in record.transcript),
+                           default=0)
+            return {**record.model_dump(mode="json"), "last_seq": last_seq}
+
+        @router.post("/chat/threads/{thread_id}/agents/{agent_id}/stop")
+        async def post_stop_agent(thread_id: str, agent_id: str) -> dict:
+            stop = getattr(_chat_agent, "stop_agent", None)
+            if stop is None:
+                return {"ok": False}
+            return {"ok": await stop(thread_id, agent_id)}  # type: ignore[misc]
 
         # ── Chat rewind ──────────────────────────────────────────────────────
         # There is no is_terminal_status helper in domain/state_machine.py; the

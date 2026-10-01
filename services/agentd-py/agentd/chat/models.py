@@ -67,6 +67,18 @@ class AgentRecord(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
 
+    def summary(self) -> dict[str, Any]:
+        """The list view (spec §11.3): no transcript, a 200-character UI-only preview."""
+        return {
+            "agent_id": self.agent_id, "turn_id": self.turn_id,
+            "parent_agent_id": self.parent_agent_id, "depth": self.depth,
+            "name": self.name, "label": self.label, "status": self.status,
+            "files_changed_count": len(self.files_changed),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+            "report_preview": self.report[:200],
+        }
+
 
 class CapturedFile(BaseModel):
     """One path's pre-edit state inside a rewind checkpoint.
@@ -220,6 +232,8 @@ class ThreadLiveState(BaseModel):
     # only — no age_sec/unread_bytes, they'd churn the /live dedup signature
     # every tick (the webview computes age locally from started_at).
     sessions: list[dict[str, Any]] | None = None
+    # The in-flight turn's sub-agent tree (spec §11.1); None when there is none.
+    agents: list[dict[str, Any]] | None = None
 
 
 class ChatCommandDecisionRequest(CommandDecision):
