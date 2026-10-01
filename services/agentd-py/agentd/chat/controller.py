@@ -49,10 +49,24 @@ from agentd.memory.models import ObservedPrompt
 from agentd.prompting.tagged import RenderContext
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource
-from agentd.subagents.config import subagent_max_concurrent
+from agentd.subagents.config import subagent_max_concurrent, subagent_max_depth, subagent_max_iters
+from agentd.subagents.context import AgentContext, new_agent_id
+from agentd.subagents.definitions import BUILTIN_AGENTS
+from agentd.subagents.events import SequencedBroadcaster
+from agentd.subagents.permissions import (
+    child_allowed_types,
+    child_tool_names,
+    effective_permission,
+    follows_live_review,
+)
+from agentd.subagents.tool_source import SubAgentToolSource
+from agentd.subagents.transcript import AgentTranscript
+from agentd.subagents.vcs_guard import vcs_refusal
 from agentd.subagents.runtime import (
     TERMINAL_STATUSES,
     AgentHandle,
+    ChildResult,
+    DispatchRequest,
     SubAgentRuntime,
     agent_channel,
 )
@@ -269,6 +283,7 @@ class ChatController:
         exec_session_source: object | None = None,
         thread_id: str = "",
         read_observer: Callable[[str], None] | None = None,
+        extra_sources: list[object] | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -293,6 +308,7 @@ class ChatController:
             sources.append(McpToolSource(self._mcp_manager, mcp_approval_cb))
         if exec_session_source is not None:
             sources.append(exec_session_source)
+        sources.extend(extra_sources or [])
         return AggregatingToolRegistry(sources)
 
     async def _persist_todos(self, thread_id: str, raw: str | None) -> None:
@@ -519,6 +535,10 @@ class ChatController:
         # (see ControllerLoop._maybe_force_required_subskill).
         skill_catalog_loader = (
             SkillCatalogLoader(self._workspace_path) if is_skills_enabled() else None)
+        # The parent's dispatch_agents (spec §6.1) — only when sub-agents are enabled.
+        dispatch_sources: list[object] = (
+            [self._dispatch_source(thread_id, turn_id, None)]
+            if self._subagents is not None and turn_id else [])
         loop = ControllerLoop(
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb,
@@ -530,7 +550,8 @@ class ChatController:
                                   read_observer=(
                                       write_log.read_observer(
                                           Path(self._workspace_path), MAIN_AGENT_ID)
-                                      if write_log is not None else None),), self._broadcaster,
+                                      if write_log is not None else None),
+                                  extra_sources=dispatch_sources), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session_factory=edit_session_factory,
             todo_ledger=ledger,
             task_subsystem_enabled=self._task_subsystem_enabled,
@@ -1319,6 +1340,246 @@ class ChatController:
     ) -> dict[str, object]:
         return await self._edit_decision_cb(
             child.thread_id, f"chat:{child.thread_id}", diff, child=child)
+
+    def _dispatch_source(
+        self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
+    ) -> SubAgentToolSource:
+        return SubAgentToolSource(
+            BUILTIN_AGENTS, partial(self._dispatch, thread_id, turn_id, dispatcher))
+
+    async def _dispatch(
+        self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
+        requests: list[DispatchRequest],
+    ) -> list[tuple[AgentHandle, ChildResult]]:
+        runtime = self._subagents
+        log = self._write_log_for(thread_id)
+        if runtime is None or log is None:
+            raise RuntimeError("dispatch_agents was offered while sub-agents are disabled")
+        parent_permission = dispatcher.context.permission if dispatcher is not None else None
+        depth = dispatcher.context.depth + 1 if dispatcher is not None else 1
+        handles: list[AgentHandle] = []
+        for request in requests:
+            permission = effective_permission(request.agent.permission, parent_permission)
+            context = AgentContext(
+                agent_id=new_agent_id(), name=request.agent.name, label=request.label,
+                depth=depth,
+                parent_agent_id=dispatcher.agent_id if dispatcher is not None else None,
+                permission=permission, allowed_types=child_allowed_types(permission),
+                persona=request.agent.persona,
+                max_iters=request.agent.max_turns or subagent_max_iters())
+            # Writes before this instant are not stale for the new agent (spec §7.3).
+            log.register_agent(context.agent_id)
+            handles.append(AgentHandle(
+                context=context, definition=request.agent, prompt=request.prompt,
+                thread_id=thread_id, turn_id=turn_id))
+        self._on_dispatch_start(thread_id, turn_id, dispatcher, handles)
+        results = await runtime.dispatch(handles, self._run_child, dispatcher=dispatcher)
+        return list(zip(handles, results, strict=True))
+
+    def _on_dispatch_start(
+        self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
+        handles: list[AgentHandle],
+    ) -> None:
+        """Make a dispatch durable before any child runs (spec §6.1), so a mid-run reload
+        shows the roster: the anchor message, one row and one agent_started per child."""
+        roster = ChatMessage(
+            role="agent", content="", type="agent_dispatch",
+            metadata={"agent_ids": [h.agent_id for h in handles], "turn_id": turn_id})
+        if dispatcher is None:
+            self._mark_pills_boundary(thread_id)
+            self._store.append_message(thread_id, roster)
+        else:
+            if isinstance(dispatcher.loop, ControllerLoop):
+                dispatcher.loop.mark_pills_boundary()
+            if dispatcher.transcript is not None:
+                dispatcher.transcript.append(roster)
+        thread_channel = f"chat:{thread_id}"
+        for handle in handles:
+            ctx = handle.context
+            self._store.insert_agent(AgentRecord(
+                agent_id=ctx.agent_id, thread_id=thread_id, turn_id=turn_id,
+                parent_agent_id=ctx.parent_agent_id, depth=ctx.depth, name=ctx.name,
+                label=ctx.label, prompt=handle.prompt, status=handle.status))
+            self._broadcaster.broadcast(thread_channel, {
+                "type": "agent_started",
+                "payload": {"agent_id": ctx.agent_id, "parent_agent_id": ctx.parent_agent_id,
+                            "depth": ctx.depth, "name": ctx.name, "label": ctx.label}})
+            logger.info("[subagent] start id=%s parent=%s depth=%d name=%s",
+                        ctx.agent_id, ctx.parent_agent_id, ctx.depth, ctx.name)
+
+    async def _run_child(self, handle: AgentHandle) -> ChildResult:
+        """Build and run one sub-agent (spec §5): its own context window, tool set,
+        shadow, channel and transcript, on the shared workspace guarded by the thread's
+        write log."""
+        ctx = handle.context
+        thread_id, turn_id = handle.thread_id, handle.turn_id
+        log = self._write_log_for(thread_id)
+        assert log is not None and self._subagents is not None
+        channel = agent_channel(thread_id, ctx.agent_id)
+        broadcaster = SequencedBroadcaster(self._broadcaster, channel)
+        transcript = AgentTranscript(
+            partial(self._store.set_agent_transcript, ctx.agent_id),
+            lambda: broadcaster.last_seq)
+        handle.broadcaster, handle.transcript = broadcaster, transcript
+        workspace = Path(self._workspace_path)
+        run_id = f"{thread_id}:{ctx.agent_id}"
+        ledger = TodoLedger()  # in memory only: never written to thread columns (§5.2)
+        active_skills: dict[str, str] = {}
+        may_dispatch = ctx.depth < subagent_max_depth()
+
+        def sources(render_ctx: RenderContext | None) -> list[object]:
+            built: list[object] = [
+                BuiltinToolSource(
+                    shadow_root=workspace, real_workspace_path=workspace,
+                    semantic_index=getattr(self._retrieval, "_semantic_index", None),
+                    command_approval_callback=partial(self._child_command_approval_cb, handle),
+                    render_ctx=render_ctx,
+                    read_observer=log.read_observer(workspace, ctx.agent_id),
+                    command_guard=vcs_refusal),
+                TodoToolSource(ledger, render_ctx=render_ctx),
+            ]
+            memory_source = self._memory_harness.memory_tool_source(
+                run_id, allow_remember=False)
+            if memory_source is not None:
+                built.append(memory_source)
+            if is_skills_enabled():
+                built.append(SkillToolSource(
+                    SkillCatalogLoader(self._workspace_path), active_skills, additive=True))
+            if self._mcp_manager is not None:
+                from agentd.mcp.tool_source import McpToolSource
+
+                built.append(McpToolSource(
+                    self._mcp_manager, partial(self._child_mcp_approval_cb, handle),
+                    render_ctx=render_ctx))
+            if may_dispatch:
+                built.append(self._dispatch_source(thread_id, turn_id, handle))
+            return built
+
+        available = [d.name for d in AggregatingToolRegistry(sources(None)).definitions()]
+        names = child_tool_names(available, definition_tools=handle.definition.tools,
+                                 permission=ctx.permission, may_dispatch=may_dispatch)
+        render_ctx = RenderContext.for_agent(
+            ctx, tools=names,
+            shell_policy="allow_all" if self._shell_policy == ShellPolicy.ALLOW_ALL else "ask")
+        registry = AggregatingToolRegistry(sources(render_ctx), allowed_tools=names)
+        edit_session_factory = (
+            (lambda: TurnEditSession(
+                turn_id=f"{thread_id}-{ctx.agent_id}", real_path=workspace,
+                workspace_manager=self._orchestrator._workspace_manager,
+                patch_engine=self._orchestrator._patch_engine,
+                # Children's edits land in the parent turn's checkpoint (first-seen-wins),
+                # so rewinding before the turn reverts the whole tree (spec §7.5).
+                checkpoint_cb=(
+                    partial(self._rewind.capture, thread_id)
+                    if self._rewind is not None else None),
+                write_guard=WriteGuard(log, ctx.agent_id, ctx.label, ctx.name)))
+            if self._orchestrator is not None else None)
+        parent_control = self._turn_controls.get(thread_id)
+        control = (parent_control
+                   if follows_live_review(ctx.permission) and parent_control is not None
+                   else ChatTurnControl(auto_accept_edits=True))
+        engine = (self._reasoning if handle.definition.model == "inherit"
+                  else self._reasoning.with_model(handle.definition.model))
+        loop = ControllerLoop(
+            engine, registry, broadcaster, channel_id=channel,
+            phase_sm=ControllerPhaseSM(start="AGENT"),
+            edit_session_factory=edit_session_factory, todo_ledger=ledger,
+            memory_harness=self._memory_harness, active_skills=active_skills,
+            progress_note_cb=partial(self._child_progress_note, handle),
+            pills_seal_cb=transcript.seal_pills, render_ctx=render_ctx, agent=ctx)
+        handle.loop = loop
+        plan_context: dict[str, object] = {
+            "goal": handle.prompt, "workspace_path": self._workspace_path, "run_id": run_id,
+            # Nests this child's controller-turn-NN / memory-recall-NN dumps under
+            # chat/<thread>/<turn>/agents/<agent>/ (spec §5.2) with no engine change.
+            "artifact_thread_id": thread_id,
+            "artifact_turn_id": f"{turn_id}/agents/{ctx.agent_id}",
+            "artifact_seed_len": 0, "edit_is_resume": False}
+
+        def subtree_files() -> list[str]:
+            assert self._subagents is not None
+            return log.files_changed_by(self._subagents.registry.subtree_ids(ctx.agent_id))
+
+        status, report = "failed", ""
+        try:
+            # No retrieval_delta_cb: the delta references a seed children never had.
+            outcome = await loop.run(
+                plan_context, max_iters=ctx.max_iters, turn_control=control,
+                edit_decision_cb=partial(self._child_edit_decision_cb, handle),
+                edit_record_cb=partial(self._child_edit_record_cb, handle),
+                on_pills_update=transcript.upsert_pills)
+            if outcome.kind == "report":
+                status = str((outcome.payload or {}).get("status", "completed"))
+                report = outcome.text
+            else:
+                report = loop.fallback_report(
+                    f"ended without a report ({outcome.text or outcome.kind})",
+                    subtree_files())
+        except asyncio.CancelledError:
+            handle.result = self._close_child(handle, "stopped", loop.fallback_report(
+                "stopped before reporting", subtree_files(), status="stopped"))
+            raise
+        except Exception as exc:
+            logger.exception("[subagent] child failed id=%s", ctx.agent_id)
+            report = loop.fallback_report(str(exc), subtree_files())
+        return self._close_child(handle, status, report)
+
+    def _close_child(self, handle: AgentHandle, status: str, report: str) -> ChildResult:
+        """The child's final bookkeeping on every exit (spec §5.5, §6.3, §8)."""
+        ctx = handle.context
+        log = self._write_log_for(handle.thread_id)
+        files = (log.files_changed_by(self._subagents.registry.subtree_ids(ctx.agent_id))
+                 if log is not None and self._subagents is not None else [])
+        result = ChildResult(
+            status=status, report=report, files_changed=files,
+            stale_refusals=log.stale_refusals(ctx.agent_id) if log is not None else 0)
+        if handle.transcript is not None:
+            handle.transcript.append(ChatMessage(
+                role="agent", content=report, metadata={"report": True, "status": status}))
+        # Its gates can never be answered now; its recall caches and replay buffer are
+        # done — the replay map is otherwise never pruned (late viewers backfill instead).
+        self._store.clear_controller_gates(handle.thread_id, agent_id=ctx.agent_id)
+        self._memory_harness.release_run(f"{handle.thread_id}:{ctx.agent_id}")
+        self._broadcaster.clear_replay(agent_channel(handle.thread_id, ctx.agent_id))
+        return result
+
+    async def _child_edit_record_cb(
+        self, child: AgentHandle, diff: list[DiffEntry], decision: str, reason: str,
+        was_gated: bool,
+    ) -> None:
+        """The child twin of _edit_record_cb: the inert diff card and breadcrumbs go to the
+        child's transcript and channel (spec §5.5). The event is broadcast first, so the
+        persisted message records the seq of the event that produced it."""
+        diff_payload = [
+            {"path": d.path, "additions": d.additions,
+             "deletions": d.deletions, "unified_diff": d.unified_diff}
+            for d in diff]
+        resolved = "applied" if decision == "accept" else "discarded"
+        if isinstance(child.loop, ControllerLoop):
+            child.loop.mark_pills_boundary()
+        if child.broadcaster is not None:
+            child.broadcaster.broadcast(agent_channel(child.thread_id, child.agent_id), {
+                "type": "diff_ready",
+                "payload": {"diff_entries": diff_payload, "resolved": resolved}})
+        if child.transcript is not None:
+            child.transcript.append(ChatMessage(
+                role="agent", content="", type="diff_card",
+                metadata={"diff_entries": diff_payload, "resolved": resolved}))
+        files = ", ".join(d.path for d in diff) or "(no files)"
+        if decision == "stale":
+            self._child_breadcrumb(child, f"✗ Not applied: {reason}")
+        elif was_gated and decision == "accept":
+            self._child_breadcrumb(child, f"✓ Edit accepted: {files}")
+        elif was_gated:
+            self._child_breadcrumb(
+                child, f"✗ Edit rejected: {files}" + (f" — {reason}" if reason else ""))
+
+    async def _child_progress_note(self, child: AgentHandle, note: str) -> None:
+        """Persist a child's progress note to ITS transcript (the loop already broadcast
+        chat_progress on the child's channel)."""
+        if child.transcript is not None:
+            child.transcript.append(ChatMessage(
+                role="agent", content=note, metadata={"progress": True}))
 
     def _write_breadcrumb(self, thread_id: str, channel_id: str, text: str) -> None:
         """Persist a durable transcript breadcrumb AND broadcast it live (mirror

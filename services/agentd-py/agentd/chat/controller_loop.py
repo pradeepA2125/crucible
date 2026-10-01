@@ -862,6 +862,10 @@ class ControllerLoop:
         if self._agent is not None:
             # The Plan 1A AGENT payload branch reads this for its read-only hints.
             plan_context["agent_readonly"] = self._agent.permission == "plan"
+        if self._agent is None and any(
+                d.get("name") == "dispatch_agents" for d in tool_defs):
+            # The parent's entry hint offers parallel dispatch (spec §6.6).
+            plan_context["dispatch_available"] = True
         # Tool trace + thinking accumulated across the turn → persisted as durable
         # pills + thinking entries (reload). Live SSE copies die on reload.
         self._calls = []
