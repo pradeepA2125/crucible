@@ -68,6 +68,14 @@ def test_pick_executable_required_subskill_none_when_only_non_executable_named()
     assert _pick_executable_required_subskill(["subagent-driven-development"]) is None
 
 
+def test_subagent_driven_development_is_executable_when_subagents_are_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "1")
+    assert _pick_executable_required_subskill(
+        ["subagent-driven-development", "executing-plans"]) == "subagent-driven-development"
+
+
 def _install_skill(root: Path, name: str, description: str, body: str) -> None:
     skill_dir = root / ".crucible" / "skills" / name
     skill_dir.mkdir(parents=True)

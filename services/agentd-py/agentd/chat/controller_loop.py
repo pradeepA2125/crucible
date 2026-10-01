@@ -499,12 +499,17 @@ def _empty_edit_redirect(ctx: RenderContext) -> str:
 _REQUIRED_SUBSKILL_LINE_RE = re.compile(r"REQUIRED SUB-SKILL:([^\n]*)", re.IGNORECASE)
 _SUPERPOWERS_NAME_RE = re.compile(r"superpowers:([a-z0-9_-]+)", re.IGNORECASE)
 
-# Crucible's chat controller has no subagent-dispatch tool (verified: no such tool
-# exists anywhere in agentd/tools or agentd/skills) — a plan directive naming
-# "subagent-driven-development" is never actually executable here, only its sibling
-# "executing-plans" (single continuous session, no separate session needed) is. This
-# is a fixed fact about THIS host, not a preference between the two skills.
-_NON_EXECUTABLE_SUBSKILLS = frozenset({"subagent-driven-development"})
+# A plan directive naming "subagent-driven-development" needs a sub-agent dispatch tool.
+# This host has one (dispatch_agents) only while CRUCIBLE_SUBAGENTS_ENABLED is on; with it
+# off, only its sibling "executing-plans" (one continuous session) is runnable here. A fact
+# about THIS host's tools, not a preference between the two skills (spec §16 phase 3).
+_SUBAGENT_ONLY_SUBSKILLS = frozenset({"subagent-driven-development"})
+
+
+def _non_executable_subskills() -> frozenset[str]:
+    from agentd.chat.controller_factory import is_subagents_enabled
+
+    return frozenset() if is_subagents_enabled() else _SUBAGENT_ONLY_SUBSKILLS
 
 
 def _extract_required_subskills(ops: list[dict[str, object]]) -> list[str]:
@@ -529,9 +534,10 @@ def _extract_required_subskills(ops: list[dict[str, object]]) -> list[str]:
 
 def _pick_executable_required_subskill(names: list[str]) -> str | None:
     """Of the names a plan directive names, return the one THIS host can actually run
-    (see _NON_EXECUTABLE_SUBSKILLS) — None if the directive named none, or named only
+    (see _non_executable_subskills()) — None if the directive named none, or named only
     ones this host can't run."""
-    return next((n for n in names if n not in _NON_EXECUTABLE_SUBSKILLS), None)
+    blocked = _non_executable_subskills()
+    return next((n for n in names if n not in blocked), None)
 
 
 def _normalized_recommended(resp: dict[str, object]) -> str:
