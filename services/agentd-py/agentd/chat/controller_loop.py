@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from agentd.domain.models import DiffEntry
     from agentd.orchestrator.broadcaster import EventBroadcaster
     from agentd.reasoning.contracts import ReasoningEngine
+    from agentd.subagents.context import AgentContext
     from agentd.tools.sources import AggregatingToolRegistry
 
     EditDecisionCb = Callable[[list[DiffEntry]], Awaitable[dict[str, object]]]
@@ -543,7 +544,9 @@ def _normalized_recommended(resp: dict[str, object]) -> str:
 
 @dataclass
 class ControllerOutcome:
-    kind: str  # "answer" | "clarify" | "propose_mode" | "submit_changes"
+    # "answer" | "clarify" | "propose_mode" | "submit_changes" | "report" (a sub-agent's
+    # terminal; its payload is {"status": "completed" | "partial"}).
+    kind: str
     text: str = ""
     payload: dict[str, object] | None = None
     history: list[dict[str, object]] | None = None
@@ -575,6 +578,7 @@ class ControllerLoop:
         progress_note_cb: Callable[[str], Awaitable[None]] | None = None,
         pills_seal_cb: Callable[[], None] | None = None,
         render_ctx: RenderContext | None = None,
+        agent: AgentContext | None = None,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -670,6 +674,12 @@ class ControllerLoop:
         # Which audience this loop's text is rendered for (spec §4.7). None = the main agent,
         # whose every string stays byte-identical (tests/test_prompt_goldens.py).
         self._render_ctx = render_ctx or RenderContext.main()
+        # A dispatched sub-agent (spec §5.1). None = the main agent, whose behavior is
+        # unchanged by everything keyed off this.
+        self._agent = agent
+        # Set per iteration by _iterate; the final iteration narrows a child's types.
+        self._iteration = 0
+        self._max_iters = 0
 
     def mark_pills_boundary(self) -> None:
         """A durable message just landed in the transcript mid-turn — close the current
@@ -768,10 +778,16 @@ class ControllerLoop:
         })
 
     def _allowed_action_types(self) -> list[str]:
-        """The action types legal THIS iteration — the phase SM's own set, plus a
-        conditional propose_mode addition when in ACTIVE with the task subsystem on
-        (I4: lets a big-enough ACTIVE-phase request escalate to a reviewed task
-        without a detour through Plan Mode)."""
+        """The action types legal THIS iteration. The main agent: the phase SM's own set,
+        plus a conditional propose_mode addition when in ACTIVE with the task subsystem on
+        (I4: lets a big-enough ACTIVE-phase request escalate to a reviewed task without a
+        detour through Plan Mode). A sub-agent: its own type set, narrowed to `report` on
+        the final iteration so the budget always ends in a report (spec §6.5) — the system
+        prompt keeps the full base set, only the schema narrows."""
+        if self._agent is not None:
+            if self._iteration >= self._max_iters:
+                return ["report"]
+            return list(self._agent.allowed_types)
         types = list(self._sm.allowed_types())
         if self._sm.phase == "ACTIVE" and self._task_subsystem_enabled:
             types.append("propose_mode")
@@ -781,6 +797,23 @@ class ControllerLoop:
         return (
             self._active_allowed_modes if self._sm.phase == "ACTIVE"
             else self._plan_allowed_modes)
+
+    def fallback_report(
+        self, error: str, files_changed: list[str], *, status: str = "failed",
+    ) -> str:
+        """The report for a sub-agent that produced none (malformed exhaustion, a crash,
+        or a stop — spec §6.5, §11.4). Synthesized from what the loop recorded — never a
+        truncation of anything the model wrote."""
+        lines = [f"Status: {status} — {error}", "",
+                 "Files changed: " + (", ".join(files_changed) or "none")]
+        still_open = self._ledger.pending()
+        if still_open:
+            lines += ["", "Unfinished:", *(f"- {i.title} ({i.status})" for i in still_open)]
+        recent = self._calls[-10:]
+        if recent:
+            lines += ["", "Last tool calls:", *(
+                f"- {c.tool_name} {json.dumps(c.arguments, sort_keys=True)}" for c in recent)]
+        return "\n".join(lines)
 
     def partial_history(self) -> list[dict[str, object]]:
         """The verbatim conversation accumulated so far this turn. Meaningful after a
@@ -825,6 +858,10 @@ class ControllerLoop:
         _MAX_MALFORMED = 3
         consecutive_malformed = 0
         plan_context = {**plan_context, "max_iters": max_iters}
+        self._max_iters = max_iters
+        if self._agent is not None:
+            # The Plan 1A AGENT payload branch reads this for its read-only hints.
+            plan_context["agent_readonly"] = self._agent.permission == "plan"
         # Tool trace + thinking accumulated across the turn → persisted as durable
         # pills + thinking entries (reload). Live SSE copies die on reload.
         self._calls = []
@@ -1020,6 +1057,7 @@ class ControllerLoop:
         seen_notes: set[str] = set()
 
         for iteration in range(max_iters + 1):
+            self._iteration = iteration
             # Close a pills segment marked since the last iteration (a gate breadcrumb
             # written mid-tool-call, a `progress` note) BEFORE anything this iteration
             # computes a call_index or persists a pill against it.
@@ -1039,7 +1077,10 @@ class ControllerLoop:
             # the message lives in plan_context, not yet in history.
             _prep = await self._memory_harness.prepare_turn(
                 history, run_id, query=str(plan_context.get("goal", "")),
-                observed=self._observed_prompt)
+                observed=self._observed_prompt,
+                # A child's run never schedules consolidation (spec §5.2); the parent's
+                # call is left exactly as it was.
+                **({"consolidate": False} if self._agent is not None else {}))
             history[:] = _prep.history
             if _prep.compacted:
                 # The pinned message_count no longer refers to this history.
@@ -1112,6 +1153,8 @@ class ControllerLoop:
                     seam_kwargs["allowed_types"] = self._allowed_action_types()
                 if accepts_kwarg(step_fn, "render_ctx"):
                     seam_kwargs["render_ctx"] = self._render_ctx
+                if self._agent is not None and accepts_kwarg(step_fn, "persona"):
+                    seam_kwargs["persona"] = self._agent.persona
                 resp = await step_fn(
                     plan_context=plan_context, history=history,
                     tool_definitions=tool_defs, phase=self._sm.phase,
@@ -1600,6 +1643,36 @@ class ControllerLoop:
                         "role": "tool_result", "tool": "edit",
                         "content": f"REJECTED by user: {reason}. Revise and re-emit."})
                 continue
+            if atype == "report":
+                # A sub-agent's only terminal and its WHOLE deliverable (spec §5.1, D8): the
+                # summary is returned verbatim, never truncated.
+                still_open = self._ledger.pending()
+                final = iteration >= max_iters
+                if still_open and not final:
+                    # Same contract as submit_changes: a redirect, NOT a malformed action,
+                    # so it does not touch consecutive_malformed — only max_iters bounds it.
+                    titles = ", ".join(i.title for i in still_open)
+                    history.append(assistant_turn(resp))
+                    history.append({
+                        "role": "tool_result", "tool": "",
+                        "content": (
+                            f"report BLOCKED — {len(still_open)} todo item(s) still open: "
+                            f"{titles}. Continue with the next item, then call write_todos to "
+                            "mark it 'done' (cite evidence in 'note'). If one is genuinely "
+                            "stuck, mark it 'blocked' (with the unblock reason) or 'cancelled' "
+                            "(with why). Report once nothing is pending."),
+                    })
+                    continue
+                history.append(assistant_turn(resp))
+                summary = str(resp.get("summary", "")).strip()
+                if still_open:
+                    # Final iteration: the budget is spent, so the ledger block is bypassed
+                    # and the dispatcher is told exactly what is left (spec §6.5).
+                    summary += "\n\nUnfinished:\n" + "\n".join(
+                        f"- {i.title} ({i.status})" for i in still_open)
+                return ControllerOutcome(
+                    kind="report", text=summary, history=history,
+                    payload={"status": "partial" if final else "completed"})
             if atype == "submit_changes":
                 # Hard gate: a non-empty ledger is a contract. Block submit while items are
                 # pending/in_progress (NOT blocked/cancelled/done — those never deadlock) and
