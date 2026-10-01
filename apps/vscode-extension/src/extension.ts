@@ -216,7 +216,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (enabled: boolean) => runtimeManager.setPlanMode(enabled),
     () => runtimeManager.getStepReview(),
     (messageId) => controller.previewRewind(messageId),
-    (messageId) => controller.rewindTo(messageId)
+    (messageId) => controller.rewindTo(messageId),
+    (agentIds) => controller.setOpenAgents(agentIds),
+    (agentId) => controller.stopAgent(agentId)
   );
 
   const ui: ControllerUI = {
@@ -391,6 +393,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     sendLiveStatus: (status, turnActive) => {
       chatPanel.sendLiveStatus(status, turnActive);
+    },
+    renderAgents: (agents) => {
+      chatPanel.renderAgents(agents);
+    },
+    agentDetail: (agentId, detail) => {
+      chatPanel.agentDetail(agentId, detail);
+    },
+    agentEvent: (agentId, event) => {
+      chatPanel.agentEvent(agentId, event);
     },
   };
 

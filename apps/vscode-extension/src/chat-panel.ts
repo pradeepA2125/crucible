@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import type {
+  AgentDetail,
+  AgentSummary,
   ChatMessage,
   ChatThreadSummary,
   RewindPreview,
@@ -8,6 +10,7 @@ import type {
   EffortSupport,
   McpToolDecision,
   ReasoningEffort,
+  SequencedStreamEvent,
 } from "@crucible/editor-client";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
@@ -153,7 +156,9 @@ export class ChatPanel {
     private readonly onSetPlanMode: SetPlanModeHandler = async () => {},
     private readonly onGetStepReview: GetStepReviewHandler = () => true,
     private readonly onRewindPreview: RewindPreviewHandler = async () => {},
-    private readonly onRewindConfirm: RewindConfirmHandler = async () => {}
+    private readonly onRewindConfirm: RewindConfirmHandler = async () => {},
+    private readonly onSetOpenAgents: (agentIds: string[]) => void = () => {},
+    private readonly onStopAgent: (agentId: string) => Promise<void> = async () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -316,6 +321,14 @@ export class ChatPanel {
       } else if (m["type"] === "resumeTask") {
         const stage = m["stage"] === "plan" ? "plan" : "execute";
         p = this.onResumeTask(m["taskId"] as string, stage);
+      } else if (m["type"] === "setOpenAgents") {
+        const ids = Array.isArray(m["agentIds"])
+          ? (m["agentIds"] as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+        this.onSetOpenAgents(ids);
+        return;
+      } else if (m["type"] === "stopAgent") {
+        p = this.onStopAgent(String(m["agentId"] ?? ""));
       } else if (m["type"] === "stopTurn") {
         this.onStopTurn();
         return;
@@ -535,6 +548,18 @@ export class ChatPanel {
 
   sendLiveStatus(status: string | null, turnActive: boolean): void {
     this.panel?.webview.postMessage({ type: "liveStatus", status, turnActive });
+  }
+
+  renderAgents(agents: AgentSummary[]): void {
+    this.panel?.webview.postMessage({ type: "renderAgents", agents });
+  }
+
+  agentDetail(agentId: string, detail: AgentDetail): void {
+    this.panel?.webview.postMessage({ type: "agentDetail", agentId, detail });
+  }
+
+  agentEvent(agentId: string, event: SequencedStreamEvent): void {
+    this.panel?.webview.postMessage({ type: "agentEvent", agentId, event });
   }
 
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void {
