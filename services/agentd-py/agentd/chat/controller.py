@@ -1507,12 +1507,20 @@ class ChatController:
         roster = ChatMessage(
             role="agent", content="", type="agent_dispatch",
             metadata={"agent_ids": [h.agent_id for h in handles], "turn_id": turn_id})
+        event = {"type": "agent_dispatch",
+                 "payload": {"message": roster.model_dump(mode="json")}}
         if dispatcher is None:
             self._mark_pills_boundary(thread_id)
             self._store.append_message(thread_id, roster)
+            self._broadcaster.broadcast(f"chat:{thread_id}", event)
         else:
             if isinstance(dispatcher.loop, ControllerLoop):
                 dispatcher.loop.mark_pills_boundary()
+            # Broadcast first: the persisted copy then records the seq of the event that
+            # produced it, so backfill-then-subscribe never shows the roster twice.
+            if dispatcher.broadcaster is not None:
+                dispatcher.broadcaster.broadcast(
+                    agent_channel(thread_id, dispatcher.agent_id), event)
             if dispatcher.transcript is not None:
                 dispatcher.transcript.append(roster)
         thread_channel = f"chat:{thread_id}"
