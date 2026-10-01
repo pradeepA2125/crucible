@@ -39,6 +39,13 @@ class StaleWriteError(PatchPreflightFailed):
         self.writer_label = writer_label
 
 
+def _same_bytes(real_file: Path, shadow_file: Path) -> bool:
+    """True when the edit left this file exactly as it is in real (both absent counts)."""
+    if real_file.exists() != shadow_file.exists():
+        return False
+    return not real_file.exists() or real_file.read_bytes() == shadow_file.read_bytes()
+
+
 def _looks_double_escaped(text: str) -> bool:
     """Detects a model double-escaping its own JSON string content: technically
     valid JSON (parses fine, triggers no retry) where the value holds literal
@@ -178,8 +185,20 @@ class TurnEditSession:
             self._checkpoint_cb(touched)
         shadow = await self._ensure_shadow(touched)
         applied = await apply_ops(self._patch, shadow, patch_ops, allowed_files=set(touched))
-        self._pending_touched = applied
-        return compute_diff_entries(self._real, shadow, applied, self._turn_id)
+        # Only files whose bytes actually changed go forward. An unchanged file must not be
+        # promoted, shown as a diff, or recorded as written: a recorded no-op promote
+        # reports false work in files_changed and makes siblings' edits of that file stale.
+        # Its shadow copy already equals real, so dropping it keeps shadow == real.
+        changed = [rel for rel in applied if not _same_bytes(self._real / rel, shadow / rel)]
+        if not changed:
+            self._pending_touched = []
+            files = ", ".join(applied) or "(no files)"
+            message = f"Edit changes nothing: {files} already has exactly this content."
+            raise PatchPreflightFailed(message, [PatchPreflightIssue(
+                code=PatchFailureCode.NO_OP, file=applied[0] if applied else None,
+                message=message)])
+        self._pending_touched = changed
+        return compute_diff_entries(self._real, shadow, changed, self._turn_id)
 
     async def accept(self) -> None:
         assert self._shadow is not None

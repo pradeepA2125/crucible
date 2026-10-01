@@ -57,6 +57,8 @@ class PatchFailureCode(StrEnum):
     APPLY_ERROR = "apply_error"
     # Another agent promoted this file after the editing agent last read it (spec §7.4).
     STALE_READ = "stale_read"
+    # The edit leaves every touched file byte-for-byte unchanged (e.g. replace == search).
+    NO_OP = "no_op"
 
 
 class TaskBudget(BaseModel):

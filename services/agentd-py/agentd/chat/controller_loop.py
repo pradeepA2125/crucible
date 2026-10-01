@@ -345,6 +345,10 @@ _EDIT_GUIDANCE_BY_CODE: dict[PatchFailureCode, str] = {
     PatchFailureCode.STALE_READ: (
         "Another agent changed this file after your last read. read_file it again, "
         "then re-emit your edit against its current content."),
+    PatchFailureCode.NO_OP: (
+        "Your edit changes nothing: the file already has exactly that content (for "
+        "search_replace, 'replace' is identical to 'search'). Emit an edit that makes the "
+        "change; if the change is already in the file, don't edit it again."),
 }
 
 # Kept for every failure we cannot classify — notably the malformed-op shape errors
