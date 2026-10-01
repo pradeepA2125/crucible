@@ -8,6 +8,7 @@ and discarded at turn end.
 """
 from __future__ import annotations
 
+import logging
 import shutil
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
@@ -16,8 +17,11 @@ from agentd.domain.models import DiffEntry, PatchFailureCode, PatchPreflightIssu
 from agentd.patch.diffing import compute_diff_entries
 from agentd.patch.engine import PatchEngine, PatchPreflightFailed
 from agentd.patch.inline_apply import apply_ops
+from agentd.subagents.write_log import WriteGuard, canonical_path
 from agentd.workspace.promote import promote_files
 from agentd.workspace.shadow import ShadowWorkspaceManager
+
+logger = logging.getLogger(__name__)
 
 
 _CONTENT_FIELDS = ("content", "search", "replace", "diff")
@@ -26,12 +30,13 @@ _CONTENT_FIELDS = ("content", "search", "replace", "diff")
 class StaleWriteError(PatchPreflightFailed):
     """An agent tried to edit a file another agent changed after its last read
     (spec §7.4). Carries a STALE_READ issue so the loop's PATCH FAILED branch gives the
-    re-read guidance. Raised by the sub-agent write guard (Phase 2)."""
+    re-read guidance, and `writer_label` so the durable record can name the writer."""
 
-    def __init__(self, path: str, message: str) -> None:
+    def __init__(self, path: str, message: str, *, writer_label: str = "") -> None:
         super().__init__(message, [PatchPreflightIssue(
             code=PatchFailureCode.STALE_READ, file=path, message=message)])
         self.path = path
+        self.writer_label = writer_label
 
 
 def _looks_double_escaped(text: str) -> bool:
@@ -107,6 +112,7 @@ class TurnEditSession:
         workspace_manager: ShadowWorkspaceManager,
         patch_engine: PatchEngine,
         checkpoint_cb: Callable[[list[str]], None] | None = None,
+        write_guard: WriteGuard | None = None,
     ) -> None:
         self._turn_id = turn_id
         self._real = real_path
@@ -118,6 +124,30 @@ class TurnEditSession:
         # real workspace is still the clean before-state (the `shadow == real` invariant
         # in this module's docstring). Sync, like the shutil copies in _ensure_shadow.
         self._checkpoint_cb = checkpoint_cb
+        self._write_guard = write_guard
+
+    def _raise_if_stale(self, paths: list[str]) -> None:
+        """Refuse the first path another agent promoted after this agent last saw it.
+        Synchronous on purpose: callers pair it with the promote/patch that follows
+        with no await in between (spec §7.4)."""
+        guard = self._write_guard
+        if guard is None:
+            return
+        for raw in paths:
+            key = canonical_path(self._real, raw)
+            if key is None:
+                continue
+            writer = guard.log.stale_writer(guard.agent_id, key)
+            if writer is None:
+                continue
+            guard.log.note_stale_refusal(guard.agent_id)
+            logger.info("[subagent] stale-refusal path=%s by=%s agent=%s",
+                        key, writer.label, guard.agent_id)
+            raise StaleWriteError(
+                key,
+                f"`{key}` was modified by agent `{writer.label}` ({writer.name}) after "
+                "your last read — read it again before editing.",
+                writer_label=writer.label)
 
     async def _ensure_shadow(self, touched: list[str]) -> Path:
         if self._shadow is None:
@@ -143,6 +173,7 @@ class TurnEditSession:
     async def apply(self, patch_ops: list[dict[str, object]]) -> list[DiffEntry]:
         _validate_patch_ops(patch_ops)
         touched = [str(op["file"]) for op in patch_ops if "file" in op]
+        self._raise_if_stale(touched)
         if self._checkpoint_cb is not None:
             self._checkpoint_cb(touched)
         shadow = await self._ensure_shadow(touched)
@@ -152,7 +183,20 @@ class TurnEditSession:
 
     async def accept(self) -> None:
         assert self._shadow is not None
+        if self._write_guard is not None:
+            try:
+                # Check 2: a sibling may have promoted one of these files while this edit
+                # was held at a review gate. Check + promote below are await-free.
+                self._raise_if_stale(self._pending_touched)
+            except StaleWriteError:
+                await self.reject()  # restore the shadow from real (shadow == real)
+                raise
         promote_files(self._shadow, self._real, self._pending_touched)
+        if self._write_guard is not None:
+            guard = self._write_guard
+            keys = [k for k in (canonical_path(self._real, p) for p in self._pending_touched)
+                    if k is not None]
+            guard.log.note_promote(guard.agent_id, guard.label, guard.name, keys)
         self._pending_touched = []
 
     async def reject(self) -> None:
