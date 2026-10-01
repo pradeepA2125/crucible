@@ -62,10 +62,14 @@ export interface ToolEventView {
 }
 
 // ── Live slot views ──────────────────────────────────────────────────────────
+export interface GateAgentView { id: string; label: string; name: string }
+
 export interface LiveGateView {
+  gateId: string;
   kind: "command" | "scope" | "validation" | "step" | "mode" | "edit" | "clarify" | "mcp_tool" | "doc_write";
   taskId: string;
   payload: Record<string, unknown>;  // pending_* payload, snake_case
+  agent?: GateAgentView | null;      // the sub-agent that raised it; absent/null = main
 }
 
 export interface LivePlanView { taskId: string; planMarkdown: string }
@@ -178,8 +182,7 @@ export type ExtensionMessage =
   | { type: "setInputEnabled"; enabled: boolean }
   | { type: "renderThreadList"; threads: ThreadSummary[]; activeThreadId: string }
   | { type: "clearThread" }
-  | { type: "renderLiveGate"; gate: LiveGateView }
-  | { type: "clearLiveGate" }
+  | { type: "renderLiveGates"; gates: LiveGateView[] }
   | { type: "renderLivePlan"; plan: LivePlanView }
   | { type: "clearLivePlan" }
   | { type: "renderLiveReview"; review: LiveReviewView }
@@ -222,9 +225,9 @@ export type WebviewMessage =
   | { type: "viewDiffFile"; path: string; shadowPath: string }
   | { type: "scopeDecision"; taskId: string; files: string[]; decision: "approve" | "reject"; remember: boolean }
   | { type: "validationDecision"; taskId: string; decision: "accept" | "reject" }
-  | { type: "commandDecision"; taskId: string; approve: boolean; remember?: boolean; scope?: string; ruleValue?: string }
+  | { type: "commandDecision"; taskId: string; gateId: string; approve: boolean; remember?: boolean; scope?: string; ruleValue?: string }
   // Controller mcp_tool gate: approve/reject an external MCP tool call (threadId — no task)
-  | { type: "mcpDecision"; threadId: string; approve: boolean; remember: boolean }
+  | { type: "mcpDecision"; threadId: string; gateId: string; approve: boolean; remember: boolean }
   // Controller doc_write gate: approve/reject a write_doc file write (threadId — no task)
   | { type: "docDecision"; threadId: string; approve: boolean }
   | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" }
@@ -234,7 +237,7 @@ export type WebviewMessage =
   // sticky toggle off via the same single write path the toggle itself uses.
   | { type: "setPlanMode"; enabled: boolean }
   | { type: "clarifyDecision"; threadId: string; answer: string }
-  | { type: "editDecision"; threadId: string; decision: "accept" | "reject"; reason: string }
+  | { type: "editDecision"; threadId: string; gateId: string; decision: "accept" | "reject"; reason: string }
   | { type: "acceptTask"; taskId: string }
   | { type: "rejectTask"; taskId: string; reason: string }
   | { type: "resumeTask"; taskId: string; stage: "plan" | "execute" }
@@ -281,7 +284,7 @@ export interface AppState {
   streaming: StreamingBubble | null;
   thinkingStatus: string | null;
   inputEnabled: boolean;
-  liveGate: LiveGateView | null;
+  liveGates: LiveGateView[];
   livePlan: LivePlanView | null;
   liveReview: LiveReviewView | null;
   liveError: LiveErrorView | null;

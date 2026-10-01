@@ -58,25 +58,26 @@ const CMD_PAYLOAD = {
 
 describe("CommandGate — renders", () => {
   it("renders the command text in the command block", () => {
-    render(<CommandGate taskId="t1" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="t1" payload={CMD_PAYLOAD} />);
     // shlexJoin(["npm","run","build"]) = "npm run build"
     expect(screen.getByText("npm run build")).toBeTruthy();
   });
 
   it("renders the step subtitle when step_id is present", () => {
-    render(<CommandGate taskId="t1" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="t1" payload={CMD_PAYLOAD} />);
     expect(screen.getByText("step s1")).toBeTruthy();
   });
 });
 
 describe("CommandGate — Allow once", () => {
   it("posts commandDecision with approve:true, remember:false, scope:exact", () => {
-    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "commandDecision",
+      gateId: "g1",
       taskId: "task-cmd",
       approve: true,
       remember: false,
@@ -87,13 +88,14 @@ describe("CommandGate — Allow once", () => {
 
 describe("CommandGate — Allow & remember default scope", () => {
   it("defaults to prefix with the binary+verb pair for a subcommand tool (npm run build)", () => {
-    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
     // No radio clicks — exercise the default selection as-is.
     fireEvent.click(screen.getByRole("button", { name: /allow.*remember/i }));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "commandDecision",
+      gateId: "g1",
       taskId: "task-cmd",
       approve: true,
       remember: true,
@@ -106,6 +108,7 @@ describe("CommandGate — Allow & remember default scope", () => {
   it("defaults to prefix with just the binary for a single-word test runner (pytest)", () => {
     render(
       <CommandGate
+        gateId="g1"
         taskId="task-cmd"
         payload={{ command: "pytest", args: ["tests/test_foo.py::test_bar", "-v"] }}
       />
@@ -115,6 +118,7 @@ describe("CommandGate — Allow & remember default scope", () => {
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "commandDecision",
+      gateId: "g1",
       taskId: "task-cmd",
       approve: true,
       remember: true,
@@ -124,12 +128,13 @@ describe("CommandGate — Allow & remember default scope", () => {
   });
 
   it("Allow once still uses scope:exact regardless of the default remember scope", () => {
-    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "commandDecision",
+      gateId: "g1",
       taskId: "task-cmd",
       approve: true,
       remember: false,
@@ -140,7 +145,7 @@ describe("CommandGate — Allow & remember default scope", () => {
 
 describe("CommandGate — Allow & remember with binary scope", () => {
   it("posts ruleValue = basename when binary scope is selected", () => {
-    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
     // Select binary radio (third radio)
     const radios = screen.getAllByRole("radio");
@@ -151,6 +156,7 @@ describe("CommandGate — Allow & remember with binary scope", () => {
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "commandDecision",
+      gateId: "g1",
       taskId: "task-cmd",
       approve: true,
       remember: true,
@@ -164,6 +170,7 @@ describe("CommandGate — Allow & remember with prefix scope", () => {
   it("posts shlexJoin of first 2 tokens when prefixCount=2", () => {
     render(
       <CommandGate
+        gateId="g1"
         taskId="task-cmd"
         payload={{ command: "npm", args: ["run", "build"], step_id: "s1", decision_id: "d1" }}
       />
@@ -181,6 +188,7 @@ describe("CommandGate — Allow & remember with prefix scope", () => {
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "commandDecision",
+      gateId: "g1",
       taskId: "task-cmd",
       approve: true,
       remember: true,
@@ -193,12 +201,13 @@ describe("CommandGate — Allow & remember with prefix scope", () => {
 
 describe("CommandGate — Reject", () => {
   it("posts approve:false when Reject is clicked", () => {
-    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /^reject$/i }));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "commandDecision",
+      gateId: "g1",
       taskId: "task-cmd",
       approve: false,
     });
@@ -207,7 +216,7 @@ describe("CommandGate — Reject", () => {
 
 describe("CommandGate — keyboard-operable radios", () => {
   it("pressing Space on a radio option selects it (aria-checked=true)", () => {
-    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
     // radios[1]=prefix (selected by default for a subcommand tool like npm), radios[2]=binary (not selected)
     const radios = screen.getAllByRole("radio");
@@ -221,7 +230,7 @@ describe("CommandGate — keyboard-operable radios", () => {
   });
 
   it("pressing Enter on a radio option selects it (aria-checked=true)", () => {
-    render(<CommandGate taskId="task-cmd" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="task-cmd" payload={CMD_PAYLOAD} />);
 
     // radios[0]=exact — not selected by default (prefix is, for a subcommand tool like npm).
     const radios = screen.getAllByRole("radio");
@@ -237,7 +246,7 @@ describe("CommandGate — keyboard-operable radios", () => {
 
 describe("CommandGate — one-shot after any action", () => {
   it("all three action buttons are gone after Allow once", () => {
-    render(<CommandGate taskId="t1" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="t1" payload={CMD_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /allow once/i }));
 
@@ -247,7 +256,7 @@ describe("CommandGate — one-shot after any action", () => {
   });
 
   it("all three action buttons are gone after Reject", () => {
-    render(<CommandGate taskId="t1" payload={CMD_PAYLOAD} />);
+    render(<CommandGate gateId="g1" taskId="t1" payload={CMD_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /^reject$/i }));
 
@@ -488,19 +497,20 @@ const EDIT_PAYLOAD = {
 
 describe("EditGate — renders", () => {
   it("renders the changed file basename", () => {
-    render(<EditGate taskId="th1" payload={EDIT_PAYLOAD} />);
+    render(<EditGate gateId="g1" taskId="th1" payload={EDIT_PAYLOAD} />);
     expect(screen.getByText("deps.py")).toBeTruthy();
   });
 });
 
 describe("EditGate — Accept", () => {
   it("posts editDecision accept with threadId", () => {
-    render(<EditGate taskId="thread-1" payload={EDIT_PAYLOAD} />);
+    render(<EditGate gateId="g1" taskId="thread-1" payload={EDIT_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /^accept$/i }));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "editDecision",
+      gateId: "g1",
       threadId: "thread-1",
       decision: "accept",
       reason: "",
@@ -510,7 +520,7 @@ describe("EditGate — Accept", () => {
 
 describe("EditGate — Reject", () => {
   it("opens a reason box on Reject, then posts editDecision reject with threadId on confirm", () => {
-    render(<EditGate taskId="thread-1" payload={EDIT_PAYLOAD} />);
+    render(<EditGate gateId="g1" taskId="thread-1" payload={EDIT_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /^reject$/i }));
     expect(postMessage).not.toHaveBeenCalled();
@@ -519,6 +529,7 @@ describe("EditGate — Reject", () => {
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "editDecision",
+      gateId: "g1",
       threadId: "thread-1",
       decision: "reject",
       reason: "",
@@ -532,6 +543,7 @@ describe("McpGate", () => {
   it("renders server.tool + args and posts mcpDecision on approve", () => {
     render(
       <McpGate
+        gateId="g1"
         taskId="th1"
         payload={{ server: "gh", tool: "create_issue", args: { title: "bug" } }}
       />
@@ -540,28 +552,28 @@ describe("McpGate", () => {
     expect(screen.getByText(/"title": "bug"/)).toBeTruthy();
     fireEvent.click(screen.getByText("Approve once"));
     expect(postMessage).toHaveBeenCalledWith({
-      type: "mcpDecision", threadId: "th1", approve: true, remember: false,
+      type: "mcpDecision", threadId: "th1", gateId: "g1", approve: true, remember: false,
     });
   });
 
   it("approve & remember posts remember=true", () => {
-    render(<McpGate taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
+    render(<McpGate gateId="g1" taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
     fireEvent.click(screen.getByText(/Approve & remember/));
     expect(postMessage).toHaveBeenCalledWith({
-      type: "mcpDecision", threadId: "th1", approve: true, remember: true,
+      type: "mcpDecision", threadId: "th1", gateId: "g1", approve: true, remember: true,
     });
   });
 
   it("reject posts approve=false", () => {
-    render(<McpGate taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
+    render(<McpGate gateId="g1" taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
     fireEvent.click(screen.getByText("Reject"));
     expect(postMessage).toHaveBeenCalledWith({
-      type: "mcpDecision", threadId: "th1", approve: false, remember: false,
+      type: "mcpDecision", threadId: "th1", gateId: "g1", approve: false, remember: false,
     });
   });
 
   it("one-shot guard: second click posts nothing", () => {
-    render(<McpGate taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
+    render(<McpGate gateId="g1" taskId="th1" payload={{ server: "s", tool: "t", args: {} }} />);
     fireEvent.click(screen.getByText("Reject"));
     postMessage.mockClear();
     expect(screen.queryByText("Approve once")).toBeNull();

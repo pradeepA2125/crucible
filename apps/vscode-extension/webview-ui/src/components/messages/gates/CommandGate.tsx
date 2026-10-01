@@ -26,6 +26,7 @@ export function shlexJoin(tokens: string[]): string {
 type ScopeKind = "exact" | "prefix" | "binary";
 
 interface Props {
+  gateId: string;
   taskId: string;
   payload: Record<string, unknown>;
 }
@@ -60,7 +61,7 @@ function defaultPrefixCount(tokens: string[], basename: string): number {
  * or reject. Mirrors the legacy chat.js command_card with custom radio group
  * and shlexJoin-based preview.
  */
-export function CommandGate({ taskId, payload }: Props) {
+export function CommandGate({ gateId, taskId, payload }: Props) {
   const command = String(payload.command ?? "");
   const args = Array.isArray(payload.args) ? payload.args.map(String) : [];
   const stepId = String(payload.step_id ?? "");
@@ -97,6 +98,7 @@ export function CommandGate({ taskId, payload }: Props) {
     vscode.postMessage({
       type: "commandDecision",
       taskId,
+      gateId,
       approve: true,
       remember: false,
       scope: "exact",
@@ -109,6 +111,7 @@ export function CommandGate({ taskId, payload }: Props) {
     vscode.postMessage({
       type: "commandDecision",
       taskId,
+      gateId,
       approve: true,
       remember: true,
       scope,
@@ -119,7 +122,7 @@ export function CommandGate({ taskId, payload }: Props) {
   function handleReject() {
     if (resolved !== null) return; // one-shot guard
     setResolved("Rejected");
-    vscode.postMessage({ type: "commandDecision", taskId, approve: false });
+    vscode.postMessage({ type: "commandDecision", taskId, gateId, approve: false });
   }
 
   // ── render ──

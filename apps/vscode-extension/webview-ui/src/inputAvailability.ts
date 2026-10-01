@@ -1,4 +1,4 @@
-import type { AppState } from "./types";
+import type { AppState, LiveGateView } from "./types";
 
 // UX Rule 1: Input area disable precedence.
 // These sets mirror the backend task status enum.
@@ -48,14 +48,15 @@ export interface InputAvailability {
 const ABORTABLE_STATUSES = new Set(["EXECUTING", "VALIDATING", "REPAIRING"]);
 
 export function inputAvailability(
-  state: Pick<AppState, "inputEnabled" | "liveStatus" | "workbar" | "liveGate" | "turnActive">,
+  state: Pick<AppState, "inputEnabled" | "liveStatus" | "workbar" | "liveGates" | "turnActive">,
 ): InputAvailability {
-  const { inputEnabled, liveStatus, workbar, liveGate, turnActive } = state;
+  const { inputEnabled, liveStatus, workbar, liveGates, turnActive } = state;
+  const hasGate = (kind: LiveGateView["kind"]) => liveGates.some((g) => g.kind === kind);
   const taskStop = liveStatus !== null && ABORTABLE_STATUSES.has(liveStatus);
 
   // ── Controller precedence (spec §5), first match wins, ahead of task rows ──
   // Row 1: per-edit gate — only the EditGate card is interactive.
-  if (liveGate?.kind === "edit") {
+  if (hasGate("edit")) {
     return {
       disabled: true,
       placeholder: "Waiting for your decision on the card above",
@@ -64,7 +65,7 @@ export function inputAvailability(
     };
   }
   // Row 2: mode/clarify gate — the card (incl. its in-card field) is the input path.
-  if (liveGate?.kind === "mode") {
+  if (hasGate("mode")) {
     return {
       disabled: true,
       placeholder: "Choose how to proceed — or chat about it on the card",
@@ -72,7 +73,7 @@ export function inputAvailability(
       taskStop,
     };
   }
-  if (liveGate?.kind === "clarify") {
+  if (hasGate("clarify")) {
     return {
       disabled: true,
       placeholder: "Answer on the card above",

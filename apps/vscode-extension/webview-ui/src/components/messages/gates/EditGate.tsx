@@ -9,6 +9,7 @@ import type { DiffEntry } from "../../../types";
 
 interface Props {
   /** Carries the threadId (controller gates have no task — LiveSlot passes activeTaskId ?? threadId). */
+  gateId: string;
   taskId: string;
   payload: Record<string, unknown>;
 }
@@ -35,7 +36,7 @@ function parseDiffEntries(payload: Record<string, unknown>): DiffEntry[] {
  * the model on the next attempt, and a specific reason (what's wrong, what to keep)
  * measurably steers the retry; a blind reject tends to reproduce the same defect.
  */
-export function EditGate({ taskId, payload }: Props) {
+export function EditGate({ gateId, taskId, payload }: Props) {
   const entries = parseDiffEntries(payload);
 
   const [resolved, setResolved] = useState<string | null>(null);
@@ -45,14 +46,14 @@ export function EditGate({ taskId, payload }: Props) {
   function handleAccept() {
     if (resolved !== null) return; // one-shot guard
     setResolved("Accepted");
-    vscode.postMessage({ type: "editDecision", threadId: taskId, decision: "accept", reason: "" });
+    vscode.postMessage({ type: "editDecision", threadId: taskId, gateId, decision: "accept", reason: "" });
   }
 
   function confirmReject() {
     if (resolved !== null) return; // one-shot guard
     setResolved("Rejected");
     vscode.postMessage({
-      type: "editDecision", threadId: taskId, decision: "reject", reason: reason.trim(),
+      type: "editDecision", threadId: taskId, gateId, decision: "reject", reason: reason.trim(),
     });
   }
 

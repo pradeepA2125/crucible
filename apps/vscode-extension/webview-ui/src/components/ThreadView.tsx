@@ -368,7 +368,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
       {/* ── Pinned bottom section ── */}
       <LiveSlot
-        liveGate={state.liveGate}
+        liveGates={state.liveGates}
         livePlan={state.livePlan}
         liveReview={state.liveReview}
         liveError={liveError}

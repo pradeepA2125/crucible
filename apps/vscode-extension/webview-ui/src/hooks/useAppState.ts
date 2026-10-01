@@ -29,7 +29,7 @@ const INITIAL: AppState = {
   streaming: null,
   thinkingStatus: null,
   inputEnabled: true,
-  liveGate: null,
+  liveGates: [],
   livePlan: null,
   liveReview: null,
   liveError: null,
@@ -320,11 +320,8 @@ function reducer(state: AppState, action: Action): AppState {
         ),
       };
 
-    case "renderLiveGate":
-      return { ...state, liveGate: msg.gate };
-
-    case "clearLiveGate":
-      return { ...state, liveGate: null };
+    case "renderLiveGates":
+      return { ...state, liveGates: msg.gates };
 
     case "renderLivePlan":
       return { ...state, livePlan: msg.plan };

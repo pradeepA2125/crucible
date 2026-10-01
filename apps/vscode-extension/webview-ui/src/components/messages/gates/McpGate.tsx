@@ -5,6 +5,7 @@ import { BtnDanger, BtnGhost, BtnPrimary } from "../../shared/buttons";
 
 interface Props {
   /** Carries the threadId (controller gates have no task — LiveSlot passes activeTaskId ?? threadId). */
+  gateId: string;
   taskId: string;
   payload: Record<string, unknown>;
 }
@@ -14,7 +15,7 @@ interface Props {
  * Copy is "Call MCP tool: server.tool" (NOT "Run command:") — spec decision 7.
  * Approve & remember persists the exact (server, tool) pair for this workspace.
  */
-export function McpGate({ taskId, payload }: Props) {
+export function McpGate({ gateId, taskId, payload }: Props) {
   const server = String(payload.server ?? "");
   const tool = String(payload.tool ?? "");
   const args = (payload.args ?? {}) as Record<string, unknown>;
@@ -23,7 +24,7 @@ export function McpGate({ taskId, payload }: Props) {
   function submit(approve: boolean, remember: boolean) {
     if (resolved !== null) return; // one-shot guard
     setResolved(approve ? (remember ? "Approved & remembered" : "Approved") : "Rejected");
-    vscode.postMessage({ type: "mcpDecision", threadId: taskId, approve, remember });
+    vscode.postMessage({ type: "mcpDecision", threadId: taskId, gateId, approve, remember });
   }
 
   return (

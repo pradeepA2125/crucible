@@ -34,6 +34,7 @@ function makeAvailability(overrides: Partial<InputAvailability> = {}): InputAvai
 
 describe("LiveSlot — remount on payload change", () => {
   const baseGate: LiveGateView = {
+    gateId: "task:t1:command",
     kind: "command",
     taskId: "t1",
     payload: { command: "npm", args: ["run", "build"], step_id: "s1", decision_id: "d1" },
@@ -42,7 +43,7 @@ describe("LiveSlot — remount on payload change", () => {
   it("resolves a card and then remounts when payload changes", () => {
     const { rerender } = render(
       <LiveSlot
-        liveGate={baseGate}
+        liveGates={[baseGate]}
         livePlan={null}
         liveReview={null}
         liveError={null}
@@ -62,7 +63,7 @@ describe("LiveSlot — remount on payload change", () => {
     };
     rerender(
       <LiveSlot
-        liveGate={newGate}
+        liveGates={[newGate]}
         livePlan={null}
         liveReview={null}
         liveError={null}
@@ -77,7 +78,7 @@ describe("LiveSlot — remount on payload change", () => {
   it("does NOT remount when the same payload object is re-rendered", () => {
     const { rerender } = render(
       <LiveSlot
-        liveGate={baseGate}
+        liveGates={[baseGate]}
         livePlan={null}
         liveReview={null}
         liveError={null}
@@ -91,7 +92,7 @@ describe("LiveSlot — remount on payload change", () => {
     // Same payload → same key → no remount → still resolved.
     rerender(
       <LiveSlot
-        liveGate={baseGate}
+        liveGates={[baseGate]}
         livePlan={null}
         liveReview={null}
         liveError={null}
@@ -110,7 +111,7 @@ describe("LiveSlot — renders plan card", () => {
     const livePlan: LivePlanView = { taskId: "t1", planMarkdown: "## Step 1\nDo the thing." };
     render(
       <LiveSlot
-        liveGate={null}
+        liveGates={[]}
         livePlan={livePlan}
         liveReview={null}
         liveError={null}
@@ -140,7 +141,7 @@ describe("LiveSlot — renders review card", () => {
     };
     render(
       <LiveSlot
-        liveGate={null}
+        liveGates={[]}
         livePlan={null}
         liveReview={liveReview}
         liveError={null}
@@ -161,7 +162,7 @@ describe("LiveSlot — renders error card and wires onDismissError", () => {
     const onDismiss = vi.fn();
     render(
       <LiveSlot
-        liveGate={null}
+        liveGates={[]}
         livePlan={null}
         liveReview={null}
         liveError={liveError}
@@ -177,7 +178,7 @@ describe("LiveSlot — returns null when all slots are null", () => {
   it("renders nothing when all four props are null", () => {
     const { container } = render(
       <LiveSlot
-        liveGate={null}
+        liveGates={[]}
         livePlan={null}
         liveReview={null}
         liveError={null}
@@ -192,53 +193,53 @@ describe("LiveSlot — returns null when all slots are null", () => {
 
 describe("inputAvailability", () => {
   it("precedence 5 (default): enabled when inputEnabled=true + no liveStatus", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: null, workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: null, workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(false);
     expect(result.placeholder).toBe("Ask anything or describe a change…");
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 1: chat turn streaming (inputEnabled=false, liveStatus=null) → disabled + showStop=true", () => {
-    const result = inputAvailability({ inputEnabled: false, liveStatus: null, workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: false, liveStatus: null, workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Agent is working…");
     expect(result.showStop).toBe(true);
   });
 
   it("precedence 1 + task running: inputEnabled=false + EXECUTING → showStop=false", () => {
-    const result = inputAvailability({ inputEnabled: false, liveStatus: "EXECUTING", workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: false, liveStatus: "EXECUTING", workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 1 + AWAITING_PLAN_APPROVAL: showStop=false", () => {
-    const result = inputAvailability({ inputEnabled: false, liveStatus: "AWAITING_PLAN_APPROVAL", workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: false, liveStatus: "AWAITING_PLAN_APPROVAL", workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 1 + gate: inputEnabled=false + AWAITING_COMMAND_DECISION → showStop=false", () => {
-    const result = inputAvailability({ inputEnabled: false, liveStatus: "AWAITING_COMMAND_DECISION", workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: false, liveStatus: "AWAITING_COMMAND_DECISION", workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 2: AWAITING_PLAN_APPROVAL → disabled, plan-review placeholder, no stop", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: "AWAITING_PLAN_APPROVAL", workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: "AWAITING_PLAN_APPROVAL", workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Review the plan — Implement or Give feedback");
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 3: gate status AWAITING_SCOPE_DECISION → disabled, gate placeholder, no stop", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: "AWAITING_SCOPE_DECISION", workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: "AWAITING_SCOPE_DECISION", workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Waiting for your decision on the card above");
     expect(result.showStop).toBe(false);
   });
 
   it("precedence 4: EXECUTING without workbar → 'Task is running…'", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: "EXECUTING", workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: "EXECUTING", workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Task is running…");
     expect(result.showStop).toBe(false);
@@ -249,7 +250,7 @@ describe("inputAvailability", () => {
       inputEnabled: true,
       liveStatus: "EXECUTING",
       workbar: { stepIndex: 2, totalSteps: 4 },
-      liveGate: null,
+      liveGates: [],
       turnActive: false,
     });
     expect(result.disabled).toBe(true);
@@ -258,7 +259,7 @@ describe("inputAvailability", () => {
   });
 
   it("precedence 4: VALIDATING → disabled, no stop", () => {
-    const result = inputAvailability({ inputEnabled: true, liveStatus: "VALIDATING", workbar: null, liveGate: null, turnActive: false });
+    const result = inputAvailability({ inputEnabled: true, liveStatus: "VALIDATING", workbar: null, liveGates: [], turnActive: false });
     expect(result.disabled).toBe(true);
     expect(result.showStop).toBe(false);
   });
@@ -266,13 +267,13 @@ describe("inputAvailability", () => {
   // Tier B: taskStop is true exactly in the abortable execution phases.
   it("taskStop=true for EXECUTING/VALIDATING/REPAIRING", () => {
     for (const status of ["EXECUTING", "VALIDATING", "REPAIRING"]) {
-      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null, liveGate: null, turnActive: false }).taskStop).toBe(true);
+      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null, liveGates: [], turnActive: false }).taskStop).toBe(true);
     }
   });
 
   it("taskStop=false for non-abortable states (null, plan approval, PROMOTING, gates)", () => {
     for (const status of [null, "AWAITING_PLAN_APPROVAL", "PROMOTING", "AWAITING_COMMAND_DECISION", "PLANNED"]) {
-      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null, liveGate: null, turnActive: false }).taskStop).toBe(false);
+      expect(inputAvailability({ inputEnabled: true, liveStatus: status, workbar: null, liveGates: [], turnActive: false }).taskStop).toBe(false);
     }
   });
 });
@@ -846,5 +847,24 @@ describe("HistoryView — enriched summaries", () => {
     ]);
     expect(screen.queryByText(/messages/)).toBeNull();
     expect(screen.queryByText("Review")).toBeNull();
+  });
+});
+
+describe("LiveSlot — several gates at once", () => {
+  it("renders one card per gate and tags a sub-agent's gate with its label", () => {
+    const gates: LiveGateView[] = [
+      { gateId: "g1", kind: "command", taskId: "th", agent: null,
+        payload: { command: "ls", args: [] } },
+      { gateId: "g2", kind: "mcp_tool", taskId: "th",
+        agent: { id: "agent-1", label: "impl", name: "general" },
+        payload: { server: "gh", tool: "create_issue", args: {} } },
+    ];
+    render(
+      <LiveSlot liveGates={gates} livePlan={null} liveReview={null} liveError={null}
+                onDismissError={vi.fn()} />,
+    );
+    expect(screen.getByText(/run command\?/i)).toBeTruthy();
+    expect(screen.getByText(/call mcp tool: gh\.create_issue/i)).toBeTruthy();
+    expect(screen.getByText("impl · general")).toBeTruthy();
   });
 });

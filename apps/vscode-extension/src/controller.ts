@@ -83,8 +83,8 @@ export interface ControllerUI {
   finalizeAgentMessage(): void;
   // Live, state-driven cards (Class A). One slot per kind, replace-not-append; written
   // by both the SSE path (instant) and the /live poll (durable across reload/resume).
-  renderLiveGate(gate: LiveGateView): void;
-  clearLiveGate(): void;
+  renderLiveGates(gates: LiveGateView[]): void;
+  clearLiveGates(): void;
   renderLivePlan(plan: LivePlanView): void;
   clearLivePlan(): void;
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void;
@@ -112,9 +112,13 @@ export interface ControllerUI {
 }
 
 export interface LiveGateView {
+  gateId: string;
   kind: "command" | "step" | "scope" | "validation" | "mode" | "edit" | "clarify" | "mcp_tool";
   payload: Record<string, unknown>;
+  // The active task for task gates ("task:" ids); the thread for controller gates.
   taskId: string;
+  // The sub-agent that raised the gate; null for the main agent.
+  agent: { id: string; label: string; name: string } | null;
 }
 
 export interface LivePlanView {
@@ -615,7 +619,7 @@ export class CrucibleController {
     this.activeThreadId = thread.threadId;
     this.ui.openChatPanel();
     this.ui.clearChatThread();
-    this.ui.clearLiveGate();
+    this.ui.clearLiveGates();
     this.ui.clearLivePlan();
     this.lastLiveSignature = null;
     this._liveResumeThreadId = null;
@@ -635,7 +639,7 @@ export class CrucibleController {
     const thread = await client.getChatThread(threadId);
     this.ui.clearChatThread();
     // Drop the previous thread's live cards; the new thread's /live poll repopulates.
-    this.ui.clearLiveGate();
+    this.ui.clearLiveGates();
     this.ui.clearLivePlan();
     this.lastLiveSignature = null;
     this._liveResumeThreadId = null;
@@ -1252,12 +1256,13 @@ export class CrucibleController {
     threadId: string,
     decision: "accept" | "reject",
     reason: string,
+    gateId: string,
   ): Promise<void> {
     const client = this.clientForChat();
     try {
-      await client.postEditDecision(threadId, decision, reason);
+      await client.postEditDecision(threadId, decision, reason, gateId || undefined);
     } catch (error) {
-      if (this.isBenignConflict(error)) return;
+      if (this.isBenignGateMiss(error)) return;
       this.ui.showError(
         `Failed to send edit decision: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -1575,7 +1580,7 @@ export class CrucibleController {
           // Fire and forget — prompt the user; on response, post the decision.
           void this.handleScopeExtensionRequest(taskId, event);
         }
-        // step_review_requested: step review surfaces via the /live poll (renderLiveGate kind "step").
+        // step_review_requested: step review surfaces via the /live poll (renderLiveGates kind "step").
       }, signal)
       .catch((err: unknown) => {
         if (err instanceof Error && err.name === "AbortError") return;
@@ -1617,34 +1622,34 @@ export class CrucibleController {
 
   async handleCommandDecisionFromChat(
     taskId: string,
-    decision: CommandDecision
+    decision: CommandDecision,
+    gateId: string,
   ): Promise<void> {
     try {
-      // A controller (chat EDIT) command gate has no task — /live reports activeTaskId
-      // null and the gate id is the thread id (LiveSlot renders activeTaskId ?? threadId).
-      // Route it to the chat endpoint; otherwise it's a task gate → the task route. Mirrors
-      // handleEditDecisionFromChat. The undefined-latestLiveState case (no poll yet) stays
-      // on the task route — backward-compatible with the direct task-gate path.
-      if (this.latestLiveState != null && this.latestLiveState.activeTaskId == null) {
-        await this.clientForChat().postChatCommandDecision(taskId, decision);
+      // Task gates carry "task:{taskId}:command" ids and resolve on the task route;
+      // every other command gate is a controller gate on the thread (taskId carries the
+      // thread id for those — see pollThreadLiveState).
+      if (gateId.startsWith("task:")) {
+        await this.clientForChat().sendCommandDecision(this.liveTaskIdOr(taskId), decision);
         return;
       }
-      await this.clientForChat().sendCommandDecision(this.liveTaskIdOr(taskId), decision);
+      await this.clientForChat().postChatCommandDecision(taskId, decision, gateId || undefined);
     } catch (err) {
-      if (this.isBenignConflict(err)) return;
+      if (this.isBenignGateMiss(err)) return;
       this.ui.showError(`Failed to send command decision: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   async handleMcpDecisionFromChat(
     threadId: string,
-    decision: McpToolDecision
+    decision: McpToolDecision,
+    gateId: string,
   ): Promise<void> {
     try {
       // mcp_tool gates are controller-only (no task path) — always the chat route.
-      await this.clientForChat().postChatMcpDecision(threadId, decision);
+      await this.clientForChat().postChatMcpDecision(threadId, decision, gateId || undefined);
     } catch (err) {
-      if (this.isBenignConflict(err)) return;
+      if (this.isBenignGateMiss(err)) return;
       this.ui.showError(
         `Failed to send MCP decision: ${err instanceof Error ? err.message : String(err)}`
       );
@@ -1804,6 +1809,19 @@ export class CrucibleController {
       (err as { status?: number }).status === 409
     );
   }
+  /**
+   * Gate-addressed decisions (edit/command/MCP on the chat routes) also answer 404 when
+   * the named gate is no longer pending — an auto-accept, a stop, or another click got
+   * there first. Same reconciliation as a 409: the next /live poll redraws the cards.
+   * Kept separate from isBenignConflict so a 404 from any other route still surfaces.
+   */
+  private isBenignGateMiss(err: unknown): boolean {
+    return (
+      this.isBenignConflict(err) ||
+      (typeof err === "object" && err !== null && (err as { status?: number }).status === 404)
+    );
+  }
+
 
   /** Start polling the active thread's /live state. Idempotent. */
   private startLiveStatePolling(): void {
@@ -1860,8 +1878,8 @@ export class CrucibleController {
     // subscriber), double-rendering every event and clobbering the live turnAbort. A
     // fresh webview after a reload has turnAbort === null, which is exactly when resume
     // is needed (the original stream died with the old SSE; the detached turn lives on).
-    const channelActive = live.turnActive || live.pendingGate?.kind === "mode"
-      || live.pendingGate?.kind === "edit";
+    const channelActive = live.turnActive
+      || live.pendingGates.some((g) => g.kind === "mode" || g.kind === "edit");
     if (channelActive && this.turnAbort === null && this._liveResumeThreadId !== threadId) {
       this._liveResumeThreadId = threadId;
       void this.resumeLiveOverlay(threadId);
@@ -1879,7 +1897,7 @@ export class CrucibleController {
       // stays wedged on "Agent is working…". Same dedup-lock bug class as runSummary/
       // narrative/failure below.
       turnActive: live.turnActive,
-      gate: live.pendingGate,
+      gates: live.pendingGates,
       plan: live.plan,
       // Durable telemetry is finalized server-side AFTER the READY_FOR_REVIEW/terminal
       // status save (the narrative is a later LLM call), so it arrives on a poll where
@@ -1903,16 +1921,18 @@ export class CrucibleController {
     }
     this.lastLiveSignature = signature;
 
-    if (live.pendingGate) {
-      this.ui.renderLiveGate({
-        kind: live.pendingGate.kind,
-        payload: live.pendingGate.payload,
-        // Controller gates (mode/edit) have NO task — fall back to the thread id so
-        // the gate still renders (the render guard previously required activeTaskId).
-        taskId: live.activeTaskId ?? threadId,
-      });
+    if (live.pendingGates.length > 0) {
+      this.ui.renderLiveGates(live.pendingGates.map((g) => ({
+        gateId: g.gateId,
+        kind: g.kind,
+        payload: g.payload,
+        agent: g.agent,
+        // Per gate: controller gates have no task (their decisions go to the thread),
+        // task gates carry "task:" ids — so a mixed list addresses each correctly.
+        taskId: g.gateId.startsWith("task:") ? (live.activeTaskId ?? threadId) : threadId,
+      })));
     } else {
-      this.ui.clearLiveGate();
+      this.ui.clearLiveGates();
     }
 
     if (live.plan && live.activeTaskId) {

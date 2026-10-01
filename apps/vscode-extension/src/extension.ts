@@ -152,12 +152,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (relativePath, shadowPath) => controller.openInlineDiff(relativePath, shadowPath),
     (taskId, files, decision, remember) => controller.handleScopeDecisionFromChat(taskId, files, decision, remember),
     (taskId, decision) => controller.handleValidationDecisionFromChat(taskId, decision),
-    (taskId, decision) => controller.handleCommandDecisionFromChat(taskId, decision),
+    (taskId, decision, gateId) => controller.handleCommandDecisionFromChat(taskId, decision, gateId),
     (taskId, decision) =>
       decision === "accept" ? controller.acceptStep(taskId) : controller.discardStep(taskId),
     (threadId, mode) => controller.handleModeDecisionFromChat(threadId, mode),
     (threadId, answer) => controller.handleClarifyDecisionFromChat(threadId, answer),
-    (threadId, decision, reason) => controller.handleEditDecisionFromChat(threadId, decision, reason),
+    (threadId, decision, reason, gateId) => controller.handleEditDecisionFromChat(threadId, decision, reason, gateId),
     (taskId) => controller.acceptTaskPatch(taskId),
     (taskId, reason) => controller.rejectTaskPatch(taskId, reason),
     (taskId, stage) => controller.resumeTaskById(taskId, stage),
@@ -174,7 +174,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (name: string, args: string) => controller.expandPrompt(name, args),
     () => controller.listSkills(),
     () => controller.openChat(),
-    (threadId, decision) => controller.handleMcpDecisionFromChat(threadId, decision),
+    (threadId, decision, gateId) => controller.handleMcpDecisionFromChat(threadId, decision, gateId),
     () => composerModelState(),
     async (backend, model) => {
       // Pass the stored key as request credentials: the running backend's env may
@@ -335,11 +335,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     finalizeAgentMessage: () => {
       chatPanel.finalizeAgentMessage();
     },
-    renderLiveGate: (gate) => {
-      chatPanel.renderLiveGate(gate);
+    renderLiveGates: (gates) => {
+      chatPanel.renderLiveGates(gates);
     },
-    clearLiveGate: () => {
-      chatPanel.clearLiveGate();
+    clearLiveGates: () => {
+      chatPanel.clearLiveGates();
     },
     renderLivePlan: (plan) => {
       chatPanel.renderLivePlan(plan);

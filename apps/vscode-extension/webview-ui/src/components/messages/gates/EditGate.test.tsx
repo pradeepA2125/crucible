@@ -13,33 +13,33 @@ describe("EditGate", () => {
   beforeEach(() => (vscode.postMessage as ReturnType<typeof vi.fn>).mockClear());
 
   it("posts editDecision accept with an empty reason", () => {
-    render(<EditGate taskId="t1" payload={payload} />);
+    render(<EditGate gateId="g1" taskId="t1" payload={payload} />);
     fireEvent.click(screen.getByText("Accept"));
     expect(vscode.postMessage).toHaveBeenCalledWith({
-      type: "editDecision", threadId: "t1", decision: "accept", reason: "" });
+      type: "editDecision", threadId: "t1", gateId: "g1", decision: "accept", reason: "" });
   });
 
   it("clicking Reject opens a reason box instead of rejecting immediately", () => {
-    render(<EditGate taskId="t1" payload={payload} />);
+    render(<EditGate gateId="g1" taskId="t1" payload={payload} />);
     fireEvent.click(screen.getByText("Reject"));
     expect(vscode.postMessage).not.toHaveBeenCalled();
     expect(screen.getByPlaceholderText(/what's wrong/i)).toBeInTheDocument();
   });
 
   it("posts editDecision reject with the typed reason on confirm", () => {
-    render(<EditGate taskId="t1" payload={payload} />);
+    render(<EditGate gateId="g1" taskId="t1" payload={payload} />);
     fireEvent.click(screen.getByText("Reject"));
     fireEvent.change(screen.getByPlaceholderText(/what's wrong/i), {
       target: { value: "Keep the flush, drop the extra brace." },
     });
     fireEvent.click(screen.getByText("Reject"));
     expect(vscode.postMessage).toHaveBeenCalledWith({
-      type: "editDecision", threadId: "t1", decision: "reject",
+      type: "editDecision", threadId: "t1", gateId: "g1", decision: "reject",
       reason: "Keep the flush, drop the extra brace." });
   });
 
   it("Back returns to Accept/Reject without posting", () => {
-    render(<EditGate taskId="t1" payload={payload} />);
+    render(<EditGate gateId="g1" taskId="t1" payload={payload} />);
     fireEvent.click(screen.getByText("Reject"));
     fireEvent.click(screen.getByText("Back"));
     expect(vscode.postMessage).not.toHaveBeenCalled();
@@ -48,10 +48,10 @@ describe("EditGate", () => {
   });
 
   it("allows confirming reject with an empty reason", () => {
-    render(<EditGate taskId="t1" payload={payload} />);
+    render(<EditGate gateId="g1" taskId="t1" payload={payload} />);
     fireEvent.click(screen.getByText("Reject"));
     fireEvent.click(screen.getByText("Reject"));
     expect(vscode.postMessage).toHaveBeenCalledWith({
-      type: "editDecision", threadId: "t1", decision: "reject", reason: "" });
+      type: "editDecision", threadId: "t1", gateId: "g1", decision: "reject", reason: "" });
   });
 });

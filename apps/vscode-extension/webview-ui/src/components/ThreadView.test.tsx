@@ -22,7 +22,7 @@ const base: AppState = {
   streaming: null,
   thinkingStatus: null,
   inputEnabled: true,
-  liveGate: null,
+  liveGates: [],
   livePlan: null,
   liveReview: null,
   liveError: null,

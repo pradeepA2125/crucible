@@ -37,12 +37,12 @@ export type NewChatHandler = () => Promise<void>;
 export type SwitchThreadHandler = (threadId: string) => Promise<void>;
 export type ScopeDecisionHandler = (taskId: string, files: string[], decision: "approve" | "reject", remember: boolean) => Promise<void>;
 export type ValidationDecisionHandler = (taskId: string, decision: "accept" | "reject") => Promise<void>;
-export type CommandDecisionHandler = (taskId: string, decision: CommandDecision) => Promise<void>;
+export type CommandDecisionHandler = (taskId: string, decision: CommandDecision, gateId: string) => Promise<void>;
 export type StepDecisionHandler = (taskId: string, decision: "accept" | "discard") => Promise<void>;
 // Controller gates (Phase F): mode is a streamed dispatch, edit a plain ack.
 export type ModeDecisionHandler = (threadId: string, mode: string) => Promise<void>;
 export type ClarifyDecisionHandler = (threadId: string, answer: string) => Promise<void>;
-export type EditDecisionHandler = (threadId: string, decision: "accept" | "reject", reason: string) => Promise<void>;
+export type EditDecisionHandler = (threadId: string, decision: "accept" | "reject", reason: string, gateId: string) => Promise<void>;
 export type AcceptTaskHandler = (taskId: string) => Promise<void>;
 export type RejectTaskHandler = (taskId: string, reason: string) => Promise<void>;
 export type ResumeTaskHandler = (taskId: string, stage: "plan" | "execute") => Promise<void>;
@@ -60,7 +60,7 @@ export type ExpandPromptHandler = (
 // P2: skill catalog for the composer's /skill forced-load.
 export type ListSkillsHandler = () => Promise<{ name: string; description: string }[]>;
 // P3: controller mcp_tool gate — approve/reject an external MCP tool call.
-export type McpDecisionHandler = (threadId: string, decision: McpToolDecision) => Promise<void>;
+export type McpDecisionHandler = (threadId: string, decision: McpToolDecision, gateId: string) => Promise<void>;
 
 // Composer model quick-swap (options are ModelOption[] from composer-models.ts, kept
 // as unknown[] here since chat-panel doesn't import that type; the webview mirrors it).
@@ -289,12 +289,12 @@ export class ChatPanel {
           scope: (m["scope"] === "prefix" || m["scope"] === "binary") ? m["scope"] : "exact",
           ruleValue: typeof m["ruleValue"] === "string" ? (m["ruleValue"] as string) : undefined,
         };
-        p = this.onCommandDecision(m["taskId"] as string, decision);
+        p = this.onCommandDecision(m["taskId"] as string, decision, typeof m["gateId"] === "string" ? m["gateId"] : "");
       } else if (m["type"] === "mcpDecision") {
         p = this.onMcpDecision(m["threadId"] as string, {
           approve: m["approve"] === true,
           remember: m["remember"] === true,
-        });
+        }, typeof m["gateId"] === "string" ? m["gateId"] : "");
       } else if (m["type"] === "stepDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "discard";
         p = this.onStepDecision(m["taskId"] as string, decision);
@@ -308,7 +308,7 @@ export class ChatPanel {
         p = this.onClarifyDecision(m["threadId"] as string, m["answer"] as string);
       } else if (m["type"] === "editDecision") {
         const decision = m["decision"] === "accept" ? "accept" : "reject";
-        p = this.onEditDecision(m["threadId"] as string, decision, (m["reason"] as string) ?? "");
+        p = this.onEditDecision(m["threadId"] as string, decision, (m["reason"] as string) ?? "", typeof m["gateId"] === "string" ? m["gateId"] : "");
       } else if (m["type"] === "acceptTask") {
         p = this.onAcceptTask(m["taskId"] as string);
       } else if (m["type"] === "rejectTask") {
@@ -484,12 +484,13 @@ export class ChatPanel {
 
   // Live, state-driven cards (Class A). The webview keeps a single slot per kind and
   // replaces in place, so these are safe to call every poll tick.
-  renderLiveGate(gate: LiveGateView): void {
-    this.panel?.webview.postMessage({ type: "renderLiveGate", gate });
+  // Every pending gate as a list (spec §4.5); an empty list clears the gate cards.
+  renderLiveGates(gates: LiveGateView[]): void {
+    this.panel?.webview.postMessage({ type: "renderLiveGates", gates });
   }
 
-  clearLiveGate(): void {
-    this.panel?.webview.postMessage({ type: "clearLiveGate" });
+  clearLiveGates(): void {
+    this.panel?.webview.postMessage({ type: "renderLiveGates", gates: [] });
   }
 
   renderLivePlan(plan: LivePlanView): void {
