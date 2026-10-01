@@ -7,8 +7,10 @@ from agentd.subagents.permissions import (
     AGENT_BASE_TYPES,
     child_allowed_types,
     child_tool_names,
+    definition_allows_edit,
     effective_permission,
     follows_live_review,
+    tool_matches,
 )
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
@@ -68,3 +70,40 @@ async def test_the_registry_allow_list(tmp_path: Path) -> None:
     assert not (await reg.execute("read_file", {"path": "f.py"})).is_error
     refused = await reg.execute("run_command", {"command": "ls"})
     assert refused.is_error and refused.output == "Error: unknown tool 'run_command'"
+
+
+def test_tool_matches_exact_and_server_wildcard() -> None:
+    patterns = frozenset({"read_file", "mcp__gh__*"})
+    assert tool_matches("read_file", patterns)
+    assert tool_matches("mcp__gh__create_issue", patterns)
+    assert not tool_matches("mcp__ghx__create_issue", patterns)  # the prefix ends at "__"
+    assert not tool_matches("search_code", patterns)
+
+
+def test_definition_tools_accept_mcp_wildcards() -> None:
+    names = child_tool_names(_AVAILABLE, definition_tools=frozenset({"read_file", "mcp__gh__*"}),
+                             permission="default", may_dispatch=False)
+    assert names == frozenset({"read_file", "mcp__gh__create_issue"})
+
+
+def test_disallowed_is_removed_before_tools() -> None:
+    names = child_tool_names(
+        _AVAILABLE, definition_tools=None, permission="default", may_dispatch=True,
+        definition_disallowed=frozenset({"run_command", "mcp__gh__*"}))
+    assert "run_command" not in names and "mcp__gh__create_issue" not in names
+    assert {"read_file", "dispatch_agents"} <= names
+
+
+@pytest.mark.parametrize("tools,disallowed,expected", [
+    (None, frozenset(), True),
+    (frozenset({"read_file", "edit"}), frozenset(), True),
+    (frozenset({"read_file"}), frozenset(), False),     # tools listed without Edit/Write
+    (None, frozenset({"edit"}), False),                 # disallowedTools: Write
+])
+def test_definition_allows_edit(tools, disallowed, expected) -> None:
+    assert definition_allows_edit(tools, disallowed) is expected
+
+
+def test_no_edit_type_when_the_definition_cannot_edit() -> None:
+    assert child_allowed_types("default", can_edit=False) == ("tool_call", "progress", "report")
+    assert child_allowed_types("default") == AGENT_BASE_TYPES   # unchanged default

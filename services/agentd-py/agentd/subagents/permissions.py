@@ -23,8 +23,22 @@ def effective_permission(own: Permission, dispatcher: Permission | None) -> Perm
     return own
 
 
-def child_allowed_types(permission: Permission) -> tuple[str, ...]:
-    if permission == "plan":
+def tool_matches(name: str, patterns: frozenset[str]) -> bool:
+    """`mcp__<server>__*` matches every tool of that server (spec §9.3); anything else
+    is an exact name."""
+    if name in patterns:
+        return True
+    return any(p.endswith("__*") and name.startswith(p[:-1]) for p in patterns)
+
+
+def definition_allows_edit(tools: frozenset[str] | None, disallowed: frozenset[str]) -> bool:
+    """Whether a definition keeps the edit action (spec §5.3): `edit` is the mapped name of
+    Claude Code's Edit/Write/MultiEdit/NotebookEdit, which are actions here, not tools."""
+    return "edit" not in disallowed and (tools is None or "edit" in tools)
+
+
+def child_allowed_types(permission: Permission, *, can_edit: bool = True) -> tuple[str, ...]:
+    if permission == "plan" or not can_edit:
         return tuple(t for t in AGENT_BASE_TYPES if t != "edit")
     return AGENT_BASE_TYPES
 
@@ -32,10 +46,12 @@ def child_allowed_types(permission: Permission) -> tuple[str, ...]:
 def child_tool_names(
     available: Iterable[str], *, definition_tools: frozenset[str] | None,
     permission: Permission, may_dispatch: bool,
+    definition_disallowed: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
-    names = set(available) - CHILD_EXCLUDED_TOOLS
+    names = {n for n in set(available) - CHILD_EXCLUDED_TOOLS
+             if not tool_matches(n, definition_disallowed)}
     if definition_tools is not None:
-        names &= definition_tools
+        names = {n for n in names if tool_matches(n, definition_tools)}
     if permission == "plan":
         # Filtered out of the tool list entirely, so the MCP teaching block is not
         # appended either; _permission_correction is the defense in depth.
