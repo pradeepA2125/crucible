@@ -66,6 +66,8 @@ class WorkspaceWriteLog:
         # main's spawn_seq is 0 and its watermarks persist across turns: a parent editing
         # a file a child changed in an EARLIER turn, without re-reading, is refused too.
         self._agents: dict[str, _AgentView] = {MAIN_AGENT_ID: _AgentView(spawn_seq=0)}
+        # Every path each agent ever promoted — a child's files_changed is its subtree's.
+        self._promoted: dict[str, set[str]] = {}
 
     @property
     def seq(self) -> int:
@@ -87,11 +89,19 @@ class WorkspaceWriteLog:
     def note_promote(self, agent_id: str, label: str, name: str, paths: list[str]) -> int:
         """Record one promote of `paths` by `agent_id`; returns the new sequence number."""
         view = self._view(agent_id)
+        self._promoted.setdefault(agent_id, set()).update(paths)
         self._seq += 1
         for path in paths:
             self._last_write[path] = WriteRecord(agent_id, label, name, self._seq)
             view.last_seen[path] = self._seq
         return self._seq
+
+    def files_changed_by(self, agent_ids: set[str]) -> list[str]:
+        """Sorted union of every path any of `agent_ids` promoted (spec §6.3)."""
+        paths: set[str] = set()
+        for agent_id in agent_ids:
+            paths |= self._promoted.get(agent_id, set())
+        return sorted(paths)
 
     def stale_writer(self, agent_id: str, path: str) -> WriteRecord | None:
         """The other agent whose promote `agent_id` has not seen, or None when it is safe."""
