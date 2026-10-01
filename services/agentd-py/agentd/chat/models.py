@@ -69,11 +69,15 @@ class AgentRecord(BaseModel):
 
     def summary(self) -> dict[str, Any]:
         """The list view (spec §11.3): no transcript, a 200-character UI-only preview."""
+        # Pills persist per segment, each message holding its segment's full list
+        # (AgentTranscript.upsert_pills), so the sum over messages is the call count.
+        tool_count = sum(len(m.metadata.get("tool_events") or []) for m in self.transcript)
         return {
             "agent_id": self.agent_id, "turn_id": self.turn_id,
             "parent_agent_id": self.parent_agent_id, "depth": self.depth,
             "name": self.name, "label": self.label, "status": self.status,
             "files_changed_count": len(self.files_changed),
+            "tool_count": tool_count,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
             "report_preview": self.report[:200],
