@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from pathlib import Path
 
 import yaml
 
 from agentd.prompting.tagged import Permission
-from agentd.subagents.definitions import AgentDefinition
+from agentd.subagents.definitions import BUILTIN_AGENTS, AgentDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -151,3 +152,71 @@ def parse_agent_file(path: Path) -> AgentDefinition | None:
             map_tool_names(disallowed, path) if disallowed is not None else frozenset()),
         skills=tuple(skills or ()),
         source=str(path))
+
+
+class AgentCatalogLoader:
+    """The agents `dispatch_agents` offers (spec §9.1): `.crucible/agents/`, then
+    `.claude/agents/`, then `~/.claude/agents/`, then the built-ins. A name wins at its
+    highest-precedence source. Directories are scanned recursively for `*.md`.
+
+    Cached on the (path, mtime_ns) of every file, not the roots' mtimes: a directory's
+    mtime moves only when its direct entries change, so a root-keyed cache (the
+    SkillCatalogLoader discipline) would never see an edit to a nested file."""
+
+    def __init__(self, workspace_path: Path | str, *, user_agents_dir: Path | None = None) -> None:
+        workspace = Path(workspace_path)
+        self._roots: tuple[Path, ...] = (
+            workspace / ".crucible" / "agents",
+            workspace / ".claude" / "agents",
+            user_agents_dir if user_agents_dir is not None else Path.home() / ".claude" / "agents",
+        )
+        self._lock = threading.Lock()
+        self._signature: tuple[tuple[str, int], ...] | None = None
+        self._cached: dict[str, AgentDefinition] | None = None
+
+    def load(self) -> dict[str, AgentDefinition]:
+        """The catalog, sorted by name. Treat it as read-only: it is the cached object."""
+        with self._lock:
+            files = self._files()
+            signature = tuple((str(path), mtime) for _, path, mtime in files)
+            if self._cached is None or signature != self._signature:
+                self._cached = self._build(files)
+                self._signature = signature
+            return self._cached
+
+    def _files(self) -> list[tuple[int, Path, int]]:
+        found: list[tuple[int, Path, int]] = []
+        for index, root in enumerate(self._roots):
+            if not root.is_dir():
+                continue
+            try:
+                paths = sorted(root.rglob("*.md"))
+            except OSError as exc:
+                logger.warning("[agents] cannot scan %s: %s", root, exc)
+                continue
+            for path in paths:
+                try:
+                    if path.is_file():
+                        found.append((index, path, path.stat().st_mtime_ns))
+                except OSError:
+                    continue
+        return found
+
+    def _build(self, files: list[tuple[int, Path, int]]) -> dict[str, AgentDefinition]:
+        catalog: dict[str, AgentDefinition] = {}
+        origin: dict[str, int] = {}
+        for index, path, _ in files:
+            definition = parse_agent_file(path)
+            if definition is None:
+                continue
+            if definition.name in catalog:
+                if origin[definition.name] == index:
+                    logger.warning("[agents] %s: duplicate agent name %r (already defined in "
+                                   "%s) — skipped", path, definition.name,
+                                   catalog[definition.name].source)
+                continue  # a lower-precedence root never overrides a higher one
+            catalog[definition.name] = definition
+            origin[definition.name] = index
+        for name, builtin in BUILTIN_AGENTS.items():
+            catalog.setdefault(name, builtin)
+        return dict(sorted(catalog.items()))
