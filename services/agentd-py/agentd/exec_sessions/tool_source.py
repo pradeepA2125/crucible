@@ -7,9 +7,6 @@ process). Everything returns ToolOutput; is_error for unknown ids / cap /
 spawn failures — the loop adapts, never crashes."""
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
-from agentd.domain.models import CommandDecision
 from agentd.exec_sessions.config import result_max_chars
 from agentd.exec_sessions.manager import (
     STDIN_MAX_CHARS,
@@ -19,6 +16,7 @@ from agentd.exec_sessions.manager import (
     SessionRead,
     SessionSpawnError,
 )
+from agentd.tools.approvals import CommandApprovalCallback, denial_text
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
 _TOOLS = ("start_session", "write_stdin", "kill_session", "list_sessions")
@@ -26,9 +24,6 @@ _TOOLS = ("start_session", "write_stdin", "kill_session", "list_sessions")
 _STILL_RUNNING_GUIDE = (
     'Session {sid} is still running. Poll with write_stdin(session_id, '
     'chars="") or stop it with kill_session.')
-
-CommandApprovalCallback = Callable[[str, list[str], str], Awaitable[CommandDecision]]
-
 
 class ExecSessionToolSource:
     name = "exec_sessions"
@@ -143,11 +138,15 @@ class ExecSessionToolSource:
         raw_args = args.get("args")
         cmd_args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
         cwd = str(args.get("cwd") or "")
-        decision = await self._approve(command, cmd_args, cwd)
-        if not getattr(decision, "approve", False):
+        outcome = await self._approve(command, cmd_args, cwd)
+        if not outcome.approved:
+            cmdline = f"{command} {' '.join(cmd_args)}".strip()
             return ToolOutput(
-                output=(f"Command rejected by user: {command}. Do not retry the "
-                        "same command — adapt or ask."), is_error=True)
+                output=denial_text(
+                    outcome, subject=f"command `{cmdline}`",
+                    user_text=(f"Command rejected by user: {command}. Do not retry the "
+                               "same command — adapt or ask.")),
+                is_error=True)
         read = await self._manager.start(
             self._thread_id, command, cmd_args, cwd or None,
             args.get("yield_time_ms"))

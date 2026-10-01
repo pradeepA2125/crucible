@@ -10,17 +10,15 @@ definitions (query-independent, cache-stable — mirrors select_catalog_for_budg
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
 
 from agentd.mcp.config import mcp_tools_max_chars
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
+from agentd.tools.approvals import McpApprovalCallback, denial_text
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
 logger = logging.getLogger(__name__)
 
 _PREFIX = "mcp__"
-
-ApprovalCallback = Callable[[str, str, dict[str, object]], Awaitable[bool]]
 
 _MCP_REJECTED_TEMPLATE = tagged("mcp_rejected", (
     "MCP tool call rejected by user: {server}.{tool}. "
@@ -42,7 +40,7 @@ class McpToolSource:
     name = "mcp"
 
     def __init__(
-        self, manager: object, approval_callback: ApprovalCallback, *,
+        self, manager: object, approval_callback: McpApprovalCallback, *,
         render_ctx: RenderContext | None = None,
     ) -> None:
         self._manager = manager
@@ -72,11 +70,13 @@ class McpToolSource:
         if parsed is None:
             return ToolOutput(output=f"Error: malformed MCP tool name '{tool}'", is_error=True)
         server, tool_name = parsed
-        approved = await self._approve(server, tool_name, dict(args))
-        if not approved:
+        outcome = await self._approve(server, tool_name, dict(args))
+        if not outcome.approved:
+            user_text = (render_prompt(_MCP_REJECTED_TEMPLATE, self._render_ctx)
+                         .replace("{server}", server).replace("{tool}", tool_name))
             return ToolOutput(
-                output=render_prompt(_MCP_REJECTED_TEMPLATE, self._render_ctx)
-                .replace("{server}", server).replace("{tool}", tool_name),
+                output=denial_text(outcome, subject=f"MCP tool `{server}.{tool_name}`",
+                                   user_text=user_text),
                 is_error=True)
         try:
             result = await self._manager.call_tool(server, tool_name, dict(args))  # type: ignore[attr-defined]

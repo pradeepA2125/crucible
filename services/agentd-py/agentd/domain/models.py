@@ -189,6 +189,39 @@ class McpToolDecision(BaseModel):
     remember: bool = False
 
 
+DeniedBy = Literal["user", "policy", "timeout"]
+
+
+class ApprovalOutcome(BaseModel):
+    """Server-internal result of a command/MCP approval gate (spec §4.6.4).
+
+    NEVER a request body: CommandDecision/McpToolDecision are what clients post, and a
+    client must not be able to claim denied_by="policy". The routes build a plain
+    decision (→ denied_by="user"); only server code sets "timeout" (no decision arrived)
+    or "policy" (an agent's permission mode denied it without asking anyone). `decision`
+    carries the user's CommandDecision for commands so rule_from_decision keeps working.
+    """
+    approved: bool
+    denied_by: DeniedBy | None = None
+    decision: CommandDecision | None = None
+
+    @classmethod
+    def from_command(
+        cls, decision: CommandDecision, *, denied_by: DeniedBy = "user",
+    ) -> ApprovalOutcome:
+        return cls(approved=decision.approve,
+                   denied_by=None if decision.approve else denied_by,
+                   decision=decision)
+
+    @classmethod
+    def allow(cls) -> ApprovalOutcome:
+        return cls(approved=True)
+
+    @classmethod
+    def deny(cls, by: DeniedBy) -> ApprovalOutcome:
+        return cls(approved=False, denied_by=by)
+
+
 class CommandRule(BaseModel):
     """A persisted user-approved shell command rule (workspace store + per-task set)."""
     type: Literal["exact", "prefix", "binary"]

@@ -26,7 +26,13 @@ from agentd.chat.models import ChatMessage, GateAmbiguousError, GateNotFoundErro
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
-from agentd.domain.models import CommandDecision, McpToolDecision, ShellPolicy
+from agentd.domain.models import (
+    ApprovalOutcome,
+    CommandDecision,
+    DeniedBy,
+    McpToolDecision,
+    ShellPolicy,
+)
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.skills.loader import SkillCatalogLoader
@@ -990,7 +996,7 @@ class ChatController:
     async def _command_approval_cb(
         self, thread_id: str, channel_id: str,
         command: str, args: list[str], cwd: str,
-    ) -> CommandDecision:
+    ) -> ApprovalOutcome:
         """Gate a run_command in a chat EDIT turn (mirror engine._build_command_approval_
         callback on the controller's thread-gate machinery instead of task status).
 
@@ -1000,9 +1006,9 @@ class ChatController:
         gate clears in place in the finally (Class-A); on approve+remember the rule is
         persisted via the shared rule_from_decision derivation."""
         if self._shell_policy == ShellPolicy.ALLOW_ALL:
-            return CommandDecision(approve=True)
+            return ApprovalOutcome.allow()
         if CommandRuleStore(self._workspace_path).matches(command, args):
-            return CommandDecision(approve=True)
+            return ApprovalOutcome.allow()
 
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
             "command", {"command": command, "args": args, "cwd": cwd}))
@@ -1023,11 +1029,13 @@ class ChatController:
                 "step_id": "",
             },
         })
+        denied_by: DeniedBy = "user"
         timeout = self._command_decision_timeout_sec
         try:
             decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
         except TimeoutError:
             decision = CommandDecision(approve=False)
+            denied_by = "timeout"
         finally:
             self._pending_command.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
@@ -1039,7 +1047,7 @@ class ChatController:
             thread_id, channel_id,
             f"✓ Command approved: {command}" if decision.approve
             else f"✗ Command rejected: {command}")
-        return decision
+        return ApprovalOutcome.from_command(decision, denied_by=denied_by)
 
     async def resolve_command(
         self, thread_id: str, decision: CommandDecision, gate_id: str | None = None,
@@ -1065,7 +1073,7 @@ class ChatController:
     async def _mcp_approval_cb(
         self, thread_id: str, channel_id: str,
         server: str, tool: str, args: dict[str, object],
-    ) -> bool:
+    ) -> ApprovalOutcome:
         """Gate an MCP tool call (mirror of _command_approval_cb on the same
         thread-gate machinery). A remembered (server, tool) rule auto-approves;
         otherwise raise a durable kind="mcp_tool" gate and await /mcp-decision."""
@@ -1073,7 +1081,7 @@ class ChatController:
         from agentd.mcp.rules import McpRuleStore
 
         if McpRuleStore(self._workspace_path).matches(server, tool):
-            return True
+            return ApprovalOutcome.allow()
 
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
             "mcp_tool", {"server": server, "tool": tool, "args": args}))
@@ -1085,11 +1093,13 @@ class ChatController:
             "type": "mcp_approval_requested",
             "payload": {"server": server, "tool": tool, "args": args},
         })
+        denied_by: DeniedBy = "user"
         timeout = mcp_decision_timeout_sec()
         try:
             decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
         except TimeoutError:
             decision = McpToolDecision(approve=False)
+            denied_by = "timeout"
         finally:
             self._pending_mcp.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
@@ -1100,7 +1110,9 @@ class ChatController:
             thread_id, channel_id,
             f"✓ MCP tool approved: {server}.{tool}" if decision.approve
             else f"✗ MCP tool rejected: {server}.{tool}")
-        return decision.approve
+        if decision.approve:
+            return ApprovalOutcome.allow()
+        return ApprovalOutcome.deny(denied_by)
 
     async def resolve_mcp(
         self, thread_id: str, decision: McpToolDecision, gate_id: str | None = None,

@@ -20,12 +20,14 @@ from pydantic import ValidationError
 from agentd.chat.tool_events import ToolEventSource, trace_to_tool_events
 from agentd.domain.models import (
     AgentToolTrace,
+    ApprovalOutcome,
     CandidateScoreBreakdown,
     CheckpointManifest,
     CommandApprovalRequest,
     CommandDecision,
     CommandRule,
     DeltaReplanRequest,
+    DeniedBy,
     Diagnostic,
     DiffEntry,
     FailureSummary,
@@ -1989,7 +1991,7 @@ class AgentOrchestrator:
     def _build_command_approval_callback(self, task_id: str):
         """Mirror of _build_scope_callback for run_command gating.
 
-        Returns an async callback (command, args, cwd) -> CommandDecision that:
+        Returns an async callback (command, args, cwd) -> ApprovalOutcome that:
         - approves silently when policy is ALLOW_ALL,
         - approves silently when the command matches a per-task or per-workspace
           remembered rule (token-aware match),
@@ -2002,21 +2004,21 @@ class AgentOrchestrator:
 
         from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 
-        async def _cb(command: str, args: list[str], cwd: str) -> CommandDecision:
+        async def _cb(command: str, args: list[str], cwd: str) -> ApprovalOutcome:
             task = await self._store.get(task_id)
 
             policy = task.shell_policy or self._shell_policy
             if policy == ShellPolicy.ALLOW_ALL:
-                return CommandDecision(approve=True)
+                return ApprovalOutcome.allow()
 
             # Per-task + per-workspace remembered approvals (token-aware match
             # via the same CommandRuleStore.rule_matches used for the JSON store).
             cmd_tokens = [command, *args]
             for rule in task.execution_state.approved_commands:
                 if CommandRuleStore.rule_matches(rule, cmd_tokens):
-                    return CommandDecision(approve=True)
+                    return ApprovalOutcome.allow()
             if CommandRuleStore(task.workspace_path).matches(command, args):
-                return CommandDecision(approve=True)
+                return ApprovalOutcome.allow()
 
             # ASK — pause + future + broadcast.
             decision_id = uuid4().hex
@@ -2053,6 +2055,7 @@ class AgentOrchestrator:
             })
 
             decision = CommandDecision(approve=False)
+            denied_by: DeniedBy = "user"
             try:
                 if self._command_decision_timeout_sec > 0:
                     decision = await asyncio.wait_for(
@@ -2062,6 +2065,7 @@ class AgentOrchestrator:
                     decision = await future
             except asyncio.TimeoutError:
                 decision = CommandDecision(approve=False)
+                denied_by = "timeout"
             finally:
                 self._pending_command_decisions.pop(task_id, None)
                 task = await self._store.get(task_id)
@@ -2078,7 +2082,7 @@ class AgentOrchestrator:
                 else:
                     self.write_chat_breadcrumb(task, f"✗ Command rejected: {command}")
 
-            return decision
+            return ApprovalOutcome.from_command(decision, denied_by=denied_by)
 
         return _cb
 

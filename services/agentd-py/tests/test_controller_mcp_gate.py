@@ -38,7 +38,7 @@ async def test_gate_raised_then_approve_resolves(tmp_path: Path):
     assert gate.payload["args"] == {"title": "x"}
 
     assert await ctrl.resolve_mcp(th.thread_id, McpToolDecision(approve=True)) is True
-    assert await cb_task is True
+    assert (await cb_task).approved is True
     assert first_gate(store.get_thread(th.thread_id)) is None  # cleared in place
 
 
@@ -51,7 +51,7 @@ async def test_reject_returns_false(tmp_path: Path):
         th.thread_id, f"chat:{th.thread_id}", "gh", "t", {}))
     await asyncio.sleep(0)
     await ctrl.resolve_mcp(th.thread_id, McpToolDecision(approve=False))
-    assert await cb_task is False
+    assert (await cb_task).approved is False
 
 
 @pytest.mark.asyncio
@@ -63,11 +63,11 @@ async def test_remember_persists_rule_and_auto_approves_next(tmp_path: Path):
         th.thread_id, f"chat:{th.thread_id}", "gh", "t", {}))
     await asyncio.sleep(0)
     await ctrl.resolve_mcp(th.thread_id, McpToolDecision(approve=True, remember=True))
-    assert await cb_task is True
+    assert (await cb_task).approved is True
     assert McpRuleStore(str(tmp_path)).matches("gh", "t") is True
     # Second call: no gate — remembered rule auto-approves.
-    assert await ctrl._mcp_approval_cb(
-        th.thread_id, f"chat:{th.thread_id}", "gh", "t", {}) is True
+    assert (await ctrl._mcp_approval_cb(
+        th.thread_id, f"chat:{th.thread_id}", "gh", "t", {})).approved is True
     assert first_gate(store.get_thread(th.thread_id)) is None
 
 
@@ -96,8 +96,8 @@ async def test_timeout_rejects(tmp_path: Path, monkeypatch):
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     th = store.create_thread(str(tmp_path), title="t")
     ctrl = _controller(tmp_path, store)
-    assert await ctrl._mcp_approval_cb(
-        th.thread_id, f"chat:{th.thread_id}", "gh", "t", {}) is False
+    assert (await ctrl._mcp_approval_cb(
+        th.thread_id, f"chat:{th.thread_id}", "gh", "t", {})).approved is False
     assert first_gate(store.get_thread(th.thread_id)) is None
 
 

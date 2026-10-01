@@ -4,7 +4,7 @@ import sys
 import pytest
 
 from agentd.chat.controller_loop import _decide_state_change_correction
-from agentd.domain.models import CommandDecision
+from agentd.domain.models import ApprovalOutcome, CommandDecision
 from agentd.exec_sessions.manager import SessionManager
 from agentd.exec_sessions.tool_source import ExecSessionToolSource
 from agentd.tools.sources import AggregatingToolRegistry
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="unix tests")
 
 def test_registry_aggregation_dispatches_session_tools(tmp_path):
     async def cb(command, args, cwd):
-        return CommandDecision(approve=True)
+        return ApprovalOutcome.from_command(CommandDecision(approve=True))
 
     src = ExecSessionToolSource(SessionManager(tmp_path), "t1", cb)
     reg = AggregatingToolRegistry([src])

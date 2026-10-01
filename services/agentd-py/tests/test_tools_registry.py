@@ -97,11 +97,11 @@ async def test_run_command_consults_approval_callback(tmp_path: Path) -> None:
     returns a tool-result error string so the agent can adapt."""
     calls: list[tuple[str, list[str]]] = []
 
-    from agentd.domain.models import CommandDecision
+    from agentd.domain.models import ApprovalOutcome, CommandDecision
 
-    async def cb(command: str, args: list[str], cwd: str) -> CommandDecision:
+    async def cb(command: str, args: list[str], cwd: str) -> ApprovalOutcome:
         calls.append((command, args))
-        return CommandDecision(approve=False)
+        return ApprovalOutcome.from_command(CommandDecision(approve=False))
 
     registry = ToolRegistry(
         shadow_root=tmp_path,

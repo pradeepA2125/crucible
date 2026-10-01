@@ -141,14 +141,15 @@ def _empty_edit_redirect(out: dict[str, str]) -> None:
 
 def _tool_texts(out: dict[str, str]) -> None:
     from agentd.chat.edit_session import _validate_patch_ops
+    from agentd.domain.models import ApprovalOutcome
     from agentd.mcp.tool_source import McpToolSource
 
     out["tools/builtin/explore"] = json.dumps(_builtin_defs("explore"), indent=1, sort_keys=True)
     out["tools/builtin/verify"] = json.dumps(_builtin_defs("verify"), indent=1, sort_keys=True)
     out["tools/write_todos"] = json.dumps(_todo_defs(), indent=1, sort_keys=True)
 
-    async def _deny(server: str, tool: str, args: dict[str, object]) -> bool:
-        return False
+    async def _deny(server: str, tool: str, args: dict[str, object]) -> ApprovalOutcome:
+        return ApprovalOutcome.deny("user")
 
     mcp = McpToolSource(object(), _deny)
     out["history/mcp_rejected"] = asyncio.run(mcp.execute("mcp__gh__create_issue", {})).output

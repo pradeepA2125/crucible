@@ -46,7 +46,8 @@ def test_remove_one_gate_by_id(tmp_path: Path) -> None:
     assert store.remove_controller_gate(tid, drop.gate_id) is True
     assert store.remove_controller_gate(tid, drop.gate_id) is False
     thread = store.get_thread(tid)
-    assert thread is not None and [g.gate_id for g in thread.pending_controller_gates] == [keep.gate_id]
+    assert thread is not None
+    assert [g.gate_id for g in thread.pending_controller_gates] == [keep.gate_id]
 
 
 def test_clear_all_or_one_agents_gates(tmp_path: Path) -> None:
@@ -58,7 +59,8 @@ def test_clear_all_or_one_agents_gates(tmp_path: Path) -> None:
     store.add_controller_gate(tid, child)
     store.clear_controller_gates(tid, agent_id="agent-1")
     thread = store.get_thread(tid)
-    assert thread is not None and [g.gate_id for g in thread.pending_controller_gates] == [parent.gate_id]
+    assert thread is not None
+    assert [g.gate_id for g in thread.pending_controller_gates] == [parent.gate_id]
     store.clear_controller_gates(tid)
     thread = store.get_thread(tid)
     assert thread is not None and thread.pending_controller_gates == []

@@ -40,7 +40,7 @@ async def test_allow_all_skips_gate(tmp_path: Path):
     ctrl = _controller(tmp_path, store, ShellPolicy.ALLOW_ALL)
     decision = await ctrl._command_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "pytest", ["-q"], "")
-    assert decision.approve is True
+    assert decision.approved is True
     assert first_gate(store.get_thread(th.thread_id)) is None
 
 
@@ -59,7 +59,7 @@ async def test_ask_raises_command_gate_then_resolve_approves(tmp_path: Path):
     assert await ctrl.resolve_command(
         th.thread_id, CommandDecision(approve=True)) is True
     decision = await cb_task
-    assert decision.approve is True
+    assert decision.approved is True
     assert first_gate(store.get_thread(th.thread_id)) is None  # cleared in place
 
 
@@ -122,7 +122,7 @@ async def test_remembered_workspace_rule_auto_approves(tmp_path: Path):
         CommandRule(type="binary", value="pytest", added_at="x"))
     decision = await ctrl._command_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "pytest", ["-q"], "")
-    assert decision.approve is True
+    assert decision.approved is True
     assert first_gate(store.get_thread(th.thread_id)) is None
 
 
@@ -152,7 +152,7 @@ async def test_command_decision_timeout_rejects(tmp_path: Path):
         shell_policy=ShellPolicy.ASK, command_decision_timeout_sec=0.05)
     decision = await ctrl._command_approval_cb(
         th.thread_id, f"chat:{th.thread_id}", "rm", ["-rf"], "")
-    assert decision.approve is False
+    assert decision.approved is False
     assert first_gate(store.get_thread(th.thread_id)) is None
 
 

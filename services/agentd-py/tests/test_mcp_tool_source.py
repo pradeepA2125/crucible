@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from agentd.domain.models import ApprovalOutcome
 from agentd.mcp.tool_source import McpToolSource, parse_tool_name
 from agentd.tools.registry import ToolDefinition
 
@@ -43,11 +44,11 @@ def _def(name, desc="d"):
 
 
 async def _approve(server, tool, args):
-    return True
+    return ApprovalOutcome.allow()
 
 
 async def _reject(server, tool, args):
-    return False
+    return ApprovalOutcome.deny("user")
 
 
 def test_parse_tool_name():

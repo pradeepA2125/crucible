@@ -4,6 +4,7 @@ import pytest
 
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
+from agentd.domain.models import ApprovalOutcome
 from agentd.mcp.tool_source import McpToolSource
 from agentd.prompting.tagged import RenderContext
 from agentd.tools.registry import ToolRegistry
@@ -52,8 +53,8 @@ def test_child_write_todos_blocks_report_not_submit_changes() -> None:
 
 @pytest.mark.asyncio
 async def test_child_mcp_rejection_never_says_ask() -> None:
-    async def deny(server: str, tool: str, args: dict[str, object]) -> bool:
-        return False
+    async def deny(server: str, tool: str, args: dict[str, object]) -> ApprovalOutcome:
+        return ApprovalOutcome.deny("user")
     out = await McpToolSource(object(), deny, render_ctx=_ctx("default")).execute("mcp__gh__x", {})
     assert out.is_error and "or ask" not in out.output
     assert out.output.endswith("or note the blocker in your report.")

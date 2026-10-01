@@ -70,7 +70,7 @@ async def test_allow_all_skips_gate(tmp_path: Path) -> None:
     task = await _seed_task(orch)
     cb = orch._build_command_approval_callback(task.task_id)
     decision = await cb("pytest", ["-q"], "services/agentd-py")
-    assert decision.approve is True
+    assert decision.approved is True
     assert task.task_id not in orch._pending_command_decisions
 
 
@@ -84,7 +84,7 @@ async def test_remembered_per_task_rule_skips_gate(tmp_path: Path) -> None:
     await orch._store.save(task)
     cb = orch._build_command_approval_callback(task.task_id)
     decision = await cb("pytest", ["-q"], "services/agentd-py")
-    assert decision.approve is True
+    assert decision.approved is True
 
 
 @pytest.mark.asyncio
@@ -116,7 +116,7 @@ async def test_ask_pauses_then_resumes_on_approval(tmp_path: Path) -> None:
         approve=True, remember=True, scope="prefix", rule_value="python -c",
     ))
     decision = await gate
-    assert decision.approve is True
+    assert decision.approved is True
 
     # On resume: status back to EXECUTING, pending cleared, rule persisted to
     # both the per-task set and the per-workspace store.
@@ -138,4 +138,14 @@ async def test_per_task_override_beats_orchestrator_default(tmp_path: Path) -> N
     await orch._store.save(task)
     cb = orch._build_command_approval_callback(task.task_id)
     decision = await cb("pytest", ["-q"], ".")
-    assert decision.approve is True
+    assert decision.approved is True
+
+
+@pytest.mark.asyncio
+async def test_task_command_timeout_is_marked_timeout(tmp_path: Path) -> None:
+    (tmp_path / "ws").mkdir()
+    orch = _make_orchestrator(tmp_path, command_decision_timeout_sec=0.05)
+    task = await _seed_task(orch, workspace=str(tmp_path / "ws"))
+    cb = orch._build_command_approval_callback(task.task_id)
+    outcome = await cb("pytest", ["-q"], str(tmp_path / "ws"))
+    assert outcome.approved is False and outcome.denied_by == "timeout"

@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from agentd.domain.models import CommandDecision
+from agentd.domain.models import ApprovalOutcome, CommandDecision
 from agentd.exec_sessions.manager import SessionManager
 from agentd.exec_sessions.tool_source import ExecSessionToolSource
 
@@ -14,7 +14,7 @@ def _source(tmp_path, approve=True, calls=None):
     async def cb(command, args, cwd):
         if calls is not None:
             calls.append((command, args, cwd))
-        return CommandDecision(approve=approve)
+        return ApprovalOutcome.from_command(CommandDecision(approve=approve))
     return ExecSessionToolSource(SessionManager(tmp_path), "t1", cb)
 
 

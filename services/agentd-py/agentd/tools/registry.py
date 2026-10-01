@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
+from agentd.tools.approvals import denial_text
 
 
 class ToolDefinition(BaseModel):
@@ -390,14 +391,14 @@ class ToolRegistry:
             cwd = str(args.get("cwd", "")) or ""  # relative to shadow_root; "" = shadow_root
             binary_name = Path(command).name  # basename used by binary-rule matching
             if self._command_approval_callback is not None:
-                decision = await self._command_approval_callback(command, cmd_args, cwd)
-                if not decision.approve:
+                outcome = await self._command_approval_callback(command, cmd_args, cwd)
+                if not outcome.approved:
+                    cmdline = f"{command} {' '.join(cmd_args)}".strip()
                     return ToolOutput(
-                        output=(
-                            f"Command rejected by user: {command} "
-                            f"{' '.join(cmd_args)}".strip()
-                            + ". Try a different approach (e.g. a static check)."
-                        ),
+                        output=denial_text(
+                            outcome, subject=f"command `{cmdline}`",
+                            user_text=(f"Command rejected by user: {cmdline}"
+                                       ". Try a different approach (e.g. a static check).")),
                         is_error=True,
                     )
             return await run_command(

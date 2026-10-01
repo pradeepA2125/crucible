@@ -52,14 +52,14 @@ async def test_two_command_gates_resolve_independently_by_id(tmp_path: Path) -> 
 
     assert await ctrl.resolve_command(tid, CommandDecision(approve=False),
                                       gate_id=gates[1].gate_id) is True
-    assert (await second).approve is False
+    assert (await second).approved is False
     assert not first.done()
     thread = store.get_thread(tid)
     assert thread is not None
     assert [g.gate_id for g in thread.pending_controller_gates] == [gates[0].gate_id]
 
     assert await ctrl.resolve_command(tid, CommandDecision(approve=True)) is True
-    assert (await first).approve is True
+    assert (await first).approved is True
     thread = store.get_thread(tid)
     assert thread is not None and thread.pending_controller_gates == []
 
@@ -105,7 +105,8 @@ async def test_each_restart_orphan_clears_only_itself(tmp_path: Path) -> None:
     b = store.add_controller_gate(tid, PendingGate.new("mcp_tool", {"server": "s", "tool": "u"}))
     assert await ctrl.resolve_mcp(tid, McpToolDecision(approve=True), gate_id=a.gate_id) is False
     thread = store.get_thread(tid)
-    assert thread is not None and [g.gate_id for g in thread.pending_controller_gates] == [b.gate_id]
+    assert thread is not None
+    assert [g.gate_id for g in thread.pending_controller_gates] == [b.gate_id]
 
 
 def _app(tmp_path: Path, ctrl: ChatController) -> FastAPI:
@@ -140,8 +141,8 @@ async def test_routes_map_unknown_gate_to_404_and_ambiguous_to_409(tmp_path: Pat
     assert unknown_mcp.status_code == 404
     assert unknown_edit.status_code == 404
     assert chosen.status_code == 200 and chosen.json() == {"ok": True}
-    decision = await first
-    assert decision.approve is True and type(decision) is CommandDecision
+    outcome = await first
+    assert outcome.approved is True and type(outcome.decision) is CommandDecision
     second.cancel()
     await asyncio.gather(second, return_exceptions=True)
 
