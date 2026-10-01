@@ -92,6 +92,21 @@ STATE_CHANGING_DECIDE_CORRECTION = (
 )
 
 
+def _permission_correction(
+    resp: dict[str, object], atype: str, ctx: RenderContext,
+) -> str | None:
+    """Defense in depth for a read-only (effective `plan`) sub-agent (spec §5.6): its tool
+    list already omits run_command and every mcp__ tool, so reaching this means the model
+    named a tool it was never offered. Routed through the normal correction chain."""
+    if ctx.is_main or ctx.permission != "plan" or atype != "tool_call":
+        return None
+    tool = str(resp.get("tool", ""))
+    if tool == "run_command" or tool.startswith("mcp__"):
+        return (f"You are read-only for this task: `{tool}` isn't available to you. "
+                "Investigate with the read tools and put your findings in `report`.")
+    return None
+
+
 def _decide_state_change_correction(resp: dict[str, object], phase: str) -> str | None:
     """Reject a state-changing tool_call in PLAN; None otherwise (inert for other
     phases and non-tool_call actions)."""
@@ -1162,6 +1177,7 @@ class ControllerLoop:
                 else _propose_mode_correction(resp, self._allowed_modes_for_current_phase()) if atype == "propose_mode"
                 else _reserved_tool_name_correction(resp, atype, self._render_ctx)
                 or _decide_state_change_correction(resp, self._sm.phase)
+                or _permission_correction(resp, atype, self._render_ctx)
                 or _empty_action_correction(resp, atype)
                 or _answer_intent_divergence_correction(resp, atype, tool_names)
                 # After _empty_action_correction on purpose: a blank note must be
