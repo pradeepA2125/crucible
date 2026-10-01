@@ -16,6 +16,10 @@ class AgentDefinition:
     persona: str
     model: str = "inherit"
     max_turns: int | None = None
+    # Applied before `tools` (spec §9.3). "edit" in either set is the edit ACTION type.
+    disallowed_tools: frozenset[str] = frozenset()
+    skills: tuple[str, ...] = ()  # pre-seeded into the child's active skills (spec §5.2)
+    source: str = "built-in"      # the file it came from, for warnings and logs
 
 
 _EXPLORE_PERSONA = (

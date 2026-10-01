@@ -20,6 +20,15 @@ _READ_SKILL_DEF = ToolDefinition(
 )
 
 
+def cap_skill_body(name: str, body: str, *, cap: int | None = None) -> str:
+    """A skill body as the model sees it: capped at CRUCIBLE_SKILLS_BODY_MAX_CHARS with a
+    visible marker. Shared by read_skill and a sub-agent's `skills:` pre-seed."""
+    limit = skills_body_max_chars() if cap is None else cap
+    if len(body) <= limit:
+        return body
+    return body[:limit] + f"\n\n[... skill '{name}' truncated at {limit} chars ...]"
+
+
 class SkillToolSource:
     """ToolSource exposing read_skill. Activated bodies land in the shared active_skills
     dict the controller loop injects into the dynamic tail each iteration.
@@ -64,9 +73,7 @@ class SkillToolSource:
             body = manifest.body_path.read_text(encoding="utf-8")
         except OSError as exc:
             return ToolOutput(output=f"Error: cannot read skill '{name}': {exc}", is_error=True)
-        cap = skills_body_max_chars()
-        if len(body) > cap:
-            body = body[:cap] + f"\n\n[... skill '{name}' truncated at {cap} chars ...]"
+        body = cap_skill_body(name, body)
         if not self._additive:
             # The parent keeps exactly one active skill; a sub-agent accumulates every
             # skill it reads (spec §5.2) and persists none of them.
