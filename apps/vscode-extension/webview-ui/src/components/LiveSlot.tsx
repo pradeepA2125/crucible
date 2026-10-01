@@ -16,6 +16,7 @@ import { McpGate } from "./messages/gates/McpGate";
 import { PlanCard } from "./messages/PlanCard";
 import { ReviewCard } from "./messages/ReviewCard";
 import { ErrorCard } from "./messages/ErrorCard";
+import { AgentChip } from "./agents/AgentChip";
 
 // ── GateDispatch ──────────────────────────────────────────────────────────────
 
@@ -32,11 +33,8 @@ function GateDispatch({ agent, ...card }: GateDispatchProps) {
   if (agent === null) return <GateCard {...card} />;
   return (
     <div className="flex flex-col gap-1">
-      <span
-        className="self-start px-1.5 py-0.5 rounded text-[10px] text-text-3 bg-surface-2 border border-border"
-        title={`Raised by sub-agent ${agent.label} (${agent.name})`}
-      >
-        {agent.label} · {agent.name}
+      <span className="self-start" title={`Raised by sub-agent ${agent.label} (${agent.name})`}>
+        <AgentChip name={agent.name} label={agent.label} />
       </span>
       <GateCard {...card} />
     </div>

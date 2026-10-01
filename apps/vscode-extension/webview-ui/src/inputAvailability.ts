@@ -81,6 +81,16 @@ export function inputAvailability(
       taskStop,
     };
   }
+  // Row 2b: a command or MCP approval is pending — a sub-agent's or the main agent's.
+  // The card is the input path; Stop stays available because the turn is still running.
+  if (turnActive && (hasGate("command") || hasGate("mcp_tool"))) {
+    return {
+      disabled: true,
+      placeholder: "Answer the card above…",
+      showStop: true,
+      taskStop,
+    };
+  }
   // Row 3: a controller turn is running (no gate). The durable reload-window guard:
   // a fresh webview mounts inputEnabled=true while the detached turn still runs.
   // Stop is shown — a controller turn can be stopped (no task is active here).
