@@ -47,9 +47,9 @@ class MemoryToolSource:
     name = "memory"
 
     def __init__(
-        self, consolidator: object, scope_kind: str, scope_id: str,
+        self, consolidator: object | None, scope_kind: str, scope_id: str,
         *, recall_engine: object | None = None, store: object | None = None,
-        run_id: str = "",
+        run_id: str = "", allow_remember: bool = True,
     ) -> None:
         self._consolidator = consolidator
         self._scope_kind = scope_kind
@@ -59,20 +59,21 @@ class MemoryToolSource:
         # Tagging explicit remembers with the run (= thread_id) makes them rewindable;
         # an untagged memory carries source_ref="" and escapes retire_since entirely.
         self._run_id = run_id
+        self._allow_remember = allow_remember
 
     def definitions(self) -> list[ToolDefinition]:
-        defs = [_REMEMBER_DEF]
+        defs = [_REMEMBER_DEF] if self._allow_remember else []
         if self._recall_engine is not None:
             defs.append(_RECALL_DEF)
         return defs
 
     def owns(self, tool: str) -> bool:
-        return tool in {"remember", "recall"}
+        return tool == "recall" or (tool == "remember" and self._allow_remember)
 
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
         if tool == "recall":
             return await self._recall(args)
-        if tool != "remember":
+        if tool != "remember" or not self._allow_remember:
             return ToolOutput(output=f"Error: unknown tool '{tool}'", is_error=True)
         content = str(args.get("content", "")).strip()
         kind = str(args.get("kind", ""))

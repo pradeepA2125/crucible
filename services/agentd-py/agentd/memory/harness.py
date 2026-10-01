@@ -110,11 +110,13 @@ class MemoryHarness:
         self._bg_tasks: set[asyncio.Task[None]] = set()  # FIX #5: hold refs so tasks aren't GC'd
         self._recall_cache: dict[str, list[str]] = {}  # per-run rendered recall
         self._trace_cache: dict[str, RecallTrace | None] = {}  # per-run trace (for the artifact)
-        self._recall_key: str | None = None  # last (run_id::query) recalled, to dedup per turn
+        # Last query recalled PER RUN (dedup per turn). A dict, not one slot: concurrent
+        # sub-agent runs alternating queries would otherwise evict each other every turn.
+        self._recall_keys: dict[str, str] = {}
 
     async def prepare_turn(
         self, history: History, run_id: str, query: str = "",
-        observed: ObservedPrompt | None = None,
+        observed: ObservedPrompt | None = None, *, consolidate: bool = True,
     ) -> TurnPreparation:
         if not self._enabled:
             return TurnPreparation(history=history, recalled_memories=[], compacted=False)
@@ -134,7 +136,7 @@ class MemoryHarness:
             evicted_seq_lo=result.evicted_seq_lo if result else None,
             evicted_seq_hi=result.evicted_seq_hi if result else None,
         )
-        if (result and result.compacted and self._consolidator is not None
+        if (consolidate and result and result.compacted and self._consolidator is not None
                 and result.evicted_seq_hi is not None):
             self.schedule_consolidation(
                 run_id, self._scope_kind, self._scope_id,
@@ -168,7 +170,7 @@ class MemoryHarness:
         if not query:
             return self._recall_cache.get(run_id, []), None
         key = f"{run_id}::{query}"
-        if key != self._recall_key:
+        if key != self._recall_keys.get(run_id):
             try:
                 mems, trace = await self._recall_engine.recall_with_trace(  # type: ignore[union-attr]
                     query, self._scope_kind, self._scope_id, k=8)
@@ -178,8 +180,14 @@ class MemoryHarness:
                 logger.warning("[memory] recall failed for run=%s", run_id)
                 self._recall_cache[run_id] = []
                 self._trace_cache[run_id] = None
-            self._recall_key = key
+            self._recall_keys[run_id] = key
         return self._recall_cache.get(run_id, []), self._trace_cache.get(run_id)
+
+    def release_run(self, run_id: str) -> None:
+        """Drop a finished run's recall caches (a sub-agent run ends for good)."""
+        self._recall_cache.pop(run_id, None)
+        self._trace_cache.pop(run_id, None)
+        self._recall_keys.pop(run_id, None)
 
     @staticmethod
     def _recall_query(history: History) -> str:
@@ -230,15 +238,26 @@ class MemoryHarness:
         segs = [s for s in self._store.get_segments(run_id) if seq_lo <= s.seq <= seq_hi]
         return "\n".join(s.content for s in segs)
 
-    def memory_tool_source(self, run_id: str = "") -> object | None:
-        """A MemoryToolSource (remember + recall) for the controller registry, or None when
-        memory has no consolidator wired (disabled / compaction-only)."""
-        if self._consolidator is None:
-            return None
+    def memory_tool_source(
+        self, run_id: str = "", *, allow_remember: bool = True,
+    ) -> object | None:
+        """A MemoryToolSource for the controller registry. The default (remember + recall)
+        needs a consolidator; a sub-agent's recall-only source (allow_remember=False,
+        spec §5.2) needs only a recall engine. None when the needed piece is absent."""
         from agentd.memory.tool_source import MemoryToolSource
+        if allow_remember:
+            if self._consolidator is None:
+                return None
+            return MemoryToolSource(
+                self._consolidator, self._scope_kind, self._scope_id,
+                recall_engine=self._recall_engine, store=self._store, run_id=run_id,
+            )
+        if self._recall_engine is None:
+            return None
         return MemoryToolSource(
-            self._consolidator, self._scope_kind, self._scope_id,
+            None, self._scope_kind, self._scope_id,
             recall_engine=self._recall_engine, store=self._store, run_id=run_id,
+            allow_remember=False,
         )
 
     # ------------------------------------------------------------------
