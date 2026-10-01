@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -75,16 +76,39 @@ class Checkpoint(BaseModel):
     memory_anchor_md: str | None = None
 
 
+GateKind = Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]
+
+
+class GateAgent(BaseModel):
+    """Which sub-agent raised a gate (spec §4.5). Absent on the main agent's gates."""
+    id: str
+    label: str
+    name: str
+
+
 class PendingGate(BaseModel):
-    """The one gate a thread is waiting on, if any.
+    """One gate a thread is waiting on. A thread may hold several (spec §4.5).
 
     command/step/scope/validation are derived from the active *task* status
-    (see live_state._GATE_FIELD). mode/edit/clarify/mcp_tool are *controller*
-    gates — the controller has no task, so they live on the thread
-    (pending_controller_gate).
+    (see live_state._GATE_FIELD) and carry a synthetic id "task:{task_id}:{kind}".
+    mode/edit/clarify/mcp_tool/command are *controller* gates — the controller has no
+    task, so they live on the thread (pending_controller_gates).
+
+    gate_id is never a default_factory: that would mint a fresh id on every read of a
+    stored row (the ChatMessage.id lesson — see CLAUDE.md "Chat rewind"), so decision
+    routes could never address a gate. "" means "not stored yet": the store assigns a
+    uuid on add_controller_gate. Callers that need the id before storing (to key a
+    decision future) mint it with PendingGate.new().
     """
-    kind: Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]
+    gate_id: str = ""
+    kind: GateKind
     payload: dict[str, Any] = Field(default_factory=dict)
+    agent: GateAgent | None = None
+
+    @classmethod
+    def new(cls, kind: GateKind, payload: dict[str, Any],
+            agent: GateAgent | None = None) -> PendingGate:
+        return cls(gate_id=uuid4().hex, kind=kind, payload=payload, agent=agent)
 
 
 class ChatThread(BaseModel):
@@ -98,9 +122,15 @@ class ChatThread(BaseModel):
     # thread; resume updates it to the child id. The durable thread->task link
     # that lets the UI follow task-id churn without losing the gate/plan view.
     active_task_id: str | None = None
-    # Controller-turn gate (mode/edit). The controller has no task, so its gate
-    # lives here (durable, surfaced by /live via resolve_thread_live).
-    pending_controller_gate: PendingGate | None = None
+    # Controller-turn gates. The controller has no task, so its gates live here (durable,
+    # surfaced by /live via resolve_thread_live). A list: sub-agents can raise gates
+    # concurrently with each other (spec §4.5).
+    pending_controller_gates: list[PendingGate] = Field(default_factory=list)
+
+    @property
+    def pending_controller_gate(self) -> PendingGate | None:
+        """TRANSITIONAL (Plan 1B Part I, removed in Task 2): the first pending gate."""
+        return self.pending_controller_gates[0] if self.pending_controller_gates else None
     # The controller loop's verbatim turn history (assistant action + tool_result
     # pairs), replayed as seed_history on the next turn. Durable so a backend
     # restart doesn't drop the conversation the transcript still shows — mirrors
@@ -144,6 +174,11 @@ class ThreadLiveState(BaseModel):
     # disabled across a webview reload (the ephemeral inputEnabled flag resets on mount).
     turn_active: bool = False
     status: str | None = None
+    # Every pending gate, controller gates first (spec §4.5).
+    pending_gates: list[PendingGate] = Field(default_factory=list)
+    # LEGACY (Plan 1B Part I only): the first of pending_gates, kept so the pre-1B
+    # frontend keeps rendering single gates. Part II moves the frontend to pending_gates
+    # and deletes this field.
     pending_gate: PendingGate | None = None
     plan: dict[str, Any] | None = None
     # Durable lifecycle telemetry (Tier B): failure_summary only at FAILED/ABORTED,

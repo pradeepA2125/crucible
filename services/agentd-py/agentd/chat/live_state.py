@@ -87,7 +87,10 @@ def resolve_live_state(
         kind, field = _GATE_FIELD[status]
         payload = _payload(getattr(task.execution_state, field, None))
         if payload:
-            gate = PendingGate(kind=kind, payload=payload)
+            # Synthetic, deterministic id: task gates are resolved by the task routes,
+            # and the id lets the frontend key and route them like controller gates.
+            gate = PendingGate(gate_id=f"task:{task.task_id}:{kind}", kind=kind,
+                               payload=payload)
         else:
             # Tripwire + defense: status says we're at a gate but its payload is
             # missing/empty — a persistence inconsistency (e.g. a stale save clobbered
@@ -107,6 +110,7 @@ def resolve_live_state(
     return ThreadLiveState(
         active_task_id=task.task_id,
         status=status,
+        pending_gates=[gate] if gate is not None else [],
         pending_gate=gate,
         plan=plan,
         # failure_summary only makes sense once the task has failed/aborted; run_summary
@@ -132,12 +136,16 @@ def resolve_thread_live(
     next poll once the decision route clears it.
     """
     todos = thread.controller_todos if thread is not None else None
-    if thread is not None and thread.pending_controller_gate is not None:
+    base = resolve_live_state(active_task_id, get_task)
+    if thread is not None and thread.pending_controller_gates:
+        # Controller gates own the live slot (the controller has no task). A task-derived
+        # gate, when one exists, rides along after them (spec §4.5).
+        gates = [*thread.pending_controller_gates, *base.pending_gates]
         return ThreadLiveState(
             active_task_id=active_task_id,
-            pending_gate=thread.pending_controller_gate,
+            pending_gates=gates,
+            pending_gate=gates[0],
             todos=todos,
         )
-    base = resolve_live_state(active_task_id, get_task)
     base.todos = todos  # ThreadLiveState is a mutable pydantic model; set after build
     return base

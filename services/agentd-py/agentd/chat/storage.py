@@ -89,9 +89,32 @@ class ChatThreadStore:
         return json.loads(raw) if raw else None
 
     @staticmethod
-    def _gate_from_row(row: sqlite3.Row) -> PendingGate | None:
+    def _gates_from_row(row: sqlite3.Row) -> list[PendingGate]:
+        """The column holds a JSON list of gates. A row written before multi-gate holds a
+        single gate object: read it as a one-item list with the deterministic id
+        "legacy-{kind}", so repeated reads (and a decision route) agree on its id."""
         raw = row["controller_gate_json"]
-        return PendingGate.model_validate_json(raw) if raw else None
+        if not raw:
+            return []
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data.setdefault("gate_id", f"legacy-{data.get('kind', 'gate')}")
+            return [PendingGate.model_validate(data)]
+        return [PendingGate.model_validate(g) for g in data]
+
+    def _write_gates(self, thread_id: str, gates: list[PendingGate]) -> None:
+        raw = json.dumps([g.model_dump(mode="json") for g in gates]) if gates else None
+        self._conn.execute(
+            "UPDATE chat_threads SET controller_gate_json = ? WHERE thread_id = ?",
+            (raw, thread_id),
+        )
+        self._conn.commit()
+
+    def _read_gates(self, thread_id: str) -> list[PendingGate]:
+        row = self._conn.execute(
+            "SELECT controller_gate_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        return self._gates_from_row(row) if row is not None else []
 
     def create_thread(self, workspace_path: str, title: str = "New Chat") -> ChatThread:
         thread_id = f"chat-{uuid.uuid4().hex[:12]}"
@@ -122,7 +145,7 @@ class ChatThreadStore:
                 messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
                 touched_files=json.loads(row["touched_files_json"]),
                 active_task_id=row["active_task_id"],
-                pending_controller_gate=self._gate_from_row(row),
+                pending_controller_gates=self._gates_from_row(row),
                 controller_conversation_history=self._history_from_row(row),
                 controller_retrieval_seed=self._seed_from_row(row),
                 controller_todos=self._todos_from_row(row),
@@ -145,7 +168,7 @@ class ChatThreadStore:
             messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
             touched_files=json.loads(row["touched_files_json"]),
             active_task_id=row["active_task_id"],
-            pending_controller_gate=self._gate_from_row(row),
+            pending_controller_gates=self._gates_from_row(row),
             controller_conversation_history=self._history_from_row(row),
             controller_retrieval_seed=self._seed_from_row(row),
             controller_todos=self._todos_from_row(row),
@@ -175,15 +198,42 @@ class ChatThreadStore:
         )
         self._conn.commit()
 
+    # Gate list mutations (spec §4.5). Each is a synchronous read-modify-write with no
+    # await, so it is race-safe in single-process asyncio: two concurrent raise/resolve
+    # sites can never interleave inside one of these.
+    def add_controller_gate(self, thread_id: str, gate: PendingGate) -> PendingGate:
+        """Append a gate; assigns a uuid when gate_id is "" (not yet stored). Returns
+        the stored gate (with its id)."""
+        stored = gate if gate.gate_id else gate.model_copy(update={"gate_id": uuid.uuid4().hex})
+        self._write_gates(thread_id, [*self._read_gates(thread_id), stored])
+        return stored
+
+    def remove_controller_gate(self, thread_id: str, gate_id: str) -> bool:
+        """Remove one gate by id. False when no such gate is pending."""
+        gates = self._read_gates(thread_id)
+        kept = [g for g in gates if g.gate_id != gate_id]
+        if len(kept) == len(gates):
+            return False
+        self._write_gates(thread_id, kept)
+        return True
+
+    def clear_controller_gates(self, thread_id: str, *, agent_id: str | None = None) -> None:
+        """Clear every gate, or only the gates one sub-agent raised."""
+        if agent_id is None:
+            self._write_gates(thread_id, [])
+            return
+        kept = [g for g in self._read_gates(thread_id)
+                if g.agent is None or g.agent.id != agent_id]
+        self._write_gates(thread_id, kept)
+
     def set_controller_gate(self, thread_id: str, gate: PendingGate | None) -> None:
-        """Set (or clear, with None) the thread's controller-turn gate. Mirrors
-        set_active_task: an in-place durable update the /live poll renders from."""
-        raw = gate.model_dump_json() if gate is not None else None
-        self._conn.execute(
-            "UPDATE chat_threads SET controller_gate_json = ? WHERE thread_id = ?",
-            (raw, thread_id),
-        )
-        self._conn.commit()
+        """TRANSITIONAL (Plan 1B Part I, removed in Task 2): replace the whole list with
+        [gate], or clear it with None."""
+        if gate is None:
+            self._write_gates(thread_id, [])
+            return
+        stored = gate if gate.gate_id else gate.model_copy(update={"gate_id": uuid.uuid4().hex})
+        self._write_gates(thread_id, [stored])
 
     def set_controller_todos(self, thread_id: str, raw: str | None) -> None:
         """Persist (raw = TodoLedger.to_json()) or clear (raw = None) the request's todo

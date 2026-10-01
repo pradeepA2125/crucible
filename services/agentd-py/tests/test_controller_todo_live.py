@@ -17,7 +17,7 @@ def test_todos_surface_with_no_task_no_gate():
 def test_todos_surface_alongside_controller_gate():
     thread = ChatThread(
         thread_id="t1", workspace_path="/w",
-        pending_controller_gate=PendingGate(kind="mode", payload={"x": 1}),
+        pending_controller_gates=[PendingGate(gate_id="g1", kind="mode", payload={"x": 1})],
         controller_todos=[{"title": "A", "status": "in_progress", "note": ""}])
     live = resolve_thread_live(thread, active_task_id=None, get_task=_get_task_raises)
     assert live.pending_gate is not None and live.pending_gate.kind == "mode"
