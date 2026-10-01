@@ -19,7 +19,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from agentd.subagents.context import AgentContext
 
 Audience = Literal["main", "child"]
 Permission = Literal["default", "acceptEdits", "dontAsk", "plan"]
@@ -59,6 +62,17 @@ class RenderContext:
     @classmethod
     def main(cls) -> RenderContext:
         return _MAIN
+
+    @classmethod
+    def for_agent(
+        cls, agent: AgentContext, *, tools: frozenset[str], shell_policy: ShellPolicy,
+    ) -> RenderContext:
+        """A sub-agent's context (rev 11 §4.7.2): flat and hashable, built once per loop
+        from the AgentContext plus the child's final tool names."""
+        return cls(
+            audience="child", permission=agent.permission, shell_policy=shell_policy,
+            tools=tools, base_types=frozenset(agent.allowed_types),
+            agent_id=agent.agent_id, agent_label=agent.label)
 
     @property
     def is_main(self) -> bool:
