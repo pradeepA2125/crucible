@@ -12,15 +12,26 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from agentd.domain.models import DiffEntry
+from agentd.domain.models import DiffEntry, PatchFailureCode, PatchPreflightIssue
 from agentd.patch.diffing import compute_diff_entries
-from agentd.patch.engine import PatchEngine
+from agentd.patch.engine import PatchEngine, PatchPreflightFailed
 from agentd.patch.inline_apply import apply_ops
 from agentd.workspace.promote import promote_files
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
 _CONTENT_FIELDS = ("content", "search", "replace", "diff")
+
+
+class StaleWriteError(PatchPreflightFailed):
+    """An agent tried to edit a file another agent changed after its last read
+    (spec §7.4). Carries a STALE_READ issue so the loop's PATCH FAILED branch gives the
+    re-read guidance. Raised by the sub-agent write guard (Phase 2)."""
+
+    def __init__(self, path: str, message: str) -> None:
+        super().__init__(message, [PatchPreflightIssue(
+            code=PatchFailureCode.STALE_READ, file=path, message=message)])
+        self.path = path
 
 
 def _looks_double_escaped(text: str) -> bool:

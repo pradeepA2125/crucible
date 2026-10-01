@@ -55,6 +55,8 @@ class PatchFailureCode(StrEnum):
     POLICY_VIOLATION = "policy_violation"
     PARSER_UNAVAILABLE = "parser_unavailable"
     APPLY_ERROR = "apply_error"
+    # Another agent promoted this file after the editing agent last read it (spec §7.4).
+    STALE_READ = "stale_read"
 
 
 class TaskBudget(BaseModel):

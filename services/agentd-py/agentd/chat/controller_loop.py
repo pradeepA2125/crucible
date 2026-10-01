@@ -324,6 +324,9 @@ _EDIT_GUIDANCE_BY_CODE: dict[PatchFailureCode, str] = {
         "That file is outside the current scope."),
     PatchFailureCode.PATH_ESCAPE: (
         "'file' must be a workspace-relative path inside the workspace."),
+    PatchFailureCode.STALE_READ: (
+        "Another agent changed this file after your last read. read_file it again, "
+        "then re-emit your edit against its current content."),
 }
 
 # Kept for every failure we cannot classify — notably the malformed-op shape errors
