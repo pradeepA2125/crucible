@@ -6,7 +6,14 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agentd.chat.models import CapturedFile, ChatMessage, ChatThread, Checkpoint, PendingGate
+from agentd.chat.models import (
+    AgentRecord,
+    CapturedFile,
+    ChatMessage,
+    ChatThread,
+    Checkpoint,
+    PendingGate,
+)
 
 
 class ChatThreadStore:
@@ -66,6 +73,28 @@ class ChatThreadStore:
                 PRIMARY KEY (thread_id, seq)
             );
         """)
+        # Sub-agents (spec §11.3): one row per dispatched agent, its transcript inline.
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_agents (
+                agent_id            TEXT PRIMARY KEY,
+                thread_id           TEXT NOT NULL,
+                turn_id             TEXT NOT NULL,
+                parent_agent_id     TEXT,
+                depth               INTEGER NOT NULL,
+                name                TEXT NOT NULL,
+                label               TEXT NOT NULL,
+                prompt              TEXT NOT NULL,
+                status              TEXT NOT NULL,
+                report              TEXT NOT NULL DEFAULT '',
+                files_changed_json  TEXT NOT NULL DEFAULT '[]',
+                stale_refusals      INTEGER NOT NULL DEFAULT 0,
+                transcript_json     TEXT NOT NULL DEFAULT '[]',
+                started_at          TEXT,
+                ended_at            TEXT
+            );
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS chat_agents_by_turn ON chat_agents(thread_id, turn_id)")
         self._conn.commit()
 
     @staticmethod
@@ -617,3 +646,82 @@ class ChatThreadStore:
             (json.dumps(files), thread_id),
         )
         self._conn.commit()
+
+    # ── Sub-agents (spec §11.3) ─────────────────────────────────────────────
+    _AGENT_UPDATABLE = {
+        "status": "status", "report": "report", "files_changed": "files_changed_json",
+        "stale_refusals": "stale_refusals", "started_at": "started_at",
+        "ended_at": "ended_at",
+    }
+
+    def insert_agent(self, record: AgentRecord) -> None:
+        self._conn.execute(
+            "INSERT INTO chat_agents (agent_id, thread_id, turn_id, parent_agent_id, depth, "
+            "name, label, prompt, status, report, files_changed_json, stale_refusals, "
+            "transcript_json, started_at, ended_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (record.agent_id, record.thread_id, record.turn_id, record.parent_agent_id,
+             record.depth, record.name, record.label, record.prompt, record.status,
+             record.report, json.dumps(record.files_changed), record.stale_refusals,
+             json.dumps([m.model_dump(mode="json") for m in record.transcript]),
+             record.started_at.isoformat() if record.started_at else None,
+             record.ended_at.isoformat() if record.ended_at else None))
+        self._conn.commit()
+
+    def update_agent(
+        self, agent_id: str, *, status: str | None = None, report: str | None = None,
+        files_changed: list[str] | None = None, stale_refusals: int | None = None,
+        started_at: datetime | None = None, ended_at: datetime | None = None,
+    ) -> None:
+        """Change only the given fields. Column names come from a fixed map, values are
+        always bound parameters."""
+        given: dict[str, object] = {
+            "status": status, "report": report,
+            "files_changed": json.dumps(files_changed) if files_changed is not None else None,
+            "stale_refusals": stale_refusals,
+            "started_at": started_at.isoformat() if started_at else None,
+            "ended_at": ended_at.isoformat() if ended_at else None,
+        }
+        pairs = [(self._AGENT_UPDATABLE[k], v) for k, v in given.items() if v is not None]
+        if not pairs:
+            return
+        assignments = ", ".join(f"{column} = ?" for column, _ in pairs)
+        self._conn.execute(
+            f"UPDATE chat_agents SET {assignments} WHERE agent_id = ?",  # noqa: S608 — fixed map
+            (*[v for _, v in pairs], agent_id))
+        self._conn.commit()
+
+    def set_agent_transcript(self, agent_id: str, messages: list[ChatMessage]) -> None:
+        self._conn.execute(
+            "UPDATE chat_agents SET transcript_json = ? WHERE agent_id = ?",
+            (json.dumps([m.model_dump(mode="json") for m in messages]), agent_id))
+        self._conn.commit()
+
+    @staticmethod
+    def _agent_from_row(row: sqlite3.Row) -> AgentRecord:
+        return AgentRecord(
+            agent_id=row["agent_id"], thread_id=row["thread_id"], turn_id=row["turn_id"],
+            parent_agent_id=row["parent_agent_id"], depth=row["depth"], name=row["name"],
+            label=row["label"], prompt=row["prompt"], status=row["status"],
+            report=row["report"], files_changed=json.loads(row["files_changed_json"]),
+            stale_refusals=row["stale_refusals"],
+            transcript=[ChatMessage.model_validate(m)
+                        for m in json.loads(row["transcript_json"])],
+            started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+            ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None)
+
+    def get_agent(self, agent_id: str) -> AgentRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM chat_agents WHERE agent_id = ?", (agent_id,)).fetchone()
+        return self._agent_from_row(row) if row is not None else None
+
+    def list_agents(self, thread_id: str, turn_id: str | None = None) -> list[AgentRecord]:
+        if turn_id is None:
+            rows = self._conn.execute(
+                "SELECT * FROM chat_agents WHERE thread_id = ? ORDER BY rowid",
+                (thread_id,)).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM chat_agents WHERE thread_id = ? AND turn_id = ? ORDER BY rowid",
+                (thread_id, turn_id)).fetchall()
+        return [self._agent_from_row(r) for r in rows]

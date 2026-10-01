@@ -42,10 +42,30 @@ class ChatMessage(BaseModel):
     # persisted before this feature existed. Nullable means those carry None and
     # simply do not offer a rewind anchor.
     id: str | None = None
-    type: Literal["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card"] = "text"
+    type: Literal["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card",
+                  "agent_dispatch"] = "text"
     task_id: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRecord(BaseModel):
+    """One sub-agent of a dispatch (spec §11.3) — a `chat_agents` row."""
+    agent_id: str
+    thread_id: str
+    turn_id: str
+    parent_agent_id: str | None = None
+    depth: int
+    name: str
+    label: str
+    prompt: str
+    status: str  # queued | running | waiting | completed | partial | failed | stopped
+    report: str = ""  # the full report, never truncated (D8)
+    files_changed: list[str] = Field(default_factory=list)
+    stale_refusals: int = 0
+    transcript: list[ChatMessage] = Field(default_factory=list)
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 class CapturedFile(BaseModel):
