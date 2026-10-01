@@ -77,7 +77,9 @@ class AggregatingToolRegistry:
     error) so the model can never address two tools by the same name.
     """
 
-    def __init__(self, sources: list[ToolSource]) -> None:
+    def __init__(
+        self, sources: list[ToolSource], allowed_tools: frozenset[str] | None = None,
+    ) -> None:
         seen: set[str] = set()
         for src in sources:
             for d in src.definitions():
@@ -85,14 +87,18 @@ class AggregatingToolRegistry:
                     raise ValueError(f"Duplicate tool name across sources: {d.name!r}")
                 seen.add(d.name)
         self._sources = sources
+        # A sub-agent's tool set (spec §5.3): None = every tool the sources offer.
+        self._allowed = allowed_tools
 
     def definitions(self) -> list[ToolDefinition]:
-        return [d for s in self._sources for d in s.definitions()]
+        return [d for s in self._sources for d in s.definitions()
+                if self._allowed is None or d.name in self._allowed]
 
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
-        for s in self._sources:
-            if s.owns(tool):
-                return await s.execute(tool, args)
+        if self._allowed is None or tool in self._allowed:
+            for s in self._sources:
+                if s.owns(tool):
+                    return await s.execute(tool, args)
         return ToolOutput(output=f"Error: unknown tool '{tool}'", is_error=True)
 
     def use_shadow_for_reads(self) -> None:
