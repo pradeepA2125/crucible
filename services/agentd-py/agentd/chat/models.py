@@ -186,10 +186,6 @@ class ThreadLiveState(BaseModel):
     status: str | None = None
     # Every pending gate, controller gates first (spec §4.5).
     pending_gates: list[PendingGate] = Field(default_factory=list)
-    # LEGACY (Plan 1B Part I only): the first of pending_gates, kept so the pre-1B
-    # frontend keeps rendering single gates. Part II moves the frontend to pending_gates
-    # and deletes this field.
-    pending_gate: PendingGate | None = None
     plan: dict[str, Any] | None = None
     # Durable lifecycle telemetry (Tier B): failure_summary only at FAILED/ABORTED,
     # run_summary whenever present. Lets the Error/Review cards render from state on reload.

@@ -575,12 +575,10 @@ export class HttpBackendClient implements BackendTaskClient {
     const rawGates = Array.isArray(raw["pending_gates"])
       ? (raw["pending_gates"] as Record<string, unknown>[])
       : [];
-    const legacyGate = raw["pending_gate"] as Record<string, unknown> | null;
     return ThreadLiveStateSchema.parse({
       activeTaskId: raw["active_task_id"] ?? null,
       status: raw["status"] ?? null,
       pendingGates: rawGates.map(toGate),
-      pendingGate: legacyGate ? toGate(legacyGate) : null,
       plan: raw["plan"] ?? null,
       turnActive: raw["turn_active"] ?? false,
       failureSummary: this.toFailureSummary(raw),

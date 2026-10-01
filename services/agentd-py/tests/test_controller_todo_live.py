@@ -1,5 +1,6 @@
 from agentd.chat.live_state import resolve_thread_live
 from agentd.chat.models import ChatThread, PendingGate
+from tests.gate_helpers import first_live_gate
 
 
 def _get_task_raises(_tid):
@@ -20,7 +21,7 @@ def test_todos_surface_alongside_controller_gate():
         pending_controller_gates=[PendingGate(gate_id="g1", kind="mode", payload={"x": 1})],
         controller_todos=[{"title": "A", "status": "in_progress", "note": ""}])
     live = resolve_thread_live(thread, active_task_id=None, get_task=_get_task_raises)
-    assert live.pending_gate is not None and live.pending_gate.kind == "mode"
+    assert first_live_gate(live) is not None and first_live_gate(live).kind == "mode"
     assert live.todos == [{"title": "A", "status": "in_progress", "note": ""}]
 
 

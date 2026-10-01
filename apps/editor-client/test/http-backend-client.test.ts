@@ -432,8 +432,6 @@ describe("HttpBackendClient", () => {
               { gate_id: "g-2", kind: "mcp_tool", payload: {},
                 agent: { id: "agent-1", label: "impl", name: "general" } },
             ],
-            pending_gate: { gate_id: "task:task-1:command", kind: "command",
-                            payload: { command: "pytest" }, agent: null },
             plan: null,
           }),
           { status: 200, headers: { "content-type": "application/json" } }
@@ -449,7 +447,6 @@ describe("HttpBackendClient", () => {
     expect(live.pendingGates[0].payload.command).toBe("pytest");
     expect(live.pendingGates[0].agent).toBeNull();
     expect(live.pendingGates[1].agent).toEqual({ id: "agent-1", label: "impl", name: "general" });
-    expect(live.pendingGate?.gateId).toBe("task:task-1:command");
     expect(live.plan).toBeNull();
   });
 
@@ -469,7 +466,6 @@ describe("HttpBackendClient", () => {
     });
     const live = await client.getThreadLiveState("chat-idle");
     expect(live.activeTaskId).toBeNull();
-    expect(live.pendingGate).toBeNull();
     expect(live.pendingGates).toEqual([]);
     expect(live.plan).toBeNull();
   });

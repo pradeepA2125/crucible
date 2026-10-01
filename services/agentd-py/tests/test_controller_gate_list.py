@@ -100,30 +100,27 @@ def _command_gated_task() -> TaskRecord:
                       status=TaskStatus.AWAITING_COMMAND_DECISION, execution_state=es)
 
 
-def test_live_state_carries_the_gate_list_and_the_legacy_first_gate(tmp_path: Path) -> None:
+def test_live_state_carries_the_gate_list(tmp_path: Path) -> None:
     store, tid = _store(tmp_path)
     first, second = PendingGate.new("command", {}), PendingGate.new("mcp_tool", {})
     store.add_controller_gate(tid, first)
     store.add_controller_gate(tid, second)
     live = resolve_thread_live(store.get_thread(tid), None, _no_task)
     assert [g.gate_id for g in live.pending_gates] == [first.gate_id, second.gate_id]
-    assert live.pending_gate is not None and live.pending_gate.gate_id == first.gate_id
     dumped = live.model_dump(mode="json")
     assert dumped["pending_gates"][0]["gate_id"] == first.gate_id
-    assert dumped["pending_gate"]["gate_id"] == first.gate_id
 
 
-def test_no_gates_means_an_empty_list_and_no_legacy_gate(tmp_path: Path) -> None:
+def test_no_gates_means_an_empty_list(tmp_path: Path) -> None:
     store, tid = _store(tmp_path)
     live = resolve_thread_live(store.get_thread(tid), None, _no_task)
-    assert live.pending_gates == [] and live.pending_gate is None
+    assert live.pending_gates == []
 
 
 def test_task_gates_carry_a_synthetic_task_id() -> None:
     task = _command_gated_task()
     live = resolve_live_state(task.task_id, lambda _tid: task)
     assert [g.gate_id for g in live.pending_gates] == ["task:task-1:command"]
-    assert live.pending_gate is not None and live.pending_gate.gate_id == "task:task-1:command"
 
 
 def test_controller_gates_come_first_then_the_task_gate(tmp_path: Path) -> None:
@@ -132,3 +129,10 @@ def test_controller_gates_come_first_then_the_task_gate(tmp_path: Path) -> None:
     task = _command_gated_task()
     live = resolve_thread_live(store.get_thread(tid), task.task_id, lambda _tid: task)
     assert [g.gate_id for g in live.pending_gates] == [ctrl.gate_id, "task:task-1:command"]
+
+
+def test_live_state_no_longer_ships_the_legacy_single_gate(tmp_path: Path) -> None:
+    store, tid = _store(tmp_path)
+    store.add_controller_gate(tid, PendingGate.new("command", {}))
+    dumped = resolve_thread_live(store.get_thread(tid), None, _no_task).model_dump(mode="json")
+    assert "pending_gate" not in dumped and len(dumped["pending_gates"]) == 1

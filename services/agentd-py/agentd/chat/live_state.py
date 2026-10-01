@@ -111,7 +111,6 @@ def resolve_live_state(
         active_task_id=task.task_id,
         status=status,
         pending_gates=[gate] if gate is not None else [],
-        pending_gate=gate,
         plan=plan,
         # failure_summary only makes sense once the task has failed/aborted; run_summary
         # surfaces whenever the engine has finalized it (terminal states).
@@ -144,7 +143,6 @@ def resolve_thread_live(
         return ThreadLiveState(
             active_task_id=active_task_id,
             pending_gates=gates,
-            pending_gate=gates[0],
             todos=todos,
         )
     base.todos = todos  # ThreadLiveState is a mutable pydantic model; set after build

@@ -1421,7 +1421,7 @@ def build_router(
 
         @router.get("/chat/threads/{thread_id}/live")
         async def get_thread_live(thread_id: str) -> dict:
-            """The thread's current actionable state (status + one active gate + plan).
+            """The thread's current actionable state (status + every pending gate + plan).
 
             The UI polls this and renders entirely from it, so reloads and resume
             task-id churn self-heal. The resolver is a pure sync function; the task

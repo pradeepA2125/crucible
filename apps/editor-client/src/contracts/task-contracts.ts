@@ -361,8 +361,6 @@ export const ThreadLiveStateSchema = z.object({
   status: z.string().nullable(),
   // Every pending gate, controller gates first (spec §4.5).
   pendingGates: z.array(PendingGateSchema).default([]),
-  // LEGACY: the first of pendingGates. Removed once nothing reads it (Plan 1B Task 8).
-  pendingGate: PendingGateSchema.nullable(),
   plan: z.record(z.unknown()).nullable(),
   // True while a controller turn / held-open controller gate is in flight (durable
   // input-disable signal that survives a webview reload). Absent on legacy payloads → false.

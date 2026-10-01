@@ -58,7 +58,7 @@ interface StubBackendState {
 const NULL_LIVE_STATE: ThreadLiveState = {
   activeTaskId: null,
   status: null,
-  pendingGate: null, pendingGates: [],
+  pendingGates: [],
   plan: null,
   turnActive: false,
 };
@@ -1120,7 +1120,6 @@ describe("CrucibleController — command-decision", () => {
     // A controller command gate: no task, gate id is the thread.
     state.liveResponse = {
       activeTaskId: null, status: null, plan: null, turnActive: true,
-      pendingGate: { kind: "command", payload: { command: "rm", args: ["-rf", "x"] } },
       pendingGates: [{ gateId: "g-cmd", kind: "command", payload: { command: "rm", args: ["-rf", "x"] }, agent: null }],
     };
     await controller.pollThreadLiveState();  // sets latestLiveState (activeTaskId null)
@@ -1231,7 +1230,6 @@ describe("CrucibleController — command-decision", () => {
     state.liveResponse = {
       activeTaskId: "task-1",
       status: "AWAITING_COMMAND_DECISION",
-      pendingGate: { kind: "command", payload: { command: "pytest" } },
       pendingGates: [{ gateId: "task:task-1:command", kind: "command", payload: { command: "pytest" }, agent: null }],
       plan: null,
       turnActive: false,
@@ -1274,7 +1272,7 @@ describe("CrucibleController — command-decision", () => {
     const agent = { id: "agent-1", label: "impl", name: "general" };
     state.liveResponse = {
       activeTaskId: "task-1", status: "AWAITING_COMMAND_DECISION", plan: null,
-      turnActive: true, pendingGate: null,
+      turnActive: true,
       pendingGates: [
         { gateId: "g-mcp", kind: "mcp_tool", payload: {}, agent },
         { gateId: "task:task-1:command", kind: "command", payload: { command: "ls" }, agent: null },
@@ -1427,13 +1425,13 @@ describe("CrucibleController — command-decision", () => {
 
     // Poll #1: controller turn running (no task, no gate) → turnActive=true delivered.
     state.liveResponse = {
-      activeTaskId: null, status: null, pendingGate: null, pendingGates: [], plan: null, turnActive: true,
+      activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: true,
     };
     await controller.pollThreadLiveState();
 
     // Poll #2: turn ended — ONLY turnActive changed (signature otherwise identical).
     state.liveResponse = {
-      activeTaskId: null, status: null, pendingGate: null, pendingGates: [], plan: null, turnActive: false,
+      activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: false,
     };
     await controller.pollThreadLiveState();
 
@@ -1451,7 +1449,7 @@ describe("CrucibleController — command-decision", () => {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
       liveResponse: {
-        activeTaskId: null, status: null, pendingGate: null, pendingGates: [], plan: null, turnActive: true,
+        activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: true,
       },
     };
     const backend: BackendTaskClient = {
@@ -1487,7 +1485,7 @@ describe("CrucibleController — command-decision", () => {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
       liveResponse: {
-        activeTaskId: null, status: null, pendingGate: null, pendingGates: [], plan: null, turnActive: false,
+        activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: false,
       },
     };
     const backend: BackendTaskClient = {
@@ -1510,7 +1508,7 @@ describe("CrucibleController — command-decision", () => {
     const sendPromise = controller.sendChatMessage("hi"); // sets turnAbort, blocks on the stub
     await new Promise((r) => setTimeout(r, 0));            // let sendChatMessage set turnAbort
     state.liveResponse = {
-      activeTaskId: null, status: null, pendingGate: null, pendingGates: [], plan: null, turnActive: true,
+      activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: true,
     };
     await controller.pollThreadLiveState();               // turnAbort set → resume must NOT fire
     await new Promise((r) => setTimeout(r, 0));
@@ -1527,7 +1525,7 @@ describe("CrucibleController — command-decision", () => {
       liveResponse: {
         activeTaskId: "task-9",
         status: "AWAITING_PLAN_APPROVAL",
-        pendingGate: null, pendingGates: [],
+        pendingGates: [],
         plan: { task_id: "task-9", plan_markdown: "# Plan\n- step" },
         turnActive: false,
       },
@@ -1562,7 +1560,7 @@ describe("CrucibleController — command-decision", () => {
       getThreadLiveState: async () => ({
         activeTaskId: "t9",
         status: "READY_FOR_REVIEW",
-        pendingGate: null, pendingGates: [],
+        pendingGates: [],
         plan: null,
         turnActive: false,
       }),
@@ -1618,7 +1616,7 @@ describe("CrucibleController — command-decision", () => {
       getThreadLiveState: async () => ({
         activeTaskId: "task-fail",
         status: "FAILED",
-        pendingGate: null, pendingGates: [],
+        pendingGates: [],
         plan: null,
         turnActive: false,
       }),
@@ -1648,7 +1646,7 @@ describe("CrucibleController — command-decision", () => {
     let errorClears2 = 0;
     const okBackend: BackendTaskClient = {
       ...failedBackend,
-      getThreadLiveState: async () => ({ activeTaskId: null, status: null, pendingGate: null, pendingGates: [], plan: null, turnActive: false }),
+      getThreadLiveState: async () => ({ activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: false }),
     };
     const controller2 = new CrucibleController(
       () => okBackend, new MemorySessionStore(), createSettings(),
@@ -1713,7 +1711,7 @@ describe("CrucibleController — command-decision", () => {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [], abortCalls: [],
-      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, pendingGates: [], plan: null, turnActive: false },
+      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGates: [], plan: null, turnActive: false },
     };
     const backend = createStubBackend(state);
     const controller = new CrucibleController(
@@ -1732,7 +1730,7 @@ describe("CrucibleController — command-decision", () => {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [], reviewPrefCalls: [],
-      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGate: null, pendingGates: [], plan: null, turnActive: false },
+      liveResponse: { activeTaskId: "task-run", status: "EXECUTING", pendingGates: [], plan: null, turnActive: false },
     };
     const backend = createStubBackend(state);
     const controller = new CrucibleController(
@@ -1754,7 +1752,7 @@ describe("CrucibleController — command-decision", () => {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
       reviewPrefCalls: [], chatReviewPrefCalls: [],
-      liveResponse: { activeTaskId: null, status: null, pendingGate: null, pendingGates: [], plan: null, turnActive: true },
+      liveResponse: { activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: true },
     };
     const backend = createStubBackend(state);
     const controller = new CrucibleController(
@@ -1781,7 +1779,7 @@ describe("CrucibleController — command-decision", () => {
       getThreadLiveState: async () => ({
         activeTaskId: "t9",
         status: "READY_FOR_REVIEW",
-        pendingGate: null, pendingGates: [],
+        pendingGates: [],
         plan: null,
         turnActive: false,
         runSummary: { stepsCompleted: 3, stepsTotal: 4, deviations: ["1 delta replan(s)"] },
@@ -1815,7 +1813,7 @@ describe("CrucibleController — command-decision", () => {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
-      liveResponse: { activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, pendingGates: [], plan: null, turnActive: false },
+      liveResponse: { activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGates: [], plan: null, turnActive: false },
     };
     const backend: BackendTaskClient = {
       ...createStubBackend(state),
@@ -1837,7 +1835,7 @@ describe("CrucibleController — command-decision", () => {
     await controller.pollThreadLiveState();   // poll 1: no narrative yet
     // narrative lands (status unchanged)
     state.liveResponse = {
-      activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, pendingGates: [], plan: null,
+      activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGates: [], plan: null,
       turnActive: false,
       taskNarrative: { outcome: "succeeded", headline: "Did X", points: ["a"] },
     };
@@ -1856,7 +1854,7 @@ describe("CrucibleController — command-decision", () => {
         getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
       }),
       getThreadLiveState: async () => ({
-        activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGate: null, pendingGates: [], plan: null,
+        activeTaskId: "t9", status: "READY_FOR_REVIEW", pendingGates: [], plan: null,
         turnActive: false,
         taskNarrative: { outcome: "succeeded", headline: "Added refresh tokens", points: ["edited auth.py"] },
       }),
@@ -1888,7 +1886,7 @@ describe("CrucibleController — command-decision", () => {
         getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
       }),
       getThreadLiveState: async () => ({
-        activeTaskId: "tf", status: "FAILED", pendingGate: null, pendingGates: [], plan: null,
+        activeTaskId: "tf", status: "FAILED", pendingGates: [], plan: null,
         turnActive: false,
         taskNarrative: { outcome: "failed", headline: "Stopped at step 2", points: ["import broke"] },
       }),
@@ -1915,7 +1913,7 @@ describe("CrucibleController — command-decision", () => {
       getThreadLiveState: async () => ({
         activeTaskId: "task-fail",
         status: "FAILED",
-        pendingGate: null, pendingGates: [],
+        pendingGates: [],
         plan: null,
         turnActive: false,
         failureSummary: { stepId: "s3", stepIndex: 3, errorClass: "VerifyPhaseExhausted", message: "boom" },
@@ -2028,7 +2026,7 @@ describe("CrucibleController — command-decision", () => {
       getThreadLiveState: async () => ({
         activeTaskId: "task-retry",
         status: "READY_FOR_REVIEW",
-        pendingGate: null, pendingGates: [],
+        pendingGates: [],
         plan: null,
         turnActive: false,
       }),

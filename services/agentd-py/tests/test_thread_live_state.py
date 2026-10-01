@@ -12,6 +12,7 @@ from agentd.domain.models import (
     TaskRecord,
     TaskStatus,
 )
+from tests.gate_helpers import first_live_gate
 
 
 def test_execution_state_has_pending_validation_field() -> None:
@@ -43,12 +44,12 @@ def _getter(task: TaskRecord):
 def test_no_active_task_returns_nulls() -> None:
     ls = resolve_live_state(None, _getter(_task(TaskStatus.EXECUTING)))
     assert ls.active_task_id is None and ls.status is None
-    assert ls.pending_gate is None and ls.plan is None
+    assert first_live_gate(ls) is None and ls.plan is None
 
 
 def test_missing_task_returns_nulls() -> None:
     ls = resolve_live_state("ghost", _getter(_task(TaskStatus.EXECUTING)))
-    assert ls.active_task_id is None and ls.pending_gate is None
+    assert ls.active_task_id is None and first_live_gate(ls) is None
 
 
 def test_command_gate() -> None:
@@ -60,10 +61,10 @@ def test_command_gate() -> None:
     t = _task(TaskStatus.AWAITING_COMMAND_DECISION, es=es)
     ls = resolve_live_state("t1", _getter(t))
     assert ls.status == "AWAITING_COMMAND_DECISION"
-    assert ls.pending_gate is not None
-    assert ls.pending_gate.kind == "command"
-    assert ls.pending_gate.payload["command"] == "pytest"
-    assert ls.pending_gate.payload["args"] == ["-x"]
+    assert first_live_gate(ls) is not None
+    assert first_live_gate(ls).kind == "command"
+    assert first_live_gate(ls).payload["command"] == "pytest"
+    assert first_live_gate(ls).payload["args"] == ["-x"]
 
 
 def test_step_gate() -> None:
@@ -72,9 +73,9 @@ def test_step_gate() -> None:
     )
     t = _task(TaskStatus.AWAITING_STEP_REVIEW, es=es)
     ls = resolve_live_state("t1", _getter(t))
-    assert ls.pending_gate is not None
-    assert ls.pending_gate.kind == "step"
-    assert ls.pending_gate.payload["step_title"] == "Add edges"
+    assert first_live_gate(ls) is not None
+    assert first_live_gate(ls).kind == "step"
+    assert first_live_gate(ls).payload["step_title"] == "Add edges"
 
 
 def test_step_gate_carries_diff_entries_with_temp_path() -> None:
@@ -89,7 +90,7 @@ def test_step_gate_carries_diff_entries_with_temp_path() -> None:
     )
     t = _task(TaskStatus.AWAITING_STEP_REVIEW, es=es)
     ls = resolve_live_state("t1", _getter(t))
-    entries = ls.pending_gate.payload["diff_entries"]
+    entries = first_live_gate(ls).payload["diff_entries"]
     assert entries[0]["path"] == "auth.py"
     assert entries[0]["temp_path"] == "/shadow/auth.py"
 
@@ -102,18 +103,18 @@ def test_scope_gate() -> None:
     )
     t = _task(TaskStatus.AWAITING_SCOPE_DECISION, es=es)
     ls = resolve_live_state("t1", _getter(t))
-    assert ls.pending_gate is not None
-    assert ls.pending_gate.kind == "scope"
-    assert ls.pending_gate.payload["files"] == ["a.py"]
+    assert first_live_gate(ls) is not None
+    assert first_live_gate(ls).kind == "scope"
+    assert first_live_gate(ls).payload["files"] == ["a.py"]
 
 
 def test_validation_gate() -> None:
     es = TaskExecutionState(pending_validation={"summary": "1 failed", "diagnostics": ["x"]})
     t = _task(TaskStatus.AWAITING_VALIDATION_DECISION, es=es)
     ls = resolve_live_state("t1", _getter(t))
-    assert ls.pending_gate is not None
-    assert ls.pending_gate.kind == "validation"
-    assert ls.pending_gate.payload["summary"] == "1 failed"
+    assert first_live_gate(ls) is not None
+    assert first_live_gate(ls).kind == "validation"
+    assert first_live_gate(ls).payload["summary"] == "1 failed"
 
 
 def test_gate_status_with_missing_payload_suppresses_card_and_warns(caplog) -> None:
@@ -125,7 +126,7 @@ def test_gate_status_with_missing_payload_suppresses_card_and_warns(caplog) -> N
     with caplog.at_level(logging.WARNING):
         ls = resolve_live_state("t1", _getter(t))
     assert ls.status == "AWAITING_COMMAND_DECISION"
-    assert ls.pending_gate is None  # defended — no empty card
+    assert first_live_gate(ls) is None  # defended — no empty card
     assert any("inconsistency" in r.message and "pending_command_request" in r.message
                for r in caplog.records)
 
@@ -134,7 +135,7 @@ def test_plan_surfaced_only_on_awaiting_plan_approval() -> None:
     approving = _task(TaskStatus.AWAITING_PLAN_APPROVAL, plan="# Plan\n- step")
     ls = resolve_live_state("t1", _getter(approving))
     assert ls.plan is not None and ls.plan["plan_markdown"] == "# Plan\n- step"
-    assert ls.pending_gate is None
+    assert first_live_gate(ls) is None
 
     executing = _task(TaskStatus.EXECUTING, plan="# Plan\n- step")
     ls2 = resolve_live_state("t1", _getter(executing))

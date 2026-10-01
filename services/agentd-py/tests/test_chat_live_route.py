@@ -90,7 +90,7 @@ async def test_no_active_task_returns_nulls(tmp_path: Path) -> None:
     body = resp.json()
     assert body["active_task_id"] is None
     assert body["status"] is None
-    assert body["pending_gate"] is None
+    assert body["pending_gates"] == []
     assert body["plan"] is None
 
 
@@ -130,8 +130,8 @@ async def test_command_gate_surfaced(tmp_path: Path) -> None:
     body = resp.json()
     assert body["active_task_id"] == "task-1"
     assert body["status"] == "AWAITING_COMMAND_DECISION"
-    assert body["pending_gate"]["kind"] == "command"
-    assert body["pending_gate"]["payload"]["command"] == "pytest"
+    assert body["pending_gates"][0]["kind"] == "command"
+    assert body["pending_gates"][0]["payload"]["command"] == "pytest"
 
 
 @pytest.mark.asyncio
@@ -152,6 +152,6 @@ async def test_plan_surfaced_at_approval(tmp_path: Path) -> None:
         resp = await client.get(f"/v1/chat/threads/{thread.thread_id}/live")
 
     body = resp.json()
-    assert body["pending_gate"] is None
+    assert body["pending_gates"] == []
     assert body["plan"]["plan_markdown"] == "# Plan\n- do it"
     assert body["plan"]["task_id"] == "task-2"
