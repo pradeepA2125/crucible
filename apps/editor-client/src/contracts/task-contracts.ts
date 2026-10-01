@@ -205,6 +205,9 @@ export type StreamEvent =
   | { type: "chat_breadcrumb"; payload: { text: string; task_id: string } }
   | { type: "chat_progress"; payload: { note: string } }
   | { type: "memory_compacted"; payload: { evicted: number; anchor_version: number } }
+  | { type: "agent_started"; payload: { agent_id: string; parent_agent_id: string | null; depth: number; name: string; label: string } }
+  | { type: "agent_status"; payload: { agent_id: string; status: string } }
+  | { type: "agent_finished"; payload: { agent_id: string; status: string; files_changed: string[] } }
   | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } }
   // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
   // reasoning, then `output` climbs — the transition that otherwise looks like
@@ -237,12 +240,41 @@ export const ChatMessageSchema = z.object({
   content: z.string(),
   // Stable rewind anchor. Absent/null on messages persisted before rewind shipped.
   id: z.string().nullable().optional(),
-  type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card", "validation_card", "command_card"]).default("text"),
+  type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card", "validation_card", "command_card", "agent_dispatch"]).default("text"),
   taskId: z.string().nullable().optional(),
   timestamp: z.string(),
   metadata: z.record(z.unknown()).default({}),
 });
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+
+// A sub-agent of a dispatch (spec §11.1, §11.3). `now`/`toolCount` exist only on /live
+// (an in-flight turn); the routes' list view omits them.
+export const AgentSummarySchema = z.object({
+  agentId: z.string(),
+  turnId: z.string().optional(),
+  parentAgentId: z.string().nullable(),
+  depth: z.number(),
+  name: z.string(),
+  label: z.string(),
+  status: z.string(),
+  now: z.string().default(""),
+  toolCount: z.number().default(0),
+  filesChangedCount: z.number(),
+  startedAt: z.string().nullable(),
+  endedAt: z.string().nullable(),
+  reportPreview: z.string().default(""),
+});
+export type AgentSummary = z.infer<typeof AgentSummarySchema>;
+
+export const AgentDetailSchema = AgentSummarySchema.extend({
+  prompt: z.string(),
+  report: z.string(),
+  filesChanged: z.array(z.string()),
+  staleRefusals: z.number(),
+  transcript: z.array(ChatMessageSchema),
+  lastSeq: z.number(),
+});
+export type AgentDetail = z.infer<typeof AgentDetailSchema>;
 
 export const ChatThreadSummarySchema = z.object({
   threadId: z.string(),
@@ -371,6 +403,7 @@ export const ThreadLiveStateSchema = z.object({
   taskNarrative: TaskNarrativeSchema.nullable().optional(),
   todos: z.array(TodoItemSchema).nullable().optional(),
   sessions: z.array(SessionSummarySchema).nullable().optional(),
+  agents: z.array(AgentSummarySchema).nullable().optional(),
 });
 export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 
@@ -392,6 +425,7 @@ export const BackendConfigSchema = z.object({
   memoryEnabled: z.boolean(),
   skillsEnabled: z.boolean(),
   mcpEnabled: z.boolean(),
+  subagentsEnabled: z.boolean().default(false),
   // Current reasoning provider (null when the backend runs scripted / pre-P4).
   // contextWindow is the window compaction is actually using right now — seeded
   // from CRUCIBLE_MEMORY_WINDOW_TOKENS at startup, overwritten by a settings save.
@@ -568,6 +602,10 @@ export interface BackendTaskClient {
   postChatMcpDecision(threadId: string, decision: McpToolDecision, gateId?: string): Promise<void>;
   // Stop a detached controller turn (POST /chat/threads/{id}/stop). ok=false is benign.
   stopChatTurn(threadId: string): Promise<{ ok: boolean }>;
+  // Sub-agents (spec §11.3).
+  listAgents(threadId: string, turnId?: string): Promise<AgentSummary[]>;
+  getAgent(threadId: string, agentId: string): Promise<AgentDetail>;
+  stopAgent(threadId: string, agentId: string): Promise<{ ok: boolean }>;
   // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used
   // to resume the live overlay for a controller turn after a webview reload (chat:{id}).
   streamChannel(channelId: string): AsyncIterable<StreamEvent>;

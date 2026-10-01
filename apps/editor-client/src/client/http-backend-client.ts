@@ -34,6 +34,10 @@ import {
   type ContextTestResult,
   McpServerListSchema,
   type McpServerList,
+  AgentDetailSchema,
+  AgentSummarySchema,
+  type AgentDetail,
+  type AgentSummary,
   type BackendTaskClient,
   type ThreadLiveState,
   type PatchStreamEvent,
@@ -395,6 +399,42 @@ export class HttpBackendClient implements BackendTaskClient {
     return { ok: Boolean(raw["ok"]) };
   }
 
+  async listAgents(threadId: string, turnId?: string): Promise<AgentSummary[]> {
+    const query = turnId !== undefined ? `?turn_id=${encodeURIComponent(turnId)}` : "";
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/agents${query}`
+    ) as Record<string, unknown>;
+    const agents = Array.isArray(raw["agents"]) ? raw["agents"] as Record<string, unknown>[] : [];
+    return agents.map((a) => AgentSummarySchema.parse(HttpBackendClient.toAgentSummary(a)));
+  }
+
+  async getAgent(threadId: string, agentId: string): Promise<AgentDetail> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/agents/${encodeURIComponent(agentId)}`
+    ) as Record<string, unknown>;
+    const transcript = Array.isArray(raw["transcript"])
+      ? raw["transcript"] as Record<string, unknown>[] : [];
+    return AgentDetailSchema.parse({
+      ...HttpBackendClient.toAgentSummary({
+        ...raw,
+        files_changed_count: Array.isArray(raw["files_changed"]) ? raw["files_changed"].length : 0,
+        report_preview: String(raw["report"] ?? "").slice(0, 200),
+      }),
+      prompt: raw["prompt"], report: raw["report"],
+      filesChanged: raw["files_changed"] ?? [], staleRefusals: raw["stale_refusals"] ?? 0,
+      transcript: transcript.map((m) => HttpBackendClient.toChatMessage(m)),
+      lastSeq: raw["last_seq"] ?? 0,
+    });
+  }
+
+  async stopAgent(threadId: string, agentId: string): Promise<{ ok: boolean }> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/agents/${encodeURIComponent(agentId)}/stop`,
+      { method: "POST" }
+    ) as Record<string, unknown>;
+    return { ok: raw["ok"] === true };
+  }
+
   // Subscribe-only SSE relay (no turn launch). Reuses the SSE line-parsing already
   // behind postModeDecision/streamPatch. Closes on `done`/`chat_done`.
   async *streamChannel(channelId: string): AsyncIterable<StreamEvent> {
@@ -541,23 +581,39 @@ export class HttpBackendClient implements BackendTaskClient {
       threadId: raw["thread_id"],
       workspacePath: raw["workspace_path"],
       title: raw["title"],
-      messages: (messages as Record<string, unknown>[]).map((m) => ({
-        role: m["role"],
-        content: m["content"],
-        type: m["type"] ?? "text",
-        // The rewind anchor. This mapping is explicit, not passthrough — omitting
-        // the field here silently drops it no matter what the schema allows.
-        id: m["id"] ?? null,
-        taskId: m["task_id"] ?? null,
-        timestamp: typeof m["timestamp"] === "string"
-          ? m["timestamp"]
-          : new Date(m["timestamp"] as string).toISOString(),
-        metadata: (typeof m["metadata"] === "object" && m["metadata"] !== null)
-          ? m["metadata"]
-          : {},
-      })),
+      messages: (messages as Record<string, unknown>[]).map((m) => HttpBackendClient.toChatMessage(m)),
       touchedFiles: Array.isArray(raw["touched_files"]) ? raw["touched_files"] : [],
     });
+  }
+
+  private static toChatMessage(m: Record<string, unknown>): Record<string, unknown> {
+    return {
+      role: m["role"],
+      content: m["content"],
+      type: m["type"] ?? "text",
+      // The rewind anchor. This mapping is explicit, not passthrough — omitting
+      // the field here silently drops it no matter what the schema allows.
+      id: m["id"] ?? null,
+      taskId: m["task_id"] ?? null,
+      timestamp: typeof m["timestamp"] === "string"
+        ? m["timestamp"]
+        : new Date(m["timestamp"] as string).toISOString(),
+      metadata: (typeof m["metadata"] === "object" && m["metadata"] !== null)
+        ? m["metadata"]
+        : {},
+    };
+  }
+
+  private static toAgentSummary(a: Record<string, unknown>): Record<string, unknown> {
+    return {
+      agentId: a["agent_id"], turnId: a["turn_id"] ?? undefined,
+      parentAgentId: a["parent_agent_id"] ?? null, depth: a["depth"],
+      name: a["name"], label: a["label"], status: a["status"],
+      now: a["now"] ?? "", toolCount: a["tool_count"] ?? 0,
+      filesChangedCount: a["files_changed_count"] ?? 0,
+      startedAt: a["started_at"] ?? null, endedAt: a["ended_at"] ?? null,
+      reportPreview: a["report_preview"] ?? "",
+    };
   }
 
   async getThreadLiveState(threadId: string): Promise<ThreadLiveState> {
@@ -592,6 +648,9 @@ export class HttpBackendClient implements BackendTaskClient {
       // Session rows keep their snake keys (id/command/status/exit_code/started_at)
       // — same passthrough convention as the memory-inspect signals.
       sessions: raw["sessions"] ?? null,
+      agents: Array.isArray(raw["agents"])
+        ? (raw["agents"] as Record<string, unknown>[]).map((a) => HttpBackendClient.toAgentSummary(a))
+        : null,
     });
   }
 
@@ -610,6 +669,7 @@ export class HttpBackendClient implements BackendTaskClient {
       memoryEnabled: raw["memory_enabled"] ?? false,
       skillsEnabled: raw["skills_enabled"] ?? false,
       mcpEnabled: raw["mcp_enabled"] ?? false,
+      subagentsEnabled: raw["subagents_enabled"] ?? false,
       provider: HttpBackendClient.mapProvider(raw["provider"]),
     });
   }

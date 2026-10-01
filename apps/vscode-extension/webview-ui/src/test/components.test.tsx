@@ -225,3 +225,14 @@ describe("ThinkingBlock", () => {
     expect(container.querySelector("[data-thinking-body]")).toBeNull();
   });
 });
+
+describe("MessageRow — agent_dispatch", () => {
+  it("renders nothing until the roster card ships (Phase 4)", () => {
+    const { container } = render(
+      <MessageRow msg={{ role: "agent", content: "", type: "agent_dispatch",
+                         timestamp: "2026-10-01T00:00:00Z",
+                         metadata: { agent_ids: ["agent-a"] } }} />,
+    );
+    expect(container.textContent).toBe("");
+  });
+});

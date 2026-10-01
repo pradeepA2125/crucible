@@ -140,6 +140,11 @@ export function MessageRow({ msg, planVersion, turnActive, onRewindRequest }: Pr
     case "command_card":
       return <LegacyGateSummary msg={msg} />;
 
+    // The dispatch roster anchor (spec §6.1). Its card is Phase 4; until then it
+    // renders nothing rather than an empty agent bubble.
+    case "agent_dispatch":
+      return null;
+
     // diff_summary falls through to text/role-based dispatch
     case "diff_summary":
     case "text":
