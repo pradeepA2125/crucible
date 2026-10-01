@@ -855,6 +855,11 @@ class ChatController:
         self._broadcaster.broadcast(channel_id, {
             "type": "diff_ready",
             "payload": {"diff_entries": diff_payload, "resolved": resolved}})
+        if decision == "stale":
+            # Refused by the write guard (spec §7.4): always recorded, gated or not — the
+            # user may have clicked Accept on an edit that nevertheless did not land.
+            self._write_breadcrumb(thread_id, channel_id, f"✗ Not applied: {reason}")
+            return
         files = ", ".join(d.path for d in diff) or "(no files)"
         if was_gated:
             if decision == "accept":

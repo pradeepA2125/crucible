@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from agentd.chat.edit_session import StaleWriteError
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.tool_events import trace_to_tool_events
 from agentd.chat.turn_control import ChatTurnControl
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     # `was_gated` is per-edit, NOT the turn's starting preference: the review pref is
     # live-mutable (ChatTurnControl), so within one turn some edits gate and others
     # auto-accept. The breadcrumb decision keys off what actually happened.
+    # decision is "accept" | "reject" | "stale" (a promote refused by the write guard, spec §7.4).
     EditRecordCb = Callable[[list[DiffEntry], str, str, bool], Awaitable[None]]
     # Given the files an accepted edit touched, return a compact retrieval-refresh
     # note (pointers only, no bodies) to append to history — or None.
@@ -1493,18 +1495,37 @@ class ControllerLoop:
                 # mutates this same object), so one turn can legitimately gate its first
                 # edit and auto-accept its third.
                 was_gated = not turn_control.auto_accept_edits and edit_decision_cb is not None
-                if not was_gated:
-                    await self._edit.accept()
-                    accepted = True
-                    reason = ""
-                else:
+                reason = ""
+                if was_gated:
                     decision = await edit_decision_cb(diff)
                     accepted = decision.get("decision") == "accept"
                     reason = str(decision.get("reason", ""))
-                    if accepted:
+                else:
+                    accepted = True
+                stale: StaleWriteError | None = None
+                if accepted:
+                    try:
                         await self._edit.accept()
-                    else:
-                        await self._edit.reject()  # restore shadow from real (shadow==real)
+                    # Narrow on purpose and FIRST: StaleWriteError is a RuntimeError, so
+                    # anything broader would swallow it (rev 11 §7.4). Check 2 refused the
+                    # promote — a sibling changed a file while this edit was in flight or
+                    # held at the gate; accept() already restored the shadow from real.
+                    except StaleWriteError as exc:
+                        stale = exc
+                else:
+                    await self._edit.reject()  # restore shadow from real (shadow==real)
+                if stale is not None:
+                    if edit_record_cb is not None:
+                        await edit_record_cb(
+                            diff, "stale",
+                            f"{stale.path} changed since it was read (by {stale.writer_label})",
+                            was_gated)
+                    history.append(assistant_turn(
+                        {k: v for k, v in resp.items() if k != "patch_ops"}))
+                    history.append({
+                        "role": "tool_result", "tool": "edit",
+                        "content": f"PATCH FAILED: {stale} {_edit_failure_guidance(stale)}"})
+                    continue
                 if edit_record_cb is not None:
                     await edit_record_cb(
                         diff, "accept" if accepted else "reject", reason, was_gated)
