@@ -194,6 +194,10 @@ export class ChatPanel {
       vscode.ViewColumn.Two,
       {
         enableScripts: true,
+        // Keep the page alive while the tab is hidden. Without it VS Code destroys the
+        // webview on every tab switch and the chat remounts on the thread list, losing
+        // the open thread, scroll, drafts, expanded agent rows and the agent window.
+        retainContextWhenHidden: true,
         localResourceRoots: [
             vscode.Uri.joinPath(this.extensionUri, "webview-ui", "dist"),
         ],
