@@ -45,7 +45,7 @@ def _edit() -> dict[str, object]:
 
 
 def test_no_log_when_the_flag_is_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CRUCIBLE_SUBAGENTS_ENABLED", raising=False)
+    monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "0")
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     ctrl = _controller(tmp_path, tmp_path, store, [])
     assert ctrl._write_log_for("t1") is None
@@ -94,7 +94,7 @@ async def test_the_parent_is_refused_until_it_rereads(tmp_path: Path,
 @pytest.mark.asyncio
 async def test_flag_off_the_same_turn_is_never_refused(tmp_path: Path,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CRUCIBLE_SUBAGENTS_ENABLED", raising=False)
+    monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "0")
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "f.py").write_text("x = 1\n")

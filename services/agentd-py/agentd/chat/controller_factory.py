@@ -52,9 +52,10 @@ def is_skills_enabled() -> bool:
 
 def is_subagents_enabled() -> bool:
     """Whether the controller can dispatch sub-agents and guards shared-workspace writes
-    (spec §12). Default OFF through Phases 1–4 — Phase 5 flips it after the live smoke.
-    Opt in with CRUCIBLE_SUBAGENTS_ENABLED=1."""
-    return os.getenv("CRUCIBLE_SUBAGENTS_ENABLED", "0").strip().lower() in _TRUTHY
+    (spec §12). Default ON since Phase 5 (after the live smoke). Kill-switch:
+    CRUCIBLE_SUBAGENTS_ENABLED=0 (or false/no/off). Controller-only — inert when
+    CRUCIBLE_CHAT_CONTROLLER is off."""
+    return os.getenv("CRUCIBLE_SUBAGENTS_ENABLED", "1").strip().lower() in _TRUTHY
 
 
 def is_mcp_enabled() -> bool:

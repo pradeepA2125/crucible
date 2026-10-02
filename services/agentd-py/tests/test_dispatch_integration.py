@@ -134,7 +134,7 @@ async def test_nested_dispatch_stops_at_the_depth_limit(
 async def test_flag_off_the_parent_has_no_dispatch_tool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("CRUCIBLE_SUBAGENTS_ENABLED", raising=False)
+    monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "0")
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     ctrl = _controller(tmp_path, tmp_path, store, ScriptedReasoningEngine(None, []))
     assert ctrl._subagents is None
