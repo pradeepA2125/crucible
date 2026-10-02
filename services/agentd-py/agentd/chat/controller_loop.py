@@ -6,6 +6,7 @@ edit/submit_changes are added in E2/E3.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -21,6 +22,7 @@ from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
+from agentd.providers.availability import ProviderUnavailable, is_provider_unavailable
 from agentd.reasoning.react_common import (
     accepts_kwarg,
     assistant_turn,
@@ -61,6 +63,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAIN = RenderContext.main()
+
+
+# Loop-level retries for a provider outage, on top of the transport's own (spec §3.3).
+# Some capacity errors carry no status code (NIM "ResourceExhausted ... (32/32)"), so the
+# transport does not retry them; before v2 they self-healed only through the malformed path.
+PROVIDER_RETRY_BACKOFFS_SEC: tuple[float, ...] = (15.0, 45.0)
 
 
 class ControllerLoopExhausted(Exception):
@@ -957,6 +965,7 @@ class ControllerLoop:
         # it; keeping it per-call means a GENUINE model syntax error (a missing colon, a
         # stray quote) costs one call of lost grammar rather than the whole session.
         retry_unconstrained = False
+        unavailable_retries = 0
 
         def _on_thinking(chunk: str) -> None:
             # Stream the model's reasoning live so the chat thinking pane updates
@@ -1184,7 +1193,23 @@ class ControllerLoop:
                     **seam_kwargs,
                 )
                 retry_unconstrained = False   # one call only, always
+                unavailable_retries = 0
             except Exception as exc:
+                if is_provider_unavailable(exc):
+                    if unavailable_retries < len(PROVIDER_RETRY_BACKOFFS_SEC):
+                        delay = PROVIDER_RETRY_BACKOFFS_SEC[unavailable_retries]
+                        unavailable_retries += 1
+                        logger.warning("[controller] provider unavailable (%d/%d), retrying "
+                                       "in %.0fs: %s", unavailable_retries,
+                                       len(PROVIDER_RETRY_BACKOFFS_SEC), delay, exc)
+                        _on_retry(unavailable_retries, len(PROVIDER_RETRY_BACKOFFS_SEC),
+                                  "provider_unavailable",
+                                  f"⚠️ Provider unavailable — retrying in {delay:.0f}s…")
+                        # Not malformed, and nothing is appended to history: the model did
+                        # nothing wrong, so a correction message would only mislead it.
+                        await asyncio.sleep(delay)
+                        continue
+                    raise ProviderUnavailable(str(exc)) from exc
                 # A raised exception here (empty/unparseable model output, a transport
                 # hiccup — e.g. a cloud model exhausting its output budget on <think>)
                 # is just another flavor of "the model gave me nothing usable" — the
