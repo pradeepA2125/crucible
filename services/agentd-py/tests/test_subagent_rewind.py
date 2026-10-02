@@ -77,3 +77,20 @@ async def test_rewind_deletes_children_memory_and_the_write_log(
     assert [r.agent_id for r in store.list_agents(tid)] == ["agent-keep"]
     assert memory.get_anchor(run) is None and memory.get_segments(run) == []
     assert ctrl._write_log_for(tid) is not log  # reset: a fresh, empty log
+
+
+def test_agents_are_deleted_by_checkpoint_stamp(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from agentd.chat.models import AgentRecord
+    from agentd.chat.storage import ChatThreadStore
+
+    store = ChatThreadStore(tmp_path / "c.sqlite3")
+    tid = store.create_thread(str(tmp_path), title="t").thread_id
+    for agent_id, seq, turn in (("old", 0, "t0"), ("cont", 1, "uuid-continuation"),
+                                ("new", 2, "t2"), ("before", -1, "tx")):
+        store.insert_agent(AgentRecord(
+            agent_id=agent_id, thread_id=tid, turn_id=turn, depth=1, name="general-purpose",
+            label=agent_id, prompt="p", status="completed", checkpoint_seq=seq,
+            dispatcher_id="main"))
+    # A continuation-turn agent (turn id matches no checkpoint) is caught by its stamp.
+    assert sorted(store.delete_agents_from_checkpoint(tid, 1)) == ["cont", "new"]
+    assert sorted(r.agent_id for r in store.list_agents(tid)) == ["before", "old"]

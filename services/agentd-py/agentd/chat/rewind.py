@@ -57,6 +57,7 @@ class RewindOutcome(BaseModel):
     removed_messages: int = 0
     prefill_text: str = ""
     target_created_at: datetime | None = None
+    target_seq: int | None = None
 
 
 class RewindStore:
@@ -197,9 +198,12 @@ class RewindStore:
                         and str(e.get("tool", "")) in {"run_command", "session_start"})
         # Children of the rewound turns ran commands too (spec §11.6); count them so the
         # confirm dialog states everything a rewind cannot undo.
+        # By stamp (spec §8.10) — continuation turns open no checkpoint — or by turn id for
+        # rows written before stamps existed: the same rule forget_rewound_agents deletes by.
+        first = span[0].seq
         span_turns = {cp.turn_id for cp in span}
         for record in self._store.list_agents(thread_id):
-            if record.turn_id not in span_turns:
+            if record.checkpoint_seq < first and record.turn_id not in span_turns:
                 continue
             for m in record.transcript:
                 events = m.metadata.get("tool_events") or []
@@ -215,7 +219,7 @@ class RewindStore:
         if not span:
             return None
         target = span[0]
-        outcome = RewindOutcome(target_created_at=target.created_at)
+        outcome = RewindOutcome(target_created_at=target.created_at, target_seq=target.seq)
 
         # 1. Files. Per-path failures are COLLECTED, never raised: a rewind that
         #    half-worked must report it rather than stop silently partway.

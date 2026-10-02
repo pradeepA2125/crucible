@@ -1941,7 +1941,7 @@ def build_router(
             forget = getattr(_chat_agent, "forget_rewound_agents", None)
             if forget is not None:
                 try:
-                    removed_agents = forget(thread_id, rewound_turns)
+                    removed_agents = forget(thread_id, rewound_turns, outcome.target_seq)
                 except Exception:
                     import logging as _logging
                     _logging.getLogger(__name__).warning(

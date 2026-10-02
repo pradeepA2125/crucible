@@ -901,3 +901,17 @@ class ChatThreadStore:
             f"AND turn_id IN ({placeholders})", (thread_id, *turn_ids))
         self._conn.commit()
         return ids
+
+    def delete_agents_from_checkpoint(self, thread_id: str, seq: int) -> list[str]:
+        """Delete every agent stamped inside a rewind span (spec §8.10). Matching by stamp,
+        not turn id, also catches agents from continuation turns, which open no checkpoint.
+        A stamp of -1 ("before every checkpoint") is never inside a span."""
+        rows = self._conn.execute(
+            "SELECT agent_id FROM chat_agents WHERE thread_id = ? AND checkpoint_seq >= ?",
+            (thread_id, seq)).fetchall()
+        ids = [r["agent_id"] for r in rows]
+        self._conn.execute(
+            "DELETE FROM chat_agents WHERE thread_id = ? AND checkpoint_seq >= ?",
+            (thread_id, seq))
+        self._conn.commit()
+        return ids
