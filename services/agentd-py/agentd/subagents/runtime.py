@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from agentd.subagents.context import AgentContext
 from agentd.subagents.definitions import AgentDefinition
+from agentd.subagents.inbox import InboxItem
 
 if TYPE_CHECKING:
     from agentd.subagents.events import SequencedBroadcaster
@@ -66,6 +67,8 @@ class AgentHandle:
     started_at: datetime | None = None
     ended_at: datetime | None = None
     result: ChildResult | None = None
+    stop_reason: str = "user"   # user | cascade | deadline | budget | disband (spec §3.3)
+    activation_input: str = ""  # what this activation was started with
 
     @property
     def agent_id(self) -> str:
@@ -101,49 +104,132 @@ RunChild = Callable[[AgentHandle], Awaitable[ChildResult]]
 StatusSink = Callable[[AgentHandle], None]
 
 
-class SubAgentRuntime:
-    def __init__(self, max_concurrent: int, on_status: StatusSink | None = None) -> None:
+class ActivationInProgress(RuntimeError):
+    """An agent has at most one queued-or-running activation (spec §3.4); new input for a
+    running agent goes to its inbox instead."""
+
+
+ChildrenOf = Callable[[str], list[str]]
+LeftoverSink = Callable[["AgentHandle", list[InboxItem]], None]
+
+
+class AgentSupervisor:
+    """Runs agent activations under one process-wide concurrency cap (spec §3.4).
+
+    It knows nothing about loops, stores or gates: callers pass `run_child` (build and run
+    one activation), `on_status` (persist + broadcast), `children_of` (the agent tree, read
+    from the database because idle agents have no handle) and `on_leftover` (start the next
+    activation for input that arrived after the last drain)."""
+
+    def __init__(
+        self, max_concurrent: int, on_status: StatusSink | None = None,
+        children_of: ChildrenOf | None = None, on_leftover: LeftoverSink | None = None,
+    ) -> None:
         # Process-wide on purpose: the cap protects the provider's rate limit. `main` never
         # holds a slot. Bounded, so any accounting bug is a loud ValueError.
         self._slots = asyncio.BoundedSemaphore(max_concurrent)
         self._on_status = on_status
+        self._children_of = children_of or (lambda _agent_id: [])
+        self._on_leftover = on_leftover
+        self._inboxes: dict[str, list[InboxItem]] = {}
         self.registry = AgentRegistry()
 
     def set_status(self, handle: AgentHandle, status: str) -> None:
         handle.status = status
         if status == "running" and handle.started_at is None:
             handle.started_at = datetime.now(UTC)
-        if status in TERMINAL_STATUSES:
+        if status in IDLE_STATUSES:
             handle.ended_at = datetime.now(UTC)
         if self._on_status is not None:
             self._on_status(handle)
+
+    def is_active(self, agent_id: str) -> bool:
+        handle = self.registry.get(agent_id)
+        return handle is not None and handle.task is not None and not handle.task.done()
+
+    def enqueue(self, handle: AgentHandle, run_child: RunChild) -> asyncio.Task[ChildResult]:
+        if self.is_active(handle.agent_id):
+            raise ActivationInProgress(
+                f"agent {handle.agent_id} is still running — its input goes to its inbox")
+        self.registry.add(handle)
+        handle.result = None
+        handle.status = "queued"
+        task = asyncio.create_task(self._run_one(handle, run_child))
+        handle.task = task
+        return task
+
+    async def wait(
+        self, handles: list[AgentHandle], *, dispatcher: AgentHandle | None = None,
+    ) -> list[ChildResult]:
+        if dispatcher is not None and dispatcher.held:
+            # A dispatcher waiting on its agents must not pin a slot they may need.
+            self._release(dispatcher)
+        tasks = [h.task for h in handles if h.task is not None]
+        # A cancel of THIS await (the dispatcher stopping) propagates; the dispatcher then
+        # never re-acquires, so `held` stays False.
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if dispatcher is not None:
+            await self._acquire(dispatcher)
+        return [self._result_of(h) for h in handles]
 
     async def dispatch(
         self, handles: list[AgentHandle], run_child: RunChild, *,
         dispatcher: AgentHandle | None = None,
     ) -> list[ChildResult]:
+        """v1's dispatch-and-wait, kept until always-background dispatch (Phase 2)."""
         for handle in handles:
-            self.registry.add(handle)
-        if dispatcher is not None and dispatcher.held:
-            # A child waiting on its own children must not pin a slot they may need.
-            self._release(dispatcher)
-        tasks = [asyncio.create_task(self._run_one(h, run_child)) for h in handles]
-        for handle, task in zip(handles, tasks, strict=True):
-            handle.task = task
-        # A cancel of THIS await (the dispatcher stopping) cancels every child and
-        # propagates; the dispatcher then never re-acquires, so `held` stays False.
-        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
-        if dispatcher is not None:
-            await self._acquire(dispatcher)
-        return [self._result_of(h, o) for h, o in zip(handles, outcomes, strict=True)]
+            self.enqueue(handle, run_child)
+        return await self.wait(handles, dispatcher=dispatcher)
 
-    async def stop_agent(self, agent_id: str) -> bool:
+    async def stop(self, agent_id: str, reason: str = "user") -> bool:
+        """Stop the agent's queued or running descendants (deepest first), then the agent
+        (spec §3.4) — an independently scheduled agent must not outlive its dispatcher."""
+        for child_id in self._children_of(agent_id):
+            await self.stop(child_id, "cascade")
         handle = self.registry.get(agent_id)
         if handle is None or handle.task is None or handle.task.done():
             return False
+        handle.stop_reason = reason
         handle.task.cancel()
         await asyncio.wait({handle.task})
         return True
+
+    async def stop_agent(self, agent_id: str) -> bool:
+        return await self.stop(agent_id, "user")
+
+    def deliver(self, agent_id: str, item: InboxItem) -> None:
+        self._inboxes.setdefault(agent_id, []).append(item)
+        if not self.is_active(agent_id):
+            handle = self.registry.get(agent_id)
+            if handle is not None:
+                self._hand_back_leftovers(handle)
+
+    def drain(self, agent_id: str) -> list[InboxItem]:
+        """All notes plus at most one report: reports are appended one per iteration so the
+        memory compactor can run between large ones (spec §3.6)."""
+        pending = self._inboxes.get(agent_id, [])
+        taken: list[InboxItem] = []
+        kept: list[InboxItem] = []
+        report_taken = False
+        for item in pending:
+            if item.kind == "report":
+                if report_taken:
+                    kept.append(item)
+                    continue
+                report_taken = True
+            taken.append(item)
+        self._inboxes[agent_id] = kept
+        return taken
+
+    def has_pending_report(self, agent_id: str) -> bool:
+        return any(i.kind == "report" for i in self._inboxes.get(agent_id, []))
+
+    def _hand_back_leftovers(self, handle: AgentHandle) -> None:
+        items = self._inboxes.get(handle.agent_id, [])
+        if self._on_leftover is None or not any(i.wakes for i in items):
+            return
+        self._inboxes[handle.agent_id] = []
+        self._on_leftover(handle, items)
 
     async def _run_one(self, handle: AgentHandle, run_child: RunChild) -> ChildResult:
         try:
@@ -162,11 +248,10 @@ class SubAgentRuntime:
             if handle.held:
                 self._release(handle)
         self._finish(handle, result)
+        self._hand_back_leftovers(handle)
         return result
 
-    def _result_of(self, handle: AgentHandle, outcome: object) -> ChildResult:
-        if isinstance(outcome, ChildResult):
-            return outcome
+    def _result_of(self, handle: AgentHandle) -> ChildResult:
         assert handle.result is not None  # _run_one finished every path
         return handle.result
 
@@ -186,3 +271,7 @@ class SubAgentRuntime:
         handle.held = False
         self._slots.release()
         logger.info("[subagent] slot release id=%s held=%s", handle.agent_id, handle.held)
+
+
+# Existing imports keep working; new code uses AgentSupervisor.
+SubAgentRuntime = AgentSupervisor
