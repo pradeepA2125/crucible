@@ -6,12 +6,14 @@ import { useAgentsUi } from "./AgentsContext";
 import { InlineAgentBox } from "./InlineAgentBox";
 import { useNow } from "./useNow";
 
-export type AgentTone = "done" | "running" | "waiting" | "failed";
+export type AgentTone = "done" | "running" | "waiting" | "failed" | "stopped";
 
 export function toneOf(status: string): AgentTone {
   if (status === "completed" || status === "partial") return "done";
   if (status === "waiting") return "waiting";
-  if (status === "failed" || status === "stopped") return "failed";
+  if (status === "failed") return "failed";
+  // A stop is the user's choice, not a failure: its own (neutral) tally.
+  if (status === "stopped") return "stopped";
   return "running";  // queued | running
 }
 
@@ -20,6 +22,7 @@ export const TONE_COLOR: Record<AgentTone, string> = {
   running: "var(--color-accent)",
   waiting: "var(--color-amber)",
   failed: "var(--color-red)",
+  stopped: "var(--color-text-3)",
 };
 
 function firstLine(text: string): string {
@@ -54,6 +57,7 @@ const TAGS: Array<{ tone: AgentTone; word: string; bg: string }> = [
   { tone: "running", word: "running", bg: "var(--accent-bg)" },
   { tone: "waiting", word: "waiting", bg: "var(--amber-bg)" },
   { tone: "failed", word: "failed", bg: "var(--red-bg)" },
+  { tone: "stopped", word: "stopped", bg: "var(--color-surface-3)" },
 ];
 
 /** The dispatch roster (spec §10): one row per agent with ▸ (inline) and ⤢ (window). */

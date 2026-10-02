@@ -66,6 +66,18 @@ describe("AgentRosterCard", () => {
   });
 });
 
+describe("AgentRosterCard — stopped is its own tally", () => {
+  it("counts a stopped agent as stopped, not failed", () => {
+    const rows = [
+      agent({ agentId: "agent-a", label: "cart review", status: "stopped" }),
+      agent({ agentId: "agent-b", label: "pricing review", status: "failed", reportPreview: "boom" }),
+    ];
+    render(<AgentsContext.Provider value={ui(rows)}><AgentRosterCard agentIds={["agent-a", "agent-b"]} /></AgentsContext.Provider>);
+    expect(screen.getByText("1 stopped")).toBeInTheDocument();
+    expect(screen.getByText("1 failed")).toBeInTheDocument();
+  });
+});
+
 describe("statusLine", () => {
   it("covers each status", () => {
     expect(statusLine(agent({ status: "queued" }))).toBe("queued");
