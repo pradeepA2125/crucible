@@ -77,6 +77,13 @@ class WorkspaceWriteLog:
         """A sub-agent sees the workspace as of its spawn: writes before it are not stale."""
         self._agents[agent_id] = _AgentView(spawn_seq=self._seq)
 
+    def ensure_agent(self, agent_id: str) -> None:
+        """Register only if this log has no view yet (spec §3.2): a resumed agent keeps its
+        view; after a restart or a rewind's reset it starts fresh, which can only miss a
+        refusal, never cause a false one."""
+        if agent_id not in self._agents:
+            self.register_agent(agent_id)
+
     def _view(self, agent_id: str) -> _AgentView:
         view = self._agents.get(agent_id)
         if view is None:

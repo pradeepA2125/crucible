@@ -3,6 +3,7 @@ of `.crucible/agents` / `.claude/agents` files in front of them."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from agentd.prompting.tagged import Permission
 
@@ -45,3 +46,25 @@ BUILTIN_AGENTS: dict[str, AgentDefinition] = {
         tools=None,
         persona=""),
 }
+
+
+def definition_to_json(d: AgentDefinition) -> dict[str, Any]:
+    """The snapshot stored on the agent row (spec §3.1): resume uses it, so editing or
+    deleting the .md file never changes an agent already running a task."""
+    return {"name": d.name, "description": d.description, "permission": d.permission,
+            "tools": sorted(d.tools) if d.tools is not None else None, "persona": d.persona,
+            "model": d.model, "max_turns": d.max_turns,
+            "disallowed_tools": sorted(d.disallowed_tools), "skills": list(d.skills),
+            "source": d.source}
+
+
+def definition_from_json(data: dict[str, Any]) -> AgentDefinition:
+    tools = data.get("tools")
+    return AgentDefinition(
+        name=str(data["name"]), description=str(data.get("description", "")),
+        permission=data["permission"],
+        tools=frozenset(tools) if tools is not None else None,
+        persona=str(data.get("persona", "")), model=str(data.get("model", "inherit")),
+        max_turns=data.get("max_turns"),
+        disallowed_tools=frozenset(data.get("disallowed_tools", [])),
+        skills=tuple(data.get("skills", [])), source=str(data.get("source", "built-in")))

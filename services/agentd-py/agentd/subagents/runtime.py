@@ -104,6 +104,18 @@ RunChild = Callable[[AgentHandle], Awaitable[ChildResult]]
 StatusSink = Callable[[AgentHandle], None]
 
 
+class AgentNotFoundError(LookupError):
+    """No agent with that id in this thread."""
+
+
+class AgentNotYoursError(PermissionError):
+    """Only an agent's dispatcher may resume it (spec §4.3)."""
+
+
+class AgentBusyError(RuntimeError):
+    """The agent is queued or running; wait for its report or stop it first."""
+
+
 class ActivationInProgress(RuntimeError):
     """An agent has at most one queued-or-running activation (spec §3.4); new input for a
     running agent goes to its inbox instead."""

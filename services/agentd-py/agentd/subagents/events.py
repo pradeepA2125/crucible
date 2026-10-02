@@ -15,11 +15,15 @@ class SequencedBroadcaster(EventBroadcaster):
     backfill-then-subscribe never renders a duplicate. Other channels pass through
     untouched: the parent's channel never gains a field."""
 
-    def __init__(self, inner: EventBroadcaster, channel_id: str) -> None:
+    def __init__(
+        self, inner: EventBroadcaster, channel_id: str, initial_seq: int = 0,
+    ) -> None:
         super().__init__()
         self._inner = inner
         self._channel = channel_id
-        self._seq = 0
+        # A later activation continues from the agent's last seq (spec §3.2), so the UI's
+        # skip-at-or-below-cursor dedup stays correct across activations.
+        self._seq = initial_seq
 
     @property
     def last_seq(self) -> int:

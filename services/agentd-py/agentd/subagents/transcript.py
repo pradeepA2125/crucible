@@ -16,8 +16,11 @@ from agentd.chat.models import ChatMessage
 class AgentTranscript:
     def __init__(
         self, persist: Callable[[list[ChatMessage]], None], current_seq: Callable[[], int],
+        initial: list[ChatMessage] | None = None,
     ) -> None:
-        self._messages: list[ChatMessage] = []
+        # A later activation continues the stored transcript (spec §3.2); it never updates
+        # the previous activation's pills, so there is no in-flight message to resume.
+        self._messages: list[ChatMessage] = list(initial or [])
         self._inflight: int | None = None  # index of the pills message still being updated
         self._persist = persist
         self._current_seq = current_seq

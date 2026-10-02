@@ -90,6 +90,8 @@ async def test_live_roster_then_stopping_one_agent(tmp_path: Path,
     result = next(m for m in history if m.get("tool") == "dispatch_agents")
     statuses = {e["label"]: e["status"] for e in json.loads(str(result["content"]))}
     assert statuses == {"waiter": "stopped", "quick": "completed"}
+    stopped = store.get_agent(gate.agent.id)
+    assert stopped is not None and stopped.stop_reason == "user"
     assert ctrl.live_agents(tid) == []  # the turn is over
     assert await ctrl.stop_agent(tid, gate.agent.id) is False
 

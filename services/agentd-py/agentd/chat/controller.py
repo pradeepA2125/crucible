@@ -13,6 +13,7 @@ import logging
 import os
 import shutil
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,7 +27,6 @@ from agentd.chat.controller_factory import (
 from agentd.chat.controller_loop import ControllerLoop, ControllerOutcome
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
-from agentd.chat.rewind import RewindStore
 from agentd.chat.models import (
     AgentRecord,
     ChatMessage,
@@ -35,6 +35,7 @@ from agentd.chat.models import (
     GateNotFoundError,
     PendingGate,
 )
+from agentd.chat.rewind import RewindStore
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
@@ -48,14 +49,21 @@ from agentd.domain.models import (
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.prompting.tagged import RenderContext
+from agentd.providers.availability import ProviderUnavailable
 from agentd.reasoning.react_common import assistant_turn
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
 from agentd.subagents.agent_files import AgentCatalogLoader
 from agentd.subagents.config import subagent_max_concurrent, subagent_max_depth, subagent_max_iters
 from agentd.subagents.context import AgentContext, new_agent_id
-from agentd.subagents.definitions import BUILTIN_AGENTS, AgentDefinition
+from agentd.subagents.definitions import (
+    BUILTIN_AGENTS,
+    AgentDefinition,
+    definition_from_json,
+    definition_to_json,
+)
 from agentd.subagents.events import SequencedBroadcaster
+from agentd.subagents.inbox import InboxItem
 from agentd.subagents.permissions import (
     child_allowed_types,
     child_tool_names,
@@ -63,17 +71,21 @@ from agentd.subagents.permissions import (
     effective_permission,
     follows_live_review,
 )
+from agentd.subagents.runtime import (
+    IDLE_STATUSES,
+    LIVE_STATUSES,
+    AgentBusyError,
+    AgentHandle,
+    AgentNotFoundError,
+    AgentNotYoursError,
+    AgentSupervisor,
+    ChildResult,
+    DispatchRequest,
+    agent_channel,
+)
 from agentd.subagents.tool_source import SubAgentToolSource, format_dispatch_result
 from agentd.subagents.transcript import AgentTranscript
 from agentd.subagents.vcs_guard import vcs_refusal
-from agentd.subagents.runtime import (
-    TERMINAL_STATUSES,
-    AgentHandle,
-    ChildResult,
-    DispatchRequest,
-    SubAgentRuntime,
-    agent_channel,
-)
 from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
@@ -133,6 +145,20 @@ def _explore_context_from_history(
             "is_error": False,
         })
     return out
+
+
+def _divider_text(activation_input: str) -> str:
+    """`↩ Message from main: "<first line>"` (spec §3.2 item 4): the source line, then the
+    first line of what was said, so the transcript shows why the agent ran again."""
+    lines = [line.strip() for line in activation_input.splitlines() if line.strip()]
+    if not lines:
+        return "↩ resumed"
+    # The failed-run note puts the old report first, and a report can contain lines that
+    # end in ':' — so the "Message from …:" line wins when there is one.
+    source = next((line for line in lines if line.startswith("Message from")),
+                  next((line for line in lines if line.endswith(":")), lines[0]))
+    after = lines[lines.index(source) + 1:] if source in lines else []
+    return f'↩ {source} "{after[0]}"' if after else f"↩ {source}"
 
 
 class ChatController:
@@ -206,8 +232,10 @@ class ChatController:
         # sub-agents are enabled; the parent's read watermarks persist across turns.
         self._write_logs: dict[str, WorkspaceWriteLog] = {}
         # The sub-agent runtime (spec §6.2): process-wide, built once when enabled.
-        self._subagents: SubAgentRuntime | None = (
-            SubAgentRuntime(subagent_max_concurrent(), on_status=self._on_agent_status)
+        self._subagents: AgentSupervisor | None = (
+            AgentSupervisor(
+                subagent_max_concurrent(), on_status=self._on_agent_status,
+                children_of=self._store.child_agent_ids, on_leftover=self._on_leftover)
             if is_subagents_enabled() else None)
         # Agent definitions (spec §9): files in front of the built-ins, re-read per dispatch
         # source so a new file takes effect next turn with no restart.
@@ -1336,11 +1364,13 @@ class ChatController:
         low-volume events (spec §5.5, §11.2); everything else stays on the child's own."""
         self._store.update_agent(handle.agent_id, status=handle.status,
                                  started_at=handle.started_at, ended_at=handle.ended_at)
+        if handle.status == "stopped":
+            self._store.update_agent(handle.agent_id, stop_reason=handle.stop_reason)
         thread_channel = f"chat:{handle.thread_id}"
         self._broadcaster.broadcast(thread_channel, {
             "type": "agent_status",
             "payload": {"agent_id": handle.agent_id, "status": handle.status}})
-        if handle.status in TERMINAL_STATUSES and handle.result is not None:
+        if handle.status in IDLE_STATUSES and handle.result is not None:
             result = handle.result
             self._store.update_agent(handle.agent_id, report=result.report,
                                      files_changed=result.files_changed,
@@ -1445,14 +1475,87 @@ class ChatController:
             })
         return roster
 
+    def _report_guard(self, handle: AgentHandle) -> str | None:
+        """A child cannot report while its agents run or their reports wait undrained
+        (spec §4.2): an agent turns idle before its report is drained."""
+        assert self._subagents is not None
+        running = [self._store.get_agent(i) for i in self._store.child_agent_ids(handle.agent_id)
+                   if self._subagents.is_active(i)]
+        if running:
+            labels = ", ".join(r.label for r in running if r is not None)
+            return f"You have running agents ({labels}) — call wait_agents or stop_agent first."
+        if self._subagents.has_pending_report(handle.agent_id):
+            return "New reports arrived from your agents — read them before reporting."
+        return None
+
+    def _on_leftover(self, handle: AgentHandle, items: list[InboxItem]) -> None:
+        """Input that arrived after the last drain re-activates a lone agent (spec §3.6).
+        Scheduled, not run inline: the supervisor calls this from inside the finishing
+        activation's task."""
+        text = "\n\n".join(f"New message:\n{i.text}" for i in items)
+        asyncio.get_running_loop().call_soon(self._start_activation, handle, text)
+
+    def _start_activation(self, handle: AgentHandle, activation_input: str) -> None:
+        assert self._subagents is not None
+        fresh = self._handle_from_record(handle.thread_id, handle.agent_id)
+        fresh.activation_input = activation_input
+        self._subagents.enqueue(fresh, self._activate)
+
+    def _handle_from_record(self, thread_id: str, agent_id: str) -> AgentHandle:
+        """Rebuild an agent from its row (spec §3.2): idle agents have no in-memory handle,
+        and after a restart nothing of them is in memory at all."""
+        record = self._store.get_agent(agent_id)
+        if record is None or record.thread_id != thread_id:
+            raise AgentNotFoundError(f"no agent {agent_id!r} in thread {thread_id!r}")
+        definition = definition_from_json(record.definition) if record.definition else (
+            self._agent_catalog()[record.name])
+        permission = effective_permission(
+            definition.permission, "plan" if record.inherited.get("read_only") else None)
+        context = AgentContext(
+            agent_id=record.agent_id, name=record.name, label=record.label,
+            depth=record.depth, parent_agent_id=record.parent_agent_id,
+            permission=permission,
+            allowed_types=child_allowed_types(permission, can_edit=definition_allows_edit(
+                definition.tools, definition.disallowed_tools)),
+            persona=definition.persona,
+            max_iters=definition.max_turns or subagent_max_iters())
+        return AgentHandle(context=context, definition=definition, prompt=record.prompt,
+                           thread_id=thread_id, turn_id=record.turn_id, status=record.status)
+
+    def resume_agent(
+        self, thread_id: str, agent_id: str, message: str, *, caller_id: str = "main",
+    ) -> AgentHandle:
+        """Send an idle agent a follow-up; it continues with its full context (spec §4.3).
+        The seam Phase 2's `message_agent` tool calls. Returns the queued handle."""
+        assert self._subagents is not None
+        record = self._store.get_agent(agent_id)
+        if record is None or record.thread_id != thread_id:
+            raise AgentNotFoundError(f"no agent {agent_id!r} in thread {thread_id!r}")
+        if record.dispatcher_id != caller_id:
+            raise AgentNotYoursError(
+                f"agent {record.label!r} was dispatched by {record.dispatcher_id!r}, "
+                f"not {caller_id!r}")
+        if self._subagents.is_active(agent_id) or record.status in LIVE_STATUSES:
+            raise AgentBusyError(
+                f"agent {record.label!r} is still running — wait for its report or stop it")
+        caller = "main" if caller_id == "main" else (
+            (self._store.get_agent(caller_id) or record).label)
+        text = f"Message from {caller}:\n{message}"
+        if record.status in ("failed", "failed_transient", "stopped"):
+            text = f"Your previous run ended {record.status}: {record.report}\n\n{text}"
+        handle = self._handle_from_record(thread_id, agent_id)
+        handle.activation_input = text
+        self._subagents.enqueue(handle, self._activate)
+        return handle
+
     async def stop_agent(self, thread_id: str, agent_id: str) -> bool:
-        """Stop one sub-agent and its subtree; siblings continue (spec §11.4)."""
+        """Stop one sub-agent and its subtree; siblings continue (spec §4.4)."""
         if self._subagents is None:
             return False
-        handle = self._subagents.registry.get(agent_id)
-        if handle is None or handle.thread_id != thread_id:
+        record = self._store.get_agent(agent_id)
+        if record is None or record.thread_id != thread_id:
             return False
-        return await self._subagents.stop_agent(agent_id)
+        return await self._subagents.stop(agent_id, "user")
 
     def _agent_catalog(self) -> dict[str, AgentDefinition]:
         if self._agent_catalog_loader is None:
@@ -1495,7 +1598,9 @@ class ChatController:
         self._on_dispatch_start(thread_id, turn_id, dispatcher, handles)
         if dispatcher is None:
             self._inflight_dispatch[thread_id] = handles
-        results = await runtime.dispatch(handles, self._run_child, dispatcher=dispatcher)
+        for handle in handles:
+            handle.activation_input = handle.prompt
+        results = await runtime.dispatch(handles, self._activate, dispatcher=dispatcher)
         if dispatcher is None:
             # Not in a finally: a cancel must leave it for _run_loop's stop branch.
             self._inflight_dispatch.pop(thread_id, None)
@@ -1529,10 +1634,21 @@ class ChatController:
         thread_channel = f"chat:{thread_id}"
         for handle in handles:
             ctx = handle.context
+            dispatcher_row = (self._store.get_agent(dispatcher.agent_id)
+                              if dispatcher is not None else None)
+            # Rewind stamp (spec §8.10): main-dispatched agents take the thread's current
+            # checkpoint; an agent's agents inherit it, so a subtree rewinds as one unit.
+            stamp = (dispatcher_row.checkpoint_seq if dispatcher_row is not None
+                     else self._store.current_checkpoint_seq(thread_id))
             self._store.insert_agent(AgentRecord(
                 agent_id=ctx.agent_id, thread_id=thread_id, turn_id=turn_id,
                 parent_agent_id=ctx.parent_agent_id, depth=ctx.depth, name=ctx.name,
-                label=ctx.label, prompt=handle.prompt, status=handle.status))
+                label=ctx.label, prompt=handle.prompt, status=handle.status,
+                definition=definition_to_json(handle.definition),
+                dispatcher_id=dispatcher.agent_id if dispatcher is not None else "main",
+                checkpoint_seq=stamp,
+                inherited={"read_only": dispatcher is not None
+                           and dispatcher.context.permission == "plan"}))
             self._broadcaster.broadcast(thread_channel, {
                 "type": "agent_started",
                 "payload": {"agent_id": ctx.agent_id, "parent_agent_id": ctx.parent_agent_id,
@@ -1540,7 +1656,7 @@ class ChatController:
             logger.info("[subagent] start id=%s parent=%s depth=%d name=%s",
                         ctx.agent_id, ctx.parent_agent_id, ctx.depth, ctx.name)
 
-    async def _run_child(self, handle: AgentHandle) -> ChildResult:
+    async def _activate(self, handle: AgentHandle) -> ChildResult:
         """Build and run one sub-agent (spec §5): its own context window, tool set,
         shadow, channel and transcript, on the shared workspace guarded by the thread's
         write log."""
@@ -1548,12 +1664,25 @@ class ChatController:
         thread_id, turn_id = handle.thread_id, handle.turn_id
         log = self._write_log_for(thread_id)
         assert log is not None and self._subagents is not None
+        log.ensure_agent(ctx.agent_id)
+        record = self._store.get_agent(ctx.agent_id)
+        assert record is not None  # rows are written before any activation runs
+        activation = record.activation_count + 1
+        activation_input = handle.activation_input or handle.prompt
         channel = agent_channel(thread_id, ctx.agent_id)
-        broadcaster = SequencedBroadcaster(self._broadcaster, channel)
+        broadcaster = SequencedBroadcaster(self._broadcaster, channel,
+                                           initial_seq=record.last_seq)
         transcript = AgentTranscript(
             partial(self._store.set_agent_transcript, ctx.agent_id),
-            lambda: broadcaster.last_seq)
+            lambda: broadcaster.last_seq, initial=record.transcript)
         handle.broadcaster, handle.transcript = broadcaster, transcript
+        if activation > 1:
+            transcript.append(ChatMessage(
+                role="agent", content=_divider_text(activation_input),
+                metadata={"divider": True}))
+        self._store.update_agent(ctx.agent_id, activation_count=activation,
+                                 activation_started_at=datetime.now(UTC))
+        self._store.clear_report_delivered(ctx.agent_id)
         workspace = Path(self._workspace_path)
         run_id = f"{thread_id}:{ctx.agent_id}"
         ledger = TodoLedger()  # in memory only: never written to thread columns (§5.2)
@@ -1625,53 +1754,80 @@ class ChatController:
             pills_seal_cb=transcript.seal_pills, render_ctx=render_ctx, agent=ctx)
         handle.loop = loop
         plan_context: dict[str, object] = {
-            "goal": handle.prompt, "workspace_path": self._workspace_path, "run_id": run_id,
+            "goal": activation_input, "workspace_path": self._workspace_path, "run_id": run_id,
             # Nests this child's controller-turn-NN / memory-recall-NN dumps under
             # chat/<thread>/<turn>/agents/<agent>/ (spec §5.2) with no engine change.
             "artifact_thread_id": thread_id,
-            "artifact_turn_id": f"{turn_id}/agents/{ctx.agent_id}",
+            "artifact_turn_id": f"{turn_id}/agents/{ctx.agent_id}/a{activation}",
             "artifact_seed_len": 0, "edit_is_resume": False}
 
         def subtree_files() -> list[str]:
-            assert self._subagents is not None
-            return log.files_changed_by(self._subagents.registry.subtree_ids(ctx.agent_id))
+            ids = self._store.subtree_agent_ids(ctx.agent_id)
+            stored = {f for i in ids for f in (self._store.get_agent(i) or record).files_changed}
+            return sorted(stored | set(log.files_changed_by(ids)))
 
         status, report = "failed", ""
         try:
             # No retrieval_delta_cb: the delta references a seed children never had.
             outcome = await loop.run(
                 plan_context, max_iters=ctx.max_iters, turn_control=control,
+                seed_history=[*record.history, {"role": "user", "content": activation_input}],
+                iteration_cb=partial(self._store.set_agent_history, ctx.agent_id),
+                inbox_drain=partial(self._subagents.drain, ctx.agent_id),
+                report_guard=partial(self._report_guard, handle),
                 edit_decision_cb=partial(self._child_edit_decision_cb, handle),
                 edit_record_cb=partial(self._child_edit_record_cb, handle),
                 on_pills_update=transcript.upsert_pills)
             if outcome.kind == "report":
                 status = str((outcome.payload or {}).get("status", "completed"))
+                if status == "awaiting_peer":
+                    status = "partial"  # a lone agent has no peer; teams arrive in Phase 4
                 report = outcome.text
+                if status == "partial":
+                    # The forced-final report: stop the agents it never waited for (§4.2).
+                    for child_id in self._store.child_agent_ids(ctx.agent_id):
+                        await self._subagents.stop(child_id, "cascade")
             else:
                 report = loop.fallback_report(
                     f"ended without a report ({outcome.text or outcome.kind})",
                     subtree_files())
         except asyncio.CancelledError:
+            self._store.set_agent_history(ctx.agent_id, loop.partial_history())
             handle.result = self._close_child(handle, "stopped", loop.fallback_report(
                 "stopped before reporting", subtree_files(), status="stopped"))
             raise
+        except ProviderUnavailable as exc:
+            logger.warning("[subagent] provider unavailable id=%s: %s", ctx.agent_id, exc)
+            status = "failed_transient"
+            report = loop.fallback_report(f"provider unavailable: {exc}", subtree_files(),
+                                          status="failed_transient")
         except Exception as exc:
             logger.exception("[subagent] child failed id=%s", ctx.agent_id)
+            self._store.set_agent_history(ctx.agent_id, loop.partial_history())
             report = loop.fallback_report(str(exc), subtree_files())
         return self._close_child(handle, status, report)
 
     def _close_child(self, handle: AgentHandle, status: str, report: str) -> ChildResult:
-        """The child's final bookkeeping on every exit (spec §5.5, §6.3, §8)."""
+        """The activation's final bookkeeping on every exit (spec §3.2, §5.5, §8)."""
         ctx = handle.context
         log = self._write_log_for(handle.thread_id)
-        files = (log.files_changed_by(self._subagents.registry.subtree_ids(ctx.agent_id))
-                 if log is not None and self._subagents is not None else [])
+        ids = self._store.subtree_agent_ids(ctx.agent_id)
+        this_activation = log.files_changed_by(ids) if log is not None else []
+        files = self._store.merge_agent_files(ctx.agent_id, this_activation)
+        for other in ids - {ctx.agent_id}:
+            files = sorted(set(files) | set(self._store.get_agent(other).files_changed  # type: ignore[union-attr]
+                                            if self._store.get_agent(other) else []))
         result = ChildResult(
             status=status, report=report, files_changed=files,
             stale_refusals=log.stale_refusals(ctx.agent_id) if log is not None else 0)
         if handle.transcript is not None:
             handle.transcript.append(ChatMessage(
                 role="agent", content=report, metadata={"report": True, "status": status}))
+        if handle.loop is not None and isinstance(handle.loop, ControllerLoop):
+            self._store.set_agent_history(ctx.agent_id, handle.loop.partial_history())
+        if handle.broadcaster is not None:
+            self._store.update_agent(ctx.agent_id, last_seq=handle.broadcaster.last_seq)
+        self._store.update_agent(ctx.agent_id, activation_ended_at=datetime.now(UTC))
         # Its gates can never be answered now; its recall caches and replay buffer are
         # done — the replay map is otherwise never pruned (late viewers backfill instead).
         self._store.clear_controller_gates(handle.thread_id, agent_id=ctx.agent_id)
