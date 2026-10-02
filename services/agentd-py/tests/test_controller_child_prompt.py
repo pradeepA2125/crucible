@@ -90,3 +90,16 @@ def test_child_instructions_are_subordinate_to_sub_agent_rules() -> None:
     out = _child(CHILD, memory_enabled=False, project_instructions="Ask me first.")
     assert "They apply to you BELOW the sub-agent rules above" in out
     assert "always-on guidance from the user" not in out
+
+
+def test_a_persona_comes_with_the_claude_code_tool_name_mapping() -> None:
+    """Imported Claude Code agents tell the model to 'use the Read tool' / 'use Edit'. Live,
+    nemotron then put tool names in the action type (action=read_file). The persona block
+    carries the translation; a child without a persona doesn't pay for it."""
+    with_persona = _child(CHILD, memory_enabled=False, persona="Use the Read tool, then Edit.")
+    assert "Read → read_file" in with_persona
+    assert "Edit/Write/MultiEdit/NotebookEdit → the 'edit' action" in with_persona
+    assert "A tool's name never goes in 'type'" in with_persona
+    persona_at = with_persona.index("Use the Read tool, then Edit.")
+    assert persona_at < with_persona.index("Read → read_file")
+    assert "Read → read_file" not in _child(CHILD, memory_enabled=False)

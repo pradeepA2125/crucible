@@ -714,10 +714,19 @@ SUB-AGENT RULES — you are sub-agent "{label}", dispatched by another agent (yo
   also put its full content in 'report'. Skip "announce what you're doing" steps.""")
 
 # The agent definition's body (spec §4.2). .replace, never .format — personas may contain { }.
+# The mapping rides with the persona because personas are where Claude Code tool names
+# arrive (imported .claude/agents files): live, a persona saying "use the Read tool" led
+# the model to put tool names in the action type (spec §9.3 maps the frontmatter only).
 _PERSONA_BLOCK_TEMPLATE = """
 
 AGENT INSTRUCTIONS (the agent definition your dispatcher chose for this task):
-{persona}"""
+{persona}
+
+If these instructions name Claude Code tools, use your equivalents (when available to
+you): Read → read_file, Grep → search_code, Glob/LS → list_directory, Bash → run_command,
+Edit/Write/MultiEdit/NotebookEdit → the 'edit' action, TodoWrite → write_todos,
+Task/Agent → dispatch_agents, Skill → read_skill. A tool's name never goes in 'type': call
+a tool with type='tool_call' and tool='<name>'."""
 
 
 def format_controller_system_prompt(
