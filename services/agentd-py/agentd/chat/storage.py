@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from agentd.chat.models import (
     AgentRecord,
@@ -13,6 +14,23 @@ from agentd.chat.models import (
     ChatThread,
     Checkpoint,
     PendingGate,
+)
+
+# v2 columns (spec §3.1), added with the same ALTER-on-open pattern as chat_threads.
+_AGENT_V2_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("history_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("definition_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("activation_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("last_seq", "INTEGER NOT NULL DEFAULT 0"),
+    ("on_finish", "TEXT"),
+    ("team_id", "TEXT"),
+    ("dispatcher_id", "TEXT"),
+    ("checkpoint_seq", "INTEGER NOT NULL DEFAULT -1"),
+    ("report_delivered_at", "TEXT"),
+    ("inherited_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("stop_reason", "TEXT"),
+    ("activation_started_at", "TEXT"),
+    ("activation_ended_at", "TEXT"),
 )
 
 
@@ -93,9 +111,47 @@ class ChatThreadStore:
                 ended_at            TEXT
             );
         """)
+        agent_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(chat_agents)")}
+        added = [name for name, _ in _AGENT_V2_COLUMNS if name not in agent_columns]
+        for name, decl in _AGENT_V2_COLUMNS:
+            if name in added:
+                self._conn.execute(f"ALTER TABLE chat_agents ADD COLUMN {name} {decl}")  # noqa: S608 — fixed list
+        if "dispatcher_id" in added:
+            self._backfill_v1_agents()
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS chat_agents_by_turn ON chat_agents(thread_id, turn_id)")
         self._conn.commit()
+
+    def _backfill_v1_agents(self) -> None:
+        """v1 rows predate dispatcher_id and checkpoint_seq (spec §3.1). A v1 main-dispatched
+        row has parent_agent_id NULL; its rewind stamp is the latest checkpoint opened at or
+        before it started (turn_id would miss rows from continuation turns, which open no
+        checkpoint). A row stopped while still queued has no started_at and takes a
+        sibling's value from the same turn; children inherit their parent's; anything left
+        is -1 ("before every checkpoint")."""
+        self._conn.execute(
+            "UPDATE chat_agents SET dispatcher_id = COALESCE(parent_agent_id, 'main')")
+        self._conn.execute(
+            "UPDATE chat_agents SET checkpoint_seq = COALESCE(("
+            " SELECT MAX(c.seq) FROM chat_checkpoints c"
+            " WHERE c.thread_id = chat_agents.thread_id"
+            " AND c.created_at <= chat_agents.started_at), -1) "
+            "WHERE parent_agent_id IS NULL AND started_at IS NOT NULL")
+        self._conn.execute(
+            "UPDATE chat_agents SET checkpoint_seq = COALESCE(("
+            " SELECT MAX(s.checkpoint_seq) FROM chat_agents s"
+            " WHERE s.thread_id = chat_agents.thread_id AND s.turn_id = chat_agents.turn_id"
+            " AND s.parent_agent_id IS NULL AND s.started_at IS NOT NULL), -1) "
+            "WHERE parent_agent_id IS NULL AND started_at IS NULL")
+        max_depth = self._conn.execute(
+            "SELECT COALESCE(MAX(depth), 1) AS d FROM chat_agents").fetchone()["d"]
+        for depth in range(2, int(max_depth) + 1):
+            self._conn.execute(
+                "UPDATE chat_agents SET checkpoint_seq = COALESCE(("
+                " SELECT p.checkpoint_seq FROM chat_agents p"
+                " WHERE p.agent_id = chat_agents.parent_agent_id), -1) "
+                "WHERE depth = ?", (depth,))
 
     @staticmethod
     def _history_from_row(row: sqlite3.Row) -> list[dict] | None:
@@ -651,36 +707,57 @@ class ChatThreadStore:
     _AGENT_UPDATABLE = {
         "status": "status", "report": "report", "files_changed": "files_changed_json",
         "stale_refusals": "stale_refusals", "started_at": "started_at",
-        "ended_at": "ended_at",
+        "ended_at": "ended_at", "activation_count": "activation_count",
+        "last_seq": "last_seq", "stop_reason": "stop_reason",
+        "activation_started_at": "activation_started_at",
+        "activation_ended_at": "activation_ended_at",
+        "report_delivered_at": "report_delivered_at",
     }
 
     def insert_agent(self, record: AgentRecord) -> None:
         self._conn.execute(
             "INSERT INTO chat_agents (agent_id, thread_id, turn_id, parent_agent_id, depth, "
             "name, label, prompt, status, report, files_changed_json, stale_refusals, "
-            "transcript_json, started_at, ended_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "transcript_json, started_at, ended_at, history_json, definition_json, "
+            "activation_count, last_seq, on_finish, team_id, dispatcher_id, checkpoint_seq, "
+            "inherited_json, stop_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (record.agent_id, record.thread_id, record.turn_id, record.parent_agent_id,
              record.depth, record.name, record.label, record.prompt, record.status,
              record.report, json.dumps(record.files_changed), record.stale_refusals,
              json.dumps([m.model_dump(mode="json") for m in record.transcript]),
              record.started_at.isoformat() if record.started_at else None,
-             record.ended_at.isoformat() if record.ended_at else None))
+             record.ended_at.isoformat() if record.ended_at else None,
+             json.dumps(record.history), json.dumps(record.definition),
+             record.activation_count, record.last_seq, record.on_finish, record.team_id,
+             record.dispatcher_id, record.checkpoint_seq, json.dumps(record.inherited),
+             record.stop_reason))
         self._conn.commit()
 
     def update_agent(
         self, agent_id: str, *, status: str | None = None, report: str | None = None,
         files_changed: list[str] | None = None, stale_refusals: int | None = None,
         started_at: datetime | None = None, ended_at: datetime | None = None,
+        activation_count: int | None = None, last_seq: int | None = None,
+        stop_reason: str | None = None, activation_started_at: datetime | None = None,
+        activation_ended_at: datetime | None = None,
+        report_delivered_at: datetime | None = None,
     ) -> None:
         """Change only the given fields. Column names come from a fixed map, values are
         always bound parameters."""
+        def iso(value: datetime | None) -> str | None:
+            return value.isoformat() if value else None
+
         given: dict[str, object] = {
             "status": status, "report": report,
             "files_changed": json.dumps(files_changed) if files_changed is not None else None,
             "stale_refusals": stale_refusals,
-            "started_at": started_at.isoformat() if started_at else None,
-            "ended_at": ended_at.isoformat() if ended_at else None,
+            "started_at": iso(started_at), "ended_at": iso(ended_at),
+            "activation_count": activation_count, "last_seq": last_seq,
+            "stop_reason": stop_reason,
+            "activation_started_at": iso(activation_started_at),
+            "activation_ended_at": iso(activation_ended_at),
+            "report_delivered_at": iso(report_delivered_at),
         }
         pairs = [(self._AGENT_UPDATABLE[k], v) for k, v in given.items() if v is not None]
         if not pairs:
@@ -691,14 +768,53 @@ class ChatThreadStore:
             (*[v for _, v in pairs], agent_id))
         self._conn.commit()
 
-    def set_agent_transcript(self, agent_id: str, messages: list[ChatMessage]) -> None:
+    def set_agent_history(self, agent_id: str, history: list[dict[str, Any]]) -> None:
         self._conn.execute(
-            "UPDATE chat_agents SET transcript_json = ? WHERE agent_id = ?",
-            (json.dumps([m.model_dump(mode="json") for m in messages]), agent_id))
+            "UPDATE chat_agents SET history_json = ? WHERE agent_id = ?",
+            (json.dumps(history), agent_id))
         self._conn.commit()
+
+    def merge_agent_files(self, agent_id: str, files: list[str]) -> list[str]:
+        """Union, not overwrite (spec §3.1): the in-memory write log that reports an
+        activation's files is reset by rewind and empty after a restart."""
+        row = self._conn.execute(
+            "SELECT files_changed_json FROM chat_agents WHERE agent_id = ?",
+            (agent_id,)).fetchone()
+        merged = sorted(set(json.loads(row["files_changed_json"])) | set(files)) if row else []
+        self._conn.execute(
+            "UPDATE chat_agents SET files_changed_json = ? WHERE agent_id = ?",
+            (json.dumps(merged), agent_id))
+        self._conn.commit()
+        return merged
+
+    def clear_report_delivered(self, agent_id: str) -> None:
+        self._conn.execute(
+            "UPDATE chat_agents SET report_delivered_at = NULL WHERE agent_id = ?", (agent_id,))
+        self._conn.commit()
+
+    def child_agent_ids(self, agent_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT agent_id FROM chat_agents WHERE parent_agent_id = ? ORDER BY rowid",
+            (agent_id,)).fetchall()
+        return [r["agent_id"] for r in rows]
+
+    def subtree_agent_ids(self, agent_id: str) -> set[str]:
+        """The agent and every descendant, from the rows — idle agents have no in-memory
+        handle, so the registry cannot answer this (spec §3.2)."""
+        rows = self._conn.execute(
+            "WITH RECURSIVE tree(id) AS (SELECT ? UNION "
+            " SELECT a.agent_id FROM chat_agents a JOIN tree ON a.parent_agent_id = tree.id) "
+            "SELECT id FROM tree", (agent_id,)).fetchall()
+        return {r["id"] for r in rows}
+
+    def current_checkpoint_seq(self, thread_id: str) -> int:
+        return self.next_checkpoint_seq(thread_id) - 1
 
     @staticmethod
     def _agent_from_row(row: sqlite3.Row) -> AgentRecord:
+        def when(value: str | None) -> datetime | None:
+            return datetime.fromisoformat(value) if value else None
+
         return AgentRecord(
             agent_id=row["agent_id"], thread_id=row["thread_id"], turn_id=row["turn_id"],
             parent_agent_id=row["parent_agent_id"], depth=row["depth"], name=row["name"],
@@ -707,8 +823,22 @@ class ChatThreadStore:
             stale_refusals=row["stale_refusals"],
             transcript=[ChatMessage.model_validate(m)
                         for m in json.loads(row["transcript_json"])],
-            started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
-            ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None)
+            started_at=when(row["started_at"]), ended_at=when(row["ended_at"]),
+            history=json.loads(row["history_json"]),
+            definition=json.loads(row["definition_json"]),
+            activation_count=row["activation_count"], last_seq=row["last_seq"],
+            on_finish=row["on_finish"], team_id=row["team_id"],
+            dispatcher_id=row["dispatcher_id"], checkpoint_seq=row["checkpoint_seq"],
+            report_delivered_at=when(row["report_delivered_at"]),
+            inherited=json.loads(row["inherited_json"]), stop_reason=row["stop_reason"],
+            activation_started_at=when(row["activation_started_at"]),
+            activation_ended_at=when(row["activation_ended_at"]))
+
+    def set_agent_transcript(self, agent_id: str, messages: list[ChatMessage]) -> None:
+        self._conn.execute(
+            "UPDATE chat_agents SET transcript_json = ? WHERE agent_id = ?",
+            (json.dumps([m.model_dump(mode="json") for m in messages]), agent_id))
+        self._conn.commit()
 
     def get_agent(self, agent_id: str) -> AgentRecord | None:
         row = self._conn.execute(

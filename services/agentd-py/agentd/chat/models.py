@@ -50,7 +50,9 @@ class ChatMessage(BaseModel):
 
 
 class AgentRecord(BaseModel):
-    """One sub-agent of a dispatch (spec §11.3) — a `chat_agents` row."""
+    """One sub-agent (spec §3.1) — a `chat_agents` row. v2 makes it a durable record that
+    can run more than once (activations), so the model history and the definition it was
+    dispatched with are stored, not just the outcome."""
     agent_id: str
     thread_id: str
     turn_id: str
@@ -59,13 +61,28 @@ class AgentRecord(BaseModel):
     name: str
     label: str
     prompt: str
-    status: str  # queued | running | waiting | completed | partial | failed | stopped
+    # queued | running | waiting (live) — completed | awaiting_peer | partial | failed |
+    # failed_transient | stopped (idle)
+    status: str
     report: str = ""  # the full report, never truncated (D8)
     files_changed: list[str] = Field(default_factory=list)
     stale_refusals: int = 0
     transcript: list[ChatMessage] = Field(default_factory=list)
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    definition: dict[str, Any] = Field(default_factory=dict)
+    activation_count: int = 0
+    last_seq: int = 0
+    on_finish: str | None = None
+    team_id: str | None = None
+    dispatcher_id: str | None = None
+    checkpoint_seq: int = -1
+    report_delivered_at: datetime | None = None
+    inherited: dict[str, bool] = Field(default_factory=dict)
+    stop_reason: str | None = None
+    activation_started_at: datetime | None = None
+    activation_ended_at: datetime | None = None
 
     def summary(self) -> dict[str, Any]:
         """The list view (spec §11.3): no transcript, a 200-character UI-only preview."""
