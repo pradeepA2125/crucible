@@ -391,11 +391,12 @@ class ChatController:
         thread = self._store.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"Thread {thread_id!r} not found")
-        # A new turn can never leave a stale gate rendered: clear it at the start so a
-        # late decision on a superseded card hits `gate is None` and no-ops (resolve_mode/
-        # resolve_edit already guard on this). A clarify sets no gate, so this is a no-op
-        # on the clarify/EDIT-clarify resume path — no conflict.
-        self._store.clear_controller_gates(thread_id)
+        # A new turn supersedes only the MAIN agent's cards (spec §3.8): a late decision on
+        # a superseded card hits `gate is None` and no-ops (resolve_mode/resolve_edit
+        # already guard on this). A sub-agent's or a team's gate belongs to work that keeps
+        # running, so it stays. A clarify sets no gate, so the clarify resume path is
+        # unaffected.
+        self._store.clear_main_gates(thread_id)
         # Auto-name the thread from its first user message (mirrors ChatAgent).
         if not any(m.role == "user" for m in thread.messages):
             title = message.strip().replace("\n", " ")[:50]

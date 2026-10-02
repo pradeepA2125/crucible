@@ -145,6 +145,13 @@ class GateAgent(BaseModel):
     name: str
 
 
+class GateTeam(BaseModel):
+    """Which team raised a gate (spec §3.8). A team gate is not the main agent's, so a new
+    user turn must not clear it."""
+    id: str
+    name: str
+
+
 class PendingGate(BaseModel):
     """One gate a thread is waiting on. A thread may hold several (spec §4.5).
 
@@ -163,6 +170,11 @@ class PendingGate(BaseModel):
     kind: GateKind
     payload: dict[str, Any] = Field(default_factory=dict)
     agent: GateAgent | None = None
+    team: GateTeam | None = None
+
+    def is_main(self) -> bool:
+        """The main agent's own gate — the only kind a new user turn supersedes."""
+        return self.agent is None and self.team is None
 
     @classmethod
     def new(cls, kind: GateKind, payload: dict[str, Any],

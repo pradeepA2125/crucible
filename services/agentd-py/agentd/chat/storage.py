@@ -312,6 +312,11 @@ class ChatThreadStore:
         self._write_gates(thread_id, kept)
 
 
+    def clear_main_gates(self, thread_id: str) -> None:
+        """A new user turn supersedes only the main agent's cards; a sub-agent's or a
+        team's gate belongs to work that keeps running (spec §3.8)."""
+        self._write_gates(thread_id, [g for g in self._read_gates(thread_id) if not g.is_main()])
+
     def set_controller_todos(self, thread_id: str, raw: str | None) -> None:
         """Persist (raw = TodoLedger.to_json()) or clear (raw = None) the request's todo
         ledger. Mirrors set_controller_history: an in-place durable update the next loop
@@ -868,14 +873,15 @@ class ChatThreadStore:
     def remove_child_gates(self) -> list[str]:
         """Drop every sub-agent gate from every thread; returns the affected thread ids.
         A child gate is never recoverable after a restart: the write log is gone, so
-        promoting its edit would bypass the staleness guard (spec §11.5)."""
+        promoting its edit would bypass the staleness guard (spec §11.5). Team gates go
+        too: the restart reap fails their teams (spec §8.9)."""
         rows = self._conn.execute(
             "SELECT thread_id, controller_gate_json FROM chat_threads "
             "WHERE controller_gate_json IS NOT NULL").fetchall()
         affected: list[str] = []
         for row in rows:
             gates = self._gates_from_row(row)
-            kept = [g for g in gates if g.agent is None]
+            kept = [g for g in gates if g.is_main()]
             if len(kept) != len(gates):
                 self._write_gates(row["thread_id"], kept)
                 affected.append(row["thread_id"])
