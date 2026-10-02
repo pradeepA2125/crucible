@@ -48,6 +48,7 @@ from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.engine import DefaultReasoningEngine
 from agentd.retrieval.artifact_client import RetrievalArtifactClient
 from agentd.runtime.adapters import build_evidence_adapter, build_planning_adapter
+from agentd.startup import in_background
 from agentd.storage.sqlite_store import SQLiteTaskStore
 from agentd.validation.command_validator import CommandValidator
 from agentd.workspace.shadow import ShadowWorkspaceManager
@@ -396,7 +397,12 @@ if reasoning_backend != "scripted":
             logging.getLogger("agentd.startup").debug(
                 "newline capability probe skipped", exc_info=True)
 
-    app.router.add_event_handler("startup", _probe_newline_capability)
+    # In the background, not as a startup step: on a slow endpoint (NIM, measured 40-60s)
+    # the probe outlasted the managed spawn's 60s /health deadline, so the extension
+    # killed every backend it started. The first turn may begin before the probe ends;
+    # the transport's sticky JSON-mode downgrade already covers a mid-run switch.
+    app.router.add_event_handler(
+        "startup", in_background(_probe_newline_capability, "newline-capability-probe"))
 
 app.include_router(
     build_router(
