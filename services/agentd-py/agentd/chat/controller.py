@@ -903,9 +903,11 @@ class ChatController:
         decision future, and awaits it — mirroring _pause_for_step_review. On a
         dropped client (no decision) it auto-rejects after the timeout so the loop
         unwinds cleanly. The gate clears in place in the finally (Class-A)."""
+        # temp_path: the card's view-diff button opens the native diff against the shadow
+        # copy; without it every live edit gate could only say "shadow path missing".
         payload: dict[str, object] = {"diff_entries": [
-            {"path": d.path, "additions": d.additions,
-             "deletions": d.deletions, "unified_diff": d.unified_diff}
+            {"path": d.path, "additions": d.additions, "deletions": d.deletions,
+             "unified_diff": d.unified_diff, "temp_path": d.temp_path}
             for d in diff]}
         if child is not None:
             # A child edits in its own shadow (spec §7.5). Informational: a child gate is
