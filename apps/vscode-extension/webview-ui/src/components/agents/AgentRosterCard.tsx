@@ -14,6 +14,8 @@ export function toneOf(status: string): AgentTone {
   if (status === "failed") return "failed";
   // A stop is the user's choice, not a failure: its own (neutral) tally.
   if (status === "stopped") return "stopped";
+  if (status === "awaiting_peer") return "stopped";      // idle, nothing wrong: neutral
+  if (status === "failed_transient") return "waiting";   // the provider, not the agent: amber
   return "running";  // queued | running
 }
 
@@ -37,6 +39,8 @@ export function statusLine(agent: AgentSummaryView): string {
     case "partial": return `✓ reported: ${firstLine(agent.reportPreview)}`;
     case "failed": return `✗ ${firstLine(agent.reportPreview) || "failed"}`;
     case "stopped": return "■ stopped";
+    case "awaiting_peer": return "⏳ waiting on a teammate";
+    case "failed_transient": return "⚠ provider unavailable";
     default: return agent.now || "working…";
   }
 }

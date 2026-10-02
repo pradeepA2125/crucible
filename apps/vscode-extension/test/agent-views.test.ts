@@ -1,7 +1,7 @@
 import type { AgentDetail, SequencedStreamEvent } from "@crucible/editor-client";
 import { describe, expect, test } from "vitest";
 
-import { AgentViewManager, agentChannel } from "../src/agent-views.js";
+import { AgentViewManager, TERMINAL_AGENT_STATUSES, agentChannel } from "../src/agent-views.js";
 
 function detail(status: string, lastSeq: number, report = ""): AgentDetail {
   return {
@@ -113,4 +113,10 @@ describe("AgentViewManager", () => {
   test("agentChannel names the child's channel", () => {
     expect(agentChannel("t", "agent-a")).toBe("chat:t:agent:agent-a");
   });
+});
+
+test("v2 idle statuses end a view; v1 waiting does not", () => {
+  expect(TERMINAL_AGENT_STATUSES.has("failed_transient")).toBe(true);
+  expect(TERMINAL_AGENT_STATUSES.has("awaiting_peer")).toBe(true);
+  expect(TERMINAL_AGENT_STATUSES.has("waiting")).toBe(false);
 });

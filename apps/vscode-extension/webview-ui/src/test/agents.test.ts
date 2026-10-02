@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendDurable, applyAgentEvent, formatElapsed, viewFromDetail } from "../agents";
+import { appendDurable, applyAgentEvent, formatElapsed, isTerminalAgent, viewFromDetail } from "../agents";
 import type { AgentDetailView, ChatMsg } from "../types";
 
 const AT = "2026-10-01T00:00:00.000Z";
@@ -65,5 +65,13 @@ describe("helpers", () => {
     expect(formatElapsed(72_000)).toBe("1m12s");
     expect(formatElapsed(3_905_000)).toBe("1h05m");
     expect(formatElapsed(-5)).toBe("0s");
+  });
+});
+
+describe("isTerminalAgent", () => {
+  it("treats the v2 idle statuses as finished and v1 waiting as live", () => {
+    expect(isTerminalAgent("awaiting_peer")).toBe(true);
+    expect(isTerminalAgent("failed_transient")).toBe(true);
+    expect(isTerminalAgent("waiting")).toBe(false);
   });
 });

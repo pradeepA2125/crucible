@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
-import { AgentRosterCard, statusLine } from "../components/agents/AgentRosterCard";
+import { AgentRosterCard, statusLine, toneOf } from "../components/agents/AgentRosterCard";
 import { AgentsContext, type AgentsUi } from "../components/agents/AgentsContext";
 import { MessageRow } from "../components/MessageRow";
 import type { AgentSummaryView } from "../types";
@@ -83,6 +83,19 @@ describe("statusLine", () => {
     expect(statusLine(agent({ status: "queued" }))).toBe("queued");
     expect(statusLine(agent({ status: "failed", reportPreview: "boom" }))).toBe("✗ boom");
     expect(statusLine(agent({ status: "stopped" }))).toBe("■ stopped");
+  });
+
+  it("renders the v2 idle statuses", () => {
+    expect(statusLine(agent({ status: "awaiting_peer" }))).toBe("⏳ waiting on a teammate");
+    expect(statusLine(agent({ status: "failed_transient" }))).toBe("⚠ provider unavailable");
     expect(statusLine(agent({ status: "running", now: "" }))).toBe("working…");
+  });
+});
+
+describe("toneOf", () => {
+  it("keeps v1 waiting amber and gives the v2 statuses their tones", () => {
+    expect(toneOf("waiting")).toBe("waiting");
+    expect(toneOf("awaiting_peer")).toBe("stopped");
+    expect(toneOf("failed_transient")).toBe("waiting");
   });
 });

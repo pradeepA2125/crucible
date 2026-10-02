@@ -1,7 +1,8 @@
 import type { AgentDetailView, AgentEventView, AgentViewState, ChatMsg, ToolEventView } from "./types";
 
+// Idle statuses (spec §3.1). v1's "waiting" (parked at an approval card) is live, not idle.
 export const TERMINAL_AGENT_STATUSES: ReadonlySet<string> = new Set([
-  "completed", "partial", "failed", "stopped",
+  "completed", "awaiting_peer", "partial", "failed", "failed_transient", "stopped",
 ]);
 
 export function isTerminalAgent(status: string): boolean {
