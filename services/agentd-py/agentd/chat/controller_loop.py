@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from agentd.orchestrator.broadcaster import EventBroadcaster
     from agentd.reasoning.contracts import ReasoningEngine
     from agentd.subagents.context import AgentContext
+    from agentd.subagents.inbox import InboxItem
     from agentd.tools.sources import AggregatingToolRegistry
 
     EditDecisionCb = Callable[[list[DiffEntry]], Awaitable[dict[str, object]]]
@@ -866,6 +867,9 @@ class ControllerLoop:
         edit_record_cb: EditRecordCb | None = None,
         retrieval_delta_cb: RetrievalDeltaCb | None = None,
         on_pills_update: PillsUpdateCb | None = None,
+        iteration_cb: Callable[[list[dict[str, object]]], None] | None = None,
+        inbox_drain: Callable[[], list[InboxItem]] | None = None,
+        report_guard: Callable[[], str | None] | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -912,7 +916,12 @@ class ControllerLoop:
                 edit_record_cb=edit_record_cb,
                 retrieval_delta_cb=retrieval_delta_cb,
                 on_pills_update=on_pills_update,
+                iteration_cb=iteration_cb,
+                inbox_drain=inbox_drain,
+                report_guard=report_guard,
             )
+            if iteration_cb is not None:
+                iteration_cb(history)
             # The terminal action is itself an iteration, so a boundary marked during it
             # (or during the tool call before it) has had no iteration top to run at —
             # apply it here, BEFORE slicing, or the closing message would finalize the
@@ -956,6 +965,9 @@ class ControllerLoop:
         edit_record_cb: EditRecordCb | None,
         retrieval_delta_cb: RetrievalDeltaCb | None,
         on_pills_update: PillsUpdateCb | None = None,
+        iteration_cb: Callable[[list[dict[str, object]]], None] | None = None,
+        inbox_drain: Callable[[], list[InboxItem]] | None = None,
+        report_guard: Callable[[], str | None] | None = None,
     ) -> ControllerOutcome:
         pending_salvage: list[str] = []
         # Set when preflight rejects generated code for a SYNTAX error, cleared as soon
@@ -1090,6 +1102,13 @@ class ControllerLoop:
             # written mid-tool-call, a `progress` note) BEFORE anything this iteration
             # computes a call_index or persists a pill against it.
             self._apply_pills_boundary()
+            if iteration_cb is not None and iteration > 0:
+                # Persist after every iteration (spec §3.2): a stop or crash keeps everything
+                # up to here, and a resume continues from it.
+                iteration_cb(history)
+            if inbox_drain is not None:
+                for item in inbox_drain():
+                    history.append({"role": "user", "content": "New message:\n" + item.text})
             # Live "thinking" status so the chat UI isn't blank during the first model
             # call (the frontend maps chat_agent_thinking → the thinking pane). Only the
             # first iteration: subsequent activity is conveyed by tool pills + the live
@@ -1692,6 +1711,13 @@ class ControllerLoop:
                 # summary is returned verbatim, never truncated.
                 still_open = self._ledger.pending()
                 final = iteration >= max_iters
+                if report_guard is not None and not final:
+                    blocked = report_guard()
+                    if blocked is not None:
+                        # A redirect, not malformed (same contract as the open-todo block).
+                        history.append(assistant_turn(resp))
+                        history.append({"role": "tool_result", "tool": "", "content": blocked})
+                        continue
                 if still_open and not final:
                     # Same contract as submit_changes: a redirect, NOT a malformed action,
                     # so it does not touch consecutive_malformed — only max_iters bounds it.
