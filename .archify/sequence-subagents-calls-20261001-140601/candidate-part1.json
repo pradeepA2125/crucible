@@ -1,0 +1,407 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Sub-agents P5 Calls, Part 1: Turn to Child Edit",
+    "output": ".archify/sequence-subagents-calls-20261001-140601/subagents-calls-part1.html",
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      696
+    ],
+    "repository": {
+      "url": "https://github.com/pradeepA2125/crucible.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "1bf21c6d75dc9bc04d8ed2cb60c04a05e8cbe444"
+    }
+  },
+  "participants": [
+    {
+      "id": "ext",
+      "type": "frontend",
+      "label": "Extension",
+      "sublabel": "controller.ts",
+      "sources": [
+        {
+          "path": "apps/vscode-extension/src/controller.ts",
+          "line": 1623,
+          "end_line": 1640,
+          "label": "gate routing"
+        },
+        {
+          "path": "apps/editor-client/src/client/http-backend-client.ts",
+          "line": 298,
+          "end_line": 301,
+          "label": "gate_id"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Routes",
+      "sublabel": "api/routes.py",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1490,
+          "label": "/message"
+        },
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1739,
+          "end_line": 1806,
+          "label": "decisions"
+        },
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1818,
+          "end_line": 1842,
+          "label": "agent routes"
+        }
+      ]
+    },
+    {
+      "id": "ctl",
+      "type": "backend",
+      "label": "Controller",
+      "sublabel": "chat thread",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1454,
+          "end_line": 1517,
+          "label": "_dispatch"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1519,
+          "end_line": 1634,
+          "label": "_run_child"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1636,
+          "end_line": 1653,
+          "label": "_close_child"
+        }
+      ]
+    },
+    {
+      "id": "ploop",
+      "type": "backend",
+      "label": "Main loop",
+      "sublabel": "ACTIVE phase",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller_loop.py",
+          "line": 873,
+          "label": "dispatch_available"
+        },
+        {
+          "path": "services/agentd-py/agentd/subagents/tool_source.py",
+          "line": 16,
+          "end_line": 60,
+          "label": "dispatch_agents"
+        }
+      ]
+    },
+    {
+      "id": "engine",
+      "type": "cloud",
+      "label": "Engine",
+      "sublabel": "tagged prompts",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/reasoning/engine.py",
+          "line": 296,
+          "end_line": 348,
+          "label": "create_controller_step"
+        },
+        {
+          "path": "services/agentd-py/agentd/prompting/tagged.py",
+          "line": 47,
+          "end_line": 80,
+          "label": "RenderContext"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller_prompts.py",
+          "line": 723,
+          "end_line": 790,
+          "label": "system prompt"
+        }
+      ]
+    },
+    {
+      "id": "rt",
+      "type": "messagebus",
+      "label": "Runtime",
+      "sublabel": "8 slots",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/subagents/runtime.py",
+          "line": 98,
+          "end_line": 140,
+          "label": "dispatch/stop"
+        }
+      ]
+    },
+    {
+      "id": "cloop",
+      "type": "backend",
+      "label": "Child loop",
+      "sublabel": "AGENT phase",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller_loop.py",
+          "line": 1570,
+          "end_line": 1600,
+          "label": "stale branch"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller_loop.py",
+          "line": 1655,
+          "end_line": 1685,
+          "label": "report"
+        }
+      ]
+    },
+    {
+      "id": "edit",
+      "type": "security",
+      "label": "Edit session",
+      "sublabel": "WriteGuard",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/edit_session.py",
+          "line": 129,
+          "end_line": 200,
+          "label": "Check 1 / 2"
+        }
+      ]
+    },
+    {
+      "id": "wlog",
+      "type": "database",
+      "label": "Write log",
+      "sublabel": "per thread",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/subagents/write_log.py",
+          "line": 56,
+          "end_line": 133,
+          "label": "reads/promotes"
+        }
+      ]
+    }
+  ],
+  "segments": [
+    {
+      "from": 154,
+      "to": 288,
+      "label": "Turn + prompt (1A)"
+    },
+    {
+      "from": 294,
+      "to": 400,
+      "label": "Dispatch (D)"
+    },
+    {
+      "from": 406,
+      "to": 568,
+      "label": "Child + Check 1 (B, A)"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m1",
+      "from": "ext",
+      "to": "api",
+      "y": 166,
+      "label": "POST /message",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m2",
+      "from": "api",
+      "to": "ctl",
+      "y": 194,
+      "label": "handle_message",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m3",
+      "from": "ctl",
+      "to": "ploop",
+      "y": 222,
+      "label": "loop.run ACTIVE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m4",
+      "from": "ploop",
+      "to": "engine",
+      "y": 250,
+      "label": "step (main ctx)",
+      "variant": "default",
+      "note": "1A: main prompt renders byte-identical (goldens)"
+    },
+    {
+      "id": "m5",
+      "from": "engine",
+      "to": "ploop",
+      "y": 278,
+      "label": "dispatch_agents",
+      "variant": "return"
+    },
+    {
+      "id": "m6",
+      "from": "ploop",
+      "to": "ctl",
+      "y": 306,
+      "label": "_dispatch(requests)",
+      "variant": "emphasis",
+      "note": "SubAgentToolSource.execute → partial(_dispatch)"
+    },
+    {
+      "id": "m7",
+      "from": "ctl",
+      "to": "wlog",
+      "y": 334,
+      "label": "register_agent",
+      "variant": "default",
+      "note": "writes before this instant are not stale for the child"
+    },
+    {
+      "id": "m8",
+      "from": "ctl",
+      "to": "rt",
+      "y": 362,
+      "label": "runtime.dispatch",
+      "variant": "emphasis",
+      "note": "after _on_dispatch_start persists agent_dispatch + chat_agents rows"
+    },
+    {
+      "id": "m9",
+      "from": "rt",
+      "to": "cloop",
+      "y": 390,
+      "label": "slot → _run_child",
+      "variant": "emphasis",
+      "note": "BoundedSemaphore(8); depth ≤ 2"
+    },
+    {
+      "id": "m10",
+      "from": "cloop",
+      "to": "engine",
+      "y": 418,
+      "label": "step (for_agent)",
+      "variant": "default",
+      "note": "persona + allowed_types; final turn narrows to report"
+    },
+    {
+      "id": "m11",
+      "from": "engine",
+      "to": "cloop",
+      "y": 446,
+      "label": "tool_call / edit",
+      "variant": "return"
+    },
+    {
+      "id": "m12",
+      "from": "cloop",
+      "to": "wlog",
+      "y": 474,
+      "label": "note_read",
+      "variant": "dashed",
+      "note": "read_observer on BuiltinToolSource"
+    },
+    {
+      "id": "m13",
+      "from": "cloop",
+      "to": "edit",
+      "y": 502,
+      "label": "apply(patch_ops)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m14",
+      "from": "edit",
+      "to": "wlog",
+      "y": 530,
+      "label": "Check 1",
+      "variant": "security",
+      "note": "stale_writer(agent, path)"
+    },
+    {
+      "id": "m15",
+      "from": "wlog",
+      "to": "edit",
+      "y": 558,
+      "label": "not stale",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "ctl",
+      "from": 194,
+      "to": 390,
+      "type": "backend"
+    },
+    {
+      "participant": "ploop",
+      "from": 222,
+      "to": 306,
+      "type": "backend"
+    },
+    {
+      "participant": "rt",
+      "from": 362,
+      "to": 390,
+      "type": "messagebus"
+    },
+    {
+      "participant": "cloop",
+      "from": 390,
+      "to": 558,
+      "type": "backend"
+    },
+    {
+      "participant": "edit",
+      "from": 502,
+      "to": 558,
+      "type": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Dispatch",
+      "items": [
+        "Main loop picks dispatch_agents from a prompt rendered for the main audience (byte-identical to pre-P5, golden-tested)",
+        "_dispatch builds one AgentContext per request (effective permission, allowed types, persona, max turns) and registers it with the thread's write log",
+        "_on_dispatch_start persists the agent_dispatch message and chat_agents rows before any child runs"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Child setup",
+      "items": [
+        "Each child gets its own SequencedBroadcaster channel, AgentTranscript, TodoLedger and shadow chatturn-{thread}-{agent}",
+        "Tools are filtered by permission; git-mutating commands are refused by vcs_refusal before any approval",
+        "Children cannot remember; recall caches are keyed per run and released at close"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Check 1",
+      "items": [
+        "apply() asks the write log whether another agent promoted the path after this agent's last read",
+        "Every touched file is re-seeded from the real workspace before patching, so a stale shadow never promotes"
+      ]
+    }
+  ]
+}

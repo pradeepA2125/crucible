@@ -1,0 +1,377 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Sub-agents P5 Calls, Part 2: Gate to Report",
+    "output": ".archify/sequence-subagents-calls-20261001-140601/subagents-calls-part2.html",
+    "column_fit": "spread",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      696
+    ],
+    "repository": {
+      "url": "https://github.com/pradeepA2125/crucible.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "1bf21c6d75dc9bc04d8ed2cb60c04a05e8cbe444"
+    }
+  },
+  "participants": [
+    {
+      "id": "ext",
+      "type": "frontend",
+      "label": "Extension",
+      "sublabel": "controller.ts",
+      "sources": [
+        {
+          "path": "apps/vscode-extension/src/controller.ts",
+          "line": 1623,
+          "end_line": 1640,
+          "label": "gate routing"
+        },
+        {
+          "path": "apps/editor-client/src/client/http-backend-client.ts",
+          "line": 298,
+          "end_line": 301,
+          "label": "gate_id"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Routes",
+      "sublabel": "api/routes.py",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1490,
+          "label": "/message"
+        },
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1739,
+          "end_line": 1806,
+          "label": "decisions"
+        },
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1818,
+          "end_line": 1842,
+          "label": "agent routes"
+        }
+      ]
+    },
+    {
+      "id": "ctl",
+      "type": "backend",
+      "label": "Controller",
+      "sublabel": "chat thread",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1454,
+          "end_line": 1517,
+          "label": "_dispatch"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1519,
+          "end_line": 1634,
+          "label": "_run_child"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1636,
+          "end_line": 1653,
+          "label": "_close_child"
+        }
+      ]
+    },
+    {
+      "id": "ploop",
+      "type": "backend",
+      "label": "Main loop",
+      "sublabel": "ACTIVE phase",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller_loop.py",
+          "line": 873,
+          "label": "dispatch_available"
+        },
+        {
+          "path": "services/agentd-py/agentd/subagents/tool_source.py",
+          "line": 16,
+          "end_line": 60,
+          "label": "dispatch_agents"
+        }
+      ]
+    },
+    {
+      "id": "rt",
+      "type": "messagebus",
+      "label": "Runtime",
+      "sublabel": "8 slots",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/subagents/runtime.py",
+          "line": 98,
+          "end_line": 140,
+          "label": "dispatch/stop"
+        }
+      ]
+    },
+    {
+      "id": "cloop",
+      "type": "backend",
+      "label": "Child loop",
+      "sublabel": "AGENT phase",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller_loop.py",
+          "line": 1570,
+          "end_line": 1600,
+          "label": "stale branch"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller_loop.py",
+          "line": 1655,
+          "end_line": 1685,
+          "label": "report"
+        }
+      ]
+    },
+    {
+      "id": "edit",
+      "type": "security",
+      "label": "Edit session",
+      "sublabel": "WriteGuard",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/edit_session.py",
+          "line": 129,
+          "end_line": 200,
+          "label": "Check 1 / 2"
+        }
+      ]
+    },
+    {
+      "id": "wlog",
+      "type": "database",
+      "label": "Write log",
+      "sublabel": "per thread",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/subagents/write_log.py",
+          "line": 56,
+          "end_line": 133,
+          "label": "reads/promotes"
+        }
+      ]
+    }
+  ],
+  "segments": [
+    {
+      "from": 154,
+      "to": 344,
+      "label": "Gate + Check 2 (1B, A)"
+    },
+    {
+      "from": 350,
+      "to": 456,
+      "label": "Report (C, D)"
+    },
+    {
+      "from": 462,
+      "to": 568,
+      "label": "Live + stop (E)"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m16",
+      "from": "cloop",
+      "to": "ctl",
+      "y": 166,
+      "label": "edit gate (agent)",
+      "variant": "security",
+      "note": "add_controller_gate; command/mcp gates use ApprovalOutcome"
+    },
+    {
+      "id": "m17",
+      "from": "ext",
+      "to": "api",
+      "y": 194,
+      "label": "edit-decision",
+      "variant": "security",
+      "note": "body carries gate_id; 404 unknown, 409 ambiguous"
+    },
+    {
+      "id": "m18",
+      "from": "api",
+      "to": "ctl",
+      "y": 222,
+      "label": "resolve_edit",
+      "variant": "security",
+      "note": "sets the future keyed by gate_id"
+    },
+    {
+      "id": "m19",
+      "from": "ctl",
+      "to": "cloop",
+      "y": 250,
+      "label": "decision",
+      "variant": "return"
+    },
+    {
+      "id": "m20",
+      "from": "cloop",
+      "to": "edit",
+      "y": 278,
+      "label": "accept()",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m21",
+      "from": "edit",
+      "to": "wlog",
+      "y": 306,
+      "label": "Check 2 + promote",
+      "variant": "security",
+      "note": "no await between check and promote_files"
+    },
+    {
+      "id": "m22",
+      "from": "edit",
+      "to": "cloop",
+      "y": 334,
+      "label": "StaleWriteError",
+      "variant": "dashed",
+      "note": "only when stale: ✗ Not applied, loop continues"
+    },
+    {
+      "id": "m23",
+      "from": "cloop",
+      "to": "rt",
+      "y": 362,
+      "label": "report",
+      "variant": "emphasis",
+      "note": "full summary, never truncated"
+    },
+    {
+      "id": "m24",
+      "from": "rt",
+      "to": "ctl",
+      "y": 390,
+      "label": "status sink",
+      "variant": "dashed",
+      "note": "_on_agent_status: chat_agents row + agent_finished"
+    },
+    {
+      "id": "m25",
+      "from": "rt",
+      "to": "ctl",
+      "y": 418,
+      "label": "ChildResult[]",
+      "variant": "return"
+    },
+    {
+      "id": "m26",
+      "from": "ctl",
+      "to": "ploop",
+      "y": 446,
+      "label": "tool_result",
+      "variant": "return",
+      "note": "format_dispatch_result + workspace_changes"
+    },
+    {
+      "id": "m27",
+      "from": "ext",
+      "to": "api",
+      "y": 474,
+      "label": "GET /live",
+      "variant": "default",
+      "note": "pending gates + live_agents roster"
+    },
+    {
+      "id": "m28",
+      "from": "api",
+      "to": "ext",
+      "y": 502,
+      "label": "live state",
+      "variant": "return"
+    },
+    {
+      "id": "m29",
+      "from": "ext",
+      "to": "api",
+      "y": 530,
+      "label": "POST agent stop",
+      "variant": "dashed"
+    },
+    {
+      "id": "m30",
+      "from": "api",
+      "to": "rt",
+      "y": 558,
+      "label": "stop_agent",
+      "variant": "dashed",
+      "note": "ChatController.stop_agent → task.cancel"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "cloop",
+      "from": 166,
+      "to": 362,
+      "type": "backend"
+    },
+    {
+      "participant": "ctl",
+      "from": 166,
+      "to": 446,
+      "type": "backend"
+    },
+    {
+      "participant": "edit",
+      "from": 278,
+      "to": 334,
+      "type": "security"
+    },
+    {
+      "participant": "rt",
+      "from": 362,
+      "to": 418,
+      "type": "messagebus"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Gates (1B)",
+      "items": [
+        "Gates stack on the thread with a gate_id and the agent's id, label and name",
+        "Decision routes resolve the future for that gate_id: unknown → 404, ambiguous → 409, both benign in the extension",
+        "Command and MCP callbacks return ApprovalOutcome; denial_text words user, policy and timeout denials truthfully"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Check 2",
+      "items": [
+        "accept() re-checks staleness with no await before promote_files, then records the promote",
+        "A stale accept restores the shadow, raises StaleWriteError, and the loop writes ✗ Not applied and keeps going"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Report + lifecycle",
+      "items": [
+        "report is the child's only terminal; open todos block it until the final turn, which appends Unfinished:",
+        "format_dispatch_result returns every full report plus workspace_changes; nothing is truncated",
+        "Stop cancels one child; restart reaps orphans; rewind deletes rewound children and their memory"
+      ]
+    }
+  ]
+}

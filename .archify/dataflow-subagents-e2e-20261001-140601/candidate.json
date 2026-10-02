@@ -1,0 +1,645 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Sub-agents P5 (1A + 1B + Phase 2): End-to-End Data Flow",
+    "output": ".archify/dataflow-subagents-e2e-20261001-140601/subagents-e2e.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/pradeepA2125/crucible.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "1bf21c6d75dc9bc04d8ed2cb60c04a05e8cbe444"
+    },
+    "views": [
+      {
+        "id": "dispatch",
+        "label": "Dispatch + report",
+        "focus": [
+          "parentloop",
+          "dispatchtool",
+          "runtime",
+          "childloop"
+        ],
+        "note": "Parent calls dispatch_agents; children run in parallel; full reports return as one tool result."
+      },
+      {
+        "id": "guard",
+        "label": "Write guard",
+        "focus": [
+          "editsession",
+          "writelog",
+          "realws"
+        ],
+        "note": "Check 1 at apply, Check 2 at accept; a stale write is refused with the writer's label."
+      },
+      {
+        "id": "gates",
+        "label": "Stacked gates",
+        "focus": [
+          "childgates",
+          "decisionroutes",
+          "chatdb",
+          "liveroutes"
+        ],
+        "note": "Each gate has a gate_id and an agent tag; decisions resolve the future keyed by gate_id."
+      }
+    ],
+    "viewBox": [
+      1080,
+      696
+    ]
+  },
+  "stages": [
+    {
+      "label": "VS Code client"
+    },
+    {
+      "label": "FastAPI routes"
+    },
+    {
+      "label": "Parent turn (main)"
+    },
+    {
+      "label": "Sub-agent runtime"
+    },
+    {
+      "label": "Workspace, streams, state"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "webview",
+      "type": "frontend",
+      "label": "Chat webview",
+      "sublabel": "live gate list",
+      "stage": 0,
+      "row": 1,
+      "tag": "1B",
+      "sources": [
+        {
+          "path": "apps/vscode-extension/src/controller.ts",
+          "line": 86,
+          "label": "renderLiveGates"
+        }
+      ]
+    },
+    {
+      "id": "extension",
+      "type": "frontend",
+      "label": "controller.ts",
+      "sublabel": "route by gate_id",
+      "stage": 0,
+      "row": 2,
+      "tag": "1B",
+      "sources": [
+        {
+          "path": "apps/vscode-extension/src/controller.ts",
+          "line": 1623,
+          "end_line": 1640,
+          "label": "task: prefix routing"
+        }
+      ]
+    },
+    {
+      "id": "client",
+      "type": "frontend",
+      "label": "HttpBackendClient",
+      "sublabel": "Zod agent contracts",
+      "stage": 0,
+      "row": 3,
+      "tag": "E5",
+      "sources": [
+        {
+          "path": "apps/editor-client/src/client/http-backend-client.ts",
+          "line": 298,
+          "end_line": 301,
+          "label": "gate_id body"
+        },
+        {
+          "path": "apps/editor-client/src/contracts/task-contracts.ts",
+          "line": 252,
+          "end_line": 270,
+          "label": "AgentSummarySchema"
+        }
+      ]
+    },
+    {
+      "id": "msgroute",
+      "type": "backend",
+      "label": "POST /message",
+      "sublabel": "SSE turn stream",
+      "stage": 1,
+      "row": 0,
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1490,
+          "label": "post_chat_message"
+        }
+      ]
+    },
+    {
+      "id": "liveroutes",
+      "type": "backend",
+      "label": "/live + /agents",
+      "sublabel": "roster, detail, stop",
+      "stage": 1,
+      "row": 4,
+      "tag": "E2",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1424,
+          "end_line": 1473,
+          "label": "/live agents"
+        },
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1818,
+          "end_line": 1842,
+          "label": "agent routes"
+        }
+      ],
+      "yOffset": -22
+    },
+    {
+      "id": "decisionroutes",
+      "type": "security",
+      "label": "Decision routes",
+      "sublabel": "gate_id 404 / 409",
+      "stage": 1,
+      "row": 3,
+      "tag": "1B",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/api/routes.py",
+          "line": 1739,
+          "end_line": 1806,
+          "label": "edit/command/mcp"
+        }
+      ]
+    },
+    {
+      "id": "chatctl",
+      "type": "backend",
+      "label": "ChatController",
+      "sublabel": "handle_message",
+      "stage": 2,
+      "row": 0,
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 378,
+          "label": "handle_message"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 467,
+          "label": "_run_loop"
+        }
+      ]
+    },
+    {
+      "id": "parentloop",
+      "type": "backend",
+      "label": "ControllerLoop",
+      "sublabel": "main prompt, ACTIVE",
+      "stage": 2,
+      "row": 1,
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller_loop.py",
+          "line": 873,
+          "label": "dispatch_available"
+        },
+        {
+          "path": "services/agentd-py/agentd/reasoning/engine.py",
+          "line": 296,
+          "end_line": 348,
+          "label": "create_controller_step"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller_prompts.py",
+          "line": 723,
+          "end_line": 790,
+          "label": "format prompt"
+        }
+      ],
+      "tag": "1A"
+    },
+    {
+      "id": "dispatchtool",
+      "type": "messagebus",
+      "label": "dispatch_agents",
+      "sublabel": "SubAgentToolSource",
+      "stage": 2,
+      "row": 2,
+      "tag": "D6",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/subagents/tool_source.py",
+          "line": 16,
+          "end_line": 60,
+          "label": "tool + result"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1454,
+          "end_line": 1486,
+          "label": "_dispatch"
+        }
+      ],
+      "yOffset": -7
+    },
+    {
+      "id": "runtime",
+      "type": "backend",
+      "label": "SubAgentRuntime",
+      "sublabel": "8 slots, gather",
+      "stage": 3,
+      "row": 1,
+      "tag": "D3",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/subagents/runtime.py",
+          "line": 98,
+          "end_line": 140,
+          "label": "dispatch/stop"
+        }
+      ]
+    },
+    {
+      "id": "childloop",
+      "type": "backend",
+      "label": "Child loop",
+      "sublabel": "AGENT prompt, depth ≤ 2",
+      "stage": 3,
+      "row": 2,
+      "tag": "C2",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1519,
+          "end_line": 1634,
+          "label": "_run_child"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller_loop.py",
+          "line": 1655,
+          "end_line": 1685,
+          "label": "report terminal"
+        },
+        {
+          "path": "services/agentd-py/agentd/prompting/tagged.py",
+          "line": 47,
+          "end_line": 80,
+          "label": "RenderContext"
+        }
+      ]
+    },
+    {
+      "id": "childgates",
+      "type": "security",
+      "label": "Child gates",
+      "sublabel": "PendingGate + agent",
+      "stage": 3,
+      "row": 3,
+      "tag": "D7",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 1374,
+          "end_line": 1404,
+          "label": "child approval cbs"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/controller.py",
+          "line": 895,
+          "end_line": 925,
+          "label": "edit gate"
+        }
+      ]
+    },
+    {
+      "id": "channel",
+      "type": "messagebus",
+      "label": "Agent channel",
+      "sublabel": "seq events + transcript",
+      "stage": 4,
+      "row": 3,
+      "tag": "C1",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/subagents/events.py",
+          "line": 9,
+          "end_line": 30,
+          "label": "SequencedBroadcaster"
+        },
+        {
+          "path": "services/agentd-py/agentd/subagents/transcript.py",
+          "line": 16,
+          "end_line": 40,
+          "label": "AgentTranscript"
+        }
+      ],
+      "yOffset": -10
+    },
+    {
+      "id": "editsession",
+      "type": "security",
+      "label": "TurnEditSession",
+      "sublabel": "WriteGuard checks",
+      "stage": 4,
+      "row": 1,
+      "tag": "A3",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/edit_session.py",
+          "line": 129,
+          "end_line": 200,
+          "label": "Check 1 / Check 2"
+        }
+      ]
+    },
+    {
+      "id": "writelog",
+      "type": "database",
+      "label": "WorkspaceWriteLog",
+      "sublabel": "per thread, in memory",
+      "stage": 4,
+      "row": 0,
+      "tag": "A2",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/subagents/write_log.py",
+          "line": 56,
+          "end_line": 133,
+          "label": "reads / promotes"
+        }
+      ]
+    },
+    {
+      "id": "realws",
+      "type": "database",
+      "label": "Real workspace",
+      "sublabel": "shared by all agents",
+      "stage": 4,
+      "row": 2,
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/edit_session.py",
+          "line": 184,
+          "end_line": 200,
+          "label": "promote_files"
+        }
+      ]
+    },
+    {
+      "id": "chatdb",
+      "type": "database",
+      "label": "chat.sqlite3",
+      "sublabel": "gates + chat_agents",
+      "stage": 4,
+      "row": 4,
+      "tag": "D1",
+      "sources": [
+        {
+          "path": "services/agentd-py/agentd/chat/storage.py",
+          "line": 233,
+          "end_line": 255,
+          "label": "gate list"
+        },
+        {
+          "path": "services/agentd-py/agentd/chat/storage.py",
+          "line": 657,
+          "end_line": 700,
+          "label": "chat_agents"
+        }
+      ],
+      "yOffset": -29
+    }
+  ],
+  "flows": [
+    {
+      "id": "f-click",
+      "from": "webview",
+      "to": "extension",
+      "label": "message / gate click",
+      "variant": "default",
+      "labelAt": [
+        100,
+        315
+      ]
+    },
+    {
+      "id": "f-call",
+      "from": "extension",
+      "to": "client",
+      "label": "send + gateId",
+      "variant": "default",
+      "labelAt": [
+        100,
+        429
+      ]
+    },
+    {
+      "id": "f-post",
+      "from": "client",
+      "to": "msgroute",
+      "label": "POST /message",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f-decide",
+      "from": "client",
+      "to": "decisionroutes",
+      "label": "gate_id",
+      "variant": "security",
+      "labelAt": [
+        235.5,
+        486
+      ]
+    },
+    {
+      "id": "f-handle",
+      "from": "msgroute",
+      "to": "chatctl",
+      "label": "handle_message",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f-run",
+      "from": "chatctl",
+      "to": "parentloop",
+      "label": "loop.run",
+      "variant": "emphasis",
+      "labelAt": [
+        530,
+        201
+      ]
+    },
+    {
+      "id": "f-tool",
+      "from": "parentloop",
+      "to": "dispatchtool",
+      "label": "call ⇄ tool_result",
+      "variant": "emphasis",
+      "labelAt": [
+        530,
+        315
+      ]
+    },
+    {
+      "id": "f-spawn",
+      "from": "dispatchtool",
+      "to": "runtime",
+      "label": "handles + contexts",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f-slot",
+      "from": "runtime",
+      "to": "childloop",
+      "label": "slot → _run_child",
+      "variant": "emphasis",
+      "labelAt": [
+        745,
+        315
+      ]
+    },
+    {
+      "id": "f-gate",
+      "from": "childloop",
+      "to": "childgates",
+      "label": "edit / cmd / mcp gate",
+      "variant": "security",
+      "labelAt": [
+        745,
+        429
+      ]
+    },
+    {
+      "id": "f-resolve",
+      "from": "decisionroutes",
+      "to": "childgates",
+      "label": "future by gate_id",
+      "variant": "security"
+    },
+    {
+      "id": "f-gatestore",
+      "from": "childgates",
+      "to": "chatdb",
+      "label": "gate rows",
+      "variant": "default"
+    },
+    {
+      "id": "f-events",
+      "from": "childloop",
+      "to": "channel",
+      "label": "events + messages",
+      "variant": "dashed"
+    },
+    {
+      "id": "f-transcript",
+      "from": "channel",
+      "to": "chatdb",
+      "label": "transcript",
+      "variant": "dashed",
+      "labelAt": [
+        1022,
+        533
+      ]
+    },
+    {
+      "id": "f-edit",
+      "from": "childloop",
+      "to": "editsession",
+      "label": "edit (apply, accept)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f-check",
+      "from": "editsession",
+      "to": "writelog",
+      "label": "check + record",
+      "variant": "security"
+    },
+    {
+      "id": "f-promote",
+      "from": "editsession",
+      "to": "realws",
+      "label": "promote_files",
+      "variant": "emphasis",
+      "labelAt": [
+        960,
+        315
+      ]
+    },
+    {
+      "id": "f-report",
+      "from": "childloop",
+      "to": "dispatchtool",
+      "label": "full report",
+      "variant": "default",
+      "labelDy": 12
+    },
+    {
+      "id": "f-live",
+      "from": "chatdb",
+      "to": "liveroutes",
+      "label": "gates + agents",
+      "variant": "default"
+    },
+    {
+      "id": "f-poll",
+      "from": "liveroutes",
+      "to": "client",
+      "label": "/live poll",
+      "variant": "default"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Dispatch path (Phase 2 D, E)",
+      "items": [
+        "_dispatch builds an AgentContext per request (effective_permission, child_allowed_types) and registers it in the write log before any child runs",
+        "_on_dispatch_start persists the agent_dispatch message and chat_agents rows, then broadcasts agent_started on the thread channel",
+        "SubAgentRuntime caps concurrency at 8 slots; a dispatching child releases its slot while it waits on its own children",
+        "Reports are never truncated: format_dispatch_result returns one entry per child plus workspace_changes",
+        "Runtime status changes persist to chat_agents and broadcast agent_status / agent_finished on the thread channel"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Write guard (Phase 2 A)",
+      "items": [
+        "BuiltinToolSource read_observer records each read in WorkspaceWriteLog",
+        "Check 1 runs in apply; Check 2 runs in accept with no await before promote_files",
+        "A stale path raises StaleWriteError naming the writer agent; the loop records ✗ Not applied and continues",
+        "Re-seeding every touched file from real on each apply prevents silent lost updates"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Prompts + gates (1A, 1B)",
+      "items": [
+        "Engine: create_controller_step(render_ctx, persona, allowed_types) renders the system prompt; main uses RenderContext.main(), children RenderContext.for_agent()",
+        "1A: tagged templates render main byte-identical (goldens); children get AGENT role, persona and the report action",
+        "1B: pending_controller_gates is a list; decisions select by gate_id (unknown 404, ambiguous 409)",
+        "1B: ApprovalOutcome tells the model whether user, policy or timeout denied the call; dontAsk children deny by policy",
+        "Phase 2 B: children cannot remember, git-mutate (vcs_refusal) or exceed depth 2"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Lifecycle (Phase 2 E)",
+      "items": [
+        "Stop: runtime.stop_agent cancels one child; stopping the turn yields a synthetic dispatch result",
+        "Restart: reap_subagents marks orphaned agents and removes their child gates",
+        "Rewind: deletes rewound children, their memory segments and their write-log entries"
+      ]
+    }
+  ]
+}

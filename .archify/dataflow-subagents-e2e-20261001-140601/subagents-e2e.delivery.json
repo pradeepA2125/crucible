@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "7726c5b1-9885-41f8-923c-49df699e6d6b",
+  "status": "current",
+  "command": "deliver",
+  "type": "dataflow",
+  "input": "/Users/pradeepkumar/projects/AI editor/.archify/dataflow-subagents-e2e-20261001-140601/candidate.json",
+  "output": "/Users/pradeepkumar/projects/AI editor/.archify/dataflow-subagents-e2e-20261001-140601/subagents-e2e.html",
+  "specification": {
+    "sha256": "fb7f1b56a8d157165d741008c727c29da6b7cff5c308e162bf691b798c0a3fde",
+    "bytes": 16029
+  },
+  "artifact": {
+    "sha256": "b2b3a599184ac7e5f7558249b4ae5322867ec5ca76a043bde8fc0eb0bb6ddd31",
+    "bytes": 788400
+  }
+}

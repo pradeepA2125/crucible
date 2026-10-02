@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "444b45e3-0bf5-42b1-9bb8-fa68e3dac991",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/Users/pradeepkumar/projects/AI editor/.archify/sequence-subagents-calls-20261001-140601/candidate-part2.json",
+  "output": "/Users/pradeepkumar/projects/AI editor/.archify/sequence-subagents-calls-20261001-140601/subagents-calls-part2.html",
+  "specification": {
+    "sha256": "6345e03a0dcb5fa88158c0d14157d355749697183a6d55147daea98640929e26",
+    "bytes": 8953
+  },
+  "artifact": {
+    "sha256": "3c36d1d328a7f86e47a98fc5fc227158fb2777e3018bcadb681b5a874c640863",
+    "bytes": 768743
+  }
+}
