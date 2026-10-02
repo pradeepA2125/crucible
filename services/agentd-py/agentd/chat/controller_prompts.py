@@ -112,6 +112,8 @@ _PHASE_TYPES: dict[str, list[str]] = {
 # controller_loop.py and the OUTPUT block in CONTROLLER_SYSTEM_PROMPT.
 _OBJECT = {"type": "object"}
 _STR = {"type": "string"}
+# The report statuses a lone sub-agent may choose (spec §3.3); teams add awaiting_peer.
+_REPORT_STATUS = {"type": "string", "enum": ["completed", "partial"]}
 
 # Per-op-type field specs: the op-specific properties + which are required for THAT op.
 # The tight patch-op item is a oneOf over these branches (each a closed object with an
@@ -173,7 +175,8 @@ _VARIANT_SPECS: dict[str, dict[str, object]] = {
     },
     "submit_changes": {"required": ["summary"], "properties": {"summary": _STR}},
     "progress": {"required": ["note"], "properties": {"note": _STR}},
-    "report": {"required": ["summary"], "properties": {"summary": _STR}},
+    "report": {"required": ["summary"],
+               "properties": {"summary": _STR, "status": _REPORT_STATUS}},
 }
 
 
@@ -215,6 +218,10 @@ def controller_response_schema(
         return {"anyOf": [_tight_variant_branch(v) for v in types]}
     schema = copy.deepcopy(CONTROLLER_RESPONSE_SCHEMA)
     schema["properties"]["type"]["enum"] = types  # type: ignore[index]
+    if "report" in types:
+        # Only a sub-agent's schema can carry report fields: the main agent never has the
+        # report type, so its schema (and the schema-in-prompt bytes) stay unchanged.
+        schema["properties"]["status"] = dict(_REPORT_STATUS)  # type: ignore[index]
     if all_fields_required:
         extra: list[str] = []
         for variant in types:
@@ -431,6 +438,8 @@ Variant — report (END your task — the ONLY thing your dispatcher receives): 
   latest edits is stale. Structure the summary as: Summary / Changes (files + what changed) /
   Verification (commands run + results) / Assumptions made / Open questions for the dispatcher /
   Unfinished.
+  "status" (optional): "completed" when the task is done, "partial" when you could not finish it —
+  say why in the summary. Omitted means "completed".
   {"type":"report","thought":"done","summary":"Summary: added a token-bucket limiter. Changes: api/limiter.py (new TokenBucket), api/middleware.py (registered before auth). Verification: pytest tests/test_limiter.py — 6 passed. Assumptions made: 60 req/min default. Open questions: none. Unfinished: none."}
 
 <</type:report>>

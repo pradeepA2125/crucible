@@ -22,7 +22,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_STATUSES = frozenset({"completed", "partial", "failed", "stopped"})
+# `status` is the single scheduling field (spec §3.1). v1's `waiting` means "parked at an
+# approval gate" — a live status; v2's peer-wait is `awaiting_peer`, an idle one.
+LIVE_STATUSES = frozenset({"queued", "running", "waiting"})
+IDLE_STATUSES = frozenset({
+    "completed", "awaiting_peer", "partial", "failed", "failed_transient", "stopped"})
+# Kept for existing imports: every idle status ends an activation.
+TERMINAL_STATUSES = IDLE_STATUSES
 
 
 def agent_channel(thread_id: str, agent_id: str) -> str:

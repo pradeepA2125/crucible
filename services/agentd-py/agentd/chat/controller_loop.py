@@ -1689,9 +1689,11 @@ class ControllerLoop:
                     # and the dispatcher is told exactly what is left (spec §6.5).
                     summary += "\n\nUnfinished:\n" + "\n".join(
                         f"- {i.title} ({i.status})" for i in still_open)
+                chosen = str(resp.get("status") or "completed")
+                status = "partial" if final or chosen == "partial" else "completed"
                 return ControllerOutcome(
                     kind="report", text=summary, history=history,
-                    payload={"status": "partial" if final else "completed"})
+                    payload={"status": status})
             if atype == "submit_changes":
                 # Hard gate: a non-empty ledger is a contract. Block submit while items are
                 # pending/in_progress (NOT blocked/cancelled/done — those never deadlock) and
