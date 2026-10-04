@@ -14,7 +14,8 @@ export interface ChatMsg {
   /** Stable rewind anchor. Absent/null on messages persisted before rewind shipped. */
   id?: string | null;
   type: "text" | "plan_card" | "diff_card" | "diff_summary" | "task_card"
-      | "scope_card" | "validation_card" | "command_card" | "agent_dispatch";
+      | "scope_card" | "validation_card" | "command_card" | "agent_dispatch"
+      | "notice" | "agent_message" | "team_created";
   taskId?: string | null;
   timestamp: string;
   metadata: Record<string, unknown>;

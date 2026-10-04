@@ -244,7 +244,7 @@ export const ChatMessageSchema = z.object({
   content: z.string(),
   // Stable rewind anchor. Absent/null on messages persisted before rewind shipped.
   id: z.string().nullable().optional(),
-  type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card", "validation_card", "command_card", "agent_dispatch"]).default("text"),
+  type: z.enum(["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card", "validation_card", "command_card", "agent_dispatch", "notice", "agent_message", "team_created"]).default("text"),
   taskId: z.string().nullable().optional(),
   timestamp: z.string(),
   metadata: z.record(z.unknown()).default({}),

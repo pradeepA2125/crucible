@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from agentd.chat.models import (
     ChatMessage,
     ChatThread,
     Checkpoint,
+    NoticeRecord,
     PendingGate,
 )
 from agentd.providers.usage import Usage
@@ -134,6 +136,23 @@ class ChatThreadStore:
             self._backfill_v1_agents()
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS chat_agents_by_turn ON chat_agents(thread_id, turn_id)")
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_notices (
+                notice_id               TEXT PRIMARY KEY,
+                thread_id               TEXT NOT NULL,
+                source_kind             TEXT NOT NULL,
+                source_id               TEXT NOT NULL,
+                kind                    TEXT NOT NULL,
+                payload_json            TEXT NOT NULL,
+                delivery                TEXT NOT NULL,
+                created_at              TEXT NOT NULL,
+                claimed_turn_id         TEXT,
+                claimed_checkpoint_seq  INTEGER,
+                delivered_at            TEXT
+            );
+        """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS agent_notices_by_thread ON agent_notices(thread_id)")
         self._conn.commit()
 
     def _backfill_v1_agents(self) -> None:
@@ -800,6 +819,115 @@ class ChatThreadStore:
             "AND status IN ('queued', 'running', 'waiting') ORDER BY depth, rowid",
             (thread_id,)).fetchall()
         return [r["agent_id"] for r in rows]
+
+    @staticmethod
+    def _notice_from_row(row: sqlite3.Row) -> NoticeRecord:
+        return NoticeRecord(
+            notice_id=row["notice_id"], thread_id=row["thread_id"],
+            source_kind=row["source_kind"], source_id=row["source_id"], kind=row["kind"],
+            payload=json.loads(row["payload_json"]), delivery=row["delivery"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            claimed_turn_id=row["claimed_turn_id"],
+            claimed_checkpoint_seq=row["claimed_checkpoint_seq"],
+            delivered_at=(datetime.fromisoformat(row["delivered_at"])
+                          if row["delivered_at"] else None))
+
+    def insert_notice(self, record: NoticeRecord) -> None:
+        self._conn.execute(
+            "INSERT INTO agent_notices (notice_id, thread_id, source_kind, source_id, kind, "
+            "payload_json, delivery, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (record.notice_id, record.thread_id, record.source_kind, record.source_id,
+             record.kind, json.dumps(record.payload), record.delivery,
+             record.created_at.isoformat()))
+        self._conn.commit()
+
+    def unclaimed_notices(self, thread_id: str) -> list[NoticeRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM agent_notices WHERE thread_id = ? AND claimed_turn_id IS NULL "
+            "ORDER BY created_at, rowid", (thread_id,)).fetchall()
+        return [self._notice_from_row(r) for r in rows]
+
+    def claim_notices(self, notice_ids: list[str], turn_id: str, checkpoint_seq: int) -> None:
+        self._conn.executemany(
+            "UPDATE agent_notices SET claimed_turn_id = ?, claimed_checkpoint_seq = ? "
+            "WHERE notice_id = ? AND claimed_turn_id IS NULL",
+            [(turn_id, checkpoint_seq, nid) for nid in notice_ids])
+        self._conn.commit()
+
+    def deliver_claimed_notices(self, thread_id: str, turn_id: str) -> list[NoticeRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM agent_notices WHERE thread_id = ? AND claimed_turn_id = ? "
+            "AND delivered_at IS NULL", (thread_id, turn_id)).fetchall()
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            "UPDATE agent_notices SET delivered_at = ? WHERE thread_id = ? "
+            "AND claimed_turn_id = ? AND delivered_at IS NULL", (now, thread_id, turn_id))
+        self._conn.executemany(
+            "UPDATE chat_agents SET report_delivered_at = ? WHERE agent_id = ?",
+            [(now, r["source_id"]) for r in rows if r["source_kind"] == "agent"])
+        self._conn.commit()
+        return [self._notice_from_row(r) for r in rows]
+
+    def release_claimed_notices(self, thread_id: str, turn_id: str) -> int:
+        cur = self._conn.execute(
+            "UPDATE agent_notices SET claimed_turn_id = NULL, claimed_checkpoint_seq = NULL "
+            "WHERE thread_id = ? AND claimed_turn_id = ? AND delivered_at IS NULL",
+            (thread_id, turn_id))
+        self._conn.commit()
+        return cur.rowcount
+
+    def release_all_unpersisted_notices(self) -> int:
+        """Startup (spec §5.2): a claim whose turn never persisted is retried."""
+        cur = self._conn.execute(
+            "UPDATE agent_notices SET claimed_turn_id = NULL, claimed_checkpoint_seq = NULL "
+            "WHERE claimed_turn_id IS NOT NULL AND delivered_at IS NULL")
+        self._conn.commit()
+        return cur.rowcount
+
+    def claimed_agent_sources(self, thread_id: str) -> set[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT source_id FROM agent_notices WHERE thread_id = ? "
+            "AND source_kind = 'agent' AND claimed_turn_id IS NOT NULL",
+            (thread_id,)).fetchall()
+        return {r["source_id"] for r in rows}
+
+    def _rewrite_messages(
+        self, thread_id: str, edit: Callable[[list[dict[str, Any]]], bool],
+    ) -> bool:
+        row = self._conn.execute(
+            "SELECT messages_json FROM chat_threads WHERE thread_id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        messages: list[dict[str, Any]] = json.loads(row["messages_json"])
+        if not edit(messages):
+            return False
+        self._conn.execute("UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
+                           (json.dumps(messages), thread_id))
+        self._conn.commit()
+        return True
+
+    def set_message_metadata(
+        self, thread_id: str, message_id: str, updates: dict[str, Any],
+    ) -> bool:
+        def edit(messages: list[dict[str, Any]]) -> bool:
+            for message in messages:
+                if message.get("id") == message_id:
+                    message.setdefault("metadata", {}).update(updates)
+                    return True
+            return False
+        return self._rewrite_messages(thread_id, edit)
+
+    def move_message_to_end(self, thread_id: str, message_id: str) -> bool:
+        """A queued message is answered after the notice turn it arrived during (spec §5.3):
+        same id, now after everything that turn wrote."""
+        def edit(messages: list[dict[str, Any]]) -> bool:
+            index = next((i for i, m in enumerate(messages) if m.get("id") == message_id), None)
+            if index is None:
+                return False
+            messages.append(messages.pop(index))
+            return True
+        return self._rewrite_messages(thread_id, edit)
 
     def set_agent_history(self, agent_id: str, history: list[dict[str, Any]]) -> None:
         self._conn.execute(

@@ -43,7 +43,7 @@ class ChatMessage(BaseModel):
     # simply do not offer a rewind anchor.
     id: str | None = None
     type: Literal["text", "plan_card", "diff_card", "diff_summary", "task_card", "scope_card",
-                  "agent_dispatch"] = "text"
+                  "agent_dispatch", "notice", "agent_message", "team_created"] = "text"
     task_id: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -103,6 +103,21 @@ class AgentRecord(BaseModel):
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
             "report_preview": self.report[:200],
         }
+
+
+class NoticeRecord(BaseModel):
+    """A report or milestone waiting for the main agent (spec §5.1)."""
+    notice_id: str
+    thread_id: str
+    source_kind: Literal["agent", "team"]
+    source_id: str
+    kind: str                       # "agent_finished" or a team milestone (Phase 4)
+    payload: dict[str, Any]
+    delivery: Literal["notify", "wake"]
+    created_at: datetime
+    claimed_turn_id: str | None = None
+    claimed_checkpoint_seq: int | None = None
+    delivered_at: datetime | None = None
 
 
 class CapturedFile(BaseModel):
@@ -252,6 +267,9 @@ class ThreadLiveState(BaseModel):
     # /live route sets it from ChatController._active_turns so the FE can keep input
     # disabled across a webview reload (the ephemeral inputEnabled flag resets on mount).
     turn_active: bool = False
+    # Which kind of main turn is running (spec §5.3): the composer stays usable during a
+    # notice turn. None when no turn is running.
+    turn_kind: Literal["user", "notice"] | None = None
     status: str | None = None
     # Every pending gate, controller gates first (spec §4.5).
     pending_gates: list[PendingGate] = Field(default_factory=list)
