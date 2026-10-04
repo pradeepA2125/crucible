@@ -66,3 +66,37 @@ def test_rewind_deletes_notices_of_runs_started_in_the_span(
     rows = {r["notice_id"]: r for r in store._conn.execute("SELECT * FROM agent_notices")}
     assert "n-resumed" not in rows
     assert rows["n-early"]["delivered_at"] is None   # offered again
+
+
+def test_rewind_rolls_a_resumed_agent_back_to_before_the_span(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A follow-up sent in a rewound turn never happened: the agent forgets it too, not only
+    the main agent (found live, 2026-10-04)."""
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [], {})
+    store.insert_agent(_agent(tid, "old", 0, files=["a.py"]))
+    store.update_agent("old", activation_count=1, report="first report", status="completed")
+    store.set_agent_history("old", [{"role": "user", "content": "task"}])
+    # Activation 2 starts under checkpoint 3 (a turn the user later rewinds).
+    store.save_activation_snapshot("old", activation=2, checkpoint_seq=3)
+    store.update_agent("old", activation_count=2, report="follow-up report", status="completed",
+                       files_changed=["a.py", "b.py"])
+    store.set_agent_history("old", [{"role": "user", "content": "task"},
+                                    {"role": "user", "content": "Message from main: again"}])
+    ctrl.forget_rewound_agents(tid, [], 3)
+    row = store.get_agent("old")
+    assert row is not None
+    assert (row.activation_count, row.report, row.files_changed) == (1, "first report", ["a.py"])
+    assert row.history == [{"role": "user", "content": "task"}]
+    # A rewind to an earlier point than the snapshot is untouched by later rewinds.
+    assert store.restore_agents_from_seq(tid, 3) == []
+
+
+def test_rewind_before_a_snapshot_does_not_touch_later_ones(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [], {})
+    store.insert_agent(_agent(tid, "old", 0))
+    store.update_agent("old", activation_count=2, report="second")
+    store.save_activation_snapshot("old", activation=3, checkpoint_seq=5)
+    store.update_agent("old", activation_count=3, report="third")
+    assert store.restore_agents_from_seq(tid, 7) == []      # span starts after activation 3
+    assert store.get_agent("old").report == "third"  # type: ignore[union-attr]

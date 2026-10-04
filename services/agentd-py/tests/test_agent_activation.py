@@ -189,3 +189,20 @@ async def test_a_resumed_helper_keeps_inherited_restrictions(tmp_path, monkeypat
     handle = ctrl._handle_from_record(tid, row.agent_id)
     assert (handle.context.permission, handle.context.no_ask, handle.context.edit_review) == (
         "plan", True, "required")
+
+
+@pytest.mark.asyncio
+async def test_a_resume_snapshots_the_agent_for_rewind(tmp_path: Path,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    ws, store, tid, engine = _setup(tmp_path, monkeypatch, [
+        {"type": "report", "thought": "t", "summary": "one"},
+        {"type": "report", "thought": "t", "summary": "two"}])
+    ctrl = _controller(ws, tmp_path, store, engine)
+    await ctrl.handle_message(tid, "go", channel_id=f"chat:{tid}")
+    [row] = store.list_agents(tid)
+    await ctrl._subagents.wait([ctrl.resume_agent(tid, row.agent_id, "again")])  # type: ignore[union-attr]
+    assert store.get_agent(row.agent_id).report == "two"  # type: ignore[union-attr]
+    # Rewinding to the checkpoint the resume ran under puts the first report back.
+    assert store.restore_agents_from_seq(tid, store.current_checkpoint_seq(tid)) == [row.agent_id]
+    restored = store.get_agent(row.agent_id)
+    assert restored is not None and (restored.activation_count, restored.report) == (1, "one")

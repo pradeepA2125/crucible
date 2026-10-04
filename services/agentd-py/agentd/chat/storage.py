@@ -153,6 +153,18 @@ class ChatThreadStore:
         """)
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS agent_notices_by_thread ON agent_notices(thread_id)")
+        # An agent's row as it stood before each resumed activation (spec §8.10): a rewind
+        # past the activation's checkpoint restores it, so the agent forgets a follow-up the
+        # user rewound away. Activation 1 needs none — rewinding past it deletes the agent.
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_activation_snapshots (
+                agent_id        TEXT NOT NULL,
+                activation      INTEGER NOT NULL,
+                checkpoint_seq  INTEGER NOT NULL,
+                state_json      TEXT NOT NULL,
+                PRIMARY KEY (agent_id, activation)
+            );
+        """)
         self._conn.commit()
 
     def _backfill_v1_agents(self) -> None:
@@ -961,6 +973,51 @@ class ChatThreadStore:
         self._conn.commit()
         return cur.rowcount
 
+    # Columns an activation changes and a rewind puts back. Usage counters are not among
+    # them: the provider calls were made.
+    _ACTIVATION_STATE_COLUMNS: tuple[str, ...] = (
+        "status", "report", "files_changed_json", "stale_refusals", "transcript_json",
+        "ended_at", "history_json", "activation_count", "last_seq", "on_finish",
+        "report_delivered_at", "stop_reason", "activation_started_at", "activation_ended_at")
+
+    def save_activation_snapshot(
+        self, agent_id: str, *, activation: int, checkpoint_seq: int,
+    ) -> None:
+        columns = ", ".join(self._ACTIVATION_STATE_COLUMNS)
+        row = self._conn.execute(
+            f"SELECT {columns} FROM chat_agents WHERE agent_id = ?",  # noqa: S608 — fixed list
+            (agent_id,)).fetchone()
+        if row is None:
+            return
+        self._conn.execute(
+            "INSERT OR REPLACE INTO agent_activation_snapshots "
+            "(agent_id, activation, checkpoint_seq, state_json) VALUES (?, ?, ?, ?)",
+            (agent_id, activation, checkpoint_seq, json.dumps(dict(row))))
+        self._conn.commit()
+
+    def restore_agents_from_seq(self, thread_id: str, seq: int) -> list[str]:
+        """Roll each agent back to before its first activation started at or after checkpoint
+        `seq`, and drop the snapshots that rewind consumed. Returns the agents restored."""
+        rows = self._conn.execute(
+            "SELECT s.agent_id, s.activation, s.state_json FROM agent_activation_snapshots s "
+            "JOIN chat_agents a ON a.agent_id = s.agent_id "
+            "WHERE a.thread_id = ? AND s.checkpoint_seq >= ? ORDER BY s.agent_id, s.activation",
+            (thread_id, seq)).fetchall()
+        earliest: dict[str, tuple[int, dict[str, Any]]] = {}
+        for r in rows:
+            earliest.setdefault(r["agent_id"], (r["activation"], json.loads(r["state_json"])))
+        for agent_id, (activation, state) in earliest.items():
+            columns = [c for c in self._ACTIVATION_STATE_COLUMNS if c in state]
+            assignments = ", ".join(f"{c} = ?" for c in columns)
+            self._conn.execute(
+                f"UPDATE chat_agents SET {assignments} WHERE agent_id = ?",  # noqa: S608
+                (*[state[c] for c in columns], agent_id))
+            self._conn.execute(
+                "DELETE FROM agent_activation_snapshots WHERE agent_id = ? AND activation >= ?",
+                (agent_id, activation))
+        self._conn.commit()
+        return list(earliest)
+
     def delete_notices_for_sources(self, thread_id: str, source_ids: list[str]) -> int:
         cur = self._conn.executemany(
             "DELETE FROM agent_notices WHERE thread_id = ? AND source_id = ?",
@@ -1136,6 +1193,7 @@ class ChatThreadStore:
         self._conn.execute(
             f"DELETE FROM chat_agents WHERE thread_id = ? "  # noqa: S608
             f"AND turn_id IN ({placeholders})", (thread_id, *turn_ids))
+        self._delete_snapshots(ids)
         self._conn.commit()
         return ids
 
@@ -1150,8 +1208,14 @@ class ChatThreadStore:
         self._conn.execute(
             "DELETE FROM chat_agents WHERE thread_id = ? AND checkpoint_seq >= ?",
             (thread_id, seq))
+        self._delete_snapshots(ids)
         self._conn.commit()
         return ids
+
+    def _delete_snapshots(self, agent_ids: list[str]) -> None:
+        self._conn.executemany(
+            "DELETE FROM agent_activation_snapshots WHERE agent_id = ?",
+            [(i,) for i in agent_ids])
 
     def count_live_agents(self, thread_id: str) -> int:
         row = self._conn.execute(

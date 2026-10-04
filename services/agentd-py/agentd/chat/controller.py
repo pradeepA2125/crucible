@@ -1462,8 +1462,10 @@ class ChatController:
         # are offered again, since the restored history no longer holds them (spec §8.10).
         self._store.delete_notices_for_sources(thread_id, agent_ids)
         if from_seq is not None:
-            # A run started inside the span answered a request that no longer exists.
+            # A run started inside the span answered a request that no longer exists:
+            # its report goes, and the agent itself rolls back to before it.
             self._store.delete_notices_from_activation_seq(thread_id, from_seq)
+            self._store.restore_agents_from_seq(thread_id, from_seq)
             self._store.undeliver_notices_from(thread_id, from_seq)
         if restored_files and self._subagents is not None:
             restored = set(restored_files)
@@ -2267,9 +2269,13 @@ class ChatController:
             transcript.append(ChatMessage(
                 role="agent", content=_divider_text(activation_input),
                 metadata={"divider": True}))
+        handle.activation_seq = self._store.current_checkpoint_seq(thread_id)
+        if activation > 1:
+            # Before the row changes: a rewind past this checkpoint restores it (§8.10).
+            self._store.save_activation_snapshot(
+                ctx.agent_id, activation=activation, checkpoint_seq=handle.activation_seq)
         self._store.update_agent(ctx.agent_id, activation_count=activation,
                                  activation_started_at=datetime.now(UTC))
-        handle.activation_seq = self._store.current_checkpoint_seq(thread_id)
         self._store.clear_report_delivered(ctx.agent_id)
         workspace = Path(self._workspace_path)
         run_id = f"{thread_id}:{ctx.agent_id}"
