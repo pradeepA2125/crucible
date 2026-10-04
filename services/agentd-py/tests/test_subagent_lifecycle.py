@@ -81,8 +81,10 @@ async def test_live_roster_then_stopping_one_agent(tmp_path: Path,
     assert roster["waiter"]["status"] == "waiting"
     assert roster["waiter"]["depth"] == 1 and roster["waiter"]["report_preview"] == ""
     assert set(roster["waiter"]) == {
-        "agent_id", "parent_agent_id", "depth", "name", "label", "status", "now",
-        "tool_count", "files_changed_count", "started_at", "ended_at", "report_preview"}
+        "agent_id", "turn_id", "parent_agent_id", "depth", "name", "label", "status", "now",
+        "tool_count", "files_changed_count", "started_at", "ended_at", "report_preview",
+        "activation_count", "team_id", "dispatcher_id", "on_finish",
+        "activation_started_at", "activation_ended_at"}
     assert await ctrl.stop_agent(tid, gate.agent.id) is True
     await turn
     thread = store.get_thread(tid)
@@ -93,7 +95,9 @@ async def test_live_roster_then_stopping_one_agent(tmp_path: Path,
     assert statuses == {"waiter": "stopped", "quick": "completed"}
     stopped = store.get_agent(gate.agent.id)
     assert stopped is not None and stopped.stop_reason == "user"
-    assert ctrl.live_agents(tid) == []  # the turn is over
+    # Agents that reported since the user's last message stay listed (spec §6).
+    assert {a["label"]: a["status"] for a in ctrl.live_agents(tid)} == {
+        "waiter": "stopped", "quick": "completed"}
     assert await ctrl.stop_agent(tid, gate.agent.id) is False
 
 

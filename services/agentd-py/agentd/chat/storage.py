@@ -959,6 +959,11 @@ class ChatThreadStore:
         self._conn.commit()
         return cur.rowcount
 
+    def last_user_message_at(self, thread_id: str) -> datetime | None:
+        thread = self.get_thread(thread_id)
+        stamps = [m.timestamp for m in (thread.messages if thread else []) if m.role == "user"]
+        return stamps[-1] if stamps else None
+
     def set_agent_history(self, agent_id: str, history: list[dict[str, Any]]) -> None:
         self._conn.execute(
             "UPDATE chat_agents SET history_json = ? WHERE agent_id = ?",

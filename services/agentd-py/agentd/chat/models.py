@@ -102,6 +102,13 @@ class AgentRecord(BaseModel):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "ended_at": self.ended_at.isoformat() if self.ended_at else None,
             "report_preview": self.report[:200],
+            # Change only at activation boundaries, so /live rows stay stable (spec §6).
+            "activation_count": self.activation_count, "team_id": self.team_id,
+            "dispatcher_id": self.dispatcher_id, "on_finish": self.on_finish,
+            "activation_started_at": (self.activation_started_at.isoformat()
+                                      if self.activation_started_at else None),
+            "activation_ended_at": (self.activation_ended_at.isoformat()
+                                    if self.activation_ended_at else None),
         }
 
 
@@ -289,6 +296,10 @@ class ThreadLiveState(BaseModel):
     sessions: list[dict[str, Any]] | None = None
     # The in-flight turn's sub-agent tree (spec §11.1); None when there is none.
     agents: list[dict[str, Any]] | None = None
+    # Queued, running or gate-parked agents in the thread (spec §6) — the Stop-all control.
+    agents_running: int = 0
+    # The transcript's length: a change the host did not stream triggers a reconcile (§6).
+    message_count: int = 0
 
 
 class ChatCommandDecisionRequest(CommandDecision):

@@ -57,7 +57,9 @@ async def test_list_get_stop_live_and_config(tmp_path: Path,
         "agent_id": "agent-a", "turn_id": "turn-1", "parent_agent_id": None, "depth": 1,
         "name": "general-purpose", "label": "impl", "status": "completed",
         "files_changed_count": 1, "tool_count": 0, "started_at": None, "ended_at": None,
-        "report_preview": "R" * 200}]
+        "report_preview": "R" * 200, "activation_count": 0, "team_id": None,
+        "dispatcher_id": None, "on_finish": None, "activation_started_at": None,
+        "activation_ended_at": None}]
     assert by_turn == []
     assert detail["report"] == "R" * 500 and detail["last_seq"] == 9
     assert [m["content"] for m in detail["transcript"]] == ["x", "R"]

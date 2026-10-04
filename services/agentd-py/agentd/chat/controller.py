@@ -1598,38 +1598,30 @@ class ChatController:
             child.thread_id, f"chat:{child.thread_id}", diff, child=child)
 
     def live_agents(self, thread_id: str) -> list[dict[str, object]]:
-        """/live's roster (spec §11.1): every agent of the in-flight turn's dispatch tree,
-        running and finished. Empty once the turn ends (the UI then reads the routes)."""
-        turn_id = self._live_turns.get(thread_id)
-        if self._subagents is None or turn_id is None:
+        """/live's roster (spec §6): agents that are live, or that ended since the user's
+        last message — not only the current turn's, since agents outlive turns now."""
+        if self._subagents is None:
             return []
-        log = self._write_log_for(thread_id)
-        roster: list[dict[str, object]] = []
-        for handle in self._subagents.registry.for_turn(thread_id, turn_id):
-            calls = handle.loop.tool_calls if isinstance(handle.loop, ControllerLoop) else []
-            now = ""
-            if calls:
+        since = self._store.last_user_message_at(thread_id)
+        rows: list[dict[str, object]] = []
+        for record in self._store.list_agents(thread_id):
+            live = record.status in LIVE_STATUSES
+            recent = since is not None and record.ended_at is not None and record.ended_at >= since
+            if not (live or recent):
+                continue
+            row = record.summary()
+            handle = self._subagents.registry.get(record.agent_id)
+            calls = (handle.loop.tool_calls
+                     if handle is not None and isinstance(handle.loop, ControllerLoop) else [])
+            row["now"] = ""
+            if calls and live:
                 last = calls[-1]
                 target = last.arguments.get("path") or last.arguments.get("command") or ""
-                now = f"{last.tool_name} {target}".strip()
-            if handle.result is not None:
-                files = len(handle.result.files_changed)
-            elif log is not None:
-                files = len(log.files_changed_by(
-                    self._subagents.registry.subtree_ids(handle.agent_id)))
-            else:
-                files = 0
-            roster.append({
-                "agent_id": handle.agent_id, "parent_agent_id": handle.context.parent_agent_id,
-                "depth": handle.context.depth, "name": handle.context.name,
-                "label": handle.context.label, "status": handle.status, "now": now,
-                "tool_count": len(calls), "files_changed_count": files,
-                "started_at": handle.started_at.isoformat() if handle.started_at else None,
-                "ended_at": handle.ended_at.isoformat() if handle.ended_at else None,
-                # UI-only preview; the model always gets the full report (D8).
-                "report_preview": handle.result.report[:200] if handle.result else "",
-            })
-        return roster
+                row["now"] = f"{last.tool_name} {target}".strip()
+            if live and handle is not None:
+                row["status"] = handle.status
+            rows.append(row)
+        return rows
 
     def _report_guard(self, handle: AgentHandle) -> str | None:
         """A child cannot report while its agents run or their reports wait undrained
@@ -1731,7 +1723,27 @@ class ChatController:
         handle = self._handle_from_record(thread_id, agent_id)
         handle.activation_input = text
         self._subagents.enqueue(handle, self._activate)
+        self._write_agent_message(thread_id, record, caller_id, message)
         return handle
+
+    def _write_agent_message(
+        self, thread_id: str, record: AgentRecord, caller_id: str, message: str,
+    ) -> None:
+        """The durable record of a resume (spec §6): which activation, from whom."""
+        msg = ChatMessage(role="agent", content=message, type="agent_message", metadata={
+            "agent_id": record.agent_id, "label": record.label,
+            "activation": record.activation_count + 1, "from": caller_id})
+        event = {"type": "agent_message", "payload": {"message": msg.model_dump(mode="json")}}
+        if caller_id == MAIN_AGENT_ID:
+            self._mark_pills_boundary(thread_id)
+            self._store.append_message(thread_id, msg)
+            self._broadcaster.broadcast(f"chat:{thread_id}", event)
+            return
+        dispatcher = self._subagents.registry.get(caller_id) if self._subagents else None
+        if dispatcher is not None and dispatcher.broadcaster is not None:
+            dispatcher.broadcaster.broadcast(agent_channel(thread_id, caller_id), event)
+        if dispatcher is not None and dispatcher.transcript is not None:
+            dispatcher.transcript.append(msg)
 
     async def stop_agent(self, thread_id: str, agent_id: str) -> bool:
         """Stop one sub-agent and its subtree; siblings continue (spec §4.4)."""

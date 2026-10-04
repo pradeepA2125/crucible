@@ -1403,8 +1403,24 @@ def build_router(
                 # compare the two strings.
                 summary["updated_at"] = last_ts
                 summary["status"] = thread_status_chip(status)
+                summary["agents_running"] = _chat_agent._store.count_live_agents(t.thread_id)
                 summaries.append(summary)
             return {"threads": summaries}
+
+        @router.get("/chat/attention")
+        async def get_chat_attention(workspace: str) -> list[dict]:
+            """Threads needing the user, for the cross-thread notification (spec §6): ids
+            and counts only, never gate payloads."""
+            chat_store = _chat_agent._store
+            out: list[dict] = []
+            for t in chat_store.list_threads(workspace):
+                full = chat_store.get_thread(t.thread_id)
+                gates = len(full.pending_controller_gates) if full is not None else 0
+                running = chat_store.count_live_agents(t.thread_id)
+                if gates or running:
+                    out.append({"thread_id": t.thread_id, "pending_gates": gates,
+                                "agents_running": running})
+            return out
 
         @router.post("/chat/threads")
         async def create_chat_thread(request: dict) -> dict:
@@ -1475,6 +1491,10 @@ def build_router(
             _live_agents = getattr(_chat_agent, "live_agents", None)
             if _live_agents is not None:
                 live.agents = _live_agents(thread_id) or None
+            _count_live = getattr(_chat_agent._store, "count_live_agents", None)
+            if _count_live is not None:
+                live.agents_running = _count_live(thread_id)
+            live.message_count = len(thread.messages)
             return live.model_dump()
 
         @router.get("/chat/threads/{thread_id}/sessions/{session_id}/transcript")
