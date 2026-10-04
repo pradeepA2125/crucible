@@ -394,6 +394,8 @@ echo "uvicorn_log=$LOG_FILE"
   export CRUCIBLE_CHAT_CONTROLLER="${CRUCIBLE_CHAT_CONTROLLER:-1}"
   export CRUCIBLE_SKILLS_ENABLED="${CRUCIBLE_SKILLS_ENABLED:-1}"
   export CRUCIBLE_MCP_ENABLED="${CRUCIBLE_MCP_ENABLED:-1}"
+  # NIM free tier allows ~40 requests/minute per key; stay under it (spec §3.11).
+  export CRUCIBLE_PROVIDER_MAX_RPM="${CRUCIBLE_PROVIDER_MAX_RPM:-35}"
   export CRUCIBLE_EXEC_SESSIONS_ENABLED="${CRUCIBLE_EXEC_SESSIONS_ENABLED:-1}"
   export CRUCIBLE_SEMANTIC_RETRIEVAL="${CRUCIBLE_SEMANTIC_RETRIEVAL:-true}"
   # UX decision (chat UI redesign): the step gate is the conscious approval moment

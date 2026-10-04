@@ -70,6 +70,8 @@ export function buildBackendEnv(
     CRUCIBLE_CHAT_CONTROLLER: "1",
     CRUCIBLE_SKILLS_ENABLED: "1",
     CRUCIBLE_MCP_ENABLED: "1",
+    // One shared request budget; NIM free tier allows ~40/min per key (spec §3.11).
+    CRUCIBLE_PROVIDER_MAX_RPM: "35",
     CRUCIBLE_EXEC_SESSIONS_ENABLED: "1",
     CRUCIBLE_SEMANTIC_RETRIEVAL: "true",
     CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT: "false",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -229,6 +230,11 @@ class NonProbativeError(RuntimeError):
     `proves_json_schema_unsupported`.
     """
 
+
+
+def _jittered(delay: float) -> float:
+    """±25% so concurrent agents retrying the same 429 do not retry in lockstep (§3.11)."""
+    return delay * random.uniform(0.75, 1.25)  # noqa: S311 — not cryptographic
 
 class StreamDeadlineExceeded(TimeoutError):
     """A response stream was still going when its total deadline expired."""
@@ -1000,7 +1006,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         last_parse_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
-                delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                delay = _jittered(min(5.0 * (2 ** (attempt - 1)), 60.0))
                 logger.warning(
                     "%s malformed JSON for %s (attempt %d/%d), retrying in %.0fs",
                     self._label, schema_name, attempt, self._max_retries, delay,
@@ -1231,7 +1237,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
 
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
-                delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                delay = _jittered(min(5.0 * (2 ** (attempt - 1)), 60.0))
                 logger.warning(
                     "%s transient error (attempt %d/%d), retrying in %.0fs",
                     self._label, attempt, self._max_retries, delay,
@@ -1423,7 +1429,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
-                delay = min(5.0 * (2 ** (attempt - 1)), 60.0)
+                delay = _jittered(min(5.0 * (2 ** (attempt - 1)), 60.0))
                 logger.warning(
                     "%s transient error (attempt %d/%d), retrying in %.0fs",
                     self._label, attempt, self._max_retries, delay,

@@ -7,6 +7,8 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+from agentd.providers.rate_limit import PROCESS_LIMITER, RateLimitedTransport
+
 if TYPE_CHECKING:
     from agentd.providers.contracts import ModelJsonTransport
 
@@ -120,7 +122,7 @@ def _ollama_think_env(env: dict[str, str], name: str) -> bool | str | None:
     return None
 
 
-def build_transport(
+def _build_raw_transport(
     backend: str, credentials: dict[str, str] | None = None
 ) -> ModelJsonTransport:
     env: dict[str, str] = dict(os.environ)
@@ -275,3 +277,11 @@ def build_transport(
             json_mode=json_mode,
         )
     raise ValueError(f"Unsupported backend: {backend}")
+
+
+def build_transport(
+    backend: str, credentials: dict[str, str] | None = None
+) -> ModelJsonTransport:
+    """Every transport the process builds goes through the shared limiter (spec §3.11)."""
+    return RateLimitedTransport(  # type: ignore[return-value]
+        _build_raw_transport(backend, credentials), PROCESS_LIMITER)

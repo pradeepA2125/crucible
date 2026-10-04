@@ -57,6 +57,7 @@ from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
+from agentd.providers.rate_limit import CALL_PRIORITY
 from agentd.reasoning.react_common import assistant_turn
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
@@ -1711,6 +1712,8 @@ class ChatController:
         shadow, channel and transcript, on the shared workspace guarded by the thread's
         write log."""
         ctx = handle.context
+        # Runs inside this activation's own task: the context changes stay local to it.
+        CALL_PRIORITY.set("agent")  # the user's turn is served first (spec §3.11)
         thread_id, turn_id = handle.thread_id, handle.turn_id
         log = self._write_log_for(thread_id)
         assert log is not None and self._subagents is not None
