@@ -81,7 +81,12 @@ from agentd.subagents.definitions import (
 from agentd.subagents.events import SequencedBroadcaster
 from agentd.subagents.framing import frame
 from agentd.subagents.inbox import InboxItem
-from agentd.subagents.notices import notice_author, notice_body
+from agentd.subagents.notices import (
+    build_fold,
+    notice_author,
+    notice_body,
+    notice_fold_max_tokens,
+)
 from agentd.subagents.permissions import (
     child_allowed_types,
     child_tool_names,
@@ -173,6 +178,10 @@ class TurnDispatches:
     dispatched: dict[str, str] = field(default_factory=dict)   # agent id -> on_finish
     waited: set[str] = field(default_factory=set)
     redirected: bool = False
+
+
+# How often a turn may be held open for agent reports that are still arriving (spec §5.2).
+_MAX_ARRIVAL_REDIRECTS = 5
 
 
 def _divider_text(activation_input: str) -> str:
@@ -281,6 +290,8 @@ class ChatController:
         # The running main turn's inbox, per thread (spec §5.2 path 2): reports that
         # arrived mid-turn, appended one per iteration top.
         self._main_inbox: dict[str, list[InboxItem]] = {}
+        # Per running main turn: how often it was held open for arriving reports.
+        self._announced: dict[str, int] = {}
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -511,7 +522,10 @@ class ChatController:
         seed = self._seed_for(thread_id)
         # On a continued turn (discuss), append the user's reply to the prior history
         # and replay it as the cache prefix (spec §12 clarify resume).
-        seed_history = (seed + [{"role": "user", "content": turn_message}]) if seed else None
+        # Always a list, even on a thread's first turn (spec §5.2): the fold needs a user
+        # message in persisted history, and a first message was never in it before.
+        seed_history = [*seed, {"role": "user",
+                                "content": self._fold_notices(thread_id, turn_id, turn_message)}]
         # Clarify-resume is now driven by resolve_clarify (the gate carries resume_phase),
         # not a fresh user message: the main composer is disabled while a clarify gate is
         # pending, so the answer arrives via the card. A plain message here always
@@ -692,6 +706,7 @@ class ChatController:
         # Same lifetime, for the same reason: /review-pref reaches in here mid-turn.
         self._turn_controls[thread_id] = control
         self._turn_dispatches[thread_id] = TurnDispatches()
+        self._announced[thread_id] = 0
         # The turn task is detached, so this context change stays local to it (spec §3.11).
         usage_owner = f"thread:{thread_id}"
         USAGE_OWNER.set(usage_owner)
@@ -703,7 +718,7 @@ class ChatController:
                 edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
                 on_pills_update=pills_cb,
                 inbox_drain=partial(self._drain_main, thread_id, turn_id) if turn_id else None,
-                terminal_guard=partial(self._unwaited_guard, thread_id))
+                terminal_guard=partial(self._main_terminal_guard, thread_id))
         except asyncio.CancelledError:
             # /stop cancels the turn's asyncio.Task, raising here BEFORE the normal post-run
             # persistence below ever runs. Capture what the turn accumulated — its exploration
@@ -773,6 +788,7 @@ class ChatController:
             self._active_loops.pop(thread_id, None)
             self._turn_controls.pop(thread_id, None)
             self._turn_dispatches.pop(thread_id, None)
+            self._announced.pop(thread_id, None)
             self._live_turns.pop(thread_id, None)
             self._store.add_thread_usage(thread_id, METER.take(usage_owner))
         self._histories[thread_id] = outcome.history or []
@@ -1782,6 +1798,36 @@ class ChatController:
                 if not (i.kind == "report" and i.source_id in delivered)]
         return entries
 
+    def _fold_notices(self, thread_id: str, turn_id: str, own_input: str) -> str:
+        """The user message that opens a main turn: undelivered notices, then the turn's own
+        input (spec §5.2 path 3). Folded notices are claimed by this turn; overflow is
+        queued into the main inbox and counted as announced."""
+        if not is_subagents_enabled():
+            return own_input
+        fold = build_fold(self._store.unclaimed_notices(thread_id), notice_fold_max_tokens())
+        if not fold.text:
+            return own_input
+        seq = self._store.current_checkpoint_seq(thread_id)
+        self._store.claim_notices(fold.folded, turn_id, seq)
+        inbox = self._main_inbox.setdefault(thread_id, [])
+        for notice in fold.overflow:
+            inbox.append(InboxItem(kind="report", text=notice_body(notice), wakes=False,
+                                   source_id=notice.source_id, author=notice_author(notice),
+                                   notice_id=notice.notice_id))
+        return f"{fold.text}\n\n{own_input}" if own_input else fold.text
+
+    def _main_terminal_guard(self, thread_id: str) -> str | None:
+        redirect = self._unwaited_guard(thread_id)
+        if redirect is not None:
+            return redirect
+        if not any(i.kind == "report" for i in self._main_inbox.get(thread_id, [])):
+            return None
+        count = self._announced.get(thread_id, 0)
+        if count >= _MAX_ARRIVAL_REDIRECTS:
+            return None   # the rest return to undelivered at turn end
+        self._announced[thread_id] = count + 1
+        return "More agent reports are arriving — read them before answering."
+
     def _unwaited_guard(self, thread_id: str) -> str | None:
         """Spec §4.1: the main agent does not end its turn on agents it just dispatched
         without saying so. Redirect once; a second terminal action is accepted and those
@@ -2309,6 +2355,9 @@ class ChatController:
             # The re-entry is a full turn — give it a turn_id too so it gets incremental
             # pill persistence (finding 5) AND debug artifacts, like the handle_message path.
             turn_id = uuid4().hex
+            block = self._fold_notices(thread_id, turn_id, "")
+            if block:
+                seed_history = [*(seed_history or []), {"role": "user", "content": block}]
             outcome = await self._run_loop(
                 thread_id, channel_id, effective_goal,
                 seed_history=seed_history, step_review=review, phase=phase, turn_id=turn_id)
@@ -2382,9 +2431,9 @@ class ChatController:
         # Re-enter: the answer is the user's reply, seeded onto prior history. goal stays
         # the original goal (the answer rides as history, not as the goal).
         review = self._step_review_by_thread.get(thread_id)
-        seed_history = (self._seed_for(thread_id) or []) + [
-            {"role": "user", "content": answer}]
         turn_id = uuid4().hex
+        seed_history = (self._seed_for(thread_id) or []) + [
+            {"role": "user", "content": self._fold_notices(thread_id, turn_id, answer)}]
         outcome = await self._run_loop(
             thread_id, channel_id, goal, seed_history=seed_history,
             step_review=review, phase=resume_phase, turn_id=turn_id,
