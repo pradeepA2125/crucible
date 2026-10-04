@@ -58,6 +58,7 @@ from agentd.memory.models import ObservedPrompt
 from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
 from agentd.providers.rate_limit import CALL_PRIORITY
+from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.reasoning.react_common import assistant_turn
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
@@ -664,6 +665,9 @@ class ChatController:
             self._live_turns[thread_id] = turn_id
         # Same lifetime, for the same reason: /review-pref reaches in here mid-turn.
         self._turn_controls[thread_id] = control
+        # The turn task is detached, so this context change stays local to it (spec §3.11).
+        usage_owner = f"thread:{thread_id}"
+        USAGE_OWNER.set(usage_owner)
         try:
             outcome = await loop.run(
                 plan_context, max_iters=max_iters, seed_history=seed_history,
@@ -751,6 +755,7 @@ class ChatController:
             self._active_loops.pop(thread_id, None)
             self._turn_controls.pop(thread_id, None)
             self._live_turns.pop(thread_id, None)
+            self._store.add_thread_usage(thread_id, METER.take(usage_owner))
         self._histories[thread_id] = outcome.history or []
         # Reached for the normal-completion AND generic-exception branches (the
         # cancellation branch already recorded its own and re-raised past this point).
@@ -1714,6 +1719,7 @@ class ChatController:
         ctx = handle.context
         # Runs inside this activation's own task: the context changes stay local to it.
         CALL_PRIORITY.set("agent")  # the user's turn is served first (spec §3.11)
+        USAGE_OWNER.set(handle.context.agent_id)
         thread_id, turn_id = handle.thread_id, handle.turn_id
         log = self._write_log_for(thread_id)
         assert log is not None and self._subagents is not None
@@ -1885,6 +1891,7 @@ class ChatController:
         if handle.broadcaster is not None:
             self._store.update_agent(ctx.agent_id, last_seq=handle.broadcaster.last_seq)
         self._store.update_agent(ctx.agent_id, activation_ended_at=datetime.now(UTC))
+        self._store.add_agent_usage(ctx.agent_id, METER.take(ctx.agent_id))
         # Its gates can never be answered now; its recall caches and replay buffer are
         # done — the replay map is otherwise never pruned (late viewers backfill instead).
         self._store.clear_controller_gates(handle.thread_id, agent_id=ctx.agent_id)

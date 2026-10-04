@@ -15,6 +15,7 @@ from agentd.chat.models import (
     Checkpoint,
     PendingGate,
 )
+from agentd.providers.usage import Usage
 
 # v2 columns (spec §3.1), added with the same ALTER-on-open pattern as chat_threads.
 _AGENT_V2_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -31,7 +32,14 @@ _AGENT_V2_COLUMNS: tuple[tuple[str, str], ...] = (
     ("stop_reason", "TEXT"),
     ("activation_started_at", "TEXT"),
     ("activation_ended_at", "TEXT"),
+    # Usage (spec §3.11), summed over every activation.
+    ("requests", "INTEGER NOT NULL DEFAULT 0"),
+    ("prompt_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("completion_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("limiter_wait_ms", "INTEGER NOT NULL DEFAULT 0"),
 )
+_USAGE_COLUMNS: tuple[str, ...] = (
+    "requests", "prompt_tokens", "completion_tokens", "limiter_wait_ms")
 
 
 class ChatThreadStore:
@@ -70,6 +78,11 @@ class ChatThreadStore:
         if "controller_todo_json" not in existing:
             self._conn.execute("ALTER TABLE chat_threads ADD COLUMN controller_todo_json TEXT")
         # Thread-scoped active skill (survives every turn boundary), added later.
+        # The main agent's usage per thread (spec §3.11).
+        for column in _USAGE_COLUMNS:
+            if column not in existing:
+                self._conn.execute(  # noqa: S608 — fixed list
+                    f"ALTER TABLE chat_threads ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
         if "controller_active_skill_json" not in existing:
             self._conn.execute(
                 "ALTER TABLE chat_threads ADD COLUMN controller_active_skill_json TEXT")
@@ -792,6 +805,34 @@ class ChatThreadStore:
         self._conn.commit()
         return merged
 
+    def add_agent_usage(self, agent_id: str, usage: Usage) -> None:
+        self._conn.execute(
+            "UPDATE chat_agents SET requests = requests + ?, prompt_tokens = prompt_tokens + ?, "
+            "completion_tokens = completion_tokens + ?, limiter_wait_ms = limiter_wait_ms + ? "
+            "WHERE agent_id = ?",
+            (usage.requests, usage.prompt_tokens, usage.completion_tokens, usage.wait_ms,
+             agent_id))
+        self._conn.commit()
+
+    def add_thread_usage(self, thread_id: str, usage: Usage) -> None:
+        self._conn.execute(
+            "UPDATE chat_threads SET requests = requests + ?, prompt_tokens = prompt_tokens + ?, "
+            "completion_tokens = completion_tokens + ?, limiter_wait_ms = limiter_wait_ms + ? "
+            "WHERE thread_id = ?",
+            (usage.requests, usage.prompt_tokens, usage.completion_tokens, usage.wait_ms,
+             thread_id))
+        self._conn.commit()
+
+    def thread_usage(self, thread_id: str) -> Usage:
+        row = self._conn.execute(
+            "SELECT requests, prompt_tokens, completion_tokens, limiter_wait_ms "
+            "FROM chat_threads WHERE thread_id = ?", (thread_id,)).fetchone()
+        if row is None:
+            return Usage()
+        return Usage(requests=row["requests"], prompt_tokens=row["prompt_tokens"],
+                     completion_tokens=row["completion_tokens"],
+                     wait_ms=row["limiter_wait_ms"])
+
     def set_agent_inherited(self, agent_id: str, inherited: dict[str, bool]) -> None:
         self._conn.execute(
             "UPDATE chat_agents SET inherited_json = ? WHERE agent_id = ?",
@@ -843,7 +884,10 @@ class ChatThreadStore:
             report_delivered_at=when(row["report_delivered_at"]),
             inherited=json.loads(row["inherited_json"]), stop_reason=row["stop_reason"],
             activation_started_at=when(row["activation_started_at"]),
-            activation_ended_at=when(row["activation_ended_at"]))
+            activation_ended_at=when(row["activation_ended_at"]),
+            requests=row["requests"], prompt_tokens=row["prompt_tokens"],
+            completion_tokens=row["completion_tokens"],
+            limiter_wait_ms=row["limiter_wait_ms"])
 
     def set_agent_transcript(self, agent_id: str, messages: list[ChatMessage]) -> None:
         self._conn.execute(

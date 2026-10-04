@@ -24,6 +24,7 @@ from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.providers.availability import ProviderUnavailable, is_provider_unavailable
+from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.reasoning.react_common import (
     accepts_kwarg,
     assistant_turn,
@@ -1056,7 +1057,8 @@ class ControllerLoop:
                 "balanced brackets and every \" inside a string escaped. If those "
                 "characters were a second action you still intend, issue it now.")
 
-        def _on_usage(prompt_tokens: int, _completion_tokens: int) -> None:
+        def _on_usage(prompt_tokens: int, completion_tokens: int) -> None:
+            METER.record(USAGE_OWNER.get(), prompt=prompt_tokens, completion=completion_tokens)
             # self._observed_prompt is the provider's exact size for the LAST call,
             # pinned to the history length it measured. Compaction decides before the
             # next call is built, so this is necessarily one call behind —

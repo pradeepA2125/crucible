@@ -83,6 +83,10 @@ class AgentRecord(BaseModel):
     stop_reason: str | None = None
     activation_started_at: datetime | None = None
     activation_ended_at: datetime | None = None
+    requests: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    limiter_wait_ms: int = 0
 
     def summary(self) -> dict[str, Any]:
         """The list view (spec §11.3): no transcript, a 200-character UI-only preview."""
