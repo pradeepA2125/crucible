@@ -13,7 +13,7 @@ import logging
 import os
 import shutil
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -165,6 +165,14 @@ def _explore_context_from_history(
     return out
 
 
+@dataclass
+class TurnDispatches:
+    """What the main agent dispatched and waited on in the current turn (spec §4.1)."""
+    dispatched: dict[str, str] = field(default_factory=dict)   # agent id -> on_finish
+    waited: set[str] = field(default_factory=set)
+    redirected: bool = False
+
+
 def _divider_text(activation_input: str) -> str:
     """`↩ Message from main: "<first line>"` (spec §3.2 item 4): the source line, then the
     first line of what was said, so the transcript shows why the agent ran again."""
@@ -266,6 +274,8 @@ class ChatController:
         # finished agent's report goes to the wait or to the dispatcher's inbox, never both
         # (spec §4.2). The thread is in the key: every thread's main agent is "main".
         self._waiting: dict[tuple[str, str], set[str]] = {}
+        # The running main turn's dispatches, for the unwaited-dispatch redirect (§4.1).
+        self._turn_dispatches: dict[str, TurnDispatches] = {}
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -676,6 +686,7 @@ class ChatController:
             self._live_turns[thread_id] = turn_id
         # Same lifetime, for the same reason: /review-pref reaches in here mid-turn.
         self._turn_controls[thread_id] = control
+        self._turn_dispatches[thread_id] = TurnDispatches()
         # The turn task is detached, so this context change stays local to it (spec §3.11).
         usage_owner = f"thread:{thread_id}"
         USAGE_OWNER.set(usage_owner)
@@ -685,7 +696,8 @@ class ChatController:
                 observed_prompt=self._observed_prompts.get(thread_id),
                 turn_control=control, edit_decision_cb=edit_cb,
                 edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
-                on_pills_update=pills_cb)
+                on_pills_update=pills_cb,
+                terminal_guard=partial(self._unwaited_guard, thread_id))
         except asyncio.CancelledError:
             # /stop cancels the turn's asyncio.Task, raising here BEFORE the normal post-run
             # persistence below ever runs. Capture what the turn accumulated — its exploration
@@ -746,6 +758,7 @@ class ChatController:
             # mutating a control nothing reads.
             self._active_loops.pop(thread_id, None)
             self._turn_controls.pop(thread_id, None)
+            self._turn_dispatches.pop(thread_id, None)
             self._live_turns.pop(thread_id, None)
             self._store.add_thread_usage(thread_id, METER.take(usage_owner))
         self._histories[thread_id] = outcome.history or []
@@ -1667,8 +1680,11 @@ class ChatController:
         for handle in handles:
             handle.activation_input = handle.prompt
             if dispatcher is None:
-                self._store.update_agent(
-                    handle.agent_id, on_finish=on_finish.get(handle.context.label, "notify"))
+                choice = on_finish.get(handle.context.label, "notify")
+                self._store.update_agent(handle.agent_id, on_finish=choice)
+                state = self._turn_dispatches.get(thread_id)
+                if state is not None:
+                    state.dispatched[handle.agent_id] = choice
             runtime.enqueue(handle, self._activate)
             warning = ""
             if (handle.definition.name in BUILTIN_AGENTS
@@ -1703,6 +1719,8 @@ class ChatController:
         already = {i for i in ids if mine[i].report_delivered_at is not None
                    and mine[i].status not in LIVE_STATUSES
                    and not self._subagents.is_active(i)}
+        if caller_id == MAIN_AGENT_ID and thread_id in self._turn_dispatches:
+            self._turn_dispatches[thread_id].waited.update(ids)
         waiting = self._waiting.setdefault((thread_id, caller_id), set())
         waiting.update(ids)
         try:
@@ -1734,6 +1752,30 @@ class ChatController:
         if caller is not None:
             self._subagents.discard_reports(caller_id, delivered)
         return entries
+
+    def _unwaited_guard(self, thread_id: str) -> str | None:
+        """Spec §4.1: the main agent does not end its turn on agents it just dispatched
+        without saying so. Redirect once; a second terminal action is accepted and those
+        agents wake the main agent instead of waiting silently for the next message."""
+        state = self._turn_dispatches.get(thread_id)
+        if state is None or self._subagents is None:
+            return None
+        pending = [i for i, on_finish in state.dispatched.items()
+                   if on_finish == "notify" and i not in state.waited
+                   and self._subagents.is_active(i)]
+        if not pending:
+            return None
+        if not state.redirected:
+            state.redirected = True
+            labels = ", ".join(
+                (record.label if (record := self._store.get_agent(i)) is not None else i)
+                for i in pending)
+            return (f"Agents {labels} are still running. Call wait_agents to include their "
+                    "results, or answer now and say they continue in the background.")
+        for agent_id in pending:
+            self._store.update_agent(agent_id, on_finish="wake")
+            state.dispatched[agent_id] = "wake"
+        return None
 
     def _subtree_files(self, agent_id: str) -> list[str]:
         files: set[str] = set()

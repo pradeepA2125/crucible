@@ -876,6 +876,7 @@ class ControllerLoop:
         iteration_cb: Callable[[list[dict[str, object]]], None] | None = None,
         inbox_drain: Callable[[], list[InboxItem]] | None = None,
         report_guard: Callable[[], str | None] | None = None,
+        terminal_guard: Callable[[], str | None] | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -925,6 +926,7 @@ class ControllerLoop:
                 iteration_cb=iteration_cb,
                 inbox_drain=inbox_drain,
                 report_guard=report_guard,
+                terminal_guard=terminal_guard,
             )
             if iteration_cb is not None:
                 iteration_cb(history)
@@ -974,6 +976,7 @@ class ControllerLoop:
         iteration_cb: Callable[[list[dict[str, object]]], None] | None = None,
         inbox_drain: Callable[[], list[InboxItem]] | None = None,
         report_guard: Callable[[], str | None] | None = None,
+        terminal_guard: Callable[[], str | None] | None = None,
     ) -> ControllerOutcome:
         pending_salvage: list[str] = []
         # Set when preflight rejects generated code for a SYNTAX error, cleared as soon
@@ -1385,6 +1388,13 @@ class ControllerLoop:
                         ),
                     })
                     continue
+                if terminal_guard is not None and iteration < max_iters:
+                    redirect = terminal_guard()
+                    if redirect is not None:
+                        # A redirect, not malformed (same contract as the open-todo block).
+                        history.append(assistant_turn(resp))
+                        history.append({"role": "tool_result", "tool": "", "content": redirect})
+                        continue
                 history.append(assistant_turn(resp))
                 return ControllerOutcome(
                     kind="answer", text=str(resp.get("answer", "")), history=history)
@@ -1790,6 +1800,13 @@ class ControllerLoop:
                             "pending."),
                     })
                     continue
+                if terminal_guard is not None and iteration < max_iters:
+                    redirect = terminal_guard()
+                    if redirect is not None:
+                        # A redirect, not malformed (same contract as the open-todo block).
+                        history.append(assistant_turn(resp))
+                        history.append({"role": "tool_result", "tool": "", "content": redirect})
+                        continue
                 # The shadow is closed by run()'s finally on return (no double-close).
                 history.append(assistant_turn(resp))
                 # Deterministic fallback for an empty summary — unlike answer/clarify we do NOT
