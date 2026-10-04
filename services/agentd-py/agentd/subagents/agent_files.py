@@ -5,15 +5,18 @@ ignored) with a warning, and loading never raises into a turn.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
 
 from agentd.prompting.tagged import Permission
 from agentd.subagents.definitions import BUILTIN_AGENTS, AgentDefinition
+from agentd.subagents.trust import TrustStore
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +166,13 @@ class AgentCatalogLoader:
     mtime moves only when its direct entries change, so a root-keyed cache (the
     SkillCatalogLoader discipline) would never see an edit to a nested file."""
 
-    def __init__(self, workspace_path: Path | str, *, user_agents_dir: Path | None = None) -> None:
+    def __init__(
+        self, workspace_path: Path | str, *, user_agents_dir: Path | None = None,
+        trust_store: TrustStore | None = None,
+    ) -> None:
         workspace = Path(workspace_path)
+        self._workspace = str(workspace)
+        self._trust = trust_store or TrustStore()
         self._roots: tuple[Path, ...] = (
             workspace / ".crucible" / "agents",
             workspace / ".claude" / "agents",
@@ -178,7 +186,10 @@ class AgentCatalogLoader:
         """The catalog, sorted by name. Treat it as read-only: it is the cached object."""
         with self._lock:
             files = self._files()
-            signature = tuple((str(path), mtime) for _, path, mtime in files)
+            # Trust changes do not move file mtimes, so the trust store's version is part of
+            # the signature (spec §3.12).
+            signature = (*((str(path), mtime) for _, path, mtime in files),
+                         ("trust", self._trust.version()))
             if self._cached is None or signature != self._signature:
                 self._cached = self._build(files)
                 self._signature = signature
@@ -208,6 +219,17 @@ class AgentCatalogLoader:
         for index, path, _ in files:
             definition = parse_agent_file(path)
             if definition is None:
+                continue
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            in_workspace = index < 2  # .crucible/agents and .claude/agents (spec §3.12)
+            trusted = (not in_workspace) or self._trust.is_trusted(
+                self._workspace, str(path), digest)
+            definition = replace(definition, content_sha256=digest,
+                                 trust="trusted" if trusted else "capped")
+            if definition.trust == "capped" and definition.name in BUILTIN_AGENTS:
+                logger.warning("[agents] %s: untrusted definition shadows the built-in %r — the "
+                               "built-in stays active until the file is trusted", path,
+                               definition.name)
                 continue
             if definition.name in catalog:
                 if origin[definition.name] == index:

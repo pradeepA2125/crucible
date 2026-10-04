@@ -21,6 +21,8 @@ class AgentDefinition:
     disallowed_tools: frozenset[str] = frozenset()
     skills: tuple[str, ...] = ()  # pre-seeded into the child's active skills (spec §5.2)
     source: str = "built-in"      # the file it came from, for warnings and logs
+    trust: str = "trusted"        # "trusted" | "capped" (spec §3.12)
+    content_sha256: str = ""      # the file's hash when loaded; empty for built-ins
 
 
 _EXPLORE_PERSONA = (
@@ -55,7 +57,7 @@ def definition_to_json(d: AgentDefinition) -> dict[str, Any]:
             "tools": sorted(d.tools) if d.tools is not None else None, "persona": d.persona,
             "model": d.model, "max_turns": d.max_turns,
             "disallowed_tools": sorted(d.disallowed_tools), "skills": list(d.skills),
-            "source": d.source}
+            "source": d.source, "trust": d.trust, "content_sha256": d.content_sha256}
 
 
 def definition_from_json(data: dict[str, Any]) -> AgentDefinition:
@@ -67,4 +69,6 @@ def definition_from_json(data: dict[str, Any]) -> AgentDefinition:
         persona=str(data.get("persona", "")), model=str(data.get("model", "inherit")),
         max_turns=data.get("max_turns"),
         disallowed_tools=frozenset(data.get("disallowed_tools", [])),
-        skills=tuple(data.get("skills", [])), source=str(data.get("source", "built-in")))
+        skills=tuple(data.get("skills", [])), source=str(data.get("source", "built-in")),
+        trust=str(data.get("trust", "trusted")),
+        content_sha256=str(data.get("content_sha256", "")))

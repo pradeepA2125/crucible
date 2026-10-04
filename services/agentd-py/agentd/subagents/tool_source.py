@@ -34,7 +34,12 @@ class SubAgentToolSource:
         self._dispatch = dispatch
 
     def definitions(self) -> list[ToolDefinition]:
-        lines = "\n".join(f"- {d.name}: {d.description}" for d in self._catalog.values())
+        def line(d: AgentDefinition) -> str:
+            if d.trust == "capped":
+                return f"- {d.name}:\n" + frame(f"definition {d.source} (untrusted)",
+                                                  "agent description", d.description)
+            return f"- {d.name}: {d.description}"
+        lines = "\n".join(line(d) for d in self._catalog.values())
         return [ToolDefinition(
             name=DISPATCH_TOOL_NAME,
             description=(

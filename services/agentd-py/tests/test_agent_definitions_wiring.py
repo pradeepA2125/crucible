@@ -36,7 +36,9 @@ def test_discovered_agents_reach_the_tool_without_a_restart(
     assert "reviewer" not in before.description
     _agent_file(ws, "reviewer", "permissionMode: plan\n")   # added after construction
     [after] = ctrl._dispatch_source("t", "u", None).definitions()
-    assert "- reviewer: reviewer agent" in after.description
+    # A workspace file is untrusted until the user trusts it: listed, description framed.
+    assert "- reviewer:" in after.description and "reviewer agent" in after.description
+    assert "(untrusted)" in after.description
     enum = after.parameters["properties"]["agents"]["items"]["properties"]["agent"]["enum"]
     assert enum == ["explore", "general-purpose", "reviewer"]
 

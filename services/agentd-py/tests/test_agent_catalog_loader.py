@@ -7,6 +7,7 @@ import pytest
 
 from agentd.subagents.agent_files import AgentCatalogLoader
 from agentd.subagents.definitions import BUILTIN_AGENTS
+from agentd.subagents.trust import TrustStore
 
 
 def _agent(path: Path, name: str, description: str = "d", body: str = "") -> None:
@@ -35,9 +36,11 @@ def test_precedence_crucible_then_claude_then_user_then_built_in(roots: tuple[Pa
     _agent(user / "c.md", "shared", "from user")
     _agent(workspace / ".claude/agents/d.md", "explore", "project explore")
     _agent(user / "e.md", "only-user", "user only")
-    catalog = AgentCatalogLoader(workspace, user_agents_dir=user).load()
+    catalog = AgentCatalogLoader(workspace, user_agents_dir=user,
+                                 trust_store=TrustStore(workspace.parent / "trust.json")).load()
     assert catalog["shared"].description == "from crucible"
-    assert catalog["explore"].description == "project explore"   # a file overrides a built-in
+    # An untrusted workspace file never shadows a built-in (spec §3.12); trusted, it would.
+    assert catalog["explore"].source == "built-in"
     assert catalog["only-user"].description == "user only"
     assert list(catalog) == sorted(catalog)                      # deterministic, by name
 
