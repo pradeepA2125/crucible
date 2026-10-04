@@ -1436,6 +1436,15 @@ class ChatController:
         released = self._store.release_all_unpersisted_notices()
         logger.info("[subagent] reap rows=%d notices_released=%d", reaped, released)
 
+    def forget_turn_caches(self, thread_id: str) -> None:
+        """A rewind restored the thread's stored controller state; drop what this process
+        cached from before it, or the next turn re-seeds from the rewound history and
+        writes it straight back (the model kept remembering rewound turns until a
+        restart)."""
+        self._histories.pop(thread_id, None)
+        self._seeds.pop(thread_id, None)
+        self._observed_prompts.pop(thread_id, None)
+
     def forget_rewound_agents(
         self, thread_id: str, turn_ids: list[str], from_seq: int | None = None,
         restored_files: list[str] | None = None,

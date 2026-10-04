@@ -1974,6 +1974,9 @@ def build_router(
             outcome = rewind.restore(thread_id, message_id)
             if outcome is None:
                 raise HTTPException(status_code=404, detail="No rewind point for that message")
+            forget_caches = getattr(_chat_agent, "forget_turn_caches", None)
+            if forget_caches is not None:
+                forget_caches(thread_id)
 
             # Memory is best-effort: it must never fail a rewind that already moved files.
             retired = 0

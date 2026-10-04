@@ -138,3 +138,21 @@ async def test_rewind_to_a_queued_message_uses_its_notice_turn_checkpoint(tmp_pa
         r = await client.post(f"/v1/chat/threads/{tid}/rewind", json={"message_id": queued})
     assert r.status_code == 200
     assert controller._store.get_thread(tid).messages == []
+
+
+@pytest.mark.asyncio
+async def test_rewind_drops_the_controllers_cached_history(tmp_path: Path):
+    """The next turn must seed from the restored history, not the pre-rewind copy the
+    controller cached in memory (found live: the model remembered rewound turns until
+    the backend restarted)."""
+    app, controller, tid, msg_id = _build(tmp_path)
+    stale = [{"role": "user", "content": "a rewound turn"}]
+    controller._histories[tid] = stale
+    controller._seeds[tid] = {"stale": True}
+    controller._observed_prompts[tid] = object()
+    async with _client(app) as client:
+        r = await client.post(f"/v1/chat/threads/{tid}/rewind", json={"message_id": msg_id})
+    assert r.status_code == 200
+    assert tid not in controller._histories
+    assert tid not in controller._seeds and tid not in controller._observed_prompts
+    assert controller._seed_for(tid) == []   # what the checkpoint restored
