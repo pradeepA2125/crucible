@@ -43,6 +43,8 @@ const INITIAL: AppState = {
   editFailure: null,
   liveStatus: null,
   turnActive: false,
+  turnKind: null,
+  agentsRunning: 0,
   planMode: false,
   stepReview: true,
   agents: {},
@@ -298,7 +300,8 @@ function reducer(state: AppState, action: Action): AppState {
         };
       }
 
-      if (m.type === "agent_dispatch") {
+      if (m.type === "agent_dispatch" || m.type === "agent_message" ||
+          m.type === "notice" || m.type === "team_created") {
         return { ...next, messages: appendDurable(next.messages, m) };
       }
 
@@ -393,6 +396,7 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "liveStatus": {
       const turnActive = msg.turnActive ?? false;
+      const live = { turnKind: msg.turnKind ?? null, agentsRunning: msg.agentsRunning ?? 0 };
       // Durable reconciliation (spec §10): /live is the source of truth for turn
       // liveness. On the live-resume path, a webview reopened mid-turn can MISS the
       // chat_done SSE (it fired during the reload window — before the channel
@@ -413,10 +417,20 @@ function reducer(state: AppState, action: Action): AppState {
         // exact count the provider reports, and clearing it here unmounted the number
         // at the moment it became correct. The host clears it at the next turn's start
         // instead, which is what prevents a stale count carrying over.
-        return { ...sealed, liveStatus: msg.status, turnActive, inputEnabled: true, retryStatus: null, editFailure: null };
+        return { ...sealed, ...live, liveStatus: msg.status, turnActive, inputEnabled: true, retryStatus: null, editFailure: null };
       }
-      return { ...state, liveStatus: msg.status, turnActive };
+      return { ...state, ...live, liveStatus: msg.status, turnActive };
     }
+
+    case "replaceMessages": {
+      // Reconcile by replacement (spec §6): swap the transcript only; agents, views
+      // and live cards stay as they are. A streaming bubble is sealed first.
+      const sealed = state.streaming ? sealStreaming(state, at) : state;
+      return { ...sealed, messages: msg.messages };
+    }
+
+    case "removeChatMessage":
+      return { ...state, messages: state.messages.filter((m) => m.id !== msg.id) };
 
     case "reviewPrefState":
       return { ...state, stepReview: msg.enabled };

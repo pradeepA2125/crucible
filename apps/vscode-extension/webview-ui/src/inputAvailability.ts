@@ -48,10 +48,16 @@ export interface InputAvailability {
 const ABORTABLE_STATUSES = new Set(["EXECUTING", "VALIDATING", "REPAIRING"]);
 
 export function inputAvailability(
-  state: Pick<AppState, "inputEnabled" | "liveStatus" | "workbar" | "liveGates" | "turnActive">,
+  state: Pick<AppState, "inputEnabled" | "liveStatus" | "workbar" | "liveGates" | "turnActive">
+    & Partial<Pick<AppState, "turnKind">>,
 ): InputAvailability {
   const { inputEnabled, liveStatus, workbar, liveGates, turnActive } = state;
-  const hasGate = (kind: LiveGateView["kind"]) => liveGates.some((g) => g.kind === kind);
+  const turnKind = state.turnKind ?? null;
+  // Composer rules key on the MAIN agent's gates only (spec §6): a background agent's
+  // card waits above without taking the composer away.
+  const mainGates = liveGates.filter((g) => !g.agent);
+  const backgroundGates = liveGates.length - mainGates.length;
+  const hasGate = (kind: LiveGateView["kind"]) => mainGates.some((g) => g.kind === kind);
   const taskStop = liveStatus !== null && ABORTABLE_STATUSES.has(liveStatus);
 
   // ── Controller precedence (spec §5), first match wins, ahead of task rows ──
@@ -83,7 +89,10 @@ export function inputAvailability(
   }
   // Row 2b: a command or MCP approval is pending — a sub-agent's or the main agent's.
   // The card is the input path; Stop stays available because the turn is still running.
-  if (turnActive && (hasGate("command") || hasGate("mcp_tool"))) {
+  // Every agent's card counts here (v1 Part E): the turn already holds the composer, and
+  // this row only points the user at the card while keeping Stop.
+  const anyGate = (kind: LiveGateView["kind"]) => liveGates.some((g) => g.kind === kind);
+  if (turnActive && (anyGate("command") || anyGate("mcp_tool"))) {
     return {
       disabled: true,
       placeholder: "Answer the card above…",
@@ -94,6 +103,15 @@ export function inputAvailability(
   // Row 3: a controller turn is running (no gate). The durable reload-window guard:
   // a fresh webview mounts inputEnabled=true while the detached turn still runs.
   // Stop is shown — a controller turn can be stopped (no task is active here).
+  // A notice turn (spec §5.3): the user may keep typing; a message sent now is queued.
+  if (turnActive && turnKind === "notice") {
+    return {
+      disabled: false,
+      placeholder: "Agents reported — type to add to this turn",
+      showStop: true,
+      taskStop,
+    };
+  }
   if (turnActive && (liveStatus === null || !TASK_ACTIVE_STATUSES.has(liveStatus))) {
     return {
       disabled: true,
@@ -150,6 +168,17 @@ export function inputAvailability(
     return {
       disabled: true,
       placeholder,
+      showStop: false,
+      taskStop,
+    };
+  }
+
+  // Background agents' cards wait above; the composer stays usable (spec §6).
+  if (backgroundGates > 0) {
+    const noun = backgroundGates === 1 ? "card needs" : "cards need";
+    return {
+      disabled: false,
+      placeholder: `${backgroundGates} ${noun} your answer above`,
       showStop: false,
       taskStop,
     };

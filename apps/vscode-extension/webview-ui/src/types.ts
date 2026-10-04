@@ -48,6 +48,8 @@ export interface ThreadSummary {
   updatedAt?: string;
   messageCount?: number;
   status?: "running" | "review" | "done" | "failed" | null;
+  // Queued, running or gate-parked agents (spec §6), shown next to the chip.
+  agentsRunning?: number;
 }
 
 // ── Structured tool events ────────────────────────────────────────────────────
@@ -154,6 +156,8 @@ export interface RewindPreviewView {
   files: number;
   commandsRun: number;
   blockedByTask: string | null;
+  // Agents still running refuse the rewind (spec §8.10).
+  blockedByAgents?: string[];
   sessions: { id: string; command: string }[];
 }
 
@@ -179,6 +183,12 @@ export interface AgentSummaryView {
   startedAt: string | null;
   endedAt: string | null;
   reportPreview: string;
+  // Change only at activation boundaries (spec §6).
+  activationCount?: number;
+  dispatcherId?: string | null;
+  onFinish?: string | null;
+  activationStartedAt?: string | null;
+  activationEndedAt?: string | null;
 }
 
 export interface AgentDetailView extends AgentSummaryView {
@@ -237,7 +247,11 @@ export type ExtensionMessage =
   | { type: "renderLiveSessions"; sessions: LiveSessionsView }
   | { type: "clearLiveSessions" }
   | { type: "sessionTranscript"; sessionId: string; transcript: SessionTranscriptView | null }
-  | { type: "liveStatus"; status: string | null; turnActive?: boolean }
+  | { type: "liveStatus"; status: string | null; turnActive?: boolean;
+      turnKind?: "user" | "notice" | null; agentsRunning?: number }
+  // Transcript reconcile (spec §6) and the failed-send rollback (spec §5.3).
+  | { type: "replaceMessages"; messages: ChatMsg[] }
+  | { type: "removeChatMessage"; id: string }
   | { type: "resolveInlineChangeCard"; taskId: string; resolution: "applied" | "discarded" }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } }
   // P1: prompt-file expansion replies from the host
@@ -313,6 +327,7 @@ export type WebviewMessage =
   // @-mention composer: workspace file listing + click-to-open.
   | { type: "setOpenAgents"; agentIds: string[] }
   | { type: "stopAgent"; agentId: string }
+  | { type: "stopAllAgents" }
   | { type: "listWorkspaceFiles" }
   | { type: "openFile"; path: string };
 
@@ -349,6 +364,10 @@ export interface AppState {
   // input-disable signal from /live; survives reload). Distinct from inputEnabled,
   // which is the ephemeral per-turn flag a fresh webview mounts as `true`.
   turnActive: boolean;
+  // Which kind of main turn runs (spec §5.3): a notice turn keeps the composer usable.
+  turnKind: "user" | "notice" | null;
+  // Queued, running or gate-parked agents in the thread — the Stop-all control (§6).
+  agentsRunning: number;
   // Sticky Plan Mode toggle, hydrated from the extension's globalState on mount
   // (planModeState) and kept live as the composer/ModeGate flips it.
   planMode: boolean;

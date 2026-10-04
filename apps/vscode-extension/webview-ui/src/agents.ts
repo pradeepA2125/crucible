@@ -14,10 +14,24 @@ export function viewFromDetail(detail: AgentDetailView): AgentViewState {
   return { detail, messages: detail.transcript, live: [], callIds: {}, nextId: 1 };
 }
 
+/** The key a durable live message is deduplicated by (spec §6): a live broadcast and a
+ * reload replay can both deliver one. */
 function rosterKey(m: ChatMsg): string | null {
-  if (m.type !== "agent_dispatch") return null;
-  const ids = m.metadata?.agent_ids;
-  return Array.isArray(ids) ? ids.join(",") : null;
+  const meta = m.metadata ?? {};
+  switch (m.type) {
+    case "agent_dispatch": {
+      const ids = meta.agent_ids;
+      return Array.isArray(ids) ? `dispatch:${ids.join(",")}` : null;
+    }
+    case "agent_message":
+      return `message:${String(meta.agent_id)}:${String(meta.activation)}`;
+    case "team_created":
+      return `team:${String(meta.team_id)}`;
+    case "notice":
+      return m.id ? `notice:${m.id}` : null;
+    default:
+      return null;
+  }
 }
 
 /** Appends a durable message, skipping a roster card that is already there: a live
@@ -109,8 +123,17 @@ export function formatElapsed(ms: number): string {
 }
 
 /** Milliseconds an agent has run (or ran), or null before it started. */
-export function elapsedMs(agent: { startedAt: string | null; endedAt: string | null }, now: number): number | null {
-  if (!agent.startedAt) return null;
-  const end = agent.endedAt ? Date.parse(agent.endedAt) : now;
-  return end - Date.parse(agent.startedAt);
+export function elapsedMs(
+  agent: { startedAt: string | null; endedAt: string | null;
+           activationStartedAt?: string | null; activationEndedAt?: string | null },
+  now: number,
+): number | null {
+  // The current activation's span (spec §6): a resumed agent's clock restarts.
+  const started = agent.activationStartedAt ?? agent.startedAt;
+  if (!started) return null;
+  const ended = agent.activationStartedAt ? agent.activationEndedAt : agent.endedAt;
+  const start = Date.parse(started);
+  // A running resumed agent still carries the previous activation's end stamp.
+  const end = ended && Date.parse(ended) >= start ? Date.parse(ended) : now;
+  return end - start;
 }

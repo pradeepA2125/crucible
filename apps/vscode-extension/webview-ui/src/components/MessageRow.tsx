@@ -7,6 +7,8 @@ import { UserMessage } from "./messages/UserMessage";
 import { CardShell } from "./shared/CardShell";
 import { Icon } from "./Icon";
 import { AgentRosterCard } from "./agents/AgentRosterCard";
+import { NoticeLine } from "./messages/NoticeLine";
+import { AgentMessageLine } from "./messages/AgentMessageLine";
 import { vscode } from "../vscodeApi";
 
 interface Props {
@@ -148,6 +150,16 @@ export function MessageRow({ msg, planVersion, turnActive, onRewindRequest }: Pr
         ? <AgentRosterCard agentIds={ids as string[]} />
         : null;
     }
+
+    case "notice":
+      return <NoticeLine msg={msg} />;
+
+    case "agent_message":
+      return <AgentMessageLine msg={msg} />;
+
+    // A team's card arrives with teams (Phase 4); until then it renders nothing.
+    case "team_created":
+      return null;
 
     // diff_summary falls through to text/role-based dispatch
     case "diff_summary":

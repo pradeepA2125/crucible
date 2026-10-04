@@ -222,6 +222,20 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           <Icon name="db" size={14} />
         </button>
 
+        {/* Stop every agent in the thread (spec §4.4, §6) — shown while any runs. */}
+        {state.agentsRunning > 0 && (
+          <button
+            type="button"
+            onClick={() => vscode.postMessage({ type: "stopAllAgents" })}
+            aria-label="Stop all agents"
+            title="Stop all agents"
+            className="flex items-center justify-center w-6 h-6 rounded-md border transition-colors duration-150"
+            style={{ color: "var(--color-danger)", background: "transparent", borderColor: "transparent" }}
+          >
+            <Icon name="stop" size={14} />
+          </button>
+        )}
+
         {/* AXON dependency space — 3D knowledge-graph panel (crucible.openGraphPanel);
             degrades to an empty state when no index snapshot exists. */}
         <button
@@ -450,6 +464,13 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
               vscode.postMessage({ type: "rewindConfirm", messageId: rewindMessageId });
             }
             setRewindPreview(null);
+          }}
+          onStopAllAgents={() => {
+            vscode.postMessage({ type: "stopAllAgents" });
+            // Ask again: the dialog clears its refusal once the agents have stopped.
+            if (rewindMessageId) {
+              vscode.postMessage({ type: "rewindPreview", messageId: rewindMessageId });
+            }
           }}
         />
       )}

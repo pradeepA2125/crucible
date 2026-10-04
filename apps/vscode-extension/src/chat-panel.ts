@@ -572,7 +572,8 @@ export class ChatPanel {
   }
 
   restoreDraft(text: string): void {
-    this.panel?.webview.postMessage({ type: "restoreDraft", text });
+    // The composer already takes text back this way after a rewind.
+    this.panel?.webview.postMessage({ type: "composerPrefill", text });
   }
 
   renderAgents(agents: AgentSummary[]): void {

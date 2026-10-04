@@ -47,3 +47,26 @@ describe("inputAvailability — controller precedence", () => {
     expect(r.placeholder).toMatch(/decision on the card/i);
   });
 });
+
+describe("inputAvailability — background agents (spec §5.3, §6)", () => {
+  it("a background agent's edit gate leaves the composer usable", () => {
+    const r = inputAvailability({ ...base, turnKind: null,
+      liveGates: [{ gateId: "g", kind: "edit", taskId: "", payload: {},
+                    agent: { id: "a", label: "a", name: "explore" } }] });
+    expect(r.disabled).toBe(false);
+    expect(r.placeholder).toBe("1 card needs your answer above");
+  });
+
+  it("a notice turn keeps the composer enabled with Stop", () => {
+    const r = inputAvailability({ ...base, turnActive: true, turnKind: "notice" });
+    expect(r).toMatchObject({ disabled: false, showStop: true });
+  });
+
+  it("a user turn still disables", () => {
+    expect(inputAvailability({ ...base, turnActive: true, turnKind: "user" }).disabled).toBe(true);
+  });
+
+  it("an old backend that sends no turn kind still disables during a turn", () => {
+    expect(inputAvailability({ ...base, turnActive: true }).disabled).toBe(true);
+  });
+});

@@ -307,6 +307,11 @@ function ThreadRow({ thread, isActive, navLocked, now, onClick }: ThreadRowProps
       </div>
 
       <StatusChip status={thread.status} />
+      {(thread.agentsRunning ?? 0) > 0 && (
+        <span className="text-text-3 flex-shrink-0" style={{ fontSize: "10px" }}>
+          {thread.agentsRunning} {thread.agentsRunning === 1 ? "agent" : "agents"}
+        </span>
+      )}
 
       {/* Chevron */}
       <span

@@ -35,6 +35,8 @@ const base: AppState = {
   editFailure: null,
   liveStatus: null,
   turnActive: false,
+  turnKind: null,
+  agentsRunning: 0,
   planMode: false,
   stepReview: true,
   agents: {},
@@ -124,5 +126,20 @@ describe("ThreadView retry-status bubble", () => {
     render(<ThreadView state={state} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
 
     expect(screen.getByText("partial answer")).toBeInTheDocument();
+  });
+});
+
+describe("ThreadView — Stop all agents (spec §6)", () => {
+  it("shows Stop all agents only while agents run", () => {
+    const { rerender } = render(
+      <ThreadView state={base} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />,
+    );
+    expect(screen.queryByTitle("Stop all agents")).toBeNull();
+    rerender(
+      <ThreadView state={{ ...base, agentsRunning: 2 }} onBack={() => {}} dismissedErrorTaskId={null}
+                  onDismissError={() => {}} />,
+    );
+    fireEvent.click(screen.getByTitle("Stop all agents"));
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "stopAllAgents" });
   });
 });

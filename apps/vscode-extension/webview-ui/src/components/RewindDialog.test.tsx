@@ -35,3 +35,16 @@ describe("RewindDialog", () => {
     expect(onConfirm).toHaveBeenCalled();
   });
 });
+
+describe("RewindDialog — running agents (spec §8.10)", () => {
+  it("explains running agents and offers Stop all", () => {
+    const onStopAllAgents = vi.fn();
+    render(<RewindDialog preview={{ ...preview, blockedByAgents: ["scout"] }}
+                         onCancel={() => {}} onConfirm={() => {}}
+                         onStopAllAgents={onStopAllAgents} />);
+    expect(screen.getByText(/scout are still running/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop all agents" }));
+    expect(onStopAllAgents).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("button", { name: "Rewind" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});

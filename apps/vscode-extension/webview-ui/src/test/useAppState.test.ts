@@ -527,3 +527,45 @@ describe("useAppState", () => {
     expect(result.current.state.messages.filter((m) => m.type === "agent_dispatch")).toHaveLength(1);
   });
 });
+
+describe("useAppState — background agents (spec §6)", () => {
+  const msg = (id: string) => ({ role: "agent" as const, content: id, type: "text" as const,
+                                 id, timestamp: "2026-10-04T00:00:00Z", metadata: {} });
+
+  it("replaceMessages swaps the transcript and keeps the roster", () => {
+    const { result } = renderHook(() => useAppState());
+    act(() => { fireMessage({ type: "appendMessage", message: msg("a") }); });
+    act(() => { fireMessage({ type: "renderAgents", agents: [{
+      agentId: "x", parentAgentId: null, depth: 1, name: "explore", label: "x",
+      status: "running", now: "", toolCount: 0, filesChangedCount: 0, startedAt: null,
+      endedAt: null, reportPreview: "" }] }); });
+    const agents = result.current.state.agents;
+    act(() => { fireMessage({ type: "replaceMessages", messages: [msg("a"), msg("b")] }); });
+    expect(result.current.state.messages.map((m) => m.id)).toEqual(["a", "b"]);
+    expect(result.current.state.agents).toBe(agents);
+  });
+
+  it("removeChatMessage drops one message by id", () => {
+    const { result } = renderHook(() => useAppState());
+    act(() => { fireMessage({ type: "appendMessage", message: msg("a") }); });
+    act(() => { fireMessage({ type: "appendMessage", message: msg("b") }); });
+    act(() => { fireMessage({ type: "removeChatMessage", id: "a" }); });
+    expect(result.current.state.messages.map((m) => m.id)).toEqual(["b"]);
+  });
+
+  it("a notice marker delivered twice renders once", () => {
+    const { result } = renderHook(() => useAppState());
+    const notice = { ...msg("n1"), type: "notice" as const, content: "🔔 done" };
+    act(() => { fireMessage({ type: "appendMessage", message: notice }); });
+    act(() => { fireMessage({ type: "appendMessage", message: notice }); });
+    expect(result.current.state.messages.filter((m) => m.type === "notice")).toHaveLength(1);
+  });
+
+  it("liveStatus carries the turn kind and the running-agent count", () => {
+    const { result } = renderHook(() => useAppState());
+    act(() => { fireMessage({ type: "liveStatus", status: null, turnActive: true,
+                              turnKind: "notice", agentsRunning: 2 }); });
+    expect([result.current.state.turnKind, result.current.state.agentsRunning])
+      .toEqual(["notice", 2]);
+  });
+});

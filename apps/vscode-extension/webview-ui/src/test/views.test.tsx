@@ -262,6 +262,7 @@ describe("inputAvailability", () => {
       workbar: { stepIndex: 2, totalSteps: 4 },
       liveGates: [],
       turnActive: false,
+      turnKind: null,
     });
     expect(result.disabled).toBe(true);
     expect(result.placeholder).toBe("Task is running — step 2 of 4…");

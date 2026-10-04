@@ -13,12 +13,15 @@ export function RewindDialog({
   preview,
   onCancel,
   onConfirm,
+  onStopAllAgents,
 }: {
   preview: RewindPreviewView;
   onCancel: () => void;
   onConfirm: () => void;
+  onStopAllAgents?: () => void;
 }) {
-  const blocked = preview.blockedByTask != null;
+  const runningAgents = preview.blockedByAgents ?? [];
+  const blocked = preview.blockedByTask != null || runningAgents.length > 0;
   const plural = (n: number) => (n === 1 ? "" : "s");
   return (
     <div
@@ -48,10 +51,20 @@ export function RewindDialog({
             These sessions keep running: {preview.sessions.map((s) => s.command).join(", ")}
           </div>
         )}
-        {blocked && (
+        {preview.blockedByTask != null && (
           <div className="text-xs mb-2 leading-relaxed" style={{ color: "var(--color-danger)" }}>
             Task {preview.blockedByTask} is still running and would re-write these files.
             Cancel or abort it first.
+          </div>
+        )}
+        {runningAgents.length > 0 && (
+          <div className="text-xs mb-2 leading-relaxed" style={{ color: "var(--color-danger)" }}>
+            Agents {runningAgents.join(", ")} are still running and could edit these files.
+            {onStopAllAgents && (
+              <button className="menu-item px-2 py-0.5 rounded ml-2" onClick={onStopAllAgents}>
+                Stop all agents
+              </button>
+            )}
           </div>
         )}
         <div className="flex gap-2 justify-end mt-3">

@@ -39,6 +39,8 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
   editFailure: null,
     liveStatus: null,
     turnActive: false,
+  turnKind: null,
+  agentsRunning: 0,
     planMode: false,
   stepReview: true,
     agents: {},
