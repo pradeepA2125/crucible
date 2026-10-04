@@ -602,10 +602,11 @@ run_command shines for quick one-shot commands that finish on their own.
 # own description in tools_json; this block teaches how to use it.
 _DISPATCH_BLOCK = tagged("_DISPATCH_BLOCK", """
 
-SUB-AGENTS (dispatch_agents)
-dispatch_agents runs sub-agents in parallel — each in its own context window — and
-returns when all of them are done, with one full report per agent and the files each
-one changed.
+SUB-AGENTS (dispatch_agents, wait_agents, message_agent, stop_agent)
+dispatch_agents starts sub-agents in the background — each in its own context window — and
+returns at once with their ids. wait_agents collects their reports (one full report per
+agent, plus the files each changed). message_agent sends a finished agent a follow-up: it
+continues with everything it already read. stop_agent stops one.
 - A sub-agent starts with ONLY the prompt you write. Make each prompt self-contained:
   the goal, the exact files that agent owns, the constraints, and how to verify.
 - Give each agent its OWN files. An agent editing a file another agent changed is
@@ -613,16 +614,26 @@ one changed.
 - Sub-agents cannot ask you anything: put every decision in the prompt. Their reports
   list the assumptions they made and their open questions.
 - explore is read-only (fast, parallel investigation); general-purpose can edit.
+- When an agent failed or stopped part-way, message_agent it with what to do next: it keeps
+  its context. Dispatch a new agent only when a fresh start is better.
 <<main>>
 - Don't tell sub-agents to commit or use version control — they are blocked from it.
   Commit after the batch yourself, using each result's files_changed.
 - When the parts are independent and touch disjoint files, dispatch_agents may be your
   first action instead of write_todos; the todo list stays yours to reconcile afterwards.
+- on_finish: "notify" (default) holds a report that finishes after your turn until the
+  user's next message; "wake" starts a turn for you when it arrives.
 <</main>>
 - Check each result: read its report, and re-read any file in files_changed before you
   edit it yourself.
-Example (two independent parts):
+Example — results needed now (dispatch, then wait, then answer):
 {"type":"tool_call","thought":"two independent parts on disjoint files","tool":"dispatch_agents","args":{"agents":[{"agent":"general-purpose","label":"limiter","prompt":"Add a token-bucket limiter in api/limiter.py (you own only that file). Verify with pytest tests/test_limiter.py."},{"agent":"explore","label":"auth survey","prompt":"Find every caller of check_token under api/ and report each with path:line."}]}}
+{"type":"tool_call","thought":"collect both reports before answering","tool":"wait_agents","args":{}}
+<<main>>
+Example — long work the user need not wait for (dispatch with wake, then answer):
+{"type":"tool_call","thought":"a long migration; the user can keep chatting","tool":"dispatch_agents","args":{"agents":[{"agent":"general-purpose","label":"migrate","prompt":"Migrate api/ to the new client (you own api/). Verify with pytest tests/api.","on_finish":"wake"}]}}
+{"type":"answer","thought":"it runs in the background","answer":"I started a migration agent; it continues in the background and I'll report when it finishes."}
+<</main>>
 """)
 
 
@@ -716,7 +727,8 @@ SUB-AGENT RULES — you are sub-agent "{label}", dispatched by another agent (yo
   is done. Read-only git (status, diff, log, show) is fine.
 <<tool:dispatch_agents>>
 - You may dispatch your own sub-agents with dispatch_agents when parts of your task are
-  independent and touch disjoint files.
+  independent and touch disjoint files. Call wait_agents before you report: you cannot
+  report while your agents are still running.
 <</tool:dispatch_agents>>
 - If a skill tells you to dispatch sub-agents and dispatch_agents is not in your tools, do
   that work yourself.

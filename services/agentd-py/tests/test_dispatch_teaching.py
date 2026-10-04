@@ -19,15 +19,15 @@ def _prompt(tools: list[dict[str, object]], ctx: RenderContext | None = None) ->
 
 
 def test_the_block_appears_only_with_the_tool() -> None:
-    assert "SUB-AGENTS (dispatch_agents)" not in _prompt([])
+    assert "SUB-AGENTS (dispatch_agents, wait_agents" not in _prompt([])
     main = _prompt([DISPATCH])
-    assert "SUB-AGENTS (dispatch_agents)" in main
+    assert "SUB-AGENTS (dispatch_agents, wait_agents" in main
     assert "Commit after the batch yourself" in main
 
 
 def test_a_child_that_may_dispatch_gets_the_rules_without_main_only_lines() -> None:
     child = _prompt([DISPATCH], CHILD)
-    assert "SUB-AGENTS (dispatch_agents)" in child
+    assert "SUB-AGENTS (dispatch_agents, wait_agents" in child
     assert "Commit after the batch yourself" not in child
     assert "first action instead of write_todos" not in child
 
