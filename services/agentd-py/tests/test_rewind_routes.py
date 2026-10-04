@@ -109,3 +109,32 @@ async def test_rewind_unknown_message_is_404(tmp_path: Path):
     async with _client(app) as client:
         r = await client.post(f"/v1/chat/threads/{tid}/rewind", json={"message_id": "nope"})
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rewind_refuses_while_an_agent_runs(tmp_path: Path):
+    """Spec §8.10: a background agent could edit files the rewind restores."""
+    from agentd.chat.models import AgentRecord
+
+    app, controller, tid, msg_id = _build(tmp_path)
+    controller._store.insert_agent(AgentRecord(
+        agent_id="busy", thread_id=tid, turn_id="u", depth=1, name="explore",
+        label="scout", prompt="p", status="running", dispatcher_id="main"))
+    async with _client(app) as client:
+        r = await client.post(f"/v1/chat/threads/{tid}/rewind", json={"message_id": msg_id})
+        preview = await client.get(f"/v1/chat/threads/{tid}/rewind-preview",
+                                   params={"message_id": msg_id})
+    assert r.status_code == 409 and "scout" in r.json()["detail"]
+    assert preview.json()["blocked_by_agents"] == ["scout"]
+
+
+@pytest.mark.asyncio
+async def test_rewind_to_a_queued_message_uses_its_notice_turn_checkpoint(tmp_path: Path):
+    """Spec §5.3: a message delivered into a notice turn shares that turn's checkpoint."""
+    app, controller, tid, msg_id = _build(tmp_path)
+    queued = controller._store.append_message(tid, ChatMessage(
+        role="user", content="also", metadata={"checkpoint_anchor": msg_id}))
+    async with _client(app) as client:
+        r = await client.post(f"/v1/chat/threads/{tid}/rewind", json={"message_id": queued})
+    assert r.status_code == 200
+    assert controller._store.get_thread(tid).messages == []

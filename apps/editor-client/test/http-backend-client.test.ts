@@ -1002,6 +1002,7 @@ describe("HttpBackendClient rewind", () => {
         return new Response(
           JSON.stringify({
             messages: 3, files: 2, commands_run: 1, blocked_by_task: null,
+            blocked_by_agents: ["scout"],
             sessions: [{ id: "s1", command: "npm test" }],
           }),
           { status: 200, headers: { "content-type": "application/json" } }
@@ -1013,6 +1014,7 @@ describe("HttpBackendClient rewind", () => {
 
     expect(preview.commandsRun).toBe(1);
     expect(preview.blockedByTask).toBeNull();
+    expect(preview.blockedByAgents).toEqual(["scout"]);
     expect(preview.sessions[0].command).toBe("npm test");
     expect(url).toContain("/v1/chat/threads/chat-1/rewind-preview?message_id=m1");
   });

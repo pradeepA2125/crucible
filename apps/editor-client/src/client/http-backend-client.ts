@@ -709,6 +709,7 @@ export class HttpBackendClient implements BackendTaskClient {
       files: raw["files"],
       commandsRun: raw["commands_run"],
       blockedByTask: raw["blocked_by_task"] ?? null,
+      blockedByAgents: raw["blocked_by_agents"] ?? [],
       sessions: raw["sessions"] ?? [],
     });
   }

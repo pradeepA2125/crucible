@@ -929,6 +929,36 @@ class ChatThreadStore:
             return True
         return self._rewrite_messages(thread_id, edit)
 
+    def live_agent_labels(self, thread_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT label FROM chat_agents WHERE thread_id = ? "
+            "AND status IN ('queued', 'running', 'waiting') ORDER BY depth, rowid",
+            (thread_id,)).fetchall()
+        return [r["label"] for r in rows]
+
+    def undeliver_notices_from(self, thread_id: str, seq: int) -> int:
+        """Rewind restores the main history from before the span, so notices folded into it
+        are offered again (spec §8.10)."""
+        rows = self._conn.execute(
+            "SELECT source_kind, source_id FROM agent_notices WHERE thread_id = ? "
+            "AND claimed_checkpoint_seq >= ?", (thread_id, seq)).fetchall()
+        self._conn.execute(
+            "UPDATE agent_notices SET claimed_turn_id = NULL, claimed_checkpoint_seq = NULL, "
+            "delivered_at = NULL WHERE thread_id = ? AND claimed_checkpoint_seq >= ?",
+            (thread_id, seq))
+        self._conn.executemany(
+            "UPDATE chat_agents SET report_delivered_at = NULL WHERE agent_id = ?",
+            [(r["source_id"],) for r in rows if r["source_kind"] == "agent"])
+        self._conn.commit()
+        return len(rows)
+
+    def delete_notices_for_sources(self, thread_id: str, source_ids: list[str]) -> int:
+        cur = self._conn.executemany(
+            "DELETE FROM agent_notices WHERE thread_id = ? AND source_id = ?",
+            [(thread_id, s) for s in source_ids])
+        self._conn.commit()
+        return cur.rowcount
+
     def set_agent_history(self, agent_id: str, history: list[dict[str, Any]]) -> None:
         self._conn.execute(
             "UPDATE chat_agents SET history_json = ? WHERE agent_id = ?",

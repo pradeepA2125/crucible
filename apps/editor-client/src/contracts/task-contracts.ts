@@ -312,6 +312,8 @@ export const RewindPreviewSchema = z.object({
   commandsRun: z.number(),
   // Non-null means the POST will 409 — a task in the span is still running.
   blockedByTask: z.string().nullable().default(null),
+  // Agents still running also refuse the POST (spec §8.10); the dialog names them.
+  blockedByAgents: z.array(z.string()).default([]),
   // Named, never killed: exec sessions are background shells.
   sessions: z.array(z.object({ id: z.string(), command: z.string() })).default([]),
 });

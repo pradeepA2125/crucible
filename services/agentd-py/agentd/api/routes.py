@@ -1911,6 +1911,7 @@ def build_router(
             if preview is None:
                 raise HTTPException(status_code=404, detail="No rewind point for that message")
             preview.blocked_by_task = await _live_task_in_span(thread, message_id)
+            preview.blocked_by_agents = _chat_agent._store.live_agent_labels(thread_id)
             sessions = []
             _exec_mgr = getattr(_chat_agent, "_exec_sessions", None)
             if _exec_mgr is not None:
@@ -1927,6 +1928,12 @@ def build_router(
                 raise HTTPException(
                     status_code=409,
                     detail="A turn is in flight for this thread — stop it before rewinding.")
+            running = _chat_agent._store.live_agent_labels(thread_id)
+            if running:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"Agents {', '.join(running)} are still running — stop them "
+                            "before rewinding."))
             live_task = await _live_task_in_span(thread, message_id)
             if live_task:
                 raise HTTPException(
@@ -1964,7 +1971,9 @@ def build_router(
             forget = getattr(_chat_agent, "forget_rewound_agents", None)
             if forget is not None:
                 try:
-                    removed_agents = forget(thread_id, rewound_turns, outcome.target_seq)
+                    removed_agents = forget(
+                        thread_id, rewound_turns, outcome.target_seq,
+                        restored_files=outcome.restored_files + outcome.deleted_files)
                 except Exception:
                     import logging as _logging
                     _logging.getLogger(__name__).warning(

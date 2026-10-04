@@ -45,6 +45,8 @@ class RewindPreview(BaseModel):
     files: int
     commands_run: int
     blocked_by_task: str | None = None
+    # Agents still running block a rewind (spec §8.10); the dialog names them.
+    blocked_by_agents: list[str] = Field(default_factory=list)
 
 
 class RewindOutcome(BaseModel):

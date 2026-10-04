@@ -1438,6 +1438,7 @@ class ChatController:
 
     def forget_rewound_agents(
         self, thread_id: str, turn_ids: list[str], from_seq: int | None = None,
+        restored_files: list[str] | None = None,
     ) -> int:
         """Remove what the rewound turns' children left (spec §11.6): their rows, their
         memory runs (best-effort), and the thread's write log — reset, because a stale
@@ -1448,6 +1449,21 @@ class ChatController:
         stamped = (self._store.delete_agents_from_checkpoint(thread_id, from_seq)
                    if from_seq is not None else [])
         agent_ids = stamped + self._store.delete_agents_for_turns(thread_id, turn_ids)
+        # Notices of deleted agents go with them; notices folded into the rewound turns
+        # are offered again, since the restored history no longer holds them (spec §8.10).
+        self._store.delete_notices_for_sources(thread_id, agent_ids)
+        if from_seq is not None:
+            self._store.undeliver_notices_from(thread_id, from_seq)
+        if restored_files and self._subagents is not None:
+            restored = set(restored_files)
+            for record in self._store.list_agents(thread_id):
+                touched = sorted(restored & set(record.files_changed))
+                if touched:
+                    self._subagents.deliver(record.agent_id, InboxItem(
+                        kind="note", wakes=False, author="system",
+                        text=("The user rewound the conversation; these files were restored "
+                              f"to an earlier state: {', '.join(touched)}. Re-read before "
+                              "relying on them.")))
         for agent_id in agent_ids:
             try:
                 self._memory_harness.forget_run(f"{thread_id}:{agent_id}")
