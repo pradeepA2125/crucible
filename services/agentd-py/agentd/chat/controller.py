@@ -31,6 +31,7 @@ from agentd.chat.edit_session import TurnEditSession
 from agentd.chat.models import (
     AgentRecord,
     ChatMessage,
+    ChatThread,
     GateAgent,
     GateAmbiguousError,
     GateNotFoundError,
@@ -187,6 +188,16 @@ _NOTICE_TURN_INPUT = ("No new message from the user. These agents finished while
                       "the user's earlier request needs that.")
 _WAKE_CAP_TEXT = "🔔 Agents keep finishing — I'll tell you about them at your next message."
 
+def _with_mentioned_files(message: str, mentioned_files: list[dict[str, str]] | None) -> str:
+    """@-mentions are turn-scoped: the model sees the referenced file content only for the
+    turn the message starts (it feeds that turn's goal). The persisted message keeps the
+    short original text, tagged with the paths only."""
+    blocks = "\n\n".join(
+        f"### {f['path']}\n```\n{f['content']}\n```"
+        for f in mentioned_files or [] if f.get("path"))
+    return f"{message}\n\n---\nReferenced files:\n{blocks}" if blocks else message
+
+
 # How often a turn may be held open for agent reports that are still arriving (spec §5.2).
 _MAX_ARRIVAL_REDIRECTS = 5
 
@@ -309,6 +320,7 @@ class ChatController:
         # Queued messages during a notice turn (Task 2B.5).
         self._accepting_queued: set[str] = set()
         self._notice_markers: dict[str, str] = {}
+        self._queued: dict[str, dict[str, object]] = {}
         # The user's Plan Mode, as last sent; notice turns start in it (spec §5.4).
         self._plan_mode = False
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
@@ -484,20 +496,7 @@ class ChatController:
         thread = self._store.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"Thread {thread_id!r} not found")
-        # A user message takes any batch of wake notices and resets the wake loop (§5.3).
-        self._cancel_wake_timer(thread_id)
-        self._wake_turns.pop(thread_id, None)
-        self._wakes_suppressed.discard(thread_id)
-        self._wake_cap_noted.discard(thread_id)
-        self._turn_kinds[thread_id] = "user"
-        if plan_mode is not None:
-            self._plan_mode = plan_mode
-        # A new turn supersedes only the MAIN agent's cards (spec §3.8): a late decision on
-        # a superseded card hits `gate is None` and no-ops (resolve_mode/resolve_edit
-        # already guard on this). A sub-agent's or a team's gate belongs to work that keeps
-        # running, so it stays. A clarify sets no gate, so the clarify resume path is
-        # unaffected.
-        self._store.clear_main_gates(thread_id)
+        self._user_spoke(thread_id, plan_mode)
         # Auto-name the thread from its first user message (mirrors ChatAgent).
         if not any(m.role == "user" for m in thread.messages):
             title = message.strip().replace("\n", " ")[:50]
@@ -506,25 +505,7 @@ class ChatController:
                 "type": "thread_title_updated",
                 "payload": {"thread_id": thread_id, "title": title},
             })
-        # @-mentions are turn-scoped: the model sees the referenced file content
-        # only for THIS turn (folded into turn_message below, which feeds
-        # _run_loop's goal / plan_context["goal"]). The persisted/display message
-        # and conversation history keep the short original text, tagged with the
-        # mentioned paths only (never content) so the transcript can render
-        # clickable mentions without duplicating file content into chat storage.
-        turn_message = message
-        mentioned_paths: list[str] = []
-        if mentioned_files:
-            mentioned_paths = [f["path"] for f in mentioned_files if f.get("path")]
-            blocks = "\n\n".join(
-                f"### {f['path']}\n```\n{f['content']}\n```"
-                for f in mentioned_files if f.get("path")
-            )
-            if blocks:
-                turn_message = f"{message}\n\n---\nReferenced files:\n{blocks}"
-        # One id for this turn's in-flight pills message AND its rewind checkpoint.
-        # Assigned here (not just before _run_loop) because open_checkpoint needs it.
-        turn_id = uuid4().hex
+        mentioned_paths = [f["path"] for f in mentioned_files or [] if f.get("path")]
         # The client may supply the id: the webview echoes the user's message
         # optimistically, before this call persists it, so letting it choose the id keeps
         # the echoed bubble and the stored message in agreement — otherwise the echo has
@@ -533,9 +514,35 @@ class ChatController:
         anchor_message_id = self._store.append_message(thread_id, ChatMessage(
             role="user", content=message, id=message_id,
             metadata={"mentioned_files": mentioned_paths} if mentioned_paths else {}))
+        await self._run_user_turn(
+            thread, thread_id, anchor_message_id, _with_mentioned_files(message, mentioned_files),
+            channel_id, step_review=step_review, plan_mode=plan_mode,
+            forced_skills=forced_skills)
+
+    def _user_spoke(self, thread_id: str, plan_mode: bool | None) -> None:
+        """A user message takes any batch of wake notices and resets the wake loop
+        (spec §5.3), and supersedes only the MAIN agent's cards (spec §3.8): a late decision
+        on a superseded card hits `gate is None` and no-ops. A sub-agent's or a team's gate
+        belongs to work that keeps running, so it stays."""
+        self._cancel_wake_timer(thread_id)
+        self._wake_turns.pop(thread_id, None)
+        self._wakes_suppressed.discard(thread_id)
+        self._wake_cap_noted.discard(thread_id)
+        self._turn_kinds[thread_id] = "user"
+        if plan_mode is not None:
+            self._plan_mode = plan_mode
+        self._store.clear_main_gates(thread_id)
+
+    async def _run_user_turn(
+        self, thread: ChatThread, thread_id: str, anchor_message_id: str | None,
+        turn_message: str, channel_id: str, *, step_review: bool | None,
+        plan_mode: bool | None, forced_skills: list[str] | None,
+    ) -> None:
+        """The turn a persisted user message starts (handle_message, handle_queued_message).
+        `thread` is the pre-turn state a rewind to this message restores."""
+        # One id for this turn's in-flight pills message AND its rewind checkpoint.
+        turn_id = uuid4().hex
         if self._rewind is not None and anchor_message_id is not None:
-            # `thread` is the object read at the top of this function — pre-turn history,
-            # todos, skill and seed, which is exactly what a rewind to here restores.
             self._rewind.open_checkpoint(
                 thread_id, anchor_message_id, turn_id, thread=thread,
                 memory_anchor_md=self._memory_harness.anchor_markdown(thread_id))
@@ -546,34 +553,69 @@ class ChatController:
         # Remember this turn's review toggle so a propose_mode → "implement" re-entry
         # (resolved via /mode-decision, which carries no step_review) honors it.
         self._step_review_by_thread[thread_id] = step_review
-
         seed = self._seed_for(thread_id)
-        # On a continued turn (discuss), append the user's reply to the prior history
-        # and replay it as the cache prefix (spec §12 clarify resume).
         # Always a list, even on a thread's first turn (spec §5.2): the fold needs a user
         # message in persisted history, and a first message was never in it before.
         seed_history = [*seed, {"role": "user",
                                 "content": self._fold_notices(thread_id, turn_id, turn_message)}]
-        # Clarify-resume is now driven by resolve_clarify (the gate carries resume_phase),
-        # not a fresh user message: the main composer is disabled while a clarify gate is
-        # pending, so the answer arrives via the card. A plain message here always
-        # supersedes any pending gate (cleared above) and starts fresh, in the phase the
-        # sticky Plan Mode toggle selects (NEW-I6 — this MUST be the plan_mode
-        # computation, never a stray None, or the toggle silently has no effect).
+        # A plain message always starts fresh, in the phase the sticky Plan Mode toggle
+        # selects (NEW-I6 — this MUST be the plan_mode computation, never a stray None).
         resume_phase = "PLAN" if plan_mode else "ACTIVE"
         outcome = await self._run_loop(
             thread_id, channel_id, turn_message, seed_history=seed_history,
             step_review=step_review, phase=resume_phase, turn_id=turn_id,
-            # A plain message is ALWAYS a fresh entry, never a resume — unlike
-            # resolve_clarify's identical-looking expression below, `resume_phase`
-            # here is the toggle-derived starting phase for a brand-new turn, not
-            # "the phase we're resuming an in-flight feature into." Passing
-            # (resume_phase == "ACTIVE") would evaluate True for every default
-            # (Plan Mode off) message, suppressing the C1b entry hint on every
-            # follow-up turn in a thread — exactly the mis-route active_entry
-            # exists to prevent.
+            # A plain message is ALWAYS a fresh entry, never a resume (see resolve_clarify):
+            # passing (resume_phase == "ACTIVE") would suppress the C1b entry hint on every
+            # follow-up turn in a thread.
             edit_is_resume=False, forced_skills=forced_skills)
         await self._finish(thread_id, channel_id, outcome, step_review, turn_id=turn_id)
+
+    def accepts_queued(self, thread_id: str) -> bool:
+        return (thread_id in self._active_turns and thread_id in self._accepting_queued
+                and self._turn_kinds.get(thread_id) == "notice")
+
+    def queue_message(
+        self, thread_id: str, message: str, *, message_id: str | None,
+        step_review: bool | None, plan_mode: bool | None,
+        mentioned_files: list[dict[str, str]] | None, forced_skills: list[str] | None,
+    ) -> str:
+        """Spec §5.3: persisted now, no checkpoint yet; delivered at the notice turn's next
+        iteration top, or answered by its own turn when the notice turn ends first."""
+        turn_message = _with_mentioned_files(message, mentioned_files)
+        paths = [f["path"] for f in mentioned_files or [] if f.get("path")]
+        stored_id = self._store.append_message(thread_id, ChatMessage(
+            role="user", content=message, id=message_id,
+            metadata={"mentioned_files": paths} if paths else {}))
+        assert stored_id is not None
+        self._wake_turns.pop(thread_id, None)
+        self._wakes_suppressed.discard(thread_id)
+        self._wake_cap_noted.discard(thread_id)
+        if plan_mode is not None:
+            self._plan_mode = plan_mode
+        self._queued[stored_id] = {"turn_message": turn_message, "step_review": step_review,
+                                   "forced_skills": forced_skills}
+        self._main_inbox.setdefault(thread_id, []).append(InboxItem(
+            kind="user", text=turn_message, wakes=False, source_id=stored_id))
+        return stored_id
+
+    async def handle_queued_message(self, thread_id: str, message_id: str) -> None:
+        options = self._queued.pop(message_id, {})
+        if self._store.get_thread(thread_id) is None:
+            return
+        self._user_spoke(thread_id, None)
+        # After everything the notice turn wrote: the checkpoint snapshot, the files and the
+        # transcript position then agree (spec §5.3).
+        self._store.move_message_to_end(thread_id, message_id)
+        thread = self._store.get_thread(thread_id)
+        assert thread is not None
+        step_review = options.get("step_review")
+        forced = options.get("forced_skills")
+        await self._run_user_turn(
+            thread, thread_id, message_id, str(options.get("turn_message", "")),
+            f"chat:{thread_id}",
+            step_review=step_review if isinstance(step_review, bool) else None,
+            plan_mode=self._plan_mode,
+            forced_skills=list(forced) if isinstance(forced, list) else None)
 
     async def _run_loop(
         self, thread_id: str, channel_id: str, goal: str, *,
@@ -1974,6 +2016,16 @@ class ChatController:
                 report_taken = True
             taken.append(item)
         self._main_inbox[thread_id] = kept
+        for item in taken:
+            if item.kind == "user":
+                # The user spoke: the rest of this turn is theirs (spec §5.3).
+                self._turn_kinds[thread_id] = "user"
+                self._accepting_queued.discard(thread_id)
+                self._queued.pop(item.source_id, None)
+                marker = self._notice_markers.get(thread_id)
+                if marker:
+                    self._store.set_message_metadata(
+                        thread_id, item.source_id, {"checkpoint_anchor": marker})
         claims = [i.notice_id for i in taken if i.notice_id]
         if claims:
             self._store.claim_notices(
@@ -2060,12 +2112,22 @@ class ChatController:
         and wake notices may arm the next notice turn."""
         self._turn_kinds.pop(thread_id, None)
         self._accepting_queued.discard(thread_id)
+        self._notice_markers.pop(thread_id, None)
         leftover = self._main_inbox.pop(thread_id, [])
         self._answer_queued(thread_id, [i for i in leftover if i.kind == "user"])
         self._rearm_notices(thread_id)
 
     def _answer_queued(self, thread_id: str, items: list[InboxItem]) -> None:
-        """Task 2B.5."""
+        """Called from _end_turn (no await): the first undrained queued message gets its own
+        turn; any others wait in that turn's inbox, drained at its first iteration top."""
+        if not items:
+            return
+        first, rest = items[0], items[1:]
+        self._main_inbox[thread_id] = list(rest)
+        self._turn_kinds[thread_id] = "user"
+        self.launch_turn(
+            thread_id, self.handle_queued_message(thread_id, first.source_id),
+            channel_id=f"chat:{thread_id}")
 
     def _claim_agent_notices(self, thread_id: str, agent_id: str) -> None:
         """The main agent's wait result carries the report: its notice is claimed by the

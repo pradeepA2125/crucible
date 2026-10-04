@@ -1,4 +1,5 @@
 """Agent routes, /live agents and the config flag (spec §11.1, §11.3, §12)."""
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -78,3 +79,25 @@ async def test_stop_all_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     async with _client(tmp_path, ctrl) as client:
         response = await client.post(f"/v1/chat/threads/{tid}/agents/stop-all")
     assert response.status_code == 200 and response.json() == {"stopped": 0}
+
+
+@pytest.mark.asyncio
+async def test_message_during_a_notice_turn_is_202(tmp_path: Path,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "1")
+    store = ChatThreadStore(tmp_path / "c.sqlite3")
+    tid = store.create_thread(str(tmp_path), title="t").thread_id
+    ctrl = ChatController(
+        workspace_path=str(tmp_path), reasoning_engine=ScriptedReasoningEngine(None, []),
+        thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
+        retrieval_client=None)
+    never = asyncio.Event()
+    ctrl._active_turns[tid] = asyncio.create_task(never.wait())
+    ctrl._turn_kinds[tid] = "notice"
+    ctrl._accepting_queued.add(tid)
+    async with _client(tmp_path, ctrl) as client:
+        response = await client.post(f"/v1/chat/threads/{tid}/message",
+                                     json={"content": "hi", "message_id": "m1"})
+    assert response.status_code == 202
+    assert response.json() == {"queued": True, "message_id": "m1"}
+    ctrl._active_turns[tid].cancel()

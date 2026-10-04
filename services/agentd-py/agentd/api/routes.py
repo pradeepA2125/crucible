@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from agentd.chat.models import (
@@ -16,21 +16,20 @@ from agentd.chat.models import (
     GateAmbiguousError,
     GateNotFoundError,
 )
+from agentd.chat.rewind import resolve_rewind_anchor
 from agentd.domain.models import (
     AbortRequest,
+    CommandDecision,
+    CommandDecisionResponse,
     Diagnostic,
+    McpToolDecision,
     PlanFeedbackRequest,
     RejectPatchRequest,
-    ReviewPrefRequest,
     ResumeTaskRequest,
     ResumeTaskResponse,
+    ReviewPrefRequest,
     ScopeDecisionRequest,
     ScopeDecisionResponse,
-    CommandDecision,
-    McpToolDecision,
-    CommandDecisionResponse,
-    ValidationDecisionRequest,
-    ValidationDecisionResponse,
     StepDecisionRequest,
     StepProgress,
     TaskArtifactEntry,
@@ -43,6 +42,8 @@ from agentd.domain.models import (
     TaskResult,
     TaskStatus,
     TaskView,
+    ValidationDecisionRequest,
+    ValidationDecisionResponse,
 )
 from agentd.domain.state_machine import transition
 from agentd.orchestrator.engine import AgentOrchestrator
@@ -1527,6 +1528,16 @@ def build_router(
                 # the FE already blocks it via disabled input; isBenignConflict swallows
                 # it). Check+launch have no await between → race-safe in asyncio.
                 if thread_id in _active:
+                    _accepts = getattr(_chat_agent, "accepts_queued", None)
+                    if _accepts is not None and _accepts(thread_id):
+                        # Spec §5.3: a notice turn queues the message instead of refusing it.
+                        # Check and enqueue have no await between them.
+                        queued_id = _chat_agent.queue_message(  # type: ignore[attr-defined]
+                            thread_id, message, message_id=_message_id,
+                            step_review=step_review, plan_mode=plan_mode,
+                            mentioned_files=mentioned_files, forced_skills=forced_skills)
+                        return JSONResponse(status_code=202,  # type: ignore[return-value]
+                                            content={"queued": True, "message_id": queued_id})
                     raise HTTPException(
                         status_code=409,
                         detail=f"Thread {thread_id} already has a turn in progress")
@@ -1895,6 +1906,7 @@ def build_router(
         @router.get("/chat/threads/{thread_id}/rewind-preview")
         async def get_rewind_preview(thread_id: str, message_id: str) -> dict:
             rewind, thread = _require_rewind(thread_id)
+            message_id = resolve_rewind_anchor(_chat_agent._store, thread_id, message_id)
             preview = rewind.preview(thread_id, message_id)
             if preview is None:
                 raise HTTPException(status_code=404, detail="No rewind point for that message")
@@ -1909,7 +1921,8 @@ def build_router(
         @router.post("/chat/threads/{thread_id}/rewind")
         async def post_rewind(thread_id: str, request: dict) -> dict:
             rewind, thread = _require_rewind(thread_id)
-            message_id = str(request.get("message_id") or "")
+            message_id = resolve_rewind_anchor(
+                _chat_agent._store, thread_id, str(request.get("message_id") or ""))
             if thread_id in getattr(_chat_agent, "_active_turns", {}):
                 raise HTTPException(
                     status_code=409,

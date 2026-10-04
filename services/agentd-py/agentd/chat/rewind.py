@@ -60,6 +60,15 @@ class RewindOutcome(BaseModel):
     target_seq: int | None = None
 
 
+def resolve_rewind_anchor(store: ChatThreadStore, thread_id: str, message_id: str) -> str:
+    """A message queued into a notice turn shares that turn's checkpoint (spec §5.3)."""
+    thread = store.get_thread(thread_id)
+    for message in thread.messages if thread is not None else []:
+        if message.id == message_id:
+            return str(message.metadata.get("checkpoint_anchor") or message_id)
+    return message_id
+
+
 class RewindStore:
     def __init__(
         self,

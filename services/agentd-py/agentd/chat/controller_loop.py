@@ -1118,6 +1118,10 @@ class ControllerLoop:
                 iteration_cb(history)
             if inbox_drain is not None:
                 for item in inbox_drain():
+                    if item.kind == "user":
+                        # The user's own words (spec §5.3), never framed as agent content.
+                        history.append({"role": "user", "content": item.text})
+                        continue
                     author = item.author or item.source_id or "agent"
                     history.append({"role": "user", "content": "New message:\n"
                                     + frame(author, item.kind, item.text)})
