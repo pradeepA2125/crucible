@@ -46,3 +46,23 @@ def test_forget_cleans_notices_and_notes_survivors(tmp_path: Path,
     assert rows["n-old"]["delivered_at"] is None and rows["n-old"]["claimed_turn_id"] is None
     assert store.get_agent("old").report_delivered_at is None  # type: ignore[union-attr]
     assert delivered and delivered[0][0] == "old" and "a.py" in delivered[0][1]
+
+
+def test_rewind_deletes_notices_of_runs_started_in_the_span(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A follow-up sent in a rewound turn never happened from the user's side: its report
+    is deleted, not offered again. A report from a run started before the span still is."""
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [], {})
+    store.insert_agent(_agent(tid, "old", 0))
+    early = _notice(tid, "n-early", "old").model_copy(update={"payload": {
+        "report": "r", "activation_seq": 1}})
+    resumed = _notice(tid, "n-resumed", "old").model_copy(update={"payload": {
+        "report": "r", "activation_seq": 2}})
+    for n in (early, resumed):
+        store.insert_notice(n)
+    store.claim_notices(["n-early", "n-resumed"], "turn-2", 2)
+    store.deliver_claimed_notices(tid, "turn-2")
+    ctrl.forget_rewound_agents(tid, [], 2)
+    rows = {r["notice_id"]: r for r in store._conn.execute("SELECT * FROM agent_notices")}
+    assert "n-resumed" not in rows
+    assert rows["n-early"]["delivered_at"] is None   # offered again

@@ -69,6 +69,9 @@ class AgentHandle:
     result: ChildResult | None = None
     stop_reason: str = "user"   # user | cascade | deadline | budget | disband (spec §3.3)
     activation_input: str = ""  # what this activation was started with
+    # The thread's checkpoint when this activation started: a rewind to or before it
+    # deletes the activation's notice, since the request that started it is gone.
+    activation_seq: int = -1
     # Restrictions inherited from the dispatcher, persisted on the row (spec §3.12).
     inherited: dict[str, bool] = field(default_factory=dict)
 

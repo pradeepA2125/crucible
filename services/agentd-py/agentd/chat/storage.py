@@ -952,6 +952,15 @@ class ChatThreadStore:
         self._conn.commit()
         return len(rows)
 
+    def delete_notices_from_activation_seq(self, thread_id: str, seq: int) -> int:
+        """Notices from activations started at or after checkpoint `seq` (spec §8.10 as
+        amended): a rewind deletes them instead of offering them again."""
+        cur = self._conn.execute(
+            "DELETE FROM agent_notices WHERE thread_id = ? "
+            "AND json_extract(payload_json, '$.activation_seq') >= ?", (thread_id, seq))
+        self._conn.commit()
+        return cur.rowcount
+
     def delete_notices_for_sources(self, thread_id: str, source_ids: list[str]) -> int:
         cur = self._conn.executemany(
             "DELETE FROM agent_notices WHERE thread_id = ? AND source_id = ?",

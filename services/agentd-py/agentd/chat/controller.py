@@ -1462,6 +1462,8 @@ class ChatController:
         # are offered again, since the restored history no longer holds them (spec §8.10).
         self._store.delete_notices_for_sources(thread_id, agent_ids)
         if from_seq is not None:
+            # A run started inside the span answered a request that no longer exists.
+            self._store.delete_notices_from_activation_seq(thread_id, from_seq)
             self._store.undeliver_notices_from(thread_id, from_seq)
         if restored_files and self._subagents is not None:
             restored = set(restored_files)
@@ -2027,7 +2029,8 @@ class ChatController:
             source_id=handle.agent_id, kind="agent_finished",
             payload={"label": handle.context.label, "name": handle.context.name,
                      "status": result.status, "report": result.report,
-                     "files_changed": self._subtree_files(handle.agent_id)},
+                     "files_changed": self._subtree_files(handle.agent_id),
+                     "activation_seq": handle.activation_seq},
             delivery=delivery, created_at=datetime.now(UTC))
         self._store.insert_notice(notice)
         if handle.agent_id in self._waiting.get((thread_id, MAIN_AGENT_ID), set()):
@@ -2266,6 +2269,7 @@ class ChatController:
                 metadata={"divider": True}))
         self._store.update_agent(ctx.agent_id, activation_count=activation,
                                  activation_started_at=datetime.now(UTC))
+        handle.activation_seq = self._store.current_checkpoint_seq(thread_id)
         self._store.clear_report_delivered(ctx.agent_id)
         workspace = Path(self._workspace_path)
         run_id = f"{thread_id}:{ctx.agent_id}"
