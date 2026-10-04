@@ -127,3 +127,18 @@ def test_count_live_agents(tmp_path: Path) -> None:
     for agent_id, status in (("a", "running"), ("b", "waiting"), ("c", "completed"), ("d", "queued")):
         store.insert_agent(_record(agent_id, tid).model_copy(update={"status": status}))
     assert store.count_live_agents(tid) == 3
+
+
+def test_on_finish_and_dispatcher_queries(tmp_path: Path) -> None:
+    store, tid = _store(tmp_path)
+    store.insert_agent(_record("a1", tid, dispatcher_id="main", on_finish="notify").model_copy(
+        update={"status": "completed"}))
+    store.insert_agent(_record("a2", tid, parent="a1", dispatcher_id="a1").model_copy(
+        update={"status": "completed"}))
+    store.insert_agent(_record("a3", tid, dispatcher_id="main").model_copy(
+        update={"status": "running"}))
+    store.update_agent("a1", on_finish="wake")
+    assert store.get_agent("a1").on_finish == "wake"  # type: ignore[union-attr]
+    assert [r.agent_id for r in store.agents_dispatched_by(tid, "main")] == ["a1", "a3"]
+    assert [r.agent_id for r in store.agents_dispatched_by(tid, "a1")] == ["a2"]
+    assert store.live_agent_ids(tid) == ["a3"]

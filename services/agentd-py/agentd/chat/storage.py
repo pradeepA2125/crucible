@@ -729,7 +729,7 @@ class ChatThreadStore:
         "last_seq": "last_seq", "stop_reason": "stop_reason",
         "activation_started_at": "activation_started_at",
         "activation_ended_at": "activation_ended_at",
-        "report_delivered_at": "report_delivered_at",
+        "report_delivered_at": "report_delivered_at", "on_finish": "on_finish",
     }
 
     def insert_agent(self, record: AgentRecord) -> None:
@@ -759,7 +759,7 @@ class ChatThreadStore:
         activation_count: int | None = None, last_seq: int | None = None,
         stop_reason: str | None = None, activation_started_at: datetime | None = None,
         activation_ended_at: datetime | None = None,
-        report_delivered_at: datetime | None = None,
+        report_delivered_at: datetime | None = None, on_finish: str | None = None,
     ) -> None:
         """Change only the given fields. Column names come from a fixed map, values are
         always bound parameters."""
@@ -775,7 +775,7 @@ class ChatThreadStore:
             "stop_reason": stop_reason,
             "activation_started_at": iso(activation_started_at),
             "activation_ended_at": iso(activation_ended_at),
-            "report_delivered_at": iso(report_delivered_at),
+            "report_delivered_at": iso(report_delivered_at), "on_finish": on_finish,
         }
         pairs = [(self._AGENT_UPDATABLE[k], v) for k, v in given.items() if v is not None]
         if not pairs:
@@ -785,6 +785,21 @@ class ChatThreadStore:
             f"UPDATE chat_agents SET {assignments} WHERE agent_id = ?",  # noqa: S608 — fixed map
             (*[v for _, v in pairs], agent_id))
         self._conn.commit()
+
+    def agents_dispatched_by(self, thread_id: str, dispatcher_id: str) -> list[AgentRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM chat_agents WHERE thread_id = ? AND dispatcher_id = ? ORDER BY rowid",
+            (thread_id, dispatcher_id)).fetchall()
+        return [self._agent_from_row(r) for r in rows]
+
+    def live_agent_ids(self, thread_id: str) -> list[str]:
+        """Queued, running or parked at a gate — top-level first, so a stop-all reaches the
+        dispatchers (whose stop cascades) before their children."""
+        rows = self._conn.execute(
+            "SELECT agent_id FROM chat_agents WHERE thread_id = ? "
+            "AND status IN ('queued', 'running', 'waiting') ORDER BY depth, rowid",
+            (thread_id,)).fetchall()
+        return [r["agent_id"] for r in rows]
 
     def set_agent_history(self, agent_id: str, history: list[dict[str, Any]]) -> None:
         self._conn.execute(
