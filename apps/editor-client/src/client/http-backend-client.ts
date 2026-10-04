@@ -59,6 +59,9 @@ import {
   type StreamEvent,
   type ChatMessage,
   type SequencedStreamEvent,
+  type SendChatOptions,
+  type SendChatResult,
+  type ThreadAttention,
 } from "../contracts/task-contracts.js";
 import type { TaskStatus } from "../domain/types.js";
 
@@ -562,6 +565,7 @@ export class HttpBackendClient implements BackendTaskClient {
         updatedAt: t["updated_at"] ?? undefined,
         messageCount: t["message_count"] ?? undefined,
         status: t["status"] ?? null,
+        agentsRunning: t["agents_running"] ?? 0,
       })
     );
   }
@@ -620,6 +624,10 @@ export class HttpBackendClient implements BackendTaskClient {
       filesChangedCount: a["files_changed_count"] ?? 0,
       startedAt: a["started_at"] ?? null, endedAt: a["ended_at"] ?? null,
       reportPreview: a["report_preview"] ?? "",
+      activationCount: a["activation_count"] ?? 0, teamId: a["team_id"] ?? null,
+      dispatcherId: a["dispatcher_id"] ?? null, onFinish: a["on_finish"] ?? null,
+      activationStartedAt: a["activation_started_at"] ?? null,
+      activationEndedAt: a["activation_ended_at"] ?? null,
     };
   }
 
@@ -658,6 +666,9 @@ export class HttpBackendClient implements BackendTaskClient {
       agents: Array.isArray(raw["agents"])
         ? (raw["agents"] as Record<string, unknown>[]).map((a) => HttpBackendClient.toAgentSummary(a))
         : null,
+      agentsRunning: raw["agents_running"] ?? 0,
+      turnKind: raw["turn_kind"] ?? null,
+      messageCount: raw["message_count"] ?? 0,
     });
   }
 
@@ -904,7 +915,7 @@ export class HttpBackendClient implements BackendTaskClient {
     return raw.map((m) => MemoryViewSchema.parse(mapMemoryView(m)));
   }
 
-  async *sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[]; mentionedFiles?: { path: string; content: string }[]; planMode?: boolean; messageId?: string }): AsyncIterable<StreamEvent> {
+  async sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: SendChatOptions): Promise<SendChatResult> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
       {
@@ -927,10 +938,38 @@ export class HttpBackendClient implements BackendTaskClient {
         signal: signal ?? null,
       }
     );
-    if (!response.ok) {
-      throw new Error(`Chat message failed (${response.status}) for thread ${threadId}`);
+    if (response.status === 202) {
+      // Spec §5.3: a notice turn is running; the backend queued the message.
+      const body = z.object({ queued: z.literal(true), message_id: z.string() })
+        .parse(await response.json());
+      return { kind: "queued", messageId: body.message_id };
     }
-    yield* this.consumeChatEventStream(response);
+    if (!response.ok) {
+      const error = new Error(
+        `Chat message failed (${response.status}) for thread ${threadId}`
+      ) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return { kind: "stream", events: this.consumeChatEventStream(response) };
+  }
+
+  async getAttention(workspacePath: string): Promise<ThreadAttention[]> {
+    const raw = await this.fetchJson(
+      `/v1/chat/attention?workspace=${encodeURIComponent(workspacePath)}`
+    );
+    const rows = z.array(z.object({
+      thread_id: z.string(), pending_gates: z.number(), agents_running: z.number(),
+    })).parse(raw);
+    return rows.map((r) => ({
+      threadId: r.thread_id, pendingGates: r.pending_gates, agentsRunning: r.agents_running,
+    }));
+  }
+
+  async stopAllAgents(threadId: string): Promise<number> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/agents/stop-all`, { method: "POST" });
+    return z.object({ stopped: z.number() }).parse(raw).stopped;
   }
 
   async applyInlineChange(inlineTaskId: string): Promise<void> {

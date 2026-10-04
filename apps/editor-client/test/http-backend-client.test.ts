@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { HttpBackendClient } from "../src/client/http-backend-client.js";
+import type { SendChatResult, StreamEvent } from "../src/contracts/task-contracts.js";
 
 // A ReadableStream that never enqueues and never closes — simulates a stalled SSE
 // connection (idle proxy timeout, dead socket with no RST) where reader.read() would
@@ -25,8 +26,7 @@ describe("HttpBackendClient skills", () => {
         });
       },
     });
-    const iter = client.sendChatMessage("t1", "hi", undefined, { forcedSkills: ["git-commit"] });
-    await iter[Symbol.asyncIterator]().next();
+    await client.sendChatMessage("t1", "hi", undefined, { forcedSkills: ["git-commit"] });
     expect(JSON.parse(sentBody).forced_skills).toEqual(["git-commit"]);
   });
 
@@ -39,10 +39,9 @@ describe("HttpBackendClient skills", () => {
         return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
       },
     });
-    const iter = client.sendChatMessage("t1", "hi", undefined, {
+    await client.sendChatMessage("t1", "hi", undefined, {
       mentionedFiles: [{ path: "src/a.py", content: "x = 1" }],
     });
-    await iter[Symbol.asyncIterator]().next();
     expect(JSON.parse(sentBody).mentioned_files).toEqual([{ path: "src/a.py", content: "x = 1" }]);
   });
 
@@ -55,8 +54,7 @@ describe("HttpBackendClient skills", () => {
         return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
       },
     });
-    const iter = client.sendChatMessage("t1", "hi");
-    await iter[Symbol.asyncIterator]().next();
+    await client.sendChatMessage("t1", "hi");
     expect(JSON.parse(sentBody).mentioned_files).toBeUndefined();
   });
 
@@ -69,8 +67,7 @@ describe("HttpBackendClient skills", () => {
         return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
       },
     });
-    const iter = client.sendChatMessage("t1", "hello", undefined, { planMode: true });
-    await iter[Symbol.asyncIterator]().next();
+    await client.sendChatMessage("t1", "hello", undefined, { planMode: true });
     expect(JSON.parse(sentBody).plan_mode).toBe(true);
   });
 
@@ -83,8 +80,7 @@ describe("HttpBackendClient skills", () => {
         return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
       },
     });
-    const iter = client.sendChatMessage("t1", "hi");
-    await iter[Symbol.asyncIterator]().next();
+    await client.sendChatMessage("t1", "hi");
     expect(JSON.parse(sentBody).plan_mode).toBeUndefined();
   });
 
@@ -483,7 +479,7 @@ describe("HttpBackendClient", () => {
         }),
     });
     const events: Array<{ type: string }> = [];
-    for await (const event of client.sendChatMessage("chat-abc123", "hello")) {
+    for await (const event of streamOf(await client.sendChatMessage("chat-abc123", "hello"))) {
       events.push(event);
     }
     expect(events[0].type).toBe("intent_classified");
@@ -862,7 +858,7 @@ describe("HttpBackendClient — SSE idle-read timeout", () => {
             headers: { "content-type": "text/event-stream" },
           }),
       });
-      const iterator = client.sendChatMessage("t1", "hi")[Symbol.asyncIterator]();
+      const iterator = streamOf(await client.sendChatMessage("t1", "hi"))[Symbol.asyncIterator]();
       const nextPromise = iterator.next();
 
       // Nothing has arrived and the promise must not resolve before the idle timeout.
@@ -1038,5 +1034,53 @@ describe("HttpBackendClient rewind", () => {
     expect(result.retiredMemories).toBe(4);
     expect(result.failed[0].path).toBe("b.py");
     expect(JSON.parse(captured.body ?? "{}").message_id).toBe("m1");
+  });
+});
+
+/** The stream of a sendChatMessage result; a test that expects a stream fails on a queue. */
+function streamOf(result: SendChatResult): AsyncIterable<StreamEvent> {
+  if (result.kind !== "stream") throw new Error(`expected a stream, got ${result.kind}`);
+  return result.events;
+}
+
+describe("HttpBackendClient background agents (spec §5.3, §6)", () => {
+  test("a 202 is a queued result", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://x",
+      fetchFn: async () => new Response(
+        JSON.stringify({ queued: true, message_id: "m1" }), { status: 202 }),
+    });
+    await expect(client.sendChatMessage("t1", "hi"))
+      .resolves.toEqual({ kind: "queued", messageId: "m1" });
+  });
+
+  test("a 409 rejects with the status attached", async () => {
+    const client = new HttpBackendClient({
+      baseUrl: "http://x", fetchFn: async () => new Response("busy", { status: 409 }),
+    });
+    await expect(client.sendChatMessage("t1", "hi")).rejects.toMatchObject({ status: 409 });
+  });
+
+  test("maps the new live fields", async () => {
+    const client = jsonClient({
+      turn_active: true, turn_kind: "notice", agents_running: 2, message_count: 7,
+      pending_gates: [], agents: [{ agent_id: "a", depth: 1, name: "explore", label: "a",
+        status: "completed", files_changed_count: 0, activation_count: 2, on_finish: "wake" }],
+    }, {});
+    const live = await client.getThreadLiveState("t1");
+    expect([live.turnKind, live.agentsRunning, live.messageCount]).toEqual(["notice", 2, 7]);
+    expect([live.agents?.[0].activationCount, live.agents?.[0].onFinish]).toEqual([2, "wake"]);
+  });
+
+  test("reads attention", async () => {
+    const client = jsonClient([{ thread_id: "t1", pending_gates: 1, agents_running: 0 }], {});
+    await expect(client.getAttention("/ws")).resolves.toEqual(
+      [{ threadId: "t1", pendingGates: 1, agentsRunning: 0 }]);
+  });
+
+  test("stops all agents", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient({ stopped: 3 }, captured);
+    await expect(client.stopAllAgents("t1")).resolves.toBe(3);
   });
 });

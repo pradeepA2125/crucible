@@ -209,6 +209,8 @@ export type StreamEvent =
   | { type: "agent_status"; payload: { agent_id: string; status: string } }
   | { type: "agent_finished"; payload: { agent_id: string; status: string; files_changed: string[] } }
   | { type: "agent_dispatch"; payload: { message: Record<string, unknown> } }
+  // Durable messages carried live (spec §6): a resume, a notice-turn marker, a team.
+  | { type: "agent_message" | "notice" | "team_created"; payload: { message: Record<string, unknown> } }
   | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } }
   // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
   // reasoning, then `output` climbs — the transition that otherwise looks like
@@ -267,6 +269,13 @@ export const AgentSummarySchema = z.object({
   startedAt: z.string().nullable(),
   endedAt: z.string().nullable(),
   reportPreview: z.string().default(""),
+  // Change only at activation boundaries (spec §6): a resume re-lights the row.
+  activationCount: z.number().default(0),
+  teamId: z.string().nullable().default(null),
+  dispatcherId: z.string().nullable().default(null),
+  onFinish: z.string().nullable().default(null),
+  activationStartedAt: z.string().nullable().default(null),
+  activationEndedAt: z.string().nullable().default(null),
 });
 export type AgentSummary = z.infer<typeof AgentSummarySchema>;
 
@@ -290,6 +299,8 @@ export const ChatThreadSummarySchema = z.object({
   updatedAt: z.string().optional(),
   messageCount: z.number().optional(),
   status: z.enum(["running", "review", "done", "failed"]).nullable().optional(),
+  // Queued, running or gate-parked agents (spec §6) — a count, not a status value.
+  agentsRunning: z.number().default(0),
 });
 export type ChatThreadSummary = z.infer<typeof ChatThreadSummarySchema>;
 
@@ -412,6 +423,11 @@ export const ThreadLiveStateSchema = z.object({
   todos: z.array(TodoItemSchema).nullable().optional(),
   sessions: z.array(SessionSummarySchema).nullable().optional(),
   agents: z.array(AgentSummarySchema).nullable().optional(),
+  agentsRunning: z.number().default(0),
+  // A notice turn keeps the composer usable (spec §5.3).
+  turnKind: z.enum(["user", "notice"]).nullable().default(null),
+  // A change the host did not stream triggers a transcript reconcile (spec §6).
+  messageCount: z.number().default(0),
 });
 export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 
@@ -597,7 +613,9 @@ export interface BackendTaskClient {
   upsertMcpServer(name: string, entry: Record<string, unknown>, disabled: string[]): Promise<McpServerList>;
   deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
   reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
-  sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: { stepReview?: boolean; forcedSkills?: string[]; mentionedFiles?: { path: string; content: string }[]; planMode?: boolean; messageId?: string }): AsyncIterable<StreamEvent>;
+  sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: SendChatOptions): Promise<SendChatResult>;
+  getAttention(workspacePath: string): Promise<ThreadAttention[]>;
+  stopAllAgents(threadId: string): Promise<number>;
   // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
   // produce live events); the per-edit gate is a plain JSON ack (its continuation rides
   // the already-open message stream).
@@ -621,4 +639,24 @@ export interface BackendTaskClient {
   streamChannel(channelId: string, signal?: AbortSignal): AsyncIterable<SequencedStreamEvent>;
   applyInlineChange(inlineTaskId: string): Promise<void>;
   discardInlineChange(inlineTaskId: string): Promise<void>;
+}
+
+export interface SendChatOptions {
+  stepReview?: boolean;
+  forcedSkills?: string[];
+  mentionedFiles?: { path: string; content: string }[];
+  planMode?: boolean;
+  messageId?: string;
+}
+
+// A message sent during a notice turn is queued, not streamed (spec §5.3).
+export type SendChatResult =
+  | { kind: "stream"; events: AsyncIterable<StreamEvent> }
+  | { kind: "queued"; messageId: string };
+
+// Cross-thread attention (spec §6): ids and counts only, never gate payloads.
+export interface ThreadAttention {
+  threadId: string;
+  pendingGates: number;
+  agentsRunning: number;
 }
