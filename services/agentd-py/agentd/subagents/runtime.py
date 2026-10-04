@@ -186,6 +186,23 @@ class AgentSupervisor:
             await self._acquire(dispatcher)
         return [self._result_of(h) for h in handles]
 
+    async def wait_for(
+        self, handles: list[AgentHandle], *, dispatcher: AgentHandle | None = None,
+        timeout: float | None = None,
+    ) -> list[ChildResult | None]:
+        """`wait_agents` (spec §4.2): the results that are in by the timeout; None for an
+        agent still running. The dispatcher lends its slot while it waits, as in `wait`."""
+        if dispatcher is not None and dispatcher.held:
+            self._release(dispatcher)
+        tasks = [h.task for h in handles if h.task is not None and not h.task.done()]
+        # Not try/finally: a cancel of THIS await (the dispatcher stopping) propagates and
+        # the dispatcher never re-acquires — the same contract as `wait`.
+        if tasks:
+            await asyncio.wait(tasks, timeout=timeout)
+        if dispatcher is not None:
+            await self._acquire(dispatcher)
+        return [h.result if h.task is not None and h.task.done() else None for h in handles]
+
     async def dispatch(
         self, handles: list[AgentHandle], run_child: RunChild, *,
         dispatcher: AgentHandle | None = None,

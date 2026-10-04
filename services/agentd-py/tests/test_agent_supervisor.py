@@ -121,3 +121,37 @@ async def test_non_waking_leftovers_stay() -> None:
     sup = AgentSupervisor(max_concurrent=1, on_leftover=lambda h, items: got.append(items))
     sup.deliver("a", InboxItem(kind="note", text="fyi", wakes=False))
     assert got == [] and [i.text for i in sup.drain("a")] == ["fyi"]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_returns_what_finished_by_the_timeout() -> None:
+    sup = AgentSupervisor(max_concurrent=4)
+    fast, slow = _handle("fast"), _handle("slow")
+    never = asyncio.Event()
+
+    async def run(handle: AgentHandle) -> ChildResult:
+        if handle.agent_id == "slow":
+            await never.wait()
+        return _done()
+
+    sup.enqueue(fast, run)
+    sup.enqueue(slow, run)
+    results = await sup.wait_for([fast, slow], timeout=0.05)
+    assert results[0] is not None and results[0].status == "completed"
+    assert results[1] is None and sup.is_active("slow")
+    await sup.stop("slow")
+
+
+@pytest.mark.asyncio
+async def test_wait_for_without_timeout_waits_for_all() -> None:
+    sup = AgentSupervisor(max_concurrent=4)
+    handles = [_handle("a"), _handle("b")]
+
+    async def run(handle: AgentHandle) -> ChildResult:
+        await asyncio.sleep(0)
+        return _done()
+
+    for h in handles:
+        sup.enqueue(h, run)
+    assert [r.status for r in await sup.wait_for(handles) if r is not None] == [
+        "completed", "completed"]
