@@ -99,6 +99,19 @@ export function AgentRosterCard({ agentIds }: { agentIds: string[] }) {
   );
 }
 
+/** One agent's live row outside its dispatch card — the resume line (spec §6) shows it
+ * where the activity is, instead of the card far up the thread. */
+export function AgentLiveRow({ agentId }: { agentId: string }) {
+  const ui = useAgentsUi();
+  const agent = rosterRow(ui.agents, agentId);
+  const now = useNow(!isTerminalAgent(agent.status));
+  return (
+    <div className="surface-card overflow-hidden">
+      <AgentRosterRow agent={agent} now={now} siblings={[agentId]} />
+    </div>
+  );
+}
+
 function AgentRosterRow({ agent, now, siblings }: {
   agent: AgentSummaryView; now: number; siblings: string[];
 }) {

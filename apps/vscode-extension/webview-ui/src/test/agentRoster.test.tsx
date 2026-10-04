@@ -99,3 +99,17 @@ describe("toneOf", () => {
     expect(toneOf("failed_transient")).toBe("waiting");
   });
 });
+
+describe("AgentMessageLine (resume)", () => {
+  it("carries the resumed agent's live row, so nobody scrolls up to the dispatch card", () => {
+    const value = ui([agent({ agentId: "agent-a", label: "docs check", status: "running" })]);
+    render(<AgentsContext.Provider value={value}><MessageRow msg={{
+      role: "agent", content: "Look again for outdated wording\nmore", type: "agent_message",
+      timestamp: "t", metadata: { agent_id: "agent-a", label: "docs check", activation: 2 } }} />
+    </AgentsContext.Provider>);
+    expect(screen.getByText(/Look again for outdated wording/)).toBeInTheDocument();
+    expect(screen.getByText("read_file api/a.py")).toBeInTheDocument();   // live status line
+    fireEvent.click(screen.getByRole("button", { name: "Open docs check in a window" }));
+    expect(value.openWindow).toHaveBeenCalledWith("agent-a", ["agent-a"]);
+  });
+});
