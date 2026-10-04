@@ -22,3 +22,14 @@ class AgentContext:
     allowed_types: tuple[str, ...]  # the AGENT base type set for this permission
     persona: str         # the definition body ("" = none)
     max_iters: int
+    # Effective constraints (spec §3.12): no_ask = command/MCP calls are policy-denied;
+    # edit_review = shared (the live review control) | auto | required (always gated).
+    no_ask: bool = False
+    edit_review: str = "shared"
+    capped: bool = False
+
+    def __post_init__(self) -> None:
+        # One fact, two fields: a dontAsk agent is no-ask however the context was built
+        # (a hand-built context without the flag would otherwise wait on a card forever).
+        if self.permission == "dontAsk" and not self.no_ask:
+            object.__setattr__(self, "no_ask", True)

@@ -792,6 +792,12 @@ class ChatThreadStore:
         self._conn.commit()
         return merged
 
+    def set_agent_inherited(self, agent_id: str, inherited: dict[str, bool]) -> None:
+        self._conn.execute(
+            "UPDATE chat_agents SET inherited_json = ? WHERE agent_id = ?",
+            (json.dumps(inherited), agent_id))
+        self._conn.commit()
+
     def clear_report_delivered(self, agent_id: str) -> None:
         self._conn.execute(
             "UPDATE chat_agents SET report_delivered_at = NULL WHERE agent_id = ?", (agent_id,))

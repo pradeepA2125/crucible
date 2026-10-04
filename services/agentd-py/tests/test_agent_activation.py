@@ -159,7 +159,7 @@ async def test_dispatch_stamps_checkpoint_and_inherits(tmp_path: Path,
     [row] = store.list_agents(tid)
     assert row.checkpoint_seq == store.current_checkpoint_seq(tid)
     assert row.definition["name"] == "general-purpose"
-    assert row.inherited == {"read_only": False}
+    assert row.inherited == {}  # the main agent passes down no restrictions (§3.12)
 
 
 def test_divider_text() -> None:
@@ -170,3 +170,20 @@ def test_divider_text() -> None:
     assert _divider_text("Your previous run ended failed: Status: failed\n\nUnfinished:\n- x\n\n"
                          "Message from main:\nretry") == '↩ Message from main: "retry"'
     assert _divider_text("New message:\nchild done") == '↩ New message: "child done"'
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_helper_keeps_inherited_restrictions(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    ws, store, tid, engine = _setup(tmp_path, monkeypatch, [
+        {"type": "report", "thought": "t", "summary": "one"},
+        {"type": "report", "thought": "t", "summary": "two"}])
+    ctrl = _controller(ws, tmp_path, store, engine)
+    await ctrl.handle_message(tid, "go", channel_id=f"chat:{tid}")
+    [row] = store.list_agents(tid)
+    # Simulate a capped, read-only dispatcher's helper: the row carries what it inherited.
+    store._conn.execute("UPDATE chat_agents SET inherited_json = ? WHERE agent_id = ?",
+                        ('{"read_only": true, "no_ask": true, "capped": true}', row.agent_id))
+    store._conn.commit()
+    handle = ctrl._handle_from_record(tid, row.agent_id)
+    assert (handle.context.permission, handle.context.no_ask, handle.context.edit_review) == (
+        "plan", True, "required")

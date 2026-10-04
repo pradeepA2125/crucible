@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -69,6 +69,8 @@ class AgentHandle:
     result: ChildResult | None = None
     stop_reason: str = "user"   # user | cascade | deadline | budget | disband (spec §3.3)
     activation_input: str = ""  # what this activation was started with
+    # Restrictions inherited from the dispatcher, persisted on the row (spec §3.12).
+    inherited: dict[str, bool] = field(default_factory=dict)
 
     @property
     def agent_id(self) -> str:

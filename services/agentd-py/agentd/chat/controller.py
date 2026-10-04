@@ -13,6 +13,7 @@ import logging
 import os
 import shutil
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -61,6 +62,7 @@ from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
 from agentd.subagents.agent_files import AgentCatalogLoader
 from agentd.subagents.config import subagent_max_concurrent, subagent_max_depth, subagent_max_iters
+from agentd.subagents.constraints import resolve_constraints
 from agentd.subagents.context import AgentContext, new_agent_id
 from agentd.subagents.definitions import (
     BUILTIN_AGENTS,
@@ -74,9 +76,6 @@ from agentd.subagents.inbox import InboxItem
 from agentd.subagents.permissions import (
     child_allowed_types,
     child_tool_names,
-    definition_allows_edit,
-    effective_permission,
-    follows_live_review,
 )
 from agentd.subagents.runtime import (
     IDLE_STATUSES,
@@ -949,6 +948,8 @@ class ChatController:
         if any(is_protected(d.path) for d in diff):
             # Resolved only by an explicit decision on this card (spec §3.9).
             payload["protected"] = True
+        if child is not None and child.context.capped:
+            payload["review_required"] = True  # an untrusted agent's edit (spec §3.12)
         if child is not None:
             # A child edits in its own shadow (spec §7.5). Informational: a child gate is
             # never recovered after a restart (§11.5).
@@ -1436,7 +1437,7 @@ class ChatController:
         if (self._shell_policy == ShellPolicy.ALLOW_ALL
                 or CommandRuleStore(self._workspace_path).matches(command, args)):
             return ApprovalOutcome.allow()
-        if child.context.permission == "dontAsk":
+        if child.context.no_ask:
             # dontAsk: only a remembered rule or allow_all runs a command; nobody is asked
             # (spec §5.6), and the model is told the truth (rev 11 §4.6.4).
             return ApprovalOutcome.deny("policy")
@@ -1450,7 +1451,7 @@ class ChatController:
 
         if McpRuleStore(self._workspace_path).matches(server, tool):
             return ApprovalOutcome.allow()
-        if child.context.permission == "dontAsk":
+        if child.context.no_ask:
             return ApprovalOutcome.deny("policy")
         return await self._mcp_approval_cb(
             child.thread_id, f"chat:{child.thread_id}", server, tool, args, child=child)
@@ -1523,26 +1524,53 @@ class ChatController:
         fresh.activation_input = activation_input
         self._subagents.enqueue(fresh, self._activate)
 
+    def _context_for(
+        self, *, agent_id: str, name: str, label: str, depth: int, parent_agent_id: str | None,
+        snapshot: AgentDefinition, inherited: dict[str, bool],
+    ) -> tuple[AgentContext, AgentDefinition]:
+        """The agent's context and effective definition, tightened per dimension against the
+        definition as it is now and what it inherited (spec §3.12)."""
+        catalog = self._agent_catalog()
+        c = resolve_constraints(snapshot, catalog.get(snapshot.name), inherited,
+                                is_builtin=snapshot.name in BUILTIN_AGENTS)
+        persona = snapshot.persona
+        if c.capped and persona.strip():
+            # An untrusted definition's persona is data, not the role (spec §3.12).
+            persona = frame(f"definition {snapshot.source} (untrusted)", "agent persona",
+                            persona)
+        context = AgentContext(
+            agent_id=agent_id, name=name, label=label, depth=depth,
+            parent_agent_id=parent_agent_id, permission=c.permission,
+            allowed_types=child_allowed_types(c.permission, can_edit=c.can_edit),
+            persona=persona, max_iters=snapshot.max_turns or subagent_max_iters(),
+            no_ask=c.no_ask, edit_review=c.edit_review, capped=c.capped)
+        return context, replace(snapshot, tools=c.tools)
+
     def _handle_from_record(self, thread_id: str, agent_id: str) -> AgentHandle:
         """Rebuild an agent from its row (spec §3.2): idle agents have no in-memory handle,
         and after a restart nothing of them is in memory at all."""
         record = self._store.get_agent(agent_id)
         if record is None or record.thread_id != thread_id:
             raise AgentNotFoundError(f"no agent {agent_id!r} in thread {thread_id!r}")
-        definition = definition_from_json(record.definition) if record.definition else (
+        snapshot = definition_from_json(record.definition) if record.definition else (
             self._agent_catalog()[record.name])
-        permission = effective_permission(
-            definition.permission, "plan" if record.inherited.get("read_only") else None)
-        context = AgentContext(
+        # Monotonic (spec §3.12): what the dispatcher is restricted by now is OR-ed in, so a
+        # dispatcher that became capped or read-only tightens its existing descendants.
+        inherited = dict(record.inherited)
+        if record.parent_agent_id is not None:
+            parent = self._store.get_agent(record.parent_agent_id)
+            if parent is not None:
+                for key, value in parent.inherited.items():
+                    inherited[key] = inherited.get(key, False) or value
+        self._store.set_agent_inherited(agent_id, inherited)
+        context, definition = self._context_for(
             agent_id=record.agent_id, name=record.name, label=record.label,
             depth=record.depth, parent_agent_id=record.parent_agent_id,
-            permission=permission,
-            allowed_types=child_allowed_types(permission, can_edit=definition_allows_edit(
-                definition.tools, definition.disallowed_tools)),
-            persona=definition.persona,
-            max_iters=definition.max_turns or subagent_max_iters())
-        return AgentHandle(context=context, definition=definition, prompt=record.prompt,
-                           thread_id=thread_id, turn_id=record.turn_id, status=record.status)
+            snapshot=snapshot, inherited=inherited)
+        handle = AgentHandle(context=context, definition=definition, prompt=record.prompt,
+                             thread_id=thread_id, turn_id=record.turn_id, status=record.status)
+        handle.inherited = inherited
+        return handle
 
     def resume_agent(
         self, thread_id: str, agent_id: str, message: str, *, caller_id: str = "main",
@@ -1598,25 +1626,26 @@ class ChatController:
         log = self._write_log_for(thread_id)
         if runtime is None or log is None:
             raise RuntimeError("dispatch_agents was offered while sub-agents are disabled")
-        parent_permission = dispatcher.context.permission if dispatcher is not None else None
+        # What every agent this dispatch creates inherits (spec §3.12).
+        inherited: dict[str, bool] = (
+            {"read_only": dispatcher.context.permission == "plan",
+             "no_ask": dispatcher.context.no_ask, "capped": dispatcher.context.capped}
+            if dispatcher is not None else {})
         depth = dispatcher.context.depth + 1 if dispatcher is not None else 1
         handles: list[AgentHandle] = []
         for request in requests:
-            permission = effective_permission(request.agent.permission, parent_permission)
-            context = AgentContext(
+            context, definition = self._context_for(
                 agent_id=new_agent_id(), name=request.agent.name, label=request.label,
                 depth=depth,
                 parent_agent_id=dispatcher.agent_id if dispatcher is not None else None,
-                permission=permission, allowed_types=child_allowed_types(
-                    permission, can_edit=definition_allows_edit(
-                        request.agent.tools, request.agent.disallowed_tools)),
-                persona=request.agent.persona,
-                max_iters=request.agent.max_turns or subagent_max_iters())
+                snapshot=request.agent, inherited=inherited)
             # Writes before this instant are not stale for the new agent (spec §7.3).
             log.register_agent(context.agent_id)
-            handles.append(AgentHandle(
-                context=context, definition=request.agent, prompt=request.prompt,
-                thread_id=thread_id, turn_id=turn_id))
+            handle = AgentHandle(
+                context=context, definition=definition, prompt=request.prompt,
+                thread_id=thread_id, turn_id=turn_id)
+            handle.inherited = inherited
+            handles.append(handle)
         self._on_dispatch_start(thread_id, turn_id, dispatcher, handles)
         if dispatcher is None:
             self._inflight_dispatch[thread_id] = handles
@@ -1669,8 +1698,7 @@ class ChatController:
                 definition=definition_to_json(handle.definition),
                 dispatcher_id=dispatcher.agent_id if dispatcher is not None else "main",
                 checkpoint_seq=stamp,
-                inherited={"read_only": dispatcher is not None
-                           and dispatcher.context.permission == "plan"}))
+                inherited=handle.inherited))
             self._broadcaster.broadcast(thread_channel, {
                 "type": "agent_started",
                 "payload": {"agent_id": ctx.agent_id, "parent_agent_id": ctx.parent_agent_id,
@@ -1762,10 +1790,13 @@ class ChatController:
                 write_guard=WriteGuard(log, ctx.agent_id, ctx.label, ctx.name),
                 protection=AgentProtection()))
             if self._orchestrator is not None else None)
-        parent_control = self._turn_controls.get(thread_id)
-        control = (parent_control
-                   if follows_live_review(ctx.permission) and parent_control is not None
-                   else ChatTurnControl(auto_accept_edits=True))
+        if ctx.edit_review == "required":
+            control = ChatTurnControl(auto_accept_edits=False)   # fixed: never auto-resolved
+        elif ctx.edit_review == "auto":
+            control = ChatTurnControl(auto_accept_edits=True)
+        else:
+            control = self._turn_controls.get(thread_id) or ChatTurnControl(
+                auto_accept_edits=True)
         engine = (self._reasoning if handle.definition.model == "inherit"
                   else self._reasoning.with_model(handle.definition.model))
         loop = ControllerLoop(
