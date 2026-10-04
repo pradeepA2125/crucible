@@ -495,7 +495,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await vscode.commands.executeCommand(
       "setContext", "crucible.skillsEnabled", skillsEnabled);
   };
-  runtimeManager.onBackendReady(() => {
+  runtimeManager.onBackendReady((workspace) => {
+    // A crash-respawn picks a new port: without this the chat kept calling the dead one
+    // while the status bar showed the live one (found live, 2026-10-04). Set the URL
+    // before anything below reads it.
+    const url = runtimeManager.backendUrl(workspace);
+    if (url) settings.setManagedBackendUrl(url);
     void refreshCapabilityFlags();
   });
   await refreshCapabilityFlags();
