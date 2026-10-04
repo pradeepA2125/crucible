@@ -1341,10 +1341,17 @@ includes the team name, phase, usage vs budget, and a link target for the UI.
   span. This also closes the v1 gap where an agent dispatched in a continuation turn survived a rewind.
 - **What a rewind deletes:** agents and teams (with members and posts) inside the span, and every
   `agent_notices` row whose source was deleted.
-- **Notices delivered in the span become undelivered again.** Rewind restores the main agent's history to
-  its pre-span snapshot, which drops any notice text folded into the rewound turns. So for every surviving
-  notice whose `claimed_checkpoint_seq` is inside the span, the rewind clears its claim and `delivered_at`
-  (and the source agent's `report_delivered_at`); the notice is offered again at the next main turn.
+- **Notices from runs started inside the span are deleted.** A `message_agent` follow-up sent in a rewound
+  turn never happened from the user's point of view, so the report it produced is deleted rather than
+  offered again. Each notice records the checkpoint its activation started under (`activation_seq` in its
+  payload); a rewind to checkpoint `k` deletes notices with `activation_seq >= k`. (Found in the live smoke,
+  2026-10-04: the follow-ups' reports came back as "While you were away".) The agent's own history still
+  holds the rewound activations — rolling that back needs a per-activation history checkpoint (§12).
+- **Other notices delivered in the span become undelivered again.** Rewind restores the main agent's
+  history to its pre-span snapshot, which drops any notice text folded into the rewound turns. So for every
+  surviving notice whose `claimed_checkpoint_seq` is inside the span, the rewind clears its claim and
+  `delivered_at` (and the source agent's `report_delivered_at`); the notice is offered again at the next
+  main turn.
 - **Surviving agents.** A rewind may restore files that an idle agent from an earlier turn had edited, so
   its history now describes changes that are gone. The affected agents are found from the persisted
   `chat_agents.files_changed_json` intersected with the restored paths (the write log is reset by rewind and
@@ -1658,6 +1665,9 @@ reuse on activations where the provider reports it.
 
 ## 12. Deferred
 
+- **Rewinding an agent's own history** past activations started in the rewound span (§8.10): needs a
+  per-activation checkpoint of `chat_agents.history_json`. Until then a resumed agent remembers follow-ups
+  the user rewound away.
 - **Backend authentication** (E17): the local backend has no Host/Origin check and no token. v2 adds
   routes a DNS-rebinding page could reach: `PUT`/`DELETE /v1/agents/{name}` (write definitions),
   `POST /v1/agents/trust` (lifts the trust cap — the most privileged new route), `PUT /v1/chat/review-pref`
