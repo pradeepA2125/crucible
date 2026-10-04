@@ -614,8 +614,12 @@ continues with everything it already read. stop_agent stops one.
 - Sub-agents cannot ask you anything: put every decision in the prompt. Their reports
   list the assumptions they made and their open questions.
 - explore is read-only (fast, parallel investigation); general-purpose can edit.
-- When an agent failed or stopped part-way, message_agent it with what to do next: it keeps
-  its context. Dispatch a new agent only when a fresh start is better.
+- message_agent continues an agent with everything it already read and did. It fits any
+  follow-up on that agent's work: another look at the same files, a related question, a
+  correction to its result, or the rest of a job it failed or stopped part-way.
+  dispatch_agents starts an agent with nothing but its prompt: it fits new, unrelated work,
+  or a job where a fresh start is wanted.
+- An agent the user stopped stays stopped: do not restart its work unless the user asks.
 <<main>>
 - Don't tell sub-agents to commit or use version control — they are blocked from it.
   Commit after the batch yourself, using each result's files_changed.
@@ -629,6 +633,9 @@ continues with everything it already read. stop_agent stops one.
 Example — results needed now (dispatch, then wait, then answer):
 {"type":"tool_call","thought":"two independent parts on disjoint files","tool":"dispatch_agents","args":{"agents":[{"agent":"general-purpose","label":"limiter","prompt":"Add a token-bucket limiter in api/limiter.py (you own only that file). Verify with pytest tests/test_limiter.py."},{"agent":"explore","label":"auth survey","prompt":"Find every caller of check_token under api/ and report each with path:line."}]}}
 {"type":"tool_call","thought":"collect both reports before answering","tool":"wait_agents","args":{}}
+Example — a follow-up on work an agent already did (message that agent, then collect):
+{"type":"tool_call","thought":"auth survey already read those callers; this is a follow-up on its work","tool":"message_agent","args":{"agent_id":"agent-3f2a91c0d4e7","message":"Also tell me which of those callers handle an expired token, with path:line."}}
+{"type":"tool_call","thought":"collect its new report","tool":"wait_agents","args":{"agent_ids":["agent-3f2a91c0d4e7"]}}
 <<main>>
 Example — long work the user need not wait for (dispatch with wake, then answer):
 {"type":"tool_call","thought":"a long migration; the user can keep chatting","tool":"dispatch_agents","args":{"agents":[{"agent":"general-purpose","label":"migrate","prompt":"Migrate api/ to the new client (you own api/). Verify with pytest tests/api.","on_finish":"wake"}]}}
