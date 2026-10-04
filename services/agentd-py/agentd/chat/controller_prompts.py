@@ -13,6 +13,7 @@ import json
 from collections.abc import Sequence
 
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
+from agentd.subagents.framing import FRAMING_SENTENCE
 
 # The patch ops the controller edit action exposes — a subset of the engine's
 # PatchOperationV2 union (domain/models.py) chosen for chat edits: full-file
@@ -772,6 +773,8 @@ def format_controller_system_prompt(
         # Child append order (spec §4.2): role block → persona → then today's order.
         label = ctx.agent_label or ctx.agent_id
         base += render_prompt(_AGENT_ROLE_BLOCK, ctx).replace("{label}", label)
+        # Appended raw: the frame marker contains '<<', which tagged templates reject.
+        base += "\n- " + FRAMING_SENTENCE
         if persona and persona.strip():
             base += _PERSONA_BLOCK_TEMPLATE.replace("{persona}", persona.strip())
     # Appended (not a placeholder) — process-fixed flag, so the prompt stays cache-stable.
@@ -803,6 +806,8 @@ def format_controller_system_prompt(
     if any(str((d or {}).get("name", "")) == "dispatch_agents"
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_DISPATCH_BLOCK, ctx)
+        if ctx.is_main:
+            base += FRAMING_SENTENCE + "\n"
     return base
 
 

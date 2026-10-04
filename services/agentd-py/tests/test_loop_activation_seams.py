@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from agentd.subagents.framing import frame
 from agentd.subagents.inbox import InboxItem
 from tests.loop_harness import run_child_loop
 
@@ -20,7 +21,7 @@ async def test_iteration_cb_sees_each_iteration_and_the_end(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_inbox_items_are_appended_at_the_iteration_top(tmp_path: Path) -> None:
-    pending = [InboxItem(kind="report", text="child finished: X", wakes=True)]
+    pending = [InboxItem(kind="report", text="child finished: X", wakes=True, author="kid-2")]
 
     def drain() -> list[InboxItem]:
         items, pending[:] = list(pending), []
@@ -28,7 +29,8 @@ async def test_inbox_items_are_appended_at_the_iteration_top(tmp_path: Path) -> 
 
     outcome = await run_child_loop(tmp_path, [READ, REPORT], inbox_drain=drain)
     users = [m["content"] for m in outcome.history or [] if m.get("role") == "user"]
-    assert "New message:\nchild finished: X" in users
+    expected = "New message:\n" + frame("kid-2", "report", "child finished: X")
+    assert expected in users
 
 
 @pytest.mark.asyncio

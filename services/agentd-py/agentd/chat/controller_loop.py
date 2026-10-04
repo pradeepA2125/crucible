@@ -30,6 +30,7 @@ from agentd.reasoning.react_common import (
     malformed_correction,
 )
 from agentd.skills.config import skills_body_max_chars
+from agentd.subagents.framing import frame
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -1108,7 +1109,9 @@ class ControllerLoop:
                 iteration_cb(history)
             if inbox_drain is not None:
                 for item in inbox_drain():
-                    history.append({"role": "user", "content": "New message:\n" + item.text})
+                    author = item.author or item.source_id or "agent"
+                    history.append({"role": "user", "content": "New message:\n"
+                                    + frame(author, item.kind, item.text)})
             # Live "thinking" status so the chat UI isn't blank during the first model
             # call (the frontend maps chat_agent_thinking → the thinking pane). Only the
             # first iteration: subsequent activity is conveyed by tool pills + the live

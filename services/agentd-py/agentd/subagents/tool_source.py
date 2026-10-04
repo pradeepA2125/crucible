@@ -5,6 +5,7 @@ import json
 from collections.abc import Awaitable, Callable
 
 from agentd.subagents.definitions import AgentDefinition
+from agentd.subagents.framing import frame
 from agentd.subagents.runtime import AgentHandle, ChildResult, DispatchRequest
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
@@ -18,7 +19,9 @@ def format_dispatch_result(pairs: list[tuple[AgentHandle, ChildResult]]) -> str:
     return json.dumps([{
         "agent_id": handle.agent_id, "agent": handle.context.name,
         "label": handle.context.label, "status": result.status,
-        "report": result.report, "files_changed": result.files_changed,
+        "report": frame(f"{handle.context.label} ({handle.context.name})", "report",
+                        result.report),
+        "files_changed": result.files_changed,
         "stale_refusals": result.stale_refusals,
     } for handle, result in pairs], indent=2)
 

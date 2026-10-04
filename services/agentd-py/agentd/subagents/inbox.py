@@ -11,3 +11,4 @@ class InboxItem:
     text: str
     wakes: bool         # an idle owner is re-activated for it (§3.6 leftovers)
     source_id: str = ""  # the agent the item came from, when there is one
+    author: str = ""     # who wrote it, shown in the frame header (spec §3.10)

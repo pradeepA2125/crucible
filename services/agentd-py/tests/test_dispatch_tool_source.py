@@ -5,6 +5,7 @@ import pytest
 
 from agentd.subagents.context import AgentContext
 from agentd.subagents.definitions import BUILTIN_AGENTS
+from agentd.subagents.framing import frame
 from agentd.subagents.runtime import AgentHandle, ChildResult, DispatchRequest
 from agentd.subagents.tool_source import SubAgentToolSource
 
@@ -71,6 +72,9 @@ async def test_default_labels_full_reports_and_workspace_changes() -> None:
     entries = json.loads(out.output)
     assert entries[1] == {"agent_id": "agent-1", "agent": "general-purpose",
                           "label": "general-purpose-1", "status": "partial",
-                          "report": long_report, "files_changed": ["b.py", "a.py"],
+                          # Never truncated (D8), and framed as data (spec §3.10).
+                          "report": frame("general-purpose-1 (general-purpose)", "report",
+                                          long_report),
+                          "files_changed": ["b.py", "a.py"],
                           "stale_refusals": 1}
     assert out.workspace_changes == ["a.py", "b.py"]

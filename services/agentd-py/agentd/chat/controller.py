@@ -63,6 +63,7 @@ from agentd.subagents.definitions import (
     definition_to_json,
 )
 from agentd.subagents.events import SequencedBroadcaster
+from agentd.subagents.framing import frame
 from agentd.subagents.inbox import InboxItem
 from agentd.subagents.permissions import (
     child_allowed_types,
@@ -1498,7 +1499,9 @@ class ChatController:
         """Input that arrived after the last drain re-activates a lone agent (spec §3.6).
         Scheduled, not run inline: the supervisor calls this from inside the finishing
         activation's task."""
-        text = "\n\n".join(f"New message:\n{i.text}" for i in items)
+        text = "\n\n".join(
+            "New message:\n" + frame(i.author or i.source_id or "agent", i.kind, i.text)
+            for i in items)
         asyncio.get_running_loop().call_soon(self._start_activation, handle, text)
 
     def _start_activation(self, handle: AgentHandle, activation_input: str) -> None:

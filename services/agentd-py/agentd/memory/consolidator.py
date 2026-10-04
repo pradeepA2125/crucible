@@ -9,6 +9,7 @@ from uuid import uuid4
 from agentd.memory.embedder import Embedder
 from agentd.memory.models import CandidateMemory, Memory
 from agentd.memory.store import MemoryStore
+from agentd.subagents.framing import strip_frames
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,12 @@ def _parse_candidate(item: object) -> CandidateMemory | None:
     return c
 
 
+def transcript_for_distill(transcript: str) -> str:
+    """Memories are formed only from the user's and the agent's own words (spec §3.10): a
+    planted instruction in another agent's report must never become a durable memory."""
+    return strip_frames(transcript)
+
+
 def make_engine_consolidator(transport: object, model: str) -> DistillFn:
     async def _distill(transcript: str, existing: list[Memory]) -> list[CandidateMemory]:
         payload: dict[str, object] = {
@@ -150,7 +157,7 @@ class Consolidator:
         # FIX #4: bound the existing-context fed to the LLM — ALL live memories would grow the
         # prompt without limit on a mature workspace until consolidation fails every time.
         existing = self._bounded_existing(scope_kind, scope_id)
-        candidates = await self._distill(transcript, existing)
+        candidates = await self._distill(transcript_for_distill(transcript), existing)
         inserted = 0
         for c in candidates:
             emb = await self._embed(c.content)  # FIX #3: off the event loop

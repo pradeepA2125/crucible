@@ -11,6 +11,7 @@ from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.patch.engine import PatchEngine
 from agentd.storage.in_memory import InMemoryTaskStore
+from agentd.subagents.framing import frame
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
@@ -92,7 +93,8 @@ async def test_two_children_edit_disjoint_files(tmp_path: Path,
     result = next(m for m in history if m.get("tool") == "dispatch_agents")
     entries = json.loads(str(result["content"]))
     assert [(e["label"], e["status"], e["report"]) for e in entries] == [
-        ("impl-a", "completed", "Created a.py."), ("impl-b", "completed", "Created b.py.")]
+        ("impl-a", "completed", frame("impl-a (general-purpose)", "report", "Created a.py.")),
+        ("impl-b", "completed", frame("impl-b (general-purpose)", "report", "Created b.py."))]
     types = [thread_events.get_nowait()["type"] for _ in range(thread_events.qsize())]
     assert types.count("agent_started") == 2 and types.count("agent_finished") == 2
 
