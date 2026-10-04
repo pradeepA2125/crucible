@@ -63,7 +63,13 @@ from agentd.reasoning.react_common import assistant_turn
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
 from agentd.subagents.agent_files import AgentCatalogLoader
-from agentd.subagents.config import subagent_max_concurrent, subagent_max_depth, subagent_max_iters
+from agentd.subagents.config import (
+    DispatchCapExceeded,
+    subagent_max_concurrent,
+    subagent_max_depth,
+    subagent_max_iters,
+    subagent_max_live_per_thread,
+)
 from agentd.subagents.constraints import resolve_constraints
 from agentd.subagents.context import AgentContext, new_agent_id
 from agentd.subagents.definitions import (
@@ -1632,6 +1638,12 @@ class ChatController:
         log = self._write_log_for(thread_id)
         if runtime is None or log is None:
             raise RuntimeError("dispatch_agents was offered while sub-agents are disabled")
+        limit = subagent_max_live_per_thread()
+        live = self._store.count_live_agents(thread_id)
+        if live + len(requests) > limit:
+            raise DispatchCapExceeded(
+                f"this thread already has {live} agents running (limit {limit}) — wait for "
+                "some to finish or stop them before dispatching more")
         # What every agent this dispatch creates inherits (spec §3.12).
         inherited: dict[str, bool] = (
             {"read_only": dispatcher.context.permission == "plan",

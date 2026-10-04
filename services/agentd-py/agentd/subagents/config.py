@@ -35,3 +35,15 @@ def subagent_max_concurrent() -> int:
 def subagent_max_iters() -> int:
     """A child's loop budget when its definition sets no maxTurns (spec §6.5)."""
     return _int_env("CRUCIBLE_SUBAGENT_MAX_ITERS", 100, 1)
+
+
+class DispatchCapExceeded(ValueError):
+    """A dispatch would exceed a cap (spec §3.11); the model is told which and why."""
+
+
+def subagent_max_per_dispatch() -> int:
+    return _int_env("CRUCIBLE_SUBAGENT_MAX_PER_DISPATCH", 8, 1)
+
+
+def subagent_max_live_per_thread() -> int:
+    return _int_env("CRUCIBLE_SUBAGENT_MAX_LIVE_PER_THREAD", 16, 1)

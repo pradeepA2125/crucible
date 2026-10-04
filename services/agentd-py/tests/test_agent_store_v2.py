@@ -120,3 +120,10 @@ def test_v1_rows_are_backfilled(tmp_path: Path) -> None:
     got = {r.agent_id: (r.dispatcher_id, r.checkpoint_seq) for r in store.list_agents(tid)}
     assert got == {"early": ("main", -1), "m1": ("main", 0), "m2": ("main", 1),
                    "m3": ("main", 1), "c1": ("m2", 1)}
+
+
+def test_count_live_agents(tmp_path: Path) -> None:
+    store, tid = _store(tmp_path)
+    for agent_id, status in (("a", "running"), ("b", "waiting"), ("c", "completed"), ("d", "queued")):
+        store.insert_agent(_record(agent_id, tid).model_copy(update={"status": status}))
+    assert store.count_live_agents(tid) == 3

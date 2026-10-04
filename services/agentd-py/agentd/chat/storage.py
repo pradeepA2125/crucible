@@ -965,3 +965,9 @@ class ChatThreadStore:
             (thread_id, seq))
         self._conn.commit()
         return ids
+
+    def count_live_agents(self, thread_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM chat_agents WHERE thread_id = ? "
+            "AND status IN ('queued', 'running', 'waiting')", (thread_id,)).fetchone()
+        return int(row["n"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 
+from agentd.subagents.config import DispatchCapExceeded, subagent_max_per_dispatch
 from agentd.subagents.definitions import AgentDefinition
 from agentd.subagents.framing import frame
 from agentd.subagents.runtime import AgentHandle, ChildResult, DispatchRequest
@@ -70,7 +71,10 @@ class SubAgentToolSource:
         if problem is not None:
             valid = ", ".join(self._catalog)
             return ToolOutput(output=f"Error: {problem}. Valid agents: {valid}.", is_error=True)
-        pairs = await self._dispatch(requests)
+        try:
+            pairs = await self._dispatch(requests)
+        except DispatchCapExceeded as exc:
+            return ToolOutput(output=f"Error: {exc}", is_error=True)
         changed = sorted({f for _, result in pairs for f in result.files_changed})
         return ToolOutput(output=format_dispatch_result(pairs), workspace_changes=changed)
 
@@ -78,6 +82,8 @@ class SubAgentToolSource:
         raw = args.get("agents")
         if not isinstance(raw, list) or not raw:
             return [], "'agents' must be a non-empty list"
+        if len(raw) > subagent_max_per_dispatch():
+            return [], f"at most {subagent_max_per_dispatch()} agents per call"
         requests: list[DispatchRequest] = []
         labels: set[str] = set()
         counts: dict[str, int] = {}
