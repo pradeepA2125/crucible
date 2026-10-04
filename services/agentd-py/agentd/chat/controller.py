@@ -34,6 +34,7 @@ from agentd.chat.models import (
     GateAgent,
     GateAmbiguousError,
     GateNotFoundError,
+    NoticeRecord,
     PendingGate,
 )
 from agentd.chat.protected_paths import (
@@ -80,6 +81,7 @@ from agentd.subagents.definitions import (
 from agentd.subagents.events import SequencedBroadcaster
 from agentd.subagents.framing import frame
 from agentd.subagents.inbox import InboxItem
+from agentd.subagents.notices import notice_author, notice_body
 from agentd.subagents.permissions import (
     child_allowed_types,
     child_tool_names,
@@ -276,6 +278,9 @@ class ChatController:
         self._waiting: dict[tuple[str, str], set[str]] = {}
         # The running main turn's dispatches, for the unwaited-dispatch redirect (§4.1).
         self._turn_dispatches: dict[str, TurnDispatches] = {}
+        # The running main turn's inbox, per thread (spec §5.2 path 2): reports that
+        # arrived mid-turn, appended one per iteration top.
+        self._main_inbox: dict[str, list[InboxItem]] = {}
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -697,6 +702,7 @@ class ChatController:
                 turn_control=control, edit_decision_cb=edit_cb,
                 edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
                 on_pills_update=pills_cb,
+                inbox_drain=partial(self._drain_main, thread_id, turn_id) if turn_id else None,
                 terminal_guard=partial(self._unwaited_guard, thread_id))
         except asyncio.CancelledError:
             # /stop cancels the turn's asyncio.Task, raising here BEFORE the normal post-run
@@ -712,6 +718,12 @@ class ChatController:
             if partial_hist:
                 self._histories[thread_id] = partial_hist
                 self._store.set_controller_history(thread_id, partial_hist)
+                if turn_id:
+                    self._store.deliver_claimed_notices(thread_id, turn_id)
+            if turn_id:
+                # Not in the finally: the normal path persists AFTER it. A claim this
+                # stopped turn never wrote is retried by the next main turn (spec §5.2).
+                self._store.release_claimed_notices(thread_id, turn_id)
             # Captured explicitly (not left to the shared line after this try/except):
             # a re-raise skips everything below, so this branch is the only place that
             # would ever record it.
@@ -744,6 +756,8 @@ class ChatController:
             if partial_hist:
                 self._histories[thread_id] = partial_hist
                 self._store.set_controller_history(thread_id, partial_hist)
+                if turn_id:
+                    self._store.deliver_claimed_notices(thread_id, turn_id)
             self._store.set_controller_todos(
                 thread_id, ledger.to_json() if ledger.items else None)
             outcome = ControllerOutcome(
@@ -777,6 +791,9 @@ class ChatController:
         # seed_history instead of re-exploring cold (mirrors the planner persisting
         # planning_conversation_history on the TaskRecord).
         self._store.set_controller_history(thread_id, outcome.history or [])
+        if turn_id:
+            # Delivered once the text is in persisted history (spec §5.2).
+            self._store.deliver_claimed_notices(thread_id, turn_id)
         # Persist the ledger across this request's loop boundaries; clear on a terminal
         # outcome so the next request starts fresh. propose_mode/clarify are non-terminal —
         # the follow-on loop rehydrates the in-progress list.
@@ -1330,7 +1347,8 @@ class ChatController:
             root = self._orchestrator._workspace_manager._root_path
             for shadow in root.glob("chatturn-*-agent-*"):
                 shutil.rmtree(shadow, ignore_errors=True)
-        logger.info("[subagent] reap rows=%d", reaped)
+        released = self._store.release_all_unpersisted_notices()
+        logger.info("[subagent] reap rows=%d notices_released=%d", reaped, released)
 
     def forget_rewound_agents(
         self, thread_id: str, turn_ids: list[str], from_seq: int | None = None,
@@ -1716,7 +1734,10 @@ class ChatController:
                     raise AgentNotYoursError(f"agent {record.label!r} is not one you dispatched")
         # Read before waiting; an agent just resumed is active but its row still carries
         # the previous activation's delivery stamp until the activation starts.
-        already = {i for i in ids if mine[i].report_delivered_at is not None
+        claimed = (self._store.claimed_agent_sources(thread_id)
+                   if caller_id == MAIN_AGENT_ID else set())
+        already = {i for i in ids
+                   if (mine[i].report_delivered_at is not None or i in claimed)
                    and mine[i].status not in LIVE_STATUSES
                    and not self._subagents.is_active(i)}
         if caller_id == MAIN_AGENT_ID and thread_id in self._turn_dispatches:
@@ -1746,11 +1767,19 @@ class ChatController:
                     status=record.status, report=record.report,
                     files_changed=self._subtree_files(agent_id),
                     stale_refusals=record.stale_refusals))
-                self._store.update_agent(agent_id, report_delivered_at=now)
+                if caller_id == MAIN_AGENT_ID:
+                    self._claim_agent_notices(thread_id, agent_id)
+                else:
+                    self._store.update_agent(agent_id, report_delivered_at=now)
         delivered = {e.agent_id for e in entries
                      if e.status not in ("still running", "already delivered")}
         if caller is not None:
             self._subagents.discard_reports(caller_id, delivered)
+        else:
+            # The same rule for the main agent's inbox (spec §5.2 path 1 before path 2).
+            self._main_inbox[thread_id] = [
+                i for i in self._main_inbox.get(thread_id, [])
+                if not (i.kind == "report" and i.source_id in delivered)]
         return entries
 
     def _unwaited_guard(self, thread_id: str) -> str | None:
@@ -1819,13 +1848,74 @@ class ChatController:
         inbox (spec §3.6, §4.2); the main agent's go to notices (Part 2B)."""
         assert self._subagents is not None
         record = self._store.get_agent(handle.agent_id)
-        if record is None or record.dispatcher_id in (None, MAIN_AGENT_ID):
+        if record is None or record.dispatcher_id is None:
+            return
+        if record.dispatcher_id == MAIN_AGENT_ID:
+            self._on_main_report(handle, result)
             return
         if handle.agent_id in self._waiting.get((record.thread_id, record.dispatcher_id), set()):
             return
         self._subagents.deliver(record.dispatcher_id, InboxItem(
             kind="report", text=result.report, wakes=True, source_id=handle.agent_id,
             author=f"{handle.context.label} ({handle.context.name})"))
+
+    def _on_main_report(self, handle: AgentHandle, result: ChildResult) -> None:
+        """Spec §5.2: write the notice, then the first path that applies."""
+        thread_id = handle.thread_id
+        record = self._store.get_agent(handle.agent_id)
+        delivery = "wake" if record is not None and record.on_finish == "wake" else "notify"
+        notice = NoticeRecord(
+            notice_id=uuid4().hex, thread_id=thread_id, source_kind="agent",
+            source_id=handle.agent_id, kind="agent_finished",
+            payload={"label": handle.context.label, "name": handle.context.name,
+                     "status": result.status, "report": result.report,
+                     "files_changed": self._subtree_files(handle.agent_id)},
+            delivery=delivery, created_at=datetime.now(UTC))
+        self._store.insert_notice(notice)
+        if handle.agent_id in self._waiting.get((thread_id, MAIN_AGENT_ID), set()):
+            return                       # path 1: the waiting wait_agents claims it
+        if thread_id in self._active_loops:
+            self._main_inbox.setdefault(thread_id, []).append(InboxItem(
+                kind="report", text=notice_body(notice), wakes=False,
+                source_id=handle.agent_id, author=notice_author(notice),
+                notice_id=notice.notice_id))
+            return                       # path 2
+        self._rearm_notices(thread_id)   # paths 3 and 4
+
+    def _drain_main(self, thread_id: str, turn_id: str) -> list[InboxItem]:
+        """All notes and user messages plus at most one report (spec §3.6)."""
+        pending = self._main_inbox.get(thread_id, [])
+        taken: list[InboxItem] = []
+        kept: list[InboxItem] = []
+        report_taken = False
+        for item in pending:
+            if item.kind == "report":
+                if report_taken:
+                    kept.append(item)
+                    continue
+                report_taken = True
+            taken.append(item)
+        self._main_inbox[thread_id] = kept
+        claims = [i.notice_id for i in taken if i.notice_id]
+        if claims:
+            self._store.claim_notices(
+                claims, turn_id, self._store.current_checkpoint_seq(thread_id))
+        return taken
+
+    def _rearm_notices(self, thread_id: str) -> None:
+        """Arms a notice turn for undelivered `wake` notices — Task 2B.4."""
+
+    def _claim_agent_notices(self, thread_id: str, agent_id: str) -> None:
+        """The main agent's wait result carries the report: its notice is claimed by the
+        running turn and delivered when that turn's history is written (spec §5.2 path 1).
+        An agent stopped before reporting has no notice; mark it directly."""
+        turn_id = self._live_turns.get(thread_id)
+        ids = [n.notice_id for n in self._store.unclaimed_notices(thread_id)
+               if n.source_kind == "agent" and n.source_id == agent_id]
+        if ids and turn_id is not None:
+            self._store.claim_notices(ids, turn_id, self._store.current_checkpoint_seq(thread_id))
+        else:
+            self._store.update_agent(agent_id, report_delivered_at=datetime.now(UTC))
 
     def _drain_and_mark(self, agent_id: str) -> list[InboxItem]:
         assert self._subagents is not None
