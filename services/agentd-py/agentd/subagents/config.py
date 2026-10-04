@@ -47,3 +47,12 @@ def subagent_max_per_dispatch() -> int:
 
 def subagent_max_live_per_thread() -> int:
     return _int_env("CRUCIBLE_SUBAGENT_MAX_LIVE_PER_THREAD", 16, 1)
+
+
+# A wake notice waits this long for siblings before its notice turn starts (spec §5.3).
+NOTICE_BATCH_SEC = 2.0
+
+
+def subagent_max_wake_turns() -> int:
+    """Consecutive notice turns with no user message in between (spec §5.3)."""
+    return _int_env("CRUCIBLE_SUBAGENT_MAX_WAKE_TURNS", 10, 0)

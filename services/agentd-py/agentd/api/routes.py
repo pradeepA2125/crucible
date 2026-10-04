@@ -1460,6 +1460,9 @@ def build_router(
             # open controller gate parked on a future) keeps input disabled across reload.
             # The legacy ChatAgent has no _active_turns → resolves to False (no regression).
             live.turn_active = thread_id in getattr(_chat_agent, "_active_turns", {})
+            _turn_kind = getattr(_chat_agent, "turn_kind", None)
+            if _turn_kind is not None:
+                live.turn_kind = _turn_kind(thread_id)
             # Exec sessions strip (flag-tolerant: legacy ChatAgent / flag-off has no
             # manager → None). live_summaries rows are deliberately stable — see
             # SessionManager.live_summaries' signature-churn invariant.

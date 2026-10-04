@@ -64,11 +64,13 @@ from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
 from agentd.subagents.agent_files import AgentCatalogLoader
 from agentd.subagents.config import (
+    NOTICE_BATCH_SEC,
     DispatchCapExceeded,
     subagent_max_concurrent,
     subagent_max_depth,
     subagent_max_iters,
     subagent_max_live_per_thread,
+    subagent_max_wake_turns,
 )
 from agentd.subagents.constraints import resolve_constraints
 from agentd.subagents.context import AgentContext, new_agent_id
@@ -179,6 +181,11 @@ class TurnDispatches:
     waited: set[str] = field(default_factory=set)
     redirected: bool = False
 
+
+_NOTICE_TURN_INPUT = ("No new message from the user. These agents finished while you were "
+                      "away: tell the user what they found or changed, and act on it if "
+                      "the user's earlier request needs that.")
+_WAKE_CAP_TEXT = "🔔 Agents keep finishing — I'll tell you about them at your next message."
 
 # How often a turn may be held open for agent reports that are still arriving (spec §5.2).
 _MAX_ARRIVAL_REDIRECTS = 5
@@ -292,6 +299,18 @@ class ChatController:
         self._main_inbox: dict[str, list[InboxItem]] = {}
         # Per running main turn: how often it was held open for arriving reports.
         self._announced: dict[str, int] = {}
+        # Notice turns (spec §5.3), per thread: which kind of main turn is running, the
+        # batching timer, consecutive wake turns, Stop's suppression, the cap breadcrumb.
+        self._turn_kinds: dict[str, str] = {}
+        self._wake_timers: dict[str, asyncio.TimerHandle] = {}
+        self._wake_turns: dict[str, int] = {}
+        self._wakes_suppressed: set[str] = set()
+        self._wake_cap_noted: set[str] = set()
+        # Queued messages during a notice turn (Task 2B.5).
+        self._accepting_queued: set[str] = set()
+        self._notice_markers: dict[str, str] = {}
+        # The user's Plan Mode, as last sent; notice turns start in it (spec §5.4).
+        self._plan_mode = False
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -351,6 +370,7 @@ class ChatController:
                     channel_id, {"type": "chat_done", "payload": {}})
         finally:
             self._active_turns.pop(thread_id, None)
+            self._end_turn(thread_id)
 
     def _write_log_for(self, thread_id: str) -> WorkspaceWriteLog | None:
         """The thread's write log, created on first use; None when sub-agents are off
@@ -464,6 +484,14 @@ class ChatController:
         thread = self._store.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"Thread {thread_id!r} not found")
+        # A user message takes any batch of wake notices and resets the wake loop (§5.3).
+        self._cancel_wake_timer(thread_id)
+        self._wake_turns.pop(thread_id, None)
+        self._wakes_suppressed.discard(thread_id)
+        self._wake_cap_noted.discard(thread_id)
+        self._turn_kinds[thread_id] = "user"
+        if plan_mode is not None:
+            self._plan_mode = plan_mode
         # A new turn supersedes only the MAIN agent's cards (spec §3.8): a late decision on
         # a superseded card hits `gate is None` and no-ops (resolve_mode/resolve_edit
         # already guard on this). A sub-agent's or a team's gate belongs to work that keeps
@@ -1398,6 +1426,10 @@ class ChatController:
         task = self._active_turns.get(thread_id)
         if task is None or task.done():
             return False
+        if self._turn_kinds.get(thread_id) == "notice":
+            # Without this the re-arm at turn end would start another notice turn two
+            # seconds after the user stopped one (spec §5.3).
+            self._wakes_suppressed.add(thread_id)
         task.cancel()
         try:
             await task  # let the cancellation unwind (finally chain runs)
@@ -1948,8 +1980,92 @@ class ChatController:
                 claims, turn_id, self._store.current_checkpoint_seq(thread_id))
         return taken
 
+    def turn_kind(self, thread_id: str) -> str | None:
+        return self._turn_kinds.get(thread_id) if thread_id in self._active_turns else None
+
+    def _notice_blocked(self, thread_id: str) -> bool:
+        if thread_id in self._active_turns or thread_id in self._wakes_suppressed:
+            return True
+        thread = self._store.get_thread(thread_id)
+        if thread is None:
+            return True
+        return any(g.agent is None for g in thread.pending_controller_gates)
+
     def _rearm_notices(self, thread_id: str) -> None:
-        """Arms a notice turn for undelivered `wake` notices — Task 2B.4."""
+        """Arm a notice turn for undelivered wake notices (spec §5.2 re-arming, §5.3)."""
+        if thread_id in self._wake_timers or self._notice_blocked(thread_id):
+            return
+        if not any(n.delivery == "wake" for n in self._store.unclaimed_notices(thread_id)):
+            return
+        if self._wake_turns.get(thread_id, 0) >= subagent_max_wake_turns():
+            if thread_id not in self._wake_cap_noted:
+                self._wake_cap_noted.add(thread_id)
+                self._write_breadcrumb(thread_id, f"chat:{thread_id}", _WAKE_CAP_TEXT)
+            return
+        self._wake_timers[thread_id] = asyncio.get_running_loop().call_later(
+            NOTICE_BATCH_SEC, self._fire_notice_turn, thread_id)
+
+    def _fire_notice_turn(self, thread_id: str) -> None:
+        self._wake_timers.pop(thread_id, None)
+        if self._notice_blocked(thread_id):
+            return
+        channel_id = f"chat:{thread_id}"
+        self._broadcaster.clear_replay(channel_id)
+        self.launch_turn(thread_id, self.handle_notices(thread_id), channel_id=channel_id)
+
+    def _cancel_wake_timer(self, thread_id: str) -> None:
+        timer = self._wake_timers.pop(thread_id, None)
+        if timer is not None:
+            timer.cancel()
+
+    async def handle_notices(self, thread_id: str) -> None:
+        """A main turn whose input is the undelivered notices (spec §5.3)."""
+        thread = self._store.get_thread(thread_id)
+        pending = self._store.unclaimed_notices(thread_id)
+        if thread is None or not pending:
+            return
+        self._turn_kinds[thread_id] = "notice"
+        self._accepting_queued.add(thread_id)            # Task 2B.5
+        self._wake_turns[thread_id] = self._wake_turns.get(thread_id, 0) + 1
+        channel_id = f"chat:{thread_id}"
+        sources = [n for n in pending if n.source_kind == "agent"]
+        target = {"agent_id": sources[0].source_id} if len(sources) == 1 else {}
+        text = (f"🔔 Agent \"{sources[0].payload.get('label', '')}\" finished — main agent woke"
+                if len(sources) == 1 else
+                f"🔔 {len(pending)} agents finished — main agent woke")
+        marker = ChatMessage(role="agent", content=text, type="notice",
+                             metadata={"target": target})
+        marker_id = self._store.append_message(thread_id, marker)
+        self._broadcaster.broadcast(channel_id, {"type": "notice", "payload": {
+            "message": marker.model_copy(update={"id": marker_id}).model_dump(mode="json")}})
+        turn_id = uuid4().hex
+        if self._rewind is not None and marker_id is not None:
+            self._rewind.open_checkpoint(
+                thread_id, marker_id, turn_id, thread=thread,
+                memory_anchor_md=self._memory_harness.anchor_markdown(thread_id))
+        self._notice_markers[thread_id] = marker_id or ""   # Task 2B.5's checkpoint_anchor
+        review = self._step_review_by_thread.get(thread_id)
+        seed_history = [*(self._seed_for(thread_id) or []), {
+            "role": "user",
+            "content": self._fold_notices(thread_id, turn_id, _NOTICE_TURN_INPUT)}]
+        outcome = await self._run_loop(
+            thread_id, channel_id, _NOTICE_TURN_INPUT, seed_history=seed_history,
+            step_review=review, phase="PLAN" if self._plan_mode else "ACTIVE",
+            turn_id=turn_id)
+        await self._finish(thread_id, channel_id, outcome, step_review=review, turn_id=turn_id)
+
+    def _end_turn(self, thread_id: str) -> None:
+        """Turn end, with no await (spec §5.3): undrained reports return to undelivered
+        (their rows were never claimed), queued user messages are answered (Task 2B.5),
+        and wake notices may arm the next notice turn."""
+        self._turn_kinds.pop(thread_id, None)
+        self._accepting_queued.discard(thread_id)
+        leftover = self._main_inbox.pop(thread_id, [])
+        self._answer_queued(thread_id, [i for i in leftover if i.kind == "user"])
+        self._rearm_notices(thread_id)
+
+    def _answer_queued(self, thread_id: str, items: list[InboxItem]) -> None:
+        """Task 2B.5."""
 
     def _claim_agent_notices(self, thread_id: str, agent_id: str) -> None:
         """The main agent's wait result carries the report: its notice is claimed by the
@@ -2398,6 +2514,7 @@ class ChatController:
             logger.warning("[controller] unhandled mode %r — no dispatch", mode)
             self._write_breadcrumb(
                 thread_id, channel_id, f"Mode {mode!r} is not available yet.")
+        self._rearm_notices(thread_id)
         self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
 
     async def resolve_clarify(
