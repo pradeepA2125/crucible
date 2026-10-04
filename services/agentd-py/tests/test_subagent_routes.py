@@ -101,3 +101,19 @@ async def test_message_during_a_notice_turn_is_202(tmp_path: Path,
     assert response.status_code == 202
     assert response.json() == {"queued": True, "message_id": "m1"}
     ctrl._active_turns[tid].cancel()
+
+
+@pytest.mark.asyncio
+async def test_global_preference_routes(tmp_path: Path) -> None:
+    store = ChatThreadStore(tmp_path / "c.sqlite3")
+    ctrl = ChatController(
+        workspace_path=str(tmp_path), reasoning_engine=ScriptedReasoningEngine(None, []),
+        thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
+        retrieval_client=None)
+    async with _client(tmp_path, ctrl) as client:
+        pref = await client.put("/v1/chat/review-pref", json={"auto_accept": False})
+        mode = await client.put("/v1/chat/plan-mode", json={"plan_mode": True})
+        gone = await client.post("/v1/chat/threads/x/review-pref", json={"auto_accept": True})
+    assert pref.json() == {"auto_resolved": 0, "background": 0}
+    assert mode.json() == {"plan_mode": True} and ctrl._plan_mode is True
+    assert gone.status_code in (404, 405)

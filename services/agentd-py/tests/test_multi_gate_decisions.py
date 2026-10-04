@@ -11,7 +11,6 @@ from agentd.api.routes import build_router
 from agentd.chat.controller import ChatController
 from agentd.chat.models import GateAmbiguousError, GateNotFoundError, PendingGate
 from agentd.chat.storage import ChatThreadStore
-from agentd.chat.turn_control import ChatTurnControl
 from agentd.domain.models import CommandDecision, McpToolDecision, ShellPolicy
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
@@ -84,15 +83,16 @@ async def test_review_pref_on_accepts_every_pending_edit_gate(tmp_path: Path) ->
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     tid = store.create_thread(str(tmp_path), title="t").thread_id
     ctrl = _controller(tmp_path, store)
-    ctrl._turn_controls[tid] = ChatTurnControl(auto_accept_edits=False)
+    ctrl._review_control.auto_accept_edits = False
     loop = asyncio.get_running_loop()
     futures = []
     for _ in range(2):
         gate = store.add_controller_gate(tid, PendingGate.new("edit", {}))
         fut: asyncio.Future[dict[str, object]] = loop.create_future()
         ctrl._pending_edit[gate.gate_id] = fut
+        ctrl._pending_edit_gates[gate.gate_id] = (tid, gate)
         futures.append(fut)
-    assert await ctrl.set_review_pref(tid, auto_accept=True) is True
+    assert ctrl.set_review_pref(auto_accept=True).auto_resolved == 2
     assert all(f.done() and f.result()["decision"] == "accept" for f in futures)
 
 

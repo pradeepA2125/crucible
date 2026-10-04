@@ -175,6 +175,12 @@ def _explore_context_from_history(
     return out
 
 
+@dataclass(frozen=True)
+class ReviewPrefResult:
+    auto_resolved: int   # pending edit gates accepted by turning auto-accept on
+    background: int      # of those, gates raised by sub-agents (spec §5.4)
+
+
 @dataclass
 class TurnDispatches:
     """What the main agent dispatched and waited on in the current turn (spec §4.1)."""
@@ -347,7 +353,12 @@ class ChatController:
         # the orchestrator's _task_controls). Registered/released alongside
         # _active_loops; absent between turns, which is exactly how set_review_pref
         # tells "no turn running" (→ 409) from a live one.
-        self._turn_controls: dict[str, ChatTurnControl] = {}
+        # The one "Review each edit" value for every thread, turn and background agent
+        # (spec §5.4): the extension's checkbox is global, so the backend's is too.
+        self._review_control = ChatTurnControl(auto_accept_edits=True)
+        # gate id -> (thread, gate) for every pending edit gate, so a flip to auto-accept
+        # can resolve them across threads.
+        self._pending_edit_gates: dict[str, tuple[str, PendingGate]] = {}
 
     def launch_turn(
         self, thread_id: str, coro, *, channel_id: str | None = None,
@@ -497,6 +508,10 @@ class ChatController:
         if thread is None:
             raise ValueError(f"Thread {thread_id!r} not found")
         self._user_spoke(thread_id, plan_mode)
+        if step_review is not None:
+            # Sets the value for future edits; never resolves gates (spec §5.4) — a
+            # message in one thread must not accept edits waiting in another.
+            self._review_control.auto_accept_edits = not step_review
         # Auto-name the thread from its first user message (mirrors ChatAgent).
         if not any(m.role == "user" for m in thread.messages):
             title = message.strip().replace("\n", " ")[:50]
@@ -592,6 +607,8 @@ class ChatController:
         self._wake_cap_noted.discard(thread_id)
         if plan_mode is not None:
             self._plan_mode = plan_mode
+        if step_review is not None:
+            self._review_control.auto_accept_edits = not step_review
         self._queued[stored_id] = {"turn_message": turn_message, "step_review": step_review,
                                    "forced_skills": forced_skills}
         self._main_inbox.setdefault(thread_id, []).append(InboxItem(
@@ -754,8 +771,6 @@ class ChatController:
         # LIVE for the whole turn: the composer checkbox posts /review-pref, which mutates
         # this control, and the loop re-reads it before every edit. The message's
         # step_review is only the STARTING value.
-        is_review = step_review is True
-        control = ChatTurnControl(auto_accept_edits=not is_review)
         # Always wired, even when the turn starts in auto-accept — otherwise a mid-turn
         # flip TO review would have no gate to call and would silently keep promoting.
         edit_cb = partial(self._edit_decision_cb, thread_id, channel_id)
@@ -774,7 +789,6 @@ class ChatController:
         if turn_id:
             self._live_turns[thread_id] = turn_id
         # Same lifetime, for the same reason: /review-pref reaches in here mid-turn.
-        self._turn_controls[thread_id] = control
         self._turn_dispatches[thread_id] = TurnDispatches()
         self._announced[thread_id] = 0
         # The turn task is detached, so this context change stays local to it (spec §3.11).
@@ -784,7 +798,7 @@ class ChatController:
             outcome = await loop.run(
                 plan_context, max_iters=max_iters, seed_history=seed_history,
                 observed_prompt=self._observed_prompts.get(thread_id),
-                turn_control=control, edit_decision_cb=edit_cb,
+                turn_control=self._review_control, edit_decision_cb=edit_cb,
                 edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
                 on_pills_update=pills_cb,
                 inbox_drain=partial(self._drain_main, thread_id, turn_id) if turn_id else None,
@@ -856,7 +870,6 @@ class ChatController:
             # /review-pref arriving after the turn ends answers 409 instead of
             # mutating a control nothing reads.
             self._active_loops.pop(thread_id, None)
-            self._turn_controls.pop(thread_id, None)
             self._turn_dispatches.pop(thread_id, None)
             self._announced.pop(thread_id, None)
             self._live_turns.pop(thread_id, None)
@@ -1073,6 +1086,7 @@ class ChatController:
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[dict[str, object]] = loop.create_future()
         self._pending_edit[gate.gate_id] = fut
+        self._pending_edit_gates[gate.gate_id] = (thread_id, gate)
         self._set_child_status(child, "waiting")
         timeout = float(os.environ.get(_EDIT_DECISION_TIMEOUT_ENV, "0") or "0")
         try:
@@ -1083,6 +1097,7 @@ class ChatController:
             return {"decision": "reject", "reason": "decision timed out"}
         finally:
             self._pending_edit.pop(gate.gate_id, None)
+            self._pending_edit_gates.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
             self._set_child_status(child, "running")
 
@@ -1136,45 +1151,30 @@ class ChatController:
                     text += f" — {reason}"  # surface the user's reason in the record
             self._write_breadcrumb(thread_id, channel_id, text)
 
-    async def set_review_pref(self, thread_id: str, *, auto_accept: bool) -> bool:
-        """Live-mutable "Review each edit" preference for an IN-FLIGHT turn (chat-side
-        twin of POST /tasks/{id}/review-pref). Returns False when no turn is running,
-        which the route answers 409 with — the value still governs the next message,
-        since the composer sends it with every send.
+    def set_review_pref(self, *, auto_accept: bool) -> ReviewPrefResult:
+        """The one "Review each edit" value for every thread, turn and background agent
+        (spec §5.4). Turning auto-accept ON accepts the edit gates waiting under it — the
+        diff on screen would otherwise contradict the switch — except protected-path and
+        untrusted-agent gates, which take an explicit decision (§3.9, §3.12). Turning it
+        off only governs future edits. No await between the flip and the resolutions."""
+        self._review_control.auto_accept_edits = auto_accept
+        if not auto_accept:
+            return ReviewPrefResult(auto_resolved=0, background=0)
+        resolved = background = 0
+        for gate_id, (_thread_id, gate) in list(self._pending_edit_gates.items()):
+            if gate.payload.get("protected") or gate.payload.get("review_required"):
+                continue
+            future = self._pending_edit.get(gate_id)
+            if future is None or future.done():
+                continue
+            future.set_result({"decision": "accept", "reason": "auto-accept turned on"})
+            resolved += 1
+            if gate.agent is not None:
+                background += 1
+        return ReviewPrefResult(auto_resolved=resolved, background=background)
 
-        Flipping to auto-accept while an edit gate is open resolves that gate as accept
-        too, for the same consistent-intent reason the task route resolves a pending
-        step review: the diff on screen would otherwise contradict the switch just
-        flipped. The other direction only governs future edits — it never retroactively
-        gates an edit that already promoted.
-
-        Race-safe without a lock: single-process asyncio, and the mutation + the future's
-        set_result happen with no `await` in between, so the loop can never observe a
-        half-applied flip.
-        """
-        # Record it for a mode/clarify RESUME first. Those gates end the loop (chat_done),
-        # so a flip made while one is on screen finds no live control — yet the gate pause
-        # is exactly where "fine, stop asking me about each edit" gets clicked, and
-        # resolve_mode/resolve_clarify re-enter from this map, not from the POST (neither
-        # decision route carries step_review). Harmless when nothing is pending: the next
-        # message overwrites this entry with its own value.
-        self._step_review_by_thread[thread_id] = not auto_accept
-        control = self._turn_controls.get(thread_id)
-        if control is None:
-            return False
-        control.auto_accept_edits = auto_accept
-        if auto_accept:
-            thread = self._store.get_thread(thread_id)
-            for gate in (thread.pending_controller_gates if thread is not None else []):
-                if gate.kind != "edit":
-                    continue
-                if gate.payload.get("protected") or gate.payload.get("review_required"):
-                    continue  # an explicit decision only (spec §3.9, §3.12)
-                future = self._pending_edit.get(gate.gate_id)
-                if future is not None and not future.done():
-                    future.set_result({
-                        "decision": "accept", "reason": "auto-accept turned on"})
-        return True
+    def set_plan_mode(self, plan_mode: bool) -> None:
+        self._plan_mode = plan_mode
 
     def _select_gate(
         self, thread_id: str, kind: str, gate_id: str | None,
@@ -2291,8 +2291,7 @@ class ChatController:
         elif ctx.edit_review == "auto":
             control = ChatTurnControl(auto_accept_edits=True)
         else:
-            control = self._turn_controls.get(thread_id) or ChatTurnControl(
-                auto_accept_edits=True)
+            control = self._review_control
         engine = (self._reasoning if handle.definition.model == "inherit"
                   else self._reasoning.with_model(handle.definition.model))
         loop = ControllerLoop(

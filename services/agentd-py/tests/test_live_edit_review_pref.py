@@ -154,25 +154,22 @@ def _controller(tmp_path: Path, store: ChatThreadStore) -> ChatController:
 
 
 @pytest.mark.asyncio
-async def test_set_review_pref_reports_no_turn_in_flight(tmp_path: Path):
-    """No registered control = no live turn → the route answers 409 off this False."""
+async def test_set_review_pref_sets_the_process_control(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
-    thread = store.create_thread(str(tmp_path), title="t")
     controller = _controller(tmp_path, store)
+    controller._review_control.auto_accept_edits = False
 
-    assert await controller.set_review_pref(thread.thread_id, auto_accept=True) is False
+    controller.set_review_pref(auto_accept=True)
+    assert controller._review_control.auto_accept_edits is True
 
 
-@pytest.mark.asyncio
-async def test_set_review_pref_mutates_the_live_turn_control(tmp_path: Path):
-    store = ChatThreadStore(tmp_path / "chat.sqlite3")
-    thread = store.create_thread(str(tmp_path), title="t")
-    controller = _controller(tmp_path, store)
-    control = ChatTurnControl(auto_accept_edits=False)
-    controller._turn_controls[thread.thread_id] = control
-
-    assert await controller.set_review_pref(thread.thread_id, auto_accept=True) is True
-    assert control.auto_accept_edits is True
+def _pending_edit(controller: ChatController, store: ChatThreadStore, thread_id: str,
+                  payload: dict[str, object]) -> asyncio.Future[dict[str, object]]:
+    gate = store.add_controller_gate(thread_id, PendingGate(kind="edit", payload=payload))
+    future: asyncio.Future[dict[str, object]] = asyncio.get_event_loop().create_future()
+    controller._pending_edit[gate.gate_id] = future
+    controller._pending_edit_gates[gate.gate_id] = (thread_id, gate)
+    return future
 
 
 @pytest.mark.asyncio
@@ -182,14 +179,14 @@ async def test_flipping_to_auto_accept_resolves_a_pending_edit_gate(tmp_path: Pa
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     controller = _controller(tmp_path, store)
-    controller._turn_controls[thread.thread_id] = ChatTurnControl(auto_accept_edits=False)
-    gate = store.add_controller_gate(thread.thread_id, PendingGate(kind="edit", payload={}))
-    future: asyncio.Future[dict[str, object]] = asyncio.get_event_loop().create_future()
-    controller._pending_edit[gate.gate_id] = future
+    controller._review_control.auto_accept_edits = False
+    future = _pending_edit(controller, store, thread.thread_id, {})
+    protected = _pending_edit(controller, store, thread.thread_id, {"protected": True})
 
-    assert await controller.set_review_pref(thread.thread_id, auto_accept=True) is True
-    assert future.done()
-    assert future.result()["decision"] == "accept"
+    result = controller.set_review_pref(auto_accept=True)
+    assert (result.auto_resolved, result.background) == (1, 0)
+    assert future.done() and future.result()["decision"] == "accept"
+    assert not protected.done()   # a protected path takes an explicit decision (§3.9)
 
 
 @pytest.mark.asyncio
@@ -198,16 +195,13 @@ async def test_flipping_to_review_leaves_a_pending_gate_alone(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     controller = _controller(tmp_path, store)
-    controller._turn_controls[thread.thread_id] = ChatTurnControl(auto_accept_edits=True)
-    gate = store.add_controller_gate(thread.thread_id, PendingGate(kind="edit", payload={}))
-    future: asyncio.Future[dict[str, object]] = asyncio.get_event_loop().create_future()
-    controller._pending_edit[gate.gate_id] = future
+    future = _pending_edit(controller, store, thread.thread_id, {})
 
-    assert await controller.set_review_pref(thread.thread_id, auto_accept=False) is True
+    controller.set_review_pref(auto_accept=False)
     assert not future.done()
 
 
-# ── POST /v1/chat/threads/{id}/review-pref ────────────────────────────────────
+# ── PUT /v1/chat/review-pref ─────────────────────────────────────────────────
 
 def _app(tmp_path: Path):
     """Minimal router over a real ChatController (mirrors test_rewind_routes._build)."""
@@ -246,48 +240,33 @@ def _http(app):
 
 
 @pytest.mark.asyncio
-async def test_review_pref_route_conflicts_when_no_turn_is_running(tmp_path: Path):
+async def test_review_pref_route_flips_the_process_control(tmp_path: Path):
+    app, controller, _thread_id = _app(tmp_path)
+    controller._review_control.auto_accept_edits = False
+    async with _http(app) as client:
+        r = await client.put("/v1/chat/review-pref", json={"auto_accept": True})
+    assert r.status_code == 200
+    assert r.json() == {"auto_resolved": 0, "background": 0}
+    assert controller._review_control.auto_accept_edits is True
+
+
+@pytest.mark.asyncio
+async def test_the_per_thread_route_is_gone(tmp_path: Path):
     app, _controller, thread_id = _app(tmp_path)
     async with _http(app) as client:
         r = await client.post(f"/v1/chat/threads/{thread_id}/review-pref",
                               json={"auto_accept": True})
-    assert r.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_review_pref_route_is_404_for_an_unknown_thread(tmp_path: Path):
-    app, _controller, _thread_id = _app(tmp_path)
-    async with _http(app) as client:
-        r = await client.post("/v1/chat/threads/nope/review-pref",
-                              json={"auto_accept": True})
-    assert r.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_review_pref_route_flips_the_live_control(tmp_path: Path):
-    app, controller, thread_id = _app(tmp_path)
-    control = ChatTurnControl(auto_accept_edits=False)
-    controller._turn_controls[thread_id] = control
-    async with _http(app) as client:
-        r = await client.post(f"/v1/chat/threads/{thread_id}/review-pref",
-                              json={"auto_accept": True})
-    assert r.status_code == 200
-    assert control.auto_accept_edits is True
+    assert r.status_code in (404, 405)
 
 
 @pytest.mark.asyncio
 async def test_pref_set_at_a_gate_is_honored_by_the_resumed_turn(tmp_path: Path):
-    """A ModeGate/ClarifyGate pause ends the loop, so there is no live control — but it
-    is exactly where a user reaches for "stop asking me about each edit". resolve_mode/
-    resolve_clarify re-enter from _step_review_by_thread (captured when the message was
-    sent), so the flip has to land there too or the resume silently uses the stale value
-    while the checkbox shows the new one."""
+    """A ModeGate/ClarifyGate pause ends the loop — yet it is exactly where a user reaches
+    for "stop asking me about each edit". The resumed turn reads the process control, so
+    a flip made with no turn running still governs it."""
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
-    thread = store.create_thread(str(tmp_path), title="t")
     controller = _controller(tmp_path, store)
-    controller._step_review_by_thread[thread.thread_id] = True  # message asked for review
+    controller._review_control.auto_accept_edits = False
 
-    # No live turn (the gate ended the loop) → reports False, and still records the flip.
-    assert await controller.set_review_pref(thread.thread_id, auto_accept=True) is False
-
-    assert controller._step_review_by_thread[thread.thread_id] is False
+    controller.set_review_pref(auto_accept=True)
+    assert controller._review_control.auto_accept_edits is True

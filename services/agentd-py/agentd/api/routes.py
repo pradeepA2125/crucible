@@ -1766,25 +1766,25 @@ def build_router(
                 raise _gate_http_error(exc) from exc
             return {"ok": ok}
 
-        @router.post("/chat/threads/{thread_id}/review-pref")
-        async def post_chat_review_pref(
-            thread_id: str, request: ReviewPrefRequest,
-        ) -> dict:
-            """Live-mutable "Review each edit" preference for an in-flight controller
-            turn — the chat twin of /tasks/{id}/review-pref. The loop re-reads the
-            control before every edit, so a flip lands mid-turn instead of waiting for
-            the next message; flipping it ON also resolves an already-open edit gate as
-            accept. 409 when no turn is running (the composer still sends the value with
-            the next message, so nothing is lost)."""
-            if _chat_agent._store.get_thread(thread_id) is None:
-                raise HTTPException(status_code=404, detail="Thread not found")
+        @router.put("/chat/review-pref")
+        async def put_chat_review_pref(request: ReviewPrefRequest) -> dict:
+            """The one "Review each edit" value for the whole backend (spec §5.4). Turning
+            auto-accept on accepts the edits waiting under it, in every thread."""
             set_pref = getattr(_chat_agent, "set_review_pref", None)
-            if set_pref is None:  # legacy ChatAgent has no live turn control
-                raise HTTPException(status_code=409, detail="No turn is running")
-            ok = await set_pref(thread_id, auto_accept=bool(request.auto_accept))
-            if not ok:
-                raise HTTPException(status_code=409, detail="No turn is running")
-            return {"ok": True}
+            if set_pref is None:  # legacy ChatAgent has no review control
+                return {"auto_resolved": 0, "background": 0}
+            result = set_pref(auto_accept=bool(request.auto_accept))
+            return {"auto_resolved": result.auto_resolved, "background": result.background}
+
+        @router.put("/chat/plan-mode")
+        async def put_chat_plan_mode(request: dict) -> dict:
+            plan_mode = request.get("plan_mode")
+            if not isinstance(plan_mode, bool):
+                raise HTTPException(status_code=422, detail="plan_mode must be a boolean")
+            set_mode = getattr(_chat_agent, "set_plan_mode", None)
+            if set_mode is not None:
+                set_mode(plan_mode)
+            return {"plan_mode": plan_mode}
 
         @router.post("/chat/threads/{thread_id}/command-decision")
         async def post_chat_command_decision(
