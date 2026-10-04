@@ -1893,7 +1893,8 @@ class ChatController:
                     agent_id=agent_id, label=record.label, name=record.name,
                     status=record.status, report=record.report,
                     files_changed=self._subtree_files(agent_id),
-                    stale_refusals=record.stale_refusals))
+                    stale_refusals=record.stale_refusals,
+                    stop_reason=(record.stop_reason or "") if record.status == "stopped" else ""))
                 if caller_id == MAIN_AGENT_ID:
                     self._claim_agent_notices(thread_id, agent_id)
                 else:

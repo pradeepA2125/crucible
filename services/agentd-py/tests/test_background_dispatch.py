@@ -121,3 +121,6 @@ async def test_stopping_the_turn_leaves_agents_running_and_stop_all_stops_them(
     assert row.status == "waiting"                 # still parked at its command card
     assert await ctrl.stop_all_agents(tid) == 1
     assert store.get_agent(row.agent_id).status == "stopped"  # type: ignore[union-attr]
+    # The next wait says who stopped it, so the model does not restart the work.
+    [entry] = await ctrl._agent_ops(tid, "t2", None).wait([row.agent_id], None)
+    assert (entry.status, entry.stop_reason) == ("stopped", "user")

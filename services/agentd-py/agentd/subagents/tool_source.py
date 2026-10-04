@@ -42,6 +42,7 @@ class AgentResultEntry:
     report: str = ""     # full, never truncated; framed when written into the result
     files_changed: list[str] = field(default_factory=list)
     stale_refusals: int = 0
+    stop_reason: str = ""  # "user" or "cascade" when status is "stopped"
 
 
 @dataclass(frozen=True)
@@ -73,10 +74,17 @@ def format_wait_result(entries: list[AgentResultEntry]) -> str:
         elif e.status == "still running":
             out.append({**base, "status": "still running"})
         else:
-            out.append({**base, "status": e.status,
-                        "report": frame(f"{e.label} ({e.name})", "report", e.report),
-                        "files_changed": e.files_changed,
-                        "stale_refusals": e.stale_refusals})
+            entry: dict[str, object] = {
+                **base, "status": e.status,
+                "report": frame(f"{e.label} ({e.name})", "report", e.report),
+                "files_changed": e.files_changed, "stale_refusals": e.stale_refusals}
+            if e.stop_reason:
+                entry["stopped_by"] = e.stop_reason
+            if e.stop_reason == "user":
+                # Found live: a model that saw only "stopped" re-dispatched the same work.
+                entry["note"] = ("Stopped by the user. Do not restart this work unless the "
+                                 "user asks for it.")
+            out.append(entry)
     return json.dumps(out, indent=2)
 
 

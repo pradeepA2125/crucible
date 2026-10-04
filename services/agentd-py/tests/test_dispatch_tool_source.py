@@ -111,3 +111,17 @@ async def test_stop_agent() -> None:
     src = _source(_Ops())
     assert json.loads((await src.execute("stop_agent", {"agent_id": "agent-0"})).output) == {
         "agent_id": "agent-0", "stopped": True}
+
+
+def test_a_user_stop_tells_the_model_not_to_restart() -> None:
+    from agentd.subagents.tool_source import format_wait_result
+
+    [entry] = json.loads(format_wait_result([AgentResultEntry(
+        agent_id="a", label="lister", name="general-purpose", status="stopped",
+        report="Status: stopped", stop_reason="user")]))
+    assert entry["stopped_by"] == "user"
+    assert "do not restart" in entry["note"].lower()
+    [cascade] = json.loads(format_wait_result([AgentResultEntry(
+        agent_id="b", label="kid", name="explore", status="stopped", report="r",
+        stop_reason="cascade")]))
+    assert "note" not in cascade and cascade["stopped_by"] == "cascade"
