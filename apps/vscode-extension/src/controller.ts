@@ -17,6 +17,8 @@ import type {
   TaskView,
   ThreadLiveState,
   RewindPreview,
+  SendChatResult,
+  ThreadAttention,
 } from "@crucible/editor-client";
 import { parseWireChatMessage } from "@crucible/editor-client";
 import { AgentViewManager } from "./agent-views.js";
@@ -113,7 +115,14 @@ export interface ControllerUI {
   clearLiveTodos(): void;
   renderLiveSessions(sessions: LiveSessionsView): void;
   clearLiveSessions(): void;
-  sendLiveStatus(status: string | null, turnActive: boolean): void;
+  sendLiveStatus(
+    status: string | null, turnActive: boolean,
+    extra?: { turnKind: "user" | "notice" | null; agentsRunning: number },
+  ): void;
+  // Transcript reconcile and the queued-send fallbacks (spec §5.3, §6).
+  replaceChatMessages(messages: ChatMessage[]): void;
+  removeChatMessage(id: string): void;
+  restoreDraft(text: string): void;
   // Sub-agents (spec §10): roster rows, and the open agents' transcripts and live events.
   renderAgents(agents: AgentSummary[]): void;
   agentDetail(agentId: string, detail: AgentDetail): void;
@@ -174,6 +183,12 @@ export class CrucibleController {
   // The previous poll's turnActive: a true→false edge is when /live stops reporting the
   // turn's agents, so the final roster comes from the routes then.
   private lastTurnActive = false;
+  // Set only from a getChatThread result (spec §6): the transcript length the webview has.
+  private lastReconciledCount = 0;
+  private reconcilePending = false;
+  // (threadId -> pendingGates) last notified, so a waiting gate does not re-notify.
+  private readonly attentionNotified = new Map<string, number>();
+  private readonly attentionListeners: Array<(threadId: string, pendingGates: number) => void> = [];
   // Structured tool event forwarding state
   private toolEventSeq = 0;
   private openToolEvent: Partial<Record<"explore" | "execution" | "planning", number>> = {};
@@ -669,6 +684,8 @@ export class CrucibleController {
     for (const message of thread.messages) {
       this.ui.appendChatMessage(message);
     }
+    this.lastReconciledCount = thread.messages.length;
+    this.reconcilePending = false;
     void this.refreshAgentRoster(threadId);
     this.startLiveStatePolling();
   }
@@ -677,6 +694,72 @@ export class CrucibleController {
   setOpenAgents(agentIds: string[]): void {
     if (!this.activeThreadId) return;
     this.agentViews.setOpen(this.activeThreadId, agentIds);
+  }
+
+  async stopAllAgents(): Promise<void> {
+    const threadId = this.activeThreadId;
+    if (!threadId) return;
+    try {
+      await this.clientForChat().stopAllAgents(threadId);
+    } catch (error) {
+      this.ui.showError(`Failed to stop agents: ${formatError(error)}`);
+      return;
+    }
+    this.lastLiveSignature = null;
+    void this.pollThreadLiveState();
+  }
+
+  /** Reconcile by replacement (spec §6): messages written while nothing streamed this
+   * thread — a notice marker, a breadcrumb — reach the webview without a reload. Swaps
+   * the messages only; agents, views, live cards and subscriptions are untouched. */
+  private async reconcileTranscript(threadId: string, expected: number): Promise<void> {
+    if (expected === this.lastReconciledCount) {
+      this.reconcilePending = false;
+      return;
+    }
+    let messages: ChatMessage[];
+    try {
+      messages = (await this.clientForChat().getChatThread(threadId)).messages;
+    } catch {
+      return; // the next poll retries
+    }
+    if (this.activeThreadId !== threadId || this.turnAbort !== null) {
+      this.reconcilePending = true;
+      return;
+    }
+    this.lastReconciledCount = messages.length;
+    this.reconcilePending = false;
+    this.ui.replaceChatMessages(messages);
+  }
+
+  onAttention(listener: (threadId: string, pendingGates: number) => void): void {
+    this.attentionListeners.push(listener);
+  }
+
+  /** Threads other than the open one that gained a pending card (spec §6). */
+  async pollAttention(): Promise<void> {
+    const workspace = this.ui.getWorkspacePath();
+    if (!workspace) return;
+    let rows: ThreadAttention[];
+    try {
+      rows = await this.clientForChat().getAttention(workspace);
+    } catch {
+      return;
+    }
+    const seen = new Set<string>();
+    for (const row of rows) {
+      seen.add(row.threadId);
+      if (row.threadId === this.activeThreadId || row.pendingGates === 0) {
+        this.attentionNotified.delete(row.threadId);
+        continue;
+      }
+      if (this.attentionNotified.get(row.threadId) === row.pendingGates) continue;
+      this.attentionNotified.set(row.threadId, row.pendingGates);
+      for (const listener of this.attentionListeners) listener(row.threadId, row.pendingGates);
+    }
+    for (const id of [...this.attentionNotified.keys()]) {
+      if (!seen.has(id)) this.attentionNotified.delete(id);
+    }
   }
 
   async stopAgent(agentId: string): Promise<void> {
@@ -779,21 +862,32 @@ export class CrucibleController {
     });
 
     this.ui.setChatInputEnabled(false);
+    let result: SendChatResult;
+    try {
+      result = await client.sendChatMessage(threadId, text, undefined, {
+        ...(stepReview !== undefined ? { stepReview } : {}),
+        ...(forcedSkills?.length ? { forcedSkills } : {}),
+        ...(mentionedFiles?.length ? { mentionedFiles } : {}),
+        ...(planMode !== undefined ? { planMode } : {}),
+        messageId,
+      });
+    } catch (error) {
+      // InputArea already cleared the draft: give the text back (spec §5.3).
+      this.ui.removeChatMessage(messageId);
+      this.ui.restoreDraft(text);
+      this.ui.setChatInputEnabled(true);
+      if (!this.isBenignConflict(error)) {
+        this.ui.showError(`Failed to send: ${formatError(error)}`);
+      }
+      return;
+    }
+    if (result.kind === "queued") {
+      // A notice turn took the message; its relay is already live (spec §5.3).
+      this.ui.setChatInputEnabled(true);
+      return;
+    }
     this.turnAbort = new AbortController();
-    await this.streamTurn(
-      client.sendChatMessage(
-        threadId,
-        text,
-        this.turnAbort.signal,
-        {
-          ...(stepReview !== undefined ? { stepReview } : {}),
-          ...(forcedSkills?.length ? { forcedSkills } : {}),
-          ...(mentionedFiles?.length ? { mentionedFiles } : {}),
-          ...(planMode !== undefined ? { planMode } : {}),
-          messageId,
-        },
-      ),
-    );
+    await this.streamTurn(result.events);
   }
 
   // Thread currently being live-resumed (channel re-subscribe) — idempotency guard.
@@ -1021,7 +1115,10 @@ export class CrucibleController {
         ) {
           // Low-volume roster pokes (spec §11.2): /live is the source of truth.
           void this.pollThreadLiveState();
-        } else if (event.type === "agent_dispatch") {
+        } else if (
+          event.type === "agent_dispatch" || event.type === "agent_message" ||
+          event.type === "notice" || event.type === "team_created"
+        ) {
           this.ui.appendChatMessage(parseWireChatMessage(event.payload.message));
         } else if (event.type === "chat_done") {
           this.ui.updateWorkbar(null);
@@ -1967,8 +2064,9 @@ export class CrucibleController {
     // subscriber), double-rendering every event and clobbering the live turnAbort. A
     // fresh webview after a reload has turnAbort === null, which is exactly when resume
     // is needed (the original stream died with the old SSE; the detached turn lives on).
+    // Main-agent gates only (spec §6): a background agent's gate never opens a relay.
     const channelActive = live.turnActive
-      || live.pendingGates.some((g) => g.kind === "mode" || g.kind === "edit");
+      || live.pendingGates.some((g) => !g.agent && (g.kind === "mode" || g.kind === "edit"));
     if (channelActive && this.turnAbort === null && this._liveResumeThreadId !== threadId) {
       this._liveResumeThreadId = threadId;
       void this.resumeLiveOverlay(threadId);
@@ -2006,11 +2104,21 @@ export class CrucibleController {
       sessions: live.sessions,
       // INVARIANT (CLAUDE.md /live dedup): roster rows are consumed after this gate.
       agents: live.agents,
+      agentsRunning: live.agentsRunning,
+      turnKind: live.turnKind,
+      messageCount: live.messageCount,
     });
     if (signature === this.lastLiveSignature) {
+      if (this.reconcilePending && this.turnAbort === null) {
+        void this.reconcileTranscript(threadId, live.messageCount);
+      }
       return; // dedup — nothing actionable changed
     }
     this.lastLiveSignature = signature;
+    if (live.messageCount !== this.lastReconciledCount) {
+      if (this.turnAbort === null) void this.reconcileTranscript(threadId, live.messageCount);
+      else this.reconcilePending = true;
+    }
 
     if (live.pendingGates.length > 0) {
       this.ui.renderLiveGates(live.pendingGates.map((g) => ({
@@ -2115,11 +2223,16 @@ export class CrucibleController {
 
     if (live.agents && live.agents.length > 0) {
       this.ui.renderAgents(live.agents);
-      for (const agent of live.agents) this.agentViews.noteStatus(agent.agentId, agent.status);
+      for (const agent of live.agents) {
+        this.agentViews.noteStatus(agent.agentId, agent.status);
+        this.agentViews.noteActivation(agent.agentId, agent.activationCount);
+      }
     }
     if (this.lastTurnActive && !live.turnActive) void this.refreshAgentRoster(threadId);
     this.lastTurnActive = live.turnActive ?? false;
-    this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false);
+    this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false, {
+      turnKind: live.turnKind, agentsRunning: live.agentsRunning,
+    });
     } finally {
       this.livePollInFlight = false;
     }

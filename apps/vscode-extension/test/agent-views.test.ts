@@ -120,3 +120,47 @@ test("v2 idle statuses end a view; v1 waiting does not", () => {
   expect(TERMINAL_AGENT_STATUSES.has("awaiting_peer")).toBe(true);
   expect(TERMINAL_AGENT_STATUSES.has("waiting")).toBe(false);
 });
+
+describe("AgentViewManager re-follow (spec §6)", () => {
+  test("restarts a finished view when the agent is resumed, not on the same activation", async () => {
+    let activation = 1;
+    let backfills = 0;
+    const client = {
+      getAgent: async () => {
+        backfills += 1;
+        return { ...detail("completed", 0), activationCount: activation } as AgentDetail;
+      },
+      streamChannel: channel([], false),
+    };
+    const m = new AgentViewManager(() => client, { detail: () => {}, event: () => {} }, 0);
+    m.setOpen("t", ["agent-a"]);
+    await flush();
+    expect(backfills).toBe(1);
+    m.noteActivation("agent-a", 1);
+    await flush();
+    expect(backfills).toBe(1);   // same activation: nothing new to show
+    activation = 2;
+    m.noteActivation("agent-a", 2);
+    await flush();
+    expect(backfills).toBe(2);
+    m.closeAll();
+  });
+
+  test("setOpen restarts a finished view instead of skipping it", async () => {
+    let backfills = 0;
+    const client = {
+      getAgent: async () => {
+        backfills += 1;
+        return { ...detail("completed", 0), activationCount: 1 } as AgentDetail;
+      },
+      streamChannel: channel([], false),
+    };
+    const m = new AgentViewManager(() => client, { detail: () => {}, event: () => {} }, 0);
+    m.setOpen("t", ["agent-a"]);
+    await flush();
+    m.setOpen("t", ["agent-a"]);
+    await flush();
+    expect(backfills).toBe(2);
+    m.closeAll();
+  });
+});

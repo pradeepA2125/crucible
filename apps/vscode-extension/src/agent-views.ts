@@ -25,6 +25,9 @@ interface OpenView {
   threadId: string;
   closed: boolean;
   abort: AbortController | null;
+  // Set after the terminal backfill; a finished view is restarted on a new activation.
+  finished: boolean;
+  activation: number;
 }
 
 /**
@@ -50,16 +53,34 @@ export class AgentViewManager {
       if (!wanted.has(id) || view.threadId !== threadId) this.close(id);
     }
     for (const id of wanted) {
-      if (this.views.has(id)) continue;
-      const view: OpenView = { threadId, closed: false, abort: null };
-      this.views.set(id, view);
-      void this.run(id, view);
+      const existing = this.views.get(id);
+      if (existing && !existing.finished) continue;
+      this.restart(id, threadId);
     }
   }
 
   /** A roster status: a terminal agent's stream is cut so its final backfill runs. */
   noteStatus(agentId: string, status: string): void {
     if (TERMINAL_AGENT_STATUSES.has(status)) this.views.get(agentId)?.abort?.abort();
+  }
+
+  /** A resumed agent (spec §6): a short activation can start and end between two polls,
+   * so the view keys on activation_count, not a status edge. Views still following are
+   * never restarted. */
+  noteActivation(agentId: string, activationCount: number): void {
+    const view = this.views.get(agentId);
+    if (!view || activationCount <= view.activation) return;
+    view.activation = activationCount;
+    if (view.finished) this.restart(agentId, view.threadId);
+  }
+
+  private restart(agentId: string, threadId: string): void {
+    const previous = this.views.get(agentId);
+    const activation = previous?.activation ?? 0;
+    this.close(agentId);
+    const view: OpenView = { threadId, closed: false, abort: null, finished: false, activation };
+    this.views.set(agentId, view);
+    void this.run(agentId, view);
   }
 
   closeAll(): void {
@@ -85,7 +106,11 @@ export class AgentViewManager {
       }
       if (view.closed) return;
       this.sink.detail(agentId, detail);
-      if (TERMINAL_AGENT_STATUSES.has(detail.status)) return;
+      view.activation = Math.max(view.activation, detail.activationCount);
+      if (TERMINAL_AGENT_STATUSES.has(detail.status)) {
+        view.finished = true;
+        return;
+      }
       let lastSeq = detail.lastSeq;
       view.abort = new AbortController();
       try {

@@ -221,7 +221,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (messageId) => controller.previewRewind(messageId),
     (messageId) => controller.rewindTo(messageId),
     (agentIds) => controller.setOpenAgents(agentIds),
-    (agentId) => controller.stopAgent(agentId)
+    (agentId) => controller.stopAgent(agentId),
+    () => controller.stopAllAgents()
   );
 
   const ui: ControllerUI = {
@@ -394,8 +395,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     clearLiveSessions: () => {
       chatPanel.clearLiveSessions();
     },
-    sendLiveStatus: (status, turnActive) => {
-      chatPanel.sendLiveStatus(status, turnActive);
+    sendLiveStatus: (status, turnActive, extra) => {
+      chatPanel.sendLiveStatus(status, turnActive, extra);
+    },
+    replaceChatMessages: (messages) => {
+      chatPanel.replaceMessages(messages);
+    },
+    removeChatMessage: (id) => {
+      chatPanel.removeMessage(id);
+    },
+    restoreDraft: (text) => {
+      chatPanel.restoreDraft(text);
     },
     renderAgents: (agents) => {
       chatPanel.renderAgents(agents);
@@ -451,6 +461,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     planMode: runtimeManager.getPlanMode(),
   });
   controller.onBackendReachable(() => void pushPreferences());
+
+  // Spec §6: another thread gained a card while this one is open. The /live poll covers
+  // only the active thread, so a separate, cheap poll returns ids and counts.
+  controller.onAttention((threadId) => {
+    void vscode.window
+      .showInformationMessage("A chat thread needs your answer.", "Open thread")
+      .then(async (choice: string | undefined) => {
+        if (choice !== "Open thread") return;
+        chatPanel.show();
+        await controller.switchChatThread(threadId);
+      });
+  });
+  const attentionTimer = setInterval(() => void controller.pollAttention(), 10_000);
+  context.subscriptions.push({ dispose: () => clearInterval(attentionTimer) });
 
   const refreshCapabilityFlags = async (): Promise<void> => {
     try {

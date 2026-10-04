@@ -158,7 +158,8 @@ export class ChatPanel {
     private readonly onRewindPreview: RewindPreviewHandler = async () => {},
     private readonly onRewindConfirm: RewindConfirmHandler = async () => {},
     private readonly onSetOpenAgents: (agentIds: string[]) => void = () => {},
-    private readonly onStopAgent: (agentId: string) => Promise<void> = async () => {}
+    private readonly onStopAgent: (agentId: string) => Promise<void> = async () => {},
+    private readonly onStopAllAgents: () => Promise<void> = async () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -333,6 +334,8 @@ export class ChatPanel {
         return;
       } else if (m["type"] === "stopAgent") {
         p = this.onStopAgent(String(m["agentId"] ?? ""));
+      } else if (m["type"] === "stopAllAgents") {
+        p = this.onStopAllAgents();
       } else if (m["type"] === "stopTurn") {
         this.onStopTurn();
         return;
@@ -550,8 +553,26 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "clearLiveSessions" });
   }
 
-  sendLiveStatus(status: string | null, turnActive: boolean): void {
-    this.panel?.webview.postMessage({ type: "liveStatus", status, turnActive });
+  sendLiveStatus(
+    status: string | null, turnActive: boolean,
+    extra?: { turnKind: "user" | "notice" | null; agentsRunning: number },
+  ): void {
+    this.panel?.webview.postMessage({
+      type: "liveStatus", status, turnActive,
+      turnKind: extra?.turnKind ?? null, agentsRunning: extra?.agentsRunning ?? 0,
+    });
+  }
+
+  replaceMessages(messages: ChatMessage[]): void {
+    this.panel?.webview.postMessage({ type: "replaceMessages", messages });
+  }
+
+  removeMessage(id: string): void {
+    this.panel?.webview.postMessage({ type: "removeChatMessage", id });
+  }
+
+  restoreDraft(text: string): void {
+    this.panel?.webview.postMessage({ type: "restoreDraft", text });
   }
 
   renderAgents(agents: AgentSummary[]): void {

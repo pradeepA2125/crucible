@@ -6,6 +6,8 @@ import type {
   CommandDecision,
   Diagnostic,
   TaskResult,
+  SendChatResult,
+  StreamEvent,
   TaskSubmission,
   ThreadLiveState,
 } from "@crucible/editor-client";
@@ -40,6 +42,13 @@ class MemorySessionStore implements SessionStore {
   async clear(): Promise<void> {
     this.value = null;
   }
+}
+
+/** Wraps a generator stub as sendChatMessage's {kind: "stream"} result (spec §5.3). */
+function asStream<A extends unknown[]>(
+  gen: (...args: A) => AsyncIterable<StreamEvent>,
+): (...args: A) => Promise<SendChatResult> {
+  return async (...args: A) => ({ kind: "stream", events: gen(...args) });
 }
 
 interface StubBackendState {
@@ -187,9 +196,9 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
       state.liveCalls?.push(threadId);
       return state.liveResponse ?? NULL_LIVE_STATE;
     },
-    sendChatMessage: async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
+    sendChatMessage: asStream(async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
       yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-    },
+    }),
     applyInlineChange: async (_inlineTaskId: string) => {},
     discardInlineChange: async (_inlineTaskId: string) => {},
     sendStepDecision: async (_taskId: string, _decision: "accept" | "discard") => {},
@@ -217,6 +226,9 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
 function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
   return {
     getWorkspacePath: () => "/tmp/workspace",
+    replaceChatMessages: () => {},
+    removeChatMessage: () => {},
+    restoreDraft: () => {},
     promptForGoal: async () => "Ship the feature",
     promptForTaskId: async () => undefined,
     promptForRejectReason: async () => "Needs changes",
@@ -524,12 +536,12 @@ describe("CrucibleController — chat", () => {
         messages: [],
         touchedFiles: [],
       }),
-      sendChatMessage: async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
+      sendChatMessage: asStream(async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
         yield { type: "chat_agent_thinking" as const, payload: { message: "Exploring…" } };
         yield { type: "intent_classified" as const, payload: { intent: "qa", rationale: "", likely_targets: [] } };
         yield { type: "chat_response" as const, payload: { chunk: "The answer is 42." } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
     };
 
     const store = new MemorySessionStore();
@@ -568,14 +580,14 @@ describe("CrucibleController — chat", () => {
       getChatThread: async (threadId) => ({
         threadId, workspacePath: "/tmp/workspace", title: "New Chat", messages: [], touchedFiles: [],
       }),
-      sendChatMessage: async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
+      sendChatMessage: asStream(async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
         yield {
           type: "retry_status" as const,
           payload: { attempt: 1, max_attempts: 4, reason: "rate_limited", message: "⏳ retrying…" },
         };
         yield { type: "chat_response" as const, payload: { chunk: "hi" } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
     };
 
     const controller = new CrucibleController(
@@ -610,13 +622,13 @@ describe("CrucibleController — chat", () => {
       getChatThread: async (threadId) => ({
         threadId, workspacePath: "/tmp/workspace", title: "New Chat", messages: [], touchedFiles: [],
       }),
-      sendChatMessage: async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
+      sendChatMessage: asStream(async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
         yield {
           type: "chat_progress" as const,
           payload: { note: "Working on task 1." },
         };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
     };
 
     const controller = new CrucibleController(
@@ -654,9 +666,9 @@ describe("CrucibleController — chat", () => {
       getChatThread: async (threadId) => ({
         threadId, workspacePath, title: "New Chat", messages: [], touchedFiles: [],
       }),
-      sendChatMessage: async function* () {
+      sendChatMessage: asStream(async function* () {
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
     };
 
     const store = new MemorySessionStore();
@@ -699,13 +711,13 @@ describe("CrucibleController — chat", () => {
         threadId, workspacePath: "/tmp/workspace",
         title: "New Chat", messages: [], touchedFiles: [],
       }),
-      sendChatMessage: async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
+      sendChatMessage: asStream(async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
         yield { type: "chat_agent_thinking" as const, payload: { message: "Exploring workspace…" } };
         yield { type: "explore_tool_call" as const, payload: { tool: "search_code", args: { pattern: "auth" }, thought: "Looking for auth handling code" } };
         yield { type: "intent_classified" as const, payload: { intent: "qa", rationale: "", likely_targets: [] } };
         yield { type: "chat_response" as const, payload: { chunk: "It handles auth." } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
     };
 
     const store = new MemorySessionStore();
@@ -789,13 +801,13 @@ describe("CrucibleController — tool-event pairing & orphan handling", () => {
         threadId, workspacePath: "/tmp/workspace",
         title: "New Chat", messages: [], touchedFiles: [],
       }),
-      sendChatMessage: async function* (_threadId, _message, _signal) {
+      sendChatMessage: asStream(async function* (_threadId, _message, _signal) {
         yield { type: "explore_tool_call" as const, payload: { tool: "search_code", args: {}, thought: "looking" } };
         yield { type: "tool_call" as const, payload: { tool: "read_file", thought: "", iteration: 1, phase: "explore", args: {} } };
         yield { type: "explore_tool_result" as const, payload: { tool: "search_code", output: "explore-out", is_error: false } };
         yield { type: "tool_result" as const, payload: { tool: "read_file", output: "exec-out", is_error: false, iteration: 1 } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
     };
 
     const store = new MemorySessionStore();
@@ -821,11 +833,11 @@ describe("CrucibleController — tool-event pairing & orphan handling", () => {
     const strayResultIds: number[] = [];
     const turn2Backend: BackendTaskClient = {
       ...turn1Backend,
-      sendChatMessage: async function* (_threadId, _message, _signal) {
+      sendChatMessage: asStream(async function* (_threadId, _message, _signal) {
         // No preceding tool_call — orphan result.
         yield { type: "tool_result" as const, payload: { tool: "read_file", output: "stray", is_error: false, iteration: 1 } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
     };
     const controller2 = new CrucibleController(
       () => turn2Backend, store, createSettings(),
@@ -864,10 +876,10 @@ describe("CrucibleController — abort handling", () => {
         threadId, workspacePath: "/tmp/workspace",
         title: "New Chat", messages: [], touchedFiles: [],
       }),
-      sendChatMessage: async function* (_threadId, _message, _signal) {
+      sendChatMessage: asStream(async function* (_threadId, _message, _signal) {
         yield { type: "chat_agent_thinking" as const, payload: { message: "thinking…" } };
         throw Object.assign(new Error("aborted"), { name: "AbortError" });
-      },
+      }),
     };
 
     const controller = new CrucibleController(
@@ -892,10 +904,10 @@ describe("CrucibleController — abort handling", () => {
     // In the test harness the rethrow surfaces as a rejected promise.
     const nonAbortBackend: BackendTaskClient = {
       ...abortBackend,
-      sendChatMessage: async function* (_threadId, _message, _signal) {
+      sendChatMessage: asStream(async function* (_threadId, _message, _signal) {
         yield { type: "chat_agent_thinking" as const, payload: { message: "thinking…" } };
         throw new Error("backend exploded");
-      },
+      }),
     };
     let finalEnabled2: boolean | undefined;
     const controller2 = new CrucibleController(
@@ -1499,10 +1511,10 @@ describe("CrucibleController — command-decision", () => {
     };
     const backend: BackendTaskClient = {
       ...createStubBackend(state),
-      sendChatMessage: async function* () {
+      sendChatMessage: asStream(async function* () {
         await sendBlock; // hold the local turn open so turnAbort stays set
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
       streamChannel: async function* (_channelId: string) {
         streamChannelCalls++;
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
@@ -2313,14 +2325,14 @@ describe("CrucibleController — sub-agents", () => {
 
   test("a live roster message is appended as a contract ChatMessage; agent events poke /live", async () => {
     const { state, controller, appended } = setup({
-      sendChatMessage: async function* () {
+      sendChatMessage: asStream(async function* () {
         yield { type: "agent_dispatch" as const, payload: { message: {
           role: "agent", content: "", type: "agent_dispatch", task_id: null,
           timestamp: "2026-10-01T00:00:00Z", metadata: { agent_ids: ["agent-a"] } } } };
         yield { type: "agent_started" as const, payload: {
           agent_id: "agent-a", parent_agent_id: null, depth: 1, name: "explore", label: "survey" } };
         yield { type: "chat_done" as const, payload: {} as Record<string, never> };
-      },
+      }),
     });
     await controller.switchChatThread("chat-1");
     const before = state.liveCalls!.length;
@@ -2340,5 +2352,121 @@ describe("CrucibleController — sub-agents", () => {
     await controller.stopAgent("agent-a");
     controller.dispose();
     expect(stops).toEqual([["chat-1", "agent-a"]]);
+  });
+});
+
+describe("CrucibleController — background agents (spec §5.3, §6)", () => {
+  const baseState = (): StubBackendState => ({
+    submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+    getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+  });
+  const make = (backend: BackendTaskClient, ui: ControllerUI) => new CrucibleController(
+    () => backend, new MemorySessionStore(), createSettings(), ui,
+    { openDiff: async (_entry: ReviewFileEntry) => {} },
+    () => "2026-06-11T00:00:00.000Z"
+  );
+
+  test("a queued send keeps the bubble, re-enables input and opens no stream", async () => {
+    const appended: ChatMessage[] = [];
+    const enabled: boolean[] = [];
+    const removed: string[] = [];
+    const backend: BackendTaskClient = {
+      ...createStubBackend(baseState()),
+      sendChatMessage: async () => ({ kind: "queued", messageId: "m1" }),
+    };
+    const controller = make(backend, createUi({
+      appendChatMessage: (m) => { appended.push(m); },
+      setChatInputEnabled: (e) => { enabled.push(e); },
+      removeChatMessage: (id) => { removed.push(id); },
+    }));
+    await controller.switchChatThread("t1");
+    await controller.sendChatMessage("hi");
+    controller.dispose();
+    expect(appended.filter((m) => m.role === "user")).toHaveLength(1);
+    expect(removed).toEqual([]);
+    expect(enabled.at(-1)).toBe(true);
+  });
+
+  test("a failed send removes the bubble and restores the draft", async () => {
+    const removed: string[] = [];
+    const drafts: string[] = [];
+    const backend: BackendTaskClient = {
+      ...createStubBackend(baseState()),
+      sendChatMessage: async () => { throw new Error("Chat message failed (500)"); },
+    };
+    const controller = make(backend, createUi({
+      removeChatMessage: (id) => { removed.push(id); },
+      restoreDraft: (t) => { drafts.push(t); },
+    }));
+    await controller.switchChatThread("t1");
+    await controller.sendChatMessage("hi");
+    controller.dispose();
+    expect(removed).toHaveLength(1);
+    expect(drafts).toEqual(["hi"]);
+  });
+
+  test("reconciles the transcript when the backend has more messages, once", async () => {
+    let fetches = 0;
+    const replaced: ChatMessage[][] = [];
+    const message = (content: string): ChatMessage =>
+      ({ role: "agent", content, type: "text", timestamp: "2026-06-11T00:00:00Z", metadata: {} } as ChatMessage);
+    const backend: BackendTaskClient = {
+      ...createStubBackend(baseState()),
+      getChatThread: async (threadId: string) => {
+        fetches += 1;
+        return { threadId, workspacePath: "/w", title: "t", createdAt: "x",
+                 messages: fetches === 1 ? [] : [message("a"), message("b")] } as never;
+      },
+      getThreadLiveState: async () => ({
+        activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: false,
+        agentsRunning: 0, turnKind: null, messageCount: 2 }),
+    };
+    const controller = make(backend, createUi({
+      replaceChatMessages: (m) => { replaced.push(m); },
+    }));
+    await controller.switchChatThread("t1");        // fetch 1: an empty transcript
+    await controller.pollThreadLiveState();
+    await new Promise((r) => setTimeout(r, 0));
+    await controller.pollThreadLiveState();
+    controller.dispose();
+    expect(replaced.map((m) => m.length)).toEqual([2]);
+    expect(fetches).toBe(2);
+  });
+
+  test("a background agent's gate opens no thread relay", async () => {
+    let streams = 0;
+    const backend: BackendTaskClient = {
+      ...createStubBackend(baseState()),
+      streamChannel: async function* () { streams += 1; },
+      getThreadLiveState: async () => ({
+        activeTaskId: null, status: null, plan: null, turnActive: false,
+        agentsRunning: 1, turnKind: null, messageCount: 0,
+        pendingGates: [{ gateId: "g", kind: "edit", payload: {},
+                         agent: { id: "a", label: "a", name: "explore" } }] }),
+    };
+    const controller = make(backend, createUi());
+    await controller.switchChatThread("t1");
+    await controller.pollThreadLiveState();
+    controller.dispose();
+    expect(streams).toBe(0);
+  });
+
+  test("notifies once per attention change, never for the open thread", async () => {
+    const seen: Array<[string, number]> = [];
+    let rows = [{ threadId: "t2", pendingGates: 1, agentsRunning: 0 },
+                { threadId: "t1", pendingGates: 3, agentsRunning: 0 }];
+    const backend: BackendTaskClient = {
+      ...createStubBackend(baseState()),
+      getAttention: async () => rows,
+    };
+    const controller = make(backend, createUi());
+    await controller.switchChatThread("t1");
+    controller.onAttention((id, n) => seen.push([id, n]));
+    await controller.pollAttention();
+    await controller.pollAttention();
+    rows = [{ threadId: "t2", pendingGates: 2, agentsRunning: 0 }];
+    await controller.pollAttention();
+    controller.dispose();
+    expect(seen).toEqual([["t2", 1], ["t2", 2]]);
   });
 });
