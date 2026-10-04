@@ -17,7 +17,7 @@ from agentd.domain.models import DiffEntry, PatchFailureCode, PatchPreflightIssu
 from agentd.patch.diffing import compute_diff_entries
 from agentd.patch.engine import PatchEngine, PatchPreflightFailed
 from agentd.patch.inline_apply import apply_ops
-from agentd.subagents.write_log import WriteGuard, canonical_path
+from agentd.subagents.write_log import WriteGuard, canonical_path, file_digest
 from agentd.workspace.promote import promote_files
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
@@ -155,6 +155,17 @@ class TurnEditSession:
                 f"`{key}` was modified by agent `{writer.label}` ({writer.name}) after "
                 "your last read — read it again before editing.",
                 writer_label=writer.label)
+        for raw in paths:
+            key = canonical_path(self._real, raw)
+            if key is None:
+                continue
+            if guard.log.changed_outside(guard.agent_id, key, file_digest(self._real / key)):
+                guard.log.note_stale_refusal(guard.agent_id)
+                raise StaleWriteError(
+                    key,
+                    f"STALE_READ: `{key}` was changed outside the agents (by you or a tool) "
+                    "since you last read it. Re-read it before editing.",
+                    writer_label="outside the agents")
 
     async def _ensure_shadow(self, touched: list[str]) -> Path:
         if self._shadow is None:
@@ -215,7 +226,8 @@ class TurnEditSession:
             guard = self._write_guard
             keys = [k for k in (canonical_path(self._real, p) for p in self._pending_touched)
                     if k is not None]
-            guard.log.note_promote(guard.agent_id, guard.label, guard.name, keys)
+            guard.log.note_promote(guard.agent_id, guard.label, guard.name, keys,
+                                   {k: file_digest(self._real / k) for k in keys})
         self._pending_touched = []
 
     async def reject(self) -> None:

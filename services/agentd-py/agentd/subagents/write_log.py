@@ -11,6 +11,7 @@ only ever miss a refusal, never produce a false one (spec §7.1).
 """
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -46,11 +47,21 @@ class WriteRecord:
     seq: int
 
 
+def file_digest(path: Path) -> str | None:
+    """sha256 of a file's bytes, or None when it does not exist (spec §3.7)."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 @dataclass
 class _AgentView:
     spawn_seq: int
     last_seen: dict[str, int] = field(default_factory=dict)
     stale_refusals: int = 0
+    # sha256 of the file as this agent last read or wrote it (spec §3.7); None = absent.
+    hashes: dict[str, str | None] = field(default_factory=dict)
 
 
 class WorkspaceWriteLog:
@@ -90,12 +101,20 @@ class WorkspaceWriteLog:
             raise KeyError(f"agent {agent_id!r} is not registered with this write log")
         return view
 
-    def note_read(self, agent_id: str, path: str) -> None:
-        self._view(agent_id).last_seen[path] = self._seq
+    def note_read(self, agent_id: str, path: str, digest: str | None = None) -> None:
+        view = self._view(agent_id)
+        view.last_seen[path] = self._seq
+        if digest is not None:
+            view.hashes[path] = digest
 
-    def note_promote(self, agent_id: str, label: str, name: str, paths: list[str]) -> int:
+    def note_promote(
+        self, agent_id: str, label: str, name: str, paths: list[str],
+        digests: dict[str, str | None] | None = None,
+    ) -> int:
         """Record one promote of `paths` by `agent_id`; returns the new sequence number."""
         view = self._view(agent_id)
+        for path, digest in (digests or {}).items():
+            view.hashes[path] = digest
         self._promoted.setdefault(agent_id, set()).update(paths)
         self._seq += 1
         for path in paths:
@@ -120,6 +139,14 @@ class WorkspaceWriteLog:
             return record
         return None
 
+    def changed_outside(self, agent_id: str, path: str, current: str | None) -> bool:
+        """The file differs from what this agent last read or wrote, and no agent's promote
+        explains it (spec §3.7) — the user, a formatter, or a shell command changed it."""
+        view = self._view(agent_id)
+        if path not in view.hashes:
+            return False
+        return view.hashes[path] != current
+
     def note_stale_refusal(self, agent_id: str) -> int:
         view = self._view(agent_id)
         view.stale_refusals += 1
@@ -134,7 +161,7 @@ class WorkspaceWriteLog:
         def observe(raw: str) -> None:
             key = canonical_path(workspace_root, raw)
             if key is not None:
-                self.note_read(agent_id, key)
+                self.note_read(agent_id, key, file_digest(workspace_root / key))
         return observe
 
 

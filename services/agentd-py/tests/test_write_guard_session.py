@@ -99,3 +99,49 @@ async def test_an_unguarded_session_never_checks(tmp_path: Path) -> None:
     await sess.accept()
     assert (real / "f.py").read_text() == "x = 2\n"
     await sess.close()
+
+
+def _session_with_guard(
+    tmp_path: Path, *, agent_id: str,
+) -> tuple[TurnEditSession, WorkspaceWriteLog, Path]:
+    ws = tmp_path / "fp-ws"
+    ws.mkdir()
+    log = WorkspaceWriteLog()
+    log.register_agent(agent_id)
+    session = TurnEditSession(
+        turn_id="fp", real_path=ws, workspace_manager=ShadowWorkspaceManager(tmp_path / "sh"),
+        patch_engine=PatchEngine(),
+        write_guard=WriteGuard(log, agent_id, agent_id, "general-purpose"))
+    return session, log, ws
+
+
+@pytest.mark.asyncio
+async def test_external_edit_is_refused_with_the_outside_message(tmp_path: Path) -> None:
+    session, log, ws = _session_with_guard(tmp_path, agent_id="agent-a")
+    (ws / "a.py").write_text("x = 1\n")
+    log.read_observer(ws, "agent-a")("a.py")      # the agent reads it
+    (ws / "a.py").write_text("x = 2\n")           # the user edits it
+    with pytest.raises(StaleWriteError, match="changed outside the agents"):
+        await session.apply(_sr("a.py", "x = 2", "x = 3"))
+
+
+@pytest.mark.asyncio
+async def test_a_sibling_promote_still_names_the_sibling(tmp_path: Path) -> None:
+    session, log, ws = _session_with_guard(tmp_path, agent_id="agent-a")
+    log.register_agent("agent-b")
+    (ws / "a.py").write_text("x = 1\n")
+    log.read_observer(ws, "agent-a")("a.py")
+    (ws / "a.py").write_text("x = 2\n")
+    log.note_promote("agent-b", "bob", "general-purpose", ["a.py"])
+    with pytest.raises(StaleWriteError, match="agent `bob`"):
+        await session.apply(_sr("a.py", "x = 2", "x = 3"))
+
+
+@pytest.mark.asyncio
+async def test_own_promote_updates_the_fingerprint(tmp_path: Path) -> None:
+    session, log, ws = _session_with_guard(tmp_path, agent_id="agent-a")
+    (ws / "a.py").write_text("x = 1\n")
+    log.read_observer(ws, "agent-a")("a.py")
+    await session.apply(_sr("a.py", "x = 1", "x = 2"))
+    await session.accept()
+    await session.apply(_sr("a.py", "x = 2", "x = 3"))  # no refusal
