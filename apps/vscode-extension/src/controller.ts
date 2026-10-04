@@ -165,6 +165,8 @@ export class CrucibleController {
   private liveStateTimer: ReturnType<typeof setInterval> | null = null;
   private latestLiveState: ThreadLiveState | null = null;
   private lastLiveSignature: string | null = null;
+  private backendReachableListeners: Array<() => void> = [];
+  private livePollFailing = false;
   private readonly agentViews = new AgentViewManager(() => this.clientForChat(), {
     detail: (agentId, detail) => this.ui.agentDetail(agentId, detail),
     event: (agentId, event) => this.ui.agentEvent(agentId, event),
@@ -1419,12 +1421,12 @@ export class CrucibleController {
    * A 409 from either is benign — it just means that surface has nothing running, and
    * the value still governs the next task's creation default / the next message. */
   async setReviewPref(autoAccept: boolean): Promise<void> {
-    const threadId = this.activeThreadId;
     const taskId = this.latestLiveState?.activeTaskId;
-    if (!threadId && !taskId) return;
     try {
-      if (threadId) {
-        await this.clientForChat().setChatReviewPref(threadId, { autoAccept });
+      const result = await this.clientForChat().setGlobalReviewPref({ autoAccept });
+      if (result.background > 0) {
+        const noun = result.background === 1 ? "edit" : "edits";
+        this.ui.showInfo(`Accepted ${result.background} pending background ${noun}.`);
       }
       if (taskId) {
         await this.clientForChat().setReviewPref(taskId, { autoAccept });
@@ -1435,6 +1437,24 @@ export class CrucibleController {
       if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to update review preference: ${formatError(error)}`);
     }
+  }
+
+  /** Spec §5.4: the backend's values must match the toggles after every (re)connect —
+   * a restarted backend starts from its defaults. */
+  async pushPreferences(prefs: { autoAccept: boolean; planMode: boolean }): Promise<void> {
+    try {
+      const client = this.clientForChat();
+      await client.setGlobalReviewPref({ autoAccept: prefs.autoAccept });
+      await client.setPlanMode(prefs.planMode);
+    } catch {
+      // Unreachable now; the next reconnect pushes again.
+    }
+  }
+
+  /** Fired when the /live poll succeeds after failing — the host's only periodic
+   * contact with an explicitly configured backend, where onBackendReady never fires. */
+  onBackendReachable(listener: () => void): void {
+    this.backendReachableListeners.push(listener);
   }
 
   /** Mirror of the backend's persisted breadcrumb, rendered immediately. The
@@ -1925,7 +1945,12 @@ export class CrucibleController {
       live = await this.clientForChat().getThreadLiveState(threadId);
     } catch {
       // Transient backend/poll error — keep the last rendered cards; next tick retries.
+      this.livePollFailing = true;
       return;
+    }
+    if (this.livePollFailing) {
+      this.livePollFailing = false;
+      for (const listener of this.backendReachableListeners) listener();
     }
     this.latestLiveState = live;
 

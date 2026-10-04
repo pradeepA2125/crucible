@@ -13,7 +13,7 @@ import { promises as fsp } from "fs";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import {
   CrucibleController,
@@ -53,7 +53,8 @@ interface StubBackendState {
   liveCalls?: string[];
   abortCalls?: Array<{ taskId: string; revert: boolean }>;
   reviewPrefCalls?: Array<{ taskId: string; autoAccept: boolean }>;
-  chatReviewPrefCalls?: Array<{ threadId: string; autoAccept: boolean }>;
+  globalReviewPrefCalls?: Array<{ autoAccept: boolean }>;
+  planModeCalls?: boolean[];
 }
 
 const NULL_LIVE_STATE: ThreadLiveState = {
@@ -122,8 +123,12 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
       state.reviewPrefCalls?.push({ taskId, autoAccept: options.autoAccept });
       return { taskId, goal: "goal", status: "EXECUTING", modifiedFiles: [], diagnostics: [] as Diagnostic[] };
     },
-    setChatReviewPref: async (threadId, options) => {
-      state.chatReviewPrefCalls?.push({ threadId, autoAccept: options.autoAccept });
+    setGlobalReviewPref: async (options) => {
+      state.globalReviewPrefCalls?.push({ autoAccept: options.autoAccept });
+      return { autoResolved: 0, background: 0 };
+    },
+    setPlanMode: async (planMode) => {
+      state.planModeCalls?.push(planMode);
     },
     acceptPatch: async (taskId) => {
       state.acceptCalls.push(taskId);
@@ -1749,14 +1754,12 @@ describe("CrucibleController — command-decision", () => {
     expect(state.reviewPrefCalls).toEqual([{ taskId: "task-run", autoAccept: false }]);
   });
 
-  test("setReviewPref posts to the chat thread so a controller turn picks it up mid-flight", async () => {
-    // A controller chat turn has no task, so the task route alone left the toggle inert
-    // until the next message — the chat route is what makes it live.
+  test("setReviewPref reaches the backend with no thread or task open", async () => {
+    // The backend keeps one value for every thread and background agent (spec §5.4).
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
-      reviewPrefCalls: [], chatReviewPrefCalls: [],
-      liveResponse: { activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: true },
+      reviewPrefCalls: [], globalReviewPrefCalls: [],
     };
     const backend = createStubBackend(state);
     const controller = new CrucibleController(
@@ -1764,13 +1767,57 @@ describe("CrucibleController — command-decision", () => {
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-06-11T00:00:00.000Z"
     );
-    await controller.switchChatThread("chat-pref-live");
     await controller.setReviewPref(true);
     controller.dispose();
-    expect(state.chatReviewPrefCalls).toEqual([
-      { threadId: "chat-pref-live", autoAccept: true },
-    ]);
+    expect(state.globalReviewPrefCalls).toEqual([{ autoAccept: true }]);
     expect(state.reviewPrefCalls).toEqual([]);  // no task is running
+  });
+
+  test("setReviewPref reports edits it accepted for background agents", async () => {
+    const infos: string[] = [];
+    const backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+        getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      }),
+      setGlobalReviewPref: async () => ({ autoResolved: 1, background: 1 }),
+    };
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(),
+      createUi({ showInfo: (m) => { infos.push(m); } }),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    await controller.setReviewPref(true);
+    controller.dispose();
+    expect(infos).toEqual(["Accepted 1 pending background edit."]);
+  });
+
+  test("onBackendReachable fires when the live poll recovers", async () => {
+    let calls = 0;
+    const backend: BackendTaskClient = {
+      ...createStubBackend({
+        submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+        getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      }),
+      getThreadLiveState: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("down");
+        return { activeTaskId: null, status: null, pendingGates: [], plan: null, turnActive: false };
+      },
+    };
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(), createUi(),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-06-11T00:00:00.000Z"
+    );
+    const reachable = vi.fn();
+    controller.onBackendReachable(reachable);
+    await controller.switchChatThread("chat-reach");
+    await controller.pollThreadLiveState();
+    await controller.pollThreadLiveState();
+    controller.dispose();
+    expect(reachable).toHaveBeenCalledTimes(1);
   });
 
   test("durable run_summary supersedes ephemeral counts in renderLiveReview", async () => {

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   TaskStatusSchema,
   TaskResultSchema,
@@ -308,18 +309,20 @@ export class HttpBackendClient implements BackendTaskClient {
     );
   }
 
-  // Live "Review each edit" preference for an in-flight controller turn — the chat twin
-  // of setReviewPref (which targets a task). The loop re-reads it before every edit, so
-  // this lands mid-turn; flipping it on also accepts an already-open edit gate. 409 when
-  // no turn is running, which the caller treats as benign.
-  async setChatReviewPref(
-    threadId: string,
-    options: { autoAccept: boolean }
-  ): Promise<void> {
-    await this.fetchJson(
-      `/v1/chat/threads/${encodeURIComponent(threadId)}/review-pref`,
-      { method: "POST", body: JSON.stringify({ auto_accept: options.autoAccept }) }
-    );
+  // One "Review each edit" value for the whole backend (spec §5.4): every thread, turn
+  // and background agent. Turning auto-accept on accepts the edits waiting under it.
+  async setGlobalReviewPref(options: { autoAccept: boolean }): Promise<{ autoResolved: number; background: number }> {
+    const body = await this.fetchJson("/v1/chat/review-pref", {
+      method: "PUT", body: JSON.stringify({ auto_accept: options.autoAccept }),
+    });
+    const parsed = z.object({ auto_resolved: z.number(), background: z.number() }).parse(body);
+    return { autoResolved: parsed.auto_resolved, background: parsed.background };
+  }
+
+  async setPlanMode(planMode: boolean): Promise<void> {
+    await this.fetchJson("/v1/chat/plan-mode", {
+      method: "PUT", body: JSON.stringify({ plan_mode: planMode }),
+    });
   }
 
   // Controller run_command gate (Phase F): a plain JSON ack — the loop's continuation

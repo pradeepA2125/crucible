@@ -54,19 +54,28 @@ describe("mode/edit decision clients", () => {
   });
 });
 
-describe("chat review preference client", () => {
-  it("posts review-pref to the chat thread endpoint with a snake_case body", async () => {
+describe("global preference client", () => {
+  it("puts the review preference and reads what it resolved", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+      .mockResolvedValue({ ok: true, json: async () => ({ auto_resolved: 2, background: 1 }) });
     const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
-    await c.setChatReviewPref("th1", { autoAccept: true });
+    await expect(c.setGlobalReviewPref({ autoAccept: true }))
+      .resolves.toEqual({ autoResolved: 2, background: 1 });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://x/v1/chat/threads/th1/review-pref",
-      expect.objectContaining({ method: "POST" })
-    );
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body).toEqual({ auto_accept: true });
+      "http://x/v1/chat/review-pref", expect.objectContaining({ method: "PUT" }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ auto_accept: true });
+  });
+
+  it("puts plan mode", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ plan_mode: true }) });
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
+    await c.setPlanMode(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://x/v1/chat/plan-mode", expect.objectContaining({ method: "PUT" }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ plan_mode: true });
   });
 });
 

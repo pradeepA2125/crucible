@@ -557,7 +557,9 @@ export interface BackendTaskClient {
   setReviewPref(taskId: string, options: { autoAccept: boolean }): Promise<TaskView>;
   // The same preference for an in-flight CHAT turn, where edits (not steps) are what
   // gets gated. Separate from setReviewPref because a controller turn has no task.
-  setChatReviewPref(threadId: string, options: { autoAccept: boolean }): Promise<void>;
+  // One "Review each edit" value for the whole backend (spec §5.4).
+  setGlobalReviewPref(options: { autoAccept: boolean }): Promise<{ autoResolved: number; background: number }>;
+  setPlanMode(planMode: boolean): Promise<void>;
   acceptPatch(taskId: string): Promise<TaskResult>;
   rejectPatch(taskId: string, reason: string): Promise<TaskResult>;
   providePlanFeedback(taskId: string, feedback: string | null): Promise<TaskView>;

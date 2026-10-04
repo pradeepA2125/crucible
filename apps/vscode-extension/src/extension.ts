@@ -213,7 +213,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     (sessionId: string) => controller.fetchSessionTranscript(sessionId),
     () => runtimeManager.getPlanMode(),
-    (enabled: boolean) => runtimeManager.setPlanMode(enabled),
+    async (enabled: boolean) => {
+      await runtimeManager.setPlanMode(enabled);
+      await controller.configClient().setPlanMode(enabled).catch(() => undefined);
+    },
     () => runtimeManager.getStepReview(),
     (messageId) => controller.previewRewind(messageId),
     (messageId) => controller.rewindTo(messageId),
@@ -442,6 +445,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // explicit restart) — a one-shot activation-time read goes stale forever once the
   // managed backend restarts after the initial fetch has already run (e.g. the backend
   // wasn't healthy yet at activation, or it crashed and respawned mid-session).
+  // Spec §5.4: the backend's preferences must match the toggles after every (re)connect.
+  const pushPreferences = (): Promise<void> => controller.pushPreferences({
+    autoAccept: !runtimeManager.getStepReview(),
+    planMode: runtimeManager.getPlanMode(),
+  });
+  controller.onBackendReachable(() => void pushPreferences());
+
   const refreshCapabilityFlags = async (): Promise<void> => {
     try {
       const cfg = await clientFactory(settings.getBackendBaseUrl()).getConfig();
@@ -449,6 +459,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       memoryEnabled = cfg.memoryEnabled;
       skillsEnabled = cfg.skillsEnabled;
       capabilitiesKnown = true;
+      void pushPreferences();
     } catch {
       // backend unreachable right now — leave the flags at their last-known values.
       return;
