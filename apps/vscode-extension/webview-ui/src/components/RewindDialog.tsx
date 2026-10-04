@@ -52,14 +52,16 @@ export function RewindDialog({
           </div>
         )}
         {preview.blockedByTask != null && (
-          <div className="text-xs mb-2 leading-relaxed" style={{ color: "var(--color-danger)" }}>
+          <div className="text-xs mb-2 leading-relaxed" style={{ color: "var(--color-red)" }}>
             Task {preview.blockedByTask} is still running and would re-write these files.
             Cancel or abort it first.
           </div>
         )}
         {runningAgents.length > 0 && (
-          <div className="text-xs mb-2 leading-relaxed" style={{ color: "var(--color-danger)" }}>
-            Agents {runningAgents.join(", ")} are still running and could edit these files.
+          <div className="text-xs mb-2 leading-relaxed" style={{ color: "var(--color-red)" }}>
+            {runningAgents.length === 1
+              ? `Agent ${runningAgents[0]} is still running and could edit these files.`
+              : `Agents ${runningAgents.join(", ")} are still running and could edit these files.`}
             {onStopAllAgents && (
               <button className="menu-item px-2 py-0.5 rounded ml-2" onClick={onStopAllAgents}>
                 Stop all agents

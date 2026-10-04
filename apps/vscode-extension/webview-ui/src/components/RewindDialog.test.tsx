@@ -42,9 +42,17 @@ describe("RewindDialog — running agents (spec §8.10)", () => {
     render(<RewindDialog preview={{ ...preview, blockedByAgents: ["scout"] }}
                          onCancel={() => {}} onConfirm={() => {}}
                          onStopAllAgents={onStopAllAgents} />);
-    expect(screen.getByText(/scout are still running/)).toBeTruthy();
+    expect(screen.getByText(/scout is still running/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Stop all agents" }));
     expect(onStopAllAgents).toHaveBeenCalledTimes(1);
     expect((screen.getByRole("button", { name: "Rewind" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("RewindDialog — wording", () => {
+  it("speaks of one agent in the singular", () => {
+    render(<RewindDialog preview={{ ...preview, blockedByAgents: ["scout"] }}
+                         onCancel={() => {}} onConfirm={() => {}} />);
+    expect(screen.getByText(/Agent scout is still running/)).toBeTruthy();
   });
 });

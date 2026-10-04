@@ -230,7 +230,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
             aria-label="Stop all agents"
             title="Stop all agents"
             className="flex items-center justify-center w-6 h-6 rounded-md border transition-colors duration-150"
-            style={{ color: "var(--color-danger)", background: "transparent", borderColor: "transparent" }}
+            style={{ color: "var(--color-red)", background: "transparent", borderColor: "transparent" }}
           >
             <Icon name="stop" size={14} />
           </button>
