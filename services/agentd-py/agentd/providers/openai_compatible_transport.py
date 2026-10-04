@@ -1007,17 +1007,23 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
                 delay = _jittered(min(5.0 * (2 ** (attempt - 1)), 60.0))
+                # Only a TransientTransportError reaches this retry — a malformed reply
+                # is raised at once (below) — so name what actually failed. Found live:
+                # a stream that hit its 600s deadline was shown as "Malformed JSON".
+                cause = str(last_parse_exc) if last_parse_exc else "transient error"
                 logger.warning(
-                    "%s malformed JSON for %s (attempt %d/%d), retrying in %.0fs",
-                    self._label, schema_name, attempt, self._max_retries, delay,
+                    "%s transient failure for %s (%s) (attempt %d/%d), retrying in %.0fs",
+                    self._label, schema_name, cause, attempt, self._max_retries, delay,
                 )
-                # A malformed-JSON retry cycle can run for minutes with the UI
-                # otherwise showing nothing — on_retry (structured, distinct
-                # from on_thinking) lets the caller show a retry is happening.
+                # A retry cycle can run for minutes with the UI otherwise showing
+                # nothing — on_retry (structured, distinct from on_thinking) lets the
+                # caller show a retry is happening.
                 if callable(on_retry):
+                    reason = (_classify_retry_reason(last_parse_exc)
+                              if last_parse_exc else "network_error")
                     on_retry(
-                        attempt, self._max_retries, "malformed_response",
-                        f"⏳ Malformed JSON response — retrying in {delay:.0f}s "
+                        attempt, self._max_retries, reason,
+                        f"⏳ {cause} — retrying in {delay:.0f}s "
                         f"(attempt {attempt}/{self._max_retries})…",
                     )
                 await asyncio.sleep(delay)

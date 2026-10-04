@@ -2225,3 +2225,37 @@ async def test_probe_is_skipped_when_already_downgraded() -> None:
     transport._downgrade_json_mode()
     await transport._ensure_newline_capability("m")
     assert fake.calls == [], "nothing to probe once json_object is already in force"
+
+
+@pytest.mark.asyncio
+async def test_a_transient_retry_is_not_reported_as_malformed_json(caplog) -> None:  # type: ignore[no-untyped-def]
+    """Found live: a stream that hit its 600s deadline was logged and shown to the user as
+    'Malformed JSON — retrying'. Only transient failures reach this retry at all."""
+    calls = {"n": 0}
+
+    class _FailsThenOk:
+        def __aiter__(self):
+            return self._gen()
+
+        async def _gen(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                yield _StreamChunk("partial")
+                raise RuntimeError("ResourceExhausted: Worker local total request "
+                                   "limit reached (32/32)")
+            yield _StreamChunk(json.dumps({"ok": True}))
+            yield _StreamChunk(None, finish_reason="stop")
+
+    transport, _ = _transport([], json_mode="none")
+    transport._completions = _FakeCompletions([_FailsThenOk(), _FailsThenOk()])
+    retries: list[tuple[str, str]] = []
+    with caplog.at_level("WARNING"):
+        await transport.generate_json(
+            model="m", schema_name="s", schema={"type": "object"},
+            system_instructions="sys", user_payload={"k": "v"},
+            on_thinking=lambda _c: None,
+            on_retry=lambda _a, _m, reason, message: retries.append((reason, message)))
+    assert retries and "malformed" not in retries[0][1].lower()
+    assert "ResourceExhausted" in retries[0][1] or "stream failed" in retries[0][1]
+    assert retries[0][0] == "network_error"
+    assert "malformed JSON" not in caplog.text
