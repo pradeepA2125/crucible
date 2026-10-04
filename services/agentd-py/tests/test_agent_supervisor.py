@@ -155,3 +155,12 @@ async def test_wait_for_without_timeout_waits_for_all() -> None:
         sup.enqueue(h, run)
     assert [r.status for r in await sup.wait_for(handles) if r is not None] == [
         "completed", "completed"]
+
+
+def test_discard_reports_keeps_notes_and_other_reports() -> None:
+    sup = AgentSupervisor(max_concurrent=1)
+    sup.deliver("lead", InboxItem(kind="report", text="a", wakes=True, source_id="a"))
+    sup.deliver("lead", InboxItem(kind="report", text="b", wakes=True, source_id="b"))
+    sup.deliver("lead", InboxItem(kind="note", text="n", wakes=False, source_id="a"))
+    sup.discard_reports("lead", {"a"})
+    assert [(i.kind, i.source_id) for i in sup.drain("lead")] == [("report", "b"), ("note", "a")]

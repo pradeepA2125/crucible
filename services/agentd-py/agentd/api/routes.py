@@ -1833,6 +1833,13 @@ def build_router(
                            default=0)
             return {**record.model_dump(mode="json"), "last_seq": last_seq}
 
+        @router.post("/chat/threads/{thread_id}/agents/stop-all")
+        async def post_stop_all_agents(thread_id: str) -> dict:
+            stop_all = getattr(_chat_agent, "stop_all_agents", None)
+            if stop_all is None:
+                return {"stopped": 0}
+            return {"stopped": await stop_all(thread_id)}  # type: ignore[misc]
+
         @router.post("/chat/threads/{thread_id}/agents/{agent_id}/stop")
         async def post_stop_agent(thread_id: str, agent_id: str) -> dict:
             stop = getattr(_chat_agent, "stop_agent", None)

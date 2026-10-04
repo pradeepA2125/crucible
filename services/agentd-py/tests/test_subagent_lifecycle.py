@@ -47,6 +47,7 @@ WAIT = [{"type": "tool_call", "thought": "t", "tool": "run_command",
         {"type": "report", "thought": "t", "summary": "Listed."}]
 QUICK = [{"type": "report", "thought": "t", "summary": "Quick done."}]
 DONE = {"type": "submit_changes", "thought": "d", "summary": "ok"}
+COLLECT = {"type": "tool_call", "thought": "collect", "tool": "wait_agents", "args": {}}
 
 
 def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -55,7 +56,7 @@ def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     ws.mkdir()
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     tid = store.create_thread(str(ws), title="t").thread_id
-    engine = ScriptedReasoningEngine(None, [], controller_step_responses=[DISPATCH, DONE],
+    engine = ScriptedReasoningEngine(None, [], controller_step_responses=[DISPATCH, COLLECT, DONE],
                                      agent_scripts={"waiter": WAIT, "quick": QUICK})
     return _controller(ws, tmp_path, store, engine), store, tid
 
@@ -87,7 +88,7 @@ async def test_live_roster_then_stopping_one_agent(tmp_path: Path,
     thread = store.get_thread(tid)
     assert thread is not None and thread.pending_controller_gates == []
     history = thread.controller_conversation_history or []
-    result = next(m for m in history if m.get("tool") == "dispatch_agents")
+    result = next(m for m in history if m.get("tool") == "wait_agents")
     statuses = {e["label"]: e["status"] for e in json.loads(str(result["content"]))}
     assert statuses == {"waiter": "stopped", "quick": "completed"}
     stopped = store.get_agent(gate.agent.id)
@@ -97,19 +98,17 @@ async def test_live_roster_then_stopping_one_agent(tmp_path: Path,
 
 
 @pytest.mark.asyncio
-async def test_a_stopped_turn_remembers_its_dispatch(tmp_path: Path,
-                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_stopped_turn_leaves_its_agents_running(tmp_path: Path,
+                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spec §4.4: /stop ends the turn only; the next turn sees what it dispatched."""
     ctrl, store, tid = _setup(tmp_path, monkeypatch)
     ctrl.launch_turn(tid, ctrl.handle_message(tid, "go", channel_id=f"chat:{tid}"),
                      channel_id=f"chat:{tid}")
     await _wait_for_gate(store, tid)
     assert await ctrl.stop_turn(tid) is True
     rows = {r.label: r for r in store.list_agents(tid)}
-    assert rows["waiter"].status == "stopped"
-    assert rows["waiter"].report.startswith("Status: stopped — stopped before reporting")
-    history = store.get_thread(tid).controller_conversation_history or []
-    assert json.loads(str(history[-2]["content"]))["tool"] == "dispatch_agents"
-    assert history[-1]["tool"] == "dispatch_agents"
-    entries = json.loads(str(history[-1]["content"]))
-    assert {e["label"]: e["status"] for e in entries}["waiter"] == "stopped"
-    assert ctrl._inflight_dispatch == {}
+    assert rows["waiter"].status == "waiting"
+    history = store.get_thread(tid).controller_conversation_history or []  # type: ignore[union-attr]
+    dispatched = next(m for m in history if m.get("tool") == "dispatch_agents")
+    assert {e["label"] for e in json.loads(str(dispatched["content"]))} == {"waiter", "quick"}
+    assert await ctrl.stop_all_agents(tid) == 1

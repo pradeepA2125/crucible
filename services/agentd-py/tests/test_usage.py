@@ -57,10 +57,11 @@ async def test_usage_lands_on_the_agent_and_the_thread(
     tid = store.create_thread(str(ws), title="t").thread_id
     engine = _Metered(None, [], controller_step_responses=[
         _dispatch("kid", "Investigate"),
+        {"type": "tool_call", "thought": "collect", "tool": "wait_agents", "args": {}},
         {"type": "submit_changes", "thought": "d", "summary": "done"}],
         agent_scripts={"kid": [{"type": "report", "thought": "t", "summary": "one"}]})
     await _controller(ws, tmp_path, store, engine).handle_message(
         tid, "go", channel_id=f"chat:{tid}")
     [row] = store.list_agents(tid)
     assert (row.requests, row.prompt_tokens, row.completion_tokens) == (1, 10, 2)
-    assert store.thread_usage(tid).requests == 2   # the main turn's two calls
+    assert store.thread_usage(tid).requests == 3   # the main turn's three calls

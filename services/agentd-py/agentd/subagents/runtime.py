@@ -252,6 +252,13 @@ class AgentSupervisor:
         self._inboxes[agent_id] = kept
         return taken
 
+    def discard_reports(self, agent_id: str, source_ids: set[str]) -> None:
+        """A wait_agents result already carried these reports (spec §4.2): drop the inbox
+        copies so the dispatcher never reads one twice."""
+        self._inboxes[agent_id] = [
+            i for i in self._inboxes.get(agent_id, [])
+            if not (i.kind == "report" and i.source_id in source_ids)]
+
     def has_pending_report(self, agent_id: str) -> bool:
         return any(i.kind == "report" for i in self._inboxes.get(agent_id, []))
 

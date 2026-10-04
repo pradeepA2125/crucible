@@ -5,7 +5,7 @@ import pytest
 
 from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
-from tests.test_dispatch_integration import DONE, _controller, _creates, _dispatch
+from tests.test_dispatch_integration import DONE, WAIT, _controller, _creates, _dispatch
 
 
 def _record(ctrl) -> list[tuple[str, dict]]:
@@ -57,9 +57,9 @@ async def test_nested_roster_is_broadcast_before_it_is_persisted(
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     tid = store.create_thread(str(ws), title="t").thread_id
     engine = ScriptedReasoningEngine(None, [], controller_step_responses=[
-        _dispatch(("general-purpose", "lead", "Split the work")), DONE],
+        _dispatch(("general-purpose", "lead", "Split the work")), WAIT, DONE],
         agent_scripts={
-            "lead": [_dispatch(("general-purpose", "leaf", "Create leaf.py")),
+            "lead": [_dispatch(("general-purpose", "leaf", "Create leaf.py")), WAIT,
                      {"type": "report", "thought": "t", "summary": "Lead done."}],
             "leaf": _creates("leaf.py", "LEAF = 1\n")})
     ctrl = _controller(ws, tmp_path, store, engine)

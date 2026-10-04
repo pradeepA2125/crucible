@@ -6,7 +6,7 @@ import pytest
 
 from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
-from tests.test_dispatch_integration import DONE, _controller, _dispatch
+from tests.test_dispatch_integration import DONE, WAIT, _controller, _dispatch
 
 _REPORT = [{"type": "report", "thought": "t", "summary": "Read it."}]
 
@@ -32,10 +32,10 @@ def test_discovered_agents_reach_the_tool_without_a_restart(
 ) -> None:
     ws, store, _ = _setup(tmp_path, monkeypatch)
     ctrl = _controller(ws, tmp_path, store, ScriptedReasoningEngine(None, []))
-    [before] = ctrl._dispatch_source("t", "u", None).definitions()
+    before = ctrl._dispatch_source("t", "u", None).definitions()[0]
     assert "reviewer" not in before.description
     _agent_file(ws, "reviewer", "permissionMode: plan\n")   # added after construction
-    [after] = ctrl._dispatch_source("t", "u", None).definitions()
+    after = ctrl._dispatch_source("t", "u", None).definitions()[0]
     # A workspace file is untrusted until the user trusts it: listed, description framed.
     assert "- reviewer:" in after.description and "reviewer agent" in after.description
     assert "(untrusted)" in after.description
@@ -55,7 +55,7 @@ async def test_definition_fields_shape_the_child(
                      encoding="utf-8")
     _agent_file(ws, "reader", "tools: Read, Grep, Bash\ndisallowedTools: Bash\nskills: tdd, nope\n")
     engine = ScriptedReasoningEngine(None, [], controller_step_responses=[
-        _dispatch(("reader", "r1", "Read a file")), DONE], agent_scripts={"r1": _REPORT})
+        _dispatch(("reader", "r1", "Read a file")), WAIT, DONE], agent_scripts={"r1": _REPORT})
     ctrl = _controller(ws, tmp_path, store, engine)
 
     with caplog.at_level(logging.WARNING):
@@ -83,7 +83,7 @@ async def test_skills_need_the_skills_flag(
     monkeypatch.delenv("CRUCIBLE_SKILLS_ENABLED", raising=False)
     _agent_file(ws, "reader", "skills: tdd\n")
     engine = ScriptedReasoningEngine(None, [], controller_step_responses=[
-        _dispatch(("reader", "r1", "Read a file")), DONE], agent_scripts={"r1": _REPORT})
+        _dispatch(("reader", "r1", "Read a file")), WAIT, DONE], agent_scripts={"r1": _REPORT})
     ctrl = _controller(ws, tmp_path, store, engine)
 
     with caplog.at_level(logging.WARNING):

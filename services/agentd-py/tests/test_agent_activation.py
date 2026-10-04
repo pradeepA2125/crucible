@@ -55,6 +55,8 @@ def _dispatch(label: str, prompt: str) -> dict[str, object]:
 
 
 DONE = {"type": "submit_changes", "thought": "d", "summary": "done"}
+# Dispatch returns at once (spec §4.1); the main agent collects reports with wait_agents.
+WAIT = {"type": "tool_call", "thought": "collect", "tool": "wait_agents", "args": {}}
 
 
 def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kid_script):  # type: ignore[no-untyped-def]
@@ -64,7 +66,7 @@ def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kid_script):  # type
     store = ChatThreadStore(tmp_path / "c.sqlite3")
     tid = store.create_thread(str(ws), title="t").thread_id
     engine = _Recording(None, [], controller_step_responses=[
-        _dispatch("kid", "Investigate the parser"), DONE], agent_scripts={"kid": kid_script})
+        _dispatch("kid", "Investigate the parser"), WAIT, DONE], agent_scripts={"kid": kid_script})
     return ws, store, tid, engine
 
 

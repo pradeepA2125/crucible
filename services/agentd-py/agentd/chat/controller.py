@@ -59,7 +59,6 @@ from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
 from agentd.providers.rate_limit import CALL_PRIORITY
 from agentd.providers.usage import METER, USAGE_OWNER
-from agentd.reasoning.react_common import assistant_turn
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
 from agentd.subagents.agent_files import AgentCatalogLoader
@@ -97,7 +96,12 @@ from agentd.subagents.runtime import (
     DispatchRequest,
     agent_channel,
 )
-from agentd.subagents.tool_source import SubAgentToolSource, format_dispatch_result
+from agentd.subagents.tool_source import (
+    AgentResultEntry,
+    QueuedAgent,
+    SubAgentOps,
+    SubAgentToolSource,
+)
 from agentd.subagents.transcript import AgentTranscript
 from agentd.subagents.vcs_guard import vcs_refusal
 from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
@@ -258,9 +262,10 @@ class ChatController:
         # The turn whose dispatch tree /live reports (spec §11.1) — registered for exactly
         # loop.run's lifetime, like _active_loops.
         self._live_turns: dict[str, str] = {}
-        # The main agent's dispatch that is awaiting its children, so a /stop can still
-        # tell the next turn what they did (spec §11.4).
-        self._inflight_dispatch: dict[str, list[AgentHandle]] = {}
+        # (thread_id, waiter) -> the agents that waiter's wait_agents is blocked on. A
+        # finished agent's report goes to the wait or to the dispatcher's inbox, never both
+        # (spec §4.2). The thread is in the key: every thread's main agent is "main".
+        self._waiting: dict[tuple[str, str], set[str]] = {}
         # gate_id → future for an in-flight mcp_tool gate; same lifecycle as
         # _pending_command.
         self._pending_mcp: dict[str, asyncio.Future[McpToolDecision]] = {}
@@ -692,24 +697,6 @@ class ChatController:
             # Sync writes only (no further await) → the re-raised cancellation can't interrupt
             # them; then re-raise so stop_turn's own teardown/breadcrumb proceeds.
             partial_hist = loop.partial_history()
-            # A dispatch the stop interrupted (spec §11.4): its tool_call never returned,
-            # so append it and its result — each child's status, files and report — or the
-            # next turn would not know what the children already promoted.
-            interrupted = self._inflight_dispatch.pop(thread_id, None)
-            if interrupted:
-                partial_hist.append(assistant_turn({
-                    "type": "tool_call", "thought": "(dispatch interrupted by stop)",
-                    "tool": "dispatch_agents",
-                    "args": {"agents": [
-                        {"agent": h.context.name, "label": h.context.label, "prompt": h.prompt}
-                        for h in interrupted]}}))
-                partial_hist.append({
-                    "role": "tool_result", "tool": "dispatch_agents",
-                    "content": format_dispatch_result([
-                        (h, h.result or ChildResult(
-                            status="stopped", report="Stopped before it started.",
-                            files_changed=[]))
-                        for h in interrupted])})
             if partial_hist:
                 self._histories[thread_id] = partial_hist
                 self._store.set_controller_history(thread_id, partial_hist)
@@ -721,7 +708,6 @@ class ChatController:
                 thread_id, ledger.to_json() if ledger.items else None)
             raise
         except Exception as exc:
-            self._inflight_dispatch.pop(thread_id, None)
             # A provider call (or any other step of the loop) raised something we don't
             # have specific recovery for — e.g. a cloud model exhausting its whole output
             # budget on thinking and returning no text content (observed live: Ollama
@@ -1627,13 +1613,25 @@ class ChatController:
     def _dispatch_source(
         self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
     ) -> SubAgentToolSource:
-        return SubAgentToolSource(
-            self._agent_catalog(), partial(self._dispatch, thread_id, turn_id, dispatcher))
+        return SubAgentToolSource(self._agent_catalog(),
+                                  self._agent_ops(thread_id, turn_id, dispatcher))
+
+    def _agent_ops(
+        self, thread_id: str, turn_id: str, caller: AgentHandle | None,
+    ) -> SubAgentOps:
+        caller_id = caller.agent_id if caller is not None else MAIN_AGENT_ID
+        return SubAgentOps(
+            dispatch=partial(self._dispatch, thread_id, turn_id, caller),
+            wait=partial(self._wait_agents, thread_id, caller_id, caller),
+            message=partial(self._message_agent, thread_id, caller_id),
+            stop=partial(self._stop_own_agent, thread_id, caller_id))
 
     async def _dispatch(
         self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
-        requests: list[DispatchRequest],
-    ) -> list[tuple[AgentHandle, ChildResult]]:
+        requests: list[DispatchRequest], on_finish: dict[str, str],
+    ) -> list[QueuedAgent]:
+        """Create the agents and enqueue their first activation; returns at once (spec
+        §4.1). Results come back through wait_agents, the dispatcher's inbox, or notices."""
         runtime = self._subagents
         log = self._write_log_for(thread_id)
         if runtime is None or log is None:
@@ -1665,15 +1663,136 @@ class ChatController:
             handle.inherited = inherited
             handles.append(handle)
         self._on_dispatch_start(thread_id, turn_id, dispatcher, handles)
-        if dispatcher is None:
-            self._inflight_dispatch[thread_id] = handles
+        queued: list[QueuedAgent] = []
         for handle in handles:
             handle.activation_input = handle.prompt
-        results = await runtime.dispatch(handles, self._activate, dispatcher=dispatcher)
-        if dispatcher is None:
-            # Not in a finally: a cancel must leave it for _run_loop's stop branch.
-            self._inflight_dispatch.pop(thread_id, None)
-        return list(zip(handles, results, strict=True))
+            if dispatcher is None:
+                self._store.update_agent(
+                    handle.agent_id, on_finish=on_finish.get(handle.context.label, "notify"))
+            runtime.enqueue(handle, self._activate)
+            warning = ""
+            if (handle.definition.name in BUILTIN_AGENTS
+                    and handle.definition.source != "built-in"):
+                warning = (f"{handle.definition.name!r} is defined by "
+                           f"{handle.definition.source} in this workspace, not the built-in")
+            queued.append(QueuedAgent(agent_id=handle.agent_id, label=handle.context.label,
+                                      name=handle.context.name, warning=warning))
+        return queued
+
+    async def _wait_agents(
+        self, thread_id: str, caller_id: str, caller: AgentHandle | None,
+        agent_ids: list[str] | None, timeout: float | None,
+    ) -> list[AgentResultEntry]:
+        assert self._subagents is not None
+        mine = {r.agent_id: r for r in self._store.agents_dispatched_by(thread_id, caller_id)}
+        if agent_ids is None:
+            # Running agents, plus finished ones whose report has not reached the caller
+            # yet — an agent that finished before this call must not be silently skipped.
+            ids = [i for i, r in mine.items()
+                   if r.status in LIVE_STATUSES or r.report_delivered_at is None]
+        else:
+            ids = list(agent_ids)
+            for agent_id in ids:
+                record = self._store.get_agent(agent_id)
+                if record is None or record.thread_id != thread_id:
+                    raise AgentNotFoundError(f"no agent {agent_id!r} in this thread")
+                if agent_id not in mine:
+                    raise AgentNotYoursError(f"agent {record.label!r} is not one you dispatched")
+        # Read before waiting; an agent just resumed is active but its row still carries
+        # the previous activation's delivery stamp until the activation starts.
+        already = {i for i in ids if mine[i].report_delivered_at is not None
+                   and mine[i].status not in LIVE_STATUSES
+                   and not self._subagents.is_active(i)}
+        waiting = self._waiting.setdefault((thread_id, caller_id), set())
+        waiting.update(ids)
+        try:
+            handles = [h for h in (self._subagents.registry.get(i) for i in ids)
+                       if h is not None and self._subagents.is_active(h.agent_id)]
+            await self._subagents.wait_for(handles, dispatcher=caller, timeout=timeout)
+        finally:
+            waiting.difference_update(ids)
+        entries: list[AgentResultEntry] = []
+        now = datetime.now(UTC)
+        for agent_id in ids:
+            record = self._store.get_agent(agent_id)
+            assert record is not None
+            if self._subagents.is_active(agent_id) or record.status in LIVE_STATUSES:
+                entries.append(AgentResultEntry(agent_id=agent_id, label=record.label,
+                                                name=record.name, status="still running"))
+            elif agent_id in already:
+                entries.append(AgentResultEntry(agent_id=agent_id, label=record.label,
+                                                name=record.name, status="already delivered"))
+            else:
+                entries.append(AgentResultEntry(
+                    agent_id=agent_id, label=record.label, name=record.name,
+                    status=record.status, report=record.report,
+                    files_changed=self._subtree_files(agent_id),
+                    stale_refusals=record.stale_refusals))
+                self._store.update_agent(agent_id, report_delivered_at=now)
+        delivered = {e.agent_id for e in entries
+                     if e.status not in ("still running", "already delivered")}
+        if caller is not None:
+            self._subagents.discard_reports(caller_id, delivered)
+        return entries
+
+    def _subtree_files(self, agent_id: str) -> list[str]:
+        files: set[str] = set()
+        for i in self._store.subtree_agent_ids(agent_id):
+            record = self._store.get_agent(i)
+            if record is not None:
+                files |= set(record.files_changed)
+        return sorted(files)
+
+    async def _message_agent(
+        self, thread_id: str, caller_id: str, agent_id: str, message: str,
+        on_finish: str | None,
+    ) -> QueuedAgent:
+        handle = self.resume_agent(thread_id, agent_id, message, caller_id=caller_id)
+        if on_finish is not None and caller_id == MAIN_AGENT_ID:
+            self._store.update_agent(agent_id, on_finish=on_finish)
+        return QueuedAgent(agent_id=agent_id, label=handle.context.label,
+                           name=handle.context.name)
+
+    async def _stop_own_agent(self, thread_id: str, caller_id: str, agent_id: str) -> bool:
+        assert self._subagents is not None
+        record = self._store.get_agent(agent_id)
+        if record is None or record.thread_id != thread_id:
+            raise AgentNotFoundError(f"no agent {agent_id!r} in this thread")
+        if record.dispatcher_id != caller_id:
+            raise AgentNotYoursError(f"agent {record.label!r} is not one you dispatched")
+        return await self._subagents.stop(agent_id, "user")
+
+    async def stop_all_agents(self, thread_id: str) -> int:
+        """Stop every agent in the thread (spec §4.4); a stopped dispatcher's stop cascades."""
+        if self._subagents is None:
+            return 0
+        stopped = 0
+        for agent_id in self._store.live_agent_ids(thread_id):
+            if await self._subagents.stop(agent_id, "user"):
+                stopped += 1
+        return stopped
+
+    def _route_report(self, handle: AgentHandle, result: ChildResult) -> None:
+        """A child dispatcher that is not waiting on this agent gets its report in its
+        inbox (spec §3.6, §4.2); the main agent's go to notices (Part 2B)."""
+        assert self._subagents is not None
+        record = self._store.get_agent(handle.agent_id)
+        if record is None or record.dispatcher_id in (None, MAIN_AGENT_ID):
+            return
+        if handle.agent_id in self._waiting.get((record.thread_id, record.dispatcher_id), set()):
+            return
+        self._subagents.deliver(record.dispatcher_id, InboxItem(
+            kind="report", text=result.report, wakes=True, source_id=handle.agent_id,
+            author=f"{handle.context.label} ({handle.context.name})"))
+
+    def _drain_and_mark(self, agent_id: str) -> list[InboxItem]:
+        assert self._subagents is not None
+        items = self._subagents.drain(agent_id)
+        now = datetime.now(UTC)
+        for item in items:
+            if item.kind == "report" and item.source_id:
+                self._store.update_agent(item.source_id, report_delivered_at=now)
+        return items
 
     def _on_dispatch_start(
         self, thread_id: str, turn_id: str, dispatcher: AgentHandle | None,
@@ -1848,7 +1967,7 @@ class ChatController:
                 plan_context, max_iters=ctx.max_iters, turn_control=control,
                 seed_history=[*record.history, {"role": "user", "content": activation_input}],
                 iteration_cb=partial(self._store.set_agent_history, ctx.agent_id),
-                inbox_drain=partial(self._subagents.drain, ctx.agent_id),
+                inbox_drain=partial(self._drain_and_mark, ctx.agent_id),
                 report_guard=partial(self._report_guard, handle),
                 edit_decision_cb=partial(self._child_edit_decision_cb, handle),
                 edit_record_cb=partial(self._child_edit_record_cb, handle),
@@ -1880,7 +1999,9 @@ class ChatController:
             logger.exception("[subagent] child failed id=%s", ctx.agent_id)
             self._store.set_agent_history(ctx.agent_id, loop.partial_history())
             report = loop.fallback_report(str(exc), subtree_files())
-        return self._close_child(handle, status, report)
+        result = self._close_child(handle, status, report)
+        self._route_report(handle, result)
+        return result
 
     def _close_child(self, handle: AgentHandle, status: str, report: str) -> ChildResult:
         """The activation's final bookkeeping on every exit (spec §3.2, §5.5, §8)."""

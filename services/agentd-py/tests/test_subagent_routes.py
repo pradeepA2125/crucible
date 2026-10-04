@@ -64,3 +64,17 @@ async def test_list_get_stop_live_and_config(tmp_path: Path,
     assert stopped == {"ok": False}  # already finished
     assert live["agents"] is None
     assert config["subagents_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_stop_all_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "1")
+    store = ChatThreadStore(tmp_path / "c.sqlite3")
+    tid = store.create_thread(str(tmp_path), title="t").thread_id
+    ctrl = ChatController(
+        workspace_path=str(tmp_path), reasoning_engine=ScriptedReasoningEngine(None, []),
+        thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
+        retrieval_client=None)
+    async with _client(tmp_path, ctrl) as client:
+        response = await client.post(f"/v1/chat/threads/{tid}/agents/stop-all")
+    assert response.status_code == 200 and response.json() == {"stopped": 0}

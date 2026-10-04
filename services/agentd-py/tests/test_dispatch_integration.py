@@ -52,6 +52,8 @@ def _dispatch(*agents: tuple[str, str, str]) -> dict[str, object]:
 
 
 DONE = {"type": "submit_changes", "thought": "d", "summary": "All parts done."}
+# Dispatch returns at once (spec §4.1); reports are collected with wait_agents.
+WAIT = {"type": "tool_call", "thought": "collect", "tool": "wait_agents", "args": {}}
 
 
 @pytest.mark.asyncio
@@ -65,7 +67,7 @@ async def test_two_children_edit_disjoint_files(tmp_path: Path,
     engine = ScriptedReasoningEngine(
         None, [], controller_step_responses=[
             _dispatch(("general-purpose", "impl-a", "Create a.py"),
-                      ("general-purpose", "impl-b", "Create b.py")), DONE],
+                      ("general-purpose", "impl-b", "Create b.py")), WAIT, DONE],
         agent_scripts={"impl-a": _creates("a.py", "A = 1\n"),
                        "impl-b": _creates("b.py", "B = 2\n")})
     ctrl = _controller(ws, tmp_path, store, engine)
@@ -90,7 +92,7 @@ async def test_two_children_edit_disjoint_files(tmp_path: Path,
     assert sorted(roster.metadata["agent_ids"]) == sorted(r.agent_id for r in rows.values())
     assert not any(m.type == "diff_card" for m in thread.messages)  # children's stay theirs
     history = thread.controller_conversation_history or []
-    result = next(m for m in history if m.get("tool") == "dispatch_agents")
+    result = next(m for m in history if m.get("tool") == "wait_agents")
     entries = json.loads(str(result["content"]))
     assert [(e["label"], e["status"], e["report"]) for e in entries] == [
         ("impl-a", "completed", frame("impl-a (general-purpose)", "report", "Created a.py.")),
@@ -111,9 +113,9 @@ async def test_nested_dispatch_stops_at_the_depth_limit(
     tid = store.create_thread(str(ws), title="t").thread_id
     engine = ScriptedReasoningEngine(
         None, [], controller_step_responses=[
-            _dispatch(("general-purpose", "lead", "Split the work")), DONE],
+            _dispatch(("general-purpose", "lead", "Split the work")), WAIT, DONE],
         agent_scripts={
-            "lead": [_dispatch(("general-purpose", "leaf", "Create leaf.py")),
+            "lead": [_dispatch(("general-purpose", "leaf", "Create leaf.py")), WAIT,
                      {"type": "report", "thought": "t", "summary": "Lead done."}],
             "leaf": _creates("leaf.py", "LEAF = 1\n")})
     ctrl = _controller(ws, tmp_path, store, engine)
