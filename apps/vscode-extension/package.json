@@ -121,7 +121,8 @@
         "crucible.backendBaseUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8000",
-          "description": "Leave default for the managed backend; set explicitly to attach to a dev backend (e.g. one started via start-backend.sh)."
+          "description": "Leave default for the managed backend; set explicitly to attach to a dev backend (e.g. one started via start-backend.sh).",
+          "scope": "machine"
         },
         "crucible.defaultMode": {
           "type": "string",
@@ -143,12 +144,14 @@
         "crucible.managedRuntime.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Provision and spawn the Crucible runtime (backend, indexer, ripgrep, language servers) automatically per workspace. Disable to fall back to the pure dev flow (start-backend.sh + an explicit crucible.backendBaseUrl)."
+          "description": "Provision and spawn the Crucible runtime (backend, indexer, ripgrep, language servers) automatically per workspace. Disable to fall back to the pure dev flow (start-backend.sh + an explicit crucible.backendBaseUrl).",
+          "scope": "machine"
         },
         "crucible.devSourcePath": {
           "type": "string",
           "default": "",
-          "description": "DEVELOPMENT ONLY. Absolute path to a Crucible checkout. When set, the managed runtime installs crucible-agentd EDITABLE from <path>/services/agentd-py instead of the released wheel, so backend edits are picked up on reload without rebuilding. Leave empty for normal installs. Changing it requires re-running Crucible: Run Setup (or deleting ~/.crucible/runtime/venv) to take effect."
+          "description": "DEVELOPMENT ONLY. Absolute path to a Crucible checkout. When set, the managed runtime installs crucible-agentd EDITABLE from <path>/services/agentd-py instead of the released wheel, so backend edits are picked up on reload without rebuilding. Leave empty for normal installs. Changing it requires re-running Crucible: Run Setup (or deleting ~/.crucible/runtime/venv) to take effect.",
+          "scope": "machine"
         },
         "crucible.policy.shell": {
           "type": "string",
@@ -157,7 +160,8 @@
             "ask",
             "allow_all"
           ],
-          "description": "Shell command policy for the execution agent's run_command tool. 'ask' surfaces an approval card for every command; 'allow_all' skips the gate."
+          "description": "Shell command policy for the execution agent's run_command tool. 'ask' surfaces an approval card for every command; 'allow_all' skips the gate.",
+          "scope": "machine"
         },
         "crucible.policy.scope": {
           "type": "string",
@@ -167,7 +171,8 @@
             "ask",
             "auto"
           ],
-          "description": "Scope-extension policy for out-of-plan file writes. 'ask' pauses for approval; 'strict' auto-rejects; 'auto' silently approves and audit-logs."
+          "description": "Scope-extension policy for out-of-plan file writes. 'ask' pauses for approval; 'strict' auto-rejects; 'auto' silently approves and audit-logs.",
+          "scope": "machine"
         },
         "crucible.memory.enabled": {
           "type": "boolean",

@@ -1,0 +1,71 @@
+"""Files that control what agents may do are not editable by agents (spec §3.9)."""
+from __future__ import annotations
+
+from fnmatch import fnmatchcase
+
+from agentd.domain.models import PatchFailureCode, PatchPreflightIssue
+from agentd.patch.engine import PatchPreflightFailed
+
+PROTECTED_PATTERNS: tuple[str, ...] = (
+    ".crucible/*", ".claude/agents/*", ".claude/skills/*", "AGENTS.md",
+    ".vscode/settings.json", ".vscode/tasks.json", ".vscode/launch.json", "*.code-workspace",
+)
+
+
+def is_protected(key: str) -> bool:
+    """`key` is a canonical workspace-relative POSIX path (write_log.canonical_path), so a
+    symlink into a protected directory is matched by where it really points."""
+    return any(fnmatchcase(key, pattern) for pattern in PROTECTED_PATTERNS)
+
+
+class ProtectedPathError(PatchPreflightFailed):
+    def __init__(self, path: str, message: str) -> None:
+        super().__init__(message, [PatchPreflightIssue(
+            code=PatchFailureCode.PROTECTED_PATH, file=path, message=message)])
+        self.path = path
+
+
+class AgentProtection:
+    """A sub-agent or team member: refused outright, at apply and again at accept."""
+    requires_review = False
+
+    def check_apply(self, keys: list[str]) -> None:
+        self.check_accept(keys)
+
+    def check_accept(self, keys: list[str]) -> None:
+        for key in keys:
+            if is_protected(key):
+                raise ProtectedPathError(
+                    key, f"`{key}` is a protected Crucible configuration file; agents cannot "
+                    "edit it. Tell your dispatcher what should change instead.")
+
+
+class MainProtection:
+    """The main agent may propose the edit, but it always raises a review card; at accept,
+    a path that became protected after apply (a symlink created in between) is refused."""
+
+    def __init__(self) -> None:
+        self.requires_review = False
+        self._approved: set[str] = set()
+
+    def check_apply(self, keys: list[str]) -> None:
+        self._approved = {k for k in keys if is_protected(k)}
+        self.requires_review = bool(self._approved)
+
+    def check_accept(self, keys: list[str]) -> None:
+        for key in keys:
+            if is_protected(key) and key not in self._approved:
+                raise ProtectedPathError(
+                    key, f"`{key}` resolves to a protected file only since the edit was "
+                    "shown for review; it was not applied.")
+
+
+_COMMAND_MARKERS = (".crucible/", ".claude/agents", ".claude/skills", "AGENTS.md", ".vscode/",
+                    ".code-workspace")
+
+
+def command_mentions_protected(command: str, args: list[str]) -> bool:
+    """A hint for the command card (spec §3.9): writes through run_command are the documented
+    residual gap, so the card can at least highlight a command that names a protected path."""
+    text = " ".join([command, *args])
+    return any(marker in text for marker in _COMMAND_MARKERS)

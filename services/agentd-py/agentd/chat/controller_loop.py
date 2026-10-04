@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from agentd.chat.edit_session import StaleWriteError
+from agentd.chat.protected_paths import ProtectedPathError
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.tool_events import trace_to_tool_events
 from agentd.chat.turn_control import ChatTurnControl
@@ -353,8 +354,11 @@ _EDIT_GUIDANCE_BY_CODE: dict[PatchFailureCode, str] = {
     PatchFailureCode.PATH_ESCAPE: (
         "'file' must be a workspace-relative path inside the workspace."),
     PatchFailureCode.STALE_READ: (
-        "Another agent changed this file after your last read. read_file it again, "
-        "then re-emit your edit against its current content."),
+        "This file changed after your last read (another agent, the user or a tool). "
+        "read_file it again, then re-emit your edit against its current content."),
+    PatchFailureCode.PROTECTED_PATH: (
+        "That file is protected. Describe the change in your report or answer instead "
+        "of editing it."),
     PatchFailureCode.NO_OP: (
         "Your edit changes nothing: the file already has exactly that content (for "
         "search_replace, 'replace' is identical to 'search'). Emit an edit that makes the "
@@ -1619,7 +1623,9 @@ class ControllerLoop:
                 # start. The composer checkbox is live (POST /chat/threads/{id}/review-pref
                 # mutates this same object), so one turn can legitimately gate its first
                 # edit and auto-accept its third.
-                was_gated = not turn_control.auto_accept_edits and edit_decision_cb is not None
+                # A protected-path edit always asks, whatever the preference (spec §3.9).
+                was_gated = edit_decision_cb is not None and (
+                    not turn_control.auto_accept_edits or self._edit.requires_review)
                 reason = ""
                 if was_gated:
                     decision = await edit_decision_cb(diff)
@@ -1628,6 +1634,7 @@ class ControllerLoop:
                 else:
                     accepted = True
                 stale: StaleWriteError | None = None
+                refused: ProtectedPathError | None = None
                 if accepted:
                     try:
                         await self._edit.accept()
@@ -1637,8 +1644,21 @@ class ControllerLoop:
                     # held at the gate; accept() already restored the shadow from real.
                     except StaleWriteError as exc:
                         stale = exc
+                    # A symlink made after apply redirected the promote into a protected
+                    # path (spec §3.9); accept() already restored the shadow.
+                    except ProtectedPathError as exc:
+                        refused = exc
                 else:
                     await self._edit.reject()  # restore shadow from real (shadow==real)
+                if refused is not None:
+                    if edit_record_cb is not None:
+                        await edit_record_cb(diff, "reject", str(refused), was_gated)
+                    history.append(assistant_turn(
+                        {k: v for k, v in resp.items() if k != "patch_ops"}))
+                    history.append({
+                        "role": "tool_result", "tool": "edit",
+                        "content": f"PATCH FAILED: {refused} {_edit_failure_guidance(refused)}"})
+                    continue
                 if stale is not None:
                     if edit_record_cb is not None:
                         await edit_record_cb(

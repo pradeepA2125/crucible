@@ -35,6 +35,12 @@ from agentd.chat.models import (
     GateNotFoundError,
     PendingGate,
 )
+from agentd.chat.protected_paths import (
+    AgentProtection,
+    MainProtection,
+    command_mentions_protected,
+    is_protected,
+)
 from agentd.chat.rewind import RewindStore
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
@@ -531,7 +537,8 @@ class ChatController:
                     if self._rewind is not None else None),
                 write_guard=(
                     WriteGuard(write_log, MAIN_AGENT_ID, "main", "main")
-                    if write_log is not None else None),))
+                    if write_log is not None else None),
+                protection=MainProtection()))
             if self._orchestrator is not None else None)
         # run_command (ACTIVE-only; PLAN rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
@@ -939,6 +946,9 @@ class ChatController:
             {"path": d.path, "additions": d.additions, "deletions": d.deletions,
              "unified_diff": d.unified_diff, "temp_path": d.temp_path}
             for d in diff]}
+        if any(is_protected(d.path) for d in diff):
+            # Resolved only by an explicit decision on this card (spec §3.9).
+            payload["protected"] = True
         if child is not None:
             # A child edits in its own shadow (spec §7.5). Informational: a child gate is
             # never recovered after a restart (§11.5).
@@ -1043,6 +1053,8 @@ class ChatController:
             for gate in (thread.pending_controller_gates if thread is not None else []):
                 if gate.kind != "edit":
                     continue
+                if gate.payload.get("protected") or gate.payload.get("review_required"):
+                    continue  # an explicit decision only (spec §3.9, §3.12)
                 future = self._pending_edit.get(gate.gate_id)
                 if future is not None and not future.done():
                     future.set_result({
@@ -1157,7 +1169,8 @@ class ChatController:
             return ApprovalOutcome.allow()
 
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
-            "command", {"command": command, "args": args, "cwd": cwd},
+            "command", {"command": command, "args": args, "cwd": cwd,
+                        "mentions_protected": command_mentions_protected(command, args)},
             agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[CommandDecision] = loop.create_future()
@@ -1746,7 +1759,8 @@ class ChatController:
                 checkpoint_cb=(
                     partial(self._rewind.capture, thread_id)
                     if self._rewind is not None else None),
-                write_guard=WriteGuard(log, ctx.agent_id, ctx.label, ctx.name)))
+                write_guard=WriteGuard(log, ctx.agent_id, ctx.label, ctx.name),
+                protection=AgentProtection()))
             if self._orchestrator is not None else None)
         parent_control = self._turn_controls.get(thread_id)
         control = (parent_control

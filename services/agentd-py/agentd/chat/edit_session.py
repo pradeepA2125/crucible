@@ -13,6 +13,7 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
+from agentd.chat.protected_paths import AgentProtection, MainProtection, ProtectedPathError
 from agentd.domain.models import DiffEntry, PatchFailureCode, PatchPreflightIssue
 from agentd.patch.diffing import compute_diff_entries
 from agentd.patch.engine import PatchEngine, PatchPreflightFailed
@@ -120,6 +121,7 @@ class TurnEditSession:
         patch_engine: PatchEngine,
         checkpoint_cb: Callable[[list[str]], None] | None = None,
         write_guard: WriteGuard | None = None,
+        protection: MainProtection | AgentProtection | None = None,
     ) -> None:
         self._turn_id = turn_id
         self._real = real_path
@@ -132,6 +134,8 @@ class TurnEditSession:
         # in this module's docstring). Sync, like the shutil copies in _ensure_shadow.
         self._checkpoint_cb = checkpoint_cb
         self._write_guard = write_guard
+        # Control-plane files (spec §3.9): an agent is refused, the main agent must review.
+        self._protection = protection or MainProtection()
 
     def _raise_if_stale(self, paths: list[str]) -> None:
         """Refuse the first path another agent promoted after this agent last saw it.
@@ -191,6 +195,7 @@ class TurnEditSession:
     async def apply(self, patch_ops: list[dict[str, object]]) -> list[DiffEntry]:
         _validate_patch_ops(patch_ops)
         touched = [str(op["file"]) for op in patch_ops if "file" in op]
+        self._protection.check_apply(self._keys(touched))
         self._raise_if_stale(touched)
         if self._checkpoint_cb is not None:
             self._checkpoint_cb(touched)
@@ -211,8 +216,22 @@ class TurnEditSession:
         self._pending_touched = changed
         return compute_diff_entries(self._real, shadow, changed, self._turn_id)
 
+    @property
+    def requires_review(self) -> bool:
+        """The last apply touched a protected path: it must be shown for review (§3.9)."""
+        return self._protection.requires_review
+
+    def _keys(self, paths: list[str]) -> list[str]:
+        return [k for k in (canonical_path(self._real, p) for p in paths) if k is not None]
+
     async def accept(self) -> None:
         assert self._shadow is not None
+        try:
+            # Re-checked here: a symlink created after apply could redirect the promote.
+            self._protection.check_accept(self._keys(self._pending_touched))
+        except ProtectedPathError:
+            await self.reject()
+            raise
         if self._write_guard is not None:
             try:
                 # Check 2: a sibling may have promoted one of these files while this edit

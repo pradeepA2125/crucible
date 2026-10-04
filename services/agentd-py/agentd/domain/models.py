@@ -59,6 +59,8 @@ class PatchFailureCode(StrEnum):
     STALE_READ = "stale_read"
     # The edit leaves every touched file byte-for-byte unchanged (e.g. replace == search).
     NO_OP = "no_op"
+    # An agent tried to edit a control-plane file (spec §3.9).
+    PROTECTED_PATH = "protected_path"
 
 
 class TaskBudget(BaseModel):

@@ -17,5 +17,7 @@ def test_stale_write_error_carries_a_stale_read_issue() -> None:
 
 def test_stale_read_has_its_own_guidance() -> None:
     guidance = _edit_failure_guidance(StaleWriteError("a.py", "stale"))
-    assert guidance == ("Another agent changed this file after your last read. read_file it "
-                        "again, then re-emit your edit against its current content.")
+    # Not always another agent since fingerprints (spec §3.7): the user or a tool, too.
+    assert guidance == ("This file changed after your last read (another agent, the user or a "
+                        "tool). read_file it again, then re-emit your edit against its current "
+                        "content.")
