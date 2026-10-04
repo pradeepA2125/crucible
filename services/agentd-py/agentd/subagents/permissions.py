@@ -7,6 +7,7 @@ from agentd.prompting.tagged import Permission
 
 AGENT_BASE_TYPES: tuple[str, ...] = ("tool_call", "edit", "progress", "report")
 DISPATCH_TOOL = "dispatch_agents"
+DISPATCH_GROUP = frozenset({"dispatch_agents", "wait_agents", "message_agent", "stop_agent"})
 # PTY sessions are thread-scoped (one child could kill a sibling's process), and
 # `remember` writes durable memory — children get recall only (spec §5.2, §5.3).
 CHILD_EXCLUDED_TOOLS = frozenset({
@@ -56,8 +57,12 @@ def child_tool_names(
         # Filtered out of the tool list entirely, so the MCP teaching block is not
         # appended either; _permission_correction is the defense in depth.
         names = {n for n in names if n not in _READ_ONLY_EXCLUDED and not n.startswith("mcp__")}
+    if DISPATCH_TOOL in names:
+        # A definition that may dispatch (Claude Code's Agent/Task map to dispatch_agents)
+        # gets the whole group, so it can always wait — and so satisfy the report guard.
+        names |= DISPATCH_GROUP & set(available)
     if not may_dispatch:
-        names.discard(DISPATCH_TOOL)
+        names -= DISPATCH_GROUP
     return frozenset(names)
 
 

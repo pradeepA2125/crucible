@@ -107,3 +107,16 @@ def test_definition_allows_edit(tools, disallowed, expected) -> None:
 def test_no_edit_type_when_the_definition_cannot_edit() -> None:
     assert child_allowed_types("default", can_edit=False) == ("tool_call", "progress", "report")
     assert child_allowed_types("default") == AGENT_BASE_TYPES   # unchanged default
+
+
+def test_dispatch_brings_its_whole_group() -> None:
+    from agentd.subagents.permissions import DISPATCH_GROUP, child_tool_names
+
+    available = ["read_file", *sorted(DISPATCH_GROUP)]
+    names = child_tool_names(available, definition_tools=frozenset({"read_file",
+                                                                    "dispatch_agents"}),
+                             permission="default", may_dispatch=True)
+    assert DISPATCH_GROUP <= names
+    names = child_tool_names(available, definition_tools=None, permission="default",
+                             may_dispatch=False)
+    assert not (DISPATCH_GROUP & names)

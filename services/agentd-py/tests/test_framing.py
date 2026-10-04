@@ -35,18 +35,11 @@ def test_framing_sentence_text() -> None:
 
 
 def test_dispatch_result_frames_reports() -> None:
-    from agentd.subagents.context import AgentContext
-    from agentd.subagents.definitions import BUILTIN_AGENTS
-    from agentd.subagents.runtime import AgentHandle, ChildResult
-    from agentd.subagents.tool_source import format_dispatch_result
+    from agentd.subagents.tool_source import AgentResultEntry, format_wait_result
 
-    ctx = AgentContext(agent_id="agent-a", name="explore", label="survey", depth=1,
-                       parent_agent_id=None, permission="plan", allowed_types=("report",),
-                       persona="", max_iters=4)
-    handle = AgentHandle(context=ctx, definition=BUILTIN_AGENTS["explore"], prompt="p",
-                         thread_id="t", turn_id="u")
-    [entry] = json.loads(format_dispatch_result(
-        [(handle, ChildResult(status="completed", report="Found it.", files_changed=[]))]))
+    [entry] = json.loads(format_wait_result([AgentResultEntry(
+        agent_id="agent-a", label="survey", name="explore", status="completed",
+        report="Found it.")]))
     assert entry["report"] == frame("survey (explore)", "report", "Found it.")
 
 

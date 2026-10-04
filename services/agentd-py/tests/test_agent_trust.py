@@ -59,6 +59,6 @@ def test_capped_descriptions_are_framed_in_the_dispatch_tool(tmp_path: Path) -> 
 
     loader, ws, _ = _loader(tmp_path)
     _write(ws / ".claude" / "agents", "repo-agent")
-    [tool] = SubAgentToolSource(loader.load(), dispatch=None).definitions()  # type: ignore[arg-type]
+    tool = SubAgentToolSource(loader.load(), None).definitions()[0]  # type: ignore[arg-type]
     assert '<<<agent-content author="definition' in tool.description
     assert "(untrusted)" in tool.description
