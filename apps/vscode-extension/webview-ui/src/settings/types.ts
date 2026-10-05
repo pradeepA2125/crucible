@@ -2,6 +2,47 @@
 // imports the extension's src/ (separate Vite bundle). Mirrors setup/types.ts's split.
 import type { SectionId } from "./sections/meta";
 
+// Mirror of editor-client's AgentDefinitionView / AgentCatalog / AgentDefinitionInput.
+// tools: null = all tools, distinct from [] (no tools).
+export interface AgentView {
+  name: string;
+  description: string;
+  tools: string[] | null;
+  disallowedTools: string[];
+  permission: string;
+  declaredPermission: string;
+  model: string;
+  maxTurns: number | null;
+  skills: string[];
+  source: "crucible" | "claude" | "user_claude" | "builtin";
+  path: string | null;
+  sha256: string | null;
+  trust: "trusted" | "capped";
+  active: boolean;
+  warnings: string[];
+  shadowedBy: string | null;
+  persona: string;
+  content: string | null;
+}
+
+export interface AgentCatalog {
+  agents: AgentView[];
+  skipped: { path: string; reason: string }[];
+  availableTools: string[];
+}
+
+export interface AgentInput {
+  description: string;
+  persona: string;
+  tools: string[] | null;
+  disallowedTools: string[];
+  permission: string;
+  model: string;
+  maxTurns: number | null;
+  skills: string[];
+  renameFrom?: string;
+}
+
 export interface McpServerRow {
   name: string;
   transport: string;
@@ -47,7 +88,13 @@ export type SettingsInMsg =
   | { type: "settings/setEnvFlag"; key: string; value: string }
   | { type: "settings/loadInstructions" }
   | { type: "settings/saveInstructions"; content: string }
-  | { type: "settings/restartBackend" };
+  | { type: "settings/restartBackend" }
+  | { type: "settings/listAgents" }
+  | { type: "settings/saveAgent"; name: string; input: AgentInput }
+  | { type: "settings/deleteAgent"; name: string }
+  | { type: "settings/trustAgent"; path: string; sha256: string }
+  | { type: "settings/openFile"; path: string }
+  | { type: "settings/listModels" };
 
 // host → webview
 export type SettingsOutMsg =
@@ -57,7 +104,10 @@ export type SettingsOutMsg =
   | { type: "settings/navigate"; section: SectionId }
   // Deliberately NOT folded into settings/state: a verdict about a value is not a
   // change to one, and it must not survive the next snapshot rebuild.
-  | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } };
+  | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } }
+  | { type: "settings/agents"; catalog: AgentCatalog }
+  | { type: "settings/agentsError"; message: string }
+  | { type: "settings/models"; models: string[] };
 
 export interface ExtraField {
   envVar: string;

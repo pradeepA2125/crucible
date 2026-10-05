@@ -5,6 +5,7 @@ import { OverviewSection } from "./sections/OverviewSection";
 import { ProviderSection } from "./sections/ProviderSection";
 import { McpSection } from "./sections/McpSection";
 import { SkillsSection } from "./sections/SkillsSection";
+import { AgentsSection } from "./sections/AgentsSection";
 import { InstructionsSection } from "./sections/InstructionsSection";
 import { PoliciesSection } from "./sections/PoliciesSection";
 import { RuntimeSection } from "./sections/RuntimeSection";
@@ -121,6 +122,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
             {section === "provider" && <ProviderSection {...props} />}
             {section === "mcp" && <McpSection {...props} />}
             {section === "skills" && <SkillsSection {...props} />}
+            {section === "agents" && <AgentsSection {...props} />}
             {section === "instructions" && (
               <InstructionsSection instructions={instructions} busy={busy} send={send} />
             )}

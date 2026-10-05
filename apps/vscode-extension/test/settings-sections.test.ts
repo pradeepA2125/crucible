@@ -5,12 +5,13 @@ import { SETTINGS_SECTIONS, asSettingsSectionId } from "../src/settings-sections
 // webview SectionId union (webview-ui/src/settings/sections/meta.ts) — this test
 // is the drift guard for that cross-file enum (the repo's recurring `.min(1)` class).
 describe("SETTINGS_SECTIONS registry", () => {
-  it("lists the seven settings sections in nav order, each with a label", () => {
+  it("lists the eight settings sections in nav order, each with a label", () => {
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       "overview",
       "provider",
       "mcp",
       "skills",
+      "agents",
       "instructions",
       "policies",
       "runtime",

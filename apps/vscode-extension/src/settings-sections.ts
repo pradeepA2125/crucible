@@ -9,6 +9,7 @@ export type SettingsSectionId =
   | "provider"
   | "mcp"
   | "skills"
+  | "agents"
   | "instructions"
   | "policies"
   | "runtime";
@@ -24,6 +25,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "provider", label: "Provider" },
   { id: "mcp", label: "MCP Servers" },
   { id: "skills", label: "Skills" },
+  { id: "agents", label: "Agents" },
   { id: "instructions", label: "Instructions" },
   { id: "policies", label: "Policies & Memory" },
   { id: "runtime", label: "Runtime" },
