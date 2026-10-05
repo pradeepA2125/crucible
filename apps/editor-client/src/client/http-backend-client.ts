@@ -44,11 +44,13 @@ import {
   AgentDetailSchema,
   AgentSummarySchema,
   TeamDetailSchema,
+  TeamActivitySchema,
   TeamPostSchema,
   TeamSummarySchema,
   type AgentDetail,
   type AgentSummary,
   type TeamDetail,
+  type TeamActivity,
   type TeamPost,
   type TeamSummary,
   type BackendTaskClient,
@@ -505,6 +507,9 @@ export class HttpBackendClient implements BackendTaskClient {
       ...HttpBackendClient.toTeamSummary(raw),
       posts: posts.map((p) => HttpBackendClient.toTeamPost(p)),
       lastSeq: raw["last_seq"] ?? 0,
+      activity: (Array.isArray(raw["activity"]) ? raw["activity"] as Record<string, unknown>[] : [])
+        .map((e) => HttpBackendClient.toTeamActivity(e)),
+      lastAseq: raw["last_aseq"] ?? 0,
     });
   }
 
@@ -688,6 +693,14 @@ export class HttpBackendClient implements BackendTaskClient {
     };
   }
 
+  static toTeamActivity(e: Record<string, unknown>): Record<string, unknown> {
+    return {
+      teamId: e["team_id"], aseq: e["aseq"], at: e["at"], label: e["label"], kind: e["kind"],
+      activation: e["activation"] ?? null, causeSeq: e["cause_seq"] ?? null,
+      payload: e["payload"] ?? {},
+    };
+  }
+
   static toTeamPost(p: Record<string, unknown>): Record<string, unknown> {
     return {
       teamId: p["team_id"], seq: p["seq"], author: p["author"], kind: p["kind"],
@@ -712,7 +725,8 @@ export class HttpBackendClient implements BackendTaskClient {
       ...HttpBackendClient.toTeamCore(t),
       goal: t["goal"] ?? "",
       members: members.map((m) => ({ label: m["label"], agentId: m["agent_id"],
-                                     status: m["status"] ?? "" })),
+                                     status: m["status"] ?? "", name: m["name"] ?? "",
+                                     description: m["description"] ?? "" })),
       // Proposal keys (id/author/text) are camel-safe; stances are label → stance.
       openProposals: proposals,
       usage: t["usage"] ?? { requests: 0, budget: 0 },
@@ -722,12 +736,26 @@ export class HttpBackendClient implements BackendTaskClient {
 
   private static toTeamLive(t: Record<string, unknown>): Record<string, unknown> {
     const members = Array.isArray(t["members"]) ? t["members"] as Record<string, unknown>[] : [];
+    const latest = t["latest"] as Record<string, unknown> | null | undefined;
+    const counts = t["counts"] as Record<string, unknown> | undefined;
     return {
       ...HttpBackendClient.toTeamCore(t),
-      members: members.map((m) => ({ label: m["label"], agentId: m["agent_id"],
-                                     status: m["status"] ?? "" })),
+      members: members.map((m) => {
+        const last = m["last"] as Record<string, unknown> | null | undefined;
+        return {
+          label: m["label"], agentId: m["agent_id"], status: m["status"] ?? "",
+          last: last ? {
+            kind: last["kind"], at: last["at"], causeSeq: last["cause_seq"] ?? null,
+            by: last["by"] ?? null, status: last["status"] ?? null,
+            activation: last["activation"] ?? null,
+          } : null,
+        };
+      }),
+      latest: latest ?? null,
+      counts: counts ?? { posts: 0, proposals: [] },
     };
   }
+
 
   private static toAgentSummary(a: Record<string, unknown>): Record<string, unknown> {
     return {
@@ -1425,4 +1453,8 @@ export function parseWireChatMessage(raw: Record<string, unknown>): ChatMessage 
 
 export function parseWireTeamPost(raw: Record<string, unknown>): TeamPost {
   return TeamPostSchema.parse(HttpBackendClient.toTeamPost(raw));
+}
+
+export function parseWireTeamActivity(raw: Record<string, unknown>): TeamActivity {
+  return TeamActivitySchema.parse(HttpBackendClient.toTeamActivity(raw));
 }

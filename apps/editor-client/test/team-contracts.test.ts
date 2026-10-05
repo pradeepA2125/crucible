@@ -51,7 +51,7 @@ describe("team contracts", () => {
                 members: [{ label: "alice", agent_id: "agent-a", status: "running" }] }],
     }) });
     const state = await live.getThreadLiveState("t");
-    expect(state.teams?.[0]).toEqual({ teamId: "team-1", name: "auth", phase: "DELIBERATING",
+    expect(state.teams?.[0]).toMatchObject({ teamId: "team-1", name: "auth", phase: "DELIBERATING",
       round: 1, maxRounds: 3, pausedReason: null,
       members: [{ label: "alice", agentId: "agent-a", status: "running" }] });
     const none = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({

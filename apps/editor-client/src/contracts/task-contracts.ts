@@ -213,6 +213,7 @@ export type StreamEvent =
   | { type: "agent_message" | "notice" | "team_created"; payload: { message: Record<string, unknown> } }
   // Team channel (chat:{thread}:team:{team}); seq = the post's seq.
   | { type: "team_post"; payload: { post: Record<string, unknown> } }
+  | { type: "team_activity"; payload: { event: Record<string, unknown> } }
   | { type: "team_phase"; payload: { phase: string; round: number; paused_reason: string | null } }
   | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } }
   // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
@@ -310,6 +311,28 @@ export const TeamPostSchema = z.object({
 });
 export type TeamPost = z.infer<typeof TeamPostSchema>;
 
+// Spec 2026-10-05 §4: lifecycle facts for the journey view. Payload keys stay snake_case.
+export const TeamActivitySchema = z.object({
+  teamId: z.string(),
+  aseq: z.number(),
+  at: z.string(),
+  label: z.string(),
+  kind: z.string(),
+  activation: z.number().nullable(),
+  causeSeq: z.number().nullable(),
+  payload: z.record(z.unknown()).default({}),
+});
+export type TeamActivity = z.infer<typeof TeamActivitySchema>;
+
+const TeamMemberLastSchema = z.object({
+  kind: z.string(),
+  at: z.string(),
+  causeSeq: z.number().nullable(),
+  by: z.string().nullable(),
+  status: z.string().nullable(),
+  activation: z.number().nullable(),
+});
+
 export const TeamSummarySchema = z.object({
   teamId: z.string(),
   name: z.string(),
@@ -318,7 +341,10 @@ export const TeamSummarySchema = z.object({
   round: z.number(),
   maxRounds: z.number(),
   pausedReason: z.string().nullable(),
-  members: z.array(z.object({ label: z.string(), agentId: z.string(), status: z.string() })),
+  members: z.array(z.object({
+    label: z.string(), agentId: z.string(), status: z.string(),
+    name: z.string().default(""), description: z.string().default(""),
+  })),
   openProposals: z.array(z.object({
     id: z.string(), author: z.string(), text: z.string(),
     stances: z.record(z.string(), z.string()),
@@ -331,6 +357,8 @@ export type TeamSummary = z.infer<typeof TeamSummarySchema>;
 export const TeamDetailSchema = TeamSummarySchema.extend({
   posts: z.array(TeamPostSchema),
   lastSeq: z.number(),
+  activity: z.array(TeamActivitySchema).default([]),
+  lastAseq: z.number().default(0),
 });
 export type TeamDetail = z.infer<typeof TeamDetailSchema>;
 
@@ -342,7 +370,19 @@ export const TeamLiveSchema = z.object({
   round: z.number(),
   maxRounds: z.number(),
   pausedReason: z.string().nullable(),
-  members: z.array(z.object({ label: z.string(), agentId: z.string(), status: z.string() })),
+  members: z.array(z.object({
+    label: z.string(), agentId: z.string(), status: z.string(),
+    last: TeamMemberLastSchema.nullable().default(null),
+  })),
+  latest: z.object({
+    kind: z.enum(["post", "activity"]), label: z.string(), text: z.string(), at: z.string(),
+    event: z.string().optional(), status: z.string().nullable().optional(),
+  }).nullable().default(null),
+  counts: z.object({
+    posts: z.number(),
+    proposals: z.array(z.object({ id: z.string(), agree: z.number(), object: z.number(),
+                                  pending: z.number() })),
+  }).default({ posts: 0, proposals: [] }),
 });
 export type TeamLive = z.infer<typeof TeamLiveSchema>;
 
