@@ -4,7 +4,6 @@
 // in installer.ts / backend-process.ts — this file is wiring.
 import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
@@ -12,9 +11,12 @@ import * as vscode from "vscode";
 import { extractArchive } from "./archive.js";
 import {
   BackendProcess,
+  StdoutLines,
   type BackendSettings,
+  type ExecOutcome,
   type ProcessDeps,
 } from "./backend-process.js";
+import { readBackendToken } from "./backend-token.js";
 import {
   RuntimeInstaller,
   type ComponentProgress,
@@ -49,15 +51,20 @@ const SETTING_ENV_MAP: Record<string, string> = {
 const MAX_RESTART_ATTEMPTS = 3;
 const RESTART_RESET_MS = 5 * 60_000;
 
-function pickFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, () => {
-      const address = server.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      server.close(() => (port ? resolve(port) : reject(new Error("no free port"))));
-    });
+function execWithTimeout(cmd: string, args: string[], timeoutMs: number): Promise<ExecOutcome> {
+  return new Promise((resolve) => {
+    // execFile's `timeout` sends SIGTERM at expiry; killSignal makes it SIGKILL, since an
+    // old indexer treats --version as "start watching" and may ignore SIGTERM.
+    execFile(cmd, args, { timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => {
+        const e = err as (NodeJS.ErrnoException & { killed?: boolean; code?: number | string }) | null;
+        resolve({
+          code: e ? (typeof e.code === "number" ? e.code : null) : 0,
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr ?? ""),
+          timedOut: Boolean(e?.killed),
+        });
+      });
   });
 }
 
@@ -436,32 +443,47 @@ export class RuntimeManager {
     return {
       runtimeDir: this.runtimeDir,
       spawn: (cmd, args, opts) => {
-        const child = spawn(cmd, args, {
-          env: opts.env,
-          cwd: opts.cwd,
-          stdio: ["ignore", "pipe", "pipe"],
+        const child = spawn(cmd, args, { env: opts.env, cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
+        const lines = new StdoutLines();
+        const exited = new Promise<number | null>((resolve) => {
+          child.once("exit", (code) => resolve(code));
+          child.once("error", () => resolve(null)); // spawn failure (ENOENT…)
         });
-        child.stdout?.on("data", (chunk: Buffer) =>
-          this.output.append(chunk.toString()));
-        child.stderr?.on("data", (chunk: Buffer) =>
-          this.output.append(chunk.toString()));
+        child.stdout?.on("data", (chunk: Buffer) => {
+          const text = chunk.toString();
+          this.output.append(text);
+          lines.push(text);
+        });
+        child.stderr?.on("data", (chunk: Buffer) => this.output.append(chunk.toString()));
         return {
           pid: child.pid ?? -1,
-          kill: () => child.kill(),
-          onExit: (cb) => child.on("exit", (code) => cb(code)),
+          kill: (sig) => { child.kill(sig); },
+          onExit: (cb) => { void exited.then(cb); },
+          onStdoutLine: (cb) => lines.subscribe(cb),
+          exited,
         };
       },
       fetchJson: async (url, init) => {
-        const res = await fetch(url, {
-          ...(init?.method ? { method: init.method } : {}),
-          ...(init?.body
-            ? { body: init.body, headers: { "content-type": "application/json" } }
-            : {}),
-        });
+        const token = readBackendToken(Number(new URL(url).port));
+        const headers: Record<string, string> = {};
+        if (init?.body) headers["content-type"] = "application/json";
+        if (token) headers.authorization = `Bearer ${token}`;
+        const res = await fetch(url, { ...(init?.method ? { method: init.method } : {}),
+          ...(init?.body ? { body: init.body } : {}), headers, redirect: "manual" });
         if (!res.ok) throw new Error(`request failed (${res.status}) for ${url}`);
         return res.json();
       },
-      pickPort: pickFreePort,
+      fetchRaw: async (url, init) => {
+        const res = await fetch(url, { signal: init.signal, redirect: "manual" });
+        return { status: res.status, body: await res.text() };
+      },
+      readToken: (port) => readBackendToken(port),
+      processInfo: async () => null, // Task 11 replaces this with readProcessInfo
+      signal: (pid, sig) => { try { process.kill(pid, sig); } catch { /* gone */ } },
+      exec: (cmd, args, timeoutMs) => execWithTimeout(cmd, args, timeoutMs),
+      now: () => Date.now(),
+      // exactOptionalPropertyTypes: omit the key on Windows rather than pass undefined.
+      ...(process.getuid ? { uid: process.getuid() } : {}),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       isPidAlive: (pid) => {
         try {

@@ -10,6 +10,7 @@ import {
 } from "./jdtls.js";
 import { binPath, venvPython } from "./installer.js";
 import { platformKey, type PlatformKey } from "./manifest.js";
+import { probeHealth, type ProbeDeps } from "./probe-health.js";
 
 export interface BackendSettings {
   backend: string;                     // "gemini" | "openai" | ... (never "scripted")
@@ -22,18 +23,32 @@ export interface BackendSettings {
 }
 export interface ChildHandle {
   pid: number;
-  kill(): void;
+  kill(signal?: NodeJS.Signals): void;
   onExit(cb: (code: number | null) => void): void;
+  /** Complete stdout lines; lines printed before the first subscriber are replayed. */
+  onStdoutLine(cb: (line: string) => void): void;
+  /** Resolves when the child exits — even if it exited before anyone asked. */
+  exited: Promise<number | null>;
 }
+export interface ExecOutcome { code: number | null; stdout: string; stderr: string; timedOut: boolean }
+export interface ProcessInfo { uid: number; command: string; startedAtSec: number }
 export interface ProcessDeps {
   runtimeDir: string;
   spawn(cmd: string, args: string[], opts: { env: Record<string, string>; cwd?: string }): ChildHandle;
-  fetchJson(url: string, init?: { method?: string; body?: string }): Promise<unknown>; // throws on non-2xx
-  pickPort(): Promise<number>;
+  /** Throws on non-2xx; attaches the bearer token for the URL's port. */
+  fetchJson(url: string, init?: { method?: string; body?: string }): Promise<unknown>;
+  fetchRaw(url: string, init: { signal: AbortSignal }): Promise<{ status: number; body: string }>;
+  readToken(port: number): string | undefined;
+  processInfo(pid: number): Promise<ProcessInfo | null>;
+  signal(pid: number, sig: NodeJS.Signals): void;
+  /** Mandatory timeout: the process is killed when it expires. */
+  exec(cmd: string, args: string[], timeoutMs: number): Promise<ExecOutcome>;
+  now(): number;
   sleep(ms: number): Promise<void>;
   isPidAlive(pid: number): boolean;
   log(line: string): void;
   platform?: PlatformKey;
+  uid?: number;
 }
 
 // Same table as agentd/providers/factory.py::MODEL_ENV_VAR.
@@ -46,17 +61,72 @@ export const MODEL_ENV_VAR: Record<string, string> = {
 };
 
 const HEALTH_ATTEMPTS = 60;
+export const HANDSHAKE_TIMEOUT_MS = 10_000;
+const HANDSHAKE_RE = /^CRUCIBLE_SERVE (\{.*\})\s*$/;
+
+export class RuntimeUpdateRequiredError extends Error {
+  constructor(readonly component: "agentd" | "indexer" | "backend", detail: string) {
+    super(`Crucible runtime update required (${component}): ${detail}`);
+    this.name = "RuntimeUpdateRequiredError";
+  }
+}
+
+export class StdoutLines {
+  private partial = "";
+  private readonly buffered: string[] = [];
+  private subscriber: ((line: string) => void) | null = null;
+
+  push(chunk: string): void {
+    const parts = (this.partial + chunk).split("\n");
+    this.partial = parts.pop() ?? "";
+    for (const line of parts) this.emit(line.replace(/\r$/, ""));
+  }
+
+  subscribe(cb: (line: string) => void): void {
+    this.subscriber = cb;
+    for (const line of this.buffered.splice(0)) cb(line);
+  }
+
+  private emit(line: string): void {
+    if (this.subscriber) this.subscriber(line);
+    else this.buffered.push(line);
+  }
+}
+
+export function parseHandshake(line: string): { pid: number; port: number } | null {
+  const json = HANDSHAKE_RE.exec(line)?.[1];
+  if (json === undefined) return null;
+  try {
+    const raw = JSON.parse(json) as { pid?: unknown; port?: unknown };
+    return Number.isInteger(raw.pid) && Number.isInteger(raw.port)
+      ? { pid: raw.pid as number, port: raw.port as number }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function finalSpawnEnv(
+  ...parts: Array<Record<string, string | undefined>>
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const part of parts) {
+    for (const [k, v] of Object.entries(part)) if (v !== undefined) merged[k] = v;
+  }
+  // Spec §3.6: a managed spawn never runs with the token check off, whoever set it.
+  delete merged.CRUCIBLE_AUTH_DISABLED;
+  return merged;
+}
 const INDEX_WARM_ATTEMPTS = 120;
 
 export function buildBackendEnv(
-  workspace: string, settings: BackendSettings, runtimeDir: string, port: number,
+  workspace: string, settings: BackendSettings, runtimeDir: string,
   platform: PlatformKey = platformKey(),
 ): Record<string, string> {
   const agentdDir = join(workspace, ".crucible/state");
   const built: Record<string, string> = {
     CRUCIBLE_REASONING_BACKEND: settings.backend,
     CRUCIBLE_WORKSPACE_PATH: workspace,
-    CRUCIBLE_PORT: String(port),
     CRUCIBLE_DB_PATH: join(agentdDir, "agentd.sqlite3"),
     CRUCIBLE_CHAT_DB_PATH: join(agentdDir, "chat.sqlite3"),
     CRUCIBLE_SHADOW_ROOT: join(agentdDir, "shadows"),
@@ -120,6 +190,7 @@ export class BackendProcess {
   private backend: ChildHandle | undefined;
   private watcher: ChildHandle | undefined;
   private _port: number | undefined;
+  private lastChildPid: number | undefined;
 
   constructor(private readonly deps: ProcessDeps) {
     this.platform = deps.platform ?? platformKey();
@@ -138,7 +209,8 @@ export class BackendProcess {
   ): Promise<{ port: number; reused: boolean }> {
     // 1. Reuse a live locked backend (a managed spawn already has a watcher).
     const lock = readLock(workspace);
-    if (lock && this.deps.isPidAlive(lock.pid) && await this.healthy(lock.port)) {
+    if (lock && (await probeHealth(
+      lock.port, this.probeDeps(), { pid: lock.pid, workspace })) === "authed") {
       this._port = lock.port;
       this.deps.log(`[runtime] reusing live backend pid=${lock.pid} port=${lock.port}`);
       return { port: lock.port, reused: true };
@@ -148,23 +220,37 @@ export class BackendProcess {
       this.deps.log(`[runtime] reaped stale lock (pid=${lock.pid})`);
     }
 
-    // 2. Spawn agentd from the managed venv (no --reload — that's dev-script only).
-    const port = await this.deps.pickPort();
-    const env = {
-      ...process.env,
-      ...buildBackendEnv(workspace, settings, this.deps.runtimeDir, port, this.platform),
-    } as Record<string, string>;
-    this.backend = this.deps.spawn(
+    // 2. Spawn agentd.serve on any free port; it binds first, then reports the port.
+    const env = finalSpawnEnv(
+      process.env as Record<string, string | undefined>,
+      buildBackendEnv(workspace, settings, this.deps.runtimeDir, this.platform),
+    );
+    const child = this.deps.spawn(
       venvPython(this.deps.runtimeDir, this.platform),
-      ["-m", "uvicorn", "agentd.main:app", "--port", String(port)],
+      ["-m", "agentd.serve", "--port", "0", "--workspace-lock", workspace],
       { env, cwd: workspace },
     );
+    this.backend = child;
+    this.lastChildPid = child.pid;
+    let handshake: { pid: number; port: number };
+    try {
+      handshake = await this.waitForHandshake(child);
+    } catch (err) {
+      await this.stop();
+      throw err;
+    }
+    const port = handshake.port;
     this._port = port;
 
-    // 3. Health poll.
+    // 3. Health: the proof must name this child's pid and this workspace.
     let up = false;
     for (let i = 0; i < HEALTH_ATTEMPTS; i++) {
-      if (await this.healthy(port)) { up = true; break; }
+      const result = await probeHealth(port, this.probeDeps(), { pid: handshake.pid, workspace });
+      if (result === "authed") { up = true; break; }
+      if (result === "preauth") {
+        await this.stop();
+        throw new RuntimeUpdateRequiredError("backend", "the backend answered without a token proof");
+      }
       await this.deps.sleep(1000);
     }
     if (!up) {
@@ -174,13 +260,13 @@ export class BackendProcess {
 
     // 4. Pre-warm the index (non-fatal — the watcher keeps it fresh anyway).
     try {
-      await this.deps.fetchJson(`http://localhost:${port}/v1/index/build`, {
+      await this.deps.fetchJson(`http://127.0.0.1:${port}/v1/index/build`, {
         method: "POST",
         body: JSON.stringify({ workspace_path: workspace }),
       });
       for (let i = 0; i < INDEX_WARM_ATTEMPTS; i++) {
         const status = await this.deps.fetchJson(
-          `http://localhost:${port}/v1/index/status`) as { building?: boolean };
+          `http://127.0.0.1:${port}/v1/index/status`) as { building?: boolean };
         if (status.building === false) break;
         await this.deps.sleep(1000);
       }
@@ -219,9 +305,8 @@ export class BackendProcess {
     const rsCmd = existsSync(rustAnalyzerBin) ? rustAnalyzerBin : "rust-analyzer";
     const goCmd = existsSync(goplsBin) ? goplsBin : "gopls";
     const javaCmd = this.buildJavaLspCommand(workspace);
-    const env = {
-      ...process.env,
-      CRUCIBLE_BACKEND_URL: `http://localhost:${port}`,
+    const env = finalSpawnEnv(process.env as Record<string, string | undefined>, {
+      CRUCIBLE_BACKEND_URL: `http://127.0.0.1:${port}`,
       CRUCIBLE_LSP_ENABLED: lspInstalled ? "true" : "false",
       CRUCIBLE_LSP_RS_CMD: rsCmd,
       CRUCIBLE_LSP_GO_CMD: goCmd,
@@ -243,7 +328,7 @@ export class BackendProcess {
             CRUCIBLE_LSP_TS_CMD: `${lspBin("typescript-language-server")} --stdio`,
           }
         : {}),
-    } as Record<string, string>;
+    });
     this.watcher = this.deps.spawn(indexer, [
       "index",
       "--workspace", workspace,
@@ -276,18 +361,29 @@ export class BackendProcess {
   async stop(): Promise<void> {
     // Watcher first so it doesn't observe the backend vanishing mid-write.
     try { this.watcher?.kill(); } catch { /* already dead */ }
-    try { this.backend?.kill(); } catch { /* already dead */ }
+    try { this.backend?.kill("SIGTERM"); } catch { /* already dead */ }
     this.watcher = undefined;
     this.backend = undefined;
     this._port = undefined;
   }
 
-  private async healthy(port: number): Promise<boolean> {
-    try {
-      await this.deps.fetchJson(`http://localhost:${port}/health`);
-      return true;
-    } catch {
-      return false;
-    }
+  private probeDeps(): ProbeDeps {
+    return { fetchRaw: (url, init) => this.deps.fetchRaw(url, init),
+             readToken: (port) => this.deps.readToken(port) };
+  }
+
+  private waitForHandshake(child: ChildHandle): Promise<{ pid: number; port: number }> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
+      child.onStdoutLine((line) => {
+        const hs = parseHandshake(line);
+        if (hs) settle(() => resolve(hs));
+      });
+      void child.exited.then((code) => settle(() => reject(new Error(
+        `backend exited (code=${code}) before it started — see the Crucible output`))));
+      void this.deps.sleep(HANDSHAKE_TIMEOUT_MS).then(() => settle(() => reject(new Error(
+        "backend printed no CRUCIBLE_SERVE line within 10s — see the Crucible output"))));
+    });
   }
 }
