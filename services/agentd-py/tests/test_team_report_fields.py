@@ -103,3 +103,19 @@ def test_round_headers(tmp_path) -> None:
     store.update_team(tid, round=1)
     text, _top = svc.render_delta(tid, "bob")
     assert text.startswith("Round 1 of 3: the main agent proposed P1.")
+
+
+def test_a_report_does_not_repeat_a_stance_posted_this_round(tmp_path) -> None:
+    svc, store, tid = _svc(tmp_path)
+    svc.object_(tid, "alice", "P1", "misses a.py", {"files": ["a.py"], "line": 1})
+    check = ReportFields(svc, tid, "alice", ActivationCounters())
+    again = {"proposal_id": "P1", "stance": "object", "reason": "misses a.py",
+             "evidence": {"files": ["a.py"], "line": 1}}
+    verdict = check(_report(stances=[again]), False)
+    assert verdict.message is None
+    assert [p.kind for p in store.posts(tid)] == ["proposal", "object"]   # no second copy
+    # A changed stance still posts.
+    check2 = ReportFields(svc, tid, "alice", ActivationCounters())
+    changed = _report(stances=[{"proposal_id": "P1", "stance": "agree"}])
+    assert check2(changed, False).message is None
+    assert [p.kind for p in store.posts(tid)] == ["proposal", "object", "agree"]

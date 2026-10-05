@@ -28,11 +28,24 @@ class ReportFields:
         self._redirected = False
         self._last_refused: str | None = None
 
+    def _stated_this_round(self) -> dict[int, str]:
+        """This member's latest stance per proposal, if it was posted in the current round."""
+        team = self._svc._store.get_team(self._team_id)
+        out: dict[int, str] = {}
+        if team is None:
+            return out
+        for post in self._svc._store.posts(self._team_id):
+            if (post.author == self._label and post.kind in ("agree", "object") and post.ref_id
+                    and post.round == team.round):
+                out[parse_proposal_id(post.ref_id)] = post.kind
+        return out
+
     def __call__(self, resp: dict[str, object], final: bool) -> ReportVerdict:
         errors: list[str] = []
         prepared: list[PreparedPost] = []
         stated: set[int] = set()
         raw = resp.get("stances") or []
+        repeated = self._stated_this_round()
         if not isinstance(raw, list):
             errors.append("stances must be a list")
             raw = []
@@ -41,6 +54,12 @@ class ReportFields:
                 if not isinstance(entry, dict):
                     raise TeamInputError("must be an object")
                 stance = entry.get("stance")
+                seq = parse_proposal_id(entry.get("proposal_id"))
+                if repeated.get(seq) == stance:
+                    # Already said this round through the tool: a second copy adds nothing
+                    # to the board or the tally (found live, 2026-10-06).
+                    stated.add(seq)
+                    continue
                 if stance == "agree":
                     p = self._svc.prepare_agree(self._team_id, self._label,
                                                 entry.get("proposal_id"), entry.get("note"))
