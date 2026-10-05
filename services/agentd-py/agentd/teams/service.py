@@ -42,6 +42,17 @@ class AgentInfo:
     status: str
 
 
+@dataclass(frozen=True)
+class PreparedPost:
+    """A validated stance or proposal not yet on the board: a report's fields are all
+    checked before any is posted (spec v2 §8.3)."""
+    kind: str
+    text: str
+    ref_id: str | None
+    payload: dict[str, Any]
+    closes: tuple[int, ...] = ()
+
+
 class TeamService:
     def __init__(
         self, store: TeamStore, workspace: Path, agent_info: Callable[[str], AgentInfo],
@@ -145,16 +156,17 @@ class TeamService:
             team_id, author=author, kind="post", text=body, recipient=target,
             mentions=[target]))
 
-    def propose(self, team_id: str, author: str, text: object, assignments: object,
-                shared_files: object = None, supersedes: object = None,
-                counters: ActivationCounters | None = None) -> TeamPost:
+    def prepare_propose(self, team_id: str, author: str, text: object, assignments: object,
+                        shared_files: object = None, supersedes: object = None, *,
+                        also_stated: frozenset[int] = frozenset()) -> PreparedPost:
         team = self._team(team_id)
         self._require_phase(team, ("DELIBERATING",), "team_propose")
         body = check_text(text, "proposal")
         roster = self._roster(team_id)
+        stances = self.stances(team_id)
         owed = [p.proposal_id for p in self.open_proposals(team_id)
                 if p.author != author and (p.round or 0) < team.round
-                and author not in self.stances(team_id).get(p.seq, {})]
+                and author not in stances.get(p.seq, {}) and p.seq not in also_stated]
         if owed:
             raise TeamInputError(
                 f"State your stance on {', '.join(owed)} first (team_agree, with a note for "
@@ -181,29 +193,25 @@ class TeamService:
             if not isinstance(supersedes, list):
                 raise TeamInputError("supersedes must be a list of proposal ids")
             closes = [self._open_proposal(team_id, raw) for raw in supersedes]
-        self._count(counters, [])
-        post = self._store.append_post(
-            team_id, author=author, kind="proposal", text=body, round=team.round,
+        return PreparedPost(
+            kind="proposal", text=body, ref_id=None,
             payload={"assignments": parts, "shared_files": shared,
-                     "supersedes": [p.proposal_id for p in closes]})
-        for old in closes:
-            self._store.close_proposal(team_id, old.seq, "superseded")
-        return self._emit(team, post)
+                     "supersedes": [p.proposal_id for p in closes]},
+            closes=tuple(p.seq for p in closes))
 
-    def agree(self, team_id: str, author: str, proposal_id: object,
-              note: object = None) -> TeamPost:
+    def prepare_agree(self, team_id: str, author: str, proposal_id: object,
+                      note: object = None) -> PreparedPost:
         team = self._team(team_id)
         proposal = self._open_proposal(team_id, proposal_id)
         self._stance_phase(team, proposal, "team_agree")
         if proposal.author == author:
             raise TeamInputError("your own proposal already counts as your agreement")
         payload = {"note": check_text(note, "note")} if note not in (None, "") else {}
-        return self._emit(team, self._store.append_post(
-            team_id, author=author, kind="agree", text=str(payload.get("note", "")),
-            ref_id=proposal.proposal_id, round=team.round, payload=payload))
+        return PreparedPost(kind="agree", text=str(payload.get("note", "")),
+                            ref_id=proposal.proposal_id, payload=payload)
 
-    def object_(self, team_id: str, author: str, proposal_id: object, reason: object,
-                evidence: object) -> TeamPost:
+    def prepare_object(self, team_id: str, author: str, proposal_id: object, reason: object,
+                       evidence: object) -> PreparedPost:
         team = self._team(team_id)
         proposal = self._open_proposal(team_id, proposal_id)
         self._stance_phase(team, proposal, "team_object")
@@ -213,9 +221,45 @@ class TeamService:
         checked = validate_evidence(
             evidence, workspace=self._workspace, assignment_files=assigned,
             post_exists=lambda seq: self._store.get_post(team_id, seq) is not None)
-        return self._emit(team, self._store.append_post(
-            team_id, author=author, kind="object", text=body, ref_id=proposal.proposal_id,
-            round=team.round, payload={"evidence": checked}))
+        return PreparedPost(kind="object", text=body, ref_id=proposal.proposal_id,
+                            payload={"evidence": checked})
+
+    def commit(self, team_id: str, author: str, prepared: PreparedPost,
+               counters: ActivationCounters | None = None, *, count: bool = False) -> TeamPost:
+        team = self._team(team_id)
+        if count:
+            self._count(counters, [])
+        post = self._store.append_post(
+            team_id, author=author, kind=prepared.kind, text=prepared.text,
+            ref_id=prepared.ref_id, round=team.round, payload=prepared.payload)
+        for seq in prepared.closes:
+            self._store.close_proposal(team_id, seq, "superseded")
+        return self._emit(team, post)
+
+    def propose(self, team_id: str, author: str, text: object, assignments: object,
+                shared_files: object = None, supersedes: object = None,
+                counters: ActivationCounters | None = None) -> TeamPost:
+        return self.commit(team_id, author, self.prepare_propose(
+            team_id, author, text, assignments, shared_files, supersedes), counters, count=True)
+
+    def agree(self, team_id: str, author: str, proposal_id: object,
+              note: object = None) -> TeamPost:
+        return self.commit(team_id, author, self.prepare_agree(team_id, author, proposal_id, note))
+
+    def object_(self, team_id: str, author: str, proposal_id: object, reason: object,
+                evidence: object) -> TeamPost:
+        return self.commit(team_id, author, self.prepare_object(
+            team_id, author, proposal_id, reason, evidence))
+
+    def expected_stances(self, team_id: str, label: str) -> list[str]:
+        """Open proposals from earlier rounds that `label` has no stance on (spec v2 §8.3)."""
+        team = self._store.get_team(team_id)
+        if team is None or team.phase != "DELIBERATING":
+            return []
+        stances = self.stances(team_id)
+        return [p.proposal_id for p in self.open_proposals(team_id)
+                if p.author != label and (p.round or 0) < team.round
+                and label not in stances.get(p.seq, {})]
 
     def withdraw(self, team_id: str, author: str, proposal_id: object) -> TeamPost:
         team = self._team(team_id)
@@ -232,11 +276,12 @@ class TeamService:
     def read(self, team_id: str, viewer: str, since_seq: int = 0) -> list[TeamPost]:
         return self._store.posts(team_id, since_seq=since_seq, viewer=viewer)
 
-    def system_post(self, team_id: str, text: str) -> TeamPost:
+    def system_post(self, team_id: str, text: str,
+                    payload: dict[str, Any] | None = None) -> TeamPost:
         team = self._store.get_team(team_id)
         assert team is not None
         return self._emit(team, self._store.append_post(
-            team_id, author="system", kind="system", text=text))
+            team_id, author="system", kind="system", text=text, payload=payload))
 
     # ── what members and the main agent read ────────────────────────────────
 
@@ -300,22 +345,40 @@ class TeamService:
         return frame(self._who(team_id, post.author), kind, body, seq=post.seq)
 
     def _header(self, team: TeamRecord, first: bool) -> str:
-        lines = [f"Team {team.name!r} — phase {team.phase}, round {team.round} of "
-                 f"{team.max_rounds}."]
+        n, total = team.round, team.max_rounds
+        kickoff = self._store.get_post(team.team_id, 1)
+        if team.phase != "DELIBERATING":
+            lead = f"Team {team.name!r} — phase {team.phase}."
+        elif n == 1 and kickoff is not None and kickoff.kind == "proposal":
+            lead = (f"Round 1 of {total}: the main agent proposed {kickoff.proposal_id}. "
+                    "Check the claims relevant to your role, then state your stance.")
+        elif n == 1:
+            lead = (f"Round 1 of {total}: the main agent asked for proposals. Check the code "
+                    "your role covers, then propose an approach (team_propose, or the "
+                    "proposal field of your report).")
+        else:
+            lead = (f"Round {n} of {total}: others have posted their views. Check the claims "
+                    "relevant to your role, then state your stance on each open proposal.")
+        lines = [lead]
         if first:
             lines.append(f"Goal: {team.goal}")
-        lines.append("Check the claims relevant to your role, then state your stance on each "
-                     "open proposal (team_agree with a note for small changes, or team_object "
-                     "with evidence). Post what others need to know; report when you are done.")
+        lines.append("What you post this round reaches the others at the next round. Report "
+                     "when your part of this round is done; your stances can ride on the "
+                     "report.")
         return "\n".join(lines)
 
-    def render_delta_posts(self, team_id: str, label: str) -> tuple[str, int, list[TeamPost]]:
+    def render_delta_posts(
+        self, team_id: str, label: str, until_seq: int | None = None,
+    ) -> tuple[str, int, list[TeamPost]]:
         """The member's inbox delta, its top seq, and the posts by others it covers — what
-        the member is 'handed' (the took_up / picked_up record, spec 2026-10-05 §4.2)."""
+        the member is 'handed' (the took_up / picked_up record, spec 2026-10-05 §4.2).
+        `until_seq` is the round's cutoff: a later post waits for the next round (E5)."""
         team = self._store.get_team(team_id)
         member = self._store.member(team_id, label)
         assert team is not None and member is not None
         visible = self._store.posts(team_id, since_seq=member.delivered_seq, viewer=label)
+        if until_seq is not None:
+            visible = [p for p in visible if p.seq <= until_seq]
         top = max((p.seq for p in visible), default=member.delivered_seq)
         others = [p for p in visible if p.author != label]
         body = "\n\n".join(self._render_post(team_id, p, label) for p in others)
