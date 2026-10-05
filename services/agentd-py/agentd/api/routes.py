@@ -266,6 +266,7 @@ def build_router(
             is_skills_enabled,
             is_subagents_enabled,
             is_task_subsystem_enabled,
+            is_teams_enabled,
         )
         from agentd.exec_sessions.config import is_exec_sessions_enabled
 
@@ -277,6 +278,7 @@ def build_router(
             "mcp_enabled": is_mcp_enabled(),
             "exec_sessions_enabled": is_exec_sessions_enabled(),
             "subagents_enabled": is_subagents_enabled(),
+            "teams_enabled": is_teams_enabled() and is_subagents_enabled(),
             "provider": (
                 {
                     "backend": provider_runtime.backend,  # type: ignore[attr-defined]

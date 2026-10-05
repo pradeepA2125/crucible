@@ -18,6 +18,7 @@ from agentd.chat.models import (
     PendingGate,
 )
 from agentd.providers.usage import Usage
+from agentd.teams.store import TeamStore
 
 # v2 columns (spec §3.1), added with the same ALTER-on-open pattern as chat_threads.
 _AGENT_V2_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -50,6 +51,8 @@ class ChatThreadStore:
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._migrate()
+        # Team tables (sub-agents v2 §7.4) share this connection.
+        self.teams = TeamStore(self._conn)
 
     def _migrate(self) -> None:
         self._conn.executescript("""
