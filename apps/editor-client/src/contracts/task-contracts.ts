@@ -211,6 +211,9 @@ export type StreamEvent =
   | { type: "agent_dispatch"; payload: { message: Record<string, unknown> } }
   // Durable messages carried live (spec §6): a resume, a notice-turn marker, a team.
   | { type: "agent_message" | "notice" | "team_created"; payload: { message: Record<string, unknown> } }
+  // Team channel (chat:{thread}:team:{team}); seq = the post's seq.
+  | { type: "team_post"; payload: { post: Record<string, unknown> } }
+  | { type: "team_phase"; payload: { phase: string; round: number; paused_reason: string | null } }
   | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } }
   // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
   // reasoning, then `output` climbs — the transition that otherwise looks like
@@ -288,6 +291,60 @@ export const AgentDetailSchema = AgentSummarySchema.extend({
   lastSeq: z.number(),
 });
 export type AgentDetail = z.infer<typeof AgentDetailSchema>;
+
+// Agent teams (spec v2 §7, §9). A post's author and kind come from columns, never from
+// its text — the UI renders them from these fields only (§3.10).
+export const TeamPostSchema = z.object({
+  teamId: z.string(),
+  seq: z.number(),
+  author: z.string(),
+  kind: z.string(),
+  recipient: z.string().nullable(),
+  text: z.string(),
+  mentions: z.array(z.string()).default([]),
+  refId: z.string().nullable(),
+  round: z.number().nullable(),
+  payload: z.record(z.unknown()).default({}),
+  closed: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type TeamPost = z.infer<typeof TeamPostSchema>;
+
+export const TeamSummarySchema = z.object({
+  teamId: z.string(),
+  name: z.string(),
+  goal: z.string(),
+  phase: z.string(),
+  round: z.number(),
+  maxRounds: z.number(),
+  pausedReason: z.string().nullable(),
+  members: z.array(z.object({ label: z.string(), agentId: z.string(), status: z.string() })),
+  openProposals: z.array(z.object({
+    id: z.string(), author: z.string(), text: z.string(),
+    stances: z.record(z.string(), z.string()),
+  })),
+  usage: z.object({ requests: z.number(), budget: z.number() }),
+  createdAt: z.string(),
+});
+export type TeamSummary = z.infer<typeof TeamSummarySchema>;
+
+export const TeamDetailSchema = TeamSummarySchema.extend({
+  posts: z.array(TeamPostSchema),
+  lastSeq: z.number(),
+});
+export type TeamDetail = z.infer<typeof TeamDetailSchema>;
+
+// /live carries only slow-changing team fields (the dedup signature must not churn).
+export const TeamLiveSchema = z.object({
+  teamId: z.string(),
+  name: z.string(),
+  phase: z.string(),
+  round: z.number(),
+  maxRounds: z.number(),
+  pausedReason: z.string().nullable(),
+  members: z.array(z.object({ label: z.string(), agentId: z.string(), status: z.string() })),
+});
+export type TeamLive = z.infer<typeof TeamLiveSchema>;
 
 export const ChatThreadSummarySchema = z.object({
   threadId: z.string(),
@@ -424,6 +481,8 @@ export const ThreadLiveStateSchema = z.object({
   sessions: z.array(SessionSummarySchema).nullable().optional(),
   agents: z.array(AgentSummarySchema).nullable().optional(),
   agentsRunning: z.number().default(0),
+  // Live teams (spec v2 §9). Null when there are none.
+  teams: z.array(TeamLiveSchema).nullable().default(null),
   // A notice turn keeps the composer usable (spec §5.3).
   turnKind: z.enum(["user", "notice"]).nullable().default(null),
   // A change the host did not stream triggers a transcript reconcile (spec §6).
@@ -450,6 +509,7 @@ export const BackendConfigSchema = z.object({
   skillsEnabled: z.boolean(),
   mcpEnabled: z.boolean(),
   subagentsEnabled: z.boolean().default(false),
+  teamsEnabled: z.boolean().default(false),
   // Current reasoning provider (null when the backend runs scripted / pre-P4).
   // contextWindow is the window compaction is actually using right now — seeded
   // from CRUCIBLE_MEMORY_WINDOW_TOKENS at startup, overwritten by a settings save.
@@ -680,6 +740,10 @@ export interface BackendTaskClient {
   listAgents(threadId: string, turnId?: string): Promise<AgentSummary[]>;
   getAgent(threadId: string, agentId: string): Promise<AgentDetail>;
   stopAgent(threadId: string, agentId: string): Promise<{ ok: boolean }>;
+  // Agent teams (spec v2 §9).
+  listTeams(threadId: string): Promise<TeamSummary[]>;
+  getTeam(threadId: string, teamId: string): Promise<TeamDetail>;
+  disbandTeam(threadId: string, teamId: string): Promise<{ phase: string | null }>;
   // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used
   // to resume the live overlay for a controller turn after a webview reload (chat:{id}).
   streamChannel(channelId: string, signal?: AbortSignal): AsyncIterable<SequencedStreamEvent>;

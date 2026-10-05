@@ -43,8 +43,14 @@ import {
   type McpServerList,
   AgentDetailSchema,
   AgentSummarySchema,
+  TeamDetailSchema,
+  TeamPostSchema,
+  TeamSummarySchema,
   type AgentDetail,
   type AgentSummary,
+  type TeamDetail,
+  type TeamPost,
+  type TeamSummary,
   type BackendTaskClient,
   type ThreadLiveState,
   type PatchStreamEvent,
@@ -482,6 +488,34 @@ export class HttpBackendClient implements BackendTaskClient {
     ) as Record<string, unknown>;
     return { ok: raw["ok"] === true };
   }
+  async listTeams(threadId: string): Promise<TeamSummary[]> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/teams`
+    ) as Record<string, unknown>;
+    const teams = Array.isArray(raw["teams"]) ? raw["teams"] as Record<string, unknown>[] : [];
+    return teams.map((t) => TeamSummarySchema.parse(HttpBackendClient.toTeamSummary(t)));
+  }
+
+  async getTeam(threadId: string, teamId: string): Promise<TeamDetail> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/teams/${encodeURIComponent(teamId)}`
+    ) as Record<string, unknown>;
+    const posts = Array.isArray(raw["posts"]) ? raw["posts"] as Record<string, unknown>[] : [];
+    return TeamDetailSchema.parse({
+      ...HttpBackendClient.toTeamSummary(raw),
+      posts: posts.map((p) => HttpBackendClient.toTeamPost(p)),
+      lastSeq: raw["last_seq"] ?? 0,
+    });
+  }
+
+  async disbandTeam(threadId: string, teamId: string): Promise<{ phase: string | null }> {
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/teams/${encodeURIComponent(teamId)}/disband`,
+      { method: "POST", body: "{}" }
+    ) as Record<string, unknown>;
+    return { phase: typeof raw["phase"] === "string" ? raw["phase"] : null };
+  }
+
 
   // Subscribe-only SSE relay (no turn launch). Reuses the SSE line-parsing already
   // behind postModeDecision/streamPatch. Closes on `done`/`chat_done`.
@@ -654,6 +688,47 @@ export class HttpBackendClient implements BackendTaskClient {
     };
   }
 
+  static toTeamPost(p: Record<string, unknown>): Record<string, unknown> {
+    return {
+      teamId: p["team_id"], seq: p["seq"], author: p["author"], kind: p["kind"],
+      recipient: p["recipient"] ?? null, text: p["text"] ?? "", mentions: p["mentions"] ?? [],
+      refId: p["ref_id"] ?? null, round: p["round"] ?? null, payload: p["payload"] ?? {},
+      closed: p["closed"] ?? null, createdAt: p["created_at"],
+    };
+  }
+
+  private static toTeamCore(t: Record<string, unknown>): Record<string, unknown> {
+    return {
+      teamId: t["team_id"], name: t["name"], phase: t["phase"], round: t["round"],
+      maxRounds: t["max_rounds"], pausedReason: t["paused_reason"] ?? null,
+    };
+  }
+
+  private static toTeamSummary(t: Record<string, unknown>): Record<string, unknown> {
+    const members = Array.isArray(t["members"]) ? t["members"] as Record<string, unknown>[] : [];
+    const proposals = Array.isArray(t["open_proposals"])
+      ? t["open_proposals"] as Record<string, unknown>[] : [];
+    return {
+      ...HttpBackendClient.toTeamCore(t),
+      goal: t["goal"] ?? "",
+      members: members.map((m) => ({ label: m["label"], agentId: m["agent_id"],
+                                     status: m["status"] ?? "" })),
+      // Proposal keys (id/author/text) are camel-safe; stances are label → stance.
+      openProposals: proposals,
+      usage: t["usage"] ?? { requests: 0, budget: 0 },
+      createdAt: t["created_at"] ?? "",
+    };
+  }
+
+  private static toTeamLive(t: Record<string, unknown>): Record<string, unknown> {
+    const members = Array.isArray(t["members"]) ? t["members"] as Record<string, unknown>[] : [];
+    return {
+      ...HttpBackendClient.toTeamCore(t),
+      members: members.map((m) => ({ label: m["label"], agentId: m["agent_id"],
+                                     status: m["status"] ?? "" })),
+    };
+  }
+
   private static toAgentSummary(a: Record<string, unknown>): Record<string, unknown> {
     return {
       agentId: a["agent_id"], turnId: a["turn_id"] ?? undefined,
@@ -706,6 +781,9 @@ export class HttpBackendClient implements BackendTaskClient {
         ? (raw["agents"] as Record<string, unknown>[]).map((a) => HttpBackendClient.toAgentSummary(a))
         : null,
       agentsRunning: raw["agents_running"] ?? 0,
+      teams: Array.isArray(raw["teams"])
+        ? (raw["teams"] as Record<string, unknown>[]).map((t) => HttpBackendClient.toTeamLive(t))
+        : null,
       turnKind: raw["turn_kind"] ?? null,
       messageCount: raw["message_count"] ?? 0,
     });
@@ -727,6 +805,7 @@ export class HttpBackendClient implements BackendTaskClient {
       skillsEnabled: raw["skills_enabled"] ?? false,
       mcpEnabled: raw["mcp_enabled"] ?? false,
       subagentsEnabled: raw["subagents_enabled"] ?? false,
+      teamsEnabled: raw["teams_enabled"] ?? false,
       provider: HttpBackendClient.mapProvider(raw["provider"]),
     });
   }
@@ -1342,4 +1421,8 @@ function mapRecallTrace(t: Record<string, unknown>): Record<string, unknown> {
 /** A chat message as the backend serializes it (snake_case) → the contract shape. */
 export function parseWireChatMessage(raw: Record<string, unknown>): ChatMessage {
   return ChatMessageSchema.parse(HttpBackendClient.toChatMessage(raw));
+}
+
+export function parseWireTeamPost(raw: Record<string, unknown>): TeamPost {
+  return TeamPostSchema.parse(HttpBackendClient.toTeamPost(raw));
 }
