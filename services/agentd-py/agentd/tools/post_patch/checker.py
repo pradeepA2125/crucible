@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from agentd.child_env import child_env
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -46,6 +48,7 @@ async def run_subprocess(
             text=True,
             cwd=cwd,
             timeout=timeout,
+            env=child_env(),
         )
         return result.returncode, (result.stdout + result.stderr).strip()
     except FileNotFoundError:

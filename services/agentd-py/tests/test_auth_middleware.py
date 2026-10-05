@@ -15,6 +15,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from agentd.auth import (
     AuthStartupError,
@@ -89,7 +90,7 @@ def test_missing_token_401_names_no_value() -> None:
 
 def test_wrong_and_non_ascii_token_401() -> None:
     assert _client().get("/x", headers={"Authorization": "Bearer nope"}).status_code == 401
-    raw = {"Authorization": "Bearer ".encode() + "é".encode("utf-8") * 10}
+    raw = {"Authorization": b"Bearer " + "é".encode() * 10}
     assert _client().get("/x", headers=raw).status_code == 401
 
 
@@ -199,9 +200,10 @@ def test_websocket_closed() -> None:
         await websocket.accept()
 
     client = TestClient(app, base_url=BASE, client=LOOPBACK)
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect) as excinfo:
         with client.websocket_connect("/ws"):
             pass
+    assert excinfo.value.code == 1008
 
 
 def test_lifespan_passes(tmp_path: Path) -> None:

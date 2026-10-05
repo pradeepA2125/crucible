@@ -18,6 +18,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from agentd.chat.tool_events import ToolEventSource, trace_to_tool_events
+from agentd.child_env import child_env
 from agentd.domain.models import (
     AgentToolTrace,
     ApprovalOutcome,
@@ -3066,7 +3067,7 @@ class AgentOrchestrator:
         All existing directories are prepended so the project's binaries take priority
         over system PATH.
         """
-        env = os.environ.copy()
+        env = child_env()
         real = Path(real_workspace_path)
         candidates = [
             shadow_path / ".venv" / "bin",

@@ -6,6 +6,7 @@ import os
 from asyncio.subprocess import PIPE, STDOUT
 from pathlib import Path
 
+from agentd.child_env import child_env
 from agentd.tools._paths import resolve_workspace_bin
 from agentd.tools.registry import ToolOutput
 from agentd.tools.shell import _resolve_workspace_cwd
@@ -101,6 +102,7 @@ async def find_binary(*, name: str, real_workspace: Path) -> ToolOutput:
             "-name", name,
             "-maxdepth", "6",
             "-type", "f",
+            env=child_env(),
             stdout=PIPE,
             stderr=PIPE,
         )
@@ -130,6 +132,7 @@ async def _run_silent(command: str, *args: str) -> str | None:
     try:
         proc = await asyncio.create_subprocess_exec(
             command, *args,
+            env=child_env(),
             stdout=PIPE,
             stderr=PIPE,
         )
@@ -362,6 +365,7 @@ async def _run_capture(
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
+            env=child_env(),
             stdout=PIPE,
             stderr=STDOUT,
         )
@@ -464,7 +468,7 @@ async def setup_env(
         # Unreachable given allowlist, but defensive.
         return _structured_pm_missing(binary)
 
-    env = os.environ.copy()
+    env = child_env()
     cmd_parts = list(parts)
 
     # The install root is the REAL workspace path that corresponds to the agent-

@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agentd.child_env import child_env
+
 # TOML allows whitespace around the `=` between key and value, so any string-
 # matching on a build-backend line must tolerate both `build-backend="x"` and
 # `build-backend = "x"`. Pre-compiled here so _diagnose stays cheap.
@@ -154,6 +156,7 @@ class EcosystemProbe:
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "which", name,
+                    env=child_env(),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )

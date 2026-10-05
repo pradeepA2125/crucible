@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from agentd.child_env import child_env
 from agentd.domain.models import Diagnostic, ValidationResult
 from agentd.tools._paths import prepend_pythonpath, shadow_pythonpath_extras
 
@@ -304,6 +305,7 @@ class CommandValidator:
         process = await asyncio.create_subprocess_exec(
             *args,
             cwd=str(cwd),
+            env=child_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -329,7 +331,7 @@ class CommandValidator:
         # import the edited package under test, not an installed copy — same redirect the
         # agent's run_command applies (e.g. agentd run via --agentd-dir would otherwise
         # import the dev worktree and miss freshly-added symbols).
-        env = prepend_pythonpath(os.environ.copy(), shadow_pythonpath_extras(workspace_path))
+        env = prepend_pythonpath(child_env(), shadow_pythonpath_extras(workspace_path))
         process = await asyncio.create_subprocess_shell(
             command.command,
             cwd=str(workspace_path),

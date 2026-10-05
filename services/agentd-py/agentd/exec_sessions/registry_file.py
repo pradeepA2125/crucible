@@ -13,6 +13,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from agentd.child_env import child_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,7 +73,7 @@ class SessionRegistryFile:
         try:
             live_cmd = subprocess.run(
                 ["ps", "-o", "command=", "-p", str(pid)],
-                capture_output=True, text=True, timeout=5).stdout.strip()
+                capture_output=True, text=True, timeout=5, env=child_env()).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             return 0
         # Basename-prefix match, both directions: a venv `python3.13` symlink

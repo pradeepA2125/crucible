@@ -7,6 +7,7 @@ import shutil
 from asyncio.subprocess import PIPE
 from pathlib import Path
 
+from agentd.child_env import child_env
 from agentd.tools.registry import ToolOutput
 
 _MAX_MATCHES = 50
@@ -56,7 +57,8 @@ async def search_code(
     cmd += [pattern, str(shadow_root)]
 
     try:
-        proc = await asyncio.create_subprocess_exec(*cmd, stdout=PIPE, stderr=PIPE)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=PIPE, stderr=PIPE, env=child_env())
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
     except asyncio.TimeoutError:
         return ToolOutput(output="Error: search timed out after 15s", is_error=True)

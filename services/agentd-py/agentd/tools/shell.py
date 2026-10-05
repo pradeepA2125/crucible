@@ -8,6 +8,7 @@ import signal
 from asyncio.subprocess import PIPE, STDOUT
 from pathlib import Path
 
+from agentd.child_env import child_env
 from agentd.tools._paths import (
     prepend_pythonpath,
     resolve_workspace_bin,
@@ -142,7 +143,7 @@ async def run_command(
     # PYTHONPATH wins because Python's PathFinder is consulted before setuptools' appended
     # editable finder. See shadow_pythonpath_extras for the two redirects.
     env = prepend_pythonpath(
-        os.environ.copy(),
+        child_env(),
         shadow_pythonpath_extras(
             shadow_root,
             real_workspace_path,
@@ -154,7 +155,7 @@ async def run_command(
     # mirroring setup_env's install_root. CWD is the shadow, so without this `uv run`
     # would default to a shadow-local .venv — create an empty one missing the dev
     # extra and fail to spawn pytest. Also overrides any inherited VIRTUAL_ENV (the
-    # backend runs inside its own venv, which os.environ.copy() would otherwise leak).
+    # backend runs inside its own venv, which a plain os.environ copy would otherwise leak).
     _workspace_venv = real_workspace_path / (cwd or "") / ".venv"
     env["UV_PROJECT_ENVIRONMENT"] = str(_workspace_venv)
     env["VIRTUAL_ENV"] = str(_workspace_venv)

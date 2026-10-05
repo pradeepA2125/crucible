@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agentd.child_env import child_env
 from agentd.domain.models import (
     Diagnostic,
     PlanEvidenceFile,
@@ -316,6 +317,7 @@ class RetrievalArtifactClient:
                 text=True,
                 timeout=self._index_timeout_sec,
                 check=False,
+                env=child_env(),
             )
         except subprocess.TimeoutExpired:
             return [

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
+from agentd.child_env import child_env
 from agentd.exec_sessions.config import (
     buffer_bytes,
     clamp_yield_ms,
@@ -175,7 +175,7 @@ class SessionManager:
             if local is not None:
                 command = str(local)
         # 3. never leak the backend's own venv into the child.
-        env = os.environ.copy()
+        env = child_env()
         workspace_venv = self._workspace / (cwd or "") / ".venv"
         env["UV_PROJECT_ENVIRONMENT"] = str(workspace_venv)
         env["VIRTUAL_ENV"] = str(workspace_venv)
