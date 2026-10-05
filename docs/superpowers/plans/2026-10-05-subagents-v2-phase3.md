@@ -109,8 +109,9 @@ def _entry(report, name: str, kind: str):
 
 
 def test_parse_records_warnings(tmp_path: Path) -> None:
-    path = _put(tmp_path, "w", _md(
-        "w", "tools: Read, WebFetch, frobnicate\nmodel: sonnet\npermissionMode: yolo\nmaxTurns: 500\n"))
+    extra = ("tools: Read, WebFetch, frobnicate\nmodel: sonnet\n"
+             "permissionMode: yolo\nmaxTurns: 500\n")
+    path = _put(tmp_path, "w", _md("w", extra))
     warnings: list[str] = []
     d = parse_agent_file(path, warnings)
     assert d is not None
@@ -159,7 +160,8 @@ def test_trusted_file_overriding_a_builtin(tmp_path: Path) -> None:
     report = loader.report()
     assert _entry(report, "explore", "builtin").shadowed_by == str(path)
     file_row = _entry(report, "explore", "crucible")
-    assert file_row.active and any("overrides the built-in" in w for w in file_row.definition.warnings)
+    assert file_row.active
+    assert any("overrides the built-in" in w for w in file_row.definition.warnings)
 
 
 def test_lower_precedence_definition_is_shadowed(tmp_path: Path) -> None:
@@ -665,7 +667,8 @@ def test_render_round_trips_through_the_parser(tmp_path: Path) -> None:
     path.write_text(text, encoding="utf-8")
     d = parse_agent_file(path)
     assert d is not None
-    assert d.tools == frozenset({"read_file", "search_code", "edit", "query_graph", "mcp__github__*"})
+    assert d.tools == frozenset(
+        {"read_file", "search_code", "edit", "query_graph", "mcp__github__*"})
     assert d.disallowed_tools == frozenset({"run_command"})
     assert (d.permission, d.model, d.max_turns, d.skills) == ("acceptEdits", "gpt-5", 30, ("tdd",))
     assert d.persona == "You help.\n\nCarefully."
@@ -697,7 +700,7 @@ def test_write_and_delete(tmp_path: Path) -> None:
     ws.mkdir()
     path = write_agent_file(ws, "helper", "---\nname: helper\ndescription: d\n---\nx\n")
     assert path == ws / ".crucible" / "agents" / "helper.md"
-    assert path.read_text() .startswith("---")
+    assert path.read_text().startswith("---")
     assert [p.name for p in path.parent.iterdir()] == ["helper.md"]  # no temp left behind
     write_agent_file(ws, "helper", "---\nname: helper\ndescription: e\n---\ny\n")
     assert "description: e" in path.read_text()
@@ -969,7 +972,8 @@ def _body(**over):
 
 def _row(client, name: str, source: str | None = None) -> dict:
     agents = client.get("/v1/agents").json()["agents"]
-    return next(a for a in agents if a["name"] == name and (source is None or a["source"] == source))
+    return next(a for a in agents
+                if a["name"] == name and (source is None or a["source"] == source))
 
 
 def test_list_shape_and_available_tools(env) -> None:
@@ -1095,7 +1099,8 @@ def test_trust_records_the_reviewed_hash(env) -> None:
     resp = client.post("/v1/agents/trust", json={"path": row["path"], "sha256": row["sha256"]})
     assert resp.json() == {"ok": True}
     assert _row(client, "c")["trust"] == "trusted"
-    assert client.request("DELETE", "/v1/agents/trust", json={"path": row["path"]}).json() == {"ok": True}
+    untrust = client.request("DELETE", "/v1/agents/trust", json={"path": row["path"]})
+    assert untrust.json() == {"ok": True}
     assert _row(client, "c")["trust"] == "capped"
 
 
@@ -1363,7 +1368,7 @@ app.include_router(build_agents_router(
     mcp_server_names=lambda: [s.name for s in _mcp_manager.statuses()] if _mcp_manager else []))
 ```
 
-(`McpConnectionManager.statuses()` returns `McpServerStatus` objects; confirm the attribute is `name` with `grep -n "class McpServerStatus" -A8 agentd/mcp/client.py` and use whatever field holds the server name.)
+(`McpConnectionManager.statuses()` returns `agentd/mcp/models.py::McpServerStatus`, whose `name` is the server name.)
 
 In `tests/test_get_routes_read_only.py`, add to `REVIEWED_READ_ONLY_GET_ROUTES`:
 
@@ -1606,10 +1611,10 @@ Import `AgentCatalogSchema`, `AgentDefinitionViewSchema` and the types. Add:
 - [ ] **Step 5: Run, build, update stubs, commit**
 
 Run: `npm run -w @crucible/editor-client test && npm run -w @crucible/editor-client build`
-Expected: PASS and a clean build. Then `npm run -w crucible-vscode-extension typecheck`: if it reports an object typed `BackendTaskClient` missing the four new methods (stub clients in `src/`), add them there as `async () => { throw new Error("not used here"); }`. Test stubs in `test/controller.test.ts` are not typechecked by `tsc` but keep them consistent: add the same four entries to `createStubBackend`.
+Expected: PASS and a clean build. `npm run -w crucible-vscode-extension typecheck` stays clean: no object in the extension's `src/` implements `BackendTaskClient` by hand, and the test stubs (`test/controller.test.ts`) are partial by design (`tsc` does not check `test/`), so nothing else changes.
 
 ```bash
-git add apps/editor-client apps/vscode-extension/test/controller.test.ts
+git add apps/editor-client
 git commit -m "feat(editor-client): agent definition list, save, delete and trust"
 ```
 
@@ -1957,7 +1962,7 @@ Add a `test/settings-sections.test.ts` change: the expected list becomes `["over
 - [ ] **Step 2: Run to verify failure**
 
 Run: `npm run -w crucible-vscode-extension test -- test/settings-sections.test.ts` and `cd apps/vscode-extension/webview-ui && npx vitest run src/settings/sections/AgentsSection.test.tsx`
-Expected: both FAIL. (Find the webview test command with `grep -n '"test"' apps/vscode-extension/webview-ui/package.json` if `npx vitest run` is not it.)
+Expected: both FAIL. (`webview-ui` is its own npm package — not a root workspace — so a fresh checkout or worktree needs `npm install` inside `apps/vscode-extension/webview-ui` first; its scripts are `test` = `vitest run`, `typecheck` = `tsc --noEmit`.)
 
 - [ ] **Step 3: Types, registry, meta, shell**
 
