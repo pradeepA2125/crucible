@@ -10,6 +10,7 @@ from agentd.chat.controller_loop import _tool_name_as_type_correction
 from agentd.chat.controller_prompts import (
     TEAM_FRAMING,
     build_controller_step_payload,
+    controller_response_schema,
     format_controller_system_prompt,
 )
 from agentd.chat.storage import ChatThreadStore
@@ -129,3 +130,27 @@ def test_member_report_schema_allows_awaiting_peer(variant: dict[str, bool]) -> 
         phase="AGENT", allowed_types=["tool_call", "report"], team_member=True, **variant))
     assert "awaiting_peer" not in lone
     assert "awaiting_peer" in member
+
+
+def test_team_report_schema_has_stances_and_proposal() -> None:
+    flat = controller_response_schema(phase="AGENT", team_member=True)
+    assert flat["properties"]["stances"]["items"]["properties"]["stance"]["enum"] == [
+        "agree", "object"]
+    assert "assignments" in flat["properties"]["proposal"]["properties"]
+    tight = controller_response_schema(phase="AGENT", tight=True, team_member=True)
+    report = next(b for b in tight["oneOf"] if b["properties"]["type"]["const"] == "report")
+    assert {"stances", "proposal"} <= set(report["properties"])
+    assert "stances" not in report["required"]
+
+
+def test_lone_agent_schema_unchanged() -> None:
+    flat = controller_response_schema(phase="AGENT")
+    assert "stances" not in flat["properties"] and "proposal" not in flat["properties"]
+
+
+def test_member_prompt_teaches_rounds_and_report_stances() -> None:
+    from agentd.chat.controller_prompts import _TEAM_BLOCK
+    text = _TEAM_BLOCK   # tagged() returns the template string itself
+    assert "reaches the others at the next round" in text
+    assert '"stances":[{"proposal_id":"P3","stance":"agree"' in text
+    assert "appears on the board as a one-line notice" not in text

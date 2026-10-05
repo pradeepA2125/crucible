@@ -18,9 +18,8 @@ MEMBER_TOOL_NAMES = frozenset({
     "team_read"})
 MAIN_TOOL_NAMES = frozenset({
     "create_team", "post_board", "team_status", "adopt_proposal", "resume_team", "disband_team"})
-# Phase 4 has no milestones yet (the coordinator is Phase 5): nothing wakes the main agent.
 BACKGROUND_NOTE = ("The team runs in the background and the user can watch its board. "
-                   "Answer the user now.")
+                   "Answer the user now; milestones will wake you.")
 _OBJ = "object"
 _STR = {"type": "string"}
 _STRS = {"type": "array", "items": _STR}

@@ -118,6 +118,18 @@ _REPORT_STATUS = {"type": "string", "enum": ["completed", "partial"]}
 # A team member may also wait on a peer (spec v2 §7.3); mirrors controller_loop's
 # TEAM_REPORT_STATUSES, which keeps the chosen status.
 _TEAM_REPORT_STATUS = {"type": "string", "enum": ["completed", "partial", "awaiting_peer"]}
+# A team member's report may carry its stances and a proposal (spec v2 §8.3) — declared
+# only for a team member, so every other schema and its schema-in-prompt bytes are unchanged.
+_STANCE_ENTRY = {"type": "object", "properties": {
+    "proposal_id": _STR, "stance": {"type": "string", "enum": ["agree", "object"]},
+    "note": _STR, "reason": _STR, "evidence": _OBJECT}, "required": ["proposal_id", "stance"]}
+_REPORT_TEAM_FIELDS = {
+    "stances": {"type": "array", "items": _STANCE_ENTRY},
+    "proposal": {"type": "object", "properties": {
+        "text": _STR, "assignments": {"type": "array", "items": _OBJECT},
+        "shared_files": {"type": "array", "items": _STR},
+        "supersedes": {"type": "array", "items": _STR}}, "required": ["text", "assignments"]},
+}
 
 # Per-op-type field specs: the op-specific properties + which are required for THAT op.
 # The tight patch-op item is a oneOf over these branches (each a closed object with an
@@ -224,6 +236,8 @@ def controller_response_schema(
             props = branch["properties"]
             if variant == "report" and isinstance(props, dict):
                 props["status"] = dict(report_status)  # each branch owns a fresh dict
+                if team_member:
+                    props.update(copy.deepcopy(_REPORT_TEAM_FIELDS))
         return {"oneOf" if tight else "anyOf": branches}
     schema = copy.deepcopy(CONTROLLER_RESPONSE_SCHEMA)
     schema["properties"]["type"]["enum"] = types  # type: ignore[index]
@@ -231,6 +245,8 @@ def controller_response_schema(
         # Only a sub-agent's schema can carry report fields: the main agent never has the
         # report type, so its schema (and the schema-in-prompt bytes) stay unchanged.
         schema["properties"]["status"] = dict(report_status)  # type: ignore[index]
+        if team_member:
+            schema["properties"].update(copy.deepcopy(_REPORT_TEAM_FIELDS))  # type: ignore[attr-defined]
     if all_fields_required:
         extra: list[str] = []
         for variant in types:
@@ -799,15 +815,19 @@ HOW THE TEAM WORKS
 - Your input is the board: each new post and direct message to you, framed with its author.
   team_status (in your payload) shows the phase, round, open proposals with your stance, your
   assignment, and your unread counts — it is current on every step.
-- Your dispatcher is the main agent that created this team; the user watches the board. Your
-  report is recorded and appears on the board as a one-line notice.
+- The team works in rounds. In each round every member reads what is new, checks it and
+  reports. What you post during a round reaches the others at the next round, so state your
+  stances in this round rather than waiting for a reply. The main agent created the team;
+  the user watches the board.
 - team_post reaches everyone; @label (or mentions) brings it to those members' attention, @team
   to everyone's. team_message reaches one member. team_propose sets out an approach with
   assignments (member, part, files). team_agree and team_object state your stance on an open
   proposal; an objection carries evidence: files + line, command + output, or quote_seq.
   team_withdraw closes one of your own proposals. team_read re-reads the board.
 - Report when your part of this round is done: status "completed", or "awaiting_peer" naming
-  whom you wait on.
+  whom you wait on. A report can carry your stances ("stances": [{proposal_id, stance, note,
+  or reason + evidence}]) and, when you were asked to propose, your proposal ("proposal":
+  {text, assignments}) — the same as the separate tool calls, in one action.
 Example — verify by reading, then state stances, then report:
 {"type":"tool_call","thought":"P3 says login() skips the rate limiter; my role covers api/","tool":"read_file","args":{"path":"api/login.py"}}
 {"type":"tool_call","thought":"confirmed at line 42; small issue only","tool":"team_agree","args":{"proposal_id":"P3","note":"Confirmed: login() calls check_token before the limiter (api/login.py:42). Also cover the refresh route."}}
@@ -815,6 +835,8 @@ Example — verify by reading, then state stances, then report:
 {"type":"tool_call","thought":"P5 misses a caller","tool":"team_object","args":{"proposal_id":"P5","reason":"P5 changes check_token's signature but misses the caller in api/admin.py.","evidence":{"files":["api/admin.py"],"line":17}}}
 {"type":"tool_call","thought":"P7's latency claim needs a benchmark; reading cannot check it","tool":"team_agree","args":{"proposal_id":"P7","note":"not verified: the latency claim — needs a benchmark in review"}}
 {"type":"report","thought":"stances stated","summary":"Agreed P3 (with refresh-route note) and P7 (latency unverified); objected to P5 (missed caller api/admin.py:17).","status":"completed"}
+Example — the same stances carried on the report itself:
+{"type":"report","thought":"checked P3 and P5","summary":"P3 confirmed at api/login.py:42; P5 misses the caller in api/admin.py:17.","status":"completed","stances":[{"proposal_id":"P3","stance":"agree","note":"Confirmed at api/login.py:42."},{"proposal_id":"P5","stance":"object","reason":"Misses the caller in api/admin.py.","evidence":{"files":["api/admin.py"],"line":17}}]}
 Example — a proposal that is close: agree with a note describing the change, rather than a
 competing proposal:
 {"type":"tool_call","thought":"P4 is right apart from one file name","tool":"team_agree","args":{"proposal_id":"P4","note":"Use api/limits.py, not api/limit.py — the latter does not exist."}}
@@ -842,8 +864,9 @@ is built; dispatch_agents fits independent parts that need no discussion.
 - A full run costs roughly 60–90 requests per member (deliberation, implementation, review):
   set budget with that in mind.
 - After create_team, answer the user: the team runs in the background and the user watches its
-  board. post_board is how the user's later requests reach the team. team_status shows where it
-  stands when the user asks.
+  board. Milestones (a plan adopted, a deadlock, a member lost) wake you — do not poll
+  team_status. post_board is how the user's later requests reach the team; for a DEADLOCKED
+  team it runs one more round, and adopt_proposal adopts one of its open proposals.
 Example — you have a plan and want it checked:
 {"type":"tool_call","thought":"two reviewers should check my plan","tool":"create_team","args":{"name":"auth","goal":"Add rate-limited login","members":[{"label":"api","agent":"general-purpose"},{"label":"review","agent":"explore"}],"kickoff":{"kind":"proposal","text":"api adds api/limiter.py and wires it into api/routes.py; review checks the callers.","assignments":[{"member":"api","part":"limiter + wiring","files":["api/limiter.py","api/routes.py"]}]}}}
 Example — you want the members to propose:
