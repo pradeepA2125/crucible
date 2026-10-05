@@ -12,6 +12,9 @@ import type {
   SessionTranscript,
   SequencedStreamEvent,
   TaskResult,
+  TeamDetail,
+  TeamLive,
+  TeamSummary,
   TaskStatus,
   TaskSubmission,
   TaskView,
@@ -22,6 +25,7 @@ import type {
 } from "@crucible/editor-client";
 import { parseWireChatMessage } from "@crucible/editor-client";
 import { AgentViewManager } from "./agent-views.js";
+import { TeamViewManager, type TeamViewEvent } from "./team-views.js";
 
 import * as path from "path";
 import type { MemoryDataSource } from "./memory-data.js";
@@ -127,6 +131,11 @@ export interface ControllerUI {
   renderAgents(agents: AgentSummary[]): void;
   agentDetail(agentId: string, detail: AgentDetail): void;
   agentEvent(agentId: string, event: SequencedStreamEvent): void;
+  // Agent teams (spec v2 §9): summaries, live slow fields, and the open teams' boards.
+  renderTeams(teams: TeamSummary[]): void;
+  renderLiveTeams(teams: TeamLive[]): void;
+  teamDetail(teamId: string, detail: TeamDetail): void;
+  teamEvent(teamId: string, event: TeamViewEvent): void;
 }
 
 export interface LiveGateView {
@@ -180,6 +189,12 @@ export class CrucibleController {
     detail: (agentId, detail) => this.ui.agentDetail(agentId, detail),
     event: (agentId, event) => this.ui.agentEvent(agentId, event),
   });
+  private readonly teamViews = new TeamViewManager(() => this.clientForChat(), {
+    detail: (teamId, detail) => this.ui.teamDetail(teamId, detail),
+    event: (teamId, event) => this.ui.teamEvent(teamId, event),
+  });
+  // Live team ids from the last changed /live: one that drops out has ended (spec §9).
+  private lastLiveTeamIds: ReadonlySet<string> = new Set();
   // The previous poll's turnActive: a true→false edge is when /live stops reporting the
   // turn's agents, so the final roster comes from the routes then.
   private lastTurnActive = false;
@@ -630,6 +645,7 @@ export class CrucibleController {
           this.ui.appendChatMessage(message);
         }
         void this.refreshAgentRoster(this.activeThreadId);
+        void this.refreshTeams(this.activeThreadId);
       } catch {
         // non-fatal — panel opens empty
       }
@@ -658,6 +674,8 @@ export class CrucibleController {
     this.lastLiveSignature = null;
     this._liveResumeThreadId = null;
     this.agentViews.closeAll();
+    this.teamViews.closeAll();
+    this.lastLiveTeamIds = new Set();
     this.lastTurnActive = false;
     let threads: ChatThreadSummary[];
     try {
@@ -680,6 +698,8 @@ export class CrucibleController {
     this.lastLiveSignature = null;
     this._liveResumeThreadId = null;
     this.agentViews.closeAll();
+    this.teamViews.closeAll();
+    this.lastLiveTeamIds = new Set();
     this.lastTurnActive = false;
     for (const message of thread.messages) {
       this.ui.appendChatMessage(message);
@@ -687,6 +707,7 @@ export class CrucibleController {
     this.lastReconciledCount = thread.messages.length;
     this.reconcilePending = false;
     void this.refreshAgentRoster(threadId);
+    void this.refreshTeams(threadId);
     this.startLiveStatePolling();
   }
 
@@ -695,6 +716,38 @@ export class CrucibleController {
     if (!this.activeThreadId) return;
     this.agentViews.setOpen(this.activeThreadId, agentIds);
   }
+  /** The webview's full set of open team windows. */
+  setOpenTeams(teamIds: string[]): void {
+    if (!this.activeThreadId) return;
+    this.teamViews.setOpen(this.activeThreadId, teamIds);
+  }
+
+  async disbandTeam(teamId: string): Promise<void> {
+    const threadId = this.activeThreadId;
+    if (!threadId) return;
+    try {
+      await this.clientForChat().disbandTeam(threadId, teamId);
+    } catch (error) {
+      this.ui.showError(`Failed to disband team: ${formatError(error)}`);
+      return;
+    }
+    this.lastLiveSignature = null;
+    void this.pollThreadLiveState();
+    void this.refreshTeams(threadId);
+  }
+
+  /** Team summaries from the routes (spec §9): thread open, turn end, a team ending. */
+  private async refreshTeams(threadId: string): Promise<void> {
+    let teams: TeamSummary[];
+    try {
+      teams = await this.clientForChat().listTeams(threadId);
+    } catch {
+      return; // transient, or a backend without teams
+    }
+    if (threadId !== this.activeThreadId) return;
+    if (teams.length > 0) this.ui.renderTeams(teams);
+  }
+
 
   async stopAllAgents(): Promise<void> {
     const threadId = this.activeThreadId;
@@ -1616,6 +1669,7 @@ export class CrucibleController {
     this.stopStream();
     this.stopLiveStatePolling();
     this.agentViews.closeAll();
+    this.teamViews.closeAll();
   }
 
   async stopActiveTurn(): Promise<void> {
@@ -2105,6 +2159,8 @@ export class CrucibleController {
       // INVARIANT (CLAUDE.md /live dedup): roster rows are consumed after this gate.
       agents: live.agents,
       agentsRunning: live.agentsRunning,
+      // INVARIANT (CLAUDE.md /live dedup): team rows are consumed after this gate.
+      teams: live.teams,
       turnKind: live.turnKind,
       messageCount: live.messageCount,
     });
@@ -2228,7 +2284,17 @@ export class CrucibleController {
         this.agentViews.noteActivation(agent.agentId, agent.activationCount);
       }
     }
-    if (this.lastTurnActive && !live.turnActive) void this.refreshAgentRoster(threadId);
+    const liveTeamIds = new Set((live.teams ?? []).map((t) => t.teamId));
+    if (live.teams && live.teams.length > 0) this.ui.renderLiveTeams(live.teams);
+    // /live lists live teams only: one that left has ended — reload its summary.
+    if ([...this.lastLiveTeamIds].some((id) => !liveTeamIds.has(id))) {
+      void this.refreshTeams(threadId);
+    }
+    this.lastLiveTeamIds = liveTeamIds;
+    if (this.lastTurnActive && !live.turnActive) {
+      void this.refreshAgentRoster(threadId);
+      void this.refreshTeams(threadId);
+    }
     this.lastTurnActive = live.turnActive ?? false;
     this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false, {
       turnKind: live.turnKind, agentsRunning: live.agentsRunning,

@@ -277,6 +277,10 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     renderAgents: () => {},
     agentDetail: () => {},
     agentEvent: () => {},
+    renderTeams: () => {},
+    renderLiveTeams: () => {},
+    teamDetail: () => {},
+    teamEvent: () => {},
     ...overrides,
   };
 }
@@ -2267,7 +2271,7 @@ describe("CrucibleController — sub-agents", () => {
     startedAt: "2026-10-01T00:00:00Z", endedAt: null, reportPreview: "",
   };
 
-  function setup(extra: Record<string, unknown> = {}) {
+  function setup(extra: Record<string, unknown> = {}, uiExtra: Partial<ControllerUI> = {}) {
     const state: StubBackendState = {
       submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
       getResultCalls: [], planFeedbackCalls: [], liveCalls: [], liveResponse: NULL_LIVE_STATE,
@@ -2283,6 +2287,7 @@ describe("CrucibleController — sub-agents", () => {
     const ui = createUi({
       renderAgents: (agents) => { rosters.push(agents); },
       appendChatMessage: (m) => { appended.push(m); },
+      ...uiExtra,
     });
     const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(), ui,
@@ -2352,6 +2357,41 @@ describe("CrucibleController — sub-agents", () => {
     await controller.stopAgent("agent-a");
     controller.dispose();
     expect(stops).toEqual([["chat-1", "agent-a"]]);
+  });
+  test("team summaries load on open, /live teams are in the signature, and a team leaving /live refreshes", async () => {
+    const TEAM = { teamId: "team-1", name: "auth", goal: "g", phase: "DELIBERATING", round: 1,
+      maxRounds: 3, pausedReason: null, members: [], openProposals: [],
+      usage: { requests: 0, budget: 160 }, createdAt: "2026-10-05T00:00:00Z" };
+    const LIVE = { teamId: "team-1", name: "auth", phase: "DELIBERATING", round: 1,
+      maxRounds: 3, pausedReason: null, members: [] };
+    const teamLists: string[] = [];
+    const summaries: unknown[][] = [];
+    const lives: unknown[][] = [];
+    const { state, controller } = setup({
+      listTeams: async (threadId: string) => { teamLists.push(threadId); return [TEAM]; },
+    }, {
+      renderTeams: (t) => { summaries.push(t); },
+      renderLiveTeams: (t) => { lives.push(t); },
+    });
+    await controller.switchChatThread("chat-1");
+    await Promise.resolve(); await Promise.resolve();
+    controller.dispose();
+    expect(teamLists).toEqual(["chat-1"]);
+    expect(summaries).toHaveLength(1);
+
+    state.liveResponse = { ...NULL_LIVE_STATE, teams: [LIVE] };
+    await controller.pollThreadLiveState();
+    await controller.pollThreadLiveState();
+    expect(lives).toHaveLength(1);                       // unchanged → deduped
+    state.liveResponse = { ...NULL_LIVE_STATE, teams: [{ ...LIVE, round: 2 }] };
+    await controller.pollThreadLiveState();
+    expect(lives).toHaveLength(2);                       // teams ARE in the signature
+
+    teamLists.length = 0;
+    state.liveResponse = NULL_LIVE_STATE;                // the team ended
+    await controller.pollThreadLiveState();
+    await Promise.resolve(); await Promise.resolve();
+    expect(teamLists).toEqual(["chat-1"]);
   });
 });
 

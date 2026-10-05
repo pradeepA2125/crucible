@@ -11,7 +11,11 @@ import type {
   McpToolDecision,
   ReasoningEffort,
   SequencedStreamEvent,
+  TeamDetail,
+  TeamLive,
+  TeamSummary,
 } from "@crucible/editor-client";
+import type { TeamViewEvent } from "./team-views.js";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
 
@@ -159,7 +163,9 @@ export class ChatPanel {
     private readonly onRewindConfirm: RewindConfirmHandler = async () => {},
     private readonly onSetOpenAgents: (agentIds: string[]) => void = () => {},
     private readonly onStopAgent: (agentId: string) => Promise<void> = async () => {},
-    private readonly onStopAllAgents: () => Promise<void> = async () => {}
+    private readonly onStopAllAgents: () => Promise<void> = async () => {},
+    private readonly onSetOpenTeams: (teamIds: string[]) => void = () => {},
+    private readonly onDisbandTeam: (teamId: string) => Promise<void> = async () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -336,6 +342,14 @@ export class ChatPanel {
         p = this.onStopAgent(String(m["agentId"] ?? ""));
       } else if (m["type"] === "stopAllAgents") {
         p = this.onStopAllAgents();
+      } else if (m["type"] === "setOpenTeams") {
+        const ids = Array.isArray(m["teamIds"])
+          ? (m["teamIds"] as unknown[]).filter((x): x is string => typeof x === "string")
+          : [];
+        this.onSetOpenTeams(ids);
+        return;
+      } else if (m["type"] === "disbandTeam") {
+        p = this.onDisbandTeam(String(m["teamId"] ?? ""));
       } else if (m["type"] === "stopTurn") {
         this.onStopTurn();
         return;
@@ -586,6 +600,22 @@ export class ChatPanel {
 
   agentEvent(agentId: string, event: SequencedStreamEvent): void {
     this.panel?.webview.postMessage({ type: "agentEvent", agentId, event });
+  }
+
+  renderTeams(teams: TeamSummary[]): void {
+    this.panel?.webview.postMessage({ type: "renderTeams", teams });
+  }
+
+  renderLiveTeams(teams: TeamLive[]): void {
+    this.panel?.webview.postMessage({ type: "renderLiveTeams", teams });
+  }
+
+  teamDetail(teamId: string, detail: TeamDetail): void {
+    this.panel?.webview.postMessage({ type: "teamDetail", teamId, detail });
+  }
+
+  teamEvent(teamId: string, event: TeamViewEvent): void {
+    this.panel?.webview.postMessage({ type: "teamEvent", teamId, event });
   }
 
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void {

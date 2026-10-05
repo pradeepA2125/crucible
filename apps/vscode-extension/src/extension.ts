@@ -227,7 +227,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (messageId) => controller.rewindTo(messageId),
     (agentIds) => controller.setOpenAgents(agentIds),
     (agentId) => controller.stopAgent(agentId),
-    () => controller.stopAllAgents()
+    () => controller.stopAllAgents(),
+    (teamIds) => controller.setOpenTeams(teamIds),
+    (teamId) => controller.disbandTeam(teamId)
   );
 
   const ui: ControllerUI = {
@@ -420,6 +422,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     agentEvent: (agentId, event) => {
       chatPanel.agentEvent(agentId, event);
+    },
+    renderTeams: (teams) => {
+      chatPanel.renderTeams(teams);
+    },
+    renderLiveTeams: (teams) => {
+      chatPanel.renderLiveTeams(teams);
+    },
+    teamDetail: (teamId, detail) => {
+      chatPanel.teamDetail(teamId, detail);
+    },
+    teamEvent: (teamId, event) => {
+      chatPanel.teamEvent(teamId, event);
     },
   };
 
