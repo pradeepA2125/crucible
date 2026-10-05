@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from agentd.providers.usage import METER
 from agentd.subagents.context import AgentContext
 from agentd.subagents.definitions import AgentDefinition
 from agentd.subagents.inbox import InboxItem
@@ -34,6 +35,22 @@ TERMINAL_STATUSES = IDLE_STATUSES
 
 def agent_channel(thread_id: str, agent_id: str) -> str:
     return f"chat:{thread_id}:agent:{agent_id}"
+
+
+def paused_seconds(handle: AgentHandle, now: datetime) -> float:
+    """Gate waits so far this activation, including one still open (spec v2 §8.3)."""
+    open_wait = (now - handle.waiting_since).total_seconds() if handle.waiting_since else 0.0
+    return handle.gate_wait_s + open_wait
+
+
+def active_seconds(handle: AgentHandle, now: datetime) -> float | None:
+    """The round deadline's clock: time since the activation took its slot, minus time
+    parked at a user gate and time waiting on the provider rate limiter (spec v2 §8.3).
+    None until the activation has started."""
+    if handle.started_at is None:
+        return None
+    limiter = METER.peek(handle.agent_id).wait_ms / 1000
+    return (now - handle.started_at).total_seconds() - paused_seconds(handle, now) - limiter
 
 
 @dataclass(frozen=True)
@@ -74,6 +91,10 @@ class AgentHandle:
     activation_seq: int = -1
     # Restrictions inherited from the dispatcher, persisted on the row (spec §3.12).
     inherited: dict[str, bool] = field(default_factory=dict)
+    # Time parked at a user gate (`waiting`) this activation, and the open wait's start —
+    # the round deadline clock pauses for both (spec v2 §8.3).
+    gate_wait_s: float = 0.0
+    waiting_since: datetime | None = None
 
     @property
     def agent_id(self) -> str:
@@ -152,11 +173,17 @@ class AgentSupervisor:
         self.registry = AgentRegistry()
 
     def set_status(self, handle: AgentHandle, status: str) -> None:
+        now = datetime.now(UTC)
+        if status == "waiting" and handle.waiting_since is None:
+            handle.waiting_since = now
+        elif status != "waiting" and handle.waiting_since is not None:
+            handle.gate_wait_s += (now - handle.waiting_since).total_seconds()
+            handle.waiting_since = None
         handle.status = status
         if status == "running" and handle.started_at is None:
-            handle.started_at = datetime.now(UTC)
+            handle.started_at = now
         if status in IDLE_STATUSES:
-            handle.ended_at = datetime.now(UTC)
+            handle.ended_at = now
         if self._on_status is not None:
             self._on_status(handle)
 
@@ -254,6 +281,11 @@ class AgentSupervisor:
             taken.append(item)
         self._inboxes[agent_id] = kept
         return taken
+
+    def keep(self, agent_id: str, items: list[InboxItem]) -> None:
+        """Put items back without waking anyone: a team member's leftovers during
+        deliberation wait for its next round (spec v2 §3.6, E5)."""
+        self._inboxes.setdefault(agent_id, []).extend(items)
 
     def discard_reports(self, agent_id: str, source_ids: set[str]) -> None:
         """A wait_agents result already carried these reports (spec §4.2): drop the inbox

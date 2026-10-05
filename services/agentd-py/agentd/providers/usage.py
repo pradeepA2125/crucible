@@ -31,6 +31,15 @@ class UsageMeter:
         usage.completion_tokens += completion
         usage.wait_ms += wait_ms
 
+    def peek(self, owner: str) -> Usage:
+        """The owner's counts so far, left in place — the deadline clock reads limiter
+        waits mid-activation (spec v2 §8.3); `take` still consumes them at its end."""
+        usage = self._by_owner.get(owner)
+        if usage is None:
+            return Usage()
+        return Usage(requests=usage.requests, prompt_tokens=usage.prompt_tokens,
+                     completion_tokens=usage.completion_tokens, wait_ms=usage.wait_ms)
+
     def take(self, owner: str) -> Usage:
         return self._by_owner.pop(owner, Usage())
 
