@@ -16,6 +16,7 @@ import { RewindDialog } from "./RewindDialog";
 import { AgentsContext, type AgentsUi } from "./agents/AgentsContext";
 import { AgentWindow } from "./agents/AgentWindow";
 import { TeamsContext, type TeamsUi } from "./teams/TeamsContext";
+import { TeamStrip } from "./teams/TeamStrip";
 import { TeamWindow } from "./teams/TeamWindow";
 
 // Gate statuses where the workbar should be HIDDEN (user is deciding something).
@@ -445,6 +446,8 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         onExpandSession={(sessionId) => vscode.postMessage({ type: "fetchSessionTranscript", sessionId })}
         onDismissError={() => state.liveError && onDismissError(state.liveError.taskId)}
       />
+
+      <TeamStrip />
 
       <WorkBar
         workbar={state.workbar}

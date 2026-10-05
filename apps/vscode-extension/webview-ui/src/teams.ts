@@ -140,3 +140,16 @@ export function roundProgressText(
   }
   return { text, pct: Math.round((done / progress.members.length) * 100) };
 }
+
+/** A live team's phase in a few words, for when no round is running (the pinned strip). */
+export function teamPhaseText(team: TeamSummaryView): string {
+  switch (team.phase) {
+    case "DELIBERATING": return `Round ${team.round} of ${team.maxRounds}`;
+    case "DEADLOCKED": return "Deadlocked — waiting on the main agent";
+    case "AWAITING_APPROVAL": return "Waiting for your approval";
+    case "IMPLEMENTING": return "Implementing";
+    case "REVIEWING": return "Review";
+    case "PAUSED": return team.pausedReason ? `Paused — ${team.pausedReason}` : "Paused";
+    default: return team.phase.charAt(0) + team.phase.slice(1).toLowerCase();
+  }
+}
