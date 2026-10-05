@@ -23,6 +23,8 @@ class AgentDefinition:
     source: str = "built-in"      # the file it came from, for warnings and logs
     trust: str = "trusted"        # "trusted" | "capped" (spec §3.12)
     content_sha256: str = ""      # the file's hash when loaded; empty for built-ins
+    # What the loader noticed (spec §10.1): shown in Settings, never fatal.
+    warnings: tuple[str, ...] = ()
 
 
 _EXPLORE_PERSONA = (
