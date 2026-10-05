@@ -32,7 +32,8 @@ describe("team state", () => {
   });
 
   it("appends posts in seq order and drops a repeat", () => {
-    const detail: TeamDetailView = { ...SUMMARY, posts: [post(1), post(2)], lastSeq: 2 };
+    const detail: TeamDetailView = { ...SUMMARY, posts: [post(1), post(2)], lastSeq: 2,
+                                     activity: [], lastAseq: 0 };
     let view = viewFromTeamDetail(detail);
     view = applyTeamEvent(view, { type: "team_post", post: post(2) });
     view = applyTeamEvent(view, { type: "team_post", post: post(3) });
@@ -66,5 +67,18 @@ describe("team state", () => {
       post(4, { kind: "agree", refId: "P1", author: "bob" })];
     expect(stanceOf(posts, 1, "alice")).toBe("agree");
     expect(stanceOf(posts, 1, "carol")).toBeNull();
+  });
+});
+
+describe("team activity state", () => {
+  const act = (aseq: number) => ({ teamId: "team-1", aseq, at: `2026-10-05T00:00:0${aseq}Z`,
+    label: "alice", kind: "woke", activation: 1, causeSeq: 1, payload: {} });
+  it("keeps activity in aseq order and drops repeats", () => {
+    let view = viewFromTeamDetail({ ...SUMMARY, posts: [], lastSeq: 0,
+      activity: [act(1), act(2)], lastAseq: 2 });
+    view = applyTeamEvent(view, { type: "team_activity", activity: act(2) });
+    view = applyTeamEvent(view, { type: "team_activity", activity: act(3) });
+    expect(view.activity.map((e) => e.aseq)).toEqual([1, 2, 3]);
+    expect(view.lastAseq).toBe(3);
   });
 });

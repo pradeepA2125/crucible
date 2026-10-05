@@ -232,7 +232,49 @@ export interface TeamPostView {
   createdAt: string;
 }
 
-export interface TeamMemberView { label: string; agentId: string; status: string }
+/** A lifecycle fact (spec 2026-10-05 §4); payload keys stay snake_case. */
+export interface TeamActivityView {
+  teamId: string;
+  aseq: number;
+  at: string;
+  label: string;
+  kind: string;
+  activation: number | null;
+  causeSeq: number | null;
+  payload: Record<string, unknown>;
+}
+
+export interface TeamMemberLastView {
+  kind: string;
+  at: string;
+  causeSeq: number | null;
+  by: string | null;
+  status: string | null;
+  activation: number | null;
+}
+
+export interface TeamLatestView {
+  kind: "post" | "activity";
+  label: string;
+  text: string;
+  at: string;
+  event?: string;
+  status?: string | null;
+}
+
+export interface TeamCountsView {
+  posts: number;
+  proposals: { id: string; agree: number; object: number; pending: number }[];
+}
+
+export interface TeamMemberView {
+  label: string;
+  agentId: string;
+  status: string;
+  name?: string;
+  description?: string;
+  last?: TeamMemberLastView | null;
+}
 
 export interface TeamSummaryView {
   teamId: string;
@@ -246,6 +288,8 @@ export interface TeamSummaryView {
   openProposals: { id: string; author: string; text: string; stances: Record<string, string> }[];
   usage: { requests: number; budget: number };
   createdAt: string;
+  latest?: TeamLatestView | null;
+  counts?: TeamCountsView;
 }
 
 export interface TeamLiveView {
@@ -256,22 +300,29 @@ export interface TeamLiveView {
   maxRounds: number;
   pausedReason: string | null;
   members: TeamMemberView[];
+  latest?: TeamLatestView | null;
+  counts?: TeamCountsView;
 }
 
 export interface TeamDetailView extends TeamSummaryView {
   posts: TeamPostView[];
   lastSeq: number;
+  activity: TeamActivityView[];
+  lastAseq: number;
 }
 
 /** A team-channel event as the host forwards it (already camelCase, Task 9). */
 export type TeamEventView =
   | { type: "team_post"; post: TeamPostView }
+  | { type: "team_activity"; activity: TeamActivityView }
   | { type: "team_phase"; phase: string; round: number; pausedReason: string | null };
 
 /** An open team's board. */
 export interface TeamViewState {
   posts: TeamPostView[];
   lastSeq: number;
+  activity: TeamActivityView[];
+  lastAseq: number;
 }
 
 // ── Extension → Webview ──────────────────────────────────────────────────────

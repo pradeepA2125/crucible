@@ -46,7 +46,7 @@ function renderWindow(onTab = vi.fn(), onClose = vi.fn(), tab = "board") {
   const agentsUi: AgentsUi = { agents: {}, views: {}, expanded: new Set(),
     toggleExpanded: vi.fn(), openWindow: vi.fn() };
   const teamsUi: TeamsUi = { teams: { "team-1": TEAM },
-    views: { "team-1": { posts: POSTS, lastSeq: 7 } }, openTeam: vi.fn() };
+    views: { "team-1": { posts: POSTS, lastSeq: 7, activity: [], lastAseq: 0 } }, openTeam: vi.fn() };
   render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={teamsUi}>
     <TeamWindow teamId="team-1" tab={tab} onTab={onTab} onClose={onClose} />
   </TeamsContext.Provider></AgentsContext.Provider>);

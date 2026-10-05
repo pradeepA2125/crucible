@@ -532,7 +532,7 @@ describe("useAppState", () => {
       members: [] }] }); });
     expect(result.current.state.teams["team-1"]).toMatchObject({ round: 2, goal: "g" });
     act(() => { fireMessage({ type: "teamDetail", teamId: "team-1",
-      detail: { ...team, posts: [post], lastSeq: 1 } }); });
+      detail: { ...team, posts: [post], lastSeq: 1, activity: [], lastAseq: 0 } }); });
     act(() => { fireMessage({ type: "teamEvent", teamId: "team-1",
       event: { type: "team_post", post: { ...post, seq: 2, kind: "post", text: "hi" } } }); });
     act(() => { fireMessage({ type: "teamEvent", teamId: "team-1",

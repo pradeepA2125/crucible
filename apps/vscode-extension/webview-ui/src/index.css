@@ -259,3 +259,8 @@ code, pre, .mono {
     transition-duration: .01ms !important;
   }
 }
+
+/* Team member avatar ring (spec 2026-10-05 §6). */
+@keyframes team-ring { 0% { transform: scale(.9); opacity: 1; } 100% { transform: scale(1.35); opacity: 0; } }
+.team-ring-pulse { animation: team-ring 1.4s var(--ease-out) infinite; }
+@media (prefers-reduced-motion: reduce) { .team-ring-pulse { animation: none; } }

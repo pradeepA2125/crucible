@@ -20,13 +20,22 @@ export function mergeLiveTeam(prev: TeamSummaryView | undefined, live: TeamLiveV
 }
 
 export function viewFromTeamDetail(detail: TeamDetailView): TeamViewState {
-  return { posts: detail.posts, lastSeq: detail.lastSeq };
+  return { posts: detail.posts, lastSeq: detail.lastSeq,
+           activity: detail.activity ?? [], lastAseq: detail.lastAseq ?? 0 };
 }
 
-/** A post the backfill already holds (a live broadcast racing the backfill) is dropped. */
+/** A post or event the backfill already holds (a live broadcast racing it) is dropped. */
 export function applyTeamEvent(view: TeamViewState, event: TeamEventView): TeamViewState {
-  if (event.type !== "team_post" || event.post.seq <= view.lastSeq) return view;
-  return { posts: [...view.posts, event.post], lastSeq: event.post.seq };
+  if (event.type === "team_post") {
+    if (event.post.seq <= view.lastSeq) return view;
+    return { ...view, posts: [...view.posts, event.post], lastSeq: event.post.seq };
+  }
+  if (event.type === "team_activity") {
+    if (event.activity.aseq <= view.lastAseq) return view;
+    const activity = [...view.activity, event.activity].sort((a, b) => a.aseq - b.aseq);
+    return { ...view, activity, lastAseq: event.activity.aseq };
+  }
+  return view;
 }
 
 export function summaryWithEvent(team: TeamSummaryView, event: TeamEventView): TeamSummaryView {

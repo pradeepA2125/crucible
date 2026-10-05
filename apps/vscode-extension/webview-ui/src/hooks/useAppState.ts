@@ -477,7 +477,8 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case "teamDetail": {
-      const { posts: _posts, lastSeq: _lastSeq, ...summary } = msg.detail;
+      const { posts: _posts, lastSeq: _lastSeq, activity: _activity, lastAseq: _lastAseq,
+              ...summary } = msg.detail;
       return {
         ...state,
         teams: { ...state.teams, [msg.teamId]: summary },
