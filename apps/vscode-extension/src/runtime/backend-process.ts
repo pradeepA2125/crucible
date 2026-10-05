@@ -1,5 +1,7 @@
 // vscode-free. One instance per workspace folder; owns agentd + watcher children.
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import {
+  closeSync, constants, existsSync, fstatSync, openSync, readFileSync, unlinkSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   buildJdtlsCommand,
@@ -174,15 +176,59 @@ export function buildBackendEnv(
 
 interface LockInfo { pid: number; port: number; started_at: number }
 
-function readLock(workspace: string): LockInfo | null {
+export const LOCK_YOUNG_SEC = 60;
+export const REAP_GRACE_MS = 5000;
+
+function lockPath(workspace: string): string {
+  return join(workspace, ".crucible/state", "agentd.lock");
+}
+
+function unlinkLock(workspace: string): void {
+  try { unlinkSync(lockPath(workspace)); } catch { /* gone already */ }
+}
+
+export function readOwnedLock(workspace: string, uid: number | undefined): LockInfo | null {
+  let fd: number;
   try {
-    const raw = JSON.parse(
-      readFileSync(join(workspace, ".crucible/state", "agentd.lock"), "utf8"));
-    if (typeof raw.pid !== "number" || typeof raw.port !== "number") return null;
-    return raw as LockInfo;
+    fd = openSync(lockPath(workspace), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch {
-    return null;
+    return null; // missing — or a planted symlink, which the spawn's rename replaces
   }
+  let raw: string;
+  try {
+    const st = fstatSync(fd);
+    // A lock planted by another user in a shared workspace (or a hard link to
+    // someone else's file) is ignored and removed: no wait, no signal (spec §3.7).
+    if (!st.isFile() || st.nlink !== 1 || (uid !== undefined && st.uid !== uid)) {
+      unlinkLock(workspace);
+      return null;
+    }
+    raw = readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    const lock = JSON.parse(raw) as Partial<LockInfo>;
+    if (typeof lock.pid === "number" && typeof lock.port === "number"
+        && typeof lock.started_at === "number") {
+      return lock as LockInfo;
+    }
+  } catch { /* fall through */ }
+  unlinkLock(workspace);
+  return null;
+}
+
+export function isOurBackend(
+  info: ProcessInfo, lock: LockInfo, workspace: string, uid: number | undefined,
+): boolean {
+  if (uid === undefined || info.uid !== uid) return false;
+  if (info.startedAtSec > Math.floor(lock.started_at) + 1) return false; // recycled pid
+  const cmd = info.command;
+  if (cmd.includes("agentd.serve") && cmd.endsWith(` --workspace-lock ${workspace}`)) return true;
+  const tokens = cmd.split(/\s+/);
+  const portIdx = tokens.indexOf("--port");
+  return tokens.includes("agentd.main:app") && portIdx >= 0
+    && tokens[portIdx + 1] === String(lock.port);
 }
 
 export class BackendProcess {
@@ -207,17 +253,26 @@ export class BackendProcess {
   async start(
     workspace: string, settings: BackendSettings,
   ): Promise<{ port: number; reused: boolean }> {
-    // 1. Reuse a live locked backend (a managed spawn already has a watcher).
-    const lock = readLock(workspace);
-    if (lock && (await probeHealth(
-      lock.port, this.probeDeps(), { pid: lock.pid, workspace })) === "authed") {
-      this._port = lock.port;
-      this.deps.log(`[runtime] reusing live backend pid=${lock.pid} port=${lock.port}`);
-      return { port: lock.port, reused: true };
-    }
+    // 1. Reuse only the backend the lock names, serving this workspace (spec §3.7).
+    const lock = readOwnedLock(workspace, this.deps.uid);
     if (lock) {
-      try { unlinkSync(join(workspace, ".crucible/state", "agentd.lock")); } catch { /* gone already */ }
-      this.deps.log(`[runtime] reaped stale lock (pid=${lock.pid})`);
+      const expect = { pid: lock.pid, workspace };
+      let result = await probeHealth(lock.port, this.probeDeps(), expect);
+      const ageSec = this.deps.now() / 1000 - lock.started_at;
+      if (result === "down" && ageSec < LOCK_YOUNG_SEC && this.deps.isPidAlive(lock.pid)
+          && lock.pid !== this.lastChildPid) {
+        // Its spawn may still be starting: wait once, up to the lock's 60 s mark.
+        for (let i = 0; i < Math.ceil(LOCK_YOUNG_SEC - ageSec) && result === "down"; i++) {
+          await this.deps.sleep(1000);
+          result = await probeHealth(lock.port, this.probeDeps(), expect);
+        }
+      }
+      if (result === "authed") {
+        this._port = lock.port;
+        this.deps.log(`[runtime] reusing live backend pid=${lock.pid} port=${lock.port}`);
+        return { port: lock.port, reused: true };
+      }
+      await this.reap(lock, workspace);
     }
 
     // 2. Spawn agentd.serve on any free port; it binds first, then reports the port.
@@ -365,6 +420,19 @@ export class BackendProcess {
     this.watcher = undefined;
     this.backend = undefined;
     this._port = undefined;
+  }
+
+  private async reap(lock: LockInfo, workspace: string): Promise<void> {
+    unlinkLock(workspace);
+    this.deps.log(`[runtime] reaped stale lock (pid=${lock.pid})`);
+    if (this.platform === "win32-x64" || lock.pid <= 1) return;
+    const info = await this.deps.processInfo(lock.pid);
+    if (!info || !isOurBackend(info, lock, workspace, this.deps.uid)) return;
+    this.deps.signal(lock.pid, "SIGTERM");
+    for (let waited = 0; waited < REAP_GRACE_MS && this.deps.isPidAlive(lock.pid); waited += 1000) {
+      await this.deps.sleep(1000);
+    }
+    if (this.deps.isPidAlive(lock.pid)) this.deps.signal(lock.pid, "SIGKILL");
   }
 
   private probeDeps(): ProbeDeps {

@@ -17,6 +17,7 @@ import {
   type ProcessDeps,
 } from "./backend-process.js";
 import { readBackendToken } from "./backend-token.js";
+import { readProcessInfo } from "./process-info.js";
 import {
   RuntimeInstaller,
   type ComponentProgress,
@@ -478,7 +479,7 @@ export class RuntimeManager {
         return { status: res.status, body: await res.text() };
       },
       readToken: (port) => readBackendToken(port),
-      processInfo: async () => null, // Task 11 replaces this with readProcessInfo
+      processInfo: (pid) => readProcessInfo(pid, execWithTimeout),
       signal: (pid, sig) => { try { process.kill(pid, sig); } catch { /* gone */ } },
       exec: (cmd, args, timeoutMs) => execWithTimeout(cmd, args, timeoutMs),
       now: () => Date.now(),

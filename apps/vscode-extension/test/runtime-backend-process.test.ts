@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { healthBound, healthProof } from "../src/runtime/probe-health.js";
-import { BackendProcess, buildBackendEnv, finalSpawnEnv, RuntimeUpdateRequiredError,
+import { BackendProcess, buildBackendEnv, finalSpawnEnv, isOurBackend, readOwnedLock,
+  RuntimeUpdateRequiredError,
   type ChildHandle, type ProcessDeps } from "../src/runtime/backend-process.js";
 
 const TOKEN = "k".repeat(43);
@@ -295,5 +296,149 @@ describe("finalSpawnEnv", () => {
   it("drops undefined and CRUCIBLE_AUTH_DISABLED", () => {
     expect(finalSpawnEnv({ A: "1", B: undefined }, { CRUCIBLE_AUTH_DISABLED: "1", C: "3" }))
       .toEqual({ A: "1", C: "3" });
+  });
+});
+
+function writeLock(w: string, lock: { pid: number; port: number; started_at: number }): string {
+  mkdirSync(join(w, ".crucible/state"), { recursive: true });
+  const p = join(w, ".crucible/state", "agentd.lock");
+  writeFileSync(p, JSON.stringify(lock));
+  return p;
+}
+
+describe("reuse", () => {
+  it("reuses the backend the lock names, for this workspace", async () => {
+    const w = ws();
+    writeLock(w, { pid: 4242, port: 9001, started_at: Date.now() / 1000 - 600 });
+    const d = deps();
+    expect(await new BackendProcess(d).start(w, SETTINGS)).toEqual({ port: 9001, reused: true });
+    expect(d.spawned).toHaveLength(0);
+  });
+
+  it("does not reuse an authed backend for another workspace", async () => {
+    const w = ws();
+    writeLock(w, { pid: 4242, port: 9001, started_at: Date.now() / 1000 - 600 });
+    const d = deps({
+      fetchRaw: async (url) => {
+        const nonce = new URL(url).searchParams.get("nonce") ?? "";
+        // Port 9001 is held by another workspace's backend; the new spawn (8123) is ours.
+        const owner = url.includes(":9001/") ? "/some/other/ws" : currentWs;
+        return { status: 200, body: JSON.stringify({ status: "ok", pid: 4242,
+          proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, owner) }) };
+      },
+    });
+    const r = await new BackendProcess(d).start(w, SETTINGS);
+    expect(r.reused).toBe(false);
+    expect(d.spawned[0].args).toContain("agentd.serve");
+  });
+
+  it("ignores and unlinks a lock with nlink > 1", async () => {
+    const w = ws();
+    const p = writeLock(w, { pid: 4242, port: 9001, started_at: Date.now() / 1000 });
+    linkSync(p, join(w, "hardlink"));
+    expect(readOwnedLock(w, process.getuid?.())).toBeNull();
+    expect(existsSync(p)).toBe(false);
+  });
+
+  it("waits at most once for a young lock whose port is down", async () => {
+    const w = ws();
+    writeLock(w, { pid: 777, port: 9001, started_at: Date.now() / 1000 - 58 });
+    let probes9001 = 0;
+    const d = deps({
+      isPidAlive: (pid) => pid === 777,
+      fetchRaw: async (url) => {
+        if (url.includes(":9001/")) { probes9001++; throw new TypeError("fetch failed"); }
+        const nonce = new URL(url).searchParams.get("nonce") ?? "";
+        return { status: 200, body: JSON.stringify({ status: "ok", pid: 4242,
+          proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, currentWs) }) };
+      },
+    });
+    await new BackendProcess(d).start(w, SETTINGS);
+    expect(probes9001).toBeLessThanOrEqual(3); // initial + ≤2 s of re-probes, then spawn
+  });
+
+  it("does not wait when the lock's pid is dead", async () => {
+    const w = ws();
+    writeLock(w, { pid: 777, port: 9001, started_at: Date.now() / 1000 - 5 });
+    let probes9001 = 0;
+    const d = deps({ fetchRaw: async (url) => {
+      if (url.includes(":9001/")) { probes9001++; throw new TypeError("fetch failed"); }
+      const nonce = new URL(url).searchParams.get("nonce") ?? "";
+      return { status: 200, body: JSON.stringify({ status: "ok", pid: 4242,
+        proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, currentWs) }) };
+    } });
+    await new BackendProcess(d).start(w, SETTINGS);
+    expect(probes9001).toBe(1);
+  });
+});
+
+describe("reap", () => {
+  const lock = { pid: 777, port: 8000, started_at: 1000 };
+  const ours = (command: string, over: Partial<{ uid: number; startedAtSec: number }> = {}) =>
+    ({ uid: 501, startedAtSec: 999, command, ...over });
+
+  it("matches only this workspace's agentd.serve, started before the lock", () => {
+    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj"), lock, "/a/proj", 501)).toBe(true);
+    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj 2"), lock, "/a/proj", 501)).toBe(false);
+    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj", { uid: 0 }), lock, "/a/proj", 501)).toBe(false);
+    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj", { startedAtSec: 1005 }), lock, "/a/proj", 501)).toBe(false);
+  });
+
+  it("matches a legacy agentd.main:app backend on the lock's exact port", () => {
+    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 8000"), lock, "/a/proj", 501)).toBe(true);
+    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 80"), lock, "/a/proj", 501)).toBe(false);
+    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 80001"), lock, "/a/proj", 501)).toBe(false);
+  });
+
+  it("signals a verified stale backend, escalating to SIGKILL", async () => {
+    const w = ws();
+    writeLock(w, { pid: 777, port: 9001, started_at: Date.now() / 1000 - 600 });
+    const signals: string[] = [];
+    const d = deps({
+      isPidAlive: (pid) => pid === 777,
+      processInfo: async () => ({ uid: 501, startedAtSec: Date.now() / 1000 - 700,
+        command: `py -m agentd.serve --port 0 --workspace-lock ${currentWs}` }),
+      signal: (_pid, sig) => { signals.push(sig); },
+      fetchRaw: async (url) => {
+        if (url.includes(":9001/")) return { status: 200, body: '{"status":"ok"}' }; // preauth
+        const nonce = new URL(url).searchParams.get("nonce") ?? "";
+        return { status: 200, body: JSON.stringify({ status: "ok", pid: 4242,
+          proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, currentWs) }) };
+      },
+    });
+    await new BackendProcess(d).start(w, SETTINGS);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(d.spawned).not.toHaveLength(0);
+  });
+
+  it.each([
+    ["a recycled pid", { uid: 501, startedAtSec: Date.now() / 1000 + 100, command: "py -m agentd.serve --workspace-lock X" }],
+    ["another user's process", { uid: 0, startedAtSec: 0, command: "py -m agentd.serve --workspace-lock X" }],
+    ["an unrelated process", { uid: 501, startedAtSec: 0, command: "/usr/bin/vim" }],
+  ])("never signals %s, and still spawns", async (_name, info) => {
+    const w = ws();
+    writeLock(w, { pid: 777, port: 9001, started_at: Date.now() / 1000 - 600 });
+    const signals: string[] = [];
+    const d = deps({ processInfo: async () => info, signal: (_p, s) => { signals.push(s); },
+      fetchRaw: async (url) => {
+        if (url.includes(":9001/")) return { status: 421, body: "" };
+        const nonce = new URL(url).searchParams.get("nonce") ?? "";
+        return { status: 200, body: JSON.stringify({ status: "ok", pid: 4242,
+          proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, currentWs) }) };
+      } });
+    await new BackendProcess(d).start(w, SETTINGS);
+    expect(signals).toEqual([]);
+    expect(d.spawned).not.toHaveLength(0);
+  });
+
+  it("never signals pid 1", async () => {
+    const w = ws();
+    writeLock(w, { pid: 1, port: 9001, started_at: Date.now() / 1000 - 600 });
+    const signals: string[] = [];
+    const d = deps({ signal: (_p, s) => { signals.push(s); },
+      processInfo: async () => ({ uid: 501, startedAtSec: 0,
+        command: `x agentd.serve --workspace-lock ${currentWs}` }) });
+    await new BackendProcess(d).start(w, SETTINGS);
+    expect(signals).toEqual([]);
   });
 });
