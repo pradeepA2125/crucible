@@ -115,59 +115,8 @@ async def test_create_team_rows_kickoff_and_activation(tmp_path, monkeypatch) ->
     assert any(m.type == "team_created" for m in store.get_thread(tid).messages)
 
 
-@pytest.mark.asyncio
-async def test_post_kickoff_wakes_only_mentions(tmp_path, monkeypatch) -> None:
-    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
-    await ctrl._create_team(tid, "turn1", _request(kind="post"))
-    await _settle(ctrl)
-    assert {label for label, *_ in engine.seen} == {"alice"}
 
 
-@pytest.mark.asyncio
-async def test_mention_wakes_an_idle_member_with_its_delta(tmp_path, monkeypatch) -> None:
-    post_to_bob = {"type": "tool_call", "thought": "tell bob", "tool": "team_post",
-                   "args": {"text": "@bob the login route needs a test"}}
-    ctrl, store, tid, engine = _make(tmp_path, monkeypatch,
-                                     {"alice": [post_to_bob, REPORT], "bob": [REPORT]})
-    result = await ctrl._create_team(tid, "turn1", _request(kind="post"))
-    await _settle(ctrl)
-    bob_calls = [h for label, h, _, _ in engine.seen if label == "bob"]
-    assert bob_calls, "bob was never woken by the mention"
-    assert "the login route needs a test" in str(bob_calls[0][-1]["content"])
-    assert "<<<agent-content author=\"alice (general-purpose)\"" in str(bob_calls[0][-1]["content"])
-    team_id = str(result["team_id"])
-    assert store.teams.member(team_id, "bob").delivered_seq >= 2
-
-
-@pytest.mark.asyncio
-async def test_post_to_running_member_lands_at_next_drain(tmp_path, monkeypatch) -> None:
-    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
-    result = await ctrl._create_team(tid, "turn1", _request())
-    await _settle(ctrl)
-    team_id = str(result["team_id"])
-    bob = store.teams.member(team_id, "bob")
-    monkeypatch.setattr(ctrl._subagents, "is_active", lambda agent_id: agent_id == bob.agent_id)
-    ctrl._teams.post(team_id, "alice", "@bob new finding")   # type: ignore[union-attr]
-    items = ctrl._drain_member(bob.agent_id, team_id, "bob")
-    assert [i.kind for i in items] == ["team"]
-    assert "new finding" in items[0].text
-    assert store.teams.member(team_id, "bob").delivered_seq == store.teams.posts(team_id)[-1].seq
-    # A second marker with nothing new behind it (woken twice) renders nothing.
-    ctrl._subagents.deliver(bob.agent_id, InboxItem(kind="team", text="", wakes=True))
-    assert ctrl._drain_member(bob.agent_id, team_id, "bob") == []
-
-
-@pytest.mark.asyncio
-async def test_wake_cap_stops_ping_pong(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("CRUCIBLE_TEAM_MAX_WAKES", "1")
-    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
-    result = await ctrl._create_team(tid, "turn1", _request(kind="post"))  # wakes alice once
-    await _settle(ctrl)
-    team_id = str(result["team_id"])
-    ctrl._teams.post(team_id, "bob", "@alice again")   # type: ignore[union-attr]
-    await _settle(ctrl)
-    capped = [e for e in store.teams.activity(team_id) if e.kind == "capped"]
-    assert capped and capped[0].label == "alice"
 
 
 @pytest.mark.asyncio
@@ -214,3 +163,64 @@ async def test_member_sees_team_block_and_status_tail(tmp_path, monkeypatch) -> 
     _, _, _, plan_context = next(s for s in engine.seen if s[0] == "alice")
     assert "phase DELIBERATING" in str(plan_context["team_status"])
     assert "- alice (you)" in str(plan_context["team_status"])
+
+
+@pytest.mark.asyncio
+async def test_post_kickoff_round_one_is_only_the_mentions(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    monkeypatch.setattr(ctrl, "_rearm_notices", lambda _thread_id: None)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request(kind="post")))["team_id"])
+    await _settle(ctrl)
+    started = [e.payload for e in store.teams.activity(team_id) if e.kind == "round_started"]
+    assert [m["label"] for m in started[0]["members"]] == ["alice"]
+    assert [m["label"] for m in started[1]["members"]] == ["alice", "bob"]
+
+
+@pytest.mark.asyncio
+async def test_a_mention_reaches_its_member_next_round(tmp_path, monkeypatch) -> None:
+    post_to_bob = {"type": "tool_call", "thought": "tell bob", "tool": "team_post",
+                   "args": {"text": "@bob the login route needs a test"}}
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch,
+                                     {"alice": [post_to_bob, REPORT], "bob": [REPORT]})
+    monkeypatch.setattr(ctrl, "_rearm_notices", lambda _thread_id: None)
+    result = await ctrl._create_team(tid, "turn1", _request(kind="post"))
+    await _settle(ctrl)
+    bob_calls = [h for label, h, _, _ in engine.seen if label == "bob"]
+    assert bob_calls, "bob never ran"
+    assert "the login route needs a test" in str(bob_calls[0][-1]["content"])
+    assert "<<<agent-content author=\"alice (general-purpose)\"" in str(bob_calls[0][-1]["content"])
+    assert store.teams.member(str(result["team_id"]), "bob").delivered_seq >= 2
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_pushed_to_a_running_member_between_rounds(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    monkeypatch.setattr(ctrl, "_rearm_notices", lambda _thread_id: None)
+    result = await ctrl._create_team(tid, "turn1", _request())
+    await _settle(ctrl)
+    team_id = str(result["team_id"])
+    bob = store.teams.member(team_id, "bob")
+    monkeypatch.setattr(ctrl._subagents, "is_active", lambda agent_id: agent_id == bob.agent_id)
+    ctrl._teams.post(team_id, "alice", "@bob new finding")   # type: ignore[union-attr]
+    assert ctrl._drain_member(bob.agent_id, team_id, "bob") == []
+    # A marker (live delivery outside deliberation) still renders what is new.
+    ctrl._subagents.deliver(bob.agent_id, InboxItem(kind="team", text="", wakes=True))
+    items = ctrl._drain_member(bob.agent_id, team_id, "bob")
+    assert [i.kind for i in items] == ["team"] and "new finding" in items[0].text
+
+
+@pytest.mark.asyncio
+async def test_wake_cap_stops_ping_pong(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_TEAM_MAX_WAKES", "1")
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    monkeypatch.setattr(ctrl, "_rearm_notices", lambda _thread_id: None)
+    result = await ctrl._create_team(tid, "turn1", _request(kind="post"))
+    await _settle(ctrl)
+    team_id = str(result["team_id"])
+    post = store.teams.append_post(team_id, author="bob", kind="post", text="@alice again",
+                                   mentions=["alice"])
+    for _ in range(2):    # outside deliberation a post wakes whom it mentions (5B keeps it)
+        ctrl.wake_for_post(store.teams.get_team(team_id), post)
+        await _settle(ctrl)
+    capped = [e for e in store.teams.activity(team_id) if e.kind == "capped"]
+    assert capped and capped[0].label == "alice"

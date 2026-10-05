@@ -67,6 +67,7 @@ from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
 from agentd.providers.rate_limit import CALL_PRIORITY
 from agentd.providers.usage import METER, USAGE_OWNER
+from agentd.runtime.artifacts import chat_turn_artifacts_root
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
 from agentd.subagents.agent_files import AgentCatalogLoader
@@ -110,6 +111,7 @@ from agentd.subagents.runtime import (
     AgentSupervisor,
     ChildResult,
     DispatchRequest,
+    active_seconds,
     agent_channel,
 )
 from agentd.subagents.tool_source import (
@@ -121,7 +123,8 @@ from agentd.subagents.tool_source import (
 from agentd.subagents.transcript import AgentTranscript
 from agentd.subagents.vcs_guard import vcs_refusal
 from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
-from agentd.teams.config import team_max_live_per_thread, team_max_wakes
+from agentd.teams.config import team_max_live_per_thread, team_max_wakes, team_round_timeout_s
+from agentd.teams.coordinator import TeamCoordinator
 from agentd.teams.models import (
     LIVE_TEAM_PHASES,
     TeamActivity,
@@ -130,6 +133,7 @@ from agentd.teams.models import (
     TeamRecord,
     new_team_id,
 )
+from agentd.teams.report_fields import ReportFields
 from agentd.teams.service import ActivationCounters, AgentInfo, TeamService
 from agentd.teams.tools import (
     MEMBER_TOOL_NAMES,
@@ -138,6 +142,7 @@ from agentd.teams.tools import (
     MainTeamToolSource,
     TeamToolSource,
 )
+from agentd.teams.trace import CoordinatorTrace
 from agentd.teams.validation import TeamInputError
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
@@ -397,6 +402,9 @@ class ChatController:
             TeamService(thread_store.teams, Path(workspace_path), self._agent_info,
                         on_post=self._team_posted, on_activity=self._team_activity)
             if is_subagents_enabled() else None)
+        # One coordinator per live team (spec v2 §8.1). Teams never survive a restart, so
+        # nothing is rebuilt at startup: the reap fails them.
+        self._coordinators: dict[str, TeamCoordinator] = {}
         # The turn whose dispatch tree /live reports (spec §11.1) — registered for exactly
         # loop.run's lifetime, like _active_loops.
         self._live_turns: dict[str, str] = {}
@@ -1832,10 +1840,18 @@ class ChatController:
         Scheduled, not run inline: the supervisor calls this from inside the finishing
         activation's task."""
         others = [i for i in items if i.kind != "team"]
+        membership = self._store.teams.member_for_agent(handle.agent_id)
+        if membership is not None:
+            team = self._store.teams.get_team(membership.team_id)
+            if team is not None and team.phase == "DELIBERATING":
+                # Nothing reaches a member mid-round (spec v2 E5): the next round's delta
+                # covers the board, and anything else waits in its inbox for that round.
+                assert self._subagents is not None
+                self._subagents.keep(handle.agent_id, others)
+                return
         text = "\n\n".join(
             "New message:\n" + frame(i.author or i.source_id or "agent", i.kind, i.text)
             for i in others)
-        membership = self._store.teams.member_for_agent(handle.agent_id)
         if membership is not None:
             text = TEAM_DELTA + ("\n\n" + text if text else "")
             if self._teams is not None:
@@ -2318,10 +2334,18 @@ class ChatController:
         self._wake_turns[thread_id] = self._wake_turns.get(thread_id, 0) + 1
         channel_id = f"chat:{thread_id}"
         sources = [n for n in pending if n.source_kind == "agent"]
-        target = {"agent_id": sources[0].source_id} if len(sources) == 1 else {}
-        text = (f"🔔 Agent \"{sources[0].payload.get('label', '')}\" finished — main agent woke"
-                if len(sources) == 1 else
-                f"🔔 {len(pending)} agents finished — main agent woke")
+        teams = [n for n in pending if n.source_kind == "team"]
+        target: dict[str, str] = {}
+        if len(pending) == 1 and teams:
+            target = {"team_id": teams[0].source_id}
+            text = f"🔔 {teams[0].payload.get('headline', 'Team update')} — main agent woke"
+        elif len(pending) == 1:
+            target = {"agent_id": sources[0].source_id}
+            text = f"🔔 Agent \"{sources[0].payload.get('label', '')}\" finished — main agent woke"
+        elif teams:
+            text = f"🔔 {len(pending)} updates from agents and teams — main agent woke"
+        else:
+            text = f"🔔 {len(pending)} agents finished — main agent woke"
         marker = ChatMessage(role="agent", content=text, type="notice",
                              metadata={"target": target})
         marker_id = self._store.append_message(thread_id, marker)
@@ -2482,7 +2506,14 @@ class ChatController:
             payload=({"assignments": req.kickoff_assignments,
                       "shared_files": req.kickoff_shared_files, "supersedes": []}
                      if req.kickoff_kind == "proposal" else {}))
-        self._team_posted(team, kickoff, wake_all=req.kickoff_kind == "proposal")
+        self._broadcast_post(team, kickoff)
+        coordinator = TeamCoordinator(
+            team.team_id, self._store.teams, self._teams, self,
+            CoordinatorTrace(chat_turn_artifacts_root(thread_id, turn_id, self._workspace_path)
+                             / "teams" / team.team_id / "coordinator.jsonl"),
+            round_timeout_s=team_round_timeout_s())
+        self._coordinators[team.team_id] = coordinator
+        coordinator.kickoff(req.kickoff_kind, req.kickoff_mentions)
         return {"team_id": team.team_id, "members": members, "phase": team.phase,
                 "round": team.round}
 
@@ -2492,25 +2523,103 @@ class ChatController:
             "type": "team_activity", "aseq": event.aseq,
             "payload": {"event": event.model_dump(mode="json")}})
 
-    def _team_posted(self, team: TeamRecord, post: TeamPost, *, wake_all: bool = False) -> None:
-        """Every stored post: stream it, then wake whom it concerns. Phase 4's interim
-        policy — Phase 5's coordinator replaces the waking half (spec v2 §8)."""
+    def _broadcast_post(self, team: TeamRecord, post: TeamPost) -> None:
         self._broadcaster.broadcast(team_channel(team.thread_id, team.team_id), {
             "type": "team_post", "seq": post.seq,
             "payload": {"post": post.model_dump(mode="json")}})
-        if post.kind == "system" or team.phase not in LIVE_TEAM_PHASES:
+
+    def _team_posted(self, team: TeamRecord, post: TeamPost) -> None:
+        """Every stored post: stream it, then let the team's coordinator decide who sees it
+        and when (spec v2 §8.3 — during deliberation nothing reaches a member mid-round)."""
+        self._broadcast_post(team, post)
+        coordinator = self._coordinators.get(team.team_id)
+        if coordinator is not None:
+            coordinator.on_post(post)
+
+    # ── CoordinatorHost (spec v2 §8.1) ──────────────────────────────────────
+
+    def start_member(self, team_id: str, label: str) -> None:
+        """Scheduled, never inline: the round's last reporter calls this from inside its own
+        finishing activation, which is still active until that task ends (the same rule
+        as _on_leftover)."""
+        asyncio.get_running_loop().call_soon(self._start_member_now, team_id, label)
+
+    def _start_member_now(self, team_id: str, label: str) -> None:
+        assert self._subagents is not None
+        team = self._store.teams.get_team(team_id)
+        member = self._store.teams.member(team_id, label)
+        if team is None or member is None or team.phase not in LIVE_TEAM_PHASES:
             return
+        if self._subagents.is_active(member.agent_id):
+            logger.warning("[teams] %s of %s still running at its round start", label, team.name)
+            return
+        handle = self._handle_from_record(team.thread_id, member.agent_id)
+        handle.activation_input = TEAM_DELTA
+        self._subagents.enqueue(handle, self._activate)
+
+    def _member_handle(self, team_id: str, label: str) -> AgentHandle | None:
+        member = self._store.teams.member(team_id, label)
+        if member is None or self._subagents is None:
+            return None
+        if not self._subagents.is_active(member.agent_id):
+            return None
+        return self._subagents.registry.get(member.agent_id)
+
+    async def stop_member(self, team_id: str, label: str, reason: str) -> None:
+        member = self._store.teams.member(team_id, label)
+        if member is not None and self._subagents is not None:
+            await self._subagents.stop(member.agent_id, reason)
+
+    def force_final(self, team_id: str, label: str) -> bool:
+        handle = self._member_handle(team_id, label)
+        if handle is None or not isinstance(handle.loop, ControllerLoop):
+            return False
+        handle.loop.force_final()
+        return True
+
+    def active_seconds(self, team_id: str, label: str) -> float | None:
+        handle = self._member_handle(team_id, label)
+        return active_seconds(handle, datetime.now(UTC)) if handle is not None else None
+
+    def team_milestone(self, team: TeamRecord, kind: str, headline: str, body: str) -> None:
+        """A team milestone for the main agent (spec v2 §8.8): a wake notice, delivered by
+        the same paths as an agent's report (§5.2)."""
+        notice = NoticeRecord(
+            notice_id=uuid4().hex, thread_id=team.thread_id, source_kind="team",
+            source_id=team.team_id, kind=kind,
+            payload={"team_name": team.name, "team_id": team.team_id, "headline": headline,
+                     "body": body, "phase": team.phase},
+            delivery="wake", created_at=datetime.now(UTC))
+        self._store.insert_notice(notice)
+        if team.thread_id in self._active_loops:
+            self._main_inbox.setdefault(team.thread_id, []).append(InboxItem(
+                kind="note", text=body, wakes=False, source_id=team.team_id,
+                author=notice_author(notice), notice_id=notice.notice_id))
+            return
+        self._rearm_notices(team.thread_id)
+
+    def team_phase_changed(self, team: TeamRecord) -> None:
+        self._broadcaster.broadcast(team_channel(team.thread_id, team.team_id), {
+            "type": "team_phase", "payload": {"phase": team.phase, "round": team.round,
+                                              "paused_reason": team.paused_reason}})
+        if team.phase not in LIVE_TEAM_PHASES:
+            coordinator = self._coordinators.pop(team.team_id, None)
+            if coordinator is not None:
+                coordinator.close()
+
+    def wake_for_post(self, team: TeamRecord, post: TeamPost) -> None:
+        """Outside deliberation a post wakes whom it concerns: Phase 4's policy, which 5B's
+        implementation phase keeps (spec v2 §8.6 live delivery)."""
         members = self._store.teams.members(team.team_id)
         if post.recipient is not None:
             targets = [m for m in members if m.label == post.recipient]
-        elif wake_all or "team" in post.mentions:
+        elif "team" in post.mentions:
             targets = members
         else:
             targets = [m for m in members if m.label in post.mentions]
         for member in targets:
             if member.label != post.author:
-                cause = "kickoff" if wake_all else wake_cause(post, member.label)
-                self._wake_member(team, member, cause=cause, post=post)
+                self._wake_member(team, member, cause=wake_cause(post, member.label), post=post)
 
     def _wake_member(self, team: TeamRecord, member: TeamMember, *, cause: str,
                      post: TeamPost | None) -> None:
@@ -2562,19 +2671,28 @@ class ChatController:
                                     "from": sorted({p.author for p in handed})})
         return [InboxItem(kind="team", text=delta, wakes=False, author="team board"), *others]
 
-    def _team_member_reported(self, record: AgentRecord, result: ChildResult) -> None:
-        """A member's activation ended: its wrap-up (spec 2026-10-05 §4.2). Written even
-        after the team ended, so a disband's stopped activations close their chapters."""
+    def _team_member_reported(self, record: AgentRecord, result: ChildResult,
+                              stop_reason: str | None = None) -> None:
+        """A member's activation ended: its wrap-up (spec 2026-10-05 §4.2), then the
+        coordinator's event (spec v2 §8.3). Written even after the team ended, so a
+        disband's stopped activations close their chapters."""
         if self._teams is None or record.team_id is None:
             return
         report = result.report
         if len(report) > 20_000:
             report = report[:20_000] + "\n… (truncated)"
         stats = _activation_stats(record, self._store.teams.posts(record.team_id))
+        team = self._store.teams.get_team(record.team_id)
+        in_round = ({"round": team.round}
+                    if team is not None and team.phase == "DELIBERATING" else {})
         self._teams.record(record.team_id, record.label, "wrapped_up",
                            activation=record.activation_count,
                            payload={"status": result.status, "report": report,
-                                    "files_changed": list(result.files_changed), **stats})
+                                    "files_changed": list(result.files_changed), **stats,
+                                    **in_round})
+        coordinator = self._coordinators.get(record.team_id)
+        if coordinator is not None:
+            coordinator.on_report(record.label, result.status, stop_reason)
 
     async def disband_team(self, thread_id: str, team_id: str) -> dict[str, object]:
         """Stop every member, close the board (spec v2 §8.9's DISBANDED)."""
@@ -2582,6 +2700,10 @@ class ChatController:
         if team is None or team.thread_id != thread_id:
             raise TeamInputError(f"no team {team_id!r} in this thread")
         if team.phase in LIVE_TEAM_PHASES:
+            coordinator = self._coordinators.pop(team_id, None)
+            if coordinator is not None:
+                await coordinator.disband()
+                return {"team_id": team_id, "phase": "DISBANDED"}
             # Ended first, so a member's stopped report posts no "finished" line.
             self._store.teams.update_team(team_id, phase="DISBANDED", end_reason="disbanded",
                                           ended_at=datetime.now(UTC))
@@ -2665,18 +2787,32 @@ class ChatController:
         activation_input = handle.activation_input or handle.prompt
         membership = self._store.teams.member_for_agent(ctx.agent_id)
         team_counters = ActivationCounters()
+        team_row = (self._store.teams.get_team(membership.team_id)
+                    if membership is not None else None)
+        deliberating = team_row is not None and team_row.phase == "DELIBERATING"
+        coordinator = (self._coordinators.get(membership.team_id)
+                       if membership is not None else None)
+        if team_row is not None and team_row.phase != "IMPLEMENTING":
+            # Edits only where the phase allows them (spec v2 §3.9), recomputed at each
+            # activation start; deliberation activations are capped at 40 iterations (§3.11).
+            ctx = replace(ctx, allowed_types=tuple(t for t in ctx.allowed_types if t != "edit"),
+                          max_iters=min(ctx.max_iters, 40) if deliberating else ctx.max_iters)
+            handle.context = ctx
         if membership is not None and activation_input.startswith(TEAM_DELTA):
             assert self._teams is not None
             # The delta is rendered now, when the input lands in the history, and the
             # cursor advances only to what it covers (spec §7.6).
             delta, top, handed = self._teams.render_delta_posts(
-                membership.team_id, membership.label)
+                membership.team_id, membership.label,
+                until_seq=coordinator.delta_cutoff() if coordinator is not None else None)
             self._store.teams.set_delivered_seq(membership.team_id, membership.label, top)
             activation_input = delta + activation_input[len(TEAM_DELTA):]
             self._teams.record(membership.team_id, membership.label, "took_up",
                                activation=activation,
                                payload={"posts": [p.seq for p in handed],
-                                        "from": sorted({p.author for p in handed})})
+                                        "from": sorted({p.author for p in handed}),
+                                        **({"round": team_row.round}
+                                           if deliberating and team_row is not None else {})})
         channel = agent_channel(thread_id, ctx.agent_id)
         broadcaster = SequencedBroadcaster(self._broadcaster, channel,
                                            initial_seq=record.last_seq)
@@ -2780,6 +2916,13 @@ class ChatController:
             report_statuses=(TEAM_REPORT_STATUSES if membership is not None
                              else LONE_REPORT_STATUSES))
         handle.loop = loop
+        if coordinator is not None and membership is not None:
+            coordinator.on_activation_start(membership.label)
+        report_check = (
+            ReportFields(self._teams, membership.team_id, membership.label, team_counters,
+                         on_dropped=(partial(coordinator.trace_dropped, membership.label)
+                                     if coordinator is not None else (lambda _errors: None)))
+            if membership is not None and self._teams is not None else None)
         plan_context: dict[str, object] = {
             "goal": activation_input, "workspace_path": self._workspace_path, "run_id": run_id,
             # Nests this child's controller-turn-NN / memory-recall-NN dumps under
@@ -2808,6 +2951,7 @@ class ChatController:
                     partial(self._teams.status_text, membership.team_id, membership.label)
                     if membership is not None and self._teams is not None else None),
                 report_guard=partial(self._report_guard, handle),
+                report_check=report_check,
                 edit_decision_cb=partial(self._child_edit_decision_cb, handle),
                 edit_record_cb=partial(self._child_edit_record_cb, handle),
                 on_pills_update=transcript.upsert_pills)
@@ -2833,7 +2977,7 @@ class ChatController:
                 # closes (spec 2026-10-05 §4.2): stop and disband show as "stopped".
                 stopped = self._store.get_agent(ctx.agent_id)
                 if stopped is not None:
-                    self._team_member_reported(stopped, handle.result)
+                    self._team_member_reported(stopped, handle.result, handle.stop_reason)
             raise
         except ProviderUnavailable as exc:
             logger.warning("[subagent] provider unavailable id=%s: %s", ctx.agent_id, exc)
