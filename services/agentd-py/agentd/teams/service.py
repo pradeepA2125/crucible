@@ -320,6 +320,21 @@ class TeamService:
                      f"{mentions} mention{'s' if mentions != 1 else ''}")
         return "\n".join(lines)
 
+    def brief(self, team_id: str, label: str) -> str:
+        """Goal + roster for a member's system prompt. Status is left out on purpose: it
+        changes, and changing text here would break the cached prefix (status_text has it)."""
+        # Not _team(): a late leftover activation may start after the team ended, and its
+        # prompt must still build (the member then reports with nothing to do).
+        team = self._store.get_team(team_id)
+        if team is None:
+            raise TeamInputError(f"no team {team_id!r}")
+        lines = [f"Team {team.name!r}. Goal: {team.goal}", "Roster:"]
+        for m in self._store.members(team_id):
+            info = self._agent_info(m.agent_id)
+            you = " (you)" if m.label == label else ""
+            lines.append(f"- {m.label}{you}: {info.name} — {info.description}")
+        return "\n".join(lines)
+
     def summary(self, team_id: str) -> dict[str, object]:
         team = self._store.get_team(team_id)
         if team is None:

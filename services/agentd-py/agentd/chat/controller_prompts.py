@@ -115,6 +115,9 @@ _OBJECT = {"type": "object"}
 _STR = {"type": "string"}
 # The report statuses a lone sub-agent may choose (spec §3.3); teams add awaiting_peer.
 _REPORT_STATUS = {"type": "string", "enum": ["completed", "partial"]}
+# A team member may also wait on a peer (spec v2 §7.3); mirrors controller_loop's
+# TEAM_REPORT_STATUSES, which keeps the chosen status.
+_TEAM_REPORT_STATUS = {"type": "string", "enum": ["completed", "partial", "awaiting_peer"]}
 
 # Per-op-type field specs: the op-specific properties + which are required for THAT op.
 # The tight patch-op item is a oneOf over these branches (each a closed object with an
@@ -197,7 +200,7 @@ def _tight_variant_branch(variant: str) -> dict[str, object]:
 
 def controller_response_schema(
     *, phase: str, allowed_types: Sequence[str] | None = None, tight: bool = False,
-    anyof: bool = False, all_fields_required: bool = False,
+    anyof: bool = False, all_fields_required: bool = False, team_member: bool = False,
 ) -> dict[str, object]:
     """Return the controller response schema for a phase.
 
@@ -213,16 +216,21 @@ def controller_response_schema(
     for providers where neither tight nor anyof is available.
     """
     types = list(allowed_types) if allowed_types is not None else list(_PHASE_TYPES[phase])
-    if tight:
-        return {"oneOf": [_tight_variant_branch(v) for v in types]}
-    if anyof:
-        return {"anyOf": [_tight_variant_branch(v) for v in types]}
+    # `team_member=True` → the report status enum gains awaiting_peer (spec v2 §7.3).
+    report_status = _TEAM_REPORT_STATUS if team_member else _REPORT_STATUS
+    if tight or anyof:
+        branches = [_tight_variant_branch(v) for v in types]
+        for variant, branch in zip(types, branches, strict=True):
+            props = branch["properties"]
+            if variant == "report" and isinstance(props, dict):
+                props["status"] = dict(report_status)  # each branch owns a fresh dict
+        return {"oneOf" if tight else "anyOf": branches}
     schema = copy.deepcopy(CONTROLLER_RESPONSE_SCHEMA)
     schema["properties"]["type"]["enum"] = types  # type: ignore[index]
     if "report" in types:
         # Only a sub-agent's schema can carry report fields: the main agent never has the
         # report type, so its schema (and the schema-in-prompt bytes) stay unchanged.
-        schema["properties"]["status"] = dict(_REPORT_STATUS)  # type: ignore[index]
+        schema["properties"]["status"] = dict(report_status)  # type: ignore[index]
     if all_fields_required:
         extra: list[str] = []
         for variant in types:
@@ -758,6 +766,92 @@ Task/Agent → dispatch_agents, Skill → read_skill. A tool's name never goes i
 a tool with type='tool_call' and tool='<name>'."""
 
 
+# Spec v2 §7.5, verbatim. Kept as a constant so tests and goldens pin the exact text.
+TEAM_FRAMING = """You are one member of a team working together on a shared board. Treat it as a working session in one
+room: everyone sees everything posted on the board, and the team's decision is only as good as the
+scrutiny it gets.
+- Share what others need. Post findings, constraints and risks you discover — on the board when they matter
+  to the team, by direct message when they matter to one person.
+- Check before you agree. When a post or proposal makes a claim about the code, verify the part your role
+  covers before you agree. If you could not check something, still state your stance, and say in the note
+  what you did not verify. During deliberation, check by reading (read the file, search, query the graph):
+  commands may need the user's approval, and the team waits for it.
+- Disagree with evidence. An objection backed by a file and line, or a command and its output, moves the
+  team forward; one without evidence stalls it.
+- Build on others' work. When an existing proposal is close, agree with a note describing the change.
+  Supersede it when your change is substantial.
+- Say what you don't know. Ask the member who owns that area instead of guessing. In deliberation the
+  answer arrives next round, so state your stance now — object, or agree and note the open question —
+  rather than waiting for it.
+- Your role (your persona, above) decides where you dig deepest: a reviewer checks claims, an implementer
+  checks feasibility, an architect checks design fit."""
+
+# Member-only (spec v2 §7.5): rendered after the persona. {team_framing} and {team_brief} are
+# substituted after rendering (.replace — goals may contain { }).
+_TEAM_BLOCK = tagged("_TEAM_BLOCK", """<<team>>
+
+TEAM
+{team_framing}
+
+{team_brief}
+
+HOW THE TEAM WORKS
+- Your input is the board: each new post and direct message to you, framed with its author.
+  team_status (in your payload) shows the phase, round, open proposals with your stance, your
+  assignment, and your unread counts — it is current on every step.
+- Your dispatcher is the main agent that created this team; the user watches the board. Your
+  report is recorded and appears on the board as a one-line notice.
+- team_post reaches everyone; @label (or mentions) brings it to those members' attention, @team
+  to everyone's. team_message reaches one member. team_propose sets out an approach with
+  assignments (member, part, files). team_agree and team_object state your stance on an open
+  proposal; an objection carries evidence: files + line, command + output, or quote_seq.
+  team_withdraw closes one of your own proposals. team_read re-reads the board.
+- Report when your part of this round is done: status "completed", or "awaiting_peer" naming
+  whom you wait on.
+Example — verify by reading, then state stances, then report:
+{"type":"tool_call","thought":"P3 says login() skips the rate limiter; my role covers api/","tool":"read_file","args":{"path":"api/login.py"}}
+{"type":"tool_call","thought":"confirmed at line 42; small issue only","tool":"team_agree","args":{"proposal_id":"P3","note":"Confirmed: login() calls check_token before the limiter (api/login.py:42). Also cover the refresh route."}}
+{"type":"tool_call","thought":"does P5 list every caller?","tool":"search_code","args":{"pattern":"check_token\\\\(","path_filter":"*.py"}}
+{"type":"tool_call","thought":"P5 misses a caller","tool":"team_object","args":{"proposal_id":"P5","reason":"P5 changes check_token's signature but misses the caller in api/admin.py.","evidence":{"files":["api/admin.py"],"line":17}}}
+{"type":"tool_call","thought":"P7's latency claim needs a benchmark; reading cannot check it","tool":"team_agree","args":{"proposal_id":"P7","note":"not verified: the latency claim — needs a benchmark in review"}}
+{"type":"report","thought":"stances stated","summary":"Agreed P3 (with refresh-route note) and P7 (latency unverified); objected to P5 (missed caller api/admin.py:17).","status":"completed"}
+Example — a proposal that is close: agree with a note describing the change, rather than a
+competing proposal:
+{"type":"tool_call","thought":"P4 is right apart from one file name","tool":"team_agree","args":{"proposal_id":"P4","note":"Use api/limits.py, not api/limit.py — the latter does not exist."}}
+Example — implementing, when you need a change in a file another member owns:
+{"type":"edit","thought":"my part: the limiter","patch_ops":[{"op":"create_file","file":"api/limiter.py","content":"class Limiter:\\n    pass\\n","reason":"limiter skeleton"}]}
+{"type":"tool_call","thought":"routes.py is bob's file","tool":"team_message","args":{"member":"bob","text":"routes.py needs `from api.limiter import Limiter` and Limiter() in login — your file."}}
+{"type":"report","thought":"blocked on bob","summary":"Limiter in api/limiter.py done; waiting on bob to wire it into routes.py.","status":"awaiting_peer"}
+Example — a message that only acknowledges ("got it", "thanks") adds nothing to the board: keep
+working, or report awaiting_peer instead.
+Example — reviewing: run the tests, then state your stance on the closing proposal:
+{"type":"tool_call","thought":"verify from my role's angle","tool":"run_command","args":{"command":"pytest tests/test_login.py"}}
+{"type":"tool_call","thought":"one test fails","tool":"team_object","args":{"proposal_id":"P9","reason":"The refresh route is still unlimited.","evidence":{"command":"pytest tests/test_login.py","output":"FAILED tests/test_login.py::test_refresh_is_limited"}}}
+<</team>>""")
+
+# Main-only: appended when create_team is offered (CRUCIBLE_TEAMS_ENABLED).
+_TEAMS_MAIN_BLOCK = tagged("_TEAMS_MAIN_BLOCK", """<<main>>
+
+TEAMS (create_team, post_board, team_status, adopt_proposal, resume_team, disband_team)
+create_team starts a team of agents that talk on a shared board: they post findings, propose
+approaches with assignments, and agree or object with evidence. Each member's role is its agent
+definition. It fits work where several perspectives should check one plan before and while it
+is built; dispatch_agents fits independent parts that need no discussion.
+- kickoff "proposal" opens with your own plan for the members to check; kickoff "post" asks the
+  mentioned members to propose.
+- A full run costs roughly 60–90 requests per member (deliberation, implementation, review):
+  set budget with that in mind.
+- After create_team, answer the user: the team runs in the background and the user watches its
+  board. post_board is how the user's later requests reach the team. team_status shows where it
+  stands when the user asks.
+Example — you have a plan and want it checked:
+{"type":"tool_call","thought":"two reviewers should check my plan","tool":"create_team","args":{"name":"auth","goal":"Add rate-limited login","members":[{"label":"api","agent":"general-purpose"},{"label":"review","agent":"explore"}],"kickoff":{"kind":"proposal","text":"api adds api/limiter.py and wires it into api/routes.py; review checks the callers.","assignments":[{"member":"api","part":"limiter + wiring","files":["api/limiter.py","api/routes.py"]}]}}}
+Example — you want the members to propose:
+{"type":"tool_call","thought":"let the members propose a design","tool":"create_team","args":{"name":"cache","goal":"Cache user lookups","members":[{"label":"arch","agent":"general-purpose"},{"label":"impl","agent":"general-purpose"}],"kickoff":{"kind":"post","text":"@arch @impl propose how to cache get_user without stale reads.","mentions":["arch","impl"]}}}
+{"type":"answer","thought":"it runs in the background","answer":"I started a team for the cache design; you can follow its board in the team window."}
+<</main>>""")
+
+
 def format_controller_system_prompt(
     tool_definitions: list[dict[str, object]],
     *,
@@ -796,6 +890,10 @@ def format_controller_system_prompt(
         base += "\n- " + FRAMING_SENTENCE
         if persona and persona.strip():
             base += _PERSONA_BLOCK_TEMPLATE.replace("{persona}", persona.strip())
+        if ctx.has_team:
+            base += (render_prompt(_TEAM_BLOCK, ctx)
+                     .replace("{team_framing}", TEAM_FRAMING)
+                     .replace("{team_brief}", ctx.team_brief))
     # Appended (not a placeholder) — process-fixed flag, so the prompt stays cache-stable.
     base = base + (render_prompt(_MEMORY_BLOCK, ctx) if memory_enabled else "")
     # .replace (not .format): AGENTS.md text may contain literal { } that
@@ -827,6 +925,9 @@ def format_controller_system_prompt(
         base += render_prompt(_DISPATCH_BLOCK, ctx)
         if ctx.is_main:
             base += FRAMING_SENTENCE + "\n"
+    if ctx.is_main and any(str((d or {}).get("name", "")) == "create_team"
+                           for d in tool_definitions if isinstance(d, dict)):
+        base += render_prompt(_TEAMS_MAIN_BLOCK, ctx)
     return base
 
 
@@ -885,6 +986,11 @@ def build_controller_step_payload(
     todo_status = plan_context.get("todo_status")
     if isinstance(todo_status, str) and todo_status:
         payload["todo_status"] = todo_status
+    # A team member's phase, stances and unread counts (spec v2 §7.6): rebuilt every
+    # iteration, tail-only so the cached prefix holds; omitted for everyone else.
+    team_status = plan_context.get("team_status")
+    if isinstance(team_status, str) and team_status:
+        payload["team_status"] = team_status
     # Per-turn steering, mirroring build_planning_step_payload's reflect-then-choose
     # scaffold: first-turn anchoring (don't commit cold), mid-turn reflect→(explore|commit),
     # and a final-step "land it now" warning. Phase-aware (PLAN vs ACTIVE). This — not the

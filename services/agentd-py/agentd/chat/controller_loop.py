@@ -33,6 +33,7 @@ from agentd.reasoning.react_common import (
 )
 from agentd.skills.config import skills_body_max_chars
 from agentd.subagents.framing import frame
+from agentd.teams.tools import MAIN_TOOL_NAMES, MEMBER_TOOL_NAMES
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -257,6 +258,21 @@ def _reserved_tool_name_correction(
         return None
     return render_prompt(_RESERVED_TOOL_NAME_TEMPLATE, ctx).replace("{tool}", tool)
 
+
+
+_TOOL_AS_TYPE_TEMPLATE = tagged("tool_as_type", (
+    "'{tool}' is a tool, not an action type. Call it with a tool_call: "
+    '{"type":"tool_call","thought":"…","tool":"{tool}","args":{…}}'))
+
+
+def _tool_name_as_type_correction(
+    atype: str, tool_names: set[str] | frozenset[str],
+) -> str | None:
+    """The reverse of _reserved_tool_name_correction (spec v2 §7.3): an action whose type is
+    a team tool's name gets the tool_call wrapper shown, not the generic malformed text."""
+    if atype not in tool_names or atype not in (MEMBER_TOOL_NAMES | MAIN_TOOL_NAMES):
+        return None
+    return render_prompt(_TOOL_AS_TYPE_TEMPLATE, _MAIN).replace("{tool}", atype)
 
 # Guidance appended after a PARSE failure, chosen by the decoder's own complaint.
 #
@@ -885,6 +901,7 @@ class ControllerLoop:
         inbox_drain: Callable[[], list[InboxItem]] | None = None,
         report_guard: Callable[[], str | None] | None = None,
         terminal_guard: Callable[[], str | None] | None = None,
+        status_tail: Callable[[], str] | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -935,6 +952,7 @@ class ControllerLoop:
                 inbox_drain=inbox_drain,
                 report_guard=report_guard,
                 terminal_guard=terminal_guard,
+                status_tail=status_tail,
             )
             if iteration_cb is not None:
                 iteration_cb(history)
@@ -985,6 +1003,7 @@ class ControllerLoop:
         inbox_drain: Callable[[], list[InboxItem]] | None = None,
         report_guard: Callable[[], str | None] | None = None,
         terminal_guard: Callable[[], str | None] | None = None,
+        status_tail: Callable[[], str] | None = None,
     ) -> ControllerOutcome:
         pending_salvage: list[str] = []
         # Set when preflight rejects generated code for a SYNTAX error, cleared as soon
@@ -1187,6 +1206,10 @@ class ControllerLoop:
             # model re-reads its own contract (the detail that makes discretion stick). Empty
             # string when no list exists -> build_controller_step_payload omits it.
             plan_context["todo_status"] = self._ledger.render()
+            if status_tail is not None:
+                # Rebuilt from the database every iteration (spec v2 §7.6) — cheap, and the
+                # only copy of the phase state that survives a long activation or compaction.
+                plan_context["team_status"] = status_tail()
             # Re-inject activated skill bodies into the tail every iteration (compaction-
             # resilient); empty list -> build_controller_step_payload omits it.
             plan_context["active_skills"] = [
@@ -1304,7 +1327,8 @@ class ControllerLoop:
             # flat schema permits {"type":"answer"} / empty tool_call — see
             # _empty_action_correction). Each is corrected + retried, bounded by _MAX_MALFORMED.
             correction = (
-                malformed_correction(self._render_ctx, self._allowed_action_types())
+                (_tool_name_as_type_correction(atype, tool_names)
+                 or malformed_correction(self._render_ctx, self._allowed_action_types()))
                 if atype not in self._allowed_action_types()
                 else _propose_mode_correction(resp, self._allowed_modes_for_current_phase()) if atype == "propose_mode"
                 else _reserved_tool_name_correction(resp, atype, self._render_ctx)

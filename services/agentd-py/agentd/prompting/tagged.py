@@ -58,6 +58,9 @@ class RenderContext:
     base_types: frozenset[str] = field(default_factory=frozenset)
     agent_id: str = ""
     agent_label: str = ""
+    # A team member's goal + roster (spec v2 §7.5); empty for everyone else. Fixed for the
+    # team's life, so it can sit in the cached system prompt.
+    team_brief: str = ""
 
     @classmethod
     def main(cls) -> RenderContext:
@@ -66,17 +69,22 @@ class RenderContext:
     @classmethod
     def for_agent(
         cls, agent: AgentContext, *, tools: frozenset[str], shell_policy: ShellPolicy,
+        team_brief: str = "",
     ) -> RenderContext:
         """A sub-agent's context (rev 11 §4.7.2): flat and hashable, built once per loop
         from the AgentContext plus the child's final tool names."""
         return cls(
             audience="child", permission=agent.permission, shell_policy=shell_policy,
             tools=tools, base_types=frozenset(agent.allowed_types),
-            agent_id=agent.agent_id, agent_label=agent.label)
+            agent_id=agent.agent_id, agent_label=agent.label, team_brief=team_brief)
 
     @property
     def is_main(self) -> bool:
         return self.audience == "main"
+
+    @property
+    def has_team(self) -> bool:
+        return not self.is_main and bool(self.team_brief)
 
 
 _MAIN = RenderContext()
@@ -99,6 +107,8 @@ def _holds(kind: str, arg: str | None, ctx: RenderContext) -> bool:
         # Main is never gated by capability tags (§4.7.1): its prompt today is
         # unconditional in every tagged region.
         return ctx.is_main or arg in ctx.tools
+    if kind == "team":
+        return ctx.has_team
     if kind == "type":
         if ctx.is_main:
             return arg != "report"
@@ -114,6 +124,7 @@ def _check_tag(kind: str, arg: str | None, where: str) -> None:
         or (kind == "shell" and arg in _SHELL_POLICIES)
         or (kind == "tool" and arg is not None)
         or (kind == "type" and arg in _VARIANTS)
+        or (kind == "team" and arg is None)
     )
     if not ok:
         tag = kind if arg is None else f"{kind}:{arg}"

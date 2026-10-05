@@ -204,3 +204,13 @@ async def test_reap_fails_live_teams(tmp_path, monkeypatch) -> None:
     await _settle(ctrl)
     ctrl.reap_subagents()
     assert store.teams.get_team(str(result["team_id"])).phase == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_member_sees_team_block_and_status_tail(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    await ctrl._create_team(tid, "turn1", _request())
+    await _settle(ctrl)
+    _, _, _, plan_context = next(s for s in engine.seen if s[0] == "alice")
+    assert "phase DELIBERATING" in str(plan_context["team_status"])
+    assert "- alice (you)" in str(plan_context["team_status"])

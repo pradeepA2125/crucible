@@ -2558,7 +2558,9 @@ class ChatController:
             names = names | MEMBER_TOOL_NAMES
         render_ctx = RenderContext.for_agent(
             ctx, tools=names,
-            shell_policy="allow_all" if self._shell_policy == ShellPolicy.ALLOW_ALL else "ask")
+            shell_policy="allow_all" if self._shell_policy == ShellPolicy.ALLOW_ALL else "ask",
+            team_brief=(self._teams.brief(membership.team_id, membership.label)
+                        if membership is not None and self._teams is not None else ""))
         registry = AggregatingToolRegistry(sources(render_ctx), allowed_tools=names)
         edit_session_factory = (
             (lambda: TurnEditSession(
@@ -2615,6 +2617,9 @@ class ChatController:
                     partial(self._drain_member, ctx.agent_id, membership.team_id,
                             membership.label)
                     if membership is not None else partial(self._drain_and_mark, ctx.agent_id)),
+                status_tail=(
+                    partial(self._teams.status_text, membership.team_id, membership.label)
+                    if membership is not None and self._teams is not None else None),
                 report_guard=partial(self._report_guard, handle),
                 edit_decision_cb=partial(self._child_edit_decision_cb, handle),
                 edit_record_cb=partial(self._child_edit_record_cb, handle),

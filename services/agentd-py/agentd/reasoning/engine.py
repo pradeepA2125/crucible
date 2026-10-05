@@ -346,7 +346,8 @@ class DefaultReasoningEngine(ReasoningEngine):
         all_fields_required = getattr(self._transport, "requires_all_fields", False)
         schema = controller_response_schema(
             phase=phase, allowed_types=allowed_types, tight=tight, anyof=anyof,
-            all_fields_required=all_fields_required)
+            all_fields_required=all_fields_required,
+            team_member=render_ctx is not None and render_ctx.has_team)
         result = await self._transport.generate_json(
             model=self._model,
             schema_name="controller_step_response",

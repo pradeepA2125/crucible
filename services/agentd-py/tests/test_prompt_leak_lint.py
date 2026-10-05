@@ -21,8 +21,10 @@ TEMPLATES = {
     **{n: getattr(cp, n) for n in (
         "CONTROLLER_SYSTEM_PROMPT", "_PROPOSE_MODE_MODES_ENABLED", "_PROPOSE_MODE_MODES_DISABLED",
         "_MEMORY_BLOCK", "_INSTRUCTIONS_BLOCK_TEMPLATE", "_MCP_BLOCK", "_SESSIONS_BLOCK",
-        "_SKILLS_BLOCK_HEADER", "_AGENT_ROLE_BLOCK", "_DISPATCH_BLOCK")},
+        "_SKILLS_BLOCK_HEADER", "_AGENT_ROLE_BLOCK", "_DISPATCH_BLOCK", "_TEAM_BLOCK",
+        "_TEAMS_MAIN_BLOCK")},
     "reserved": cl._RESERVED_TOOL_NAME_TEMPLATE,
+    "tool_as_type": cl._TOOL_AS_TYPE_TEMPLATE,
     "progress_repeat": cl._PROGRESS_REPEAT_TEMPLATE,
     "progress_dedup": cl._PROGRESS_DEDUP_TEMPLATE,
     "empty_edit": cl._EMPTY_EDIT_REDIRECT_TEMPLATE,
@@ -118,3 +120,21 @@ def test_child_renders_add_no_extra_blank_lines(perm: str, name: str) -> None:
     child = render_prompt(template, CHILDREN[perm])
     main = render_prompt(template, RenderContext.main())
     assert child.count("\n\n\n") <= main.count("\n\n\n")
+
+
+_TEAM_VOCABULARY = ("team_post", "team_agree", "team_object", "team_propose", "TEAM",
+                    "shared board")
+
+
+@pytest.mark.parametrize("permission", ["default", "acceptEdits", "dontAsk", "plan"])
+def test_team_text_never_reaches_a_non_team_child(permission: str) -> None:
+    from agentd.subagents.context import AgentContext
+    agent = AgentContext(agent_id="a", name="general-purpose", label="x", depth=1,
+                         parent_agent_id=None, permission=permission,
+                         allowed_types=("tool_call", "progress", "report"), persona="",
+                         max_iters=10)
+    ctx = RenderContext.for_agent(agent, tools=frozenset({"read_file"}), shell_policy="ask")
+    for name, template in TEMPLATES.items():
+        rendered = render_prompt(template, ctx)
+        leaked = [w for w in _TEAM_VOCABULARY if w in rendered]
+        assert not leaked, f"{name} leaks {leaked} to a non-team child"
