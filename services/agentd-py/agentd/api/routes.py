@@ -49,6 +49,7 @@ from agentd.domain.state_machine import transition
 from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.retrieval.artifact_client import RetrievalArtifactClient
 from agentd.storage.base import TaskStore
+from agentd.teams.validation import TeamInputError
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
 # Backend-internal ChatThread fields kept off the wire: seed substrate for the
@@ -1493,6 +1494,9 @@ def build_router(
             _live_agents = getattr(_chat_agent, "live_agents", None)
             if _live_agents is not None:
                 live.agents = _live_agents(thread_id) or None
+            _live_teams = getattr(_chat_agent, "live_teams", None)
+            if _live_teams is not None:
+                live.teams = _live_teams(thread_id) or None
             _count_live = getattr(_chat_agent._store, "count_live_agents", None)
             if _count_live is not None:
                 live.agents_running = _count_live(thread_id)
@@ -1882,6 +1886,36 @@ def build_router(
             if stop is None:
                 return {"ok": False}
             return {"ok": await stop(thread_id, agent_id)}  # type: ignore[misc]
+
+        # ── Teams (spec v2 §9) ───────────────────────────────────────────────
+        # Read routes stay readable with the flag off (rows written while it was on);
+        # /live only reports live teams when it is on (ChatController.live_teams).
+        @router.get("/chat/threads/{thread_id}/teams")
+        async def list_thread_teams(thread_id: str) -> dict[str, object]:
+            if _chat_agent._store.get_thread(thread_id) is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            summaries = getattr(_chat_agent, "team_summaries", None)
+            return {"teams": summaries(thread_id) if summaries is not None else []}
+
+        @router.get("/chat/threads/{thread_id}/teams/{team_id}")
+        async def get_thread_team(thread_id: str, team_id: str) -> dict[str, object]:
+            detail = getattr(_chat_agent, "team_detail", None)
+            found: dict[str, object] | None = (
+                detail(thread_id, team_id) if detail is not None else None)
+            if found is None:
+                raise HTTPException(status_code=404, detail="Team not found")
+            return found
+
+        @router.post("/chat/threads/{thread_id}/teams/{team_id}/disband")
+        async def post_disband_team(thread_id: str, team_id: str) -> dict[str, object]:
+            disband = getattr(_chat_agent, "disband_team", None)
+            if disband is None:
+                return {"team_id": team_id, "phase": None}
+            try:
+                result: dict[str, object] = await disband(thread_id, team_id)
+            except TeamInputError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return result
 
         # ── Chat rewind ──────────────────────────────────────────────────────
         # There is no is_terminal_status helper in domain/state_machine.py; the

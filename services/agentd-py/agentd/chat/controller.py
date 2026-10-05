@@ -1642,6 +1642,44 @@ class ChatController:
         return await self._edit_decision_cb(
             child.thread_id, f"chat:{child.thread_id}", diff, child=child)
 
+    def live_teams(self, thread_id: str) -> list[dict[str, object]]:
+        """Slow-changing fields only — this rides /live, whose dedup signature must not
+        change on every model call (no usage or stances; a row status moves only at
+        activation boundaries)."""
+        if self._teams is None or not is_teams_enabled():
+            return []
+        out: list[dict[str, object]] = []
+        for team in self._store.teams.list_teams(thread_id):
+            if team.phase not in LIVE_TEAM_PHASES:
+                continue
+            out.append({
+                "team_id": team.team_id, "name": team.name, "phase": team.phase,
+                "round": team.round, "max_rounds": team.max_rounds,
+                "paused_reason": team.paused_reason,
+                "members": [{"label": m.label, "agent_id": m.agent_id,
+                             "status": self._member_row_status(m.agent_id)}
+                            for m in self._store.teams.members(team.team_id)]})
+        return out
+
+    def _member_row_status(self, agent_id: str) -> str:
+        record = self._store.get_agent(agent_id)
+        return record.status if record is not None else "unknown"
+
+    def team_summaries(self, thread_id: str) -> list[dict[str, object]]:
+        if self._teams is None:
+            return []
+        return [{**self._teams.summary(t.team_id), "created_at": t.created_at.isoformat()}
+                for t in self._store.teams.list_teams(thread_id)]
+
+    def team_detail(self, thread_id: str, team_id: str) -> dict[str, object] | None:
+        team = self._store.teams.get_team(team_id)
+        if self._teams is None or team is None or team.thread_id != thread_id:
+            return None
+        posts = self._store.teams.posts(team_id)   # viewer=None: the user sees every post
+        return {**self._teams.summary(team_id), "created_at": team.created_at.isoformat(),
+                "posts": [p.model_dump(mode="json") for p in posts],
+                "last_seq": max((p.seq for p in posts), default=0)}
+
     def live_agents(self, thread_id: str) -> list[dict[str, object]]:
         """/live's roster (spec §6): agents that are live, or that ended since the user's
         last message — not only the current turn's, since agents outlive turns now."""

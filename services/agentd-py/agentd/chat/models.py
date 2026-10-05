@@ -300,6 +300,9 @@ class ThreadLiveState(BaseModel):
     agents_running: int = 0
     # The transcript's length: a change the host did not stream triggers a reconcile (§6).
     message_count: int = 0
+    # Live teams in the thread (spec v2 §9): slow-changing fields only, so the /live dedup
+    # signature does not churn. None when there are none (or teams are off).
+    teams: list[dict[str, Any]] | None = None
 
 
 class ChatCommandDecisionRequest(CommandDecision):

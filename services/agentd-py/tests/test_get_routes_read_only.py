@@ -18,6 +18,8 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     ("api/routes.py", "/chat/threads/{thread_id}/live"),
     ("api/routes.py", "/chat/threads/{thread_id}/rewind-preview"),
     ("api/routes.py", "/chat/threads/{thread_id}/sessions/{session_id}/transcript"),
+    ("api/routes.py", "/chat/threads/{thread_id}/teams"),
+    ("api/routes.py", "/chat/threads/{thread_id}/teams/{team_id}"),
     ("api/routes.py", "/config"),
     ("api/routes.py", "/index/status"),
     ("api/routes.py", "/mcp/servers"),
