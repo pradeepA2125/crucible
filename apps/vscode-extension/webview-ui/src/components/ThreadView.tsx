@@ -15,6 +15,8 @@ import type { AppState, ChatMsg, RewindPreviewView } from "../types";
 import { RewindDialog } from "./RewindDialog";
 import { AgentsContext, type AgentsUi } from "./agents/AgentsContext";
 import { AgentWindow } from "./agents/AgentWindow";
+import { TeamsContext, type TeamsUi } from "./teams/TeamsContext";
+import { TeamWindow } from "./teams/TeamWindow";
 
 // Gate statuses where the workbar should be HIDDEN (user is deciding something).
 const WAITING_STATUSES = new Set([
@@ -53,15 +55,20 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   // Sub-agent views (spec §10): rows expanded inline, and the one floating window.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [agentWindow, setAgentWindow] = useState<{ agentId: string; siblings: string[] } | null>(null);
+  // The one open team window (spec v2 §9); its tab is "board" or a member's agentId.
+  const [teamWindow, setTeamWindow] = useState<{ teamId: string; tab: string } | null>(null);
 
   // Another thread's agents are not ours.
   useEffect(() => {
     setExpanded(new Set());
     setAgentWindow(null);
+    setTeamWindow(null);
   }, [state.activeThreadId]);
 
   // The host keeps one live subscription per open agent: tell it the full set.
-  const openAgentsKey = [...new Set([...expanded, ...(agentWindow ? [agentWindow.agentId] : [])])]
+  const teamAgent = teamWindow && teamWindow.tab !== "board" ? [teamWindow.tab] : [];
+  const openAgentsKey = [...new Set([...expanded, ...(agentWindow ? [agentWindow.agentId] : []),
+                                     ...teamAgent])]
     .sort().join(",");
   useEffect(() => {
     vscode.postMessage({ type: "setOpenAgents", agentIds: openAgentsKey ? openAgentsKey.split(",") : [] });
@@ -79,6 +86,17 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     }),
     openWindow: (agentId, siblings) => setAgentWindow({ agentId, siblings }),
   }), [state.agents, state.agentViews, expanded]);
+
+  const openTeamId = teamWindow?.teamId ?? "";
+  useEffect(() => {
+    vscode.postMessage({ type: "setOpenTeams", teamIds: openTeamId ? [openTeamId] : [] });
+  }, [openTeamId]);
+
+  const teamsUi = useMemo<TeamsUi>(() => ({
+    teams: state.teams,
+    views: state.teamViews,
+    openTeam: (teamId) => setTeamWindow({ teamId, tab: "board" }),
+  }), [state.teams, state.teamViews]);
 
   useEffect(() => {
     function onHostMessage(event: MessageEvent) {
@@ -153,6 +171,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
   return (
     <AgentsContext.Provider value={agentsUi}>
+    <TeamsContext.Provider value={teamsUi}>
     <div className="relative flex h-full overflow-hidden">
       {/* Settings drawer — squeezes the chat column (inline sibling, no overlay). */}
       <SettingsDrawer
@@ -483,7 +502,17 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           onClose={() => setAgentWindow(null)}
         />
       )}
+
+      {teamWindow !== null && (
+        <TeamWindow
+          teamId={teamWindow.teamId}
+          tab={teamWindow.tab}
+          onTab={(tab) => setTeamWindow({ ...teamWindow, tab })}
+          onClose={() => setTeamWindow(null)}
+        />
+      )}
     </div>
+    </TeamsContext.Provider>
     </AgentsContext.Provider>
   );
 }
