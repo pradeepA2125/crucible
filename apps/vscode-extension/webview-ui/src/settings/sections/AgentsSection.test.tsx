@@ -98,4 +98,13 @@ describe("AgentsSection", () => {
     deliver({ type: "settings/agentsError", message: "the file changed since you reviewed it" });
     expect(screen.getByText("the file changed since you reviewed it")).toBeTruthy();
   });
+
+  it("New agent opens the form and saves through settings/saveAgent", () => {
+    const send = setup();
+    fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "fresh" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "d" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save agent" }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: "settings/saveAgent", name: "fresh" }));
+  });
 });
