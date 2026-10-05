@@ -72,6 +72,27 @@ interface FetchLike {
 interface HttpBackendClientOptions {
   baseUrl: string;
   fetchFn?: FetchLike;
+  /** Bearer token for this backend; called per request (a restart rewrites it). */
+  authToken?: () => string | undefined;
+  /** Every response reports here: ok on any non-auth status, not ok on 401/403/421. */
+  onAuthStatus?: (ok: boolean, reason?: string) => void;
+}
+
+const AUTH_FAILURE_STATUSES = new Set([401, 403, 421]);
+
+/** The backend refused this client (spec §3.5): wrong/missing token, wrong host, or
+ * a check that failed before the request was sent. Not retried. */
+export class BackendAuthError extends Error {
+  constructor(message: string, readonly status: number | null) {
+    super(message);
+    this.name = "BackendAuthError";
+  }
+}
+
+function withAuthHeader(init: RequestInit | undefined, token: string | undefined): RequestInit {
+  const headers = { ...((init?.headers as Record<string, string> | undefined) ?? {}) };
+  if (token) headers.authorization = `Bearer ${token}`;
+  return { ...init, headers, redirect: "manual" };
 }
 
 // A stalled SSE connection (idle proxy/load-balancer timeout, sleep/wake, a dead TCP
@@ -106,7 +127,20 @@ export class HttpBackendClient implements BackendTaskClient {
   private readonly fetchFn: FetchLike;
 
   constructor(private readonly options: HttpBackendClientOptions) {
-    this.fetchFn = options.fetchFn ?? fetch;
+    const raw = options.fetchFn ?? fetch;
+    // Wrapped once here so every call — fetchJson and the raw stream/decision sites —
+    // carries the token, never follows a redirect, and reports auth status.
+    this.fetchFn = async (input, init) => {
+      const response = await raw(input, withAuthHeader(init, options.authToken?.()));
+      const status = (response as { status?: number }).status;
+      if (status !== undefined && AUTH_FAILURE_STATUSES.has(status)) {
+        const reason = `backend refused the request (${status})`;
+        options.onAuthStatus?.(false, reason);
+        throw new BackendAuthError(`${reason} for ${input}`, status);
+      }
+      options.onAuthStatus?.(true);
+      return response;
+    };
   }
 
   /**
@@ -980,10 +1014,14 @@ export class HttpBackendClient implements BackendTaskClient {
   }
 
   async discardInlineChange(inlineTaskId: string): Promise<void> {
-    await this.fetchFn(
+    const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/inline-changes/${encodeURIComponent(inlineTaskId)}`,
       { method: "DELETE", headers: { "content-type": "application/json" } }
     );
+    if (!response.ok) {
+      throw new Error(
+        `Backend request failed (${response.status} ${response.statusText}) for discardInlineChange`);
+    }
   }
 
   private async fetchJson(path: string, init: RequestInit = {}): Promise<unknown> {
