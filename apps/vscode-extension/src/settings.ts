@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 
 import type { SettingsProvider } from "./controller.js";
 import type { TaskMode } from "./types.js";
+import { normalizeBackendUrl } from "./backend-auth/backend-gate.js";
+import type { ProbeResult } from "./runtime/probe-health.js";
 
 const DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:8000";
 const DEFAULT_MODE: TaskMode = "project_edit";
@@ -61,16 +63,8 @@ export function isBackendBaseUrlUserSet(): boolean {
   );
 }
 
-export async function checkBackendHealth(baseUrl: string): Promise<boolean> {
-  const fetchFn = (globalThis as { fetch?: (input: string, init?: RequestInit) => Promise<Response> }).fetch;
-  if (typeof fetchFn !== "function") {
-    return true;
-  }
-
-  try {
-    const response = await fetchFn(`${baseUrl}/health`, { method: "GET" });
-    return response.ok;
-  } catch {
-    return false;
-  }
+export async function checkBackendHealth(
+  baseUrl: string, probe: (port: number) => Promise<ProbeResult>,
+): Promise<ProbeResult> {
+  return probe(normalizeBackendUrl(baseUrl).port);
 }

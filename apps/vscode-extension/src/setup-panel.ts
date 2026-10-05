@@ -64,7 +64,7 @@ export class SetupPanel {
       saveAndStart: async (backend, model, apiKey, extraCredentials) => {
         await this.runtimeManager.saveProvider(backend, model, apiKey, extraCredentials);
         const { port } = await this.runtimeManager.startForWorkspace(this.workspacePath);
-        const url = this.runtimeManager.backendUrl(this.workspacePath) ?? `http://localhost:${port}`;
+        const url = this.runtimeManager.backendUrl(this.workspacePath) ?? `http://127.0.0.1:${port}`;
         const result = await this.clientFactory(url).validateProvider({ backend, model });
         if (!result.ok) {
           throw new Error(result.error ?? "Provider validation failed after starting the backend.");

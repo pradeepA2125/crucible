@@ -5,6 +5,10 @@ import * as path from "node:path";
 import { ChatPanel } from "./chat-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
 import { GraphPanel } from "./graph-panel.js";
+import { AuthStatusSink } from "./backend-auth/auth-status-sink.js";
+import { BackendGate, normalizeBackendUrl } from "./backend-auth/backend-gate.js";
+import { readBackendToken } from "./runtime/backend-token.js";
+import { probeHealth } from "./runtime/probe-health.js";
 import {
   CrucibleController,
   type BackendClientFactory,
@@ -418,7 +422,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   };
 
-  const clientFactory: BackendClientFactory = (baseUrl) => new HttpBackendClient({ baseUrl });
+  // Spec §3.5/§3.8: one gate per window. No request leaves before /health proves the
+  // server holds the token, and every client reports auth status to one sink.
+  const authSink = new AuthStatusSink({
+    setError: (reason) => runtimeManager.setAuthError(reason),
+    notify: (base, reason) => {
+      void vscode.window.showErrorMessage(
+        `Crucible: the backend at ${base} was not authorized (${reason}).`, "Open logs")
+        .then((choice: string | undefined) => { if (choice === "Open logs") runtimeOutput.show(); });
+    },
+  });
+  const probeDeps = {
+    fetchRaw: async (url: string, init: { signal: AbortSignal }) => {
+      const res = await fetch(url, { signal: init.signal, redirect: "manual" });
+      return { status: res.status, body: await res.text() };
+    },
+    readToken: (port: number) => readBackendToken(port),
+  };
+  const backendGate = new BackendGate({
+    fetch: (input, init) => fetch(input, init),
+    probe: (port) => probeHealth(port, probeDeps),
+    readToken: (port) => readBackendToken(port),
+    report: (base, ok, reason) => authSink.report(base, ok, reason),
+    now: () => Date.now(),
+  });
+  const clientFactory: BackendClientFactory = (baseUrl) => {
+    const { base } = normalizeBackendUrl(baseUrl);
+    return new HttpBackendClient({
+      baseUrl: base,
+      fetchFn: backendGate.fetchFor(base),
+      authToken: backendGate.tokenFor(base),
+      onAuthStatus: (ok, reason) => authSink.report(base, ok, reason),
+    });
+  };
 
   // The chat webview embeds the settings UI (floating overlay); give it a settings
   // handler that shares the exact host wiring the standalone SettingsPanel uses.
@@ -584,7 +620,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         void vscode.window.showWarningMessage("Open a folder to view the dependency space.");
         return;
       }
-      new GraphPanel(context.extensionUri, ws, settings.getBackendBaseUrl()).open();
+      new GraphPanel(context.extensionUri, ws, () => {
+        const { base } = normalizeBackendUrl(settings.getBackendBaseUrl());
+        return { base, fetch: backendGate.authedFetchFor(base) };
+      }).open();
     })
   );
   context.subscriptions.push(
@@ -781,8 +820,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   const backendBaseUrl = settings.getBackendBaseUrl();
-  const healthy = managedBackendStarted || (await checkBackendHealth(backendBaseUrl));
-  if (!healthy) {
+  const health = managedBackendStarted
+    ? "authed"
+    : await checkBackendHealth(backendBaseUrl, (port) => probeHealth(port, probeDeps));
+  if (health !== "authed") {
+    if (health !== "down") authSink.report(normalizeBackendUrl(backendBaseUrl).base, false, health);
     void vscode.window.showWarningMessage(
       managedRuntimeActive && !runtimeManager.isInstalled()
         ? "Crucible runtime is not installed yet. Run \"Crucible: Run Setup\" to install it."

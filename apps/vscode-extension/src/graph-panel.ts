@@ -19,7 +19,10 @@ export class GraphPanel {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly workspacePath: string,
-    private readonly backendBaseUrl: string
+    private readonly resolveFetch: () => {
+      base: string;
+      fetch: (input: string, init?: RequestInit) => Promise<Response>;
+    }
   ) {
     this.snapshotPath = path.join(workspacePath, ".crucible", "index-snapshot.json");
     this.store = new GraphSnapshotStore(this.snapshotPath);
@@ -71,11 +74,13 @@ export class GraphPanel {
       },
       buildIndex: async () => {
         // The route 422s without a JSON body — workspace_path is required.
-        await fetch(new URL("/v1/index/build", this.backendBaseUrl), {
+        const { base, fetch: authedFetch } = this.resolveFetch();
+        const res = await authedFetch(`${base}/v1/index/build`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ workspace_path: this.workspacePath }),
         });
+        if (!res.ok) throw new Error(`index build failed (${res.status})`);
         // .crucible/ may not have existed when the panel opened (fs.watch on a missing
         // dir throws) — re-arm so the snapshot ignites the space when the build lands.
         this.stopWatcher();

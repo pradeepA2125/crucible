@@ -85,6 +85,7 @@ export class RuntimeManager {
   readonly runtimeDir: string;
 
   private readonly statusBar: vscode.StatusBarItem;
+  private readonly authStatus: vscode.StatusBarItem;
   private readonly processes = new Map<string, BackendProcess>();
   private readonly ports = new Map<string, number>();
   private readonly restartAttempts = new Map<string, number>();
@@ -101,6 +102,21 @@ export class RuntimeManager {
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
     this.statusBar.command = "crucible.openSettingsPanel";
     context.subscriptions.push(this.statusBar);
+    this.authStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
+    this.authStatus.text = "$(error) Crucible: not authorized";
+    this.authStatus.command = "crucible.openSettingsPanel";
+    context.subscriptions.push(this.authStatus);
+  }
+
+  /** Spec §3.8: one status item for auth failures, shared by the managed and the
+   * explicit-URL flows. Cleared by the next ok report. */
+  setAuthError(reason: string | null): void {
+    if (reason === null) {
+      this.authStatus.hide();
+      return;
+    }
+    this.authStatus.tooltip = reason;
+    this.authStatus.show();
   }
 
   // Fires every time a backend for a workspace becomes healthy — the initial managed
@@ -366,7 +382,7 @@ export class RuntimeManager {
 
   backendUrl(workspace: string): string | undefined {
     const port = this.ports.get(workspace);
-    return port ? `http://localhost:${port}` : undefined;
+    return port ? `http://127.0.0.1:${port}` : undefined;
   }
 
   mcpDisabled(): string[] {
