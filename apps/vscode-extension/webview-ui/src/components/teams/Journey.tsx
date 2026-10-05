@@ -8,6 +8,7 @@ import { useAgentsUi } from "../agents/AgentsContext";
 import { useNow } from "../agents/useNow";
 import { Avatar } from "./Avatar";
 import { PostBody } from "./PostBody";
+import { AdoptedCard, RoundStrip, Verdict, heldText } from "./RoundItems";
 import { useTeamsUi } from "./TeamsContext";
 
 const clock = (at: string) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -90,10 +91,11 @@ function PostCard({ post, footer, tally, roster }: Omit<Extract<JourneyItem, { k
         </div>
       )}
       {tally && <Tally chips={tally} roster={roster} />}
-      {(footer.woke.length > 0 || footer.queued.length > 0) && (
+      {(footer.woke.length > 0 || footer.queued.length > 0 || footer.held) && (
         <div data-testid={`footer-p${post.seq}`} className="flex flex-wrap items-center gap-1.5 border-t pt-1.5 text-[11px] text-text-3" style={{ borderColor: "var(--hairline)" }}>
           {footer.woke.length > 0 && <><span style={{ color: "var(--color-amber)" }}>⚡</span>woke {footer.woke.map((l, i) => <span key={l} className="inline-flex items-center gap-1">{i > 0 && " · "}<Avatar label={l} roster={roster} size="sm" />{l}</span>)}</>}
           {footer.queued.length > 0 && <><span style={{ color: "var(--color-code)" }}>↪</span>queued for {footer.queued.map((l, i) => <span key={l} className="inline-flex items-center gap-1">{i > 0 && " · "}<Avatar label={l} roster={roster} size="sm" />{l}</span>)}<span>· it was working — picks this up at its next step</span></>}
+          {footer.held && <><span>→</span><span className="text-text-3">{heldText(footer.held)}</span></>}
         </div>
       )}
     </article>
@@ -186,6 +188,10 @@ export function beatText(
       return { icon: "↪", tone: "var(--color-code)", text: `${e.label} was working — ${seq} from ${by} queued for its next step` };
     case "capped":
       return { icon: "⏸", tone: "var(--color-text-3)", text: `${e.label} was not woken — ${String(p.wakes)} wakes this phase (limit ${String(p.cap)})` };
+    case "requeued":
+      return { icon: "↻", tone: "var(--color-amber)", text: `${e.label} restarted after a provider error (retry ${String(p.retry)} of ${String(p.of)})` };
+    case "deadline":
+      return { icon: "⏱", tone: "var(--color-amber)", text: `${e.label} hit the round's time limit — reporting what it has` };
     default:
       return { icon: "·", tone: "var(--color-text-3)", text: `${e.label} ${e.kind}` };
   }
@@ -234,7 +240,7 @@ function WrapRow({ event, roster }: { event: TeamActivityView; roster: string[] 
       <Dot color={identityFor(event.label, roster).color} shape="square" />
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
         <Avatar label={event.label} roster={roster} size="sm" />
-        <Name label={event.label} roster={roster} />{" "}<span>wrapped up</span>
+        <Name label={event.label} roster={roster} />{" "}<span>{typeof p.round === "number" ? `wrapped up round ${p.round}` : "wrapped up"}</span>
         <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10.5px]" style={{ color: chip.color, background: chip.bg, borderColor: "var(--color-border-strong)" }}>{chip.text}</span>
         <span className="tabular-nums text-text-3">{wrapStats(p)}</span>
         {typeof p.reason === "string" && <span className="text-text-3">— {p.reason}</span>}
@@ -332,6 +338,9 @@ export function Journey({ teamId }: { teamId: string }) {
               return <div key={item.key} data-author="system" className="text-[11px] italic text-text-3">{item.post.text}</div>;
             case "beat": return <Beat key={item.key} event={item.event} isProposal={isProposal} />;
             case "wrap": return <WrapRow key={item.key} event={item.event} roster={roster} />;
+            case "round": return <RoundStrip key={item.key} item={item} teamId={teamId} roster={roster} />;
+            case "verdict": return <Verdict key={item.key} item={item} roster={roster} />;
+            case "adopted": return <AdoptedCard key={item.key} post={item.post} roster={roster} />;
             case "gap":
               return (
                 <div key={item.key} className="relative text-center text-[10.5px] text-text-4 before:absolute before:inset-x-0 before:top-1/2 before:border-t before:border-dashed before:border-[var(--color-border-strong)] before:content-['']">
