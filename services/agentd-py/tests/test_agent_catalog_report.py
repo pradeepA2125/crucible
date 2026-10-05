@@ -41,8 +41,9 @@ def _entry(report, name: str, kind: str):
 
 
 def test_parse_records_warnings(tmp_path: Path) -> None:
-    path = _put(tmp_path, "w", _md(
-        "w", "tools: Read, WebFetch, frobnicate\nmodel: sonnet\npermissionMode: yolo\nmaxTurns: 500\n"))
+    extra = ("tools: Read, WebFetch, frobnicate\nmodel: sonnet\n"
+             "permissionMode: yolo\nmaxTurns: 500\n")
+    path = _put(tmp_path, "w", _md("w", extra))
     warnings: list[str] = []
     d = parse_agent_file(path, warnings)
     assert d is not None
@@ -91,7 +92,8 @@ def test_trusted_file_overriding_a_builtin(tmp_path: Path) -> None:
     report = loader.report()
     assert _entry(report, "explore", "builtin").shadowed_by == str(path)
     file_row = _entry(report, "explore", "crucible")
-    assert file_row.active and any("overrides the built-in" in w for w in file_row.definition.warnings)
+    assert file_row.active
+    assert any("overrides the built-in" in w for w in file_row.definition.warnings)
 
 
 def test_lower_precedence_definition_is_shadowed(tmp_path: Path) -> None:
