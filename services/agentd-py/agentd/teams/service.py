@@ -378,7 +378,8 @@ class TeamService:
             "round": team.round, "max_rounds": team.max_rounds,
             "paused_reason": team.paused_reason,
             "members": [{"label": m.label, "agent_id": m.agent_id,
-                         "status": self._agent_info(m.agent_id).status}
+                         "name": (info := self._agent_info(m.agent_id)).name,
+                         "description": info.description, "status": info.status}
                         for m in self._store.members(team_id)],
             "open_proposals": [
                 {"id": p.proposal_id, "author": p.author, "text": p.text[:600],

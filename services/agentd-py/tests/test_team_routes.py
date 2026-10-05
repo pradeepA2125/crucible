@@ -72,11 +72,13 @@ async def test_list_detail_live_and_disband(tmp_path: Path, monkeypatch) -> None
     assert [p["text"] for p in detail["posts"]] == ["plan", "dm"]   # the user sees DMs
     assert detail["last_seq"] == 2
     assert foreign.status_code == 404 and missing_thread.status_code == 404
-    assert live["teams"] == [{
+    entry = live["teams"][0]
+    assert {k: entry[k] for k in ("team_id", "name", "phase", "round", "max_rounds",
+                                  "paused_reason")} == {
         "team_id": "team-1", "name": "auth", "phase": "DELIBERATING", "round": 1,
-        "max_rounds": 3, "paused_reason": None,
-        "members": [{"label": "alice", "agent_id": "agent-alice", "status": "awaiting_peer"},
-                    {"label": "bob", "agent_id": "agent-bob", "status": "awaiting_peer"}]}]
+        "max_rounds": 3, "paused_reason": None}
+    assert [(m["label"], m["status"]) for m in entry["members"]] == [
+        ("alice", "awaiting_peer"), ("bob", "awaiting_peer")]
     assert disbanded == {"team_id": "team-1", "phase": "DISBANDED"}
     assert live_after["teams"] is None
 
@@ -91,3 +93,28 @@ async def test_routes_soft_when_teams_off(tmp_path: Path, monkeypatch) -> None:
     # Rows written while the flag was on stay readable; /live stays quiet.
     assert [t["team_id"] for t in listed["teams"]] == ["team-1"]
     assert live["teams"] is None
+
+
+@pytest.mark.asyncio
+async def test_detail_carries_activity_and_live_carries_state(tmp_path: Path, monkeypatch) -> None:
+    store, ctrl, tid, _ = _seed(tmp_path, monkeypatch)
+    ctrl._teams.record("team-1", "alice", "woke", activation=1, cause_seq=1,
+                       payload={"cause": "kickoff", "by": "main", "post_seq": 1})
+    ctrl._teams.record("team-1", "alice", "wrapped_up", activation=1,
+                       payload={"status": "completed", "report": "all good"})
+    store.teams.append_post("team-1", author="bob", kind="agree", text="ok", ref_id="P1")
+    async with _client(tmp_path, ctrl) as client:
+        detail = (await client.get(f"/v1/chat/threads/{tid}/teams/team-1")).json()
+        live = (await client.get(f"/v1/chat/threads/{tid}/live")).json()
+    assert [e["kind"] for e in detail["activity"]] == ["woke", "wrapped_up"]
+    assert detail["last_aseq"] == 2
+    team = live["teams"][0]
+    alice = next(m for m in team["members"] if m["label"] == "alice")
+    assert alice["last"]["kind"] == "wrapped_up" and alice["last"]["status"] == "completed"
+    bob = next(m for m in team["members"] if m["label"] == "bob")
+    assert bob["last"] is None
+    assert team["latest"]["kind"] == "post" and team["latest"]["label"] == "bob"
+    assert team["counts"]["posts"] == 3
+    assert team["counts"]["proposals"] == [{"id": "P1", "agree": 1, "object": 0, "pending": 1}]
+    assert {m["label"]: m["name"] for m in detail["members"]} == {
+        "alice": "general-purpose", "bob": "general-purpose"}

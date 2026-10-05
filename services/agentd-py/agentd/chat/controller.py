@@ -176,6 +176,32 @@ def wake_cause(post: TeamPost, label: str) -> str:
     return "mention"
 
 
+def _last_view(event: TeamActivity | None) -> dict[str, object] | None:
+    """A member's latest event, slim — only what the card's state phrase needs."""
+    if event is None:
+        return None
+    return {"kind": event.kind, "at": event.at.isoformat(), "cause_seq": event.cause_seq,
+            "by": event.payload.get("by"), "status": event.payload.get("status"),
+            "activation": event.activation}
+
+
+def _team_counts(posts: list[TeamPost], labels: list[str]) -> dict[str, object]:
+    proposals = []
+    for p in posts:
+        if p.kind != "proposal" or p.closed is not None:
+            continue
+        latest: dict[str, str] = {}
+        for s in posts:
+            if s.ref_id == p.proposal_id and s.kind in ("agree", "object"):
+                latest[s.author] = s.kind
+        agree = sum(1 for v in latest.values() if v == "agree")
+        objected = sum(1 for v in latest.values() if v == "object")
+        pending = sum(1 for label in labels if label not in latest and label != p.author)
+        proposals.append({"id": p.proposal_id, "agree": agree, "object": objected,
+                          "pending": pending})
+    return {"posts": len(posts), "proposals": proposals}
+
+
 def _activation_stats(record: AgentRecord, posts: list[TeamPost]) -> dict[str, object]:
     """This activation's counts for its wrap-up row: tool calls since the last divider,
     and the member's posts / messages / stances since the activation started."""
@@ -1704,14 +1730,41 @@ class ChatController:
         for team in self._store.teams.list_teams(thread_id):
             if team.phase not in LIVE_TEAM_PHASES:
                 continue
+            members = self._store.teams.members(team.team_id)
+            posts = self._store.teams.posts(team.team_id)
             out.append({
                 "team_id": team.team_id, "name": team.name, "phase": team.phase,
                 "round": team.round, "max_rounds": team.max_rounds,
                 "paused_reason": team.paused_reason,
                 "members": [{"label": m.label, "agent_id": m.agent_id,
-                             "status": self._member_row_status(m.agent_id)}
-                            for m in self._store.teams.members(team.team_id)]})
+                             "status": self._member_row_status(m.agent_id),
+                             "last": _last_view(self._store.teams.latest_activity_for(
+                                 team.team_id, m.label))}
+                            for m in members],
+                "latest": self._team_latest(team.team_id, posts),
+                "counts": _team_counts(posts, [m.label for m in members]),
+            })
         return out
+
+    def _team_latest(self, team_id: str, posts: list[TeamPost]) -> dict[str, object] | None:
+        """The card's 'latest' line: the newer of the last board post and the last
+        wrapped_up / phase event (spec 2026-10-05 §5.3)."""
+        board = [p for p in posts if p.recipient is None]
+        candidates: list[dict[str, object]] = []
+        if board:
+            p = board[-1]
+            candidates.append({"kind": "post", "label": p.author, "text": p.text[:140],
+                               "at": p.created_at.isoformat()})
+        events = [e for e in self._store.teams.activity(team_id)
+                  if e.kind in ("wrapped_up", "phase")]
+        if events:
+            e = events[-1]
+            text = (str(e.payload.get("report", ""))[:140] if e.kind == "wrapped_up"
+                    else str(e.payload.get("phase", "")))
+            candidates.append({"kind": "activity", "label": e.label, "text": text,
+                               "at": e.at.isoformat(), "event": e.kind,
+                               "status": e.payload.get("status")})
+        return max(candidates, key=lambda c: str(c["at"])) if candidates else None
 
     def _member_row_status(self, agent_id: str) -> str:
         record = self._store.get_agent(agent_id)
@@ -1728,9 +1781,12 @@ class ChatController:
         if self._teams is None or team is None or team.thread_id != thread_id:
             return None
         posts = self._store.teams.posts(team_id)   # viewer=None: the user sees every post
+        activity = self._store.teams.activity(team_id)
         return {**self._teams.summary(team_id), "created_at": team.created_at.isoformat(),
                 "posts": [p.model_dump(mode="json") for p in posts],
-                "last_seq": max((p.seq for p in posts), default=0)}
+                "last_seq": max((p.seq for p in posts), default=0),
+                "activity": [e.model_dump(mode="json") for e in activity],
+                "last_aseq": max((e.aseq for e in activity), default=0),}
 
     def live_agents(self, thread_id: str) -> list[dict[str, object]]:
         """/live's roster (spec §6): agents that are live, or that ended since the user's
