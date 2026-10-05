@@ -1,8 +1,11 @@
 # Backend authentication — design
 
-**Status:** rev 6, 2026-10-05. Five review rounds, each by a security lens and an integration lens:
-rev 1 → 2 (27 findings), 2 → 3 (29), 3 → 4 (26), 4 → 5 (26), 5 → 6 (24). Rev 6 removes file deletion
-at shutdown altogether (§3.1), which removed a class of shutdown and reload races. Separate from the sub-agents v2 spec
+**Status:** rev 7, 2026-10-05 — **frozen**. Six review rounds, each by a security lens and an integration lens:
+rev 1 → 2 (27 findings), 2 → 3 (29), 3 → 4 (26), 4 → 5 (26), 5 → 6 (24), 6 → 7 (4, security lens only; the
+round-6 integration review did not complete). Rev 6 removed file deletion at shutdown (§3.1); rev 7 binds
+the backend's identity into the health proof (§3.4), serializes the token-file tidy (§3.2) and makes every
+client verify the server before sending a token (§3.5). Remaining integration-level questions are carried
+into the implementation plan, whose worktree dry run checks them against the code. Separate from the sub-agents v2 spec
 (decision E17); it must land before v2 Phase 3 (teams) merges to `main`.
 
 ## 1. Problem
@@ -69,7 +72,10 @@ unresolved string and the lock must sit where readers look.
 4. **Lock** (with `--workspace-lock`): `{pid, port, started_at (epoch seconds)}`, written via
    `runtime_lock.write_lock`, which becomes atomic and symlink-safe (`O_CREAT | O_EXCL | O_NOFOLLOW` temp file
    in `.crucible/state`, then rename). The lock is only a hint for reusing a backend across windows (§3.7).
-5. Export `CRUCIBLE_LISTEN_PORT=<port>` for the app process (§3.3).
+5. Export `CRUCIBLE_LISTEN_PORT=<port>` and `CRUCIBLE_SERVE_PID=<this pid>` for the app process (§3.3,
+   §3.4) — with `--reload` the app runs in a worker whose pid differs, and the health proof must name the
+   pid the lock records. Then run the token tidy (§3.2), here in the serve main process and never in a
+   reload worker.
 6. **Handshake:** print one line to stdout, `CRUCIBLE_SERVE {"pid": <pid>, "port": <port>}`, and flush. The
    managed spawn learns its port from its own child's output, never from a file.
 7. **Serve** with a plain `uvicorn.Server` — `server.run(sockets=[sock])`, or with `--reload`
@@ -85,9 +91,9 @@ supervisor closes the socket before returning, each reload's worker runs shutdow
 Python `finally` blocks once uvicorn re-raises the signal. Nothing needs the deletion: a leftover token file
 holds a dead token, only the user can write the owner-only directory, the next backend on that port
 overwrites it atomically (step 3), and `/health`'s proof exposes a stale one to any client at once (§3.4). A
-leftover lock is a hint that reuse verifies (§3.7). Stale token files accumulate only one per port ever
-used; a backend start also removes `agentd-*.token` files older than 7 days whose port it cannot connect to
-(best-effort, through the directory descriptor).
+leftover lock is a hint that reuse verifies (§3.7) — leftover locks are the normal case, which is why
+reuse checks the backend's identity, not just its token (§3.4). Stale token files accumulate only one per
+port ever used; the tidy in §3.2 removes old ones.
 
 Consequences: the token is stable across `--reload` restarts; a backend that cannot bind never touches
 another's files; bare `uvicorn agentd.main:app` has no `CRUCIBLE_LISTEN_PORT`, so the app refuses to start
@@ -110,7 +116,18 @@ another's files; bare `uvicorn agentd.main:app` has no `CRUCIBLE_LISTEN_PORT`, s
   `O_DIRECTORY | O_NOFOLLOW`; `fstat` the descriptor (refuse if not ours), `fchmod` it to `0700`;
   `os.open(tmp, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0o600, dir_fd=fd)` on a random name, write,
   `fsync`, `os.replace(tmp, final, src_dir_fd=fd, dst_dir_fd=fd)`. Any refusal or failure exits before
-  serving.
+  serving. The create-and-replace runs under `fcntl.flock(fd, LOCK_EX)` on the `run` directory descriptor,
+  shared with the tidy below.
+- **Keep-alive:** a live backend `os.utime`s its own token file (`follow_symlinks=False`) once a day from
+  an app-lifespan task, so a file's mtime older than 7 days means no backend has owned it for a week.
+- **Tidy** (POSIX; skipped on Windows, §6): after step 5 of §3.1, in the serve main process only, bounded
+  to 2 s in total. Under the same `flock`, for each entry of the `run` directory matching exactly
+  `^agentd-\d+\.token$` that `os.stat(name, dir_fd=fd, follow_symlinks=False)` shows is a regular file with
+  mtime older than 7 days: try a connect to `127.0.0.1:<n>` with a 200 ms timeout, and
+  `os.unlink(name, dir_fd=fd)` only when the connect fails with `ECONNREFUSED`. A timeout or any other
+  error keeps the file. Because the writer takes the same lock, a backend binding the port during the tidy
+  cannot have its fresh file removed between the check and the unlink. Best-effort: any error ends the
+  tidy and never stops startup.
 - **Reading** (app workers, extension, indexer): open with `O_NOFOLLOW`, then `fstat` **the descriptor**
   and refuse a file not owned by the user or readable by group/world — never stat-then-open. (Node:
   `fs.openSync(path, O_RDONLY | O_NOFOLLOW)` + `fs.fstatSync`; Rust: `custom_flags(libc::O_NOFOLLOW)` +
@@ -152,17 +169,29 @@ no trailing slash (`/health/` gets Starlette's redirect, which is not exempt), `
 
 Clients call `GET /health?nonce=<n>` **without** an `Authorization` header. The backend parses
 `scope["query_string"]`; with exactly one `nonce` matching `[0-9a-f]{16,64}` it answers
-`{"status": "ok", "proof": lowercase_hex(hmac_sha256(token, "crucible-health-v1\0" + nonce))}`, otherwise
-`{"status": "ok"}`. A client that verifies `proof` against the token it read knows the server holds that
-token without having revealed it; seeing proofs reveals nothing about the key (HMAC is a PRF). A relaying
+`{"status": "ok", "pid": <CRUCIBLE_SERVE_PID>, "proof": P, "bound": B}`, otherwise `{"status": "ok"}`, where
+
+- `P = lowercase_hex(hmac_sha256(token, "crucible-health-v1\0" + nonce))` — "this server holds the token";
+- `B = lowercase_hex(hmac_sha256(token, "crucible-health-bound-v1\0" + nonce + "\0" + pid + "\0" + workspace))`,
+  with `workspace` the backend's unresolved `CRUCIBLE_WORKSPACE_PATH` (empty when unset) — "and it is this
+  pid serving this workspace". The workspace never appears in the response; a client can check `B` only
+  for a workspace it already knows.
+
+A client that verifies `proof` against the token it read knows the server holds that
+token without having revealed it; seeing proofs reveals nothing about the key (HMAC is a PRF). `authed`
+alone proves only "one of this user's backends", not which one — token files outlive their backends and
+the kernel reuses ports — so reuse (§3.7) additionally checks `bound`. A relaying
 man-in-the-middle would need to share the port with the live backend, which loopback-only addresses, listen
 before writing, and `SO_EXCLUSIVEADDRUSE` on Windows (§3.1) prevent.
 
-`probeHealth(port)` — the one helper all clients use, **2 s timeout**:
+`probeHealth(port, expect?: {pid, workspace})` — the one helper all clients use, **2 s timeout**. With
+`expect`, `authed` additionally requires the response's `pid` to equal `expect.pid` and `bound` to verify
+for `expect.workspace`; a valid `proof` that fails either is `other-backend`.
 
 | Result | Meaning |
 |---|---|
 | `authed` | 200 with a valid proof |
+| `other-backend` | (with `expect` only) a valid `proof`, but a different pid or workspace |
 | `preauth` | 200 with no `proof` — something other than an authenticated backend answered |
 | `unauthorized` | 403 or 421, or a wrong proof |
 | `down` | connection refused / timeout |
@@ -179,6 +208,15 @@ the one client factory in `extension.ts`; the only raw fetches are `graph-panel.
   `CRUCIBLE_BACKEND_URL`), `vscode-runtime.ts::backendUrl()`, the `localhost` fallback in `setup-panel.ts`, and `start-backend.sh`. The client factory,
   the indexer and the script helpers also rewrite a `localhost` host to `127.0.0.1` before connecting, and
   never attach the token to any other host.
+- **Verify before sending.** No client sends a token, or trusts a response, until `probeHealth` has
+  returned `authed` for that URL. The client factory keeps a per-URL verified flag: it probes before the
+  first request to a URL and again after any connection error (a crash and respawn can hand the old port
+  to someone else while the `/live` poll keeps hitting it), and holds requests while the probe runs. On
+  `unauthorized`, `preauth` or `no-token` it sends nothing — not even an unauthenticated request — reports
+  through `reportAuthStatus` (§3.8), rejects with `BackendAuthError`, and re-probes no more than every 5 s.
+  The same rule covers `GraphPanel` and `ProcessDeps.fetchJson`/`fetchRaw` (beyond the managed-start
+  probes, which already run first) and the script helpers. The indexer verifies once per token it reads:
+  `GET /health?nonce=` and an HMAC check (`hmac` + `sha2` crates) before its first POST with that token.
 - **No redirects with a token.** The wrapped `fetchFn`, `ProcessDeps` and `GraphPanel` use
   `redirect: "manual"`; the indexer uses `redirect::Policy::none()`.
 - **editor-client** (`http-backend-client.ts`). `HttpBackendClientOptions` gains
@@ -213,7 +251,7 @@ the one client factory in `extension.ts`; the only raw fetches are `graph-panel.
   shared across the per-call tasks (an `Arc<Mutex<Option<token>>>` on the service). New `--version` arm in `main.rs`'s positional
   match prints `<version> auth=1` (§3.7).
 - **Subprocesses started by the backend.** One helper, `child_env()`, returns `os.environ` minus
-  `CRUCIBLE_LISTEN_PORT`; every subprocess site uses it — `tools/shell.py`, `tools/env.py`,
+  `CRUCIBLE_LISTEN_PORT` and `CRUCIBLE_SERVE_PID`; every subprocess site uses it — `tools/shell.py`, `tools/env.py`,
   `tools/search.py`, `tools/post_patch/checker.py`, `exec_sessions/pty_process.py` and `manager.py`,
   `env/probe.py`, `retrieval/artifact_client.py`, `validation/command_validator.py`,
   `orchestrator/engine.py`, `exec_sessions/registry_file.py` (its `ps` call). A nested app started from one
@@ -273,7 +311,11 @@ run after `start()` returns, and the watcher is spawned after health, with the p
 **Reuse** (another window's backend for the same workspace): open the lock with `O_NOFOLLOW` and `fstat`
 the descriptor; act on it only if it is owned by the current user and `st_nlink == 1`. Otherwise — a lock
 planted by another user in a shared workspace — unlink it and ignore it (no wait, no signal) and spawn.
-Reuse only when `probeHealth(lock.port)` is `authed`. If the port is `down` and the lock is younger than 60 s, its spawn may
+Reuse only when `probeHealth(lock.port, {pid: lock.pid, workspace: <this window's workspace, the same
+unresolved string passed to `--workspace-lock`>})` is `authed` — the backend holding the port is the one
+the lock names, serving this workspace. `other-backend` (the lock is stale and the port now belongs to
+another of the user's backends) is reaped like any non-reusable lock, which kills nothing, since the pid
+check below fails or names a dead process. If the port is `down` and the lock is younger than 60 s, its spawn may
 still be starting: wait **once per `start()`**, up to the lock's 60 s mark — skipped when the lock's pid is
 dead or is this `BackendProcess`'s own previous child.
 
@@ -344,12 +386,18 @@ therefore never reads the lock of a backend that is still draining.
   it; the lock names the serve pid and is written symlink-safe; importing `agentd.serve` creates no files
   in the working directory; a failed startup exits 3; a stop with an open SSE stream completes lifespan
   shutdown within 5 s; an old token file on the port is overwritten; legacy dirs are migrated before the
-  lock is written; on Windows a second bind to the port fails (`SO_EXCLUSIVEADDRUSE`).
+  lock is written; on Windows a second bind to the port fails (`SO_EXCLUSIVEADDRUSE`); the app sees
+  `CRUCIBLE_SERVE_PID` equal to the lock's pid, with and without `--reload`.
+- **Tidy:** removes an old regular token file whose port refuses connections; keeps a fresh file, a file
+  whose port is listening, one whose connect times out, a symlink, and a non-matching name; a writer
+  blocked on the `flock` during a tidy ends with its own fresh file in place; the keep-alive bumps the
+  mtime; tidy never runs in a reload worker.
 - **Middleware** (minimal app + the real `install_auth`; TestClient with
   `base_url="http://127.0.0.1:<port>"` and `client=("127.0.0.1", 50000)`): each check alone and in order;
   missing/duplicate/`localhost` Host → 421; `Origin: null`; non-loopback and non-IP peer → 403; `Bearer`
   case; non-ASCII token → 401; empty `AuthState` → 503; `/health` without a token returns a proof that
-  verifies; `/health/`, `/healthz`, `HEAD /health` and a duplicated or malformed nonce are not exempt / get no
+  verifies, the serve pid, and a `bound` value that verifies for the backend's workspace and fails for
+  any other; `/health/`, `/healthz`, `HEAD /health` and a duplicated or malformed nonce are not exempt / get no
   proof; lifespan passes; websocket closed; an SSE route streams its first chunk before the generator ends;
   the middleware is outermost in `main.py`'s app (this one test imports `agentd.main`, so it runs in a
   subprocess with a temp working directory and the scripted reasoning backend).
@@ -362,8 +410,11 @@ therefore never reads the lock of a backend that is still draining.
 - **Subprocess env:** every site uses `child_env()` (enumerating test) and lacks `CRUCIBLE_LISTEN_PORT`.
 - **editor-client:** every public method (SSE included) sends the header, reports auth status and does not
   follow redirects; `BackendAuthError` on 401/403/421; `discardInlineChange` surfaces failure.
-- **Extension:** `readBackendToken`; `probeHealth`'s results (incl. `no-token`) incl. a wrong proof, its 2 s timeout, and
-  that it sends no token; `localhost` rewritten before the token is attached; the spawn env lacks
+- **Extension:** `readBackendToken`; `probeHealth`'s results (incl. `no-token` and `other-backend`) incl. a wrong proof, its 2 s timeout, and
+  that it sends no token; **a lock whose port is served by an authed backend for a different workspace (or
+  a different pid) is not reused** and a new backend is spawned; the client factory sends nothing before
+  an `authed` probe, sends nothing (not even unauthenticated) on `unauthorized`/`preauth`/`no-token`,
+  re-probes after a connection error, and rate-limits re-probes; `localhost` rewritten before the token is attached; the spawn env lacks
   `CRUCIBLE_AUTH_DISABLED` even when `extraEnv` sets it; the port comes from the handshake line and the child
   exiting first fails fast; the pre-spawn import and indexer checks; reaping signals only a verified process
   (recycled pid, foreign uid, `pid 1`, other workspace untouched; none blocks start); a lock not owned by the user or with
@@ -382,7 +433,8 @@ therefore never reads the lock of a backend that is still draining.
   `import agentd.serve` check and rename-based writes. editor-client tests are unaffected (`authToken` is
   optional).
 - **indexer-rs:** `read_token(home, port)` with a temp dir; the file must be exactly 43 characters; the POST carries the header, goes direct and does
-  not follow redirects, picks up a rewritten token, logs a 401 once; `--version` prints `auth=1`.
+  not follow redirects, picks up a rewritten token, logs a 401 once; it does not POST with a token whose
+  health proof fails to verify; `--version` prints `auth=1`.
 - **Scripts:** the grep test (§3.5).
 - **Live:** `Host: attacker.example` → 421; `Origin: https://evil.example` → 403; no token → 401; the dev
   host works with no user action, including the indexer's self-update (after `install-local.sh` rebuilds
@@ -402,7 +454,9 @@ Owner/mode checks and `dir_fd` operations are POSIX-only. On Windows the writer 
 `%USERPROFILE%\.crucible\run` (user-private by default ACL inheritance), retries `os.replace` three times on
 `PermissionError`, and sets no explicit ACL in v1. The socket uses `SO_EXCLUSIVEADDRUSE` (§3.1), so no
 other account can share the port. The venv's `python.exe` is a launcher that runs the interpreter as a
-child; the stdout handshake (§3.7) does not depend on pids, so this is harmless. `child.kill()` skips
+child; the stdout handshake (§3.7) does not depend on pids, so this is harmless, and the pid in the lock
+and in `/health` is the same interpreter's (`agentd.serve` writes both). The token tidy (§3.2) is skipped
+on Windows, where there is no `dir_fd`; stale files there are one per port ever used. `child.kill()` skips
 shutdown hooks; no file is deleted at shutdown on any platform anyway (§3.1). Reaping kills no
 process: the lock is unlinked and a new backend spawned. Accepted Windows posture for v1.
 
