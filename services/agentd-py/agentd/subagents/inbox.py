@@ -7,7 +7,9 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class InboxItem:
-    kind: Literal["report", "note", "user"]   # "user": a message the user sent mid-turn (§5.3)
+    # "user": a message the user sent mid-turn (§5.3); "team": a member's board delta (v2 §7.6)
+    # — system-written, its bodies already framed.
+    kind: Literal["report", "note", "user", "team"]
     text: str
     wakes: bool         # an idle owner is re-activated for it (§3.6 leftovers)
     source_id: str = ""  # the agent the item came from, or the queued message's id

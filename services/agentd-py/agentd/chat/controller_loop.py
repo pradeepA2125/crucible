@@ -220,6 +220,11 @@ def _empty_action_correction(resp: dict[str, object], atype: str) -> str | None:
 # illegal call indefinitely (found live: an hour+ of retries, each a full regeneration).
 # `progress` belongs here too (final whole-branch review, finding 3) — it is exactly as
 # eligible for the {"type":"tool_call","tool":"progress",...} confusion as the others.
+# The report statuses a lone sub-agent may choose (spec §3.3); a team member may also wait
+# on a peer (spec v2 §7.3).
+LONE_REPORT_STATUSES = frozenset({"completed", "partial"})
+TEAM_REPORT_STATUSES = frozenset({"completed", "partial", "awaiting_peer"})
+
 _RESERVED_ACTION_TOOL_NAMES = frozenset(
     {"answer", "clarify", "propose_mode", "edit", "submit_changes", "progress"})
 
@@ -604,6 +609,7 @@ class ControllerLoop:
         pills_seal_cb: Callable[[], None] | None = None,
         render_ctx: RenderContext | None = None,
         agent: AgentContext | None = None,
+        report_statuses: frozenset[str] = LONE_REPORT_STATUSES,
     ) -> None:
         self._reasoning = reasoning
         self._registry = registry
@@ -702,6 +708,8 @@ class ControllerLoop:
         # A dispatched sub-agent (spec §5.1). None = the main agent, whose behavior is
         # unchanged by everything keyed off this.
         self._agent = agent
+        # A chosen status outside this set reports as "completed".
+        self._report_statuses = report_statuses
         # Set per iteration by _iterate; the final iteration narrows a child's types.
         self._iteration = 0
         self._max_iters = 0
@@ -1118,8 +1126,10 @@ class ControllerLoop:
                 iteration_cb(history)
             if inbox_drain is not None:
                 for item in inbox_drain():
-                    if item.kind == "user":
-                        # The user's own words (spec §5.3), never framed as agent content.
+                    if item.kind in ("user", "team"):
+                        # The user's own words (spec §5.3), or a team member's board delta
+                        # (v2 §7.6) whose header is system-written and whose bodies are
+                        # already framed — never framed again.
                         history.append({"role": "user", "content": item.text})
                         continue
                     author = item.author or item.source_id or "agent"
@@ -1780,7 +1790,8 @@ class ControllerLoop:
                     summary += "\n\nUnfinished:\n" + "\n".join(
                         f"- {i.title} ({i.status})" for i in still_open)
                 chosen = str(resp.get("status") or "completed")
-                status = "partial" if final or chosen == "partial" else "completed"
+                status = ("partial" if final
+                          else chosen if chosen in self._report_statuses else "completed")
                 return ControllerOutcome(
                     kind="report", text=summary, history=history,
                     payload={"status": status})
