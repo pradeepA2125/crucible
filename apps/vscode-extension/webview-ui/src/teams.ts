@@ -1,6 +1,7 @@
+import { elapsedMs, formatElapsed, isTerminalAgent } from "./agents";
 import type {
-  AgentSummaryView, TeamDetailView, TeamEventView, TeamLiveView, TeamPostView, TeamSummaryView,
-  TeamViewState,
+  AgentSummaryView, TeamCountsView, TeamDetailView, TeamEventView, TeamLatestView, TeamLiveView,
+  TeamMemberView, TeamPostView, TeamSummaryView, TeamViewState,
 } from "./types";
 
 // Phases a team never leaves (spec v2 §8.2).
@@ -66,4 +67,55 @@ export function stanceOf(posts: TeamPostView[], proposalSeq: number, label: stri
     if (p.kind === "agree" || p.kind === "object") stance = p.kind;
   }
   return stance;
+}
+
+export type PhraseTone = "work" | "ok" | "wait" | "bad" | "idle";
+
+/** A member's one-line state on the transcript card (spec 2026-10-05 §8): live work from the
+ * agent row, everything after from the member's last activity event. */
+export function memberPhrase(
+  member: TeamMemberView, row: AgentSummaryView | undefined, now: number,
+): { text: string; tone: PhraseTone } {
+  const status = row?.status ?? member.status;
+  if (status === "waiting") return { text: "⏸ needs your approval", tone: "wait" };
+  if (!isTerminalAgent(status)) {
+    const ms = row ? elapsedMs(row, now) : null;
+    const doing = row?.now ? ` · ${row.now}` : "";
+    return { text: `● working${doing}${ms !== null ? ` · ${formatElapsed(ms)}` : ""}`, tone: "work" };
+  }
+  const last = member.last;
+  if (last?.kind === "wrapped_up") {
+    const ago = `${formatElapsed(Math.max(0, now - Date.parse(last.at)))} ago`;
+    switch (last.status) {
+      case "completed": return { text: `✓ reported · ${ago}`, tone: "ok" };
+      case "partial": return { text: `◐ reported partial · ${ago}`, tone: "wait" };
+      case "awaiting_peer": return { text: "⏳ waiting on a teammate", tone: "idle" };
+      case "stopped": return { text: "■ stopped", tone: "idle" };
+      case "failed": return { text: "✗ failed", tone: "bad" };
+      default: return { text: `${last.status ?? "ended"} · ${ago}`, tone: "idle" };
+    }
+  }
+  if (last?.kind === "capped") return { text: "⏸ wake limit reached this phase", tone: "wait" };
+  if (status === "failed") return { text: "✗ failed", tone: "bad" };
+  return { text: "💤 idle", tone: "idle" };
+}
+
+export function latestText(latest: TeamLatestView): string {
+  if (latest.kind === "post") return `${latest.label} posted: ${latest.text}`;
+  if (latest.event === "wrapped_up") return `${latest.label} wrapped up — ${latest.text || latest.status || ""}`.trim();
+  return `team ${latest.text.toLowerCase()}`;
+}
+
+export function countsText(counts: TeamCountsView | undefined, budget: number): string {
+  const parts: string[] = [];
+  if (counts) {
+    parts.push(`${counts.posts} post${counts.posts === 1 ? "" : "s"}`);
+    for (const p of counts.proposals) {
+      const tally = [p.agree ? `${p.agree} ✓` : "", p.object ? `${p.object} ✗` : "",
+                     p.pending ? `${p.pending} pending` : ""].filter(Boolean).join(" ");
+      parts.push(`${p.id} ${tally}`.trim());
+    }
+  }
+  if (budget > 0) parts.push(`budget ${budget} requests`);
+  return parts.join(" · ");
 }

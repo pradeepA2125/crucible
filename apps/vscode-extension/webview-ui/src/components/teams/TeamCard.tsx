@@ -1,68 +1,80 @@
-import { formatElapsed, isTerminalAgent } from "../../agents";
-import { isTerminalTeam, waitingOn } from "../../teams";
+import { isTerminalAgent } from "../../agents";
+import { countsText, isTerminalTeam, latestText, memberPhrase } from "../../teams";
+import { identityFor } from "../../teamIdentity";
 import type { TeamSummaryView } from "../../types";
-import { Icon } from "../Icon";
-import { AgentRosterRow, rosterRow } from "../agents/AgentRosterCard";
+import { rosterRow } from "../agents/AgentRosterCard";
 import { useAgentsUi } from "../agents/AgentsContext";
 import { useNow } from "../agents/useNow";
+import { Avatar } from "./Avatar";
+import { PhaseStepper } from "./PhaseStepper";
 import { useTeamsUi } from "./TeamsContext";
 
-function placeholder(teamId: string, name: string): TeamSummaryView {
-  return { teamId, name, goal: "", phase: "DELIBERATING", round: 1, maxRounds: 0,
-    pausedReason: null, members: [], openProposals: [], usage: { requests: 0, budget: 0 },
-    createdAt: "" };
+const TONE: Record<string, string> = {
+  work: "var(--color-accent-ink)", ok: "var(--color-text-2)", wait: "var(--color-amber)",
+  bad: "var(--color-red)", idle: "var(--color-text-3)",
+};
+
+function placeholder(teamId: string, name: string, agentIds: string[], labels: string[]): TeamSummaryView {
+  return { teamId, name, goal: "", phase: "DELIBERATING", round: 1, maxRounds: 0, pausedReason: null,
+    members: agentIds.map((agentId, i) => ({ label: labels[i], agentId, status: "queued" })),
+    openProposals: [], usage: { requests: 0, budget: 0 }, createdAt: "" };
 }
 
-/** A team in the transcript (spec v2 §9), anchored by its team_created message. */
+/** A team in the transcript (spec 2026-10-05 §8), anchored by its team_created message. */
 export function TeamCard({ teamId, agentIds, name = "team" }: {
   teamId: string; agentIds: string[]; name?: string;
 }) {
   const teamsUi = useTeamsUi();
   const agentsUi = useAgentsUi();
-  const team = teamsUi.teams[teamId] ?? placeholder(teamId, name);
-  const rows = agentIds.map((id) => rosterRow(agentsUi.agents, id));
+  const team = teamsUi.teams[teamId]
+    ?? placeholder(teamId, name, agentIds, agentIds.map((id) => rosterRow(agentsUi.agents, id).label));
+  const roster = team.members.map((m) => m.label);
   const ended = isTerminalTeam(team.phase);
-  const now = useNow(!ended && rows.some((a) => !isTerminalAgent(a.status)));
-  const waiting = ended ? null : waitingOn(team, agentsUi.agents, now);
+  const anyWorking = team.members.some((m) => !isTerminalAgent(agentsUi.agents[m.agentId]?.status ?? m.status));
+  const now = useNow(!ended && anyWorking);
+  const counts = countsText(team.counts, team.usage.budget);
   return (
     <div className="surface-card overflow-hidden" data-testid="team-card">
-      <div className="accent-wash px-3 py-2" style={{ borderBottom: "1px solid var(--color-border)" }}>
+      <div className="accent-wash grid gap-2 px-3 py-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
         <div className="flex items-center gap-2">
-          <span className="flex h-5 w-5 items-center justify-center rounded-md"
-            style={{ background: "var(--accent-bg)", border: "1px solid var(--accent-brd)",
-                     color: "var(--color-accent-ink)" }}>
-            <Icon name="orbit" size={11} />
-          </span>
-          <span className="truncate text-xs font-semibold text-text">{team.name}</span>
-          <span className="whitespace-nowrap text-[10.5px] text-text-3">
-            {team.phase.toLowerCase()} · round {team.round} of {team.maxRounds}
-          </span>
+          <Avatar label="main" roster={roster} size="sm" />
+          <span className="truncate text-[13px] font-semibold text-text">{team.name}</span>
           <button type="button" onClick={() => teamsUi.openTeam(teamId)}
-            className="ml-auto cursor-pointer whitespace-nowrap rounded-md px-2 py-0.5 text-[10.5px]"
-            style={{ border: "1px solid var(--accent-brd)", color: "var(--color-accent-ink)",
-                     background: "var(--accent-bg)" }}>
+            className="ml-auto h-6 cursor-pointer whitespace-nowrap rounded-md border px-2.5 text-[11px] transition-transform duration-150 hover:-translate-y-px"
+            style={{ borderColor: "var(--accent-brd)", color: "var(--color-accent-ink)", background: "var(--accent-bg)" }}>
             Open board
           </button>
         </div>
-        {waiting && (
-          <div className="mt-1 text-[11px] text-text-3">
-            waiting on {waiting.label} ({formatElapsed(waiting.ms)})
-          </div>
-        )}
-        {team.pausedReason && (
-          <div className="mt-1 text-[11px] text-amber">{team.pausedReason}</div>
-        )}
+        {team.maxRounds > 0 && <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} mini />}
+        {team.pausedReason && <div className="text-[11px]" style={{ color: "var(--color-amber)" }}>{team.pausedReason}</div>}
       </div>
-      {rows.map((agent) => (
-        <AgentRosterRow key={agent.agentId} agent={agent} now={now} siblings={agentIds} />
-      ))}
-      {team.usage.budget > 0 && (
-        // Phase 4 counts no requests (spec v2 §8 owns the budget), so only the budget shows.
-        <div className="px-3 py-1.5 text-[10.5px] text-text-3"
-          style={{ borderTop: "1px solid var(--color-border)" }}>
-          budget {team.usage.budget} requests
+      {team.members.map((m) => {
+        const row = agentsUi.agents[m.agentId];
+        const phrase = memberPhrase(m, row, now);
+        const working = phrase.tone === "work";
+        return (
+          <div key={m.agentId} data-testid={`member-row-${m.label}`}
+            className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 border-b px-3 py-2" style={{ borderColor: "var(--hairline)" }}>
+            <Avatar label={m.label} roster={roster} ring={working ? "working" : "idle"} />
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[12px] font-semibold" style={{ color: identityFor(m.label, roster).color }}>{m.label}</span>
+                {m.name && <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10.5px]" style={{ color: "var(--color-accent-ink)", background: "var(--accent-bg)", borderColor: "var(--accent-brd)" }}>{m.name}</span>}
+              </div>
+              <div className="truncate text-[11.5px]" style={{ color: TONE[phrase.tone] }}>{phrase.text}</div>
+            </div>
+            {row && <span className="whitespace-nowrap text-[10.5px] tabular-nums text-text-3">
+              {row.activationCount ?? 0} ch · {row.toolCount} tools</span>}
+          </div>
+        );
+      })}
+      {team.latest && (
+        <div className="flex min-w-0 items-center gap-2 px-3 pt-2 text-[11.5px] text-text-2">
+          <Avatar label={team.latest.label} roster={roster} size="sm" />
+          <span className="min-w-0 truncate">{latestText(team.latest)}</span>
         </div>
       )}
+      {counts && <div className="px-3 pb-2.5 pt-1.5 text-[10.5px] text-text-3">{counts}</div>}
     </div>
   );
 }

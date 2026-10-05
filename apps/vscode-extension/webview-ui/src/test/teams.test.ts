@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  applyTeamEvent, isTerminalTeam, mergeLiveTeam, stanceOf, summaryWithEvent, viewFromTeamDetail,
-  waitingOn,
+  applyTeamEvent, countsText, isTerminalTeam, latestText, memberPhrase, mergeLiveTeam, stanceOf,
+  summaryWithEvent, viewFromTeamDetail, waitingOn,
 } from "../teams";
 import type { AgentSummaryView, TeamDetailView, TeamPostView, TeamSummaryView } from "../types";
 
@@ -80,5 +80,40 @@ describe("team activity state", () => {
     view = applyTeamEvent(view, { type: "team_activity", activity: act(3) });
     expect(view.activity.map((e) => e.aseq)).toEqual([1, 2, 3]);
     expect(view.lastAseq).toBe(3);
+  });
+});
+
+describe("card wording", () => {
+  const NOW = Date.parse("2026-10-05T17:12:00Z");
+  const member = (over: object = {}) => ({ label: "review", agentId: "a", status: "completed", last: null, ...over });
+  const row = (over: object = {}) => ({ agentId: "a", parentAgentId: null, depth: 1, name: "explore",
+    label: "review", status: "running", now: "read_file shop/cart.py", toolCount: 3, filesChangedCount: 0,
+    startedAt: "2026-10-05T17:00:00Z", endedAt: null, reportPreview: "",
+    activationStartedAt: "2026-10-05T17:11:28Z", activationEndedAt: null, ...over });
+  it("working comes from the agent row, with elapsed time", () => {
+    expect(memberPhrase(member(), row(), NOW)).toEqual(
+      { text: "● working · read_file shop/cart.py · 32s", tone: "work" });
+  });
+  it("finished states come from the member's last event", () => {
+    const at = "2026-10-05T17:10:00Z";
+    const done = member({ last: { kind: "wrapped_up", at, causeSeq: null, by: null, status: "completed", activation: 1 } });
+    expect(memberPhrase(done, row({ status: "completed" }), NOW)).toEqual({ text: "✓ reported · 2m00s ago", tone: "ok" });
+    const waiting = member({ last: { kind: "wrapped_up", at, causeSeq: null, by: null, status: "awaiting_peer", activation: 1 } });
+    expect(memberPhrase(waiting, row({ status: "awaiting_peer" }), NOW).text).toBe("⏳ waiting on a teammate");
+    const failed = member({ last: { kind: "wrapped_up", at, causeSeq: null, by: null, status: "failed", activation: 1 } });
+    expect(memberPhrase(failed, row({ status: "failed" }), NOW)).toEqual({ text: "✗ failed", tone: "bad" });
+  });
+  it("needs approval, and no history", () => {
+    expect(memberPhrase(member(), row({ status: "waiting" }), NOW)).toEqual({ text: "⏸ needs your approval", tone: "wait" });
+    expect(memberPhrase(member({ status: "awaiting_peer" }), undefined, NOW)).toEqual({ text: "💤 idle", tone: "idle" });
+  });
+  it("latest and counts", () => {
+    expect(latestText({ kind: "post", label: "review", text: "@impl findings for P1", at: "x" })).toBe("review posted: @impl findings for P1");
+    expect(latestText({ kind: "activity", label: "impl", text: "Agreed with P1", at: "x", event: "wrapped_up", status: "completed" }))
+      .toBe("impl wrapped up — Agreed with P1");
+    expect(countsText({ posts: 9, proposals: [{ id: "P1", agree: 2, object: 0, pending: 0 }] }, 60))
+      .toBe("9 posts · P1 2 ✓ · budget 60 requests");
+    expect(countsText({ posts: 3, proposals: [{ id: "P1", agree: 1, object: 1, pending: 1 }] }, 0))
+      .toBe("3 posts · P1 1 ✓ 1 ✗ 1 pending");
   });
 });
