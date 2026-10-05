@@ -304,7 +304,9 @@ npm run typecheck      # tsc --noEmit across workspaces
 cd services/agentd-py
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-uvicorn agentd.main:app --reload --port 8000
+python -m agentd.serve --port 8000 --reload
+# every request needs the token it wrote (GET /health does not):
+#   curl -H "Authorization: Bearer $(cat ~/.crucible/run/agentd-8000.token)" http://127.0.0.1:8000/v1/config
 pytest                 # note: pyproject already sets -q; do not add another
 ruff check . && mypy agentd
 ```

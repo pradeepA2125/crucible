@@ -8,7 +8,8 @@
 #
 #   frontend  built + packaged + `code --install-extension`  (real VSIX, not dev host)
 #   backend   crucible.devSourcePath -> `uv pip install -e services/agentd-py`
-#             in ~/.crucible/runtime/venv, so uvicorn --reload picks up edits
+#             in ~/.crucible/runtime/venv (restart the backend to pick up edits)
+#   indexer   built from services/indexer-rs and installed to ~/.crucible/runtime/bin
 #
 # Usage:  scripts/dev/install-local.sh [--no-backend] [--code-cmd code]
 set -euo pipefail
@@ -101,6 +102,22 @@ if [[ "$DO_BACKEND" == "1" ]]; then
     echo
     echo "        rm -rf \"$VENV\" && <reload window, then Crucible: Run Setup>"
   fi
+fi
+
+echo "==> building the indexer"
+# shellcheck source=../stress/_indexer.sh
+source "$REPO/scripts/stress/_indexer.sh"
+if _indexer_bin="$(ensure_indexer_binary "$REPO/services/indexer-rs")"; then
+  _dest="$HOME/.crucible/runtime/bin/crucible-indexer"
+  mkdir -p "$(dirname "$_dest")"
+  # Temp file + mv: overwriting a running binary in place gets it killed on macOS arm64
+  # and fails with ETXTBSY on Linux.
+  cp "$_indexer_bin" "$_dest.tmp.$$"
+  chmod 755 "$_dest.tmp.$$"
+  mv -f "$_dest.tmp.$$" "$_dest"
+  echo "    installed $_dest; restart the backend (Crucible: Restart Backend) so the watcher picks it up"
+else
+  echo "    indexer build failed (see above); the managed runtime keeps its current indexer" >&2
 fi
 
 echo

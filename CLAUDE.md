@@ -35,7 +35,7 @@ cd services/agentd-py
 python -m venv .venv && source .venv/bin/activate
 pip install -e .[dev]
 
-uvicorn agentd.main:app --reload --port 8000   # start server
+python -m agentd.serve --port 8000 --reload   # start server (127.0.0.1 only; writes ~/.crucible/run/agentd-8000.token)
 
 pytest                          # all tests
 pytest tests/test_foo.py        # single file
@@ -413,11 +413,12 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
   applies **from the next turn**, no restart. Known v1 limitation: the memory-harness
   summarizer keeps its construction-time transport until process restart. `GET /v1/config`
   reports `provider: {backend, model} | null`.
-- **Startup lockfile:** `agentd/runtime_lock.py` writes `<workspace>/.crucible/state/agentd.lock`
-  (JSON `{pid, port, started_at}`) at startup **only when `CRUCIBLE_PORT` is set**
-  (managed spawns; the dev `start-backend.sh` flow is unaffected). The extension reads/reaps
-  this file to decide "reuse the still-running backend" vs. "spawn a new one" — one
-  workspace, one backend, by construction.
+- **Startup lockfile:** `python -m agentd.serve --workspace-lock <ws>` (managed spawns only)
+  writes `<workspace>/.crucible/state/agentd.lock` (JSON `{pid, port, started_at}`, atomic and
+  symlink-safe via `runtime_lock.write_lock`). It is never deleted at shutdown: it is a hint.
+  The extension reuses the backend it names only when `/health`'s proof shows that pid serving
+  this workspace (see "Backend authentication"); otherwise it reaps the lock (killing only a
+  verified process of ours) and spawns — one workspace, one backend.
 - **MCP admin routes:** `agentd/mcp/admin.py` (`upsert_server`/`remove_server`/`read_raw_servers`,
   read-modify-write over `.crucible/mcp.json`, preserves unknown keys, `${VAR}` refs stay
   verbatim) + `McpConnectionManager.reconcile(configs, disabled=frozenset())` /
@@ -489,8 +490,9 @@ round-trips provider/MCP/skills/policy config. Spec/plan:
     actually spawned and the resulting jdtls process answered a live LSP `initialize` handshake
     in ~2s. →
   `backend-process.ts` (`BackendProcess.start()`: reuse a live locked backend via the lockfile,
-  else reap-and-spawn `venvPython -m uvicorn agentd.main:app --port <port>` with
-  `buildBackendEnv(...)`, poll `/health` up to 60s, pre-warm the index via
+  else reap-and-spawn `venvPython -m agentd.serve --port 0 --workspace-lock <ws>` with
+  `buildBackendEnv(...)`, take the port from the child's `CRUCIBLE_SERVE {…}` stdout line,
+  poll `/health` (proof-verified) up to 60s, pre-warm the index via
   `POST /v1/index/build`, then spawn the indexer watcher). `runtime/vscode-runtime.ts::RuntimeManager`
   is the thin vscode wiring on top: install root `~/.crucible/runtime`, provider
   backend/model in `globalState` + key in `SecretStorage`, per-workspace `BackendProcess`
@@ -659,6 +661,17 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - **Inspector panel (3-B, frontend):** a dedicated **`MemoryPanel`** is a **second Vite entry** in the React `webview-ui` (`memory.html` → `src/memory/{main,MemoryApp,RecallTraceTab,BrowserTab,types,vscodeApi}.tsx`), NOT the stale HTML-string "review-panel.ts" the spec named (chat fully replaced that with the `webview-ui` React app). `webview-ui` keeps **local mirror types** (it doesn't import editor-client). The host is split for testability: `src/memory-data.ts` (vscode-free — `handleMemoryMessage` + `MemoryDataSource`/`MemoryBrowseFilter`, unit-tested in the node-env vitest) and `src/memory-panel.ts` (the `vscode` `MemoryPanel` class, mirrors `chat-panel.ts` asset-rewrite+CSP). `controller.ts` stays **vscode-free**, exposing `memoryDataSource()`/`memoryThreadId()`/`memoryWorkspacePath()` (client built from the backend URL, session-independent like `attachToTask`); **`extension.ts` owns panel construction** (needs `context.extensionUri`). Command `crucible.openMemoryPanel` is gated by the `crucible.memoryEnabled` `when`-context fed from `/v1/config` (mirrors `taskSubsystemEnabled`). editor-client adds Zod `RecallTrace`/`RecallTraceEntry`/`MemoryView` + `getMemoryInspect`/`listMemories`/`getSupersedeChain` (snake→camel; routes return snake_case, signals keys pass through unmapped). Read-only; no live polling (Refresh button re-fetches).
 - **Phase-3 config env vars:** `CRUCIBLE_MEMORY_RERANKER` (default on since 2026-07-08), `CRUCIBLE_MEMORY_RERANKER_MODEL` (default `BAAI/bge-reranker-base`), `CRUCIBLE_MEMORY_RERANK_MIN_CANDIDATES` (default 8).
 
+### Backend authentication
+
+Spec: `docs/superpowers/specs/2026-10-04-backend-auth-design.md`. Plan: `docs/superpowers/plans/2026-10-05-backend-auth.md`.
+
+- **Start:** `python -m agentd.serve --port N [--reload] [--workspace-lock <ws>]` (`agentd/serve.py`, stdlib + uvicorn imports only) binds `127.0.0.1` first, writes a fresh 43-char token to `~/.crucible/run/agentd-<port>.token` (0600, atomic, under an `flock` shared with a 7-day tidy), writes the lock, prints `CRUCIBLE_SERVE {"pid","port"}`, then serves the pre-bound socket. Token and lock are never deleted at shutdown; a live backend bumps its token file's mtime daily.
+- **Middleware** (`agentd/auth.py`, pure ASGI, outermost): loopback peer (403) → `Host` exactly `127.0.0.1:<port>` (421) → no `Origin` (403) → `Authorization: Bearer` (401). The only exemption is exactly `GET /health`. 503 until the startup hook (index 0) has loaded the token.
+- **`/health?nonce=<hex>`** returns `pid`, `proof = HMAC(token, "crucible-health-v1\0"+nonce)` and `bound = HMAC(token, "crucible-health-bound-v1\0"+nonce+"\0"+pid+"\0"+workspace)` — clients verify the server holds their token without sending it, and reuse checks it is the right pid and workspace.
+- **Clients verify before sending:** the extension's `BackendGate` (`src/backend-auth/backend-gate.ts`) probes before the first request to a URL and after any connection error, and never forwards (or sends a token) unless the probe is `authed`; `localhost` is rewritten to `127.0.0.1`; no redirects are followed. editor-client takes `authToken`/`onAuthStatus` and throws `BackendAuthError` on 401/403/421. The Rust indexer verifies once per token, POSTs with `.no_proxy()`, and prints `auth=1` for `--version`. Dev scripts use `scripts/_backend_auth.{py,sh}`; a grep test (`tests/test_scripts_use_auth_helper.py`) enforces it.
+- **Managed runtime:** pre-spawn checks (`import agentd.serve`, indexer `--version` with `auth=1`, 5 s timeouts) raise `RuntimeUpdateRequiredError` → one modal (an editable dev install is pointed at `scripts/dev/install-local.sh`, which also builds the indexer).
+- **GET routes stay read-only** — `tests/test_get_routes_read_only.py` pins the reviewed list; a new GET route fails it until reviewed.
+
 ### Retrieval pipeline
 - `indexer-rs` writes `index-snapshot.json` with `nodes`/`edges`/`diagnostics`/`stats`
 - `agentd-py` reads the snapshot per task via `retrieval/` module; if missing, auto-triggers one index run
@@ -723,7 +736,8 @@ Spec: `docs/superpowers/specs/2026-06-29-memory-phase3-reranker-inspector-design
 - `CRUCIBLE_MCP_TOOLS_MAX_CHARS` — char budget for MCP tool definitions in tools_json (default `16000`; order-truncation).
 - `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` — per-server connect wait at startup before continuing without it (default `30`).
 - `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
-- `CRUCIBLE_PORT` — when set, writes `<workspace>/.crucible/state/agentd.lock` (`{pid, port, started_at}`) at startup and clears it at shutdown. Only the extension's managed spawn sets this; `start-backend.sh`/manual runs don't, so they never write a lockfile. See "P4 — Install, managed runtime & settings UI".
+- `CRUCIBLE_LISTEN_PORT` / `CRUCIBLE_SERVE_PID` — set by `python -m agentd.serve` for the app process only (stripped from every backend subprocess by `agentd/child_env.py::child_env()`); the app refuses to start without them, so bare `uvicorn agentd.main:app` no longer works. (`CRUCIBLE_PORT` is retired.)
+- `CRUCIBLE_AUTH_DISABLED=1` — skips only the bearer-token check (peer, Host and Origin checks stay). **Any local user, and any web page doing blind GETs, can then drive the backend**; a warning repeats every 60th request. Never inherited by a managed spawn.
 - `CRUCIBLE_REWIND_RETENTION_TURNS` — rewind checkpoints retained per chat thread (default `50`; oldest pruned, their file snapshots deleted with them).
 - `CRUCIBLE_REWIND_MAX_FILE_BYTES` — files larger than this are not snapshotted for rewind (default `10000000`); they are recorded `oversize` and reported as not-restored rather than restored wrong.
 - `CRUCIBLE_SUBAGENTS_ENABLED` — the controller's `dispatch_agents` + shared-workspace write guard (default **ON**; kill-switch `0/false/no/off`; controller-only). Limits: `CRUCIBLE_SUBAGENT_MAX_DEPTH` (2), `CRUCIBLE_SUBAGENT_MAX_CONCURRENT` (8, process-wide), `CRUCIBLE_SUBAGENT_MAX_ITERS` (100, when a definition sets no `maxTurns`). See "Sub-agents (P5)".
@@ -810,7 +824,7 @@ bash scripts/stress/start-backend.sh \
   --validation-profile none   # use 'full' when testing validation
 
 # Verify it's up
-curl -s http://localhost:8000/health
+curl -s http://127.0.0.1:8000/health   # needs no token
 ```
 
 Log file lands in `.tmp/stress-<timestamp>/logs/agentd.log`. Tail it while running tasks:
@@ -848,16 +862,19 @@ Task ID is persisted to `/tmp/crucible-verify-state/current_task_id.txt` between
 
 ### Inspecting a task mid-flight
 
+Every request except `GET /health` needs the backend's token (see "Backend authentication"):
+
 ```bash
+AUTH="Authorization: Bearer $(cat ~/.crucible/run/agentd-8000.token)"
 TASK_ID=task-xxxx
-curl -s http://localhost:8000/v1/tasks/$TASK_ID | python3 -m json.tool
-curl -s http://localhost:8000/v1/tasks/$TASK_ID/result | python3 -m json.tool
+curl -s -H "$AUTH" http://127.0.0.1:8000/v1/tasks/$TASK_ID | python3 -m json.tool
+curl -s -H "$AUTH" http://127.0.0.1:8000/v1/tasks/$TASK_ID/result | python3 -m json.tool
 ```
 
 ### Watching the SSE stream directly
 
 ```bash
-curl -sN --no-buffer "http://localhost:8000/v1/tasks/$TASK_ID/stream-patch" \
+curl -sN --no-buffer -H "$AUTH" "http://127.0.0.1:8000/v1/tasks/$TASK_ID/stream-patch" \
   -H "Accept: text/event-stream"
 ```
 
@@ -949,7 +966,7 @@ cat $ARTIFACTS/delta-replan-revision.json | python3 -m json.tool
 
 The API also exposes artifacts:
 ```bash
-curl -s http://localhost:8000/v1/tasks/$TASK_ID/artifacts | python3 -m json.tool
+curl -s -H "$AUTH" http://127.0.0.1:8000/v1/tasks/$TASK_ID/artifacts | python3 -m json.tool
 ```
 
 ### Provider-specific notes
