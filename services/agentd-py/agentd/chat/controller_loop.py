@@ -60,6 +60,8 @@ if TYPE_CHECKING:
     # Given the files an accepted edit touched, return a compact retrieval-refresh
     # note (pointers only, no bodies) to append to history — or None.
     RetrievalDeltaCb = Callable[[list[str]], Awaitable[str | None]]
+    # A team member's report fields (spec v2 §8.3): (report action, final) → verdict.
+    ReportCheck = Callable[[dict[str, object], bool], "ReportVerdict"]
     # Persist the in-flight turn's pills incrementally (tool_events, thinking_log) so a
     # thread switch / panel reopen mid-turn reconstructs them durably (finding 5).
     PillsUpdateCb = Callable[[list[dict], list[str]], Awaitable[None]]
@@ -588,6 +590,15 @@ def _normalized_recommended(resp: dict[str, object]) -> str:
     return ""
 
 
+@dataclass(frozen=True)
+class ReportVerdict:
+    """What a team member's report fields came to (spec v2 §8.3). `message` None accepts
+    the report; otherwise it is shown to the model, which reports again. `malformed` marks
+    a byte-identical resubmission of a refused report, counted like any malformed action."""
+    message: str | None = None
+    malformed: bool = False
+
+
 @dataclass
 class ControllerOutcome:
     # "answer" | "clarify" | "propose_mode" | "submit_changes" | "report" (a sub-agent's
@@ -728,6 +739,7 @@ class ControllerLoop:
         self._report_statuses = report_statuses
         # Set per iteration by _iterate; the final iteration narrows a child's types.
         self._iteration = 0
+        self._force_final = False
         self._max_iters = 0
 
     def mark_pills_boundary(self) -> None:
@@ -834,13 +846,18 @@ class ControllerLoop:
         the final iteration so the budget always ends in a report (spec §6.5) — the system
         prompt keeps the full base set, only the schema narrows."""
         if self._agent is not None:
-            if self._iteration >= self._max_iters:
+            if self._iteration >= self._max_iters or self._force_final:
                 return ["report"]
             return list(self._agent.allowed_types)
         types = list(self._sm.allowed_types())
         if self._sm.phase == "ACTIVE" and self._task_subsystem_enabled:
             types.append("propose_mode")
         return types
+
+    def force_final(self) -> None:
+        """Make the next iteration the final one (spec v2 §8.3 deadline, §3.11 budget): the
+        schema narrows to report, and the report is accepted as it stands."""
+        self._force_final = True
 
     def _allowed_modes_for_current_phase(self) -> frozenset[str]:
         return (
@@ -902,6 +919,7 @@ class ControllerLoop:
         report_guard: Callable[[], str | None] | None = None,
         terminal_guard: Callable[[], str | None] | None = None,
         status_tail: Callable[[], str] | None = None,
+        report_check: ReportCheck | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -953,6 +971,7 @@ class ControllerLoop:
                 report_guard=report_guard,
                 terminal_guard=terminal_guard,
                 status_tail=status_tail,
+                report_check=report_check,
             )
             if iteration_cb is not None:
                 iteration_cb(history)
@@ -1004,6 +1023,7 @@ class ControllerLoop:
         report_guard: Callable[[], str | None] | None = None,
         terminal_guard: Callable[[], str | None] | None = None,
         status_tail: Callable[[], str] | None = None,
+        report_check: ReportCheck | None = None,
     ) -> ControllerOutcome:
         pending_salvage: list[str] = []
         # Set when preflight rejects generated code for a SYNTAX error, cleared as soon
@@ -1783,7 +1803,7 @@ class ControllerLoop:
                 # A sub-agent's only terminal and its WHOLE deliverable (spec §5.1, D8): the
                 # summary is returned verbatim, never truncated.
                 still_open = self._ledger.pending()
-                final = iteration >= max_iters
+                final = iteration >= max_iters or self._force_final
                 if report_guard is not None and not final:
                     blocked = report_guard()
                     if blocked is not None:
@@ -1806,6 +1826,21 @@ class ControllerLoop:
                             "(with why). Report once nothing is pending."),
                     })
                     continue
+                if report_check is not None:
+                    verdict = report_check(resp, final)
+                    if verdict.message is not None and verdict.malformed:
+                        # A byte-identical resubmission is malformed (spec v2 §8.3) — the
+                        # counter was reset for this accepted action, so continue the streak.
+                        consecutive_malformed = prev_malformed + 1
+                        if consecutive_malformed > _MAX_MALFORMED:
+                            # Exhausted by report validation alone: accept with the invalid
+                            # entries dropped, so the member stays in the quorum.
+                            verdict = report_check(resp, True)
+                    if verdict.message is not None:
+                        history.append(assistant_turn(resp))
+                        history.append({"role": "tool_result", "tool": "",
+                                        "content": verdict.message})
+                        continue
                 history.append(assistant_turn(resp))
                 summary = str(resp.get("summary", "")).strip()
                 if still_open:
