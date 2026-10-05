@@ -9,6 +9,7 @@ import { Icon } from "./Icon";
 import { AgentRosterCard } from "./agents/AgentRosterCard";
 import { NoticeLine } from "./messages/NoticeLine";
 import { AgentMessageLine } from "./messages/AgentMessageLine";
+import { TeamCard } from "./teams/TeamCard";
 import { vscode } from "../vscodeApi";
 
 interface Props {
@@ -157,9 +158,16 @@ export function MessageRow({ msg, planVersion, turnActive, onRewindRequest }: Pr
     case "agent_message":
       return <AgentMessageLine msg={msg} />;
 
-    // A team's card arrives with teams (Phase 4); until then it renders nothing.
-    case "team_created":
-      return null;
+    // A team's card (spec v2 §9): live data comes from TeamsContext; the message's
+    // metadata names the team until its summary loads.
+    case "team_created": {
+      const teamId = msg.metadata?.team_id;
+      const ids = msg.metadata?.agent_ids;
+      return typeof teamId === "string" && Array.isArray(ids)
+        ? <TeamCard teamId={teamId} agentIds={ids as string[]}
+            name={typeof msg.metadata?.name === "string" ? msg.metadata.name : undefined} />
+        : null;
+    }
 
     // diff_summary falls through to text/role-based dispatch
     case "diff_summary":

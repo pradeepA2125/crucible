@@ -45,6 +45,8 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
   stepReview: true,
     agents: {},
     agentViews: {},
+    teams: {},
+    teamViews: {},
     ...overrides,
   };
 }

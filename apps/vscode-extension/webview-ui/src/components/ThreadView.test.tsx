@@ -41,6 +41,8 @@ const base: AppState = {
   stepReview: true,
   agents: {},
   agentViews: {},
+  teams: {},
+  teamViews: {},
 };
 
 function renderView() {

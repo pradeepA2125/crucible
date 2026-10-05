@@ -112,7 +112,7 @@ export function AgentLiveRow({ agentId }: { agentId: string }) {
   );
 }
 
-function AgentRosterRow({ agent, now, siblings }: {
+export function AgentRosterRow({ agent, now, siblings }: {
   agent: AgentSummaryView; now: number; siblings: string[];
 }) {
   const ui = useAgentsUi();

@@ -59,7 +59,7 @@ describe("ThreadView sub-agent wiring", () => {
       liveTodos: null, liveSessions: null, sessionTranscripts: {}, workbar: null,
       retryStatus: null, tokenProgress: null, editFailure: null, liveStatus: null,
       turnActive: false, turnKind: null, agentsRunning: 0, planMode: false, stepReview: true,
-      agents: { a: row("a", "limiter", "running") }, agentViews: {},
+      agents: { a: row("a", "limiter", "running") }, agentViews: {}, teams: {}, teamViews: {},
       messages: [{ role: "agent", content: "", type: "agent_dispatch", timestamp: "t",
                    metadata: { agent_ids: ["a"] } }],
     } as AppState;

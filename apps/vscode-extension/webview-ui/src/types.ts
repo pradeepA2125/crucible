@@ -216,6 +216,64 @@ export interface AgentViewState {
   nextId: number;
 }
 
+// ── Agent teams (mirrors editor-client TeamPost/TeamSummary/TeamLive — camelCase) ─────
+export interface TeamPostView {
+  teamId: string;
+  seq: number;
+  author: string;
+  kind: string;
+  recipient: string | null;
+  text: string;
+  mentions: string[];
+  refId: string | null;
+  round: number | null;
+  payload: Record<string, unknown>;
+  closed: string | null;
+  createdAt: string;
+}
+
+export interface TeamMemberView { label: string; agentId: string; status: string }
+
+export interface TeamSummaryView {
+  teamId: string;
+  name: string;
+  goal: string;
+  phase: string;
+  round: number;
+  maxRounds: number;
+  pausedReason: string | null;
+  members: TeamMemberView[];
+  openProposals: { id: string; author: string; text: string; stances: Record<string, string> }[];
+  usage: { requests: number; budget: number };
+  createdAt: string;
+}
+
+export interface TeamLiveView {
+  teamId: string;
+  name: string;
+  phase: string;
+  round: number;
+  maxRounds: number;
+  pausedReason: string | null;
+  members: TeamMemberView[];
+}
+
+export interface TeamDetailView extends TeamSummaryView {
+  posts: TeamPostView[];
+  lastSeq: number;
+}
+
+/** A team-channel event as the host forwards it (already camelCase, Task 9). */
+export type TeamEventView =
+  | { type: "team_post"; post: TeamPostView }
+  | { type: "team_phase"; phase: string; round: number; pausedReason: string | null };
+
+/** An open team's board. */
+export interface TeamViewState {
+  posts: TeamPostView[];
+  lastSeq: number;
+}
+
 // ── Extension → Webview ──────────────────────────────────────────────────────
 export type ExtensionMessage =
   | { type: "appendMessage"; message: ChatMsg }
@@ -268,6 +326,10 @@ export type ExtensionMessage =
   | { type: "renderAgents"; agents: AgentSummaryView[] }
   | { type: "agentDetail"; agentId: string; detail: AgentDetailView }
   | { type: "agentEvent"; agentId: string; event: AgentEventView }
+  | { type: "renderTeams"; teams: TeamSummaryView[] }
+  | { type: "renderLiveTeams"; teams: TeamLiveView[] }
+  | { type: "teamDetail"; teamId: string; detail: TeamDetailView }
+  | { type: "teamEvent"; teamId: string; event: TeamEventView }
   | { type: "composerPrefill"; text: string };
 
 // ── Webview → Extension ──────────────────────────────────────────────────────
@@ -326,6 +388,8 @@ export type WebviewMessage =
   | { type: "fetchSessionTranscript"; sessionId: string }
   // @-mention composer: workspace file listing + click-to-open.
   | { type: "setOpenAgents"; agentIds: string[] }
+  | { type: "setOpenTeams"; teamIds: string[] }
+  | { type: "disbandTeam"; teamId: string }
   | { type: "stopAgent"; agentId: string }
   | { type: "stopAllAgents" }
   | { type: "listWorkspaceFiles" }
@@ -378,4 +442,8 @@ export interface AppState {
   agents: Record<string, AgentSummaryView>;
   // Open agents' transcripts (backfill + live events).
   agentViews: Record<string, AgentViewState>;
+  // Team summaries (teamId → summary), from the routes and merged with /live.
+  teams: Record<string, TeamSummaryView>;
+  // Open teams' boards (backfill + live posts).
+  teamViews: Record<string, TeamViewState>;
 }

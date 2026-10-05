@@ -2,6 +2,7 @@ import { useReducer, useEffect, useCallback } from "react";
 import type { AppState, ExtensionMessage, ChatMsg, StreamingBubble, ToolEventView } from "../types";
 import { vscode } from "../vscodeApi";
 import { appendDurable, applyAgentEvent, viewFromDetail } from "../agents";
+import { applyTeamEvent, mergeLiveTeam, summaryWithEvent, viewFromTeamDetail } from "../teams";
 
 // ── Stable content signatures ────────────────────────────────────────────────
 
@@ -49,6 +50,8 @@ const INITIAL: AppState = {
   stepReview: true,
   agents: {},
   agentViews: {},
+  teams: {},
+  teamViews: {},
 };
 
 // ── Action types ─────────────────────────────────────────────────────────────
@@ -136,6 +139,8 @@ function reducer(state: AppState, action: Action): AppState {
         editFailure: null,
         agents: {},
         agentViews: {},
+        teams: {},
+        teamViews: {},
       };
 
     case "setInputEnabled":
@@ -456,6 +461,39 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         agentViews: { ...state.agentViews, [msg.agentId]: applyAgentEvent(view, msg.event, at) },
+      };
+    }
+
+    case "renderTeams": {
+      const teams = { ...state.teams };
+      for (const team of msg.teams) teams[team.teamId] = team;
+      return { ...state, teams };
+    }
+
+    case "renderLiveTeams": {
+      const teams = { ...state.teams };
+      for (const live of msg.teams) teams[live.teamId] = mergeLiveTeam(teams[live.teamId], live);
+      return { ...state, teams };
+    }
+
+    case "teamDetail": {
+      const { posts: _posts, lastSeq: _lastSeq, ...summary } = msg.detail;
+      return {
+        ...state,
+        teams: { ...state.teams, [msg.teamId]: summary },
+        teamViews: { ...state.teamViews, [msg.teamId]: viewFromTeamDetail(msg.detail) },
+      };
+    }
+
+    case "teamEvent": {
+      const view = state.teamViews[msg.teamId];
+      const team = state.teams[msg.teamId];
+      return {
+        ...state,
+        teams: team ? { ...state.teams, [msg.teamId]: summaryWithEvent(team, msg.event) } : state.teams,
+        teamViews: view
+          ? { ...state.teamViews, [msg.teamId]: applyTeamEvent(view, msg.event) }
+          : state.teamViews,
       };
     }
 

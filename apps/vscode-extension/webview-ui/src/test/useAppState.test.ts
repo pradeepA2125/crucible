@@ -518,6 +518,32 @@ describe("useAppState", () => {
     expect(result.current.state.agentViews).toEqual({});
   });
 
+  it("tracks team summaries, live merges, boards and clears them with the thread", () => {
+    const { result } = renderHook(() => useAppState());
+    const team = { teamId: "team-1", name: "auth", goal: "g", phase: "DELIBERATING", round: 1,
+      maxRounds: 3, pausedReason: null, members: [], openProposals: [],
+      usage: { requests: 0, budget: 160 }, createdAt: "2026-10-05T00:00:00Z" };
+    const post = { teamId: "team-1", seq: 1, author: "main", kind: "proposal", recipient: null,
+      text: "plan", mentions: [], refId: null, round: 0, payload: {}, closed: null,
+      createdAt: "2026-10-05T00:00:00Z" };
+    act(() => { fireMessage({ type: "renderTeams", teams: [team] }); });
+    act(() => { fireMessage({ type: "renderLiveTeams", teams: [{ teamId: "team-1",
+      name: "auth", phase: "DELIBERATING", round: 2, maxRounds: 3, pausedReason: null,
+      members: [] }] }); });
+    expect(result.current.state.teams["team-1"]).toMatchObject({ round: 2, goal: "g" });
+    act(() => { fireMessage({ type: "teamDetail", teamId: "team-1",
+      detail: { ...team, posts: [post], lastSeq: 1 } }); });
+    act(() => { fireMessage({ type: "teamEvent", teamId: "team-1",
+      event: { type: "team_post", post: { ...post, seq: 2, kind: "post", text: "hi" } } }); });
+    act(() => { fireMessage({ type: "teamEvent", teamId: "team-1",
+      event: { type: "team_phase", phase: "DISBANDED", round: 2, pausedReason: null } }); });
+    expect(result.current.state.teamViews["team-1"].posts.map((p) => p.seq)).toEqual([1, 2]);
+    expect(result.current.state.teams["team-1"].phase).toBe("DISBANDED");
+    act(() => { fireMessage({ type: "clearThread" }); });
+    expect(result.current.state.teams).toEqual({});
+    expect(result.current.state.teamViews).toEqual({});
+  });
+
   it("appends a roster message once even when it is delivered twice", () => {
     const { result } = renderHook(() => useAppState());
     const message = { role: "agent" as const, content: "", type: "agent_dispatch" as const,
