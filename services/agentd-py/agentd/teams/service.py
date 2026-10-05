@@ -6,12 +6,14 @@ the phase and rounds; nothing here needs to change for it."""
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from agentd.subagents.framing import frame
-from agentd.teams.models import LIVE_TEAM_PHASES, TeamPost, TeamRecord
+from agentd.teams.models import LIVE_TEAM_PHASES, TeamActivity, TeamPost, TeamRecord
 from agentd.teams.store import TeamStore
 from agentd.teams.validation import (
     MAX_POSTS_PER_ACTIVATION,
@@ -24,6 +26,8 @@ from agentd.teams.validation import (
 
 _STANCE_KINDS = ("agree", "object")
 
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ActivationCounters:
@@ -42,11 +46,13 @@ class TeamService:
     def __init__(
         self, store: TeamStore, workspace: Path, agent_info: Callable[[str], AgentInfo],
         on_post: Callable[[TeamRecord, TeamPost], None] = lambda _t, _p: None,
+        on_activity: Callable[[TeamRecord, TeamActivity], None] = lambda _t, _a: None,
     ) -> None:
         self._store = store
         self._workspace = workspace
         self._agent_info = agent_info
         self._on_post = on_post
+        self._on_activity = on_activity
 
     # ── helpers ─────────────────────────────────────────────────────────────
 
@@ -234,6 +240,26 @@ class TeamService:
 
     # ── what members and the main agent read ────────────────────────────────
 
+
+    def record(
+        self, team_id: str, label: str, kind: str, *, activation: int | None = None,
+        cause_seq: int | None = None, payload: dict[str, Any] | None = None,
+    ) -> TeamActivity | None:
+        """Append one activity event and stream it (spec 2026-10-05 §4.3). Best-effort: the
+        record is for the user's eyes; it must never fail the work it describes."""
+        try:
+            event = self._store.append_activity(
+                team_id, label=label, kind=kind, activation=activation,
+                cause_seq=cause_seq, payload=payload)
+            team = self._store.get_team(team_id)
+            if team is not None:
+                self._on_activity(team, event)
+            return event
+        except Exception:  # noqa: BLE001 — best-effort by design (spec §10)
+            logger.warning("[teams] could not record %s activity for %s in %s", kind, label,
+                           team_id, exc_info=True)
+            return None
+
     def _who(self, team_id: str, label: str) -> str:
         if label in ("main", "user", "system"):
             return label
@@ -283,7 +309,9 @@ class TeamService:
                      "with evidence). Post what others need to know; report when you are done.")
         return "\n".join(lines)
 
-    def render_delta(self, team_id: str, label: str) -> tuple[str, int]:
+    def render_delta_posts(self, team_id: str, label: str) -> tuple[str, int, list[TeamPost]]:
+        """The member's inbox delta, its top seq, and the posts by others it covers — what
+        the member is 'handed' (the took_up / picked_up record, spec 2026-10-05 §4.2)."""
         team = self._store.get_team(team_id)
         member = self._store.member(team_id, label)
         assert team is not None and member is not None
@@ -292,7 +320,12 @@ class TeamService:
         others = [p for p in visible if p.author != label]
         body = "\n\n".join(self._render_post(team_id, p, label) for p in others)
         header = self._header(team, first=member.delivered_seq == 0)
-        return (f"{header}\n\n{body}" if body else f"{header}\n\nNo new posts."), top
+        text = f"{header}\n\n{body}" if body else f"{header}\n\nNo new posts."
+        return text, top, others
+
+    def render_delta(self, team_id: str, label: str) -> tuple[str, int]:
+        text, top, _ = self.render_delta_posts(team_id, label)
+        return text, top
 
     def status_text(self, team_id: str, label: str) -> str:
         team = self._store.get_team(team_id)

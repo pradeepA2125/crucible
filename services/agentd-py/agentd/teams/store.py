@@ -7,7 +7,14 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-from agentd.teams.models import LIVE_TEAM_PHASES, TeamMember, TeamPost, TeamRecord
+from agentd.teams.models import (
+    ACTIVITY_KINDS,
+    LIVE_TEAM_PHASES,
+    TeamActivity,
+    TeamMember,
+    TeamPost,
+    TeamRecord,
+)
 
 _TEAM_COLUMNS = tuple(TeamRecord.model_fields)
 _DATETIME_FIELDS = frozenset({"round_started_at", "created_at", "ended_at"})
@@ -52,6 +59,14 @@ class TeamStore:
                 mentions_json TEXT NOT NULL DEFAULT '[]', ref_id TEXT, round INTEGER,
                 payload_json TEXT NOT NULL DEFAULT '{}', closed TEXT, created_at TEXT NOT NULL,
                 PRIMARY KEY (team_id, seq))""")
+        # Spec 2026-10-05 §4.1: the lifecycle record. Its own per-team sequence (aseq) so
+        # post seq stays the delivery cursor and the proposal id.
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS team_activity (
+                team_id TEXT NOT NULL, aseq INTEGER NOT NULL, at TEXT NOT NULL,
+                label TEXT NOT NULL, kind TEXT NOT NULL, activation INTEGER,
+                cause_seq INTEGER, payload_json TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (team_id, aseq))""")
         self._conn.commit()
 
     # ── teams ────────────────────────────────────────────────────────────────
@@ -219,3 +234,44 @@ class TeamStore:
             "UPDATE team_posts SET closed = ? WHERE team_id = ? AND seq = ? AND kind = 'proposal'",
             (reason, team_id, seq))
         self._conn.commit()
+
+    # ── activity (spec 2026-10-05 §4) ──────────────────────────────────────
+
+    def append_activity(
+        self, team_id: str, *, label: str, kind: str, activation: int | None = None,
+        cause_seq: int | None = None, payload: dict[str, Any] | None = None,
+    ) -> TeamActivity:
+        if kind not in ACTIVITY_KINDS:
+            raise ValueError(f"unknown activity kind {kind!r}")
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(aseq), 0) + 1 FROM team_activity WHERE team_id = ?",
+            (team_id,)).fetchone()
+        event = TeamActivity(team_id=team_id, aseq=int(row[0]), at=datetime.now(UTC),
+                             label=label, kind=kind, activation=activation,
+                             cause_seq=cause_seq, payload=payload or {})
+        self._conn.execute(
+            "INSERT INTO team_activity (team_id, aseq, at, label, kind, activation, "
+            "cause_seq, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (team_id, event.aseq, event.at.isoformat(), label, kind, activation, cause_seq,
+             json.dumps(event.payload)))
+        self._conn.commit()
+        return event
+
+    @staticmethod
+    def _activity_from_row(row: sqlite3.Row) -> TeamActivity:
+        return TeamActivity(
+            team_id=row["team_id"], aseq=row["aseq"], at=datetime.fromisoformat(row["at"]),
+            label=row["label"], kind=row["kind"], activation=row["activation"],
+            cause_seq=row["cause_seq"], payload=json.loads(row["payload_json"]))
+
+    def activity(self, team_id: str, *, since_aseq: int = 0) -> list[TeamActivity]:
+        rows = self._conn.execute(
+            "SELECT * FROM team_activity WHERE team_id = ? AND aseq > ? ORDER BY aseq",
+            (team_id, since_aseq)).fetchall()
+        return [self._activity_from_row(r) for r in rows]
+
+    def latest_activity_for(self, team_id: str, label: str) -> TeamActivity | None:
+        row = self._conn.execute(
+            "SELECT * FROM team_activity WHERE team_id = ? AND label = ? "
+            "ORDER BY aseq DESC LIMIT 1", (team_id, label)).fetchone()
+        return self._activity_from_row(row) if row else None

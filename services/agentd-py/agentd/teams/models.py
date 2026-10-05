@@ -73,3 +73,21 @@ class TeamPost(BaseModel):
     @property
     def proposal_id(self) -> str:
         return f"P{self.seq}"
+
+
+# Spec 2026-10-05 §4.2 — the lifecycle facts the UI renders; never member input.
+ACTIVITY_KINDS = frozenset({
+    "phase", "woke", "notified", "took_up", "picked_up", "wrapped_up", "capped"})
+WAKE_CAUSES = frozenset({
+    "kickoff", "mention", "team_mention", "message", "main_post", "leftover"})
+
+
+class TeamActivity(BaseModel):
+    team_id: str
+    aseq: int
+    at: datetime
+    label: str          # member label, or "main" / "team" for team-level events
+    kind: str
+    activation: int | None = None
+    cause_seq: int | None = None   # the board post that caused it, when one did
+    payload: dict[str, Any] = Field(default_factory=dict)
