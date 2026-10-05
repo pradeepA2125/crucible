@@ -107,8 +107,8 @@ async def test_create_team_rows_kickoff_and_activation(tmp_path, monkeypatch) ->
     posts = store.teams.posts(team_id)
     first = posts[0]
     assert (first.seq, first.author, first.kind, first.round) == (1, "main", "proposal", 0)
-    assert {p.text for p in posts if p.kind == "system"} == {
-        "alice finished (completed)", "bob finished (awaiting_peer)"}
+    assert {e.label: e.payload["status"] for e in store.teams.activity(team_id)
+            if e.kind == "wrapped_up"} == {"alice": "completed", "bob": "awaiting_peer"}
     assert store.teams.member(team_id, "alice").delivered_seq == 1
     alice_first = next(h for label, h, _, _ in engine.seen if label == "alice")
     assert "Plan: alice does the API" in str(alice_first[-1]["content"])
@@ -166,8 +166,8 @@ async def test_wake_cap_stops_ping_pong(tmp_path, monkeypatch) -> None:
     team_id = str(result["team_id"])
     ctrl._teams.post(team_id, "bob", "@alice again")   # type: ignore[union-attr]
     await _settle(ctrl)
-    system = [p.text for p in store.teams.posts(team_id) if p.kind == "system"]
-    assert any("alice has been woken 1 time" in t for t in system)
+    capped = [e for e in store.teams.activity(team_id) if e.kind == "capped"]
+    assert capped and capped[0].label == "alice"
 
 
 @pytest.mark.asyncio

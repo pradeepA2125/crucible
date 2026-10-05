@@ -122,7 +122,14 @@ from agentd.subagents.transcript import AgentTranscript
 from agentd.subagents.vcs_guard import vcs_refusal
 from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
 from agentd.teams.config import team_max_live_per_thread, team_max_wakes
-from agentd.teams.models import LIVE_TEAM_PHASES, TeamMember, TeamPost, TeamRecord, new_team_id
+from agentd.teams.models import (
+    LIVE_TEAM_PHASES,
+    TeamActivity,
+    TeamMember,
+    TeamPost,
+    TeamRecord,
+    new_team_id,
+)
 from agentd.teams.service import ActivationCounters, AgentInfo, TeamService
 from agentd.teams.tools import (
     MEMBER_TOOL_NAMES,
@@ -156,6 +163,40 @@ TEAM_DELTA = "\x00team-delta\x00"   # replaced by the member's rendered delta in
 
 def team_channel(thread_id: str, team_id: str) -> str:
     return f"chat:{thread_id}:team:{team_id}"
+
+
+def wake_cause(post: TeamPost, label: str) -> str:
+    """Why `label` is concerned by `post` (spec 2026-10-05 §4.2)."""
+    if post.recipient == label:
+        return "message"
+    if post.author == "main":
+        return "main_post"
+    if "team" in post.mentions:
+        return "team_mention"
+    return "mention"
+
+
+def _activation_stats(record: AgentRecord, posts: list[TeamPost]) -> dict[str, object]:
+    """This activation's counts for its wrap-up row: tool calls since the last divider,
+    and the member's posts / messages / stances since the activation started."""
+    started = record.activation_started_at
+    tools = 0
+    for message in reversed(record.transcript):
+        if message.metadata.get("divider"):
+            break
+        events = message.metadata.get("tool_events")
+        if isinstance(events, list):
+            tools += len(events)
+    mine = [p for p in posts if p.author == record.label
+            and (started is None or p.created_at >= started)]
+    duration_ms = (int((datetime.now(UTC) - started).total_seconds() * 1000)
+                   if started is not None else 0)
+    return {
+        "duration_ms": duration_ms, "tools": tools,
+        "posts": sum(1 for p in mine if p.kind in ("post", "proposal") and p.recipient is None),
+        "messages": sum(1 for p in mine if p.recipient is not None),
+        "stances": sum(1 for p in mine if p.kind in ("agree", "object")),
+    }
 
 
 def _explore_context_from_history(
@@ -328,7 +369,7 @@ class ChatController:
         # Agent teams (spec v2 §7): the board service; None when sub-agents are off.
         self._teams: TeamService | None = (
             TeamService(thread_store.teams, Path(workspace_path), self._agent_info,
-                        on_post=self._team_posted)
+                        on_post=self._team_posted, on_activity=self._team_activity)
             if is_subagents_enabled() else None)
         # The turn whose dispatch tree /live reports (spec §11.1) — registered for exactly
         # loop.run's lifetime, like _active_loops.
@@ -1455,6 +1496,17 @@ class ChatController:
         parent's orphaned-edit recovery (_promote_orphaned_edit) is unchanged."""
         reaped = self._store.reap_agents("backend restarted")
         failed_teams = self._store.teams.fail_live_teams("backend restarted")
+        if self._teams is not None:
+            for team_id in failed_teams:
+                for member in self._store.teams.members(team_id):
+                    last = self._store.teams.latest_activity_for(team_id, member.label)
+                    if last is not None and last.kind != "wrapped_up":
+                        self._teams.record(team_id, member.label, "wrapped_up",
+                                           activation=last.activation,
+                                           payload={"status": "failed", "report": "",
+                                                    "reason": "backend restarted"})
+                self._teams.record(team_id, "team", "phase",
+                                   payload={"phase": "FAILED", "reason": "backend restarted"})
         for thread_id in self._store.remove_child_gates():
             self._store.append_message(thread_id, ChatMessage(
                 role="agent",
@@ -1727,8 +1779,15 @@ class ChatController:
         text = "\n\n".join(
             "New message:\n" + frame(i.author or i.source_id or "agent", i.kind, i.text)
             for i in others)
-        if self._store.teams.member_for_agent(handle.agent_id) is not None:
+        membership = self._store.teams.member_for_agent(handle.agent_id)
+        if membership is not None:
             text = TEAM_DELTA + ("\n\n" + text if text else "")
+            if self._teams is not None:
+                record = self._store.get_agent(handle.agent_id)
+                self._teams.record(
+                    membership.team_id, membership.label, "woke",
+                    activation=(record.activation_count + 1) if record is not None else None,
+                    payload={"cause": "leftover"})
         asyncio.get_running_loop().call_soon(self._start_activation, handle, text)
 
     def _start_activation(self, handle: AgentHandle, activation_input: str) -> None:
@@ -2332,6 +2391,8 @@ class ChatController:
             budget=req.budget, created_turn_id=turn_id,
             checkpoint_seq=self._store.current_checkpoint_seq(thread_id), created_at=now)
         self._store.teams.create_team(team)
+        self._teams.record(team.team_id, "team", "phase",
+                           payload={"phase": team.phase, "round": team.round})
         thread_channel = f"chat:{thread_id}"
         members: list[dict[str, str]] = []
         for spec in req.members:
@@ -2369,6 +2430,12 @@ class ChatController:
         return {"team_id": team.team_id, "members": members, "phase": team.phase,
                 "round": team.round}
 
+    def _team_activity(self, team: TeamRecord, event: TeamActivity) -> None:
+        """Every activity event streams on the team channel (spec 2026-10-05 §5.2)."""
+        self._broadcaster.broadcast(team_channel(team.thread_id, team.team_id), {
+            "type": "team_activity", "aseq": event.aseq,
+            "payload": {"event": event.model_dump(mode="json")}})
+
     def _team_posted(self, team: TeamRecord, post: TeamPost, *, wake_all: bool = False) -> None:
         """Every stored post: stream it, then wake whom it concerns. Phase 4's interim
         policy — Phase 5's coordinator replaces the waking half (spec v2 §8)."""
@@ -2386,24 +2453,35 @@ class ChatController:
             targets = [m for m in members if m.label in post.mentions]
         for member in targets:
             if member.label != post.author:
-                self._wake_member(team, member)
+                cause = "kickoff" if wake_all else wake_cause(post, member.label)
+                self._wake_member(team, member, cause=cause, post=post)
 
-    def _wake_member(self, team: TeamRecord, member: TeamMember) -> None:
+    def _wake_member(self, team: TeamRecord, member: TeamMember, *, cause: str,
+                     post: TeamPost | None) -> None:
         assert self._subagents is not None and self._teams is not None
+        record = self._store.get_agent(member.agent_id)
+        next_activation = (record.activation_count + 1) if record is not None else 1
+        by = post.author if post is not None else None
+        post_seq = post.seq if post is not None else None
         if self._subagents.is_active(member.agent_id):
             # Running: a marker; the next drain renders whatever is new by then (§3.6).
             self._subagents.deliver(member.agent_id, InboxItem(
                 kind="team", text="", wakes=True, source_id=f"team:{team.team_id}",
                 author="team board"))
+            self._teams.record(team.team_id, member.label, "notified",
+                               activation=next_activation - 1, cause_seq=post_seq,
+                               payload={"cause": cause, "by": by, "post_seq": post_seq})
             return
         cap = team_max_wakes()
         wakes = self._store.teams.bump_wakes(team.team_id, member.label)
         if wakes > cap:
             if wakes == cap + 1:
-                self._teams.system_post(
-                    team.team_id, f"{member.label} has been woken {cap} time"
-                    f"{'s' if cap != 1 else ''} this phase — not waking it again in this phase")
+                self._teams.record(team.team_id, member.label, "capped",
+                                   cause_seq=post_seq, payload={"wakes": wakes, "cap": cap})
             return
+        self._teams.record(team.team_id, member.label, "woke", activation=next_activation,
+                           cause_seq=post_seq,
+                           payload={"cause": cause, "by": by, "post_seq": post_seq})
         handle = self._handle_from_record(team.thread_id, member.agent_id)
         handle.activation_input = TEAM_DELTA
         self._subagents.enqueue(handle, self._activate)
@@ -2417,23 +2495,30 @@ class ChatController:
         if len(others) == len(items):
             return items
         member = self._store.teams.member(team_id, label)
-        delta, top = self._teams.render_delta(team_id, label)
+        delta, top, handed = self._teams.render_delta_posts(team_id, label)
         if member is None or top <= member.delivered_seq:
-            # The marker's posts already arrived in this activation's input (a member woken
-            # twice before it started): nothing new to show.
             return others
         self._store.teams.set_delivered_seq(team_id, label, top)
+        record = self._store.get_agent(agent_id)
+        self._teams.record(team_id, label, "picked_up",
+                           activation=record.activation_count if record is not None else None,
+                           payload={"posts": [p.seq for p in handed],
+                                    "from": sorted({p.author for p in handed})})
         return [InboxItem(kind="team", text=delta, wakes=False, author="team board"), *others]
 
     def _team_member_reported(self, record: AgentRecord, result: ChildResult) -> None:
-        """Phase 4: a member's report is a system line on the board (its full text stays on
-        the agent row). It wakes nobody; Phase 5's coordinator gives reports their meaning."""
+        """A member's activation ended: its wrap-up (spec 2026-10-05 §4.2). Written even
+        after the team ended, so a disband's stopped activations close their chapters."""
         if self._teams is None or record.team_id is None:
             return
-        team = self._store.teams.get_team(record.team_id)
-        if team is None or team.phase not in LIVE_TEAM_PHASES:
-            return
-        self._teams.system_post(team.team_id, f"{record.label} finished ({result.status})")
+        report = result.report
+        if len(report) > 20_000:
+            report = report[:20_000] + "\n… (truncated)"
+        stats = _activation_stats(record, self._store.teams.posts(record.team_id))
+        self._teams.record(record.team_id, record.label, "wrapped_up",
+                           activation=record.activation_count,
+                           payload={"status": result.status, "report": report,
+                                    "files_changed": list(result.files_changed), **stats})
 
     async def disband_team(self, thread_id: str, team_id: str) -> dict[str, object]:
         """Stop every member, close the board (spec v2 §8.9's DISBANDED)."""
@@ -2449,6 +2534,9 @@ class ChatController:
                 await self._subagents.stop(member.agent_id, "disband")
             # system_post streams it on the team channel; _team_posted wakes nobody for it.
             self._teams.system_post(team_id, "The team was disbanded.")
+            self._teams.record(team_id, "team", "phase",
+                               payload={"phase": "DISBANDED", "round": team.round,
+                                        "reason": "disbanded"})
             self._broadcaster.broadcast(team_channel(thread_id, team_id), {
                 "type": "team_phase", "payload": {"phase": "DISBANDED", "round": team.round,
                                                   "paused_reason": None}})
@@ -2525,9 +2613,14 @@ class ChatController:
             assert self._teams is not None
             # The delta is rendered now, when the input lands in the history, and the
             # cursor advances only to what it covers (spec §7.6).
-            delta, top = self._teams.render_delta(membership.team_id, membership.label)
+            delta, top, handed = self._teams.render_delta_posts(
+                membership.team_id, membership.label)
             self._store.teams.set_delivered_seq(membership.team_id, membership.label, top)
             activation_input = delta + activation_input[len(TEAM_DELTA):]
+            self._teams.record(membership.team_id, membership.label, "took_up",
+                               activation=activation,
+                               payload={"posts": [p.seq for p in handed],
+                                        "from": sorted({p.author for p in handed})})
         channel = agent_channel(thread_id, ctx.agent_id)
         broadcaster = SequencedBroadcaster(self._broadcaster, channel,
                                            initial_seq=record.last_seq)
@@ -2538,7 +2631,7 @@ class ChatController:
         if activation > 1:
             transcript.append(ChatMessage(
                 role="agent", content=_divider_text(activation_input),
-                metadata={"divider": True}))
+                metadata={"divider": True, "activation": activation}))
         handle.activation_seq = self._store.current_checkpoint_seq(thread_id)
         if activation > 1:
             # Before the row changes: a rewind past this checkpoint restores it (§8.10).
@@ -2679,6 +2772,12 @@ class ChatController:
             self._store.set_agent_history(ctx.agent_id, loop.partial_history())
             handle.result = self._close_child(handle, "stopped", loop.fallback_report(
                 "stopped before reporting", subtree_files(), status="stopped"))
+            if membership is not None:
+                # A cancelled activation routes no report, but a member's chapter still
+                # closes (spec 2026-10-05 §4.2): stop and disband show as "stopped".
+                stopped = self._store.get_agent(ctx.agent_id)
+                if stopped is not None:
+                    self._team_member_reported(stopped, handle.result)
             raise
         except ProviderUnavailable as exc:
             logger.warning("[subagent] provider unavailable id=%s: %s", ctx.agent_id, exc)
