@@ -513,12 +513,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import http.client
+import socket
+import threading
+import time
 from pathlib import Path
 
 import pytest
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from agentd.auth import (
     AuthStartupError,
@@ -537,6 +543,7 @@ TOKEN = "t" * 43
 BASE = f"http://127.0.0.1:{PORT}"
 LOOPBACK = ("127.0.0.1", 50000)
 NONCE = "0123456789abcdef"
+SSE_RELEASE = threading.Event()
 
 
 def _app(state: AuthState) -> FastAPI:
@@ -554,7 +561,10 @@ def _app(state: AuthState) -> FastAPI:
     async def sse() -> StreamingResponse:
         async def gen():
             yield b"data: first\n\n"
-            await asyncio.sleep(3600)
+            # Ends only once the test has read the first chunk: a buffering middleware
+            # would deadlock here (and fail by timeout) instead of streaming.
+            await asyncio.to_thread(SSE_RELEASE.wait, 10)
+            yield b"data: last\n\n"
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -589,7 +599,7 @@ def test_missing_token_401_names_no_value() -> None:
 
 def test_wrong_and_non_ascii_token_401() -> None:
     assert _client().get("/x", headers={"Authorization": "Bearer nope"}).status_code == 401
-    raw = {"Authorization": "Bearer ".encode() + "é".encode("utf-8") * 10}
+    raw = {"Authorization": b"Bearer " + "é".encode() * 10}
     assert _client().get("/x", headers=raw).status_code == 401
 
 
@@ -664,10 +674,31 @@ def test_auth_disabled_skips_only_the_token() -> None:
 
 
 def test_sse_streams_first_chunk_before_generator_ends() -> None:
-    with _client().stream("GET", "/sse", headers=AUTH) as resp:
-        assert resp.status_code == 200
-        first = next(resp.iter_bytes())
+    # A real server: TestClient collects the whole body before returning, so it cannot
+    # tell a streaming middleware from a buffering one.
+    SSE_RELEASE.clear()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    state = AuthState(port=port, token=TOKEN.encode(), serve_pid=1, workspace="")
+    server = uvicorn.Server(uvicorn.Config(_app(state), host="127.0.0.1", port=port,
+                                           log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.05)
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/sse", headers=AUTH)
+        resp = conn.getresponse()
+        assert resp.status == 200
+        first = resp.read1(64)  # times out (fails) if the middleware buffered
         assert first.startswith(b"data: first")
+    finally:
+        SSE_RELEASE.set()
+        server.should_exit = True
+        thread.join(10)
 
 
 def test_websocket_closed() -> None:
@@ -678,9 +709,10 @@ def test_websocket_closed() -> None:
         await websocket.accept()
 
     client = TestClient(app, base_url=BASE, client=LOOPBACK)
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect) as excinfo:
         with client.websocket_connect("/ws"):
             pass
+    assert excinfo.value.code == 1008
 
 
 def test_lifespan_passes(tmp_path: Path) -> None:
@@ -1038,8 +1070,11 @@ def _get(port: int, path: str, token: str | None = None, timeout: float = 30):
 
 
 def _stop(proc: subprocess.Popen[str]) -> int:
+    """SIGTERM and wait. A clean stop reports 0, or -SIGTERM: after a graceful shutdown
+    uvicorn re-raises the signal it caught, so the process dies "of" SIGTERM."""
     proc.send_signal(signal.SIGTERM)
-    return proc.wait(15)
+    code = proc.wait(15)
+    return 0 if code == -signal.SIGTERM else code
 
 
 def test_port_zero_handshake_token_lock_and_proof(tmp_path: Path) -> None:
@@ -1199,9 +1234,38 @@ def test_bare_uvicorn_refuses_to_start(tmp_path: Path) -> None:
     assert "agentd.serve" in proc.stderr
 ```
 
-Add to `tests/test_runtime_lock.py` (and delete the three `clear_lock` tests and its import):
+Replace `tests/test_runtime_lock.py` entirely (the `clear_lock` tests go with the function):
 
 ```python
+import json
+import os
+import time
+from pathlib import Path
+
+from agentd.runtime_lock import LockInfo, is_pid_alive, read_lock, write_lock
+
+
+def test_write_then_read_roundtrip(tmp_path: Path) -> None:
+    write_lock(tmp_path, port=8123, pid=os.getpid(), started_at=time.time())
+    lock = read_lock(tmp_path)
+    assert isinstance(lock, LockInfo)
+    assert lock.port == 8123 and lock.pid == os.getpid() and lock.started_at > 0
+    raw = json.loads((tmp_path / ".crucible/state" / "agentd.lock").read_text())
+    assert set(raw) == {"pid", "port", "started_at"}
+
+
+def test_read_missing_or_corrupt_returns_none(tmp_path: Path) -> None:
+    assert read_lock(tmp_path) is None
+    (tmp_path / ".crucible/state").mkdir(parents=True)
+    (tmp_path / ".crucible/state" / "agentd.lock").write_text("{not json")
+    assert read_lock(tmp_path) is None
+
+
+def test_is_pid_alive() -> None:
+    assert is_pid_alive(os.getpid()) is True
+    assert is_pid_alive(2**22 + 12345) is False  # exceeds default pid_max
+
+
 def test_write_lock_replaces_a_symlink_without_following_it(tmp_path: Path) -> None:
     state = tmp_path / ".crucible/state"
     state.mkdir(parents=True)
@@ -1211,9 +1275,12 @@ def test_write_lock_replaces_a_symlink_without_following_it(tmp_path: Path) -> N
     write_lock(tmp_path, port=1, pid=2, started_at=3.0)
     assert target.read_text() == "keep"
     assert read_lock(tmp_path) == LockInfo(pid=2, port=1, started_at=3.0)
-```
 
-Update the existing calls in that file from `write_lock(tmp_path, port=8123)` to `write_lock(tmp_path, port=8123, pid=os.getpid(), started_at=time.time())` (import `time`).
+
+def test_write_leaves_no_temp_files(tmp_path: Path) -> None:
+    write_lock(tmp_path, port=1, pid=2, started_at=3.0)
+    assert sorted(p.name for p in (tmp_path / ".crucible/state").iterdir()) == ["agentd.lock"]
+```
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -1263,6 +1330,7 @@ import signal
 import socket
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import uvicorn
@@ -1301,6 +1369,16 @@ def _bind(port: int) -> socket.socket:
     return sock
 
 
+def _run(server: uvicorn.Server, sockets: list[socket.socket] | None) -> None:
+    try:
+        server.run(sockets=sockets)
+    except SystemExit:
+        pass  # uvicorn exits on its own startup errors (e.g. an import-string failure)
+    except Exception:
+        # agentd.main raising at import is a startup failure too: show it, exit 3 below.
+        traceback.print_exc()
+
+
 class _Worker:
     """Reload-worker target: picklable, so ChangeReload can hand it to the spawned child."""
 
@@ -1311,10 +1389,7 @@ class _Worker:
         for sock in sockets or []:
             sock.set_inheritable(False)
         server = uvicorn.Server(self.config)
-        try:
-            server.run(sockets=sockets)
-        except SystemExit:
-            pass
+        _run(server, sockets)
         if not server.started:
             # The first worker failing means nothing will ever serve this socket: take
             # the supervisor down too. A failure after a reload (a typo mid-edit) keeps
@@ -1357,10 +1432,7 @@ def main(argv: list[str] | None = None) -> None:
         code = reloader.process.exitcode if reloader.process is not None else 0
         sys.exit(EXIT_STARTUP_FAILED if code == EXIT_STARTUP_FAILED else 0)
     server = uvicorn.Server(config)
-    try:
-        server.run(sockets=[sock])
-    except SystemExit:
-        pass
+    _run(server, [sock])
     sys.exit(0 if server.started else EXIT_STARTUP_FAILED)
 
 
@@ -1372,9 +1444,9 @@ Note `agentd.auth_token`, `agentd.runtime_lock` and `agentd.workspace_migration`
 
 - [ ] **Step 5: Run to verify pass**
 
-`test_bare_uvicorn_refuses_to_start` stays red until Task 4. Run everything else:
-`.venv/bin/pytest tests/test_serve.py tests/test_runtime_lock.py --color=no --timeout=120 --deselect tests/test_serve.py::test_bare_uvicorn_refuses_to_start --deselect tests/test_serve.py::test_port_zero_handshake_token_lock_and_proof > /tmp/t3.txt 2>&1; echo exit=$?; tail -8 /tmp/t3.txt`
-Expected: `exit=0`. (`test_port_zero…` also asserts the 401 that Task 4 adds.)
+Three tests need Task 4's wiring (the health proof and the auth refusal): `test_bare_uvicorn_refuses_to_start`, `test_port_zero_handshake_token_lock_and_proof` and `test_reload_keeps_token_and_pid`. Run everything else:
+`.venv/bin/pytest tests/test_serve.py tests/test_runtime_lock.py --color=no --timeout=120 --deselect tests/test_serve.py::test_bare_uvicorn_refuses_to_start --deselect tests/test_serve.py::test_port_zero_handshake_token_lock_and_proof --deselect tests/test_serve.py::test_reload_keeps_token_and_pid > /tmp/t3.txt 2>&1; echo exit=$?; tail -8 /tmp/t3.txt`
+Expected: `exit=0`.
 
 - [ ] **Step 6: Commit**
 
@@ -1496,6 +1568,12 @@ _ASYNC_ATTRS = {"create_subprocess_exec", "create_subprocess_shell"}
 _EXEMPT = {"mcp/client.py", "exec_sessions/pty_process.py"}
 
 
+def test_exec_sessions_build_their_env_with_child_env() -> None:
+    # The PTY spawn takes its env from manager.py, which never names subprocess itself,
+    # so the enumeration below cannot see it.
+    assert "env = child_env()" in (ROOT / "exec_sessions/manager.py").read_text()
+
+
 def test_child_env_strips_listen_port_and_pid() -> None:
     env = child_env({"CRUCIBLE_LISTEN_PORT": "1", "CRUCIBLE_SERVE_PID": "2", "PATH": "/b"})
     assert env == {"PATH": "/b"}
@@ -1561,6 +1639,8 @@ def child_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
 
 - [ ] **Step 4: Apply at every site**
 
+Then sort each touched module's imports and drop any now-unused `import os` (it happens in `exec_sessions/manager.py`): `.venv/bin/ruff check --select I,F401 --fix <the touched files>`.
+
 Rule: where a site builds `env = os.environ.copy()` (or `dict(os.environ)`), replace that expression with `child_env()`; where it builds env from another function's result, wrap that result: `env=child_env(<expr>)`; where it passes no `env`, add `env=child_env()`. Import `from agentd.child_env import child_env` at each module's top. Concretely:
 
 - `tools/shell.py`: the `env = os.environ.copy()` above line ~150 → `env = child_env()`.
@@ -1576,8 +1656,7 @@ Rule: where a site builds `env = os.environ.copy()` (or `dict(os.environ)`), rep
 
 - [ ] **Step 5: Run the test and the touched modules' suites**
 
-Run: `.venv/bin/pytest tests/test_child_env.py tests/test_shell_tool.py tests/test_exec_sessions_manager.py tests/test_command_validator.py --color=no --timeout=120 > /tmp/t5.txt 2>&1; echo exit=$?; tail -5 /tmp/t5.txt`
-(If a listed test file doesn't exist, find the module's tests with `grep -l "<module name>" tests/*.py` and run those.)
+Run: `.venv/bin/pytest tests/test_child_env.py tests/test_run_command_shell.py tests/test_shell_pythonpath.py tests/test_tools_env.py tests/test_env_probe.py tests/test_exec_sessions_manager.py tests/test_exec_sessions_pty.py tests/test_exec_sessions_registry.py tests/test_retrieval_artifact_client.py tests/test_command_validator.py --color=no --timeout=120 > /tmp/t5.txt 2>&1; echo exit=$?; tail -5 /tmp/t5.txt`
 Expected: `exit=0`.
 
 - [ ] **Step 6: Commit**
@@ -1592,49 +1671,82 @@ git commit -m "feat(auth): strip serve-only env from every backend subprocess"
 **Files:**
 - Test: `tests/test_get_routes_read_only.py`
 
-Spec §4: the Origin check plus the token stop cross-site writes; a plain cross-site GET still reaches the token check, so GET routes must stay free of side effects. The test pins today's reviewed set so a new GET route fails until someone reviews it.
+Spec §4: the Origin check plus the token stop cross-site writes; a plain cross-site GET still reaches the token check, so GET routes must stay free of side effects. The test scans every `@<router>.get("<path>")` decorator under `agentd/` statically — chat, MCP and provider routes register only when their subsystem is on, so a runtime route listing would miss them — and pins the reviewed set, so a new GET route fails until someone reviews it.
 
-- [ ] **Step 1: Generate the current list**
+The 23 routes below were reviewed on 2026-10-05: every handler only reads. Accepted exception: `GET /v1/channels/{channel_id}/stream` creates an empty replay entry for an unknown channel.
 
-Run (prints the set to paste into the test):
-
-```bash
-.venv/bin/python - <<'EOF'
-from agentd.chat.app_factory import build_app
-app = build_app()
-print(sorted({r.path for r in app.routes if "GET" in getattr(r, "methods", set())}))
-EOF
-```
-
-If `build_app` needs arguments, read `agentd/chat/app_factory.py` and pass the minimal ones (it is the test-only factory using `ScriptedReasoningEngine`). Read each listed route handler in `agentd/api/routes.py` and confirm it only reads. Known exception, accepted: `GET /v1/channels/{channel_id}/stream` creates an empty replay entry for an unknown channel.
-
-- [ ] **Step 2: Write the test with that list**
+- [ ] **Step 1: Write the test**
 
 ```python
 """Every GET route is reviewed read-only (spec §4). A cross-site <img>/<script> GET
-carries no Origin and is stopped only by the token — so a GET must never write.
-A new GET route fails this test until it is reviewed and added."""
+carries no Origin and is stopped only by the token, so a GET must never write.
+A new GET route fails this test until its handler is reviewed and added here."""
 from __future__ import annotations
 
-from agentd.chat.app_factory import build_app
+import ast
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1] / "agentd"
 
 REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
-    # paste the list printed in Step 1 here, one path per line
+    ("api/routes.py", "/channels/{channel_id}/stream"),  # creates an empty replay entry
+    ("api/routes.py", "/chat/attention"),
+    ("api/routes.py", "/chat/threads"),
+    ("api/routes.py", "/chat/threads/{thread_id}"),
+    ("api/routes.py", "/chat/threads/{thread_id}/agents"),
+    ("api/routes.py", "/chat/threads/{thread_id}/agents/{agent_id}"),
+    ("api/routes.py", "/chat/threads/{thread_id}/live"),
+    ("api/routes.py", "/chat/threads/{thread_id}/rewind-preview"),
+    ("api/routes.py", "/chat/threads/{thread_id}/sessions/{session_id}/transcript"),
+    ("api/routes.py", "/config"),
+    ("api/routes.py", "/index/status"),
+    ("api/routes.py", "/mcp/servers"),
+    ("api/routes.py", "/memory"),
+    ("api/routes.py", "/memory/inspect"),
+    ("api/routes.py", "/memory/{memory_id}/chain"),
+    ("api/routes.py", "/skills"),
+    ("api/routes.py", "/tasks/{task_id}"),
+    ("api/routes.py", "/tasks/{task_id}/artifacts"),
+    ("api/routes.py", "/tasks/{task_id}/events"),
+    ("api/routes.py", "/tasks/{task_id}/result"),
+    ("api/routes.py", "/tasks/{task_id}/stream-patch"),
+    ("api/routes.py", "/workspaces/env-profile"),
+    ("main.py", "/health"),
 })
 
 
-def test_get_routes_are_reviewed() -> None:
-    app = build_app()
-    found = {r.path for r in app.routes if "GET" in getattr(r, "methods", set())}
-    assert found - REVIEWED_READ_ONLY_GET_ROUTES == set(), "review these GET routes"
+def _get_routes() -> set[tuple[str, str]]:
+    found: set[tuple[str, str]] = set()
+    for path in ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for deco in node.decorator_list:
+                if (isinstance(deco, ast.Call) and isinstance(deco.func, ast.Attribute)
+                        and deco.func.attr in {"get", "api_route"} and deco.args
+                        and isinstance(deco.args[0], ast.Constant)):
+                    found.add((path.relative_to(ROOT).as_posix(), deco.args[0].value))
+    return found
+
+
+def test_every_get_route_is_reviewed() -> None:
+    unreviewed = _get_routes() - REVIEWED_READ_ONLY_GET_ROUTES
+    assert unreviewed == set(), f"review these GET routes for side effects: {unreviewed}"
+
+
+def test_the_allowlist_has_no_stale_entries() -> None:
+    assert REVIEWED_READ_ONLY_GET_ROUTES - _get_routes() == set()
 ```
 
-- [ ] **Step 3: Run**
+`api_route` is included so a multi-method route cannot slip past; none exist today.
+
+- [ ] **Step 2: Run**
 
 Run: `.venv/bin/pytest tests/test_get_routes_read_only.py --color=no > /tmp/t6.txt 2>&1; echo exit=$?; tail -3 /tmp/t6.txt`
-Expected: `exit=0`.
+Expected: `exit=0`. If it lists a route, read that handler in `agentd/api/routes.py`, confirm it only reads, and add it.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add tests/test_get_routes_read_only.py
@@ -1642,6 +1754,7 @@ git commit -m "test(auth): pin the reviewed read-only GET routes"
 ```
 
 ---
+
 # Part B — editor-client (`apps/editor-client`)
 
 ### Task 7: Auth options, `BackendAuthError`, no redirects
@@ -1706,7 +1819,8 @@ describe("auth options", () => {
   });
 
   it("covers raw call sites: the chat channel stream carries the header", async () => {
-    const reader = { read: vi.fn().mockResolvedValue({ done: true }), cancel: vi.fn() };
+    const reader = { read: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+      cancel: vi.fn().mockResolvedValue(undefined) };
     const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 200,
       body: { getReader: () => reader } });
     const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn, authToken: () => "k" });
@@ -1723,8 +1837,6 @@ describe("auth options", () => {
   });
 });
 ```
-
-Read `streamChannel`'s current signature first (`grep -n "streamChannel" src/client/http-backend-client.ts`); adjust the call in the test if it takes more arguments.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -1905,13 +2017,14 @@ import { healthBound, healthProof, probeHealth, type ProbeDeps } from "../src/ru
 const TOKEN = "k".repeat(43);
 const NONCE = "00112233445566778899aabbccddeeff";
 
+// `null` = no token file. (An explicit `undefined` would trigger the default instead.)
 function deps(respond: (url: string) => { status: number; body: string } | Error,
-              token: string | undefined = TOKEN): ProbeDeps & { urls: string[] } {
+              token: string | null = TOKEN): ProbeDeps & { urls: string[] } {
   const urls: string[] = [];
   return {
     urls,
     nonce: () => NONCE,
-    readToken: () => token,
+    readToken: () => token ?? undefined,
     fetchRaw: vi.fn(async (url: string) => {
       urls.push(url);
       const r = respond(url);
@@ -1945,7 +2058,7 @@ describe("probeHealth", () => {
     expect(await probeHealth(9, deps(() => ({ status: 200, body: wrong })))).toBe("unauthorized");
     expect(await probeHealth(9, deps(() => new TypeError("fetch failed")))).toBe("down");
     expect(await probeHealth(9, deps(() => ({ status: 503, body: "" })))).toBe("down");
-    expect(await probeHealth(9, deps(() => ({ status: 200, body: authedBody() }), undefined)))
+    expect(await probeHealth(9, deps(() => ({ status: 200, body: authedBody() }), null)))
       .toBe("no-token");
   });
   it("gives up after 2 s", async () => {
@@ -2624,21 +2737,39 @@ function ws(): string {
 ```
 
 Change the existing tests:
-- `buildBackendEnv(...)` calls drop the port argument (`buildBackendEnv("/ws", SETTINGS, "/rt", "darwin-arm64")`), and the first test asserts `expect(env.CRUCIBLE_PORT).toBeUndefined()` instead of `"8123"`.
-- `"reaps a stale lock and spawns backend + watcher"` → rename to `"spawns agentd.serve, takes the port from the handshake, starts the watcher"` and assert:
+- Every `buildBackendEnv(...)` call drops the port argument — `sed`-able: replace `"/rt", <number>, "darwin-arm64"` with `"/rt", "darwin-arm64"` (some calls span lines) — and the first test asserts `expect(env.CRUCIBLE_PORT).toBeUndefined()` instead of `"8123"`.
+- `"reaps a stale lock and spawns backend + watcher"` → replace with:
 
 ```ts
+  it("spawns agentd.serve, takes the port from the handshake, starts the watcher", async () => {
     const d = deps();
     const w = ws();
-    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");  // keep the file the old test wrote
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     const r = await new BackendProcess(d).start(w, SETTINGS);
     expect(r).toEqual({ port: 8123, reused: false });
     expect(d.spawned[0].args).toEqual(["-m", "agentd.serve", "--port", "0", "--workspace-lock", w]);
+    expect(d.spawned[0].env.CRUCIBLE_PORT).toBeUndefined();
+    // Regression: without an explicit cwd, Node defaults to the calling process's
+    // cwd (the VS Code extension host's, not the workspace).
+    expect(d.spawned[0].cwd).toBe(w);
+    expect(d.spawned[1].args[0]).toBe("index"); // watcher
     expect(d.spawned[1].env.CRUCIBLE_BACKEND_URL).toBe("http://127.0.0.1:8123");
+    expect(d.spawned[1].cwd).toBe(w);
+  });
 ```
 
-  (keep the old test's directory setup for `bin/` — copy whatever `mkdirSync` it does.)
-- `"throws when health never comes up"`: `fetchRaw: async () => { throw new TypeError("fetch failed"); }` and `expect(child.killed).toContain("SIGTERM")`.
+- `"throws when health never comes up"` becomes:
+
+```ts
+  it("throws when health never comes up", async () => {
+    const child = stubChild(4242, { pid: 4242, port: 8123 });
+    const d = deps({ fetchRaw: async () => { throw new TypeError("fetch failed"); } }, child);
+    await expect(new BackendProcess(d).start(ws(), SETTINGS))
+      .rejects.toThrow(/healthy within 60s/);
+    expect(child.killed).toContain("SIGTERM");
+  });
+```
 - Delete `"reuses a live locked backend without spawning"` here; Task 11 rewrites it.
 
 New tests in the same file:
@@ -2725,10 +2856,10 @@ export class StdoutLines {
 }
 
 export function parseHandshake(line: string): { pid: number; port: number } | null {
-  const match = HANDSHAKE_RE.exec(line);
-  if (!match) return null;
+  const json = HANDSHAKE_RE.exec(line)?.[1];
+  if (json === undefined) return null;
   try {
-    const raw = JSON.parse(match[1]) as { pid?: unknown; port?: unknown };
+    const raw = JSON.parse(json) as { pid?: unknown; port?: unknown };
     return Number.isInteger(raw.pid) && Number.isInteger(raw.port)
       ? { pid: raw.pid as number, port: raw.port as number }
       : null;
@@ -2867,7 +2998,8 @@ The index pre-warm URLs become `` `http://127.0.0.1:${port}/v1/index/...` ``. Th
       signal: (pid, sig) => { try { process.kill(pid, sig); } catch { /* gone */ } },
       exec: (cmd, args, timeoutMs) => execWithTimeout(cmd, args, timeoutMs),
       now: () => Date.now(),
-      uid: process.getuid?.(),
+      // exactOptionalPropertyTypes: omit the key on Windows rather than pass undefined.
+      ...(process.getuid ? { uid: process.getuid() } : {}),
 ```
 
 and a module-level helper:
@@ -3123,11 +3255,11 @@ export function parseEtime(etime: string): number | null {
 }
 
 export function parsePsLine(line: string, nowSec: number): ProcessInfo | null {
-  const match = /^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
-  if (!match) return null;
-  const elapsed = parseEtime(match[2]);
+  const [, uid, etime, command] = /^\s*(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line) ?? [];
+  if (uid === undefined || etime === undefined || command === undefined) return null;
+  const elapsed = parseEtime(etime);
   if (elapsed === null) return null;
-  return { uid: Number(match[1]), startedAtSec: nowSec - elapsed, command: match[3] };
+  return { uid: Number(uid), startedAtSec: nowSec - elapsed, command };
 }
 
 export async function readProcessInfo(
@@ -3346,20 +3478,27 @@ describe("stop", () => {
 
 (the stub's `sleep` resolves at once, so `stop()`'s 10 s wait elapses immediately when `exited` has not resolved.)
 
-In `test/runtime-installer.test.ts` (read the file's existing harness first and reuse its `deps` builder):
+In `test/runtime-installer.test.ts`:
+- In `"a hollow venv … is reinstalled"`, the stub's check becomes `args.includes("import agentd.serve")` (and its stderr `No module named 'agentd.serve'`).
+- In `"a genuinely working venv … already installed"`, add after `installAll()`:
 
 ```ts
-  it("checks `import agentd.serve` for an installed agentd", async () => {
-    // Arrange as the existing "already installed" test does, then:
-    expect(execCalls.some((c) => c.args.join(" ") === "-c import agentd.serve")).toBe(true);
-    expect(execCalls.some((c) => c.args.join(" ") === "-c import uvicorn")).toBe(false);
-  });
+    expect(d2.calls.some((c) => c.join(" ").endsWith("-c import agentd.serve"))).toBe(true);
+```
 
-  it("writes binaries through a temp file and rename", async () => {
-    // Arrange a binary component install as the existing indexer test does; then:
-    const bin = join(runtimeDir, "bin");
-    expect(readdirSync(bin).filter((n) => n.includes(".tmp"))).toEqual([]);
+- Add (with `readdirSync`, `statSync` in the `node:fs` import):
+
+```ts
+  it("writes binaries through a temp file and rename (a new inode, never in place)", async () => {
+    const d = deps();
+    const bin = join(d.runtimeDir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "crucible-indexer"), "old");
+    const before = statSync(join(bin, "crucible-indexer")).ino;
+    await new RuntimeInstaller(d).installAll();
+    expect(statSync(join(bin, "crucible-indexer")).ino).not.toBe(before);
     expect(statSync(join(bin, "crucible-indexer")).mode & 0o111).not.toBe(0);
+    expect(readdirSync(bin).filter((n) => n.includes(".tmp"))).toEqual([]);
   });
 ```
 
@@ -3541,7 +3680,13 @@ Activation, crash-respawn (`watchCrash` → `startForWorkspace`) and `restart()`
   }
 ```
 
-(imports: `RuntimeUpdateRequiredError` from `./backend-process.js`, `isEditableInstall` from `./installer.js`, `platformKey` from `./manifest.js`; add `showErrorMessage(message, options: { modal: boolean }, ...items)` to `src/vscode-shim.d.ts` if the overload is missing.)
+(imports: `RuntimeUpdateRequiredError` from `./backend-process.js`, `isEditableInstall` from `./installer.js`, `platformKey` from `./manifest.js`.) The hand-maintained `src/vscode-shim.d.ts` has no modal overload; add, after the existing `showErrorMessage` line:
+
+```ts
+    function showErrorMessage(
+      message: string, options: { modal?: boolean }, ...items: string[]
+    ): Thenable<string | undefined>;
+```
 
 Add a test for the editable message to the extension's runtime-manager tests if one exists (`grep -ln "RuntimeManager" test/`); otherwise the `isEditableInstall` unit tests plus the live smoke (Task 16, step "editable install") cover it.
 
@@ -3971,7 +4116,7 @@ git commit -m "feat(indexer): verify the backend, send the token directly, --ver
 
 **Files:**
 - Create: `scripts/_backend_auth.py`, `scripts/_backend_auth.sh`
-- Modify: `scripts/drive_clarify_live.py`, `scripts/e2e-scripted.sh`, `scripts/eval/skill_trigger_eval.py`, `scripts/stress/e2e-stress-test.py`, `scripts/stress/run-constrained-task.sh`, `scripts/stress/verify-task.sh`, `scripts/verify/{01_create_task,02_feedback,03_finalize,04_resume,controller_ux_smoke,env_profile_e2e}.py` (`scripts/stress/start-backend.sh` is Task 15)
+- Modify: `scripts/drive_clarify_live.py`, `scripts/e2e-scripted.sh` (incl. its two launch lines), `scripts/eval/skill_trigger_eval.py`, `scripts/stress/e2e-stress-test.py`, `scripts/stress/run-constrained-task.sh`, `scripts/stress/verify-task.sh`, `scripts/stress/start-backend.sh` (launch line + readiness + pre-warm + watcher URL), `scripts/verify/{01_create_task,02_feedback,03_finalize,04_resume,controller_ux_smoke,env_profile_e2e}.py` — the grep test covers every one of them, so they all change in this task
 - Test: `services/agentd-py/tests/test_scripts_use_auth_helper.py`, `services/agentd-py/tests/test_backend_auth_script_helper.py`
 
 **Interfaces:**
@@ -4234,10 +4379,53 @@ curl -sf -H "$(crucible_auth_header "$BASE")" "$BASE/v1/tasks/$TASK_ID"
 
 A `curl` aimed at a different service (Ollama, TurboQuant) stays unchanged. Call `crucible_auth_header` per request in loops (it reads the token each time, so a backend restart mid-script is picked up).
 
+Per-script specifics (everything else follows the two rules above):
+
+| Script | Base variable | Change |
+|---|---|---|
+| `verify/01…04_*.py`, `stress/e2e-stress-test.py` | `BASE_URL = os.getenv(…)` | wrap in `backend_url(…)`; `httpx.AsyncClient(headers=auth_headers(BASE_URL), …)` |
+| `verify/controller_ux_smoke.py` | `BASE = os.getenv(…)` | wrap; the one `httpx.AsyncClient(…)` in `main` gains `headers=auth_headers(BASE)` |
+| `verify/env_profile_e2e.py` | `args.backend` | `backend = backend_url(args.backend)`; `httpx.AsyncClient(base_url=backend, headers=auth_headers(backend))` |
+| `eval/skill_trigger_eval.py` | `args.base_url` | default becomes `http://127.0.0.1:8002`; `args.base_url = backend_url(args.base_url)` before `httpx.Client(timeout=15.0, headers=auth_headers(args.base_url))`; both `httpx.stream(…)` calls merge `**auth_headers(base_url)` into their headers |
+| `drive_clarify_live.py` | `BASE = "http://localhost:8000"` | `BASE = backend_url("http://127.0.0.1:8000")`; `_post`'s `Request` merges the headers; `_get` builds a `Request(BASE + path, headers=auth_headers(BASE))` |
+| `stress/run-constrained-task.sh`, `stress/verify-task.sh` | `BASE_URL` | source the helper and normalize `BASE_URL` just before the `for cmd in curl …` tool check; every `curl -sS` to `$BASE_URL` gains `-H "$(crucible_auth_header "$BASE_URL")"` |
+| `e2e-scripted.sh` | none | both `"$AGENTD_PYTHON" -m uvicorn agentd.main:app --port "$PORT"` → `"$AGENTD_PYTHON" -m agentd.serve --port "$PORT"`; before `echo "==> Waiting for backend health"` source the helper and set `BASE="http://127.0.0.1:${PORT}"`; the health loop's `curl` becomes `crucible_auth_header "$BASE" >/dev/null 2>&1`; every other `curl -fsS … "http://127.0.0.1:${PORT}/…"` becomes `curl -fsS … -H "$(crucible_auth_header "$BASE")" "$BASE/…"` |
+| `stress/start-backend.sh` | `_base` (new) | see below |
+
+`start-backend.sh`:
+- The launch line becomes `./.venv/bin/python -m agentd.serve --port "$PORT" --reload 2>&1 | tee "$LOG_FILE"` (comment: `agentd.serve` binds 127.0.0.1 first, then writes `~/.crucible/run/agentd-$PORT.token`).
+- Replace the "Wait for backend to become healthy" block (from that comment up to `echo "==> backend healthy"`) with:
+
+```bash
+# Wait for backend to become healthy.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_backend_auth.sh"
+_base="http://127.0.0.1:${PORT}"
+echo "==> waiting for backend on port $PORT ..."
+for _i in $(seq 1 60); do
+  # The token file appears just after bind; the helper also verifies /health's proof,
+  # re-reading the token on each iteration.
+  if crucible_auth_header "$_base" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+if ! crucible_auth_header "$_base" >/dev/null; then
+  echo "Backend did not become healthy within 60 s" >&2
+  kill "$_SERVER_PID" 2>/dev/null || true
+  exit 1
+fi
+```
+
+- `_build_url`/`_status_url` become `"$_base/v1/index/build"` / `"$_base/v1/index/status"`; the build `curl` gains `-H "$(crucible_auth_header "$_base")"` before its `Content-Type` header; the status `curl` becomes `curl -sf -H "$(crucible_auth_header "$_base")" "$_status_url"`.
+- The watcher's `CRUCIBLE_BACKEND_URL="http://localhost:${PORT}"` becomes `CRUCIBLE_BACKEND_URL="$_base"`.
+- The usage text's `(uvicorn stdout log only)` becomes `(backend stdout log only)`.
+
+A client built once (an `httpx.AsyncClient`) reads the token once; these scripts are short-lived, so that is enough. The shell helpers read it per request.
+
 - [ ] **Step 6: Run the tests**
 
 Run: `.venv/bin/pytest tests/test_scripts_use_auth_helper.py tests/test_backend_auth_script_helper.py --color=no --timeout=120 > /tmp/t14.txt 2>&1; echo exit=$?; tail -5 /tmp/t14.txt` and `for f in scripts/verify/*.py scripts/stress/e2e-stress-test.py scripts/drive_clarify_live.py scripts/eval/skill_trigger_eval.py; do python3 -m py_compile "$f" || echo "BROKEN $f"; done; bash -n scripts/e2e-scripted.sh scripts/stress/*.sh`
-Expected: `exit=0`; `start-backend.sh` may still be listed as an offender until Task 15 — if so, run Task 15 before re-running this test. No `BROKEN`, no bash syntax errors.
+Expected: `exit=0`. No `BROKEN`, no bash syntax errors.
 
 - [ ] **Step 7: Commit**
 
@@ -4246,60 +4434,38 @@ git add scripts services/agentd-py/tests/test_scripts_use_auth_helper.py service
 git commit -m "feat(scripts): auth helper; every backend-calling script verifies and sends the token"
 ```
 
-### Task 15: Launch sites, `install-local.sh`, docs
+### Task 15: `install-local.sh`, docs
 
 **Files:**
-- Modify: `scripts/stress/start-backend.sh`, `scripts/e2e-scripted.sh`, `scripts/dev/install-local.sh`, `CLAUDE.md`, `README.md`, `services/agentd-py/README.md`
+- Modify: `scripts/dev/install-local.sh`, `CLAUDE.md`, `README.md`, `services/agentd-py/README.md`
 
-- [ ] **Step 1: `start-backend.sh`**
+(The launch sites — `start-backend.sh` and `e2e-scripted.sh` — changed in Task 14, whose grep test needs them.)
 
-- Source the helper near the top: `source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_backend_auth.sh"`.
-- The launch line (~469) becomes `./.venv/bin/python -m agentd.serve --port "$PORT" --reload 2>&1 | tee "$LOG_FILE"`.
-- Every agentd URL uses `127.0.0.1`: `_health_url`, `_build_url`, `_status_url`, and the watcher's `CRUCIBLE_BACKEND_URL` (~559).
-- The readiness loop (~474–482) re-reads per iteration and accepts only a verified backend:
+- [ ] **Step 1: `install-local.sh` builds and installs the indexer**
 
-```bash
-_base="http://127.0.0.1:${PORT}"
-for _ in $(seq 1 60); do
-  # The token file appears just after bind; the helper verifies /health's proof.
-  if crucible_auth_header "$_base" >/dev/null 2>&1; then break; fi
-  sleep 1
-done
-if ! crucible_auth_header "$_base" >/dev/null; then
-  echo "==> backend did not become ready (see $LOG_FILE)" >&2
-  exit 1
-fi
-```
-
-- The two pre-warm `curl`s gain `-H "$(crucible_auth_header "$_base")"`.
-- Delete the stale header comment line about `--reload` if it still describes `uvicorn`.
-
-- [ ] **Step 2: `e2e-scripted.sh`**
-
-Both launch sites become `python -m agentd.serve --port "$PORT"` (keep their existing flags other than the uvicorn app string; drop `--host` if present — `agentd.serve` always binds `127.0.0.1`), and any agentd `curl` uses the helper (Task 14's rule). Find them with `grep -n "uvicorn\|curl" scripts/e2e-scripted.sh`.
-
-- [ ] **Step 3: `install-local.sh` builds and installs the indexer**
-
-After the backend install block, outside the `DO_BACKEND` condition:
+After the backend install block, outside the `DO_BACKEND` condition (just before the final `echo` / `==> done.` lines). The build is non-fatal: a machine without cargo still gets the extension installed.
 
 ```bash
 echo "==> building the indexer"
 # shellcheck source=../stress/_indexer.sh
 source "$REPO/scripts/stress/_indexer.sh"
-_indexer_bin="$(ensure_indexer_binary "$REPO/services/indexer-rs")"
-_dest="$HOME/.crucible/runtime/bin/crucible-indexer"
-mkdir -p "$(dirname "$_dest")"
-# Temp file + mv: overwriting a running binary in place gets it killed on macOS arm64
-# and fails with ETXTBSY on Linux.
-cp "$_indexer_bin" "$_dest.tmp.$$"
-chmod 755 "$_dest.tmp.$$"
-mv -f "$_dest.tmp.$$" "$_dest"
-echo "==> indexer installed; restart the backend (Crucible: Restart Backend) so the watcher picks it up"
+if _indexer_bin="$(ensure_indexer_binary "$REPO/services/indexer-rs")"; then
+  _dest="$HOME/.crucible/runtime/bin/crucible-indexer"
+  mkdir -p "$(dirname "$_dest")"
+  # Temp file + mv: overwriting a running binary in place gets it killed on macOS arm64
+  # and fails with ETXTBSY on Linux.
+  cp "$_indexer_bin" "$_dest.tmp.$$"
+  chmod 755 "$_dest.tmp.$$"
+  mv -f "$_dest.tmp.$$" "$_dest"
+  echo "    installed $_dest; restart the backend (Crucible: Restart Backend) so the watcher picks it up"
+else
+  echo "    indexer build failed (see above); the managed runtime keeps its current indexer" >&2
+fi
 ```
 
 Update the usage header: the backend line becomes "backend   crucible.devSourcePath -> `uv pip install -e services/agentd-py` in ~/.crucible/runtime/venv (restart the backend to pick up edits)" and add "indexer   built from services/indexer-rs and installed to ~/.crucible/runtime/bin".
 
-- [ ] **Step 4: Docs**
+- [ ] **Step 2: Docs**
 
 - `CLAUDE.md`:
   - The `CRUCIBLE_PORT` entry under "Key Configuration → Core" is replaced by: "`CRUCIBLE_LISTEN_PORT` / `CRUCIBLE_SERVE_PID` — set by `python -m agentd.serve` for the app process only (stripped from every subprocess by `child_env()`); the app refuses to start without them. `CRUCIBLE_AUTH_DISABLED=1` skips only the token check — any local user can then drive the backend."
@@ -4311,16 +4477,16 @@ Update the usage header: the backend line becomes "backend   crucible.devSourceP
 
 Find every mention: `grep -rn "uvicorn agentd.main\|CRUCIBLE_PORT\|localhost:8000" CLAUDE.md README.md services/agentd-py/README.md`.
 
-- [ ] **Step 5: Check**
+- [ ] **Step 3: Check**
 
-Run: `bash -n scripts/stress/start-backend.sh scripts/e2e-scripted.sh scripts/dev/install-local.sh && grep -rn "uvicorn agentd.main\|CRUCIBLE_PORT" CLAUDE.md README.md services/agentd-py/README.md scripts --include='*' | grep -v node_modules`
-Expected: no syntax errors; the grep prints nothing (the only remaining `agentd.main:app` mentions are the reap migration code and `agentd/serve.py`'s `APP`, outside these paths). Then re-run Task 14's grep test: `cd services/agentd-py && .venv/bin/pytest tests/test_scripts_use_auth_helper.py --color=no > /tmp/t15.txt 2>&1; echo exit=$?` → `exit=0`.
+Run: `bash -n scripts/dev/install-local.sh && grep -rn "uvicorn agentd.main\|CRUCIBLE_PORT" CLAUDE.md README.md services/agentd-py/README.md scripts --include='*' | grep -v node_modules`
+Expected: no syntax errors; the grep prints only CLAUDE.md's own line saying bare `uvicorn agentd.main:app` no longer works and `CRUCIBLE_PORT` is retired (the other `agentd.main:app` mentions are the reap migration code and `agentd/serve.py`'s `APP`, outside these paths). Then re-run Task 14's grep test: `cd services/agentd-py && .venv/bin/pytest tests/test_scripts_use_auth_helper.py --color=no > /tmp/t15.txt 2>&1; echo exit=$?` → `exit=0`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add scripts CLAUDE.md README.md services/agentd-py/README.md
-git commit -m "chore(auth): launch via agentd.serve everywhere; install-local builds the indexer; docs"
+git add scripts/dev/install-local.sh CLAUDE.md README.md services/agentd-py/README.md
+git commit -m "chore(auth): install-local builds the indexer; docs for agentd.serve and auth"
 ```
 
 ---
