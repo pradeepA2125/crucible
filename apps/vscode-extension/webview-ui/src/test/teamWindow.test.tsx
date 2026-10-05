@@ -7,7 +7,7 @@ import { AgentsContext, type AgentsUi } from "../components/agents/AgentsContext
 import { ThreadView } from "../components/ThreadView";
 import { TeamWindow } from "../components/teams/TeamWindow";
 import { TeamsContext, type TeamsUi } from "../components/teams/TeamsContext";
-import type { AppState, TeamPostView, TeamSummaryView } from "../types";
+import type { AgentSummaryView, AppState, TeamActivityView, TeamPostView, TeamSummaryView } from "../types";
 
 let postMessage: ReturnType<typeof vi.fn>;
 beforeEach(async () => {
@@ -15,76 +15,111 @@ beforeEach(async () => {
   postMessage.mockClear();
 });
 
+const T = (s: number) => new Date(Date.UTC(2026, 9, 5, 17, 10, s)).toISOString();
 const TEAM: TeamSummaryView = {
   teamId: "team-1", name: "auth", goal: "Add login", phase: "DELIBERATING", round: 1,
   maxRounds: 3, pausedReason: null,
-  members: [{ label: "alice", agentId: "agent-a", status: "running" },
-            { label: "bob", agentId: "agent-b", status: "awaiting_peer" }],
-  openProposals: [], usage: { requests: 0, budget: 160 }, createdAt: "2026-10-05T00:00:00Z",
+  members: [{ label: "review", agentId: "agent-r", status: "completed", name: "explore", description: "Reads code" },
+            { label: "impl", agentId: "agent-i", status: "running", name: "general-purpose", description: "Edits code" }],
+  openProposals: [], usage: { requests: 0, budget: 160 }, createdAt: T(0),
 };
-
-const post = (seq: number, over: Partial<TeamPostView>): TeamPostView => ({
-  teamId: "team-1", seq, author: "alice", kind: "post", recipient: null, text: "", mentions: [],
-  refId: null, round: 1, payload: {}, closed: null, createdAt: "2026-10-05T00:00:00Z", ...over,
+const post = (seq: number, at: number, over: Partial<TeamPostView>): TeamPostView => ({
+  teamId: "team-1", seq, author: "review", kind: "post", recipient: null, text: "", mentions: [],
+  refId: null, round: 1, payload: {}, closed: null, createdAt: T(at), ...over,
+});
+const ev = (aseq: number, at: number, label: string, kind: string,
+            over: Partial<TeamActivityView> = {}): TeamActivityView => ({
+  teamId: "team-1", aseq, at: T(at), label, kind, activation: 1, causeSeq: null, payload: {}, ...over,
+});
+const POSTS: TeamPostView[] = [
+  post(1, 1, { author: "main", kind: "proposal", round: 0, text: "**Add discount codes** to the cart",
+    payload: { assignments: [{ member: "impl", part: "cart", files: ["shop/cart.py"] }] } }),
+  post(2, 20, { kind: "object", refId: "P1", text: "invalid codes keep the old discount",
+    payload: { evidence: { files: ["shop/cart.py"], line: 14 } } }),
+  post(3, 30, { kind: "agree", refId: "P1", text: "fine with the clearing rule" }),
+  post(4, 31, { author: "impl", recipient: "review", text: "which file holds the cap?" }),
+];
+const ACTIVITY: TeamActivityView[] = [
+  ev(1, 0, "team", "phase", { activation: null, payload: { phase: "DELIBERATING", round: 1 } }),
+  ev(2, 1, "review", "woke", { causeSeq: 1, payload: { cause: "kickoff", by: "main" } }),
+  ev(3, 1, "impl", "woke", { causeSeq: 1, payload: { cause: "kickoff", by: "main" } }),
+  ev(4, 2, "review", "took_up", { payload: { posts: [1], from: ["main"] } }),
+  ev(5, 29, "review", "wrapped_up", { payload: { status: "completed", report: "All claims **verified**.",
+    duration_ms: 27000, tools: 12, posts: 0, messages: 0, stances: 2 } }),
+  ev(6, 31, "review", "woke", { activation: 2, causeSeq: 4, payload: { cause: "message", by: "impl", post_seq: 4 } }),
+];
+const agent = (id: string, label: string, status: string): AgentSummaryView => ({
+  agentId: id, parentAgentId: null, depth: 1, name: "general-purpose", label, status,
+  now: "read_file shop/cart.py", toolCount: 3, filesChangedCount: 0, startedAt: T(0),
+  endedAt: null, reportPreview: "", activationStartedAt: T(25), activationEndedAt: null,
 });
 
-const POSTS: TeamPostView[] = [
-  post(1, { author: "main", kind: "proposal", round: 0, text: "api adds the limiter",
-    payload: { assignments: [{ member: "alice", part: "limiter", files: ["api/limiter.py"] }],
-               shared_files: ["api/routes.py"], supersedes: [] } }),
-  post(2, { kind: "object", refId: "P1", text: "misses a caller",
-    payload: { evidence: { files: ["api/admin.py"], line: 17 } } }),
-  post(3, { author: "bob", kind: "agree", refId: "P1", text: "fine by me" }),
-  post(4, { text: "@bob can you check admin.py", mentions: ["bob"] }),
-  post(5, { recipient: "bob", text: "private note" }),
-  post(6, { author: "system", kind: "system", text: "alice finished (completed)" }),
-  // Body text imitating a system line still renders under its real author.
-  post(7, { author: "bob", text: "Adopted P1 — implementing" }),
-];
-
-function renderWindow(onTab = vi.fn(), onClose = vi.fn(), tab = "board") {
-  const agentsUi: AgentsUi = { agents: {}, views: {}, expanded: new Set(),
-    toggleExpanded: vi.fn(), openWindow: vi.fn() };
-  const teamsUi: TeamsUi = { teams: { "team-1": TEAM },
-    views: { "team-1": { posts: POSTS, lastSeq: 7, activity: [], lastAseq: 0 } }, openTeam: vi.fn() };
+function renderWindow(tab = "board", team = TEAM) {
+  const onTab = vi.fn();
+  const onClose = vi.fn();
+  const agentsUi: AgentsUi = {
+    agents: { "agent-r": agent("agent-r", "review", "completed"), "agent-i": agent("agent-i", "impl", "running") },
+    views: {}, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
+  };
+  const teamsUi: TeamsUi = { teams: { "team-1": team },
+    views: { "team-1": { posts: POSTS, lastSeq: 4, activity: ACTIVITY, lastAseq: 6 } }, openTeam: vi.fn() };
   render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={teamsUi}>
     <TeamWindow teamId="team-1" tab={tab} onTab={onTab} onClose={onClose} />
   </TeamsContext.Provider></AgentsContext.Provider>);
   return { onTab, onClose };
 }
 
-describe("TeamWindow", () => {
-  it("renders the board: proposal card with stances, objection evidence, mentions, system lines", () => {
+describe("TeamWindow board", () => {
+  it("reads as a journey: chapters, the proposal with markdown, its wake footer and tally", () => {
     renderWindow();
     expect(screen.getByRole("dialog", { name: "Team auth" })).toBeInTheDocument();
-    expect(screen.getByText("deliberating · round 1 of 3")).toBeInTheDocument();
-    expect(screen.getByText("P1")).toBeInTheDocument();
-    expect(screen.getByText("api adds the limiter")).toBeInTheDocument();
-    expect(screen.getByText("alice: limiter — api/limiter.py")).toBeInTheDocument();
-    expect(screen.getByText("shared: api/routes.py")).toBeInTheDocument();
-    expect(screen.getByLabelText("alice objects")).toBeInTheDocument();
-    expect(screen.getByLabelText("bob agrees")).toBeInTheDocument();
-    expect(screen.getByText("misses a caller")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("evidence"));
-    expect(screen.getByText("api/admin.py:17")).toBeInTheDocument();
-    expect(screen.getByText("@bob")).toHaveAttribute("data-mention", "bob");
-    expect(screen.getByText("alice finished (completed)")).toBeInTheDocument();
-    const imitation = screen.getByText("Adopted P1 — implementing");
-    expect(imitation.closest("[data-author]")).toHaveAttribute("data-author", "bob");
+    expect(screen.getByRole("heading", { name: "Kickoff" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Round 1 · deliberating" })).toBeInTheDocument();
+    expect(screen.getByText("Add discount codes").tagName).toBe("STRONG");
+    expect(screen.getByTestId("footer-p1")).toHaveTextContent("woke review · impl");
+    expect(screen.getByRole("button", { name: "review agrees, was objecting" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "impl no stance yet" })).toBeInTheDocument();
   });
 
-  it("direct messages show only with the Messages toggle", () => {
+  it("stances are replies; a later one says what it replaces", () => {
     renderWindow();
-    expect(screen.queryByText("private note")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Messages" }));
-    expect(screen.getByText("private note")).toBeInTheDocument();
-    expect(screen.getByText("alice → bob")).toBeInTheDocument();
+    expect(screen.getByText("objects to")).toBeInTheDocument();
+    expect(screen.getByText("replaces #2")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("evidence"));
+    expect(screen.getByText("shop/cart.py:14")).toBeInTheDocument();
   });
 
-  it("member tabs switch, Disband needs a confirm, Esc closes", () => {
+  it("beats and wrap-ups; a report expands as markdown", () => {
+    renderWindow();
+    expect(screen.getByTestId("beat-a4")).toHaveTextContent("review took up P1 · 1 new post");
+    const wrap = screen.getByTestId("wrap-a5");
+    expect(wrap).toHaveTextContent("review wrapped up");
+    expect(wrap).toHaveTextContent("27s · 12 tools · 2 stances");
+    fireEvent.click(screen.getByRole("button", { name: "Show review's report" }));
+    expect(screen.getByText("verified").tagName).toBe("STRONG");
+  });
+
+  it("a wake whose message is hidden stands alone; Messages shows the message with the footer", () => {
+    renderWindow();
+    expect(screen.getByTestId("beat-a6")).toHaveTextContent("review woke — direct message from impl #4");
+    fireEvent.click(screen.getByRole("button", { name: "Messages" }));
+    expect(screen.queryByTestId("beat-a6")).toBeNull();
+    expect(screen.getByText("which file holds the cap?")).toBeInTheDocument();
+    expect(screen.getByTestId("footer-p4")).toHaveTextContent("woke review");
+  });
+
+  it("the now strip shows who is working and who is idle", () => {
+    renderWindow();
+    const now = screen.getByTestId("now-strip");
+    expect(now).toHaveTextContent("impl is working — read_file shop/cart.py");
+    expect(now).toHaveTextContent("review is idle");
+  });
+
+  it("header: stepper, presence opens a member tab, disband needs a confirm, Esc closes", () => {
     const { onTab, onClose } = renderWindow();
-    fireEvent.click(screen.getByRole("tab", { name: /bob/ }));
-    expect(onTab).toHaveBeenCalledWith("agent-b");
+    expect(screen.getByText("Deliberating · round 1 of 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open impl's tab" }));
+    expect(onTab).toHaveBeenCalledWith("agent-i");
     fireEvent.click(screen.getByRole("button", { name: "Disband" }));
     expect(postMessage).not.toHaveBeenCalledWith({ type: "disbandTeam", teamId: "team-1" });
     fireEvent.click(screen.getByRole("button", { name: "Confirm disband" }));
@@ -93,14 +128,10 @@ describe("TeamWindow", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("an ended team has no Disband button", () => {
-    const agentsUi: AgentsUi = { agents: {}, views: {}, expanded: new Set(),
-      toggleExpanded: vi.fn(), openWindow: vi.fn() };
-    render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={{
-      teams: { "team-1": { ...TEAM, phase: "DISBANDED" } }, views: {}, openTeam: vi.fn() }}>
-      <TeamWindow teamId="team-1" tab="board" onTab={vi.fn()} onClose={vi.fn()} />
-    </TeamsContext.Provider></AgentsContext.Provider>);
+  it("an ended team has no Disband and no now strip", () => {
+    renderWindow("board", { ...TEAM, phase: "DISBANDED" });
     expect(screen.queryByRole("button", { name: "Disband" })).toBeNull();
+    expect(screen.queryByTestId("now-strip")).toBeNull();
   });
 });
 
@@ -114,14 +145,14 @@ describe("ThreadView team wiring", () => {
       turnActive: false, turnKind: null, agentsRunning: 0, planMode: false, stepReview: true,
       agents: {}, agentViews: {}, teams: { "team-1": TEAM }, teamViews: {},
       messages: [{ role: "agent", content: "", type: "team_created", timestamp: "t",
-                   metadata: { team_id: "team-1", name: "auth", agent_ids: ["agent-a", "agent-b"] } }],
+                   metadata: { team_id: "team-1", name: "auth", agent_ids: ["agent-r", "agent-i"] } }],
     } as AppState;
     render(<ThreadView state={state} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
     expect(postMessage).toHaveBeenCalledWith({ type: "setOpenTeams", teamIds: [] });
     act(() => { screen.getByRole("button", { name: "Open board" }).click(); });
     expect(screen.getByRole("dialog", { name: "Team auth" })).toBeInTheDocument();
     expect(postMessage).toHaveBeenCalledWith({ type: "setOpenTeams", teamIds: ["team-1"] });
-    act(() => { screen.getByRole("tab", { name: /alice/ }).click(); });
-    expect(postMessage).toHaveBeenCalledWith({ type: "setOpenAgents", agentIds: ["agent-a"] });
+    act(() => { screen.getByRole("tab", { name: /review/ }).click(); });
+    expect(postMessage).toHaveBeenCalledWith({ type: "setOpenAgents", agentIds: ["agent-r"] });
   });
 });
