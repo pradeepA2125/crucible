@@ -467,6 +467,48 @@ export type BackendConfig = z.infer<typeof BackendConfigSchema>;
 export const SkillSummarySchema = z.object({ name: z.string(), description: z.string() });
 export type SkillSummary = z.infer<typeof SkillSummarySchema>;
 
+// ── Settings › Agents (sub-agents v2 §10). tools: null = all tools, distinct from [].
+export const AgentDefinitionViewSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  tools: z.array(z.string()).nullable(),
+  disallowedTools: z.array(z.string()),
+  permission: z.string(),
+  declaredPermission: z.string(),
+  model: z.string(),
+  maxTurns: z.number().nullable(),
+  skills: z.array(z.string()),
+  source: z.enum(["crucible", "claude", "user_claude", "builtin"]),
+  path: z.string().nullable(),
+  sha256: z.string().nullable(),
+  trust: z.enum(["trusted", "capped"]),
+  active: z.boolean(),
+  warnings: z.array(z.string()),
+  shadowedBy: z.string().nullable(),
+  persona: z.string(),
+  content: z.string().nullable(),
+});
+export type AgentDefinitionView = z.infer<typeof AgentDefinitionViewSchema>;
+
+export const AgentCatalogSchema = z.object({
+  agents: z.array(AgentDefinitionViewSchema),
+  skipped: z.array(z.object({ path: z.string(), reason: z.string() })),
+  availableTools: z.array(z.string()),
+});
+export type AgentCatalog = z.infer<typeof AgentCatalogSchema>;
+
+export interface AgentDefinitionInput {
+  description: string;
+  persona: string;
+  tools: string[] | null;
+  disallowedTools: string[];
+  permission: string;
+  model: string;
+  maxTurns: number | null;
+  skills: string[];
+  renameFrom?: string;
+}
+
 // ── Settings surfaces (P4): provider validation + MCP server management.
 // jsonMode/warning (Task 4, openai_compatible probe): jsonMode is undefined both
 // when the backend was never probed (a known provider) and when the probe was
@@ -605,6 +647,10 @@ export interface BackendTaskClient {
   }): Promise<MemoryView[]>;
   getSupersedeChain(memoryId: string): Promise<MemoryView[]>;
   listSkills(workspace: string): Promise<SkillSummary[]>;
+  listAgentDefinitions(): Promise<AgentCatalog>;
+  saveAgentDefinition(name: string, input: AgentDefinitionInput): Promise<AgentDefinitionView>;
+  deleteAgentDefinition(name: string): Promise<void>;
+  trustAgentDefinition(path: string, sha256: string): Promise<void>;
   // Settings surfaces (P4): provider validation/hot-swap + MCP server management.
   validateProvider(req: { backend: string; model?: string; credentials?: Record<string, string> }): Promise<ProviderValidateResult>;
   setProvider(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow?: number; reasoningEffort?: ReasoningEffort }): Promise<{ backend: string; model: string; reasoningEffort?: ReasoningEffort | null; reasoningEffortNote?: string | null; reasoningEffortSupport?: EffortSupport }>;

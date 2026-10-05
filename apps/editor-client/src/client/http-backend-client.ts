@@ -29,6 +29,11 @@ import {
   MemoryViewSchema,
   type MemoryView,
   SkillSummarySchema,
+  AgentCatalogSchema,
+  AgentDefinitionViewSchema,
+  type AgentCatalog,
+  type AgentDefinitionInput,
+  type AgentDefinitionView,
   type SkillSummary,
   ProviderValidateResultSchema,
   type ProviderValidateResult,
@@ -773,6 +778,72 @@ export class HttpBackendClient implements BackendTaskClient {
       prefillText: raw["prefill_text"] ?? "",
       retiredMemories: raw["retired_memories"] ?? 0,
     });
+  }
+
+  /** Like fetchJson, but a failure carries the backend's `detail` as its message: the
+   * Settings › Agents UI shows it verbatim ("the file changed since you reviewed it"). */
+  private async fetchJsonDetail(path: string, init: RequestInit = {}): Promise<unknown> {
+    const response = await this.fetchFn(`${this.options.baseUrl}${path}`, {
+      ...init,
+      headers: { "content-type": "application/json", ...((init.headers as Record<string, string>) ?? {}) },
+    });
+    if (!response.ok) {
+      let detail = `Backend request failed (${response.status} ${response.statusText}) for ${path}`;
+      try {
+        const body = (await response.json()) as { detail?: unknown };
+        if (typeof body.detail === "string") detail = body.detail;
+      } catch { /* not JSON — keep the generic message */ }
+      const error = new Error(detail) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  }
+
+  private static toAgentView(raw: Record<string, unknown>): AgentDefinitionView {
+    return AgentDefinitionViewSchema.parse({
+      name: raw["name"], description: raw["description"],
+      tools: raw["tools"] ?? null,
+      disallowedTools: raw["disallowed_tools"] ?? [],
+      permission: raw["permission"], declaredPermission: raw["declared_permission"],
+      model: raw["model"], maxTurns: raw["max_turns"] ?? null, skills: raw["skills"] ?? [],
+      source: raw["source"], path: raw["path"] ?? null, sha256: raw["sha256"] ?? null,
+      trust: raw["trust"], active: raw["active"], warnings: raw["warnings"] ?? [],
+      shadowedBy: raw["shadowed_by"] ?? null, persona: raw["persona"] ?? "",
+      content: raw["content"] ?? null,
+    });
+  }
+
+  async listAgentDefinitions(): Promise<AgentCatalog> {
+    const raw = await this.fetchJsonDetail("/v1/agents") as Record<string, unknown>;
+    const agents = Array.isArray(raw["agents"]) ? raw["agents"] as Record<string, unknown>[] : [];
+    return AgentCatalogSchema.parse({
+      agents: agents.map((a) => HttpBackendClient.toAgentView(a)),
+      skipped: raw["skipped"] ?? [],
+      availableTools: raw["available_tools"] ?? [],
+    });
+  }
+
+  async saveAgentDefinition(name: string, input: AgentDefinitionInput): Promise<AgentDefinitionView> {
+    const raw = await this.fetchJsonDetail(`/v1/agents/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        description: input.description, persona: input.persona, tools: input.tools,
+        disallowed_tools: input.disallowedTools, permission: input.permission,
+        model: input.model, max_turns: input.maxTurns, skills: input.skills,
+        ...(input.renameFrom !== undefined ? { rename_from: input.renameFrom } : {}),
+      }),
+    }) as { agent: Record<string, unknown> };
+    return HttpBackendClient.toAgentView(raw.agent);
+  }
+
+  async deleteAgentDefinition(name: string): Promise<void> {
+    await this.fetchJsonDetail(`/v1/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
+  }
+
+  async trustAgentDefinition(path: string, sha256: string): Promise<void> {
+    await this.fetchJsonDetail("/v1/agents/trust", {
+      method: "POST", body: JSON.stringify({ path, sha256 }) });
   }
 
   async listSkills(workspace: string): Promise<SkillSummary[]> {
