@@ -7,6 +7,7 @@ import { MemoryPanel } from "./memory-panel.js";
 import { GraphPanel } from "./graph-panel.js";
 import { AuthStatusSink } from "./backend-auth/auth-status-sink.js";
 import { BackendGate, normalizeBackendUrl } from "./backend-auth/backend-gate.js";
+import { RuntimeUpdateRequiredError } from "./runtime/backend-process.js";
 import { readBackendToken } from "./runtime/backend-token.js";
 import { probeHealth } from "./runtime/probe-health.js";
 import {
@@ -591,6 +592,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         void vscode.window.showInformationMessage(
           `Crucible backend restarted (${url ?? "unknown"}).`);
       } catch (err) {
+        // The runtime-update modal already explains this one; a toast would repeat it.
+        if (err instanceof RuntimeUpdateRequiredError) return;
         void vscode.window.showErrorMessage(
           `Restart failed: ${err instanceof Error ? err.message : String(err)}`);
       }

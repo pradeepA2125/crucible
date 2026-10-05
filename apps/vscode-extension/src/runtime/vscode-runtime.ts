@@ -356,12 +356,12 @@ export class RuntimeManager {
     try {
       if (isEditableInstall(this.runtimeDir, platformKey())) {
         await vscode.window.showErrorMessage(
-          `Crucible runtime update required. ${err.message}. This is an editable development install: run scripts/dev/install-local.sh, then restart the backend.`,
+          `${err.message}. This is an editable development install: run scripts/dev/install-local.sh, then restart the backend.`,
           { modal: true });
         return;
       }
       const choice = await vscode.window.showErrorMessage(
-        `Crucible runtime update required. ${err.message}.`, { modal: true }, "Update runtime");
+        `${err.message}.`, { modal: true }, "Update runtime");
       if (choice !== "Update runtime") return;
       this.intentionalStops.add(workspace);
       try {

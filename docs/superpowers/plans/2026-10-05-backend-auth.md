@@ -3658,12 +3658,12 @@ Activation, crash-respawn (`watchCrash` → `startForWorkspace`) and `restart()`
     try {
       if (isEditableInstall(this.runtimeDir, platformKey())) {
         await vscode.window.showErrorMessage(
-          `Crucible runtime update required. ${err.message}. This is an editable development install: run scripts/dev/install-local.sh, then restart the backend.`,
+          `${err.message}. This is an editable development install: run scripts/dev/install-local.sh, then restart the backend.`,
           { modal: true });
         return;
       }
       const choice = await vscode.window.showErrorMessage(
-        `Crucible runtime update required. ${err.message}.`, { modal: true }, "Update runtime");
+        `${err.message}.`, { modal: true }, "Update runtime");
       if (choice !== "Update runtime") return;
       this.intentionalStops.add(workspace);
       try {
@@ -3687,6 +3687,8 @@ Activation, crash-respawn (`watchCrash` → `startForWorkspace`) and `restart()`
       message: string, options: { modal?: boolean }, ...items: string[]
     ): Thenable<string | undefined>;
 ```
+
+The `crucible.restartBackend` command's `catch` in `extension.ts` must not add a "Restart failed" toast on top of the modal: begin it with `if (err instanceof RuntimeUpdateRequiredError) return;` (comment: the modal already explains it). The error's own message already starts "Crucible runtime update required", so the modal adds no prefix.
 
 Add a test for the editable message to the extension's runtime-manager tests if one exists (`grep -ln "RuntimeManager" test/`); otherwise the `isEditableInstall` unit tests plus the live smoke (Task 16, step "editable install") cover it.
 
@@ -4523,12 +4525,12 @@ curl -s "http://127.0.0.1:$P/health?nonce=00112233445566778899aabbccddeeff"     
 - [ ] **Step 4: Live behaviour**
 
 1. The dev host chats with no user action (one full turn with an edit).
-2. Edit a workspace file; the indexer's watcher log shows the index-build notification accepted (no 401).
+2. Edit a workspace **source** file (`.py`/`.ts`/…; a `.md` edit is not indexed and triggers nothing); the backend log shows the watcher's `POST /v1/index/build` 202 (no 401).
 3. Kill the backend (`kill <pid>`): the crash-respawn comes up on a new port, the chat keeps working, and nothing sent a token to the old port (agentd log of the new backend shows no 401s; the extension output shows the re-probe).
-4. Reload the dev-host window: the new extension host reuses the running backend (output: `reusing live backend`).
-5. Start a second workspace's dev host after stopping the first workspace's backend so the kernel may reuse its port; reopening the first workspace never attaches to the second's backend (Review Focus 1).
+4. Reuse. A window reload does NOT exercise it: deactivation stops the window's own backend. Reuse is for a second window on the same workspace. Check it by running the real `BackendProcess.start` (via `npx vite-node` from `apps/vscode-extension`, real `fetchRaw`/`readToken`, a `spawn` stub that throws) against the live backend: the same workspace returns `{reused: true}` with no spawn; a scratch workspace holding a copy of the same lock is not reused (spawn attempted, nothing signalled).
+5. (Review Focus 1 is the scratch-workspace half of step 4.)
 6. `scripts/stress/start-backend.sh --reload` in a scratch workspace: save a backend file; `scripts/verify/01_create_task.py` still works without re-reading anything.
-7. Editable install with an old venv: temporarily `mv ~/.crucible/runtime/venv/lib/python3.*/site-packages/agentd/serve.py{,.bak}`, restart the backend → the modal names `install-local.sh`; restore the file.
+7. Editable install with an old venv: the managed venv is an editable install of this checkout, so temporarily `mv services/agentd-py/agentd/serve.py{,.bak}` and run "Crucible: Restart Backend" → the status bar reads "runtime update required" and the modal names `install-local.sh` (on macOS the modal is a native sheet that CDP screenshots miss: read it with `osascript -e 'tell application "System Events" to tell (first process whose unix id is <code pid>) to get value of every static text of sheet 1 of window 1'`); restore the file, dismiss, restart.
 8. Set `crucible.backendBaseUrl` to `http://localhost:<port>` in the dev host: the chat works (rewritten to `127.0.0.1`).
 
 Record anything that fails as a finding, fix it with a regression test, and re-run the relevant step.
