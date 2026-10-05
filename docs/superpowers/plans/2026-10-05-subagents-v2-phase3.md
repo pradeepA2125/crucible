@@ -2101,21 +2101,21 @@ function AgentRow({ agent, onOpen, onTrust, onEdit, onDuplicate, onDelete }: {
   return (
     <li className="flex flex-col gap-1 border-b py-2 last:border-b-0"
         style={{ borderColor: "var(--hairline)", opacity: agent.active ? 1 : 0.55 }}>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {agent.path ? (
           <button type="button" aria-label={`Open ${agent.name}`} onClick={onOpen}
-                  className="text-xs font-medium text-text hover:underline">{agent.name}</button>
+                  className="whitespace-nowrap text-xs font-medium text-text hover:underline">{agent.name}</button>
         ) : (
-          <span className="text-xs font-medium text-text">{agent.name}</span>
+          <span className="whitespace-nowrap text-xs font-medium text-text">{agent.name}</span>
         )}
-        <span className="rounded px-1.5 text-[10px]"
+        <span className="whitespace-nowrap rounded px-1.5 text-[10px]"
               style={{ background: capped ? "var(--amber-bg)" : "var(--surface-3, transparent)",
                        color: capped ? "var(--color-amber)" : "var(--color-text-3)" }}>
           {permissionLabel(agent)}
         </span>
         {capped && <span className="text-[10px]" style={{ color: "var(--color-amber)" }}>untrusted</span>}
-        <span className="text-[10px] text-text-4">{agent.model}</span>
-        <span className="text-[10px] text-text-4">
+        <span className="min-w-0 max-w-[140px] truncate text-[10px] text-text-4" title={agent.model}>{agent.model}</span>
+        <span className="whitespace-nowrap text-[10px] text-text-4">
           {agent.tools === null ? "all tools" : `${agent.tools.length} tools`}
         </span>
         {agent.warnings.length > 0 && (
@@ -2125,7 +2125,7 @@ function AgentRow({ agent, onOpen, onTrust, onEdit, onDuplicate, onDelete }: {
             ⚠ {agent.warnings.length}
           </button>
         )}
-        <span className="flex-1" />
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {capped && agent.path && agent.source !== "user_claude" && (
           <BtnGhost onClick={onTrust} className="!text-[10px]">
             <span aria-label={`Trust ${agent.name}`}>Trust</span>
@@ -2146,9 +2146,11 @@ function AgentRow({ agent, onOpen, onTrust, onEdit, onDuplicate, onDelete }: {
           </>
         ) : (
           <BtnGhost onClick={onDuplicate}>
-            <span aria-label={`Duplicate ${agent.name}`}>Duplicate to .crucible</span>
+            <span aria-label={`Duplicate ${agent.name}`} title="Duplicate to .crucible/agents"
+                  className="whitespace-nowrap">Duplicate</span>
           </BtnGhost>
         )}
+        </div>
       </div>
       <div className="truncate text-[11px] text-text-3">{agent.description}</div>
       {!agent.path && <div className="text-[10px] text-text-4">built-in — no file</div>}
