@@ -69,4 +69,23 @@ describe("TeamCard", () => {
       metadata: { team_id: "team-9", name: "cache", agent_ids: ["agent-r"] } }} />, { teams: {} });
     expect(screen.getByText("cache")).toBeInTheDocument();
   });
+
+  it("shows the round's progress bar while deliberating", () => {
+    wrap(<TeamCard teamId="team-1" agentIds={["agent-r", "agent-i"]} />, {
+      teams: { "team-1": { ...TEAM, roundProgress: { round: 1, members: ["review", "impl"], reported: ["review"] } } } });
+    expect(screen.getByTestId("round-progress")).toHaveTextContent(/Round 1 · 1 of 2 reported · waiting on impl/);
+  });
+
+  it("a deadlocked team reads as such on the stepper", () => {
+    wrap(<TeamCard teamId="team-1" agentIds={["agent-r"]} />, {
+      teams: { "team-1": { ...TEAM, phase: "DEADLOCKED", round: 3 } } });
+    expect(screen.getByTestId("team-card")).toHaveTextContent("Deadlocked · round 3 of 3");
+  });
+
+  it("an adopted (DONE) team ends its road with the plan", () => {
+    wrap(<TeamCard teamId="team-1" agentIds={["agent-r"]} />, {
+      teams: { "team-1": { ...TEAM, phase: "DONE" } } });
+    expect(screen.getByTestId("team-card")).toHaveTextContent("Plan adopted");
+    expect(screen.getByTestId("team-card")).not.toHaveTextContent("Implementing");
+  });
 });

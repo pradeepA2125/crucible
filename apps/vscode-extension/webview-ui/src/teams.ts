@@ -1,7 +1,7 @@
 import { elapsedMs, formatElapsed, isTerminalAgent } from "./agents";
 import type {
   AgentSummaryView, TeamCountsView, TeamDetailView, TeamEventView, TeamLatestView, TeamLiveView,
-  TeamMemberView, TeamPostView, TeamSummaryView, TeamViewState,
+  TeamMemberView, TeamPostView, TeamRoundProgressView, TeamSummaryView, TeamViewState,
 } from "./types";
 
 // Phases a team never leaves (spec v2 §8.2).
@@ -118,4 +118,25 @@ export function countsText(counts: TeamCountsView | undefined, budget: number): 
   }
   if (budget > 0) parts.push(`budget ${budget} requests`);
   return parts.join(" · ");
+}
+
+/** The card's progress line (spec 2026-10-05 §9): the round's reports, and the member it
+ * waits on with that member's active time, ticked by the caller's useNow. */
+export function roundProgressText(
+  progress: TeamRoundProgressView | null | undefined, team: TeamSummaryView,
+  agents: Record<string, AgentSummaryView>, now: number,
+): { text: string; pct: number } | null {
+  if (!progress || progress.members.length === 0) return null;
+  const done = progress.reported.length;
+  let text = `Round ${progress.round} · ${done} of ${progress.members.length} reported`;
+  const pending = progress.members.filter((label) => !progress.reported.includes(label));
+  for (const label of pending) {
+    const member = team.members.find((m) => m.label === label);
+    const row = member ? agents[member.agentId] : undefined;
+    if (!row || isTerminalAgent(row.status)) continue;
+    const ms = elapsedMs(row, now);
+    text += ` · waiting on ${label}${ms !== null ? ` (${formatElapsed(ms)})` : ""}`;
+    break;
+  }
+  return { text, pct: Math.round((done / progress.members.length) * 100) };
 }

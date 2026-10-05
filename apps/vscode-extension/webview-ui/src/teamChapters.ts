@@ -2,7 +2,7 @@ import type { ChatMsg, TeamActivityView, TeamPostView } from "./types";
 
 // A member's own journey (spec 2026-10-05 §7): one chapter per activation.
 
-export interface ChapterWhy { cause: string; by: string | null; postSeq: number | null }
+export interface ChapterWhy { cause: string; by: string | null; postSeq: number | null; round?: number | null }
 
 export interface MemberChapter {
   n: number;
@@ -54,7 +54,10 @@ export function buildChapters(
     return {
       n: seg.n,
       why: woke ? { cause: String(woke.payload.cause ?? ""), by: (woke.payload.by as string | null) ?? null,
-                    postSeq: (woke.payload.post_seq as number | null) ?? woke.causeSeq } : null,
+                    postSeq: (woke.payload.post_seq as number | null) ?? woke.causeSeq }
+        : typeof took?.payload.round === "number"
+          ? { cause: "round", by: null, postSeq: null, round: took.payload.round }
+          : null,
       start: took?.at ?? woke?.at ?? null,
       status: wrap ? String(wrap.payload.status ?? "completed") : current ? "working" : last ? opts.fallbackStatus : "completed",
       durationMs: typeof wrap?.payload.duration_ms === "number" ? wrap.payload.duration_ms : null,
@@ -94,4 +97,13 @@ export function whyText(why: ChapterWhy | null, isProposal: (seq: number) => boo
     case "leftover": return "leftover input";
     default: return why.cause;
   }
+}
+
+/** A chapter's header: deliberation activations are rounds (spec 2026-10-05 §9). */
+export function chapterHeading(c: MemberChapter, isProposal: (seq: number) => boolean): { title: string; why: string } {
+  if (c.why?.cause === "round") {
+    const handed = c.handed.map((s) => (isProposal(s) ? `P${s}` : `#${s}`)).join(" ");
+    return { title: `Round ${c.why.round}`, why: handed ? `handed ${handed}` : "nothing new on the board" };
+  }
+  return { title: `Chapter ${c.n}`, why: whyText(c.why, isProposal) };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  applyTeamEvent, countsText, isTerminalTeam, latestText, memberPhrase, mergeLiveTeam, stanceOf,
-  summaryWithEvent, viewFromTeamDetail, waitingOn,
+  applyTeamEvent, countsText, isTerminalTeam, latestText, memberPhrase, mergeLiveTeam,
+  roundProgressText, stanceOf, summaryWithEvent, viewFromTeamDetail, waitingOn,
 } from "../teams";
 import type { AgentSummaryView, TeamDetailView, TeamPostView, TeamSummaryView } from "../types";
 
@@ -115,5 +115,19 @@ describe("card wording", () => {
       .toBe("9 posts · P1 2 ✓ · budget 60 requests");
     expect(countsText({ posts: 3, proposals: [{ id: "P1", agree: 1, object: 1, pending: 1 }] }, 0))
       .toBe("3 posts · P1 1 ✓ 1 ✗ 1 pending");
+  });
+});
+
+describe("round progress on the card", () => {
+  it("counts reports and names whom it waits on", () => {
+    const now = Date.parse("2026-10-06T10:01:00Z");
+    const team = { ...SUMMARY, round: 2, members: [
+      { label: "alice", agentId: "a", status: "completed" }, { label: "bob", agentId: "b", status: "running" }] };
+    const agents = { b: { agentId: "b", parentAgentId: null, depth: 1, name: "gp", label: "bob",
+      status: "running", now: "", toolCount: 0, filesChangedCount: 0, startedAt: null, endedAt: null,
+      reportPreview: "", activationStartedAt: "2026-10-06T10:00:18Z", activationEndedAt: null } };
+    expect(roundProgressText({ round: 2, members: ["alice", "bob"], reported: ["alice"] }, team, agents, now))
+      .toEqual({ text: "Round 2 · 1 of 2 reported · waiting on bob (42s)", pct: 50 });
+    expect(roundProgressText(null, team, agents, now)).toBeNull();
   });
 });

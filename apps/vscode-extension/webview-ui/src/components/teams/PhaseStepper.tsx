@@ -11,14 +11,18 @@ export function PhaseStepper({ phase, round, maxRounds, mini = false }: {
   phase: string; round: number; maxRounds: number; mini?: boolean;
 }) {
   const at = INDEX[phase] ?? 1;
-  const ended = isTerminalTeam(phase) && phase !== "DONE";
+  // In 5A a team reaches DONE only by adopting a plan; 5B restores the full road once
+  // implementation exists.
+  const ended = isTerminalTeam(phase);
   const label = (step: string, i: number) =>
-    i === 1 && at === 1 && !ended ? `Deliberating · round ${round} of ${maxRounds}` : step;
+    i === 1 && at === 1 && !ended
+      ? (phase === "DEADLOCKED" ? `Deadlocked · round ${round} of ${maxRounds}` : `Deliberating · round ${round} of ${maxRounds}`)
+      : step;
   return (
     <div className={`flex flex-wrap items-center gap-y-1 ${mini ? "text-[10.5px]" : "text-[11px]"}`} aria-label="Phase">
       {STEPS.map((step, i) => {
-        const done = i < at || phase === "DONE";
-        const now = i === at && !ended && phase !== "DONE";
+        const done = i < at || (ended && i <= 1);
+        const now = i === at && !ended;
         if (ended && i > 1) return null;
         return (
           <span key={step} className="inline-flex items-center whitespace-nowrap">
@@ -35,9 +39,9 @@ export function PhaseStepper({ phase, round, maxRounds, mini = false }: {
       {ended && (
         <span className="inline-flex items-center whitespace-nowrap">
           <span className={mini ? "mx-1 h-px w-2.5" : "mx-1.5 h-px w-[18px]"} style={{ background: "var(--color-border-strong)" }} />
-          <span className="mr-1.5 h-2 w-2 rounded-full" style={{ background: phase === "FAILED" ? "var(--color-red)" : "var(--color-text-3)" }} />
-          <span style={{ color: phase === "FAILED" ? "var(--color-red)" : "var(--color-text-2)", fontWeight: 600 }}>
-            {phase === "FAILED" ? "Failed" : "Disbanded"}
+          <span className="mr-1.5 h-2 w-2 rounded-full" style={{ background: phase === "FAILED" ? "var(--color-red)" : phase === "DONE" ? "var(--color-green)" : "var(--color-text-3)" }} />
+          <span style={{ color: phase === "FAILED" ? "var(--color-red)" : phase === "DONE" ? "var(--color-green)" : "var(--color-text-2)", fontWeight: 600 }}>
+            {phase === "FAILED" ? "Failed" : phase === "DONE" ? "Plan adopted" : "Disbanded"}
           </span>
         </span>
       )}

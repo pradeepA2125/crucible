@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { formatElapsed, isTerminalAgent } from "../../agents";
-import { buildChapters, whyText, type MemberChapter } from "../../teamChapters";
+import { buildChapters, chapterHeading, type MemberChapter } from "../../teamChapters";
 import { identityFor } from "../../teamIdentity";
 import type { TeamPostView, ToolEventView } from "../../types";
 import { MessageRow } from "../MessageRow";
@@ -110,8 +110,8 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
         className="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left text-text">
         <span className="text-text-3">{open ? "▾" : "▸"}</span>
-        <strong>Chapter {c.n}</strong>{" "}
-        <span className="text-[12px] text-text-2">· {whyText(c.why, isProposal)}</span>
+        <strong>{chapterHeading(c, isProposal).title}</strong>{" "}
+        <span className="text-[12px] text-text-2">· {chapterHeading(c, isProposal).why}</span>
         <span className="ml-auto flex items-center gap-2">
           {c.start && <span className="text-[10.5px] tabular-nums text-text-3">{new Date(c.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
           {c.durationMs !== null && <span className="text-[11px] text-text-3">{formatElapsed(c.durationMs)}</span>}

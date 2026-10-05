@@ -1,5 +1,5 @@
 import { isTerminalAgent } from "../../agents";
-import { countsText, isTerminalTeam, latestText, memberPhrase } from "../../teams";
+import { countsText, isTerminalTeam, latestText, memberPhrase, roundProgressText } from "../../teams";
 import { identityFor } from "../../teamIdentity";
 import type { TeamSummaryView } from "../../types";
 import { rosterRow } from "../agents/AgentRosterCard";
@@ -33,6 +33,7 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
   const anyWorking = team.members.some((m) => !isTerminalAgent(agentsUi.agents[m.agentId]?.status ?? m.status));
   const now = useNow(!ended && anyWorking);
   const counts = countsText(team.counts, team.usage.budget);
+  const progress = roundProgressText(team.roundProgress, team, agentsUi.agents, now);
   return (
     <div className="surface-card overflow-hidden" data-testid="team-card">
       <div className="accent-wash grid gap-2 px-3 py-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
@@ -46,6 +47,14 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
           </button>
         </div>
         {team.maxRounds > 0 && <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} mini />}
+        {progress && (
+          <div data-testid="round-progress" className="flex items-center gap-2.5 text-[11px] text-text-2">
+            <span>{progress.text}</span>
+            <span className="h-[5px] max-w-[200px] flex-1 overflow-hidden rounded-full" style={{ background: "var(--color-surface-2)" }}>
+              <i className="block h-full rounded-full" style={{ width: `${progress.pct}%`, background: "var(--color-accent)" }} />
+            </span>
+          </div>
+        )}
         {team.pausedReason && <div className="text-[11px]" style={{ color: "var(--color-amber)" }}>{team.pausedReason}</div>}
       </div>
       {team.members.map((m) => {

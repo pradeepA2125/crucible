@@ -68,3 +68,22 @@ describe("buildChapters", () => {
     expect(whyText(null, isP)).toBe("started");
   });
 });
+
+import { buildChapters as chapters5a, chapterHeading } from "../teamChapters";
+
+describe("round chapters (spec 2026-10-05 §9)", () => {
+  it("a deliberation activation is titled by its round and lists what it was handed", () => {
+    const took = { teamId: "t", aseq: 3, at: "2026-10-06T10:00:02Z", label: "alice", kind: "took_up",
+      activation: 1, causeSeq: null, payload: { posts: [1], from: ["main"], round: 1 } };
+    const [c] = chapters5a("alice", [], [took], [], { working: false, fallbackStatus: "completed" });
+    expect(c.why).toEqual({ cause: "round", by: null, postSeq: null, round: 1 });
+    expect(chapterHeading(c, (s) => s === 1)).toEqual({ title: "Round 1", why: "handed P1" });
+  });
+
+  it("other chapters keep the Chapter title", () => {
+    const woke = { teamId: "t", aseq: 3, at: "x", label: "alice", kind: "woke", activation: 1,
+      causeSeq: 5, payload: { cause: "mention", by: "bob", post_seq: 5 } };
+    const [c] = chapters5a("alice", [], [woke], [], { working: false, fallbackStatus: "completed" });
+    expect(chapterHeading(c, () => false)).toEqual({ title: "Chapter 1", why: "woken by bob's post #5" });
+  });
+});
