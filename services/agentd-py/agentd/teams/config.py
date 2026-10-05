@@ -22,3 +22,9 @@ def team_max_budget() -> int:
 
 def team_max_wakes() -> int:
     return _int_env("CRUCIBLE_TEAM_MAX_WAKES", 15, 1)
+
+
+def team_round_timeout_s() -> int:
+    """Active seconds a member gets per round before its loop is forced to report
+    (spec v2 §8.3)."""
+    return _int_env("CRUCIBLE_TEAM_ROUND_TIMEOUT_SEC", 900, 1)

@@ -75,9 +75,10 @@ class TeamPost(BaseModel):
         return f"P{self.seq}"
 
 
-# Spec 2026-10-05 §4.2 — the lifecycle facts the UI renders; never member input.
+# Spec 2026-10-05 §4.2 and §9 — the lifecycle facts the UI renders; never member input.
 ACTIVITY_KINDS = frozenset({
-    "phase", "woke", "notified", "took_up", "picked_up", "wrapped_up", "capped"})
+    "phase", "woke", "notified", "took_up", "picked_up", "wrapped_up", "capped",
+    "round_started", "round_ended", "held", "requeued", "deadline"})
 WAKE_CAUSES = frozenset({
     "kickoff", "mention", "team_mention", "message", "main_post", "leftover"})
 

@@ -9,13 +9,18 @@ from agentd.subagents.framing import frame
 
 
 def notice_author(notice: NoticeRecord) -> str:
+    if notice.source_kind == "team":
+        return f"team {notice.payload.get('team_name') or notice.source_id}"
     label = str(notice.payload.get("label") or notice.source_id)
     name = str(notice.payload.get("name") or "")
     return f"{label} ({name})" if name else label
 
 
 def notice_body(notice: NoticeRecord) -> str:
-    """The whole report, never truncated (v1 D8), with what the agent changed."""
+    """The whole report, never truncated (v1 D8), with what the agent changed. A team
+    milestone is already compact (spec v2 §8.8)."""
+    if notice.source_kind == "team":
+        return str(notice.payload.get("body", ""))
     files = notice.payload.get("files_changed") or []
     lines = [f"status: {notice.payload.get('status', '')}"]
     if files:
@@ -54,7 +59,8 @@ def build_fold(notices: list[NoticeRecord], max_tokens: int) -> Fold:
     overflow: list[NoticeRecord] = []
     used = 0
     for notice in notices:
-        block = frame(notice_author(notice), "report", notice_body(notice))
+        kind = "team milestone" if notice.source_kind == "team" else "report"
+        block = frame(notice_author(notice), kind, notice_body(notice))
         cost = estimate_tokens(block)
         if notice.source_kind == "agent" and used + cost > max_tokens:
             overflow.append(notice)

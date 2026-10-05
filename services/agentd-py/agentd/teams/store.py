@@ -113,6 +113,13 @@ class TeamStore:
             (thread_id, *sorted(LIVE_TEAM_PHASES))).fetchone()
         return int(row[0])
 
+    def live_team_names(self, thread_id: str) -> list[str]:
+        marks = ", ".join("?" * len(LIVE_TEAM_PHASES))
+        rows = self._conn.execute(
+            f"SELECT name FROM teams WHERE thread_id = ? AND phase IN ({marks}) "  # noqa: S608
+            "ORDER BY created_at", (thread_id, *sorted(LIVE_TEAM_PHASES))).fetchall()
+        return [r[0] for r in rows]
+
     def fail_live_teams(self, reason: str) -> list[str]:
         marks = ", ".join("?" * len(LIVE_TEAM_PHASES))
         ids = [r[0] for r in self._conn.execute(
@@ -168,6 +175,12 @@ class TeamStore:
         self._conn.execute(
             "UPDATE team_members SET delivered_seq = MAX(delivered_seq, ?) "
             "WHERE team_id = ? AND label = ?", (seq, team_id, label))
+        self._conn.commit()
+
+    def set_in_quorum(self, team_id: str, label: str, in_quorum: bool) -> None:
+        self._conn.execute(
+            "UPDATE team_members SET in_quorum = ? WHERE team_id = ? AND label = ?",
+            (int(in_quorum), team_id, label))
         self._conn.commit()
 
     def bump_wakes(self, team_id: str, label: str) -> int:

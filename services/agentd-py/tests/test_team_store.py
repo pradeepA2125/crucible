@@ -101,3 +101,15 @@ def test_flag_default_off_and_config(monkeypatch: pytest.MonkeyPatch) -> None:
     assert is_teams_enabled() is False
     monkeypatch.setenv("CRUCIBLE_TEAMS_ENABLED", "1")
     assert is_teams_enabled() is True
+
+
+def test_set_in_quorum_and_live_team_names(tmp_path: Path) -> None:
+    teams = _store(tmp_path).teams
+    team = _team()
+    teams.create_team(team)
+    teams.add_member(TeamMember(team_id=team.team_id, agent_id="agent-a", label="alice"))
+    teams.set_in_quorum(team.team_id, "alice", False)
+    assert teams.member(team.team_id, "alice").in_quorum is False
+    assert teams.live_team_names("t1") == ["auth"]
+    teams.update_team(team.team_id, phase="DONE")
+    assert teams.live_team_names("t1") == []
