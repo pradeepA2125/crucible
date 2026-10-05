@@ -8,7 +8,7 @@ function detail(phase: string, lastSeq: number): TeamDetail {
     teamId: "team-1", name: "auth", goal: "g", phase, round: 1, maxRounds: 3,
     pausedReason: null, members: [], openProposals: [],
     usage: { requests: 0, budget: 160 }, createdAt: "2026-10-05T00:00:00Z",
-    posts: [], lastSeq,
+    posts: [], lastSeq, activity: [], lastAseq: 0,
   };
 }
 
@@ -31,6 +31,31 @@ function channel(events: SequencedStreamEvent[], hold: boolean) {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("TeamViewManager", () => {
+  test("activity backfill then follow skips aseq <= lastAseq", async () => {
+    const seen: Array<string | number> = [];
+    const act = (aseq: number) => ({
+      team_id: "team-1", aseq, at: "2026-10-05T00:00:00Z", label: "alice", kind: "woke",
+      activation: 1, cause_seq: 1, payload: { cause: "kickoff" },
+    });
+    const client = {
+      getTeam: async () => ({ ...detail("DELIBERATING", 1), activity: [], lastAseq: 3 }),
+      streamChannel: channel([
+        { type: "team_activity", payload: { event: act(3) }, seq: 3 },
+        { type: "team_activity", payload: { event: act(4) }, seq: 4 },
+        { type: "team_post", payload: { post: post(2) }, seq: 2 },
+      ] as SequencedStreamEvent[], true),
+    };
+    const m = new TeamViewManager(() => client, {
+      detail: () => {},
+      event: (_id, e: TeamViewEvent) => seen.push(
+        e.type === "team_activity" ? `a${e.activity.aseq}` : e.type === "team_post" ? `p${e.post.seq}` : e.phase),
+    }, 0);
+    m.setOpen("t", ["team-1"]);
+    await flush(); await flush();
+    expect(seen).toEqual(["a4", "p2"]);   // activity and posts have independent cursors
+    m.closeAll();
+  });
+
   test("backfill then follow skips seq <= lastSeq", async () => {
     const seen: Array<string | number> = [];
     const subscribed: string[] = [];

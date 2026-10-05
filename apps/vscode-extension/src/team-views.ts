@@ -1,8 +1,10 @@
 import {
+  parseWireTeamActivity,
   parseWireTeamPost,
   type BackendTaskClient,
   type SequencedStreamEvent,
   type TeamDetail,
+  type TeamActivity,
   type TeamPost,
 } from "@crucible/editor-client";
 
@@ -15,6 +17,7 @@ export function teamChannel(threadId: string, teamId: string): string {
 
 export type TeamViewEvent =
   | { type: "team_post"; post: TeamPost }
+  | { type: "team_activity"; activity: TeamActivity }
   | { type: "team_phase"; phase: string; round: number; pausedReason: string | null };
 
 export interface TeamViewSink {
@@ -84,6 +87,7 @@ export class TeamViewManager {
       this.sink.detail(teamId, detail);
       if (TERMINAL_TEAM_PHASES.has(detail.phase)) return;
       let lastSeq = detail.lastSeq;
+      let lastAseq = detail.lastAseq;
       view.abort = new AbortController();
       try {
         const stream = this.client().streamChannel(
@@ -95,6 +99,9 @@ export class TeamViewManager {
           if (event.type === "team_post") {
             if (event.post.seq <= lastSeq) continue;
             lastSeq = event.post.seq;
+          } else if (event.type === "team_activity") {
+            if (event.activity.aseq <= lastAseq) continue;
+            lastAseq = event.activity.aseq;
           }
           this.sink.event(teamId, event);
           // The final backfill carries the closing system post and the ended state.
@@ -115,6 +122,9 @@ export class TeamViewManager {
 function toViewEvent(event: SequencedStreamEvent): TeamViewEvent | null {
   if (event.type === "team_post") {
     return { type: "team_post", post: parseWireTeamPost(event.payload.post) };
+  }
+  if (event.type === "team_activity") {
+    return { type: "team_activity", activity: parseWireTeamActivity(event.payload.event) };
   }
   if (event.type === "team_phase") {
     return { type: "team_phase", phase: event.payload.phase, round: event.payload.round,
