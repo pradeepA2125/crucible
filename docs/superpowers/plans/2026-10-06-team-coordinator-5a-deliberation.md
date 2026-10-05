@@ -233,8 +233,8 @@ def active_seconds(handle: AgentHandle, now: datetime) -> float | None:
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `.venv/bin/python -m pytest tests/test_runtime_clock.py tests/test_subagent_runtime.py --color=no --timeout=120 > /tmp/t1.txt 2>&1; echo exit=$?; tail -5 /tmp/t1.txt`
-Expected: exit=0. (If `tests/test_subagent_runtime.py` does not exist, list `tests/ | grep -i runtime` and run those.)
+Run: `.venv/bin/python -m pytest tests/test_runtime_clock.py tests/test_subagent_runtime.py tests/test_agent_supervisor.py --color=no --timeout=120 > /tmp/t1.txt 2>&1; echo exit=$?; tail -5 /tmp/t1.txt`
+Expected: exit=0.
 
 - [ ] **Step 5: Commit**
 
@@ -277,7 +277,7 @@ from agentd.chat.controller_loop import ControllerLoop, ReportVerdict
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.subagents.context import AgentContext
-from agentd.tools.aggregating import AggregatingToolRegistry
+from agentd.tools.sources import AggregatingToolRegistry
 
 REPORT = {"type": "report", "thought": "t", "summary": "s", "status": "completed"}
 TOOL = {"type": "tool_call", "thought": "look", "tool": "list_directory", "args": {}}
@@ -348,7 +348,6 @@ async def test_force_final_narrows_and_accepts_partial() -> None:
     assert seen == [True]
 ```
 
-(`AggregatingToolRegistry` lives where `ChatController` imports it from — check with `grep -rn "class AggregatingToolRegistry" agentd` and fix the import line if it differs.)
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -359,7 +358,7 @@ Expected: exit≠0 — `ImportError: cannot import name 'ReportVerdict'`.
 
 In `agentd/chat/controller_loop.py`:
 
-1. Module level, after the imports (with the other dataclasses/type aliases):
+1. Add `ReportVerdict` right above `@dataclass class ControllerOutcome`:
 
 ```python
 @dataclass(frozen=True)
@@ -369,12 +368,14 @@ class ReportVerdict:
     a byte-identical resubmission of a refused report, counted like any malformed action."""
     message: str | None = None
     malformed: bool = False
-
-
-ReportCheck = Callable[[dict[str, object], bool], ReportVerdict]
 ```
 
-(Add `from dataclasses import dataclass` if the module does not import it yet.)
+and the alias inside the module's `if TYPE_CHECKING:` block, after `RetrievalDeltaCb` (`Callable` is imported only there; the module uses postponed annotations):
+
+```python
+    # A team member's report fields (spec v2 §8.3): (report action, final) → verdict.
+    ReportCheck = Callable[[dict[str, object], bool], "ReportVerdict"]
+```
 
 2. In `__init__`, next to `self._iteration = 0`: `self._force_final = False`.
 
@@ -463,8 +464,6 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-
-import pytest
 
 from agentd.teams.models import TeamMember, TeamRecord
 from agentd.teams.report_fields import ReportFields
@@ -575,7 +574,7 @@ Expected: exit≠0 — `ModuleNotFoundError: No module named 'agentd.teams.repor
 
 In `agentd/teams/service.py`:
 
-1. Add `from dataclasses import dataclass, field` (keep the existing `dataclass` import) and define after `AgentInfo`:
+1. Define after `AgentInfo` (the module already imports `dataclass`):
 
 ```python
 @dataclass(frozen=True)
@@ -908,7 +907,7 @@ def test_lone_agent_schema_unchanged() -> None:
 def test_member_prompt_teaches_rounds_and_report_stances() -> None:
     from agentd.chat.controller_prompts import _TEAM_BLOCK
     text = _TEAM_BLOCK   # tagged() returns the template string itself
-    assert "reach the others at the next round" in text
+    assert "reaches the others at the next round" in text
     assert '"stances":[{"proposal_id":"P3","stance":"agree"' in text
     assert "appears on the board as a one-line notice" not in text
 ```
@@ -946,7 +945,7 @@ In `controller_response_schema`:
 - flat branch: inside `if "report" in types:` add after the status line:
   ```python
         if team_member:
-            schema["properties"].update(copy.deepcopy(_REPORT_TEAM_FIELDS))  # type: ignore[union-attr]
+            schema["properties"].update(copy.deepcopy(_REPORT_TEAM_FIELDS))  # type: ignore[attr-defined]
   ```
 
 - [ ] **Step 4: Implement the teaching**
@@ -1279,7 +1278,8 @@ class Evaluation:
 
 def evaluation_text(payload: dict[str, object]) -> str:
     """One line for a stored round_ended payload — team_status and the trace read it back."""
-    proposals = [p for p in payload.get("proposals") or [] if isinstance(p, dict)]
+    raw = payload.get("proposals")
+    proposals = [p for p in raw if isinstance(p, dict)] if isinstance(raw, list) else []
     if not proposals:
         return "no open proposals"
     return "; ".join(f"{p['id']} adopted" if p.get("adopted") else
@@ -1514,7 +1514,8 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
         if len(s.quorum()) < 2:
             s.phase = "FAILED"
             return s, [*actions, End("FAILED", "fewer than 2 members left in the quorum")]
-    waiting = [lb for lb in s.round_members if s.members[lb].in_quorum and not s.members[lb].reported]
+    waiting = [lb for lb in s.round_members
+               if s.members[lb].in_quorum and not s.members[lb].reported]
     if not waiting:
         actions.append(EvaluateRound(s.round))
     return s, actions
@@ -1620,21 +1621,20 @@ def test_trace_appends_lines(tmp_path) -> None:
     assert [json.loads(line)["kind"] for line in lines] == ["event", "evaluation"]
 ```
 
-Append to `tests/test_team_store.py` (reuse that file's existing store fixture/helper; if it builds the store inline, build one the same way):
+Append to `tests/test_team_store.py` (it builds stores with its own `_store` / `_team` helpers):
 
 ```python
-def test_set_in_quorum_and_live_team_names(store_with_team) -> None:  # type: ignore[no-untyped-def]
-    store, team_id, thread_id = store_with_team
-    label = store.members(team_id)[0].label
-    store.set_in_quorum(team_id, label, False)
-    assert store.member(team_id, label).in_quorum is False
-    name = store.get_team(team_id).name
-    assert store.live_team_names(thread_id) == [name]
-    store.update_team(team_id, phase="DONE")
-    assert store.live_team_names(thread_id) == []
+def test_set_in_quorum_and_live_team_names(tmp_path: Path) -> None:
+    teams = _store(tmp_path).teams
+    team = _team()
+    teams.create_team(team)
+    teams.add_member(TeamMember(team_id=team.team_id, agent_id="agent-a", label="alice"))
+    teams.set_in_quorum(team.team_id, "alice", False)
+    assert teams.member(team.team_id, "alice").in_quorum is False
+    assert teams.live_team_names("t1") == ["auth"]
+    teams.update_team(team.team_id, phase="DONE")
+    assert teams.live_team_names("t1") == []
 ```
-
-(If `tests/test_team_store.py` has no `store_with_team` fixture, add one at the top of the appended block that creates a store on `sqlite3.connect(":memory:")` with `row_factory = sqlite3.Row`, one `TeamRecord` and two `TeamMember`s, and returns `(store, team_id, thread_id)`.)
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -1697,7 +1697,8 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
     if kind == "adopted":
         headline = f"Team {name} adopted {data['proposal_id']}"
         by = " by you (the main agent)" if data.get("by") == "main" else " by the team"
-        parts = data.get("assignments") or []
+        raw_parts = data.get("assignments")
+        parts = raw_parts if isinstance(raw_parts, list) else []
         assigned = [f"{a.get('member')} → {a.get('part')} ({len(a.get('files') or [])} files)"
                     for a in parts if isinstance(a, dict)]
         details = [f"{data['proposal_id']} was adopted{by}.",
@@ -1707,7 +1708,8 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
     elif kind == "deadlock":
         headline = f"Team {name} deadlocked after {data['round']} rounds"
         details = []
-        for p in data.get("proposals") or []:
+        raw_proposals = data.get("proposals")
+        for p in raw_proposals if isinstance(raw_proposals, list) else []:
             if not isinstance(p, dict):
                 continue
             stances = list((p.get("stances") or {}).values())
@@ -1853,7 +1855,7 @@ from pathlib import Path
 import pytest
 
 from agentd.teams.coordinator import TeamCoordinator
-from agentd.teams.models import TeamMember, TeamPost, TeamRecord
+from agentd.teams.models import TeamMember, TeamRecord
 from agentd.teams.service import AgentInfo, TeamService
 from agentd.teams.store import TeamStore
 from agentd.teams.trace import CoordinatorTrace
@@ -2120,6 +2122,7 @@ class TeamCoordinator:
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._evaluation: dict[str, object] = {}   # the latest round_ended payload
         self._cutoff = 0                             # highest post seq at the round's start
+        self._stops: set[asyncio.Task[None]] = set()
 
     @property
     def phase(self) -> str:
@@ -2225,10 +2228,9 @@ class TeamCoordinator:
             self._store.update_team(self._team_id, phase=action.phase,
                                     end_reason=action.reason, ended_at=datetime.now(UTC))
             team = self._team()
-            for label in self._state.round_members:
-                if action.phase == "FAILED":
-                    asyncio.get_running_loop().create_task(
-                        self._host.stop_member(self._team_id, label, "disband"))
+            if action.phase == "FAILED":
+                for label in self._state.round_members:
+                    self._spawn_stop(label, "disband")
             self._ended(team, action.phase, action.reason)
 
     def _ended(self, team: TeamRecord, phase: str, reason: str) -> None:
@@ -2322,6 +2324,14 @@ class TeamCoordinator:
 
         self._timers[key] = asyncio.get_running_loop().call_later(max(0.0, delay), fire)
 
+    def _spawn_stop(self, label: str, reason: str) -> None:
+        """Stop a member from synchronous code; the task is held until it finishes, since
+        asyncio keeps only a weak reference to a task nobody awaits."""
+        task = asyncio.get_running_loop().create_task(
+            self._host.stop_member(self._team_id, label, reason))
+        self._stops.add(task)
+        task.add_done_callback(self._stops.discard)
+
     def _cancel(self, key: str) -> None:
         handle = self._timers.pop(key, None)
         if handle is not None:
@@ -2341,8 +2351,8 @@ class TeamCoordinator:
             return
         self._svc.record(self._team_id, label, "deadline", payload={})
         self._trace.write("deadline", label=label, active_s=active)
-        self._schedule(f"grace:{label}", self._grace, lambda: asyncio.get_running_loop().create_task(
-            self._host.stop_member(self._team_id, label, "deadline")))
+        self._schedule(f"grace:{label}", self._grace,
+                       lambda: self._spawn_stop(label, "deadline"))
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -2703,7 +2713,7 @@ from agentd.teams.report_fields import ReportFields
 from agentd.teams.trace import CoordinatorTrace
 ```
 
-(Some may already be imported — keep one import per name.)
+(`notice_author` is already part of the multi-line `agentd.subagents.notices` import — do not add a second line for it. `chat_turn_artifacts_root` is imported today only inside a method, so it does need the module-level import. Run `ruff check --fix agentd/chat/controller.py` afterwards to sort the block.)
 
 2. `__init__`, right after `self._teams: TeamService | None = (…)`:
 
@@ -3229,7 +3239,7 @@ def _round_progress(team: TeamRecord, activity: list[TeamActivity]) -> dict[str,
 - [ ] **Step 4: Run to verify pass**
 
 Run: `.venv/bin/python -m pytest tests/test_team_rounds_controller.py tests/test_team_routes.py tests/test_team_tools.py tests/test_team_service.py tests/test_get_routes_read_only.py tests/test_rewind_agents.py --color=no --timeout=120 > /tmp/t9.txt 2>&1; echo exit=$?; grep -E "FAILED|passed|failed" /tmp/t9.txt | tail -8`
-Expected: exit=0. (`test_team_tools.py` builds `MainTeamOps(...)` — add `adopt=lambda _t, _p: {}` there.)
+Expected: exit=0. Three tests build `MainTeamOps(...)` and need the new field: `test_team_tools.py` (`adopt=lambda tid, pid: {"team_id": tid, "adopted": pid}`), `test_prompt_goldens_teams.py` and `test_team_prompts.py` (`adopt=lambda *a: {}`). The teams prompt golden embeds the tool descriptions, so re-capture it after the `adopt_proposal` description change: `.venv/bin/python -m tests.test_prompt_goldens_teams` (only that golden changes, and only that description), then run `tests/test_prompt_goldens_teams.py tests/test_team_prompts.py` too.
 
 - [ ] **Step 5: Commit**
 
@@ -3399,9 +3409,12 @@ describe("journey with rounds (spec 2026-10-05 §9)", () => {
 });
 ```
 
+Also update the two existing footer assertions in that file, which compare the whole footer object — `toEqual({ woke: ["review", "impl"], queued: [] })` and `toEqual({ woke: [], queued: ["impl"] })` — to include `held: null`.
+
 - [ ] **Step 2: Run to verify failure**
 
 Run (from `webview-ui`): `perl -e 'alarm 120; exec @ARGV' npx vitest run src/test/teamJourney.test.ts > /tmp/t11.txt 2>&1; echo exit=$?; tail -12 /tmp/t11.txt`
+(`webview-ui` has its own `node_modules`: in a fresh worktree run `npm install` there once first.)
 Expected: exit≠0 — the order assertion fails (`round_started` renders as a beat).
 
 - [ ] **Step 3: Implement**
@@ -3446,7 +3459,7 @@ const EMPTY_FOOTER = (): PostFooter => ({ woke: [], queued: [], held: null });
 const roundOf = (e: TeamActivityView): number | null =>
   typeof e.payload.round === "number" ? e.payload.round : null;
 
-function roundItem(e: TeamActivityView, activity: TeamActivityView[]): JourneyItem {
+function roundItem(e: TeamActivityView, activity: TeamActivityView[]): Extract<JourneyItem, { kind: "round" }> {
   const round = Number(e.payload.round ?? 0);
   const raw = Array.isArray(e.payload.members) ? e.payload.members as { label?: string; handed?: number[] }[] : [];
   const members = raw.map((m): RoundMember => {
@@ -3459,7 +3472,7 @@ function roundItem(e: TeamActivityView, activity: TeamActivityView[]): JourneyIt
   return { kind: "round", key: `a${e.aseq}`, at: e.at, round, members, ended };
 }
 
-function verdictItem(e: TeamActivityView, activity: TeamActivityView[]): JourneyItem {
+function verdictItem(e: TeamActivityView, activity: TeamActivityView[]): Extract<JourneyItem, { kind: "verdict" }> {
   const round = Number(e.payload.round ?? 0);
   const raw = Array.isArray(e.payload.proposals) ? e.payload.proposals as Record<string, unknown>[] : [];
   const proposals = raw.map((p): VerdictProposal => ({
@@ -4035,7 +4048,7 @@ Claude-Session: https://claude.ai/code/session_01BZuqWJip34C3E9wRSeNhHz"
 
 - [ ] **Step 1: CLAUDE.md** — in the **Agent teams — foundations (v2 Phase 4)** bullet, replace the sentence that begins `The **interim activation policy** lives in one method, `ChatController._team_posted`…` up to `…and wakes nobody.` with:
 
-```
+```markdown
 **Coordinator — 5A deliberation (spec v2 §8.1–§8.4; plan `docs/superpowers/plans/2026-10-06-team-coordinator-5a-deliberation.md`):** `teams/state_machine.py` (pure `apply(state, event) → (state, actions)`; events `Kickoff`/`MemberReported`/`RoundEvaluated`/`MainAdopt`/`MainPost`/`Disband`) and `teams/coordinator.py` (`TeamCoordinator`, one per live team in `ChatController._coordinators`; executes actions through the `CoordinatorHost` methods `ChatController` implements). Deliberation runs in rounds: a proposal kickoff starts every member, a post kickoff its mentions (the rest join at round 2); a round's input is the board up to the round's **cutoff seq** (`delta_cutoff`), so a post made mid-round is recorded as `held` and reaches members next round — nothing is pushed mid-round (`_on_leftover` keeps a member's leftovers with `AgentSupervisor.keep`). Next-round activations are scheduled with `call_soon` (`start_member`): the last reporter is still inside its own task. A round ends when every quorum member has its final report: `failed_transient` re-queues after 30 s / 120 s; `failed` or a user ■ leaves the quorum (`member_lost`), and fewer than 2 ends the team `FAILED`; a deadline stop stays in. Per-member deadline `CRUCIBLE_TEAM_ROUND_TIMEOUT_SEC` (900) counts **active** time only (`subagents/runtime.py::active_seconds` — minus gate waits and `METER.peek` limiter waits); at expiry `ControllerLoop.force_final()` narrows to `report`, then a 120 s grace before a `deadline` stop. Stances ride the report too (`stances`/`proposal` fields in the team-member schema only), validated in the loop through `report_check` (`teams/report_fields.py::ReportFields`): an invalid entry is refused (a byte-identical resubmission counts as malformed; exhaustion accepts with invalid entries dropped), a missing expected stance gets one redirect. `teams/adoption.py::evaluate_round` adopts at round end (open, posted before the round, every quorum member's latest stance `agree`; lowest seq wins); round limit → `DEADLOCKED`, where `post_board` runs one more round and `adopt_proposal` adopts. **5A interim:** adoption ends the team `DONE` (`end_reason "adopted"`); 5B adds the approval gate and implementation. Milestones (`adopted`, `deadlock`, `member_lost`, `ended`) are wake notices with `source_kind "team"` (compact bodies, `teams/milestones.py`); trace `chat/<thread>/<created_turn>/teams/<team>/coordinator.jsonl`. Members lose the `edit` type outside `IMPLEMENTING` and are capped at 40 iterations in deliberation. Activity gains `round_started`/`round_ended`/`held`/`requeued`/`deadline`; `/live` teams gain `round_progress`; rewind 409s while a team has not ended. Board: round strips, verdicts, held footers, the adopted card (`RoundItems.tsx`); member chapters titled `Round n`.
 ```
 
