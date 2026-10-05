@@ -442,3 +442,62 @@ describe("reap", () => {
     expect(signals).toEqual([]);
   });
 });
+
+describe("pre-spawn checks", () => {
+  it("an old venv without agentd.serve needs a runtime update", async () => {
+    const d = deps({ exec: async (_cmd, args) => args.includes("import agentd.serve")
+      ? { code: 1, stdout: "", stderr: "No module named agentd.serve", timedOut: false }
+      : { code: 0, stdout: "0.1.0 auth=1", stderr: "", timedOut: false } });
+    await expect(new BackendProcess(d).start(ws(), SETTINGS))
+      .rejects.toMatchObject({ component: "agentd" });
+    expect(d.spawned).toHaveLength(0);
+  });
+
+  it.each([
+    [{ code: 0, stdout: "0.1.0", stderr: "", timedOut: false }],
+    [{ code: null, stdout: "", stderr: "", timedOut: true }],
+  ])("an indexer without auth=1, or one that times out, needs an update", async (outcome) => {
+    const d = deps({ exec: async (_cmd, args) => args[0] === "--version" ? outcome
+      : { code: 0, stdout: "", stderr: "", timedOut: false } });
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
+    await expect(new BackendProcess(d).start(ws(), SETTINGS))
+      .rejects.toMatchObject({ component: "indexer" });
+  });
+
+  it("passes the 5 s timeout to every pre-spawn exec", async () => {
+    const timeouts: number[] = [];
+    const d = deps({ exec: async (_c, _a, ms) => { timeouts.push(ms);
+      return { code: 0, stdout: "x auth=1", stderr: "", timedOut: false }; } });
+    mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
+    writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
+    await new BackendProcess(d).start(ws(), SETTINGS);
+    expect(timeouts).toEqual([5000, 5000]);
+  });
+});
+
+describe("stop", () => {
+  it("sends SIGTERM and waits for exit", async () => {
+    const child = stubChild(4242, { pid: 4242, port: 8123 });
+    const d = deps({}, child);
+    const p = new BackendProcess(d);
+    await p.start(ws(), SETTINGS);
+    await p.stop();
+    expect(child.killed).toEqual(["SIGTERM"]);
+  });
+
+  it("escalates to SIGKILL when the backend does not exit in time", async () => {
+    let resolveExit: (c: number | null) => void = () => {};
+    const killed: string[] = [];
+    const child: ChildHandle = {
+      pid: 4242, exited: new Promise((r) => { resolveExit = r; }),
+      kill: (sig) => { killed.push(sig ?? "SIGTERM"); if (sig === "SIGKILL") resolveExit(null); },
+      onExit: () => {},
+      onStdoutLine: (cb) => cb('CRUCIBLE_SERVE {"pid": 4242, "port": 8123}'),
+    };
+    const p = new BackendProcess(deps({}, child as never));
+    await p.start(ws(), SETTINGS);
+    await p.stop();
+    expect(killed).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+});

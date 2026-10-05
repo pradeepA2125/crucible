@@ -11,6 +11,7 @@ import * as vscode from "vscode";
 import { extractArchive } from "./archive.js";
 import {
   BackendProcess,
+  RuntimeUpdateRequiredError,
   StdoutLines,
   type BackendSettings,
   type ExecOutcome,
@@ -19,6 +20,7 @@ import {
 import { readBackendToken } from "./backend-token.js";
 import { readProcessInfo } from "./process-info.js";
 import {
+  isEditableInstall,
   RuntimeInstaller,
   type ComponentProgress,
   type ExecResult,
@@ -26,7 +28,7 @@ import {
   type InstallResult,
 } from "./installer.js";
 import { migrateLegacyRuntimeRoot } from "./legacy-migration.js";
-import type { RuntimeManifest } from "./manifest.js";
+import { platformKey, type RuntimeManifest } from "./manifest.js";
 
 // Same table as agentd/providers/factory.py::PROVIDER_KEY_ENV (local providers absent).
 export const PROVIDER_KEY_ENV: Record<string, string> = {
@@ -335,8 +337,43 @@ export class RuntimeManager {
       for (const listener of this.readyListeners) listener(workspace);
       return result;
     } catch (err) {
-      this.markFailed(err instanceof Error ? err.message : String(err));
+      if (err instanceof RuntimeUpdateRequiredError) {
+        this.statusBar.text = "$(error) Crucible: runtime update required";
+        this.statusBar.show();
+        void this.promptRuntimeUpdate(workspace, err);
+      } else {
+        this.markFailed(err instanceof Error ? err.message : String(err));
+      }
       throw err;
+    }
+  }
+
+  private updatePromptOpen = false;
+
+  private async promptRuntimeUpdate(workspace: string, err: RuntimeUpdateRequiredError): Promise<void> {
+    if (this.updatePromptOpen) return; // one modal, however many start paths fail
+    this.updatePromptOpen = true;
+    try {
+      if (isEditableInstall(this.runtimeDir, platformKey())) {
+        await vscode.window.showErrorMessage(
+          `Crucible runtime update required. ${err.message}. This is an editable development install: run scripts/dev/install-local.sh, then restart the backend.`,
+          { modal: true });
+        return;
+      }
+      const choice = await vscode.window.showErrorMessage(
+        `Crucible runtime update required. ${err.message}.`, { modal: true }, "Update runtime");
+      if (choice !== "Update runtime") return;
+      this.intentionalStops.add(workspace);
+      try {
+        await this.processes.get(workspace)?.stop();
+      } finally {
+        this.intentionalStops.delete(workspace);
+      }
+      await this.install((p) => this.output.appendLine(`[install] ${p.id}: ${p.status}`));
+      this.restartAttempts.delete(workspace);
+      await this.startForWorkspace(workspace);
+    } finally {
+      this.updatePromptOpen = false;
     }
   }
 

@@ -150,6 +150,9 @@ declare module "vscode" {
     ): Thenable<string | undefined>;
     function showWarningMessage(message: string): Thenable<string | undefined>;
     function showErrorMessage(message: string, ...items: string[]): Thenable<string | undefined>;
+    function showErrorMessage(
+      message: string, options: { modal?: boolean }, ...items: string[]
+    ): Thenable<string | undefined>;
     function createStatusBarItem(alignment?: StatusBarAlignment, priority?: number): StatusBarItem;
     function createOutputChannel(name: string): OutputChannel;
     function createWebviewPanel(

@@ -1,8 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RuntimeInstaller, venvPython, type InstallerDeps } from "../src/runtime/installer.js";
+import {
+  isEditableInstall, RuntimeInstaller, venvPython, type InstallerDeps,
+} from "../src/runtime/installer.js";
 import { sha256Hex, type RuntimeManifest } from "../src/runtime/manifest.js";
 
 const BIN = Buffer.from("#!/bin/sh\necho hi\n");
@@ -192,9 +196,9 @@ describe("RuntimeInstaller", () => {
       ...d,
       exec: async (cmd, args) => {
         d.calls.push([cmd, ...args]);
-        if (cmd === pyPath && args.includes("import uvicorn")) {
+        if (cmd === pyPath && args.includes("import agentd.serve")) {
           importCheckRan = true;
-          return { code: 1, stdout: "", stderr: "ModuleNotFoundError: No module named 'uvicorn'" };
+          return { code: 1, stdout: "", stderr: "ModuleNotFoundError: No module named 'agentd.serve'" };
         }
         return { code: 0, stdout: "", stderr: "" };
       },
@@ -227,7 +231,21 @@ describe("RuntimeInstaller", () => {
     await new RuntimeInstaller(d2).installAll();
     const pipCall = d2.calls.find((call) => call.includes("pip"));
     expect(pipCall).toBeUndefined(); // no reinstall needed
+    expect(d2.calls.some((c) => c.join(" ").endsWith("-c import agentd.serve"))).toBe(true);
   });
+
+  it("writes binaries through a temp file and rename (a new inode, never in place)", async () => {
+    const d = deps();
+    const bin = join(d.runtimeDir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "crucible-indexer"), "old");
+    const before = statSync(join(bin, "crucible-indexer")).ino;
+    await new RuntimeInstaller(d).installAll();
+    expect(statSync(join(bin, "crucible-indexer")).ino).not.toBe(before);
+    expect(statSync(join(bin, "crucible-indexer")).mode & 0o111).not.toBe(0);
+    expect(readdirSync(bin).filter((n) => n.includes(".tmp"))).toEqual([]);
+  });
+
 });
 
 describe("venvPython", () => {
@@ -278,5 +296,23 @@ describe("RuntimeInstaller — devSourcePath", () => {
     expect(pip).toBeDefined();
     expect(pip).not.toContain("-e");
     expect(pip!.some((a) => a.startsWith("crucible-agentd[memory,semantic]=="))).toBe(true);
+  });
+});
+
+describe("isEditableInstall", () => {
+  const fsFor = (files: Record<string, string>, dirs: Record<string, string[]>) => ({
+    readdir: (p: string) => dirs[p] ?? (() => { throw new Error("ENOENT"); })(),
+    readFile: (p: string) => files[p] ?? (() => { throw new Error("ENOENT"); })(),
+  });
+  it("detects an editable crucible_agentd install", () => {
+    const sp = join("/rt", "venv", "lib", "python3.13", "site-packages");
+    const fs = fsFor(
+      { [join(sp, "crucible_agentd-0.1.0.dist-info", "direct_url.json")]:
+          JSON.stringify({ url: "file:///src", dir_info: { editable: true } }) },
+      { [join("/rt", "venv", "lib")]: ["python3.13"], [sp]: ["crucible_agentd-0.1.0.dist-info"] });
+    expect(isEditableInstall("/rt", "darwin-arm64", fs)).toBe(true);
+  });
+  it("is false for a wheel install or a missing venv", () => {
+    expect(isEditableInstall("/rt", "darwin-arm64", fsFor({}, {}))).toBe(false);
   });
 });

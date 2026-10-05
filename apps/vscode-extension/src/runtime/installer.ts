@@ -1,5 +1,7 @@
 // vscode-free: all effects behind InstallerDeps so tests inject fakes.
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { findEquinoxLauncher, findJavaExecutable } from "./jdtls.js";
 import {
@@ -147,8 +149,8 @@ export class RuntimeInstaller {
       // network, laptop sleep, ...). Confirm the package actually imports
       // before trusting the recorded version — otherwise a hollow venv looks
       // "already installed" forever and the backend fails at startup with
-      // "No module named uvicorn".
-      const check = await this.deps.exec(py, ["-c", "import uvicorn"]);
+      // "No module named agentd.serve".
+      const check = await this.deps.exec(py, ["-c", "import agentd.serve"]);
       return check.code === 0;
     }
     return existsSync(join(this.deps.runtimeDir, "node_modules"));
@@ -228,8 +230,41 @@ export class RuntimeInstaller {
     const data = await this.deps.download(url);
     verifyChecksum(data, sha);
     const dest = binPath(this.deps.runtimeDir, BIN_NAME[id]!, this.platform);
-    writeFileSync(dest, data);
-    if (this.platform !== "win32-x64") chmodSync(dest, 0o755);
+    // Temp file + rename: overwriting a RUNNING binary in place gets it killed on macOS
+    // arm64 and fails with ETXTBSY on Linux (spec §3.7).
+    const tmp = `${dest}.tmp-${process.pid}-${Date.now()}`;
+    writeFileSync(tmp, data);
+    if (this.platform !== "win32-x64") chmodSync(tmp, 0o755);
+    renameSync(tmp, dest);
     return { id, status: "done" };
   }
+}
+
+export function isEditableInstall(
+  runtimeDir: string, platform: PlatformKey,
+  fs: { readdir(p: string): string[]; readFile(p: string): string } =
+    { readdir: (p) => readdirSync(p), readFile: (p) => readFileSync(p, "utf8") },
+): boolean {
+  const venv = join(runtimeDir, "venv");
+  let sitePackages: string[];
+  try {
+    sitePackages = platform === "win32-x64"
+      ? [join(venv, "Lib", "site-packages")]
+      : fs.readdir(join(venv, "lib")).filter((d) => d.startsWith("python3."))
+          .map((d) => join(venv, "lib", d, "site-packages"));
+  } catch {
+    return false;
+  }
+  for (const sp of sitePackages) {
+    let entries: string[];
+    try { entries = fs.readdir(sp); } catch { continue; }
+    for (const entry of entries.filter((e) => /^crucible_agentd-.*\.dist-info$/.test(e))) {
+      try {
+        const direct = JSON.parse(fs.readFile(join(sp, entry, "direct_url.json"))) as
+          { dir_info?: { editable?: boolean } };
+        if (direct.dir_info?.editable === true) return true;
+      } catch { /* not a direct-url install */ }
+    }
+  }
+  return false;
 }

@@ -176,6 +176,8 @@ export function buildBackendEnv(
 
 interface LockInfo { pid: number; port: number; started_at: number }
 
+export const STOP_WAIT_MS = 10_000;
+export const PRESPAWN_TIMEOUT_MS = 5000;
 export const LOCK_YOUNG_SEC = 60;
 export const REAP_GRACE_MS = 5000;
 
@@ -274,6 +276,8 @@ export class BackendProcess {
       }
       await this.reap(lock, workspace);
     }
+
+    await this.preSpawnChecks();
 
     // 2. Spawn agentd.serve on any free port; it binds first, then reports the port.
     const env = finalSpawnEnv(
@@ -413,14 +417,49 @@ export class BackendProcess {
     });
   }
 
+  private async preSpawnChecks(): Promise<void> {
+    const py = venvPython(this.deps.runtimeDir, this.platform);
+    const serve = await this.deps.exec(py, ["-c", "import agentd.serve"], PRESPAWN_TIMEOUT_MS);
+    if (serve.code !== 0) {
+      throw new RuntimeUpdateRequiredError("agentd", serve.timedOut
+        ? "`import agentd.serve` timed out" : "this runtime predates agentd.serve");
+    }
+    const indexer = binPath(this.deps.runtimeDir, "crucible-indexer", this.platform);
+    if (!existsSync(indexer)) return; // the watcher is skipped, as before
+    // An old indexer has no --version arm and starts a full watching indexer instead:
+    // the timeout (which kills it) is what makes this check safe.
+    const version = await this.deps.exec(indexer, ["--version"], PRESPAWN_TIMEOUT_MS);
+    if (version.code !== 0 || version.timedOut || !/\bauth=1\b/.test(version.stdout)) {
+      throw new RuntimeUpdateRequiredError("indexer", "the indexer predates backend authentication");
+    }
+  }
+
   async stop(): Promise<void> {
-    // Watcher first so it doesn't observe the backend vanishing mid-write.
-    try { this.watcher?.kill(); } catch { /* already dead */ }
-    try { this.backend?.kill("SIGTERM"); } catch { /* already dead */ }
+    const watcher = this.watcher;
+    const backend = this.backend;
     this.watcher = undefined;
     this.backend = undefined;
     this._port = undefined;
+    // Watcher first so it doesn't observe the backend vanishing mid-write.
+    try { watcher?.kill("SIGTERM"); } catch { /* already dead */ }
+    if (!backend) return;
+    try { backend.kill("SIGTERM"); } catch { /* already dead */ }
+    // agentd.serve's 5 s graceful shutdown finishes lifespan teardown inside this wait,
+    // so restart() never reads the lock of a backend that is still draining.
+    if (await this.exitsWithin(backend, STOP_WAIT_MS)) return;
+    try { backend.kill("SIGKILL"); } catch { /* already dead */ }
+    await this.exitsWithin(backend, STOP_WAIT_MS);
   }
+
+  private async exitsWithin(child: ChildHandle, ms: number): Promise<boolean> {
+    let exited = false;
+    await Promise.race([
+      child.exited.then(() => { exited = true; }),
+      this.deps.sleep(ms),
+    ]);
+    return exited;
+  }
+
 
   private async reap(lock: LockInfo, workspace: string): Promise<void> {
     unlinkLock(workspace);
