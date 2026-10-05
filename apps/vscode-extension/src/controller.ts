@@ -126,6 +126,7 @@ export interface ControllerUI {
   // Transcript reconcile and the queued-send fallbacks (spec §5.3, §6).
   replaceChatMessages(messages: ChatMessage[]): void;
   removeChatMessage(id: string): void;
+  markQueued(id: string): void;
   restoreDraft(text: string): void;
   // Sub-agents (spec §10): roster rows, and the open agents' transcripts and live events.
   renderAgents(agents: AgentSummary[]): void;
@@ -935,7 +936,9 @@ export class CrucibleController {
       return;
     }
     if (result.kind === "queued") {
-      // A notice turn took the message; its relay is already live (spec §5.3).
+      // A notice turn took the message; its relay is already live (spec §5.3). The
+      // bubble says it is queued until that turn takes it.
+      this.ui.markQueued(messageId);
       this.ui.setChatInputEnabled(true);
       return;
     }

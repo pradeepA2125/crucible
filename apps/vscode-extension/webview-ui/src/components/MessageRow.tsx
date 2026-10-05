@@ -17,6 +17,7 @@ interface Props {
   planVersion?: number;
   /** A turn in flight blocks rewind (the backend 409s), so the affordance hides. */
   turnActive?: boolean;
+  queued?: boolean;
   /** Records which message the confirm dialog is about. */
   onRewindRequest?: (messageId: string) => void;
 }
@@ -110,7 +111,7 @@ function LegacyGateSummary({ msg }: { msg: ChatMsg }) {
  * CRITICAL: switch on msg.type FIRST, role second.
  * Dispatching on role first was a real bug (cards rendered as text forever).
  */
-export function MessageRow({ msg, planVersion, turnActive, onRewindRequest }: Props) {
+export function MessageRow({ msg, planVersion, turnActive, onRewindRequest, queued = false }: Props) {
   switch (msg.type) {
     case "plan_card":
       return (
@@ -179,6 +180,7 @@ export function MessageRow({ msg, planVersion, turnActive, onRewindRequest }: Pr
           <UserMessage
             content={msg.content}
             mentionedFiles={msg.metadata?.mentioned_files as string[] | undefined}
+            queued={queued}
             onRewind={
               messageId && !turnActive && onRewindRequest
                 ? () => {

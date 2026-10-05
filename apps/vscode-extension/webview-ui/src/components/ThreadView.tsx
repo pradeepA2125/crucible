@@ -377,6 +377,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
                 msg={m}
                 planVersion={planVersionMap.get(i)}
                 turnActive={state.turnActive}
+                queued={m.id != null && state.queuedIds.includes(m.id)}
                 onRewindRequest={setRewindMessageId}
               />
             ))}

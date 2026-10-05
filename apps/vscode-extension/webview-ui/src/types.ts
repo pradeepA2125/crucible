@@ -370,6 +370,7 @@ export type ExtensionMessage =
   // Transcript reconcile (spec §6) and the failed-send rollback (spec §5.3).
   | { type: "replaceMessages"; messages: ChatMsg[] }
   | { type: "removeChatMessage"; id: string }
+  | { type: "markQueued"; id: string }
   | { type: "resolveInlineChangeCard"; taskId: string; resolution: "applied" | "discarded" }
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } }
   // P1: prompt-file expansion replies from the host
@@ -490,6 +491,9 @@ export interface AppState {
   turnActive: boolean;
   // Which kind of main turn runs (spec §5.3): a notice turn keeps the composer usable.
   turnKind: "user" | "notice" | null;
+  // User messages a notice turn accepted but has not taken yet (spec §5.3): their bubbles
+  // say so, until /live reports the turn is no longer a notice turn.
+  queuedIds: string[];
   // Queued, running or gate-parked agents in the thread — the Stop-all control (§6).
   agentsRunning: number;
   // Sticky Plan Mode toggle, hydrated from the extension's globalState on mount

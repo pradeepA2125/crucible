@@ -229,6 +229,7 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     replaceChatMessages: () => {},
     removeChatMessage: () => {},
     restoreDraft: () => {},
+    markQueued: () => {},
     promptForGoal: async () => "Ship the feature",
     promptForTaskId: async () => undefined,
     promptForRejectReason: async () => "Needs changes",
@@ -2410,6 +2411,7 @@ describe("CrucibleController — background agents (spec §5.3, §6)", () => {
     const appended: ChatMessage[] = [];
     const enabled: boolean[] = [];
     const removed: string[] = [];
+    const queued: string[] = [];
     const backend: BackendTaskClient = {
       ...createStubBackend(baseState()),
       sendChatMessage: async () => ({ kind: "queued", messageId: "m1" }),
@@ -2418,13 +2420,17 @@ describe("CrucibleController — background agents (spec §5.3, §6)", () => {
       appendChatMessage: (m) => { appended.push(m); },
       setChatInputEnabled: (e) => { enabled.push(e); },
       removeChatMessage: (id) => { removed.push(id); },
+      markQueued: (id) => { queued.push(id); },
     }));
     await controller.switchChatThread("t1");
     await controller.sendChatMessage("hi");
     controller.dispose();
-    expect(appended.filter((m) => m.role === "user")).toHaveLength(1);
+    const bubble = appended.filter((m) => m.role === "user");
+    expect(bubble).toHaveLength(1);
     expect(removed).toEqual([]);
     expect(enabled.at(-1)).toBe(true);
+    // The bubble is tagged queued until the notice turn takes it (spec §5.3).
+    expect(queued).toEqual([bubble[0].id]);
   });
 
   test("a failed send removes the bubble and restores the draft", async () => {

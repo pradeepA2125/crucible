@@ -13,9 +13,12 @@ export function UserMessage({
   content,
   mentionedFiles = [],
   onRewind,
+  queued = false,
 }: {
   content: string;
   mentionedFiles?: string[];
+  /** Accepted by a running notice turn, not yet taken by it (spec v2 §5.3). */
+  queued?: boolean;
   /** Absent when the message predates rewind (no id) or a turn is running. */
   onRewind?: () => void;
 }) {
@@ -78,6 +81,11 @@ export function UserMessage({
         }
         return renderTextSegment(part, `seg-${i}`);
       })}
+      {queued && (
+        <div data-testid="queued-tag" className="mt-1 text-[10.5px]" style={{ color: "var(--color-text-3)" }}>
+          Queued — the agent picks this up at its next step
+        </div>
+      )}
     </div>
   );
 }

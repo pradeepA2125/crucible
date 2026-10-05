@@ -142,7 +142,7 @@ describe("ThreadView team wiring", () => {
       inputEnabled: true, liveGates: [], livePlan: null, liveReview: null, liveError: null,
       liveTodos: null, liveSessions: null, sessionTranscripts: {}, workbar: null,
       retryStatus: null, tokenProgress: null, editFailure: null, liveStatus: null,
-      turnActive: false, turnKind: null, agentsRunning: 0, planMode: false, stepReview: true,
+      turnActive: false, turnKind: null, queuedIds: [], agentsRunning: 0, planMode: false, stepReview: true,
       agents: {}, agentViews: {}, teams: { "team-1": TEAM }, teamViews: {},
       messages: [{ role: "agent", content: "", type: "team_created", timestamp: "t",
                    metadata: { team_id: "team-1", name: "auth", agent_ids: ["agent-r", "agent-i"] } }],

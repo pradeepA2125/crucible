@@ -594,4 +594,15 @@ describe("useAppState — background agents (spec §6)", () => {
     expect([result.current.state.turnKind, result.current.state.agentsRunning])
       .toEqual(["notice", 2]);
   });
+
+  // Queued sends (spec v2 §5.3): tagged until the notice turn takes the message.
+  it("markQueued tags a message until the turn stops being a notice turn", () => {
+    const { result } = renderHook(() => useAppState());
+    act(() => { fireMessage({ type: "markQueued", id: "m1" }); });
+    expect(result.current.state.queuedIds).toEqual(["m1"]);
+    act(() => { fireMessage({ type: "liveStatus", status: null, turnActive: true, turnKind: "notice" }); });
+    expect(result.current.state.queuedIds).toEqual(["m1"]);
+    act(() => { fireMessage({ type: "liveStatus", status: null, turnActive: true, turnKind: "user" }); });
+    expect(result.current.state.queuedIds).toEqual([]);
+  });
 });

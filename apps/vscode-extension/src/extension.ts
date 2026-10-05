@@ -408,6 +408,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     replaceChatMessages: (messages) => {
       chatPanel.replaceMessages(messages);
     },
+    markQueued: (id) => {
+      chatPanel.markQueued(id);
+    },
     removeChatMessage: (id) => {
       chatPanel.removeMessage(id);
     },

@@ -45,6 +45,7 @@ const INITIAL: AppState = {
   liveStatus: null,
   turnActive: false,
   turnKind: null,
+  queuedIds: [],
   agentsRunning: 0,
   planMode: false,
   stepReview: true,
@@ -401,7 +402,12 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "liveStatus": {
       const turnActive = msg.turnActive ?? false;
-      const live = { turnKind: msg.turnKind ?? null, agentsRunning: msg.agentsRunning ?? 0 };
+      const live = {
+        turnKind: msg.turnKind ?? null, agentsRunning: msg.agentsRunning ?? 0,
+        // A queued message is taken once the turn is no longer a notice turn: it was
+        // drained (the turn became the user's) or answered by its own turn (spec §5.3).
+        queuedIds: (msg.turnKind ?? null) === "notice" ? state.queuedIds : [],
+      };
       // Durable reconciliation (spec §10): /live is the source of truth for turn
       // liveness. On the live-resume path, a webview reopened mid-turn can MISS the
       // chat_done SSE (it fired during the reload window — before the channel
@@ -436,6 +442,9 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "removeChatMessage":
       return { ...state, messages: state.messages.filter((m) => m.id !== msg.id) };
+
+    case "markQueued":
+      return { ...state, queuedIds: [...state.queuedIds.filter((id) => id !== msg.id), msg.id] };
 
     case "reviewPrefState":
       return { ...state, stepReview: msg.enabled };

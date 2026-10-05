@@ -36,6 +36,7 @@ const base: AppState = {
   liveStatus: null,
   turnActive: false,
   turnKind: null,
+  queuedIds: [],
   agentsRunning: 0,
   planMode: false,
   stepReview: true,
