@@ -31,6 +31,7 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     ("api/routes.py", "/tasks/{task_id}/result"),
     ("api/routes.py", "/tasks/{task_id}/stream-patch"),
     ("api/routes.py", "/workspaces/env-profile"),
+    ("api/agents_routes.py", "/agents"),  # reads the catalog; trust/writes are POST/PUT/DELETE
     ("main.py", "/health"),
 })
 

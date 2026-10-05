@@ -39,6 +39,7 @@ _agentd_logger.propagate = False
 
 from fastapi import FastAPI, Request
 
+from agentd.api.agents_routes import build_agents_router
 from agentd.api.routes import build_router
 from agentd.auth import AUTH_STATE, auth_middleware, health_payload, install_auth
 from agentd.domain.models import ScopePolicy, ScopeRemember, ScopeTrigger, ShellPolicy
@@ -402,6 +403,10 @@ app.include_router(
         mcp_manager=_mcp_manager,
     )
 )
+# Settings › Agents (spec §10): writes .crucible/agents in THIS backend's workspace only.
+app.include_router(build_agents_router(
+    workspace=_chat_workspace_path,
+    mcp_server_names=lambda: [s.name for s in _mcp_manager.statuses()] if _mcp_manager else []))
 install_auth(app, AUTH_STATE)
 
 
