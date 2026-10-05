@@ -14,6 +14,18 @@ function stateMsg(
   return msg;
 }
 
+const CATALOG = {
+  agents: [{
+    name: "helper", description: "d", tools: null, disallowedTools: [], permission: "default",
+    declaredPermission: "default", model: "inherit", maxTurns: null, skills: [],
+    source: "crucible" as const, path: "/ws/.crucible/agents/helper.md", sha256: "ab",
+    trust: "trusted" as const, active: true, warnings: [], shadowedBy: null, persona: "p",
+    content: "c",
+  }],
+  skipped: [],
+  availableTools: ["read_file", "edit"],
+};
+
 function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
   disabled: string[];
   skillsBox: string[];
@@ -42,6 +54,10 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
       deleteMcpServer: async () => ({ enabled: true, servers: [] }),
       reconnectMcpServer: vi.fn(async () => ({ enabled: true, servers: [] })),
       testContextWindow: async () => ({ ok: true, recalled: true }),
+      listAgentDefinitions: vi.fn(async () => CATALOG),
+      saveAgentDefinition: vi.fn(async () => CATALOG.agents[0]!),
+      deleteAgentDefinition: vi.fn(async () => {}),
+      trustAgentDefinition: vi.fn(async () => {}),
     },
     workspace: "/ws",
     readRuntimeJson: () => ({ releaseTag: "v0.1.0", components: {} }),
@@ -63,6 +79,8 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
     writeInstructions: () => {},
     restartBackend: async () => {},
     saveContextWindow: async () => {},
+    openFile: vi.fn(async () => {}),
+    listModels: async () => ["gpt-5", "m2"],
     disabled: box.disabled,
     skillsBox: box.skills,
     ...overrides,
@@ -308,5 +326,53 @@ describe("context window", () => {
       type: "settings/testContextWindow", backend: "groq", model: "m2", contextWindow: 128000,
     });
     expect(posted).toEqual([{ type: "settings/error", message: "backend unreachable" }]);
+  });
+});
+
+describe("agents messages", () => {
+  const run = async (d: ReturnType<typeof deps>, msg: Parameters<ReturnType<typeof createSettingsHandler>>[0]) => {
+    const posted: SettingsOutMsg[] = [];
+    await createSettingsHandler(d, (m) => posted.push(m))(msg);
+    return posted;
+  };
+
+  it("listAgents posts the catalog, not a settings snapshot", async () => {
+    const posted = await run(deps(), { type: "settings/listAgents" });
+    expect(posted).toEqual([{ type: "settings/agents", catalog: CATALOG }]);
+  });
+
+  it("a list failure stays inside the section", async () => {
+    const d = deps();
+    d.client.listAgentDefinitions = async () => { throw new Error("backend down"); };
+    const posted = await run(d, { type: "settings/listAgents" });
+    expect(posted).toEqual([{ type: "settings/agentsError", message: "backend down" }]);
+  });
+
+  it("save and delete re-post the list", async () => {
+    const d = deps();
+    const input = { description: "d", persona: "p", tools: null, disallowedTools: [],
+      permission: "default", model: "inherit", maxTurns: null, skills: [] };
+    expect((await run(d, { type: "settings/saveAgent", name: "helper", input })).at(-1))
+      .toEqual({ type: "settings/agents", catalog: CATALOG });
+    expect(d.client.saveAgentDefinition).toHaveBeenCalledWith("helper", input);
+    expect((await run(d, { type: "settings/deleteAgent", name: "helper" })).at(-1)?.type)
+      .toBe("settings/agents");
+  });
+
+  it("trustAgent conflict refreshes the list after the error", async () => {
+    const d = deps();
+    d.client.trustAgentDefinition = async () => { throw new Error("the file changed since you reviewed it"); };
+    const posted = await run(d, { type: "settings/trustAgent", path: "/p.md", sha256: "ab" });
+    expect(posted.map((m) => m.type)).toEqual(["settings/agentsError", "settings/agents"]);
+    expect(posted[0]).toEqual({ type: "settings/agentsError",
+      message: "the file changed since you reviewed it" });
+  });
+
+  it("openFile and listModels", async () => {
+    const d = deps();
+    expect(await run(d, { type: "settings/openFile", path: "/a.md" })).toEqual([]);
+    expect(d.openFile).toHaveBeenCalledWith("/a.md");
+    expect(await run(d, { type: "settings/listModels" }))
+      .toEqual([{ type: "settings/models", models: ["gpt-5", "m2"] }]);
   });
 });

@@ -1,4 +1,10 @@
-import type { McpServerList, McpServerView } from "@crucible/editor-client";
+import type {
+  AgentCatalog,
+  AgentDefinitionInput,
+  AgentDefinitionView,
+  McpServerList,
+  McpServerView,
+} from "@crucible/editor-client";
 
 import type { SettingsSectionId } from "./settings-sections.js";
 
@@ -45,7 +51,14 @@ export type SettingsInMsg =
   | { type: "settings/setEnvFlag"; key: string; value: string }
   | { type: "settings/loadInstructions" }
   | { type: "settings/saveInstructions"; content: string }
-  | { type: "settings/restartBackend" };
+  | { type: "settings/restartBackend" }
+  // Settings › Agents (sub-agents v2 §10): loaded separately from the snapshot.
+  | { type: "settings/listAgents" }
+  | { type: "settings/saveAgent"; name: string; input: AgentDefinitionInput }
+  | { type: "settings/deleteAgent"; name: string }
+  | { type: "settings/trustAgent"; path: string; sha256: string }
+  | { type: "settings/openFile"; path: string }
+  | { type: "settings/listModels" };
 
 // host → webview
 export type SettingsOutMsg =
@@ -55,7 +68,10 @@ export type SettingsOutMsg =
   | { type: "settings/navigate"; section: SettingsSectionId }
   // Deliberately NOT folded into settings/state: a verdict about a value is not a
   // change to one, and it must not survive the next snapshot rebuild.
-  | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } };
+  | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } }
+  | { type: "settings/agents"; catalog: AgentCatalog }
+  | { type: "settings/agentsError"; message: string }
+  | { type: "settings/models"; models: string[] };
 
 export interface SettingsDeps {
   client: {
@@ -86,6 +102,10 @@ export interface SettingsDeps {
       credentials?: Record<string, string>;
       contextWindow: number;
     }): Promise<{ ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined }>;
+    listAgentDefinitions(): Promise<AgentCatalog>;
+    saveAgentDefinition(name: string, input: AgentDefinitionInput): Promise<AgentDefinitionView>;
+    deleteAgentDefinition(name: string): Promise<void>;
+    trustAgentDefinition(path: string, sha256: string): Promise<void>;
   };
   workspace: string;
   readRuntimeJson(): { releaseTag: string; components: Record<string, string> } | null;
@@ -114,6 +134,10 @@ export interface SettingsDeps {
    * saveProvider for the same reason storeSecret is: a composer model hot-swap
    * writes backend/model and must not disturb the window. */
   saveContextWindow(tokens: number): Promise<void>;
+  /** Open an agent definition file in the editor (absolute path; may be outside the workspace). */
+  openFile(path: string): Promise<void>;
+  /** The model options the composer offers, for the agent form's model picker. */
+  listModels(): Promise<string[]>;
 }
 
 async function buildState(
@@ -151,6 +175,29 @@ export function createSettingsHandler(
 
   const postState = async (): Promise<void> => {
     post({ type: "settings/state", state: await buildState(deps, restartRequired, providerWarning) });
+  };
+
+  // The agents catalog is loaded separately from buildState's Promise.all: one failing
+  // route must not blank the whole panel (spec §10.2). Its errors stay in its section.
+  const postAgents = async (): Promise<void> => {
+    try {
+      post({ type: "settings/agents", catalog: await deps.client.listAgentDefinitions() });
+    } catch (err) {
+      post({ type: "settings/agentsError", message: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const agentAction = async (
+    action: () => Promise<unknown>, opts: { refreshOnError?: boolean } = {},
+  ): Promise<void> => {
+    try {
+      await action();
+    } catch (err) {
+      post({ type: "settings/agentsError", message: err instanceof Error ? err.message : String(err) });
+      if (opts.refreshOnError) await postAgents();
+      return;
+    }
+    await postAgents();
   };
 
   return async (msg: SettingsInMsg): Promise<void> => {
@@ -286,6 +333,33 @@ export function createSettingsHandler(
         case "settings/saveInstructions": {
           deps.writeInstructions(msg.content);
           post({ type: "settings/instructions", content: msg.content, exists: true });
+          return;
+        }
+        case "settings/listAgents": {
+          await postAgents();
+          return;
+        }
+        case "settings/saveAgent": {
+          await agentAction(() => deps.client.saveAgentDefinition(msg.name, msg.input));
+          return;
+        }
+        case "settings/deleteAgent": {
+          await agentAction(() => deps.client.deleteAgentDefinition(msg.name));
+          return;
+        }
+        case "settings/trustAgent": {
+          // On failure (typically: the file changed under the dialog) the list is
+          // re-posted too, so the dialog can only ever show the current bytes.
+          await agentAction(() => deps.client.trustAgentDefinition(msg.path, msg.sha256),
+                            { refreshOnError: true });
+          return;
+        }
+        case "settings/openFile": {
+          await deps.openFile(msg.path);
+          return;
+        }
+        case "settings/listModels": {
+          post({ type: "settings/models", models: await deps.listModels() });
           return;
         }
         case "settings/restartBackend": {

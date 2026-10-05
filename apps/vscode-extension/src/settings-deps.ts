@@ -4,7 +4,9 @@ import type { BackendClientFactory } from "./controller.js";
 import { PROVIDER_KEY_ENV } from "./runtime/vscode-runtime.js";
 import type { RuntimeManager } from "./runtime/vscode-runtime.js";
 import type { SettingsDeps } from "./settings-data.js";
+import { buildModelOptions } from "./composer-models.js";
 import { loadInstructions, saveInstructions } from "./instructions-file.js";
+import { PROVIDERS } from "./setup-data.js";
 
 const ENV_FLAG_KEYS = [
   "crucible.policy.shell",
@@ -58,6 +60,10 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
       deleteMcpServer: (name, disabled) => client().deleteMcpServer(name, disabled),
       reconnectMcpServer: (name, disabled) => client().reconnectMcpServer(name, disabled),
       testContextWindow: (req) => client().testContextWindow(req),
+      listAgentDefinitions: () => client().listAgentDefinitions(),
+      saveAgentDefinition: (name, input) => client().saveAgentDefinition(name, input),
+      deleteAgentDefinition: (name) => client().deleteAgentDefinition(name),
+      trustAgentDefinition: (path, sha256) => client().trustAgentDefinition(path, sha256),
     },
     workspace: workspacePath,
     readRuntimeJson: () => runtimeManager.installedRuntime(),
@@ -88,5 +94,20 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
     writeInstructions: (content) => saveInstructions(workspacePath, content),
     restartBackend: () => runtimeManager.restart(workspacePath),
     saveContextWindow: (tokens) => runtimeManager.saveContextWindow(tokens),
+    // Absolute paths: ~/.claude/agents files live outside the workspace (spec §10.2).
+    openFile: async (path) => {
+      await vscode.window.showTextDocument(vscode.Uri.file(path));
+    },
+    // The same option list as the composer's model menu (spec §10.2): providers with a
+    // stored key, plus the active one.
+    listModels: async () => {
+      const config = await client().getConfig();
+      const keyed: string[] = [];
+      for (const p of PROVIDERS) {
+        if (p.keyEnvVar && (await runtimeManager.getProviderKey(p.id)) !== undefined) keyed.push(p.id);
+      }
+      const options = buildModelOptions(config.provider ?? null, keyed, PROVIDERS);
+      return [...new Set(options.map((o) => o.model).filter((m) => m))];
+    },
   };
 }
