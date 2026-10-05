@@ -4,12 +4,13 @@ import { isTerminalTeam } from "../../teams";
 import { identityFor } from "../../teamIdentity";
 import { vscode } from "../../vscodeApi";
 import { Icon } from "../Icon";
-import { AgentTranscript, viewToken } from "../agents/AgentTranscript";
+import { viewToken } from "../agents/AgentTranscript";
 import { TONE_COLOR, toneOf } from "../agents/AgentRosterCard";
 import { useAgentsUi } from "../agents/AgentsContext";
 import { useFollowBottom } from "../agents/useFollowBottom";
 import { Avatar } from "./Avatar";
 import { Journey } from "./Journey";
+import { MemberView } from "./MemberView";
 import { PhaseStepper } from "./PhaseStepper";
 import { useTeamsUi } from "./TeamsContext";
 
@@ -122,7 +123,7 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
           })}
         </div>
         <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
-          {tab === "board" ? <Journey teamId={teamId} /> : <AgentTranscript agentId={tab} />}
+          {tab === "board" ? <Journey teamId={teamId} /> : <MemberView teamId={teamId} agentId={tab} />}
         </div>
       </div>
     </div>

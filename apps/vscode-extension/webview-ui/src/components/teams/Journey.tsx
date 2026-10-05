@@ -3,7 +3,7 @@ import { elapsedMs, formatElapsed, isTerminalAgent } from "../../agents";
 import { isTerminalTeam } from "../../teams";
 import { identityFor } from "../../teamIdentity";
 import { DEFAULT_FILTERS, buildJourney, type JourneyFilters, type JourneyItem, type TallyChip } from "../../teamJourney";
-import type { TeamActivityView } from "../../types";
+import type { TeamActivityView, TeamPostView } from "../../types";
 import { useAgentsUi } from "../agents/AgentsContext";
 import { useNow } from "../agents/useNow";
 import { Avatar } from "./Avatar";
@@ -135,6 +135,26 @@ function StanceReply({ post, replaces, roster }: Omit<Extract<JourneyItem, { kin
   );
 }
 
+/** A post as shown inside a member's chapter: same identity and body, no spine dot. */
+export function SaidPost({ post, roster }: { post: TeamPostView; roster: string[] }) {
+  if (post.kind === "agree" || post.kind === "object" || post.kind === "withdraw") {
+    return <StanceReply kind="stance" at={post.createdAt} post={post} replaces={null} roster={roster} />;
+  }
+  return (
+    <article className="grid gap-1 rounded-[10px] border border-border bg-surface px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Avatar label={post.author} roster={roster} size="sm" />
+        <Name label={post.author} roster={roster} />
+        {post.recipient && <><span className="text-text-3">→</span><Name label={post.recipient} roster={roster} /></>}
+        <Seq seq={post.seq} />
+        <span className="text-[11px] text-text-3">{post.recipient ? "direct message" : post.kind}</span>
+        <Time at={post.createdAt} />
+      </div>
+      <PostBody text={post.text} />
+    </article>
+  );
+}
+
 const CAUSE_TEXT: Record<string, (by: string, seq: string) => string> = {
   kickoff: () => "kickoff",
   mention: (by, seq) => `mentioned by ${by} in ${seq}`,
@@ -183,7 +203,7 @@ function Beat({ event, isProposal }: { event: TeamActivityView; isProposal: (seq
   );
 }
 
-const STATUS_CHIP: Record<string, { text: string; color: string; bg: string }> = {
+export const STATUS_CHIP: Record<string, { text: string; color: string; bg: string }> = {
   completed: { text: "✓ completed", color: "var(--color-green)", bg: "var(--green-bg)" },
   awaiting_peer: { text: "⏳ waiting on a teammate", color: "var(--color-text-2)", bg: "transparent" },
   partial: { text: "◐ partial", color: "var(--color-amber)", bg: "var(--amber-bg)" },
