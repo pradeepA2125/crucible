@@ -182,7 +182,7 @@ class TeamActivity(BaseModel):
 
 - [ ] **Step 4: Store** (`agentd/teams/store.py`)
 
-Import `ACTIVITY_KINDS, TeamActivity` from `agentd.teams.models`. In `_migrate`, before `self._conn.commit()`:
+`ACTIVITY_KINDS` and `TeamActivity` join the `agentd.teams.models` import (ruff's isort wants the parenthesized one-per-line form). In `_migrate`, before `self._conn.commit()`:
 
 ```python
         # Spec 2026-10-05 §4.1: the lifecycle record. Its own per-team sequence (aseq) so
@@ -240,11 +240,11 @@ New section after the posts methods:
         return self._activity_from_row(row) if row else None
 ```
 
-(`self._conn.row_factory` is `sqlite3.Row` — `posts()` already indexes rows by name; confirm with `grep -n row_factory agentd/chat/storage.py` and use the same access style as `_post_from_row`.)
+(`ChatThreadStore` sets `row_factory = sqlite3.Row`, so rows index by column name, as `_post_from_row` does.)
 
 - [ ] **Step 5: Service** (`agentd/teams/service.py`)
 
-Imports: `import logging`, `TeamActivity` from `agentd.teams.models`; `logger = logging.getLogger(__name__)` at module level if absent. Constructor:
+Imports: `import logging`, `from typing import Any` (neither is there yet), and `TeamActivity` joins the `agentd.teams.models` import; add `logger = logging.getLogger(__name__)` after the imports. Constructor:
 
 ```python
     def __init__(
@@ -304,7 +304,6 @@ Replace `render_delta` with:
         return text, top
 ```
 
-(`Any` is already imported in service.py if `summary` uses it; otherwise add `from typing import Any`.)
 
 - [ ] **Step 6: Run and commit**
 
@@ -339,7 +338,6 @@ git commit -m "feat(teams): activity record with its own sequence, TeamService.r
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
@@ -427,10 +425,11 @@ async def test_wake_cap_is_an_event_not_a_post(tmp_path, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_divider_carries_activation(tmp_path, monkeypatch) -> None:
-    ctrl, store, tid, _ = _make(tmp_path, monkeypatch,
-                                {"alice": [POST_TO_BOB, REPORT], "bob": [REPORT]})
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
     team_id = str((await ctrl._create_team(tid, "turn1", _request()))["team_id"])
-    await _settle(ctrl)
+    await _settle(ctrl)                                # both finished activation 1
+    ctrl._teams.post(team_id, "alice", "@bob one more thing")
+    await _settle(ctrl)                                # the mention woke bob: activation 2
     bob = store.get_agent(store.teams.member(team_id, "bob").agent_id)
     dividers = [m.metadata.get("activation") for m in bob.transcript if m.metadata.get("divider")]
     assert dividers == [2]
@@ -616,7 +615,7 @@ In `_activate`'s member branch, replace the `render_delta` call:
                                         "from": sorted({p.author for p in handed})})
 ```
 
-`activation` is computed above this point (`activation = record.activation_count + 1`); move the member branch below that line if it currently sits above it. The divider append becomes:
+`activation` is computed above this point (`activation = record.activation_count + 1`, computed just above the member branch). The divider append becomes:
 
 ```python
             transcript.append(ChatMessage(
@@ -658,6 +657,17 @@ Replace `_team_member_reported`:
                            activation=record.activation_count,
                            payload={"status": result.status, "report": report,
                                     "files_changed": list(result.files_changed), **stats})
+```
+
+A cancelled activation (■ Stop, Disband) never reaches `_route_report`: `_activate`'s `except asyncio.CancelledError` branch closes the child and re-raises. Close the member's chapter there too — right before its `raise`:
+
+```python
+            if membership is not None:
+                # A cancelled activation routes no report, but a member's chapter still
+                # closes (spec 2026-10-05 §4.2): stop and disband show as "stopped".
+                stopped = self._store.get_agent(ctx.agent_id)
+                if stopped is not None:
+                    self._team_member_reported(stopped, handle.result)
 ```
 
 In `disband_team`, right after the `system_post(team_id, "The team was disbanded.")` line:
@@ -1098,13 +1108,15 @@ export function parseWireTeamActivity(raw: Record<string, unknown>): TeamActivit
 }
 ```
 
+Phase 4's `test/team-contracts.test.ts` compares the whole `/live` team with `toEqual`; the new defaulted fields (`last`, `latest`, `counts`) break it — change that one assertion (`expect(state.teams?.[0]).toEqual({`) to `toMatchObject({`.
+
 - [ ] **Step 5: Run, build and commit**
 
 Run (from `apps/editor-client`): `npx vitest run > /tmp/b4.txt 2>&1; echo exit=$?; tail -5 /tmp/b4.txt`, then `npm run build > /tmp/b4b.txt 2>&1; echo exit=$?` (the extension types off `dist/`).
 Expected: two `exit=0`.
 
 ```bash
-git add apps/editor-client/src/contracts/task-contracts.ts apps/editor-client/src/client/http-backend-client.ts apps/editor-client/test/team-activity-contracts.test.ts
+git add apps/editor-client/src/contracts/task-contracts.ts apps/editor-client/src/client/http-backend-client.ts apps/editor-client/test/team-activity-contracts.test.ts apps/editor-client/test/team-contracts.test.ts
 git commit -m "feat(editor-client): team activity schema, event, and /live member state"
 ```
 
@@ -1271,7 +1283,7 @@ describe("team activity state", () => {
 });
 ```
 
-(Existing `viewFromTeamDetail` calls in this file and in `src/test/useAppState.test.ts` pass details without `activity`/`lastAseq`; add `activity: [], lastAseq: 0` to each — TypeScript catches every one under `npm run typecheck`.)
+Three existing fixtures build a `TeamDetailView` or `TeamViewState` and need `activity: [], lastAseq: 0`: the `detail` in `src/test/teams.test.ts` (`{ ...SUMMARY, posts: [post(1), post(2)], lastSeq: 2 }`), the `teamDetail` message in `src/test/useAppState.test.ts` (`detail: { ...team, posts: [post], lastSeq: 1 }`), and the `views` in `src/test/teamWindow.test.tsx` (`{ posts: POSTS, lastSeq: 7 }`; Task 8 rewrites that file). `npm run typecheck` names any other.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -1330,7 +1342,7 @@ export interface TeamMemberView {
 }
 ```
 
-`TeamSummaryView` gains `latest?: TeamLatestView | null; counts?: TeamCountsView;`. `TeamLiveView` gains `latest: TeamLatestView | null; counts: TeamCountsView;`. `TeamDetailView` gains `activity: TeamActivityView[]; lastAseq: number;`. `TeamEventView` gains `| { type: "team_activity"; activity: TeamActivityView }`. `TeamViewState` becomes:
+`TeamSummaryView` and `TeamLiveView` both gain `latest?: TeamLatestView | null; counts?: TeamCountsView;` (optional: the Zod schema defaults them, and the existing fixtures that build a `TeamLiveView` stay valid). `TeamDetailView` gains `activity: TeamActivityView[]; lastAseq: number;`. `TeamEventView` gains `| { type: "team_activity"; activity: TeamActivityView }`. `TeamViewState` becomes:
 
 ```ts
 export interface TeamViewState {
@@ -1463,7 +1475,7 @@ Run (from `webview-ui`): `perl -e 'alarm 300; exec @ARGV' npx vitest run > /tmp/
 Expected: two `exit=0`.
 
 ```bash
-git add apps/vscode-extension/webview-ui/src/types.ts apps/vscode-extension/webview-ui/src/teams.ts apps/vscode-extension/webview-ui/src/hooks/useAppState.ts apps/vscode-extension/webview-ui/src/teamIdentity.ts apps/vscode-extension/webview-ui/src/components/teams/Avatar.tsx apps/vscode-extension/webview-ui/src/index.css apps/vscode-extension/webview-ui/src/test/teamIdentity.test.tsx apps/vscode-extension/webview-ui/src/test/teams.test.ts apps/vscode-extension/webview-ui/src/test/useAppState.test.ts
+git add apps/vscode-extension/webview-ui/src/test/teamWindow.test.tsx apps/vscode-extension/webview-ui/src/types.ts apps/vscode-extension/webview-ui/src/teams.ts apps/vscode-extension/webview-ui/src/hooks/useAppState.ts apps/vscode-extension/webview-ui/src/teamIdentity.ts apps/vscode-extension/webview-ui/src/components/teams/Avatar.tsx apps/vscode-extension/webview-ui/src/index.css apps/vscode-extension/webview-ui/src/test/teamIdentity.test.tsx apps/vscode-extension/webview-ui/src/test/teams.test.ts apps/vscode-extension/webview-ui/src/test/useAppState.test.ts
 git commit -m "feat(webview): team activity state and stable member identity"
 ```
 
@@ -1987,7 +1999,7 @@ export function PostBody({ text, className = "" }: { text: string; className?: s
 }
 ```
 
-(If `text-code` is not a Tailwind colour in this theme, use `[&_code]:text-[var(--color-code)]`; check `@theme` in `src/index.css` for `--color-code`.)
+(`--color-code` is a theme token, so `text-code` is a Tailwind colour.)
 
 `src/components/teams/PhaseStepper.tsx`:
 
@@ -2048,7 +2060,7 @@ import { elapsedMs, formatElapsed, isTerminalAgent } from "../../agents";
 import { isTerminalTeam } from "../../teams";
 import { identityFor } from "../../teamIdentity";
 import { DEFAULT_FILTERS, buildJourney, type JourneyFilters, type JourneyItem, type TallyChip } from "../../teamJourney";
-import type { TeamActivityView, TeamPostView } from "../../types";
+import type { TeamActivityView } from "../../types";
 import { useAgentsUi } from "../agents/AgentsContext";
 import { useNow } from "../agents/useNow";
 import { Avatar } from "./Avatar";
@@ -2100,7 +2112,7 @@ function Tally({ chips, roster }: { chips: TallyChip[]; roster: string[] }) {
   );
 }
 
-function PostCard({ post, footer, tally, roster }: Extract<JourneyItem, { kind: "post" }> & { roster: string[] }) {
+function PostCard({ post, footer, tally, roster }: Omit<Extract<JourneyItem, { kind: "post" }>, "key"> & { roster: string[] }) {
   const [open, setOpen] = useState(false);
   const long = post.text.split("\n").length > 6 || post.text.length > 420;
   const assignments = Array.isArray(post.payload.assignments) ? post.payload.assignments as { member?: string; part?: string; files?: string[] }[] : [];
@@ -2345,8 +2357,14 @@ export function Journey({ teamId }: { teamId: string }) {
                   <h3 className="m-0 text-[11px] font-semibold uppercase tracking-[.08em] text-text-2">{item.title}</h3>
                 </div>
               );
-            case "post": return <PostCard key={item.key} {...item} roster={roster} />;
-            case "stance": return <StanceReply key={item.key} {...item} roster={roster} />;
+            case "post": {
+              const { key, ...post } = item;
+              return <PostCard key={key} {...post} roster={roster} />;
+            }
+            case "stance": {
+              const { key, ...stance } = item;
+              return <StanceReply key={key} {...stance} roster={roster} />;
+            }
             case "system":
               return <div key={item.key} data-author="system" className="text-[11px] italic text-text-3">{item.post.text}</div>;
             case "beat": return <Beat key={item.key} event={item.event} isProposal={isProposal} />;
@@ -2368,17 +2386,89 @@ export function Journey({ teamId }: { teamId: string }) {
 
 (`toLocaleTimeString` makes clock text locale-dependent; the tests above never assert on it.)
 
-- [ ] **Step 5: `TeamWindow.tsx` header and tabs**
-
-Replace the imports of `TeamBoard` with `Journey`, and add `Avatar` and `PhaseStepper`. The header block (inside `.accent-wash`) becomes:
+- [ ] **Step 5: `TeamWindow.tsx` header and tabs** (replacing the file)
 
 ```tsx
+import { useEffect, useState } from "react";
+import { isTerminalAgent } from "../../agents";
+import { isTerminalTeam } from "../../teams";
+import { identityFor } from "../../teamIdentity";
+import { vscode } from "../../vscodeApi";
+import { Icon } from "../Icon";
+import { AgentTranscript, viewToken } from "../agents/AgentTranscript";
+import { TONE_COLOR, toneOf } from "../agents/AgentRosterCard";
+import { useAgentsUi } from "../agents/AgentsContext";
+import { useFollowBottom } from "../agents/useFollowBottom";
+import { Avatar } from "./Avatar";
+import { Journey } from "./Journey";
+import { PhaseStepper } from "./PhaseStepper";
+import { useTeamsUi } from "./TeamsContext";
+
+interface Props {
+  teamId: string;
+  tab: string;            // "board" or a member's agentId
+  onTab(tab: string): void;
+  onClose(): void;
+}
+
+/** A team full height over the thread (spec 2026-10-05 §6–§7): a header with the road the
+ * team travels and who is doing what, the Board first, then one tab per member. */
+export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
+  const teamsUi = useTeamsUi();
+  const agentsUi = useAgentsUi();
+  const team = teamsUi.teams[teamId];
+  const [confirming, setConfirming] = useState(false);
+  const view = teamsUi.views[teamId];
+  const boardToken = `${view?.lastSeq ?? 0}:${view?.lastAseq ?? 0}`;
+  const { ref, onScroll } = useFollowBottom(
+    `${teamId}|${tab}|${tab === "board" ? boardToken : viewToken(agentsUi.views[tab])}`);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!team) return null;
+  const live = !isTerminalTeam(team.phase);
+  const roster = team.members.map((m) => m.label);
+  return (
+    <div role="presentation" className="scrim absolute inset-0 z-40"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}>
+      <div role="dialog" aria-modal="true" aria-label={`Team ${team.name}`}
+        className="surface-card anim-pop absolute inset-x-3 bottom-3 top-10 flex flex-col overflow-hidden">
+        <div className="accent-wash grid gap-2.5 px-3.5 pb-2.5 pt-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
           <div className="flex flex-wrap items-center gap-2.5">
-            <span className="grid h-5 w-5 place-items-center rounded-md text-[11px]" style={{ background: "var(--accent-bg)", border: "1px solid var(--accent-brd)", color: "var(--color-accent-ink)" }}>✦</span>
+            <Avatar label="main" roster={roster} />
             <span className="truncate text-[14px] font-semibold text-text">{team.name}</span>
             <span className="min-w-0 flex-1 truncate text-[12px] text-text-2">{team.goal}</span>
             <span className="flex items-center gap-1">
-              {/* the existing Disband / Confirm disband / Close buttons, unchanged */}
+              {live && !confirming && (
+                <button type="button" onClick={() => setConfirming(true)}
+                  className="cursor-pointer rounded-md px-2 py-0.5 text-[10.5px]"
+                  style={{ border: "1px solid var(--red-brd)", color: "var(--color-red)", background: "var(--red-bg)" }}>
+                  Disband
+                </button>
+              )}
+              {live && confirming && (
+                <button type="button"
+                  onClick={() => {
+                    setConfirming(false);
+                    vscode.postMessage({ type: "disbandTeam", teamId });
+                  }}
+                  className="cursor-pointer rounded-md px-2 py-0.5 text-[10.5px] font-semibold"
+                  style={{ border: "1px solid var(--red-brd)", color: "var(--color-red)", background: "var(--red-bg)" }}>
+                  Confirm disband
+                </button>
+              )}
+              <button type="button" onClick={onClose} aria-label="Close team window" title="Close"
+                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text">
+                <Icon name="x" size={12} />
+              </button>
             </span>
           </div>
           <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} />
@@ -2388,20 +2478,48 @@ Replace the imports of `TeamBoard` with `Journey`, and add `Avatar` and `PhaseSt
               const working = !isTerminalAgent(status);
               return (
                 <button key={m.agentId} type="button" aria-label={`Open ${m.label}'s tab`} onClick={() => onTab(m.agentId)}
-                  className="flex items-center gap-2 rounded-lg px-1 py-0.5 text-text-2 hover:bg-[var(--hairline)]">
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-0.5 text-text-2 hover:bg-[var(--hairline)]">
                   <Avatar label={m.label} roster={roster} ring={working ? "working" : "idle"} />
                   <span className="grid text-left leading-tight">
-                    <span className="font-semibold" style={{ color: identityFor(m.label, roster).color }}>{m.label}</span>
-                    <small className="text-[10.5px] text-text-3">{working ? "working" : status === "awaiting_peer" ? "waiting on a teammate" : "idle"}</small>
+                    <span className="text-[12px] font-semibold" style={{ color: identityFor(m.label, roster).color }}>{m.label}</span>
+                    <small className="text-[10.5px] text-text-3">
+                      {working ? "working" : status === "awaiting_peer" ? "waiting on a teammate" : "idle"}
+                    </small>
                   </span>
                 </button>
               );
             })}
             {team.usage.budget > 0 && <span className="ml-auto text-[11px] text-text-3">budget {team.usage.budget} requests</span>}
           </div>
+        </div>
+        <div role="tablist" className="flex gap-0.5 overflow-x-auto px-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
+          {[{ id: "board", label: "Board", status: null as string | null },
+            // The member's own status until the roster has loaded its row.
+            ...team.members.map((m) => ({ id: m.agentId, label: m.label,
+              status: agentsUi.agents[m.agentId]?.status ?? m.status }))].map((t) => {
+            const on = t.id === tab;
+            return (
+              <button key={t.id} type="button" role="tab" aria-selected={on} onClick={() => onTab(t.id)}
+                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap border-b-2 px-2 py-1.5 text-[11px]"
+                style={{ color: on ? "var(--color-accent-ink)" : "var(--color-text-3)",
+                         borderColor: on ? "var(--color-accent)" : "transparent" }}>
+                {t.status !== null && <Avatar label={t.label} roster={roster} size="sm" />}
+                {t.label}
+                {t.status !== null && (
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: TONE_COLOR[toneOf(t.status)] }} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
+          {tab === "board" ? <Journey teamId={teamId} /> : <AgentTranscript agentId={tab} />}
+        </div>
+      </div>
+    </div>
+  );
+}
 ```
-
-with `const roster = team.members.map((m) => m.label);` defined after the `if (!team) return null;` guard, and `isTerminalAgent` imported from `../../agents`, `identityFor` from `../../teamIdentity`. In the tab list, each member tab renders `<Avatar label={m.label} roster={roster} size="sm" />` before the label and keeps its state dot. The board body renders `<Journey teamId={teamId} />` where it rendered `<TeamBoard teamId={teamId} />`. The follow-bottom token becomes `${boardToken}:${teamsUi.views[teamId]?.lastAseq ?? 0}` so new activity also scrolls the board.
 
 Delete `src/components/teams/TeamBoard.tsx` (`git rm`).
 
@@ -2714,7 +2832,7 @@ In `teamChapters.test.ts`'s first test, chapter 1's said list is `[4]` because p
 
 - [ ] **Step 4: `MemberView.tsx`**
 
-First, in `Journey.tsx`, export the status chip map (`export const STATUS_CHIP`) and add an exported compact card after `StanceReply`:
+First, in `Journey.tsx`, export the status chip map (`export const STATUS_CHIP`), add `TeamPostView` to its `../../types` import (Task 8 leaves it out — unused there), and add an exported compact card after `StanceReply`:
 
 ```tsx
 /** A post as shown inside a member's chapter: same identity and body, no spine dot. */
@@ -3000,7 +3118,7 @@ describe("card wording", () => {
 });
 ```
 
-(Move the `import` line to the top of the file with the other imports.)
+(Merge `countsText, latestText, memberPhrase` into the file's existing `import { … } from "../teams"` rather than adding a second import of the same module.)
 
 `src/test/teamCard.test.tsx` (replacing the file):
 
@@ -3142,7 +3260,7 @@ export function countsText(counts: TeamCountsView | undefined, budget: number): 
 }
 ```
 
-(`AgentSummaryView` is already imported in `teams.ts` for `waitingOn`; merge the import lines.)
+(`AgentSummaryView` is already imported in `teams.ts` for `waitingOn`. Merge the three new types into that `import type { … } from "./types"`, keeping it alphabetical; the `./agents` import goes above it.)
 
 - [ ] **Step 4: `TeamCard.tsx`** (replacing the file)
 
