@@ -12,6 +12,11 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("--version") => {
+            // `auth=1` tells the extension this indexer authenticates to agentd (spec §3.7).
+            println!("{} auth=1", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Some("index") => run_index(&args[1..]).await,
         Some("query") => run_query(&args[1..]),
         _ => run_default().await,

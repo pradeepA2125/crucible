@@ -22,6 +22,12 @@ rustpython-parser = "0.4"
 rust-bert = { version = "0.23", optional = true }
 tree-sitter-go = "0.25.0"
 tree-sitter-java = "0.23.5"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 default = []
@@ -30,3 +36,4 @@ embeddings = ["dep:rust-bert"]
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3"
+tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "net", "io-util"] }

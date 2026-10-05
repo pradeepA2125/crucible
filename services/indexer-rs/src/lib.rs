@@ -1,3 +1,4 @@
+pub mod backend_auth;
 pub mod config;
 pub mod graph;
 pub mod lsp;

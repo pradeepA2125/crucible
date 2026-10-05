@@ -45,12 +45,19 @@ pub struct IndexerService {
     diagnostics_snapshot: Vec<LspDiagnostic>,
     index_warnings: Vec<LspDiagnostic>,
     last_watch_event: HashMap<PathBuf, Instant>,
+    notifier: Option<std::sync::Arc<crate::backend_auth::BackendNotifier>>,
 }
 
 impl IndexerService {
     pub fn new(config: IndexerConfig) -> Result<Self> {
         let lsp = LspAdapter::new(&config);
         let workspace_root = config.workspace_root.clone();
+        #[allow(deprecated)] // home_dir is correct on Windows from Rust 1.86; toolchain is 1.93
+        let notifier = match (&config.backend_url, std::env::home_dir()) {
+            (Some(_), Some(home)) => Some(std::sync::Arc::new(
+                crate::backend_auth::BackendNotifier::new(home)?)),
+            _ => None,
+        };
         Ok(Self {
             config,
             graph: SymbolGraph::default(),
@@ -60,6 +67,7 @@ impl IndexerService {
             diagnostics_snapshot: Vec::new(),
             index_warnings: Vec::new(),
             last_watch_event: HashMap::new(),
+            notifier,
         })
     }
 
@@ -308,26 +316,12 @@ impl IndexerService {
         tokio::fs::write(&tmp_path, payload).await?;
         tokio::fs::rename(&tmp_path, &self.config.snapshot_output_path).await?;
 
-        if let Some(backend_url) = &self.config.backend_url {
-            let url = format!("{}/v1/index/build", backend_url.trim_end_matches('/'));
+        if let (Some(notifier), Some(backend_url)) = (&self.notifier, &self.config.backend_url) {
+            let notifier = notifier.clone();
+            let backend_url = backend_url.clone();
             let workspace = self.config.workspace_root.display().to_string();
             tokio::spawn(async move {
-                match reqwest::Client::new()
-                    .post(&url)
-                    .json(&serde_json::json!({ "workspace_path": workspace }))
-                    .send()
-                    .await
-                {
-                    Ok(resp) if resp.status().is_success() => {
-                        tracing::debug!(url = %url, "notified backend: index build accepted");
-                    }
-                    Ok(resp) => {
-                        tracing::warn!(url = %url, status = %resp.status(), "backend index-build notification returned non-2xx");
-                    }
-                    Err(err) => {
-                        tracing::warn!(url = %url, error = %err, "backend index-build notification failed (backend may not be running)");
-                    }
-                }
+                notifier.notify_index_build(&backend_url, &workspace).await;
             });
         }
 
