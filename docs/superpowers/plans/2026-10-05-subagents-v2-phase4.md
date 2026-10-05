@@ -562,8 +562,8 @@ with `from agentd.teams.store import TeamStore` at the top.
 
 - [ ] **Step 6: Run and commit**
 
-Run: `.venv/bin/pytest tests/test_team_store.py tests/test_chat_storage*.py --color=no > /tmp/p4t1.txt 2>&1; echo exit=$?; tail -3 /tmp/p4t1.txt`
-Expected: `exit=0` (if `tests/test_chat_storage*.py` matches nothing, drop it from the command).
+Run: `.venv/bin/pytest tests/test_team_store.py tests/test_chat_storage.py --color=no --timeout=120 > /tmp/p4t1.txt 2>&1; echo exit=$?; tail -3 /tmp/p4t1.txt`
+Expected: `exit=0`.
 
 ```bash
 git add agentd/teams agentd/chat/controller_factory.py agentd/chat/storage.py agentd/api/routes.py tests/conftest.py tests/test_team_store.py
@@ -654,8 +654,9 @@ def test_evidence_file_and_line(tmp_path: Path) -> None:
 
 def test_evidence_command_output_and_quote(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
-    assert validate_evidence({"command": "pytest", "output": "1 failed"}, workspace=ws,
-                             assignment_files=set(), post_exists=lambda s: False)["command"] == "pytest"
+    out = validate_evidence({"command": "pytest", "output": "1 failed"}, workspace=ws,
+                            assignment_files=set(), post_exists=lambda s: False)
+    assert out["command"] == "pytest"
     assert validate_evidence({"quote_seq": 4}, workspace=ws, assignment_files=set(),
                              post_exists=lambda s: s == 4) == {"quote_seq": 4}
 
@@ -908,7 +909,8 @@ def test_message_is_private_and_checked(tmp_path: Path) -> None:
 
 def test_propose_validates_and_supersedes(tmp_path: Path) -> None:
     service, tid, teams, _ = _setup(tmp_path)
-    p1 = service.propose(tid, "alice", "Plan A", [{"member": "bob", "part": "api", "files": ["src/auth.py"]}])
+    p1 = service.propose(tid, "alice", "Plan A",
+                         [{"member": "bob", "part": "api", "files": ["src/auth.py"]}])
     assert p1.payload["assignments"][0]["files"] == ["src/auth.py"]
     with pytest.raises(TeamInputError, match="unknown member"):
         service.propose(tid, "alice", "Plan B", [{"member": "dave", "part": "x", "files": []}])
@@ -929,7 +931,8 @@ def test_stance_required_before_proposing_after_an_earlier_round(tmp_path: Path)
 
 def test_agree_object_withdraw_rules(tmp_path: Path) -> None:
     service, tid, teams, _ = _setup(tmp_path)
-    p = service.propose(tid, "alice", "Plan", [{"member": "bob", "part": "api", "files": ["src/new.py"]}])
+    p = service.propose(tid, "alice", "Plan",
+                        [{"member": "bob", "part": "api", "files": ["src/new.py"]}])
     with pytest.raises(TeamInputError, match="your own proposal"):
         service.agree(tid, "alice", p.proposal_id)
     service.agree(tid, "bob", p.proposal_id, note="ok")
@@ -1452,8 +1455,8 @@ def test_parse_create_team_defaults() -> None:
      "duplicate label"),
     ({"members": [{"label": "alice", "agent": "nope"}, {"label": "bob", "agent": "explore"}]},
      "unknown agent"),
-    ({"members": [{"label": "Bad Label", "agent": "explore"}, {"label": "bob", "agent": "explore"}]},
-     "label"),
+    ({"members": [{"label": "Bad Label", "agent": "explore"},
+                  {"label": "bob", "agent": "explore"}]}, "label"),
     ({"kickoff": {"kind": "vote", "text": "x"}}, "kickoff.kind"),
     ({"max_rounds": 7}, "max_rounds"),
     ({"budget": 5000}, "budget"),
@@ -1631,7 +1634,9 @@ class CreateTeamRequest:
     kickoff_mentions: list[str]
 
 
-def parse_create_team(args: dict[str, object], catalog: dict[str, AgentDefinition]) -> CreateTeamRequest:
+def parse_create_team(
+    args: dict[str, object], catalog: dict[str, AgentDefinition],
+) -> CreateTeamRequest:
     name = check_text(args.get("name"), "name")[:80]
     goal = check_text(args.get("goal"), "goal")
     raw_members = args.get("members")
@@ -1788,7 +1793,7 @@ git commit -m "feat(teams): member team_* tools and the main agent's team tools"
 ### Task 5: Controller integration — members, delivery, the inbox delta, reports, disband
 
 **Files:**
-- Modify: `agentd/subagents/inbox.py` (`InboxItem.kind` gains `"team"`), `agentd/chat/controller_loop.py` (append `team` items raw), `agentd/chat/controller.py` (below)
+- Modify: `agentd/subagents/inbox.py` (`InboxItem.kind` gains `"team"`), `agentd/chat/controller_loop.py` (append `team` items raw; `report_statuses`), `agentd/chat/controller.py` (below)
 - Test: `tests/test_team_controller.py`
 
 **Interfaces:**
@@ -1803,6 +1808,7 @@ git commit -m "feat(teams): member team_* tools and the main agent's team tools"
   - `async disband_team(thread_id, team_id) -> dict[str, object]`
   - `team_channel(thread_id, team_id) -> str` (module function: `chat:{thread}:team:{team}`)
   - `TEAM_DELTA = "\x00team-delta\x00"` — the activation-input sentinel `_activate` replaces with the rendered delta
+  - `controller_loop.LONE_REPORT_STATUSES` / `TEAM_REPORT_STATUSES`; `ControllerLoop(..., report_statuses=...)`
   - Behaviour: members keep `awaiting_peer` (no `partial` mapping); a member's report becomes `system` post `"<label> finished (<status>)"`; `stop_all_agents` also disbands the thread's live teams; `reap_subagents` fails live teams.
 
 - [ ] **Step 1: Write the failing tests** (`tests/test_team_controller.py`)
@@ -1854,10 +1860,12 @@ class _Recording(ScriptedReasoningEngine):
 
 
 REPORT = {"type": "report", "thought": "t", "summary": "done here", "status": "completed"}
-WAITING = {"type": "report", "thought": "t", "summary": "waiting on alice", "status": "awaiting_peer"}
+WAITING = {"type": "report", "thought": "t", "summary": "waiting on alice",
+           "status": "awaiting_peer"}
 
 
-def _make(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scripts: dict[str, list[dict[str, object]]]):
+def _make(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+          scripts: dict[str, list[dict[str, object]]]):
     monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "1")
     monkeypatch.setenv("CRUCIBLE_TEAMS_ENABLED", "1")
     ws = tmp_path / "ws"
@@ -1876,7 +1884,8 @@ def _make(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scripts: dict[str, li
     return ctrl, store, tid, engine
 
 
-def _request(kind: str = "proposal", agent: AgentDefinition | None = None, **over) -> CreateTeamRequest:
+def _request(kind: str = "proposal", agent: AgentDefinition | None = None,
+             **over) -> CreateTeamRequest:
     gp = agent or BUILTIN_AGENTS["general-purpose"]
     base = dict(name="auth", goal="Add login",
                 members=[TeamMemberSpec("alice", gp), TeamMemberSpec("bob", gp)],
@@ -1912,7 +1921,8 @@ async def test_create_team_rows_kickoff_and_activation(tmp_path, monkeypatch) ->
                for r in rows.values())
     assert rows["bob"].status == "awaiting_peer"     # members keep it (no partial mapping)
     posts = store.teams.posts(team_id)
-    assert (posts[0].seq, posts[0].author, posts[0].kind, posts[0].round) == (1, "main", "proposal", 0)
+    first = posts[0]
+    assert (first.seq, first.author, first.kind, first.round) == (1, "main", "proposal", 0)
     assert {p.text for p in posts if p.kind == "system"} == {
         "alice finished (completed)", "bob finished (awaiting_peer)"}
     assert store.teams.member(team_id, "alice").delivered_seq == 1
@@ -2019,13 +2029,45 @@ Expected: exit≠0 (`ChatController` has no `_create_team`).
 
 - [ ] **Step 3: Inbox kind and the loop**
 
-`agentd/subagents/inbox.py`: `kind: Literal["report", "note", "user", "team"]  # "team": a member's rendered board delta (§7.6) — system-written, bodies already framed`.
+`agentd/subagents/inbox.py`:
 
-`controller_loop.py`, in the inbox drain block, change `if item.kind == "user":` to `if item.kind in ("user", "team"):` and its comment to: `# The user's own words (spec §5.3), or a team member's board delta (§7.6) whose header is system-written and whose bodies are already framed — never framed again.`
+```python
+    # "user": a message the user sent mid-turn (§5.3); "team": a member's board delta (v2 §7.6)
+    # — system-written, its bodies already framed.
+    kind: Literal["report", "note", "user", "team"]
+```
+
+`controller_loop.py`, in the inbox drain block, change `if item.kind == "user":` to `if item.kind in ("user", "team"):` and its comment to: `# The user's own words (spec §5.3), or a team member's board delta (v2 §7.6) whose header is system-written and whose bodies are already framed — never framed again.`
+
+A member's `awaiting_peer` must survive the loop: today the report branch maps every status except `partial` to `completed`. Above `_RESERVED_ACTION_TOOL_NAMES`:
+
+```python
+# The report statuses a lone sub-agent may choose (spec §3.3); a team member may also wait
+# on a peer (spec v2 §7.3).
+LONE_REPORT_STATUSES = frozenset({"completed", "partial"})
+TEAM_REPORT_STATUSES = frozenset({"completed", "partial", "awaiting_peer"})
+```
+
+`ControllerLoop.__init__` gains a last keyword `report_statuses: frozenset[str] = LONE_REPORT_STATUSES`, stored after `self._agent = agent`:
+
+```python
+        # A chosen status outside this set reports as "completed".
+        self._report_statuses = report_statuses
+```
+
+and the report branch's status line becomes:
+
+```python
+                chosen = str(resp.get("status") or "completed")
+                status = ("partial" if final
+                          else chosen if chosen in self._report_statuses else "completed")
+```
+
+(The schema's `status` enum gains `awaiting_peer` for members in Task 6, where the render context first knows about the team. The scripted engine does not validate against the schema, so Task 5's tests already exercise the loop path.)
 
 - [ ] **Step 4: Controller — construction and the main agent's tools**
 
-Imports in `controller.py`: `from agentd.chat.controller_factory import is_teams_enabled` (next to `is_subagents_enabled`), `from agentd.subagents.definitions import definition_from_json` (if not already imported), and
+Imports in `controller.py`: `is_teams_enabled` joins the `agentd.chat.controller_factory` import; the `agentd.chat.controller_loop` import becomes `LONE_REPORT_STATUSES, TEAM_REPORT_STATUSES, ControllerLoop, ControllerOutcome`; `definition_from_json` is already imported from `agentd.subagents.definitions`; and (ruff's isort places them after the `agentd.subagents.*` block — run `ruff check --fix --select I001` on the file):
 
 ```python
 from agentd.teams.config import team_max_live_per_thread, team_max_wakes
@@ -2069,7 +2111,7 @@ In `_run_loop`, extend `dispatch_sources`:
         dispatch_sources: list[object] = (
             [self._dispatch_source(thread_id, turn_id, None)]
             if self._subagents is not None and turn_id else [])
-        if dispatch_sources and is_teams_enabled() and self._teams is not None:
+        if dispatch_sources and turn_id and is_teams_enabled() and self._teams is not None:
             dispatch_sources.append(self._main_team_source(thread_id, turn_id))
 ```
 
@@ -2298,11 +2340,18 @@ After `names = child_tool_names(...)`:
                     if membership is not None else partial(self._drain_and_mark, ctx.agent_id)),
 ```
 
-and the report mapping:
+the report mapping:
 
 ```python
                 if status == "awaiting_peer" and membership is None:
                     status = "partial"  # a lone agent has no peer to wait on
+```
+
+and the child's `ControllerLoop(...)` construction gains, after `agent=ctx`:
+
+```python
+            report_statuses=(TEAM_REPORT_STATUSES if membership is not None
+                             else LONE_REPORT_STATUSES))
 ```
 
 - [ ] **Step 8: Controller — reports, disband, stop-all, reap**
@@ -2371,7 +2420,7 @@ git commit -m "feat(teams): create teams, deliver posts to members, member inbox
 ### Task 6: Prompts — the `<<team>>` tag, `_TEAM_BLOCK`, the main agent's TEAMS block, the status tail
 
 **Files:**
-- Modify: `agentd/prompting/tagged.py` (`RenderContext.team_brief`, the `team` tag), `agentd/teams/service.py` (`brief`), `agentd/chat/controller_prompts.py` (`_TEAM_BLOCK`, `_TEAMS_MAIN_BLOCK`, `team_status` in the payload tail), `agentd/chat/controller_loop.py` (`status_tail`, the tool-name-as-type correction), `agentd/chat/controller.py` (pass both into a member's loop)
+- Modify: `agentd/prompting/tagged.py` (`RenderContext.team_brief`, the `team` tag), `agentd/teams/service.py` (`brief`), `agentd/chat/controller_prompts.py` (`_TEAM_BLOCK`, `_TEAMS_MAIN_BLOCK`, `team_status` in the payload tail, the member report schema), `agentd/reasoning/engine.py` (`team_member=`), `agentd/chat/controller_loop.py` (`status_tail`, the tool-name-as-type correction), `agentd/chat/controller.py` (pass both into a member's loop)
 - Create: `tests/test_prompt_goldens_teams.py`, `tests/goldens/controller_prompt_teams.json` (captured)
 - Modify: `tests/test_prompt_leak_lint.py` (team vocabulary)
 - Test: `tests/test_team_prompts.py`
@@ -2386,6 +2435,7 @@ git commit -m "feat(teams): create teams, deliver posts to members, member inbox
   - `build_controller_step_payload` emits `team_status` in the tail when `plan_context["team_status"]` is a non-empty string
   - `ControllerLoop.run(..., status_tail: Callable[[], str] | None = None)` — called every iteration, result stored in `plan_context["team_status"]`
   - `controller_loop._tool_name_as_type_correction(atype, tool_names) -> str | None`
+  - `controller_response_schema(..., team_member: bool = False)` — a member's `report.status` enum includes `awaiting_peer`
 
 The roster and goal go into the **system prompt** (they never change during a team's life, so the cached prefix holds); the phase, round, stances and unread counts go into the **payload tail** every iteration (spec §7.6). `_TEAM_BLOCK` renders after the persona so "your persona, above" is literally true. A member's role block still says "dispatcher": `_TEAM_BLOCK` says who that is for a member (the main agent that created the team) rather than adding a negated tag to `_AGENT_ROLE_BLOCK`, which keeps every existing child prompt byte-identical.
 
@@ -2679,6 +2729,45 @@ In `build_controller_step_payload`, right after the `todo_status` block:
         payload["team_status"] = team_status
 ```
 
+The member's report schema must offer what Task 5's loop keeps. Below `_REPORT_STATUS`:
+
+```python
+# A team member may also wait on a peer (spec v2 §7.3); mirrors controller_loop's
+# TEAM_REPORT_STATUSES, which keeps the chosen status.
+_TEAM_REPORT_STATUS = {"type": "string", "enum": ["completed", "partial", "awaiting_peer"]}
+```
+
+`controller_response_schema` gains a last keyword `team_member: bool = False`; its body up to the flat schema becomes:
+
+```python
+    types = list(allowed_types) if allowed_types is not None else list(_PHASE_TYPES[phase])
+    # `team_member=True` → the report status enum gains awaiting_peer (spec v2 §7.3).
+    report_status = _TEAM_REPORT_STATUS if team_member else _REPORT_STATUS
+    if tight or anyof:
+        branches = [_tight_variant_branch(v) for v in types]
+        for variant, branch in zip(types, branches, strict=True):
+            props = branch["properties"]
+            if variant == "report" and isinstance(props, dict):
+                props["status"] = dict(report_status)  # each branch owns a fresh dict
+        return {"oneOf" if tight else "anyOf": branches}
+```
+
+and the flat schema's `schema["properties"]["status"] = dict(_REPORT_STATUS)` becomes `dict(report_status)`. In `agentd/reasoning/engine.py`, `create_controller_step`'s `controller_response_schema(...)` call gains `team_member=render_ctx is not None and render_ctx.has_team`.
+
+Add to `tests/test_team_prompts.py` (and `import json` at its top):
+
+```python
+@pytest.mark.parametrize("variant", [{}, {"tight": True}, {"anyof": True}])
+def test_member_report_schema_allows_awaiting_peer(variant: dict[str, bool]) -> None:
+    from agentd.chat.controller_prompts import controller_response_schema
+    lone = json.dumps(controller_response_schema(
+        phase="AGENT", allowed_types=["tool_call", "report"], **variant))
+    member = json.dumps(controller_response_schema(
+        phase="AGENT", allowed_types=["tool_call", "report"], team_member=True, **variant))
+    assert "awaiting_peer" not in lone
+    assert "awaiting_peer" in member
+```
+
 - [ ] **Step 6: The loop**
 
 `ControllerLoop.run` gains `status_tail: Callable[[], str] | None = None` and passes it to `_iterate` (add the same parameter there). In `_iterate`, next to `plan_context["todo_status"] = self._ledger.render()`:
@@ -2698,17 +2787,17 @@ _TOOL_AS_TYPE_TEMPLATE = tagged("tool_as_type", (
     '{"type":"tool_call","thought":"…","tool":"{tool}","args":{…}}'))
 
 
-def _tool_name_as_type_correction(atype: str, tool_names: set[str] | frozenset[str]) -> str | None:
+def _tool_name_as_type_correction(
+    atype: str, tool_names: set[str] | frozenset[str],
+) -> str | None:
     """The reverse of _reserved_tool_name_correction (spec v2 §7.3): an action whose type is
     a team tool's name gets the tool_call wrapper shown, not the generic malformed text."""
-    from agentd.teams.tools import MAIN_TOOL_NAMES, MEMBER_TOOL_NAMES
-
     if atype not in tool_names or atype not in (MEMBER_TOOL_NAMES | MAIN_TOOL_NAMES):
         return None
     return render_prompt(_TOOL_AS_TYPE_TEMPLATE, _MAIN).replace("{tool}", atype)
 ```
 
-(Move the import to the top of the module if `agentd.teams.tools` does not import `controller_loop` — check with `python -c "import agentd.chat.controller_loop"` after moving; the CLAUDE.md rule is imports at the top.) In the correction chain:
+Add `from agentd.teams.tools import MAIN_TOOL_NAMES, MEMBER_TOOL_NAMES` to the module's imports, after `from agentd.subagents.framing import frame` (no cycle: `agentd.teams` never imports the loop). In the correction chain:
 
 ```python
             correction = (
@@ -2793,7 +2882,8 @@ from agentd.subagents.definitions import BUILTIN_AGENTS
 from agentd.teams.tools import MainTeamOps, MainTeamToolSource
 
 GOLDEN = Path(__file__).parent / "goldens" / "controller_prompt_teams.json"
-BRIEF = "Team 'auth'. Goal: Add login\nRoster:\n- alice (you): general-purpose — edits\n- bob: explore — reads"
+BRIEF = ("Team 'auth'. Goal: Add login\nRoster:\n- alice (you): general-purpose — edits\n"
+         "- bob: explore — reads")
 
 
 async def _never(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -2837,7 +2927,7 @@ Run: `.venv/bin/pytest tests/test_team_prompts.py tests/test_team_controller.py 
 Expected: `exit=0`. The two existing goldens must pass unchanged — if either moved, a tag leaked; fix the template, never re-capture an old golden.
 
 ```bash
-git add agentd/prompting/tagged.py agentd/teams/service.py agentd/chat/controller_prompts.py agentd/chat/controller_loop.py agentd/chat/controller.py tests/test_team_prompts.py tests/test_team_controller.py tests/test_prompt_goldens_teams.py tests/goldens/controller_prompt_teams.json tests/test_prompt_leak_lint.py
+git add agentd/prompting/tagged.py agentd/teams/service.py agentd/chat/controller_prompts.py agentd/reasoning/engine.py agentd/chat/controller_loop.py agentd/chat/controller.py tests/test_team_prompts.py tests/test_team_controller.py tests/test_prompt_goldens_teams.py tests/goldens/controller_prompt_teams.json tests/test_prompt_leak_lint.py
 git commit -m "feat(teams): member and main-agent team prompts, status tail, tool-as-type correction"
 ```
 
@@ -3012,34 +3102,34 @@ Expected: exit≠0 (404 on `/teams`).
         # Read routes stay readable with the flag off (rows written while it was on);
         # /live only reports live teams when it is on (ChatController.live_teams).
         @router.get("/chat/threads/{thread_id}/teams")
-        async def list_thread_teams(thread_id: str) -> dict:
+        async def list_thread_teams(thread_id: str) -> dict[str, object]:
             if _chat_agent._store.get_thread(thread_id) is None:
                 raise HTTPException(status_code=404, detail="Thread not found")
             summaries = getattr(_chat_agent, "team_summaries", None)
             return {"teams": summaries(thread_id) if summaries is not None else []}
 
         @router.get("/chat/threads/{thread_id}/teams/{team_id}")
-        async def get_thread_team(thread_id: str, team_id: str) -> dict:
+        async def get_thread_team(thread_id: str, team_id: str) -> dict[str, object]:
             detail = getattr(_chat_agent, "team_detail", None)
-            found = detail(thread_id, team_id) if detail is not None else None
+            found: dict[str, object] | None = (
+                detail(thread_id, team_id) if detail is not None else None)
             if found is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             return found
 
         @router.post("/chat/threads/{thread_id}/teams/{team_id}/disband")
-        async def post_disband_team(thread_id: str, team_id: str) -> dict:
-            from agentd.teams.validation import TeamInputError
-
+        async def post_disband_team(thread_id: str, team_id: str) -> dict[str, object]:
             disband = getattr(_chat_agent, "disband_team", None)
             if disband is None:
                 return {"team_id": team_id, "phase": None}
             try:
-                return await disband(thread_id, team_id)  # type: ignore[misc]
+                result: dict[str, object] = await disband(thread_id, team_id)
             except TeamInputError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return result
 ```
 
-Move the `TeamInputError` import to the top of `routes.py` with the other `agentd` imports (CLAUDE.md: imports at the top) — it is shown inline above only to make the dependency obvious.
+Add `from agentd.teams.validation import TeamInputError` to `routes.py`'s top-level imports, after `from agentd.storage.base import TaskStore`. The return types are `dict[str, object]` rather than the bare `dict` older routes in the file use: the bare form adds mypy `type-arg`/`no-any-return` errors.
 
 In `get_thread_live`, after the `agents` block:
 
@@ -3542,8 +3632,8 @@ Add to `test/controller.test.ts` (inside the sub-agent `describe` that defines `
 
 - [ ] **Step 2: Run to verify failure**
 
-Run (from `apps/vscode-extension`): `npx vitest run test/team-views.test.ts test/controller.test.ts > /tmp/p4t9.txt 2>&1; echo exit=$?; tail -15 /tmp/p4t9.txt`
-Expected: exit≠0 (`../src/team-views.js` does not exist).
+Run (from `apps/vscode-extension`): `perl -e 'alarm 120; exec @ARGV' npx vitest run test/team-views.test.ts test/controller.test.ts > /tmp/p4t9.txt 2>&1; echo exit=$?; tail -15 /tmp/p4t9.txt`
+Expected: exit≠0 (`../src/team-views.js` does not exist). The `alarm` guard matters here: a follow loop that re-backfills without yielding to timers starves the event loop and the run hangs instead of failing (macOS has no `timeout`). If it trips, kill the orphaned `vitest` worker too.
 
 - [ ] **Step 3: `src/team-views.ts`**
 
@@ -3655,6 +3745,9 @@ export class TeamViewManager {
       } finally {
         view.abort = null;
       }
+      // A channel that ends at once (idle timeout, a closed replay) must not spin: a
+      // backfill → stream → backfill loop of resolved promises never yields to timers.
+      if (!view.closed) await delay(this.retryDelayMs);
     }
   }
 }
@@ -4137,6 +4230,8 @@ export interface TeamViewState {
   teamViews: Record<string, TeamViewState>;
 ```
 
+Three existing test fixtures build a full `AppState` and stop typechecking until they carry the new fields — add `teams: {}, teamViews: {}` next to their `agentViews: {}`: `src/components/ThreadView.test.tsx` (`base`), `src/test/assembly.test.tsx` (`makeState`) and `src/test/agentWindow.test.tsx` (the ThreadView sub-agent wiring fixture). Vitest does not typecheck, so only `npm run typecheck` catches them.
+
 - [ ] **Step 4: `src/teams.ts`**
 
 ```ts
@@ -4365,7 +4460,7 @@ Run (from `apps/vscode-extension/webview-ui`): `npx vitest run > /tmp/p4t10.txt 
 Expected: two `exit=0`.
 
 ```bash
-git add apps/vscode-extension/webview-ui/src/types.ts apps/vscode-extension/webview-ui/src/teams.ts apps/vscode-extension/webview-ui/src/hooks/useAppState.ts apps/vscode-extension/webview-ui/src/components/teams apps/vscode-extension/webview-ui/src/components/MessageRow.tsx apps/vscode-extension/webview-ui/src/components/agents/AgentRosterCard.tsx apps/vscode-extension/webview-ui/src/test/teams.test.ts apps/vscode-extension/webview-ui/src/test/teamCard.test.tsx apps/vscode-extension/webview-ui/src/test/useAppState.test.ts
+git add apps/vscode-extension/webview-ui/src/types.ts apps/vscode-extension/webview-ui/src/teams.ts apps/vscode-extension/webview-ui/src/hooks/useAppState.ts apps/vscode-extension/webview-ui/src/components/teams apps/vscode-extension/webview-ui/src/components/MessageRow.tsx apps/vscode-extension/webview-ui/src/components/agents/AgentRosterCard.tsx apps/vscode-extension/webview-ui/src/test/teams.test.ts apps/vscode-extension/webview-ui/src/test/teamCard.test.tsx apps/vscode-extension/webview-ui/src/test/useAppState.test.ts apps/vscode-extension/webview-ui/src/components/ThreadView.test.tsx apps/vscode-extension/webview-ui/src/test/assembly.test.tsx apps/vscode-extension/webview-ui/src/test/agentWindow.test.tsx
 git commit -m "feat(webview): team state, reducer and the team card"
 ```
 
@@ -4831,7 +4926,7 @@ Wrap the existing `<AgentsContext.Provider value={agentsUi}>…</AgentsContext.P
       )}
 ```
 
-The existing ThreadView fixture in `agentWindow.test.tsx` predates teams: add `teams: {}, teamViews: {}` to it (ThreadView now reads both).
+(Task 10 already added `teams`/`teamViews` to the existing `AppState` fixtures.)
 
 - [ ] **Step 6: Run and commit**
 
@@ -4839,7 +4934,7 @@ Run (from `apps/vscode-extension/webview-ui`): `npx vitest run > /tmp/p4t11.txt 
 Expected: three `exit=0`.
 
 ```bash
-git add apps/vscode-extension/webview-ui/src/components/teams apps/vscode-extension/webview-ui/src/components/ThreadView.tsx apps/vscode-extension/webview-ui/src/test/teamWindow.test.tsx apps/vscode-extension/webview-ui/src/test/agentWindow.test.tsx
+git add apps/vscode-extension/webview-ui/src/components/teams apps/vscode-extension/webview-ui/src/components/ThreadView.tsx apps/vscode-extension/webview-ui/src/test/teamWindow.test.tsx
 git commit -m "feat(webview): team window with the board and member tabs"
 ```
 
@@ -4855,7 +4950,9 @@ git commit -m "feat(webview): team window with the board and member tabs"
   - The **interim activation policy** lives in one method, `ChatController._team_posted`, and Phase 5's coordinator replaces it: a proposal kickoff wakes every member, a post kickoff its mentions; a post wakes its mentions (`@team` everyone), a DM its recipient, never the author; a running member gets a marker that its next drain renders as one `team` inbox item; wakes cap per phase with a system post. A member's report becomes `"<label> finished (<status>)"` and wakes nobody.
   - Members keep `awaiting_peer` (no `partial` mapping); their team tools survive any definition `tools:` filter (`MEMBER_TOOL_NAMES` exemption); goal + roster ride the system prompt via `RenderContext.team_brief` and the `<<team>>` tag; phase/stances/unread ride the payload tail as `team_status` every iteration.
   - Routes `GET /chat/threads/{id}/teams`, `GET …/teams/{team_id}`, `POST …/teams/{team_id}/disband`; `/live` `teams` (slow fields only — in `lastLiveSignature`); team channel `chat:{thread}:team:{team}` (`team_post` with the post's `seq`, `team_phase`). Host `TeamViewManager` (`src/team-views.ts`); webview `TeamCard` + `TeamWindow` (Board tab + member tabs, Messages toggle, inline-confirm Disband).
+  - Members keep `awaiting_peer` only because of both `ControllerLoop(report_statuses=TEAM_REPORT_STATUSES)` and `controller_response_schema(team_member=True)` — without them the loop collapsed it to `completed`.
   - GOTCHA: `/live` lists live teams only, so the controller reloads summaries when a team **leaves** `/live` — without that, an ended team's card keeps its last live phase.
+  - GOTCHA: a follow loop that re-backfills without a timer delay starves the event loop when the channel ends at once (`TeamViewManager` awaits `delay()` after every stream end).
 
   Commit with `docs(claude): agent teams foundations`.
 
