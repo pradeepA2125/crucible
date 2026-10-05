@@ -26,7 +26,7 @@ describe("buildJourney", () => {
     ], ROSTER);
     expect(kinds(items)).toEqual(["chapter", "post", "chapter", "beat"]);
     const card = items[1];
-    expect(card.kind === "post" && card.footer).toEqual({ woke: ["review", "impl"], queued: [] });
+    expect(card.kind === "post" && card.footer).toEqual({ woke: ["review", "impl"], queued: [], held: null });
     expect(items[0]).toMatchObject({ title: "Kickoff", current: false });
     expect(items[2]).toMatchObject({ title: "Round 1 · deliberating", current: true });
   });
@@ -36,7 +36,7 @@ describe("buildJourney", () => {
       ev(2, 10, "impl", "notified", { causeSeq: 2, payload: { cause: "mention", by: "review" } }),
     ], ROSTER);
     const card = items.find((i) => i.kind === "post" && i.post.seq === 2);
-    expect(card?.kind === "post" && card.footer).toEqual({ woke: [], queued: ["impl"] });
+    expect(card?.kind === "post" && card.footer).toEqual({ woke: [], queued: ["impl"], held: null });
     expect(items.some((i) => i.kind === "beat")).toBe(false);
   });
 
@@ -114,5 +114,74 @@ describe("buildJourney", () => {
     expect(chapterTitle("DELIBERATING", 2)).toBe("Round 2 · deliberating");
     expect(chapterTitle("IMPLEMENTING", 1)).toBe("Implementing");
     expect(chapterTitle("FAILED", 1)).toBe("Failed");
+  });
+});
+
+import { buildJourney as build5a } from "../teamJourney";
+import type { TeamActivityView as Act, TeamPostView as Post } from "../types";
+
+const T0 = Date.parse("2026-10-06T10:00:00Z");
+const at = (s: number) => new Date(T0 + s * 1000).toISOString();
+const post5 = (seq: number, author: string, kind: string, s: number, over: Partial<Post> = {}): Post => ({
+  teamId: "t", seq, author, kind, recipient: null, text: `text ${seq}`, mentions: [], refId: null,
+  round: 1, payload: {}, closed: null, createdAt: at(s), ...over });
+const act5 = (aseq: number, label: string, kind: string, s: number, payload: Record<string, unknown> = {},
+              over: Partial<Act> = {}): Act => ({
+  teamId: "t", aseq, at: at(s), label, kind, activation: null, causeSeq: null, payload, ...over });
+
+describe("journey with rounds (spec 2026-10-05 §9)", () => {
+  const posts = [
+    post5(1, "main", "proposal", 0, { round: 0 }),
+    post5(2, "alice", "post", 10, { mentions: ["bob"] }),
+    post5(3, "system", "system", 50, { round: null, text: "Adopted P1.",
+      payload: { adopted: "P1", assignments: [{ member: "alice", part: "api", files: ["a.py"] }] } }),
+  ];
+  const activity = [
+    act5(1, "team", "phase", 0, { phase: "DELIBERATING", round: 1 }),
+    act5(2, "team", "round_started", 1, { round: 1, members: [
+      { label: "alice", handed: [1] }, { label: "bob", handed: [1] }] }),
+    act5(3, "alice", "took_up", 2, { posts: [1], from: ["main"], round: 1 }, { activation: 1 }),
+    act5(4, "alice", "held", 10, { post_seq: 2, for: ["bob"], everyone: false, until_round: 2 },
+         { causeSeq: 2 }),
+    act5(5, "alice", "wrapped_up", 20, { status: "completed", report: "r", round: 1 }, { activation: 1 }),
+    act5(6, "bob", "requeued", 21, { retry: 1, of: 2, after_ms: 30000 }),
+    act5(7, "bob", "wrapped_up", 25, { status: "completed", report: "r", round: 1 }, { activation: 1 }),
+    act5(8, "team", "round_ended", 26, { round: 1, adopted: null, new_posts: 1, proposals: [
+      { id: "P1", stances: { alice: "agree", bob: "none" }, adopted: false, reason: "bob has no stance" }] }),
+    act5(9, "team", "phase", 27, { phase: "DELIBERATING", round: 2 }),
+    act5(10, "team", "round_started", 28, { round: 2, members: [
+      { label: "alice", handed: [] }, { label: "bob", handed: [2] }] }),
+    act5(11, "bob", "deadline", 40, {}),
+    act5(12, "team", "round_ended", 49, { round: 2, adopted: "P1", new_posts: 0, proposals: [
+      { id: "P1", stances: { alice: "agree", bob: "agree" }, adopted: true, reason: "adopted" }] }),
+    act5(13, "team", "phase", 51, { phase: "DONE", round: 2, reason: "adopted" }),
+  ];
+  const items = build5a(posts, activity, ["alice", "bob"]);
+
+  it("lays out chapters, strips, verdicts and the adopted card in order", () => {
+    expect(items.filter((i) => i.kind !== "gap").map((i) => i.kind)).toEqual([
+      "chapter", "post", "chapter", "round", "post", "wrap", "beat", "wrap", "verdict",
+      "chapter", "round", "beat", "verdict", "adopted", "chapter"]);
+  });
+
+  it("folds held into the post footer and took_up into the strip", () => {
+    const card = items.find((i) => i.kind === "post" && i.post.seq === 2);
+    expect(card && card.kind === "post" && card.footer.held).toEqual(
+      { for: ["bob"], everyone: false, untilRound: 2 });
+    expect(items.some((i) => i.kind === "beat" && i.event.kind === "took_up")).toBe(false);
+  });
+
+  it("round strips know who reported and when", () => {
+    const strip = items.find((i) => i.kind === "round" && i.round === 1);
+    expect(strip && strip.kind === "round" && strip.members).toEqual([
+      { label: "alice", handed: [1], reportedAt: at(20), status: "completed" },
+      { label: "bob", handed: [1], reportedAt: at(25), status: "completed" }]);
+    expect(strip && strip.kind === "round" && strip.ended).toBe(true);
+  });
+
+  it("verdicts name the next round or the adoption", () => {
+    const verdicts = items.filter((i) => i.kind === "verdict");
+    expect(verdicts.map((v) => v.kind === "verdict" && [v.adopted, v.nextRound, v.newPosts])).toEqual([
+      [null, 2, 1], ["P1", null, 0]]);
   });
 });

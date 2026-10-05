@@ -8,7 +8,10 @@ export const DEFAULT_FILTERS: JourneyFilters = { posts: true, activity: true, me
 
 export type Stance = "agree" | "object";
 export interface TallyChip { label: string; stance: Stance | "pending"; was: Stance | null; seq: number | null }
-export interface PostFooter { woke: string[]; queued: string[] }
+export interface HeldNote { for: string[]; everyone: boolean; untilRound: number }
+export interface PostFooter { woke: string[]; queued: string[]; held: HeldNote | null }
+export interface RoundMember { label: string; handed: number[]; reportedAt: string | null; status: string | null }
+export interface VerdictProposal { id: string; stances: Record<string, string>; adopted: boolean }
 
 export type JourneyItem =
   | { kind: "chapter"; key: string; title: string; current: boolean; ended: boolean }
@@ -17,6 +20,10 @@ export type JourneyItem =
   | { kind: "system"; key: string; at: string; post: TeamPostView }
   | { kind: "beat"; key: string; at: string; event: TeamActivityView }
   | { kind: "wrap"; key: string; at: string; event: TeamActivityView }
+  | { kind: "round"; key: string; at: string; round: number; members: RoundMember[]; ended: boolean }
+  | { kind: "verdict"; key: string; at: string; round: number; proposals: VerdictProposal[];
+      adopted: string | null; nextRound: number | null; newPosts: number }
+  | { kind: "adopted"; key: string; at: string; post: TeamPostView }
   | { kind: "gap"; key: string; minutes: number };
 
 const GAP_MS = 60_000;
@@ -56,6 +63,34 @@ export function tallyFor(proposal: TeamPostView, posts: TeamPostView[], roster: 
   });
 }
 
+const EMPTY_FOOTER = (): PostFooter => ({ woke: [], queued: [], held: null });
+const roundOf = (e: TeamActivityView): number | null =>
+  typeof e.payload.round === "number" ? e.payload.round : null;
+
+function roundItem(e: TeamActivityView, activity: TeamActivityView[]): Extract<JourneyItem, { kind: "round" }> {
+  const round = Number(e.payload.round ?? 0);
+  const raw = Array.isArray(e.payload.members) ? e.payload.members as { label?: string; handed?: number[] }[] : [];
+  const members = raw.map((m): RoundMember => {
+    const label = String(m.label ?? "");
+    const wrap = activity.find((x) => x.kind === "wrapped_up" && x.label === label && roundOf(x) === round);
+    return { label, handed: Array.isArray(m.handed) ? m.handed : [],
+             reportedAt: wrap?.at ?? null, status: wrap ? String(wrap.payload.status ?? "completed") : null };
+  });
+  const ended = activity.some((x) => x.kind === "round_ended" && roundOf(x) === round);
+  return { kind: "round", key: `a${e.aseq}`, at: e.at, round, members, ended };
+}
+
+function verdictItem(e: TeamActivityView, activity: TeamActivityView[]): Extract<JourneyItem, { kind: "verdict" }> {
+  const round = Number(e.payload.round ?? 0);
+  const raw = Array.isArray(e.payload.proposals) ? e.payload.proposals as Record<string, unknown>[] : [];
+  const proposals = raw.map((p): VerdictProposal => ({
+    id: String(p.id ?? ""), stances: (p.stances as Record<string, string>) ?? {}, adopted: p.adopted === true }));
+  const next = activity.some((x) => x.kind === "round_started" && roundOf(x) === round + 1);
+  return { kind: "verdict", key: `a${e.aseq}`, at: e.at, round, proposals,
+           adopted: typeof e.payload.adopted === "string" ? e.payload.adopted : null,
+           nextRound: next ? round + 1 : null, newPosts: Number(e.payload.new_posts ?? 0) };
+}
+
 type Entry = { at: number; order: number; post?: TeamPostView; event?: TeamActivityView };
 
 export function buildJourney(
@@ -71,11 +106,21 @@ export function buildJourney(
   const footers = new Map<number, PostFooter>();
   const folded = new Set<number>();
   for (const e of activity) {
-    if ((e.kind !== "woke" && e.kind !== "notified") || e.causeSeq === null) continue;
+    if (e.kind === "took_up" && roundOf(e) !== null) {
+      folded.add(e.aseq);                               // the round strip shows what it handed
+      continue;
+    }
+    if (e.kind !== "woke" && e.kind !== "notified" && e.kind !== "held") continue;
+    if (e.causeSeq === null) continue;
     const cause = bySeq.get(e.causeSeq);
     if (!cause || !cardShown(cause)) continue;
-    const footer = footers.get(cause.seq) ?? { woke: [], queued: [] };
-    (e.kind === "woke" ? footer.woke : footer.queued).push(e.label);
+    const footer = footers.get(cause.seq) ?? EMPTY_FOOTER();
+    if (e.kind === "held") {
+      footer.held = { for: (e.payload.for as string[]) ?? [], everyone: e.payload.everyone === true,
+                      untilRound: Number(e.payload.until_round ?? 0) };
+    } else {
+      (e.kind === "woke" ? footer.woke : footer.queued).push(e.label);
+    }
     footers.set(cause.seq, footer);
     folded.add(e.aseq);
   }
@@ -92,7 +137,9 @@ export function buildJourney(
   };
   const postItem = (p: TeamPostView): void => {
     if (p.kind === "system") {
-      timed({ kind: "system", key: `p${p.seq}`, at: p.createdAt, post: p });
+      timed(typeof p.payload.adopted === "string"
+        ? { kind: "adopted", key: `p${p.seq}`, at: p.createdAt, post: p }
+        : { kind: "system", key: `p${p.seq}`, at: p.createdAt, post: p });
     } else if (STANCE_KINDS.has(p.kind)) {
       if (!filters.posts) return;
       const earlier = posts.filter((q) => q.seq < p.seq && q.author === p.author
@@ -101,7 +148,7 @@ export function buildJourney(
               replaces: earlier.length ? earlier[earlier.length - 1].seq : null });
     } else if (cardShown(p)) {
       timed({ kind: "post", key: `p${p.seq}`, at: p.createdAt, post: p,
-              footer: footers.get(p.seq) ?? { woke: [], queued: [] },
+              footer: footers.get(p.seq) ?? EMPTY_FOOTER(),
               tally: p.kind === "proposal" ? tallyFor(p, posts, roster) : null });
     }
   };
@@ -125,6 +172,14 @@ export function buildJourney(
       items.push({ kind: "chapter", key: `a${e.aseq}`,
                    title: chapterTitle(phase, Number(e.payload.round ?? 1)),
                    current: false, ended: ENDED_PHASES.has(phase) });
+      continue;
+    }
+    if (e.kind === "round_started") {
+      timed(roundItem(e, activity));
+      continue;
+    }
+    if (e.kind === "round_ended") {
+      timed(verdictItem(e, activity));
       continue;
     }
     if (!filters.activity || folded.has(e.aseq)) continue;

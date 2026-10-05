@@ -267,6 +267,13 @@ export interface TeamCountsView {
   proposals: { id: string; agree: number; object: number; pending: number }[];
 }
 
+/** Whom the current round started and who has its final report in (spec 2026-10-05 §9). */
+export interface TeamRoundProgressView {
+  round: number;
+  members: string[];
+  reported: string[];
+}
+
 export interface TeamMemberView {
   label: string;
   agentId: string;
@@ -290,6 +297,7 @@ export interface TeamSummaryView {
   createdAt: string;
   latest?: TeamLatestView | null;
   counts?: TeamCountsView;
+  roundProgress?: TeamRoundProgressView | null;
 }
 
 export interface TeamLiveView {
@@ -302,6 +310,7 @@ export interface TeamLiveView {
   members: TeamMemberView[];
   latest?: TeamLatestView | null;
   counts?: TeamCountsView;
+  roundProgress?: TeamRoundProgressView | null;
 }
 
 export interface TeamDetailView extends TeamSummaryView {
