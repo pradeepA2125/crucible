@@ -37,9 +37,10 @@ if not _agentd_logger.handlers:
     _agentd_logger.addHandler(_h_file)
 _agentd_logger.propagate = False
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from agentd.api.routes import build_router
+from agentd.auth import AUTH_STATE, auth_middleware, health_payload, install_auth
 from agentd.domain.models import ScopePolicy, ScopeRemember, ScopeTrigger, ShellPolicy
 from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
@@ -53,7 +54,10 @@ from agentd.storage.sqlite_store import SQLiteTaskStore
 from agentd.validation.command_validator import CommandValidator
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
-app = FastAPI(title="crucible agentd-py", version="0.1.0")
+# Auth runs outermost (spec §3.3). Passed in the constructor: a later add_middleware
+# would insert OUTSIDE it, which tests/test_main_auth_wiring.py guards against.
+app = FastAPI(
+    title="crucible agentd-py", version="0.1.0", middleware=[auth_middleware(AUTH_STATE)])
 
 database_path = Path(os.getenv("CRUCIBLE_DB_PATH", ".crucible/state/agentd.sqlite3")).resolve()
 shadow_root_path = Path(os.getenv("CRUCIBLE_SHADOW_ROOT", ".crucible/state/shadows")).resolve()
@@ -321,23 +325,6 @@ _reap_subagents = getattr(_chat_agent, "reap_subagents", None)
 if _reap_subagents is not None:
     app.router.add_event_handler("startup", _reap_subagents)
 
-# Managed-spawn lockfile: the extension sets CRUCIBLE_PORT and reads/reaps
-# <workspace>/.crucible/state/agentd.lock. The dev script doesn't set it — no-op there.
-_lock_port_raw = os.getenv("CRUCIBLE_PORT", "").strip()
-if _lock_port_raw.isdigit():
-    from agentd.runtime_lock import clear_lock, write_lock
-
-    _lock_port = int(_lock_port_raw)
-
-    def _write_runtime_lock() -> None:
-        write_lock(_chat_workspace_path, port=_lock_port)
-
-    def _clear_runtime_lock() -> None:
-        clear_lock(_chat_workspace_path)
-
-    app.router.add_event_handler("startup", _write_runtime_lock)
-    app.router.add_event_handler("shutdown", _clear_runtime_lock)
-
 warn_if_incoherent_flags(logging.getLogger("agentd.startup"))
 
 # Hot-swap seam: one ProviderRuntime holding every live DefaultReasoningEngine.
@@ -415,9 +402,12 @@ app.include_router(
         mcp_manager=_mcp_manager,
     )
 )
+install_auth(app, AUTH_STATE)
 
 
 
 @app.get("/health")
-async def healthcheck() -> dict[str, str]:
-    return {"status": "ok"}
+async def healthcheck(request: Request) -> dict[str, object]:
+    # No token required (the middleware exempts exactly GET /health); with a nonce it
+    # proves the server holds the token and names its pid (spec §3.4).
+    return health_payload(AUTH_STATE, request.scope["query_string"])
