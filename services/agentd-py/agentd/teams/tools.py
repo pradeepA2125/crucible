@@ -190,6 +190,7 @@ class MainTeamOps:
     post: Callable[[str, str, object], dict[str, object]]
     status: Callable[[str], dict[str, object]]
     disband: Callable[[str], Awaitable[dict[str, object]]]
+    adopt: Callable[[str, str], dict[str, object]]
 
 
 class MainTeamToolSource:
@@ -232,7 +233,7 @@ class MainTeamToolSource:
                 "member's stance, and usage against its budget."),
                 parameters={"type": _OBJ, "properties": team, "required": ["team"]}),
             ToolDefinition(name="adopt_proposal", description=(
-                "Adopt a proposal for a DEADLOCKED team."),
+                "Adopt one of a DEADLOCKED team's open proposals, as if every member agreed."),
                 parameters={"type": _OBJ, "properties": {**team, "proposal_id": _STR},
                             "required": ["team", "proposal_id"]}),
             ToolDefinition(name="resume_team", description=(
@@ -264,8 +265,10 @@ class MainTeamToolSource:
                     status = {**status, "note": BACKGROUND_NOTE}
                 return _ok(status)
             if tool == "adopt_proposal":
-                raise TeamInputError(f"adopt_proposal is only for a DEADLOCKED team; this team "
-                                     f"is {status.get('phase')}")
+                if status.get("phase") != "DEADLOCKED":
+                    raise TeamInputError(f"adopt_proposal is only for a DEADLOCKED team; this "
+                                         f"team is {status.get('phase')}")
+                return _ok(self._ops.adopt(team_id, str(args.get("proposal_id", ""))))
             if tool == "resume_team":
                 raise TeamInputError(f"resume_team is only for a PAUSED team; this team is "
                                      f"{status.get('phase')}")

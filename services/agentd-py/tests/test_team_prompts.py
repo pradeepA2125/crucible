@@ -74,7 +74,7 @@ async def _never(*a, **k):  # type: ignore[no-untyped-def]
 def test_main_teams_block_keyed_off_create_team() -> None:
     tools = [d.model_dump() for d in MainTeamToolSource(BUILTIN_AGENTS, MainTeamOps(
         create=_never, resolve=lambda r: r, post=lambda *a: {}, status=lambda t: {},
-        disband=_never), first_turn_team_ids=set()).definitions()]
+        disband=_never, adopt=lambda *a: {}), first_turn_team_ids=set()).definitions()]
     text = format_controller_system_prompt(tools, task_subsystem_enabled=False,
                                            memory_enabled=False)
     assert "TEAMS (create_team" in text

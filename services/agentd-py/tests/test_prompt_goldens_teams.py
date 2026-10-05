@@ -20,7 +20,7 @@ async def _never(*args, **kwargs):  # type: ignore[no-untyped-def]
 def _live() -> dict[str, str]:
     main_tools = [d.model_dump() for d in MainTeamToolSource(BUILTIN_AGENTS, MainTeamOps(
         create=_never, resolve=lambda r: r, post=lambda *a: {}, status=lambda t: {},
-        disband=_never), first_turn_team_ids=set()).definitions()]
+        disband=_never, adopt=lambda *a: {}), first_turn_team_ids=set()).definitions()]
     agent = AgentContext(agent_id="agent-1", name="general-purpose", label="alice", depth=1,
                          parent_agent_id=None, permission="default",
                          allowed_types=("tool_call", "edit", "progress", "report"),

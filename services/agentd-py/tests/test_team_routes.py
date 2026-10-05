@@ -118,3 +118,16 @@ async def test_detail_carries_activity_and_live_carries_state(tmp_path: Path, mo
     assert team["counts"]["proposals"] == [{"id": "P1", "agree": 1, "object": 0, "pending": 1}]
     assert {m["label"]: m["name"] for m in detail["members"]} == {
         "alice": "general-purpose", "bob": "general-purpose"}
+
+
+@pytest.mark.asyncio
+async def test_rewind_refused_while_a_team_is_live(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from agentd.chat.models import ChatMessage
+    store, ctrl, tid, _ = _seed(tmp_path, monkeypatch)
+    message_id = store.append_message(tid, ChatMessage(role="user", content="hi"))
+    ctrl._rewind = SimpleNamespace()        # rewind wired; the guard answers before it is used
+    async with _client(tmp_path, ctrl) as client:
+        r = await client.post(f"/v1/chat/threads/{tid}/rewind", json={"message_id": message_id})
+    assert r.status_code == 409 and "auth" in r.json()["detail"]

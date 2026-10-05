@@ -1968,6 +1968,10 @@ def build_router(
                 raise HTTPException(status_code=404, detail="No rewind point for that message")
             preview.blocked_by_task = await _live_task_in_span(thread, message_id)
             preview.blocked_by_agents = _chat_agent._store.live_agent_labels(thread_id)
+            _team_names = getattr(_chat_agent, "live_team_names", None)
+            if _team_names is not None:
+                preview.blocked_by_agents = [*preview.blocked_by_agents,
+                                             *(f"team {n}" for n in _team_names(thread_id))]
             sessions = []
             _exec_mgr = getattr(_chat_agent, "_exec_sessions", None)
             if _exec_mgr is not None:
@@ -1990,6 +1994,13 @@ def build_router(
                     status_code=409,
                     detail=(f"Agents {', '.join(running)} are still running — stop them "
                             "before rewinding."))
+            _team_names = getattr(_chat_agent, "live_team_names", None)
+            live_teams = _team_names(thread_id) if _team_names is not None else []
+            if live_teams:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"Team {', '.join(live_teams)} has not ended — disband it before "
+                            "rewinding."))
             live_task = await _live_task_in_span(thread, message_id)
             if live_task:
                 raise HTTPException(

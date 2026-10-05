@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from agentd.subagents.framing import frame
+from agentd.teams.adoption import evaluation_text
 from agentd.teams.models import LIVE_TEAM_PHASES, TeamActivity, TeamPost, TeamRecord
 from agentd.teams.store import TeamStore
 from agentd.teams.validation import (
@@ -273,6 +274,14 @@ class TeamService:
             team_id, author=author, kind="withdraw", text="", ref_id=proposal.proposal_id,
             round=team.round))
 
+    def open_proposal(self, team_id: str, raw: object) -> TeamPost:
+        """An open proposal on this board, or a TeamInputError saying why not."""
+        return self._open_proposal(team_id, raw)
+
+    def latest_evaluation(self, team_id: str) -> dict[str, Any] | None:
+        ended = [e for e in self._store.activity(team_id) if e.kind == "round_ended"]
+        return ended[-1].payload if ended else None
+
     def read(self, team_id: str, viewer: str, since_seq: int = 0) -> list[TeamPost]:
         return self._store.posts(team_id, since_seq=since_seq, viewer=viewer)
 
@@ -406,6 +415,10 @@ class TeamService:
         for p in open_ps:
             mine = "yours" if p.author == label else stances.get(p.seq, {}).get(label, "none")
             lines.append(f"- {p.proposal_id} by {p.author} — your stance: {mine}")
+        evaluation = self.latest_evaluation(team_id)
+        if evaluation is not None:
+            lines.append(f"last round ({evaluation.get('round')}): "
+                         f"{evaluation_text(evaluation)}")
         if member.assignment:
             lines.append(f"your assignment: {json.dumps(member.assignment)}")
         unread = self._store.posts(team_id, since_seq=member.delivered_seq, viewer=label)
@@ -449,4 +462,5 @@ class TeamService:
                  "stances": stances.get(p.seq, {})}
                 for p in self.open_proposals(team_id)],
             "usage": {"requests": team.requests, "budget": team.budget},
+            "evaluation": self.latest_evaluation(team_id),
         }

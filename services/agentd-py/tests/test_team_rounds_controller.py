@@ -136,3 +136,80 @@ async def test_deadline_forces_a_report(tmp_path, monkeypatch) -> None:
     alice_wrap = next(e for e in store.teams.activity(team_id)
                       if e.kind == "wrapped_up" and e.label == "alice")
     assert alice_wrap.payload["status"] == "partial"     # the forced-final report
+
+
+@pytest.mark.asyncio
+async def test_main_agent_adopts_from_deadlock(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    _no_notice_turns(ctrl, monkeypatch)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request(max_rounds=1)))["team_id"])
+    await _settle(ctrl)
+    assert store.teams.get_team(team_id).phase == "DEADLOCKED"
+    out = ctrl._adopt_proposal(tid, team_id, "P1")
+    assert out == {"team_id": team_id, "adopted": "P1", "phase": "DONE"}
+    from agentd.teams.validation import TeamInputError
+    with pytest.raises(TeamInputError):
+        ctrl._adopt_proposal(tid, team_id, "P1")          # the team has ended
+
+
+@pytest.mark.asyncio
+async def test_main_post_in_deadlock_runs_another_round(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    _no_notice_turns(ctrl, monkeypatch)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request(max_rounds=1)))["team_id"])
+    await _settle(ctrl)
+    source = ctrl._main_team_source(tid, "turn2")
+    out = await source.execute("post_board", {"team": "auth", "text": "@team settle on one plan"})
+    assert '"phase": "DELIBERATING"' in out.output
+    await _settle(ctrl)
+    rounds = [e.payload["round"] for e in store.teams.activity(team_id)
+              if e.kind == "round_started"]
+    assert rounds == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_status_and_live_progress(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    _no_notice_turns(ctrl, monkeypatch)
+    original = engine.create_controller_step
+
+    async def slow_bob(*args, **kwargs):  # type: ignore[no-untyped-def]
+        if getattr(kwargs.get("render_ctx"), "agent_label", "") == "bob":
+            await asyncio.sleep(5)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "create_controller_step", slow_bob)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request()))["team_id"])
+    for _ in range(50):
+        await asyncio.sleep(0.02)
+        live = ctrl.live_teams(tid)[0]
+        if live["round_progress"]["reported"]:
+            break
+    assert live["round_progress"] == {"round": 1, "members": ["alice", "bob"],
+                                      "reported": ["alice"]}
+    assert ctrl.live_team_names(tid) == ["auth"]
+    await ctrl.disband_team(tid, team_id)
+    await _settle(ctrl)
+    assert ctrl.live_team_names(tid) == []
+
+
+def test_status_text_names_the_last_evaluation(tmp_path) -> None:
+    import sqlite3
+    from datetime import UTC, datetime
+
+    from agentd.teams.models import TeamMember, TeamRecord
+    from agentd.teams.service import AgentInfo, TeamService
+    from agentd.teams.store import TeamStore
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    st = TeamStore(conn)
+    st.create_team(TeamRecord(team_id="team-1", thread_id="t", name="auth", goal="g",
+                              max_rounds=3, budget=1, created_turn_id="u",
+                              created_at=datetime.now(UTC)))
+    st.add_member(TeamMember(team_id="team-1", agent_id="a", label="alice"))
+    st.append_activity("team-1", label="team", kind="round_ended", payload={
+        "round": 1, "adopted": None,
+        "proposals": [{"id": "P1", "adopted": False, "reason": "bob has no stance"}]})
+    svc = TeamService(st, tmp_path, lambda _a: AgentInfo("gp", "", "idle"))
+    assert "last round (1): P1 not adopted: bob has no stance" in svc.status_text("team-1", "alice")
+    assert svc.summary("team-1")["evaluation"]["round"] == 1

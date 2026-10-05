@@ -108,7 +108,8 @@ async def test_main_tools_phase_refusals_and_status() -> None:
     ops = MainTeamOps(
         create=create, resolve=lambda t: "team-1",
         post=lambda tid, text, mentions: {"seq": 2},
-        status=lambda tid: {"team_id": tid, "phase": "DELIBERATING"}, disband=disband)
+        status=lambda tid: {"team_id": tid, "phase": "DELIBERATING"}, disband=disband,
+        adopt=lambda tid, pid: {"team_id": tid, "adopted": pid})
     source = MainTeamToolSource(_catalog(), ops, first_turn_team_ids={"team-1"})
     assert {d.name for d in source.definitions()} == MAIN_TOOL_NAMES
     adopt = await source.execute("adopt_proposal", {"team": "auth", "proposal_id": "P1"})

@@ -207,6 +207,26 @@ def _team_counts(posts: list[TeamPost], labels: list[str]) -> dict[str, object]:
     return {"posts": len(posts), "proposals": proposals}
 
 
+def _round_progress(team: TeamRecord, activity: list[TeamActivity]) -> dict[str, object] | None:
+    """The card's progress bar (spec 2026-10-05 §9): whom the round started and who has its
+    final report in. Changes only at activation boundaries, so it is safe in /live."""
+    if team.phase != "DELIBERATING":
+        return None
+    starts = [e for e in activity
+              if e.kind == "round_started" and e.payload.get("round") == team.round]
+    if not starts:
+        return None
+    start = starts[-1]
+    labels = [str(m.get("label")) for m in start.payload.get("members", [])
+              if isinstance(m, dict)]
+    last: dict[str, str] = {}
+    for e in activity:
+        if e.aseq > start.aseq and e.kind in ("wrapped_up", "requeued") and e.label in labels:
+            last[e.label] = e.kind
+    return {"round": team.round, "members": labels,
+            "reported": [lb for lb in labels if last.get(lb) == "wrapped_up"]}
+
+
 def _activation_stats(record: AgentRecord, posts: list[TeamPost]) -> dict[str, object]:
     """This activation's counts for its wrap-up row: tool calls since the last divider,
     and the member's posts / messages / stances since the activation started."""
@@ -1751,6 +1771,7 @@ class ChatController:
                             for m in members],
                 "latest": self._team_latest(team.team_id, posts),
                 "counts": _team_counts(posts, [m.label for m in members]),
+                "round_progress": _round_progress(team, self._store.teams.activity(team.team_id)),
             })
         return out
 
@@ -2429,14 +2450,36 @@ class ChatController:
 
         def post(team_id: str, text: str, mentions: object) -> dict[str, object]:
             p = teams.post(team_id, "main", text, mentions)
-            return {"seq": p.seq, "mentions": p.mentions}
+            after = self._store.teams.get_team(team_id)
+            return {"seq": p.seq, "mentions": p.mentions,
+                    "phase": after.phase if after is not None else "", 
+                    "round": after.round if after is not None else 0}
 
         return MainTeamToolSource(self._agent_catalog(), MainTeamOps(
             create=partial(self._create_team, thread_id, turn_id),
             resolve=partial(self._resolve_team, thread_id),
             post=post, status=teams.summary,
-            disband=partial(self.disband_team, thread_id)),
+            disband=partial(self.disband_team, thread_id),
+            adopt=partial(self._adopt_proposal, thread_id)),
             first_turn_team_ids=set())
+
+    def _adopt_proposal(self, thread_id: str, team_id: str, proposal_id: str) -> dict[str, object]:
+        """adopt_proposal (spec v2 §8.4): only for a DEADLOCKED team, only an open proposal."""
+        assert self._teams is not None
+        team = self._store.teams.get_team(team_id)
+        coordinator = self._coordinators.get(team_id)
+        if team is None or team.thread_id != thread_id or coordinator is None \
+                or coordinator.phase != "DEADLOCKED":
+            raise TeamInputError("adopt_proposal is only for a DEADLOCKED team")
+        proposal = self._teams.open_proposal(team_id, proposal_id)
+        coordinator.main_adopt(proposal.proposal_id)
+        after = self._store.teams.get_team(team_id)
+        return {"team_id": team_id, "adopted": proposal.proposal_id,
+                "phase": after.phase if after is not None else "DONE"}
+
+    def live_team_names(self, thread_id: str) -> list[str]:
+        """Teams that have not ended block a rewind (spec v2 §8.10)."""
+        return self._store.teams.live_team_names(thread_id)
 
     def _resolve_team(self, thread_id: str, ref: str) -> str:
         teams = self._store.teams.list_teams(thread_id)
