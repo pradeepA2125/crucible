@@ -60,6 +60,9 @@ if [[ -z "$TASK_ID" ]]; then
   exit 1
 fi
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_backend_auth.sh"
+BASE_URL="$(crucible_backend_url "$BASE_URL")"
+
 for cmd in curl jq rg; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Missing required command: $cmd" >&2
@@ -72,8 +75,8 @@ TASK_JSON="$OUT_DIR/task-$TASK_ID.json"
 RESULT_JSON="$OUT_DIR/result-$TASK_ID.json"
 LOG_SCAN_FILE="$OUT_DIR/logscan-$TASK_ID.txt"
 
-curl -sS "$BASE_URL/v1/tasks/$TASK_ID" >"$TASK_JSON"
-curl -sS "$BASE_URL/v1/tasks/$TASK_ID/result" >"$RESULT_JSON"
+curl -sS -H "$(crucible_auth_header "$BASE_URL")" "$BASE_URL/v1/tasks/$TASK_ID" >"$TASK_JSON"
+curl -sS -H "$(crucible_auth_header "$BASE_URL")" "$BASE_URL/v1/tasks/$TASK_ID/result" >"$RESULT_JSON"
 
 STATUS="$(jq -r '.status' "$RESULT_JSON")"
 MODIFIED_COUNT="$(jq -r '.modified_files | length' "$RESULT_JSON")"

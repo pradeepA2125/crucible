@@ -5,8 +5,12 @@ import os
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
-BASE_URL = os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8000")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _backend_auth import auth_headers, backend_url  # noqa: E402
+
+BASE_URL = backend_url(os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8000"))
 POLL_INTERVAL = 2.0
 TIMEOUT_SEC = 600.0  # 10 minutes for complex reasoning models
 
@@ -22,7 +26,7 @@ class E2EStressTest:
         print(f"Goal: {self.goal}")
         print(f"Target: {self.workspace_path}")
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(headers=auth_headers(BASE_URL), timeout=300.0) as client:
             # 1. Submission with retry on 429
             print("\n[Submission] POST /v1/tasks")
             for attempt in range(max_retries):

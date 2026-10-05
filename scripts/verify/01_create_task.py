@@ -4,8 +4,12 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
-BASE_URL = os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8000")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _backend_auth import auth_headers, backend_url  # noqa: E402
+
+BASE_URL = backend_url(os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8000"))
 POLL_INTERVAL = 2.0
 TIMEOUT_SEC = 300.0
 STATE_DIR = os.getenv("CRUCIBLE_VERIFY_STATE_DIR", os.path.join("/tmp", "crucible-verify-state"))
@@ -19,7 +23,7 @@ async def main():
     goal = sys.argv[1]
     workspace_path = sys.argv[2]
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(headers=auth_headers(BASE_URL), timeout=60.0) as client:
         print(f"\n🚀 Creating Task: {goal}")
         resp = await client.post(
             f"{BASE_URL}/v1/tasks",

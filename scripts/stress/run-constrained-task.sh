@@ -60,6 +60,9 @@ if [[ -z "$GOAL" ]]; then
   exit 1
 fi
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_backend_auth.sh"
+BASE_URL="$(crucible_backend_url "$BASE_URL")"
+
 for cmd in curl python3 jq; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Missing required command: $cmd" >&2
@@ -96,7 +99,7 @@ print(json.dumps(payload))
 PY
 )"
 
-curl -sS -X POST "$BASE_URL/v1/tasks" \
+curl -sS -X POST -H "$(crucible_auth_header "$BASE_URL")" "$BASE_URL/v1/tasks" \
   -H "content-type: application/json" \
   -d "$PAYLOAD" >"$CREATE_FILE"
 
@@ -112,7 +115,7 @@ echo "create_json=$CREATE_FILE"
 
 STATUS=""
 for attempt in $(seq 1 240); do
-  curl -sS "$BASE_URL/v1/tasks/$TASK_ID" >"$TASK_FILE"
+  curl -sS -H "$(crucible_auth_header "$BASE_URL")" "$BASE_URL/v1/tasks/$TASK_ID" >"$TASK_FILE"
   STATUS="$(jq -r '.status // empty' "$TASK_FILE")"
   echo "poll[$attempt] $TASK_ID => $STATUS"
   case "$STATUS" in
@@ -121,7 +124,7 @@ for attempt in $(seq 1 240); do
       ;;
     AWAITING_PLAN_APPROVAL)
       echo "  => auto-approving plan..."
-      curl -sS -X POST "$BASE_URL/v1/tasks/$TASK_ID/plan/feedback" \
+      curl -sS -X POST -H "$(crucible_auth_header "$BASE_URL")" "$BASE_URL/v1/tasks/$TASK_ID/plan/feedback" \
         -H "content-type: application/json" \
         -d '{"feedback": null}' >/dev/null
       ;;
@@ -129,10 +132,10 @@ for attempt in $(seq 1 240); do
   sleep 1
 done
 
-curl -sS "$BASE_URL/v1/tasks/$TASK_ID/result" >"$RESULT_FILE"
+curl -sS -H "$(crucible_auth_header "$BASE_URL")" "$BASE_URL/v1/tasks/$TASK_ID/result" >"$RESULT_FILE"
 
 if [[ "$STATUS" == "READY_FOR_REVIEW" && "$AUTO_ACCEPT" == "1" ]]; then
-  curl -sS -X POST "$BASE_URL/v1/tasks/$TASK_ID/accept" >"$FINAL_FILE"
+  curl -sS -X POST -H "$(crucible_auth_header "$BASE_URL")" "$BASE_URL/v1/tasks/$TASK_ID/accept" >"$FINAL_FILE"
 else
   cp "$RESULT_FILE" "$FINAL_FILE"
 fi

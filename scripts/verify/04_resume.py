@@ -18,8 +18,12 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 
-BASE_URL = os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8000")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _backend_auth import auth_headers, backend_url  # noqa: E402
+
+BASE_URL = backend_url(os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8000"))
 POLL_INTERVAL = 2.0
 TIMEOUT_SEC = 120.0
 STATE_DIR = os.getenv("CRUCIBLE_VERIFY_STATE_DIR", os.path.join("/tmp", "crucible-verify-state"))
@@ -113,7 +117,7 @@ async def main() -> None:
 
     print(f"\n🔁 Resume Verification  stage={stage}  parent={parent_id}")
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(headers=auth_headers(BASE_URL), timeout=60.0) as client:
         # --- Step 1: ensure parent is in a resumable terminal state ---
         print(f"\n⚙️  Ensuring parent task is in a terminal state…")
         terminal_status = await ensure_terminal(client, parent_id)

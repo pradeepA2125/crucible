@@ -35,6 +35,9 @@ import threading
 import time
 
 import httpx
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _backend_auth import auth_headers, backend_url  # noqa: E402
 
 DOC_REQUEST = (
     "Update docs/notes/python-latest.md: add a one-line note at the bottom "
@@ -57,7 +60,7 @@ def _drive_message(base_url: str, thread_id: str, content: str) -> threading.Thr
                 "POST",
                 f"{base_url}/v1/chat/threads/{thread_id}/message",
                 json={"content": content},
-                headers={"Accept": "text/event-stream"},
+                headers={**auth_headers(base_url), "Accept": "text/event-stream"},
                 timeout=TURN_TIMEOUT_SEC,
             ) as resp:
                 for _ in resp.iter_lines():
@@ -79,7 +82,7 @@ def _resolve_mode(base_url: str, thread_id: str, mode: str) -> threading.Thread:
                 "POST",
                 f"{base_url}/v1/chat/threads/{thread_id}/mode-decision",
                 json={"mode": mode},
-                headers={"Accept": "text/event-stream"},
+                headers={**auth_headers(base_url), "Accept": "text/event-stream"},
                 timeout=TURN_TIMEOUT_SEC,
             ) as resp:
                 for _ in resp.iter_lines():
@@ -190,11 +193,12 @@ def eval_direction_b(client: httpx.Client, base_url: str, workspace: str) -> lis
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--base-url", default="http://localhost:8002")
+    ap.add_argument("--base-url", default="http://127.0.0.1:8002")
     ap.add_argument("--workspace", required=True)
     args = ap.parse_args()
 
-    client = httpx.Client(timeout=15.0)
+    args.base_url = backend_url(args.base_url)
+    client = httpx.Client(timeout=15.0, headers=auth_headers(args.base_url))
     health = client.get(f"{args.base_url}/health")
     cfg = json.loads(client.get(f"{args.base_url}/v1/config").text, strict=False)
     if health.status_code != 200 or not cfg.get("skills_enabled"):

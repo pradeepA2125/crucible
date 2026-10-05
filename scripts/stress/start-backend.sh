@@ -11,7 +11,7 @@ Usage:
 Defaults:
   workspace:    repository root
   port:         8000
-  out-dir:      <repo>/.tmp/stress-<timestamp>  (uvicorn stdout log only)
+  out-dir:      <repo>/.tmp/stress-<timestamp>  (backend stdout log only)
   backend:      auto-detected from available provider keys
   model:        provider-specific default
   artifacts:    <workspace>/.crucible/state/artifacts
@@ -462,24 +462,28 @@ echo "uvicorn_log=$LOG_FILE"
       ;;
   esac
 
-  # Run uvicorn directly from the venv WITHOUT activating it. Activation
+  # Run the backend directly from the venv WITHOUT activating it. Activation
   # prepends .venv/bin to PATH and that PATH is inherited by every child
   # subprocess (incl. agent's run_command), causing the agent to silently use
   # the backend's pytest/ruff/mypy instead of the workspace's. Bypass that.
-  ./.venv/bin/uvicorn agentd.main:app --port "$PORT" --reload 2>&1 | tee "$LOG_FILE"
+  # agentd.serve binds 127.0.0.1 first, then writes ~/.crucible/run/agentd-$PORT.token.
+  ./.venv/bin/python -m agentd.serve --port "$PORT" --reload 2>&1 | tee "$LOG_FILE"
 ) &
 _SERVER_PID=$!
 
 # Wait for backend to become healthy.
-_health_url="http://localhost:${PORT}/health"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_backend_auth.sh"
+_base="http://127.0.0.1:${PORT}"
 echo "==> waiting for backend on port $PORT ..."
 for _i in $(seq 1 60); do
-  if curl -sf "$_health_url" >/dev/null 2>&1; then
+  # The token file appears just after bind; the helper also verifies /health's proof,
+  # re-reading the token on each iteration.
+  if crucible_auth_header "$_base" >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-if ! curl -sf "$_health_url" >/dev/null 2>&1; then
+if ! crucible_auth_header "$_base" >/dev/null; then
   echo "Backend did not become healthy within 60 s" >&2
   kill "$_SERVER_PID" 2>/dev/null || true
   exit 1
@@ -489,17 +493,18 @@ echo "==> backend healthy"
 # Pre-warm the semantic index synchronously — no task can be submitted until
 # this completes, so the first task is guaranteed to have a warm index.
 if [[ "${CRUCIBLE_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ ]]; then
-  _build_url="http://localhost:${PORT}/v1/index/build"
-  _status_url="http://localhost:${PORT}/v1/index/status"
+  _build_url="$_base/v1/index/build"
+  _status_url="$_base/v1/index/status"
   echo "==> semantic index pre-warm: triggering build for $WORKSPACE ..."
   if ! curl -sf -X POST "$_build_url" \
+      -H "$(crucible_auth_header "$_base")" \
       -H "Content-Type: application/json" \
       -d "{\"workspace_path\": \"$WORKSPACE\"}" >/dev/null; then
     echo "==> semantic index pre-warm: trigger failed (non-fatal, check backend log)" >&2
   else
     echo "==> semantic index pre-warm: waiting for completion ..."
     for _j in $(seq 1 120); do
-      _building=$(curl -sf "$_status_url" \
+      _building=$(curl -sf -H "$(crucible_auth_header "$_base")" "$_status_url" \
         | python3 -c "import sys,json; print(json.load(sys.stdin).get('building', True))" 2>/dev/null \
         || echo "True")
       if [[ "$_building" == "False" ]]; then
@@ -556,7 +561,7 @@ if [[ "${CRUCIBLE_SEMANTIC_RETRIEVAL:-}" =~ ^(1|true|yes|on)$ && -x "$_INDEXER_B
     kill $_STALE_WATCHERS 2>/dev/null || true
     sleep 1
   fi
-  CRUCIBLE_BACKEND_URL="http://localhost:${PORT}" \
+  CRUCIBLE_BACKEND_URL="$_base" \
     CRUCIBLE_LSP_ENABLED="${CRUCIBLE_LSP_ENABLED:-true}" \
     CRUCIBLE_LSP_PY_CMD="${CRUCIBLE_LSP_PY_CMD:-pyright-langserver --stdio}" \
     CRUCIBLE_LSP_TS_CMD="${CRUCIBLE_LSP_TS_CMD:-typescript-language-server --stdio}" \

@@ -199,7 +199,7 @@ if [[ "$BACKEND" == "gemini" ]]; then
     CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH" \
     CRUCIBLE_ARTIFACTS_ROOT="$ARTIFACTS_ROOT" \
     CRUCIBLE_VALIDATION_COMMANDS_JSON='[{"stage":"syntax","name":"smoke-pass","command":"true"}]' \
-    "$AGENTD_PYTHON" -m uvicorn agentd.main:app --port "$PORT"
+    "$AGENTD_PYTHON" -m agentd.serve --port "$PORT"
   ) >"$AGENTD_LOG" 2>&1 &
 else
   (
@@ -210,15 +210,18 @@ else
     CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH="$SNAPSHOT_PATH" \
     CRUCIBLE_ARTIFACTS_ROOT="$ARTIFACTS_ROOT" \
     CRUCIBLE_VALIDATION_COMMANDS_JSON='[{"stage":"syntax","name":"smoke-pass","command":"true"}]' \
-    "$AGENTD_PYTHON" -m uvicorn agentd.main:app --port "$PORT"
+    "$AGENTD_PYTHON" -m agentd.serve --port "$PORT"
   ) >"$AGENTD_LOG" 2>&1 &
 fi
 AGENT_PID="$!"
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_backend_auth.sh"
+BASE="http://127.0.0.1:${PORT}"
 echo "==> Waiting for backend health"
 READY="0"
 for _ in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+  # The token file appears just after bind; the helper also verifies /health's proof.
+  if crucible_auth_header "$BASE" >/dev/null 2>&1; then
     READY="1"
     break
   fi
@@ -238,7 +241,7 @@ print(json.dumps(os.environ["E2E_GOAL"]))
 PY
 )"
 TASK_RESPONSE="$(
-curl -fsS -X POST "http://127.0.0.1:${PORT}/v1/tasks" \
+curl -fsS -X POST -H "$(crucible_auth_header "$BASE")" "$BASE/v1/tasks" \
   -H 'content-type: application/json' \
   --data-binary @- <<EOF
 {"goal":$GOAL_JSON,"workspace_path":"$WORKSPACE","mode":"project_edit"}
@@ -249,7 +252,7 @@ echo "==> Task ID: $TASK_ID"
 
 STATUS=""
 for attempt in $(seq 1 120); do
-  TASK_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/v1/tasks/${TASK_ID}")"
+  TASK_JSON="$(curl -fsS -H "$(crucible_auth_header "$BASE")" "$BASE/v1/tasks/${TASK_ID}")"
   STATUS="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$TASK_JSON")"
   echo "    poll[$attempt]: $STATUS"
   case "$STATUS" in
@@ -260,11 +263,11 @@ for attempt in $(seq 1 120); do
   sleep 0.25
 done
 
-curl -fsS "http://127.0.0.1:${PORT}/v1/tasks/${TASK_ID}/result" >"$RESULT_JSON"
+curl -fsS -H "$(crucible_auth_header "$BASE")" "$BASE/v1/tasks/${TASK_ID}/result" >"$RESULT_JSON"
 
 if [[ "$STATUS" == "READY_FOR_REVIEW" ]]; then
   echo "==> Accepting patch"
-  curl -fsS -X POST "http://127.0.0.1:${PORT}/v1/tasks/${TASK_ID}/accept" >"$FINAL_JSON"
+  curl -fsS -X POST -H "$(crucible_auth_header "$BASE")" "$BASE/v1/tasks/${TASK_ID}/accept" >"$FINAL_JSON"
 else
   cp "$RESULT_JSON" "$FINAL_JSON"
 fi

@@ -40,8 +40,11 @@ import sys
 import time
 
 import httpx
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _backend_auth import auth_headers, backend_url  # noqa: E402
 
-BASE = os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8001")
+BASE = backend_url(os.getenv("AGENTD_BASE_URL", "http://127.0.0.1:8001"))
 
 # A message that reliably costs a few seconds of exploration (tool calls), widening
 # the window in which a turn is observably in-flight. It must NOT be so trivial that
@@ -540,7 +543,7 @@ async def main() -> int:
 
     print(f"\n🔌 Controller UX smoke against {BASE}")
     print(f"   workspace: {workspace}\n")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(200.0)) as client:
+    async with httpx.AsyncClient(headers=auth_headers(BASE), timeout=httpx.Timeout(200.0)) as client:
         try:
             await client.get(f"{BASE}/health")
         except httpx.ConnectError:

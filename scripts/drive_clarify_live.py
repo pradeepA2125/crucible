@@ -11,8 +11,11 @@ import json
 import sys
 import time
 import urllib.request
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[0]))
+from _backend_auth import auth_headers, backend_url  # noqa: E402
 
-BASE = "http://localhost:8000"
+BASE = backend_url("http://127.0.0.1:8000")
 WS = "/Users/pradeepkumar/projects/AI editor/workspaces/crucible-stress"
 PROMPT = ("There are two tax modules in src/ that both define a with_tax function: src/tax.py "
           "and src/taxutil.py. I want to add an upper-bound rate check to with_tax, but only in "
@@ -23,12 +26,13 @@ PROMPT = ("There are two tax modules in src/ that both define a with_tax functio
 def _post(path, body, stream=False, timeout=240):
     req = urllib.request.Request(
         BASE + path, data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"}, method="POST")
+        headers={**auth_headers(BASE), "content-type": "application/json"}, method="POST")
     return urllib.request.urlopen(req, timeout=timeout)
 
 
 def _get(path, timeout=10):
-    with urllib.request.urlopen(BASE + path, timeout=timeout) as r:
+    req = urllib.request.Request(BASE + path, headers=auth_headers(BASE))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
 

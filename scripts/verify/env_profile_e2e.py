@@ -31,6 +31,9 @@ from collections import Counter
 from typing import Any
 
 import httpx
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _backend_auth import auth_headers, backend_url  # noqa: E402
 
 DEFAULT_BACKEND = "http://localhost:8000"
 ENV_PROFILE_EVENTS = {
@@ -268,7 +271,8 @@ async def main() -> int:
     ap.add_argument("--timeout-sec", type=int, default=1800)
     args = ap.parse_args()
 
-    async with httpx.AsyncClient(base_url=args.backend) as client:
+    backend = backend_url(args.backend)
+    async with httpx.AsyncClient(base_url=backend, headers=auth_headers(backend)) as client:
         # Health check
         try:
             health = await client.get("/health", timeout=3)
