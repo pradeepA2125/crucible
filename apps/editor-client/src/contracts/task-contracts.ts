@@ -383,6 +383,10 @@ export const TeamLiveSchema = z.object({
     proposals: z.array(z.object({ id: z.string(), agree: z.number(), object: z.number(),
                                   pending: z.number() })),
   }).default({ posts: 0, proposals: [] }),
+  // Who the current round started and who has its final report in (spec 2026-10-05 §9).
+  roundProgress: z.object({
+    round: z.number(), members: z.array(z.string()), reported: z.array(z.string()),
+  }).nullable().default(null),
 });
 export type TeamLive = z.infer<typeof TeamLiveSchema>;
 

@@ -59,4 +59,19 @@ describe("team activity contracts", () => {
     expect(team.latest).toMatchObject({ kind: "post", label: "bob" });
     expect(team.counts.proposals[0]).toEqual({ id: "P1", agree: 1, object: 0, pending: 1 });
   });
+
+  it("maps /live round_progress, null when absent", async () => {
+    const live = (teams: unknown[]) => new HttpBackendClient({ baseUrl: "http://x",
+      fetchFn: vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+        active_task_id: null, status: null, pending_gates: [], plan: null, teams }) }) });
+    const base = { team_id: "team-1", name: "auth", phase: "DELIBERATING", round: 2,
+      max_rounds: 3, paused_reason: null, members: [] };
+    const withProgress = await live([{ ...base,
+      round_progress: { round: 2, members: ["alice", "bob"], reported: ["alice"] } }])
+      .getThreadLiveState("t");
+    expect(withProgress.teams![0].roundProgress).toEqual(
+      { round: 2, members: ["alice", "bob"], reported: ["alice"] });
+    const without = await live([base]).getThreadLiveState("t");
+    expect(without.teams![0].roundProgress).toBeNull();
+  });
 });

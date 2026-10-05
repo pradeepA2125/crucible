@@ -738,6 +738,7 @@ export class HttpBackendClient implements BackendTaskClient {
     const members = Array.isArray(t["members"]) ? t["members"] as Record<string, unknown>[] : [];
     const latest = t["latest"] as Record<string, unknown> | null | undefined;
     const counts = t["counts"] as Record<string, unknown> | undefined;
+    const rp = t["round_progress"] as Record<string, unknown> | null | undefined;
     return {
       ...HttpBackendClient.toTeamCore(t),
       members: members.map((m) => {
@@ -753,6 +754,8 @@ export class HttpBackendClient implements BackendTaskClient {
       }),
       latest: latest ?? null,
       counts: counts ?? { posts: 0, proposals: [] },
+      roundProgress: rp ? { round: rp["round"], members: rp["members"] ?? [],
+                            reported: rp["reported"] ?? [] } : null,
     };
   }
 
