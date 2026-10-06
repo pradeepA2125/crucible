@@ -24,6 +24,7 @@ from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.providers.availability import ProviderUnavailable, is_provider_unavailable
+from agentd.providers.plan_access import find_access_stop
 from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.reasoning.react_common import (
     accepts_kwarg,
@@ -1317,6 +1318,13 @@ class ControllerLoop:
                 retry_unconstrained = False   # one call only, always
                 unavailable_retries = 0
             except Exception as exc:
+                # A plan usage limit, an ineligible account or a dead sign-in: neither a
+                # retry nor a correction message can fix it, so the turn ends here.
+                stopped = find_access_stop(exc)
+                if stopped is exc:
+                    raise
+                if stopped is not None:
+                    raise stopped from exc
                 if is_provider_unavailable(exc):
                     if unavailable_retries < len(PROVIDER_RETRY_BACKOFFS_SEC):
                         delay = PROVIDER_RETRY_BACKOFFS_SEC[unavailable_retries]

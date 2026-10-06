@@ -94,6 +94,13 @@ class BudgetExhausted:
 
 
 @dataclass(frozen=True)
+class ProviderStopped:
+    """The provider refused on account grounds (e.g. a ChatGPT plan usage limit).
+    Every member would hit the same wall, so the team pauses until the user resumes."""
+    kind: str
+
+
+@dataclass(frozen=True)
 class Stuck:
     idle: tuple[tuple[str, str], ...]   # (label, last status) of each idle member
 
@@ -124,7 +131,8 @@ class ReviewEvaluated:
 
 
 Event = (Kickoff | MemberReported | RoundEvaluated | MainAdopt | MainPost | Disband | Approval
-         | BudgetExhausted | Stuck | MainResume | Revive | ReviewStarted | ReviewEvaluated)
+         | BudgetExhausted | ProviderStopped | Stuck | MainResume | Revive | ReviewStarted
+         | ReviewEvaluated)
 
 
 # ── actions ──────────────────────────────────────────────────────────────────
@@ -486,6 +494,10 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
         if s.phase == "PAUSED":
             return s, []
         return s, _pause(s, "budget")
+    if isinstance(event, ProviderStopped):
+        if s.phase not in LIVE_PHASES or s.phase == "PAUSED":
+            return s, []
+        return s, _pause(s, f"provider {event.kind}")
     if isinstance(event, Stuck):
         if s.phase != "IMPLEMENTING":
             return s, []

@@ -35,7 +35,13 @@ MODEL_ENV_VAR: dict[str, str] = {
     "turboquant": "CRUCIBLE_TURBOQUANT_MODEL",
     "openai": "CRUCIBLE_OPENAI_MODEL",
     "openai_compatible": "CRUCIBLE_OPENAI_COMPAT_MODEL",
+    "chatgpt": "CRUCIBLE_CHATGPT_MODEL",
 }
+
+# Which ChatGPT sign-in a `chatgpt` transport uses. Passed like a credential (env at
+# spawn, `credentials` on validate/hot-swap) but it is an id, not a secret: the tokens
+# themselves stay in the credential store and never enter any environment.
+CHATGPT_REGISTRATION_ENV = "CRUCIBLE_CHATGPT_REGISTRATION"
 
 # Structured-output modes accepted for the openai_compatible backend.
 # "strict"      — probe json_schema, sticky-downgrade to json_object on a probative
@@ -65,6 +71,13 @@ PROVIDER_KEY_ENV: dict[str, str] = {
 
 
 def default_model(backend: str) -> str:
+    if backend == "chatgpt":
+        # The account's own catalog is the only source: a guessed slug would fail as
+        # "unsupported capability" on accounts that don't have it.
+        raise ValueError(
+            "chatgpt has no default model — pick one from the signed-in account's "
+            "catalog (CRUCIBLE_CHATGPT_MODEL)"
+        )
     if backend == "openai_compatible":
         # Deliberately no _DEFAULT_MODEL entry: the endpoint is user-supplied, so
         # any guess would 404 at the vendor with a confusing message instead of
@@ -233,6 +246,27 @@ def _build_raw_transport(
         from agentd.providers.openai_transport import OpenAIJsonTransport
 
         return OpenAIJsonTransport(api_key=env.get("OPENAI_API_KEY"))
+    if backend == "chatgpt":
+        from agentd.chatgpt_auth.service import chatgpt_auth_service
+        from agentd.providers.openai_transport import OpenAIJsonTransport
+
+        registration_id = env.get(CHATGPT_REGISTRATION_ENV)
+        if not registration_id:
+            msg = "Not signed in with ChatGPT — choose Continue with ChatGPT in Crucible settings"
+            raise RuntimeError(msg)
+        service = chatgpt_auth_service()
+        try:
+            bearer = service.bearer(registration_id)
+        except KeyError:
+            msg = "That ChatGPT sign-in no longer exists on this machine — sign in again"
+            raise RuntimeError(msg) from None
+        return OpenAIJsonTransport(
+            bearer=bearer,
+            plan_route=True,
+            timeout_sec=_float_env(env, "CRUCIBLE_CHATGPT_TIMEOUT_SEC", 120.0),
+            stream_timeout_sec=_float_env(env, "CRUCIBLE_CHATGPT_STREAM_TIMEOUT_SEC", 600.0),
+            max_retries=_int_env(env, "CRUCIBLE_CHATGPT_MAX_RETRIES", 4),
+        )
     if backend == "openai_compatible":
         from agentd.providers.openai_compatible_transport import (
             OpenAICompatibleTransport,

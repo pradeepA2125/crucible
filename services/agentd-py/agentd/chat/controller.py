@@ -68,6 +68,12 @@ from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
+from agentd.providers.plan_access import (
+    ProviderAccessStopped,
+    access_payload,
+    describe_access_stop,
+    find_access_stop,
+)
 from agentd.providers.rate_limit import CALL_PRIORITY
 from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.runtime.artifacts import chat_turn_artifacts_root
@@ -450,6 +456,8 @@ class ChatController:
         # The turn whose dispatch tree /live reports (spec §11.1) — registered for exactly
         # loop.run's lifetime, like _active_loops.
         self._live_turns: dict[str, str] = {}
+        # thread_id → why its last turn stopped on provider access (see provider_access).
+        self._provider_access: dict[str, dict[str, object]] = {}
         # (thread_id, waiter) -> the agents that waiter's wait_agents is blocked on. A
         # finished agent's report goes to the wait or to the dispatcher's inbox, never both
         # (spec §4.2). The thread is in the key: every thread's main agent is "main".
@@ -940,6 +948,7 @@ class ChatController:
         max_iters = int(os.environ.get("CRUCIBLE_CONTROLLER_MAX_ITERS", "500"))
         # Reachable by the mid-turn durable writers for exactly the loop's lifetime.
         self._active_loops[thread_id] = loop
+        self._provider_access.pop(thread_id, None)  # a new turn: the last stop is history
         if turn_id:
             self._live_turns[thread_id] = turn_id
         # Same lifetime, for the same reason: /review-pref reaches in here mid-turn.
@@ -1003,8 +1012,17 @@ class ChatController:
             # instead of inventing a new outcome kind every caller/frontend would need to
             # learn. Same partial-state persistence as the cancellation branch, but no
             # re-raise — the turn ends cleanly with a visible, actionable message.
-            logger.exception(
-                "[controller] turn failed with an unhandled exception (thread=%s)", thread_id)
+            stopped = find_access_stop(exc)
+            if stopped is None:
+                logger.exception(
+                    "[controller] turn failed with an unhandled exception (thread=%s)",
+                    thread_id)
+            else:
+                # Not a crash: the account's plan access stopped inference. The card on
+                # /live carries the action (Manage usage / Sign in again / API key).
+                logger.warning("[controller] turn stopped on provider access (thread=%s): "
+                               "%s %s", thread_id, stopped.kind, stopped.code)
+                self._provider_access[thread_id] = access_payload(stopped)
             partial_hist = loop.partial_history()
             if partial_hist:
                 self._histories[thread_id] = partial_hist
@@ -1015,7 +1033,8 @@ class ChatController:
                 thread_id, ledger.to_json() if ledger.items else None)
             outcome = ControllerOutcome(
                 kind="answer",
-                text=f"⚠️ The turn failed and had to stop: {exc}",
+                text=(f"⚠️ {describe_access_stop(stopped)}" if stopped is not None
+                      else f"⚠️ The turn failed and had to stop: {exc}"),
                 history=partial_hist,
             )
         finally:
@@ -1860,6 +1879,10 @@ class ChatController:
                 "last_seq": max((p.seq for p in posts), default=0),
                 "activity": [e.model_dump(mode="json") for e in activity],
                 "last_aseq": max((e.aseq for e in activity), default=0),}
+
+    def provider_access(self, thread_id: str) -> dict[str, object] | None:
+        """Why this thread's last turn stopped on provider access, for /live's cards."""
+        return self._provider_access.get(thread_id)
 
     def live_agents(self, thread_id: str) -> list[dict[str, object]]:
         """/live's roster (spec §6): agents that are live, or that ended since the user's
@@ -3320,6 +3343,22 @@ class ChatController:
                 if stopped is not None:
                     self._team_member_reported(stopped, handle.result, handle.stop_reason)
             raise
+        except ProviderAccessStopped as exc:
+            # Account-level refusal (ChatGPT plan usage limit, ended sign-in): a team
+            # pauses first, so the failed_transient report below re-queues nothing; a
+            # plain child fails and its dispatcher meets the same stop on its next call.
+            logger.warning("[subagent] provider access stopped id=%s: %s %s",
+                           ctx.agent_id, exc.kind, exc.code)
+            self._store.set_agent_history(ctx.agent_id, loop.partial_history())
+            if membership is not None:
+                coordinator = self._coordinators.get(membership.team_id)
+                if coordinator is not None:
+                    coordinator.provider_stopped(exc.kind)
+                status = "failed_transient"
+            else:
+                status = "failed"
+            report = loop.fallback_report(describe_access_stop(exc), subtree_files(),
+                                          status=status)
         except ProviderUnavailable as exc:
             logger.warning("[subagent] provider unavailable id=%s: %s", ctx.agent_id, exc)
             status = "failed_transient"

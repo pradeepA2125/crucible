@@ -251,7 +251,10 @@ _chat_workspace_path = os.getenv("CRUCIBLE_WORKSPACE_PATH", str(Path.cwd()))
 from agentd.providers.factory import MODEL_ENV_VAR
 
 _chat_model = os.getenv(
-    MODEL_ENV_VAR.get(reasoning_backend, "CRUCIBLE_OPENAI_MODEL"), "gpt-4o"
+    MODEL_ENV_VAR.get(reasoning_backend, "CRUCIBLE_OPENAI_MODEL"),
+    # A ChatGPT plan's models come only from the signed-in account's catalog; a guessed
+    # name would fail as an unsupported capability. Empty until one is picked.
+    "" if reasoning_backend == "chatgpt" else "gpt-4o",
 )
 # Within-run compaction for task ToolLoop steps (no-op unless CRUCIBLE_MEMORY_ENABLED;
 # scripted backend has no transport). Disjoint run_id namespace (task_id) from the chat
@@ -407,6 +410,22 @@ app.include_router(
 app.include_router(build_agents_router(
     workspace=_chat_workspace_path,
     mcp_server_names=lambda: [s.name for s in _mcp_manager.statuses()] if _mcp_manager else []))
+# Sign in with ChatGPT (spec 2026-10-06). The service is lazy: no network, no files
+# touched until a sign-in or a `chatgpt` transport first needs it.
+from agentd.api.chatgpt_auth_routes import build_chatgpt_auth_router  # noqa: E402
+from agentd.chatgpt_auth.service import chatgpt_auth_service  # noqa: E402
+
+app.include_router(build_chatgpt_auth_router(chatgpt_auth_service))
+
+
+async def _close_chatgpt_auth() -> None:
+    from agentd.chatgpt_auth import service as _svc
+
+    if _svc._SERVICE is not None:  # never construct it just to close it
+        await _svc._SERVICE.aclose()
+
+
+app.router.add_event_handler("shutdown", _close_chatgpt_auth)
 install_auth(app, AUTH_STATE)
 
 

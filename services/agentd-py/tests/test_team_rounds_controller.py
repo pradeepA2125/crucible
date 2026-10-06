@@ -214,3 +214,28 @@ def test_status_text_names_the_last_evaluation(tmp_path) -> None:
     svc = TeamService(st, tmp_path, lambda _a: AgentInfo("gp", "", "idle"))
     assert "last round (1): P1 not adopted: bob has no stance" in svc.status_text("team-1", "alice")
     assert svc.summary("team-1")["evaluation"]["round"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_plan_usage_limit_pauses_the_team_without_requeueing(
+        tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from agentd.providers.plan_access import PlanUsageLimitReached
+
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    _no_notice_turns(ctrl, monkeypatch)
+    calls = 0
+
+    async def limited(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        raise PlanUsageLimitReached("limit", code="subscription_sharing_usage_limit_exceeded",
+                                    status=429)
+
+    monkeypatch.setattr(engine, "create_controller_step", limited)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request()))["team_id"])
+    await _settle(ctrl)
+    team = store.teams.get_team(team_id)
+    assert (team.phase, team.paused_reason) == ("PAUSED", "provider usage_limit")
+    assert calls == 2                                  # one call per member, no re-queue
+    assert all(store.teams.member(team_id, lb).in_quorum for lb in ("alice", "bob"))
+    assert not [e for e in store.teams.activity(team_id) if e.kind == "requeued"]

@@ -92,6 +92,7 @@ def test_put_route_and_config_report(
     assert client.get("/v1/config").json()["provider"] == {
         "backend": "groq",
         "model": "m2",
+        "uses_chatgpt_plan": False,
         "context_window": None,
         "reasoning_effort": None,
         "reasoning_effort_support": {"supported": [], "unsupported": {}},
@@ -246,6 +247,7 @@ def test_config_reports_the_effective_context_window(tmp_path: Path) -> None:
     assert payload["provider"] == {
         "backend": "openai",
         "model": "gpt-5",
+        "uses_chatgpt_plan": False,
         "context_window": 200_000,
         "reasoning_effort": None,
         "reasoning_effort_support": {"supported": [], "unsupported": {}},

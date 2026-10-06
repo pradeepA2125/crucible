@@ -304,6 +304,10 @@ class ThreadLiveState(BaseModel):
     # Live teams in the thread (spec v2 §9): slow-changing fields only, so the /live dedup
     # signature does not churn. None when there are none (or teams are off).
     teams: list[dict[str, Any]] | None = None
+    # Why the thread's last turn stopped on the provider's access rules (ChatGPT plan
+    # usage limit, ineligible account, ended sign-in): {kind, message, code, status,
+    # request_id}. Cleared when the next turn starts. None otherwise.
+    provider_access: dict[str, Any] | None = None
 
 
 class ChatCommandDecisionRequest(CommandDecision):

@@ -165,6 +165,12 @@ class TeamCoordinator:
             self._trace.write("budget", used=used, budget=team.budget)
             self._apply(sm.BudgetExhausted())
 
+    def provider_stopped(self, kind: str) -> None:
+        """A member's call was refused on account grounds (spec 2026-10-06 §5.4): pause
+        rather than re-queue, since every member would hit the same limit."""
+        self._trace.write("provider_stopped", access=kind)
+        self._apply(sm.ProviderStopped(kind))
+
     def resume(self, extra_budget: int) -> None:
         team = self._team()
         self._store.update_team(self._team_id, budget=team.budget + extra_budget)

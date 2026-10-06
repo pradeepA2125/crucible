@@ -285,6 +285,8 @@ def build_router(
                 {
                     "backend": provider_runtime.backend,  # type: ignore[attr-defined]
                     "model": provider_runtime.model,  # type: ignore[attr-defined]
+                    # Drives the composer's "Using ChatGPT plan" label (UI/UX guidelines).
+                    "uses_chatgpt_plan": provider_runtime.backend == "chatgpt",  # type: ignore[attr-defined]
                     # The effective window — seeded from CRUCIBLE_MEMORY_WINDOW_TOKENS
                     # at startup, overwritten by a settings-panel save. The panel
                     # pre-fills its field from this, so what it shows is what the
@@ -1501,6 +1503,9 @@ def build_router(
             _count_live = getattr(_chat_agent._store, "count_live_agents", None)
             if _count_live is not None:
                 live.agents_running = _count_live(thread_id)
+            _provider_access = getattr(_chat_agent, "provider_access", None)
+            if _provider_access is not None:
+                live.provider_access = _provider_access(thread_id)
             live.message_count = len(thread.messages)
             return live.model_dump()
 

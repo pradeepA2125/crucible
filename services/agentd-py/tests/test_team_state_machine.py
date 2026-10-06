@@ -22,6 +22,7 @@ from agentd.teams.state_machine import (
     MemberState,
     Milestone,
     OpenReview,
+    ProviderStopped,
     RaisePlanGate,
     Requeue,
     ResumeMembers,
@@ -430,3 +431,17 @@ def test_revive_from_review_reopens_it() -> None:
     failed.review_cycle = 1
     s, actions = apply(failed, Revive("REVIEWING"))
     assert actions == [OpenReview(1)] and s.phase == "REVIEWING"
+
+
+def test_a_provider_access_stop_pauses_instead_of_requeueing() -> None:
+    s = _adopted(_state())
+    s, actions = apply(s, ProviderStopped("usage_limit"))
+    assert actions == [CancelTimers(), EnterPhase("PAUSED", 1, "provider usage_limit"),
+                       Milestone("paused", {"reason": "provider usage_limit",
+                                            "paused_from": "IMPLEMENTING"})]
+    s, actions = apply(s, MemberReported("alice", "failed_transient"))
+    assert actions == [] and not s.members["alice"].done          # no re-queue; still owes
+    s, actions = apply(s, ProviderStopped("usage_limit"))
+    assert actions == []                                          # already paused
+    s, actions = apply(s, MainResume())
+    assert actions == [EnterPhase("IMPLEMENTING", 1, "resumed"), ResumeMembers(("alice", "bob"))]
