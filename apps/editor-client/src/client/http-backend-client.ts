@@ -768,6 +768,7 @@ export class HttpBackendClient implements BackendTaskClient {
             kind: last["kind"], at: last["at"], causeSeq: last["cause_seq"] ?? null,
             by: last["by"] ?? null, status: last["status"] ?? null,
             activation: last["activation"] ?? null,
+            waitingOn: last["waiting_on"] ?? [],
           } : null,
         };
       }),

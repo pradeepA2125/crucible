@@ -54,7 +54,7 @@ describe("team activity contracts", () => {
     }) });
     const team = (await c.getThreadLiveState("t")).teams![0];
     expect(team.members[0].last).toEqual({ kind: "wrapped_up", at: "2026-10-05T11:45:00+00:00",
-      causeSeq: null, by: null, status: "completed", activation: 1 });
+      causeSeq: null, by: null, status: "completed", activation: 1, waitingOn: [] });
     expect(team.members[1].last).toBeNull();
     expect(team.latest).toMatchObject({ kind: "post", label: "bob" });
     expect(team.counts.proposals[0]).toEqual({ id: "P1", agree: 1, object: 0, pending: 1 });

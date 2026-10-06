@@ -255,6 +255,7 @@ export interface TeamMemberLastView {
   by: string | null;
   status: string | null;
   activation: number | null;
+  waitingOn?: string[];
 }
 
 export interface TeamLatestView {
@@ -285,6 +286,8 @@ export interface TeamMemberView {
   name?: string;
   description?: string;
   last?: TeamMemberLastView | null;
+  assignment?: { member: string; part: string; files: string[]; fix?: string[] } | null;
+  assignmentDone?: boolean;
 }
 
 export interface TeamSummaryView {

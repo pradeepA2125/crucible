@@ -331,6 +331,7 @@ const TeamMemberLastSchema = z.object({
   by: z.string().nullable(),
   status: z.string().nullable(),
   activation: z.number().nullable(),
+  waitingOn: z.array(z.string()).default([]),
 });
 
 export const TeamSummarySchema = z.object({
@@ -344,7 +345,8 @@ export const TeamSummarySchema = z.object({
   members: z.array(z.object({
     label: z.string(), agentId: z.string(), status: z.string(),
     name: z.string().default(""), description: z.string().default(""),
-    assignment: z.object({ member: z.string(), part: z.string(), files: z.array(z.string()) })
+    assignment: z.object({ member: z.string(), part: z.string(), files: z.array(z.string()),
+                           fix: z.array(z.string()).optional() })
       .nullable().default(null),
     assignmentDone: z.boolean().default(false),
   })),

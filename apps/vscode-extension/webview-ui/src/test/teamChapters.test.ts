@@ -87,3 +87,16 @@ describe("round chapters (spec 2026-10-05 §9)", () => {
     expect(chapterHeading(c, () => false)).toEqual({ title: "Chapter 1", why: "woken by bob's post #5" });
   });
 });
+
+describe("edits (spec 2026-10-05 §9)", () => {
+  it("a chapter lists the files its edits touched", () => {
+    const diff = (path: string, resolved: string): ChatMsg => ({ role: "agent", content: "",
+      type: "diff_card", timestamp: T(5),
+      metadata: { resolved, diff_entries: [{ path, additions: 3, deletions: 1 }] } });
+    const chapters = buildChapters("review", [diff("a.py", "applied"), diff("b.py", "discarded")],
+                                   [], [], { working: false, fallbackStatus: "completed" });
+    expect(chapters[0].edits).toEqual([
+      { path: "a.py", additions: 3, deletions: 1, status: "applied" },
+      { path: "b.py", additions: 3, deletions: 1, status: "discarded" }]);
+  });
+});

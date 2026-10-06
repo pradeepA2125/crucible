@@ -89,3 +89,29 @@ describe("MemberView", () => {
     expect(screen.getByTestId("chapter-1")).toHaveTextContent("objects to");
   });
 });
+
+describe("MemberView in implementation and review", () => {
+  it("shows the assignment, the edits, and handed chips with underscores", () => {
+    const team: TeamSummaryView = { ...TEAM, phase: "REVIEWING", members: [
+      { ...TEAM.members[0], assignment: { member: "review", part: "add round_price", files: ["a.py"], fix: ["#12"] },
+        assignmentDone: false }, TEAM.members[1]] };
+    const messages = [{ role: "agent", content: "", type: "diff_card", timestamp: T(3),
+      metadata: { resolved: "applied", diff_entries: [{ path: "a.py", additions: 4, deletions: 0 }] } } as ChatMsg];
+    const posts = [{ ...POSTS[0], text: "add round_price to shop/pricing.py" }];
+    const agentsUi: AgentsUi = {
+      agents: { "agent-r": { ...DETAIL, status: "completed" } }, expanded: new Set(),
+      toggleExpanded: vi.fn(), openWindow: vi.fn(),
+      views: { "agent-r": { detail: DETAIL, messages, live: [], callIds: {}, nextId: 1 } },
+    };
+    const teamsUi: TeamsUi = { teams: { "team-1": team }, openTeam: vi.fn(), views: { "team-1": {
+      posts, lastSeq: 1, lastAseq: 1, activity: [ev(1, 1, "took_up", 1, { posts: [1], from: ["main"] })] } } };
+    render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={teamsUi}>
+      <MemberView teamId="team-1" agentId="agent-r" />
+    </TeamsContext.Provider></AgentsContext.Provider>);
+    expect(screen.getByTestId("member-assignment")).toHaveTextContent("add round_price");
+    expect(screen.getByTestId("member-assignment")).toHaveTextContent("fixing #12");
+    expect(screen.getByTestId("edits-1")).toHaveTextContent("a.py");
+    expect(screen.getByTestId("edits-1")).toHaveTextContent("+4");
+    expect(screen.getByTestId("handed-1")).toHaveTextContent("round_price");
+  });
+});

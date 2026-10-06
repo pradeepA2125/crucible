@@ -16,6 +16,7 @@ export interface MemberChapter {
   tools: number;
   report: string | null;
   said: TeamPostView[];     // the member's posts during the chapter
+  edits: { path: string; additions: number; deletions: number; status: string }[];
   current: boolean;
 }
 
@@ -67,6 +68,11 @@ export function buildChapters(
       tools: countTools(seg.messages),
       report: reportMsg ? reportMsg.content : wrapReport,
       said: [],
+      edits: seg.messages.filter((m) => m.type === "diff_card").flatMap((m) => {
+        const entries = Array.isArray(m.metadata?.diff_entries) ? m.metadata.diff_entries as Record<string, unknown>[] : [];
+        return entries.map((e) => ({ path: String(e.path ?? ""), additions: Number(e.additions ?? 0),
+                                     deletions: Number(e.deletions ?? 0), status: String(m.metadata?.resolved ?? "applied") }));
+      }),
       current,
     };
   });

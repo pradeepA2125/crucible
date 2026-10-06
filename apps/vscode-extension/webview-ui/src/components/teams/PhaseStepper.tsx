@@ -21,6 +21,7 @@ export function PhaseStepper({ phase, round, maxRounds, endReason = null, mini =
         : phase === "PAUSED" ? "Paused"
         : phase === "AWAITING_APPROVAL" ? "Awaiting approval"
         : `Deliberating · round ${round} of ${maxRounds}`)
+      : i === 4 && phase === "DONE" && endReason === "unresolved objections" ? "Done · unresolved"
       : step;
   return (
     <div className={`flex flex-wrap items-center gap-y-1 ${mini ? "text-[10.5px]" : "text-[11px]"}`} aria-label="Phase">

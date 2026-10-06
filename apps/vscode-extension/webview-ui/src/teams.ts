@@ -90,7 +90,9 @@ export function memberPhrase(
     switch (last.status) {
       case "completed": return { text: `✓ reported · ${ago}`, tone: "ok" };
       case "partial": return { text: `◐ reported partial · ${ago}`, tone: "wait" };
-      case "awaiting_peer": return { text: "⏳ waiting on a teammate", tone: "idle" };
+      case "awaiting_peer": return {
+        text: last.waitingOn?.length ? `⏳ waiting on ${last.waitingOn.join(", ")}` : "⏳ waiting on a teammate",
+        tone: "idle" };
       case "stopped": return { text: "■ stopped", tone: "idle" };
       case "failed": return { text: "✗ failed", tone: "bad" };
       default: return { text: `${last.status ?? "ended"} · ${ago}`, tone: "idle" };
@@ -101,10 +103,16 @@ export function memberPhrase(
   return { text: "💤 idle", tone: "idle" };
 }
 
+const PHASE_WORDS: Record<string, string> = {
+  DELIBERATING: "is deliberating", AWAITING_APPROVAL: "is waiting for your approval",
+  IMPLEMENTING: "is implementing", REVIEWING: "is reviewing", DEADLOCKED: "is deadlocked",
+  PAUSED: "is paused", DONE: "is done", DISBANDED: "was disbanded", FAILED: "failed",
+};
+
 export function latestText(latest: TeamLatestView): string {
   if (latest.kind === "post") return `${latest.label} posted: ${latest.text}`;
   if (latest.event === "wrapped_up") return `${latest.label} wrapped up — ${latest.text || latest.status || ""}`.trim();
-  return `team ${latest.text.toLowerCase()}`;
+  return `team ${PHASE_WORDS[latest.text] ?? latest.text.toLowerCase()}`;
 }
 
 export function countsText(counts: TeamCountsView | undefined, budget: number): string {

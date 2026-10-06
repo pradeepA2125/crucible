@@ -54,7 +54,7 @@ const agent = (id: string, label: string, status: string): AgentSummaryView => (
   endedAt: null, reportPreview: "", activationStartedAt: T(25), activationEndedAt: null,
 });
 
-function renderWindow(tab = "board", team = TEAM) {
+function renderWindow(tab = "board", team = TEAM, posts = POSTS) {
   const onTab = vi.fn();
   const onClose = vi.fn();
   const agentsUi: AgentsUi = {
@@ -62,7 +62,7 @@ function renderWindow(tab = "board", team = TEAM) {
     views: {}, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
   };
   const teamsUi: TeamsUi = { teams: { "team-1": team },
-    views: { "team-1": { posts: POSTS, lastSeq: 4, activity: ACTIVITY, lastAseq: 6 } }, openTeam: vi.fn() };
+    views: { "team-1": { posts, lastSeq: 4, activity: ACTIVITY, lastAseq: 6 } }, openTeam: vi.fn() };
   render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={teamsUi}>
     <TeamWindow teamId="team-1" tab={tab} onTab={onTab} onClose={onClose} />
   </TeamsContext.Provider></AgentsContext.Provider>);
@@ -70,6 +70,15 @@ function renderWindow(tab = "board", team = TEAM) {
 }
 
 describe("TeamWindow board", () => {
+  it("labels a closing proposal and its changed files", () => {
+    const closing = post(9, 40, { author: "system", kind: "proposal", round: null,
+      text: "Implementation complete — verify.",
+      payload: { closing: true, cycle: 2, assignments: [], files_changed: { impl: ["a.py"] } } });
+    renderWindow("board", { ...TEAM, phase: "REVIEWING" }, [...POSTS, closing]);
+    expect(screen.getByText("closing proposal · review cycle 2")).toBeInTheDocument();
+    expect(screen.getByTestId("closing-files-9")).toHaveTextContent("impl: a.py");
+  });
+
   it("reads as a journey: chapters, the proposal with markdown, its wake footer and tally", () => {
     renderWindow();
     expect(screen.getByRole("dialog", { name: "Team auth" })).toBeInTheDocument();

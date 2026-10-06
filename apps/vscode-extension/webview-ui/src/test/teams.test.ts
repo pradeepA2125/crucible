@@ -152,3 +152,15 @@ describe("team tool pills", () => {
     expect(teamForPill(pill("create_team", {}, "Error: limit"), teams)).toBeNull();
   });
 });
+
+describe("5C wording", () => {
+  it("names whom a member waits on and words a phase", () => {
+    const member = { label: "tests", agentId: "a", status: "awaiting_peer",
+      last: { kind: "wrapped_up", at: new Date().toISOString(), causeSeq: null, by: null,
+              status: "awaiting_peer", activation: 2, waitingOn: ["api"] } };
+    expect(memberPhrase(member, undefined, Date.now()).text).toBe("⏳ waiting on api");
+    expect(latestText({ kind: "activity", event: "phase", label: "team",
+                        text: "AWAITING_APPROVAL", at: "" } as never))
+      .toBe("team is waiting for your approval");
+  });
+});

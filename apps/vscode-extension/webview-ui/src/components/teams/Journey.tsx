@@ -71,7 +71,7 @@ function PostCard({ post, footer, tally, roster }: Omit<Extract<JourneyItem, { k
         {post.kind === "proposal"
           ? <span className="rounded border px-1.5 font-mono text-[11px] font-semibold" style={{ color: "var(--color-accent-ink)", background: "var(--accent-bg)", borderColor: "var(--accent-brd)" }}>P{post.seq}</span>
           : <Seq seq={post.seq} />}
-        <span className="text-[11px] text-text-3">{post.kind === "proposal" ? "proposal" : post.recipient ? "direct message" : post.author === "main" ? "post · from you, via main" : "post"}</span>
+        <span className="text-[11px] text-text-3">{post.payload.closing === true ? `closing proposal · review cycle ${String(post.payload.cycle)}` : post.kind === "proposal" ? "proposal" : post.recipient ? "direct message" : post.author === "main" ? "post · from you, via main" : "post"}</span>
         <Time at={post.createdAt} />
       </div>
       <div className={long && !open ? "max-h-[7.6em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]" : undefined}>
@@ -87,6 +87,13 @@ function PostCard({ post, footer, tally, roster }: Omit<Extract<JourneyItem, { k
               <span className="text-text-2">{a.part}</span>
               {(a.files ?? []).map((f) => <code key={f} className="font-mono text-[11px] text-[var(--color-code)]">{f}</code>)}
             </div>
+          ))}
+        </div>
+      )}
+      {post.payload.closing === true && typeof post.payload.files_changed === "object" && post.payload.files_changed !== null && (
+        <div data-testid={`closing-files-${post.seq}`} className="grid gap-0.5 text-[11.5px] text-text-2">
+          {Object.entries(post.payload.files_changed as Record<string, string[]>).map(([lb, files]) => (
+            <div key={lb}>{lb}: {files.join(", ") || "no files"}</div>
           ))}
         </div>
       )}

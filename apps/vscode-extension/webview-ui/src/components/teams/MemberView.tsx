@@ -17,7 +17,7 @@ const STATE_WORD: Record<string, string> = {
 };
 
 const firstLine = (text: string) =>
-  text.split("\n").map((l) => l.replace(/[*_`#>]/g, "").trim()).find((l) => l) ?? "";
+  text.split("\n").map((l) => l.replace(/^[#>\-*\s]+/, "").replace(/\*\*|`/g, "").trim()).find((l) => l) ?? "";
 
 /** A member's own journey (spec 2026-10-05 §7). */
 export function MemberView({ teamId, agentId }: { teamId: string; agentId: string }) {
@@ -71,6 +71,15 @@ export function MemberView({ teamId, agentId }: { teamId: string; agentId: strin
             <span><b className="text-text">{mine.filter((p) => p.recipient !== null).length}</b> messages</span>
             {active > 0 && <span><b className="text-text">{formatElapsed(active)}</b> active</span>}
           </div>
+          {member.assignment && (
+            <div data-testid="member-assignment" className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-text-2">
+              <span className="text-[10px] uppercase tracking-[.08em] text-text-3">Assignment</span>
+              <span>{member.assignment.part}</span>
+              {member.assignment.files.map((f) => <code key={f} className="font-mono text-[11px] text-[var(--color-code)]">{f}</code>)}
+              <span className="text-text-3">· {member.assignment.fix?.length && !member.assignmentDone
+                ? `fixing ${member.assignment.fix.join(", ")}` : member.assignmentDone ? "✓ done" : "open"}</span>
+            </div>
+          )}
           {stances.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-text-3">Stances
               {stances.map((s) => (
@@ -154,6 +163,21 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
               </button>
               {showWork && <div className="grid gap-1">{c.work.map((m, i) => <MessageRow key={i} msg={m} />)}
                 {live.length > 0 && <AgentRow content="" toolEvents={live} />}</div>}
+            </div>
+          )}
+          {c.edits.length > 0 && (
+            <div className="grid gap-1">
+              <span className="text-[10px] uppercase tracking-[.08em] text-text-3">Edits</span>
+              <div data-testid={`edits-${c.n}`} className="grid gap-0.5">
+                {c.edits.map((e, i) => (
+                  <div key={`${e.path}-${i}`} className="flex items-center gap-2 text-[11.5px]">
+                    <code className="font-mono text-[11px] text-[var(--color-code)]">{e.path}</code>
+                    <span style={{ color: "var(--color-green)" }}>+{e.additions}</span>
+                    <span style={{ color: "var(--color-red)" }}>−{e.deletions}</span>
+                    <span className="text-text-3">{e.status === "applied" ? "applied" : "not applied"}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           {c.said.length > 0 && (

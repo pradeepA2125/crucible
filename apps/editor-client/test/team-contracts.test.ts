@@ -103,3 +103,21 @@ describe("team plan gate and implementation fields", () => {
       members: [{ assignment: { part: "api", files: ["a.py"] }, assignmentDone: true }] });
   });
 });
+
+describe("named waits and fix assignments", () => {
+  it("maps waiting_on on a member's last event and fix on its assignment", async () => {
+    const live = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({
+      active_task_id: null, status: null, pending_gates: [], plan: null, turn_active: false,
+      teams: [{ team_id: "team-1", name: "auth", phase: "IMPLEMENTING", round: 1, max_rounds: 3,
+                paused_reason: null, members: [{ label: "tests", agent_id: "a", status: "awaiting_peer",
+                last: { kind: "wrapped_up", at: "2026-10-07T00:00:00Z", status: "awaiting_peer",
+                        waiting_on: ["api"], activation: 2 } }] }],
+    }) });
+    expect((await live.getThreadLiveState("t")).teams?.[0].members[0].last?.waitingOn).toEqual(["api"]);
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({ teams: [{
+      ...SUMMARY, members: [{ label: "alice", agent_id: "a", status: "completed",
+        assignment: { member: "alice", part: "api", files: ["a.py"], fix: ["#12"] },
+        assignment_done: false }] }] }) });
+    expect((await c.listTeams("t"))[0].members[0].assignment?.fix).toEqual(["#12"]);
+  });
+});
