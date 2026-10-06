@@ -180,7 +180,7 @@ def test_teaching_covers_implementation_and_pauses() -> None:
     main = format_controller_system_prompt(tools, task_subsystem_enabled=False,
                                            memory_enabled=False)
     assert "approval_gate: true" in main and "resume_team continues it" in main
-    assert "only after\n  the user agrees" in main
+    assert "only after the user agrees" in main
 
 
 def test_members_are_told_not_to_write_files_before_implementation() -> None:

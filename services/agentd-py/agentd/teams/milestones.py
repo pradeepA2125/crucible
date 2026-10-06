@@ -56,7 +56,8 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
         reason = str(data.get("reason", ""))
         why = {"budget": "its request budget ran out",
                "transient_burst": "the provider kept failing",
-               "stuck": "it was stuck three times in a row"}.get(reason, reason)
+               "stuck": "it was stuck three times in a row",
+               "quorum lost": "fewer than 2 members were left in the quorum"}.get(reason, reason)
         headline = f"Team {name} paused — {why}"
         details = [f"Paused from {data.get('paused_from')}; "
                    f"{data.get('done', 0)} of {data.get('total', 0)} assignments done.",

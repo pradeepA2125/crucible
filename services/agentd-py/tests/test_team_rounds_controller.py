@@ -96,12 +96,13 @@ async def test_user_stop_loses_quorum(tmp_path, monkeypatch) -> None:
     alice = store.teams.member(team_id, "alice")
     await ctrl.stop_agent(tid, alice.agent_id)
     await _settle(ctrl)
-    assert store.teams.get_team(team_id).phase == "FAILED"
+    team = store.teams.get_team(team_id)
+    assert (team.phase, team.paused_reason) == ("PAUSED", "quorum lost")
     assert store.teams.member(team_id, "alice").in_quorum is False
-    assert [n.kind for n in store.unclaimed_notices(tid)] == ["member_lost", "ended"]
+    assert [n.kind for n in store.unclaimed_notices(tid)] == ["member_lost", "paused"]
     wraps = {e.label: e.payload["status"] for e in store.teams.activity(team_id)
              if e.kind == "wrapped_up"}
-    assert wraps == {"alice": "stopped", "bob": "stopped"}
+    assert wraps == {"alice": "stopped", "bob": "completed"}     # bob finishes its round
 
 
 @pytest.mark.asyncio

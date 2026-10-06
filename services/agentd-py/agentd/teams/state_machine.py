@@ -101,8 +101,15 @@ class MainResume:
     pass
 
 
+@dataclass(frozen=True)
+class Revive:
+    """The main agent posted to a FAILED team: reopen it in the phase it failed from."""
+    from_phase: str
+    proposal_id: str | None = None     # the adopted plan, when it failed awaiting approval
+
+
 Event = (Kickoff | MemberReported | RoundEvaluated | MainAdopt | MainPost | Disband | Approval
-         | BudgetExhausted | Stuck | MainResume)
+         | BudgetExhausted | Stuck | MainResume | Revive)
 
 
 # ── actions ──────────────────────────────────────────────────────────────────
@@ -254,14 +261,27 @@ def _owing(state: TeamState, phase: str) -> tuple[str, ...]:
     return ()
 
 
+def _restore_quorum(state: TeamState) -> list[Action]:
+    """The user chose to continue: every member is back in the quorum, and a member that
+    left mid-round owes that round again."""
+    actions: list[Action] = []
+    for label, member in state.members.items():
+        if not member.in_quorum:
+            member.in_quorum = True
+            member.reported = False
+            actions.append(SetQuorum(label, True))
+    return actions
+
+
 def _resume(state: TeamState) -> list[Action]:
     phase = state.paused_from or "DELIBERATING"
     state.phase = phase
     state.paused_from = None
     state.stuck_count = 0
     state.transient_streak = 0
+    restored = _restore_quorum(state)
     owing = _owing(state, phase)
-    actions: list[Action] = [EnterPhase(phase, state.round, "resumed")]
+    actions: list[Action] = [*restored, EnterPhase(phase, state.round, "resumed")]
     if phase == "DELIBERATING" and not owing:
         return [*actions, EvaluateRound(state.round)]
     if phase == "IMPLEMENTING" and not owing:
@@ -312,8 +332,9 @@ def _deliberation_report(state: TeamState, event: MemberReported) -> list[Action
         actions += [SetQuorum(event.label, False),
                     Milestone("member_lost", {"label": event.label, "status": event.status})]
         if len(state.quorum()) < 2:
-            state.phase = "FAILED"
-            return [*actions, End("FAILED", "fewer than 2 members left in the quorum")]
+            # Paused, not failed: a member often fails on the provider, not on the work,
+            # and resume_team brings it back (asked for after the 5B live smoke).
+            return [*actions, *_pause(state, "quorum lost")]
     waiting = [lb for lb in state.round_members
                if state.members[lb].in_quorum and not state.members[lb].reported]
     if not waiting and not paused:
@@ -351,8 +372,30 @@ def _implementation_report(state: TeamState, event: MemberReported) -> list[Acti
     return actions
 
 
+def _revive(state: TeamState, event: Revive) -> list[Action]:
+    restored = _restore_quorum(state)
+    state.stuck_count = 0
+    state.transient_streak = 0
+    phase = event.from_phase
+    if phase == "IMPLEMENTING":
+        state.phase = phase
+        owing = _owing(state, phase)
+        return [*restored, EnterPhase(phase, state.round, "revived"),
+                *([ResumeMembers(owing)] if owing else _all_done(state, []))]
+    if phase == "AWAITING_APPROVAL" and event.proposal_id is not None:
+        state.phase = phase
+        return [*restored, EnterPhase(phase, state.round, "revived"),
+                RaisePlanGate(event.proposal_id)]
+    # Deliberation (or any other phase): one more round, as a main post in a deadlock does.
+    state.round += 1
+    state.max_rounds += 1
+    return [*restored, *_start_round(state, state.quorum())]
+
+
 def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
     s = copy.deepcopy(state)
+    if isinstance(event, Revive):
+        return (s, _revive(s, event)) if s.phase == "FAILED" else (s, [])
     if s.phase not in LIVE_PHASES:
         return s, []
     if isinstance(event, Disband):

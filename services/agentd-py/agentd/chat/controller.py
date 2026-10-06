@@ -30,6 +30,7 @@ from agentd.chat.controller_loop import (
     LONE_REPORT_STATUSES,
     TEAM_REPORT_STATUSES,
     ControllerLoop,
+    ControllerLoopExhausted,
     ControllerOutcome,
 )
 from agentd.chat.controller_phase import ControllerPhaseSM
@@ -1576,6 +1577,11 @@ class ChatController:
         parent's orphaned-edit recovery (_promote_orphaned_edit) is unchanged."""
         reaped = self._store.reap_agents("backend restarted")
         failed_teams = self._store.teams.fail_live_teams("backend restarted")
+        for team_id in failed_teams:
+            # A reaped team has no coordinator: a late report must not reopen it.
+            coordinator = self._coordinators.pop(team_id, None)
+            if coordinator is not None:
+                coordinator.close()
         if self._teams is not None:
             for team_id in failed_teams:
                 for member in self._store.teams.members(team_id):
@@ -2476,6 +2482,9 @@ class ChatController:
         teams = self._teams
 
         def post(team_id: str, text: str, mentions: object) -> dict[str, object]:
+            team = self._store.teams.get_team(team_id)
+            if team is not None and team.phase == "FAILED":
+                return self._revive_team(thread_id, team, text, mentions)
             p = teams.post(team_id, "main", text, mentions)
             after = self._store.teams.get_team(team_id)
             return {"seq": p.seq, "mentions": p.mentions,
@@ -2566,6 +2575,41 @@ class ChatController:
         coordinator.approval(decision, text or None)
         after = self._store.teams.get_team(team_id)
         return {"team_id": team_id, "phase": after.phase if after is not None else None}
+
+    def _failed_from(self, team_id: str) -> str:
+        """The live phase a FAILED team was in (its activity record), PAUSED skipped."""
+        for event in reversed(self._store.teams.activity(team_id)):
+            phase = str(event.payload.get("phase", "")) if event.kind == "phase" else ""
+            if phase in LIVE_TEAM_PHASES and phase != "PAUSED":
+                return phase
+        return "DELIBERATING"
+
+    def _revive_team(self, thread_id: str, team: TeamRecord, text: str,
+                     mentions: object) -> dict[str, object]:
+        """post_board to a FAILED team reopens it where it failed (asked for after the 5B
+        live smoke: a member failing on the provider, or a backend restart, should not
+        throw the team away). The post lands first, so the revived round carries it."""
+        assert self._teams is not None
+        live = self._store.teams.count_live_teams(thread_id)
+        if live >= team_max_live_per_thread():
+            raise TeamInputError(f"this thread already has {live} live teams (limit "
+                                 f"{team_max_live_per_thread()}) — disband one first")
+        from_phase = self._failed_from(team.team_id)
+        coordinator = TeamCoordinator(       # built while the row still says FAILED
+            team.team_id, self._store.teams, self._teams, self,
+            CoordinatorTrace(chat_turn_artifacts_root(thread_id, team.created_turn_id,
+                                                      self._workspace_path)
+                             / "teams" / team.team_id / "coordinator.jsonl"),
+            round_timeout_s=team_round_timeout_s())
+        self._store.teams.update_team(team.team_id, phase=from_phase, end_reason=None,
+                                      ended_at=None)
+        p = self._teams.post(team.team_id, "main", text, mentions)
+        self._coordinators[team.team_id] = coordinator
+        coordinator.revive(from_phase, team.adopted_proposal_id)
+        after = self._store.teams.get_team(team.team_id)
+        assert after is not None
+        return {"seq": p.seq, "mentions": p.mentions, "revived": True,
+                "phase": after.phase, "round": after.round}
 
     def live_team_names(self, thread_id: str) -> list[str]:
         """Teams that have not ended block a rewind (spec v2 §8.10)."""
@@ -3244,6 +3288,14 @@ class ChatController:
             status = "failed_transient"
             report = loop.fallback_report(f"provider unavailable: {exc}", subtree_files(),
                                           status="failed_transient")
+        except ControllerLoopExhausted as exc:
+            # Unparseable model output is the provider's failure, not the member's: a team
+            # member is re-queued like failed_transient instead of leaving the quorum.
+            status = "failed_transient" if membership is not None else "failed"
+            logger.warning("[subagent] loop exhausted id=%s status=%s: %s", ctx.agent_id,
+                           status, exc)
+            self._store.set_agent_history(ctx.agent_id, loop.partial_history())
+            report = loop.fallback_report(str(exc), subtree_files(), status=status)
         except Exception as exc:
             logger.exception("[subagent] child failed id=%s", ctx.agent_id)
             self._store.set_agent_history(ctx.agent_id, loop.partial_history())

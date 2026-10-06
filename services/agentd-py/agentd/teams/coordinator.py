@@ -163,6 +163,11 @@ class TeamCoordinator:
     def mark_interrupted(self, label: str) -> None:
         self._interrupted.add(label)
 
+    def revive(self, from_phase: str, proposal_id: str | None) -> None:
+        """The main agent posted to this FAILED team: reopen it where it failed."""
+        self._trace.write("revive", from_phase=from_phase)
+        self._apply(sm.Revive(from_phase, proposal_id))
+
     def user_spoke(self) -> None:
         self._suppress_wakes = False
 

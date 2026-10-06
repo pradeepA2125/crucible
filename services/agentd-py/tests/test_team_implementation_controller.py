@@ -242,3 +242,51 @@ async def test_a_named_wait_is_answered_when_the_peer_finishes(tmp_path, monkeyp
                     if label == "tests" and h and h[-1].get("role") == "user"]
     assert any("api reported completed — you were waiting on it" in str(c)
                for c in tests_inputs)
+
+
+@pytest.mark.asyncio
+async def test_post_board_revives_a_failed_team(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {"alice": [REPORT],
+                                                             "bob": [REPORT]})
+    _quiet(ctrl, monkeypatch)
+    original = engine.create_controller_step
+    calls = {"n": 0}
+
+    async def first_round_hangs(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            await asyncio.sleep(5)            # round 1 is still running at the "restart"
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "create_controller_step", first_round_hangs)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request()))["team_id"])
+    await asyncio.sleep(0.05)
+    ctrl.reap_subagents()                      # what a backend restart does to a live team
+    for handle in list(ctrl._subagents.registry._handles.values()):  # type: ignore[union-attr]
+        if handle.task is not None:
+            handle.task.cancel()
+    await _settle(ctrl)
+    assert store.teams.get_team(team_id).phase == "FAILED"
+    ops = ctrl._main_team_source(tid, "turn2")._ops
+    out = ops.post(team_id, "@alice @bob the backend restarted — carry on", None)
+    assert out["revived"] is True and out["phase"] == "DELIBERATING" and out["round"] == 2
+    await _settle(ctrl)
+    team = store.teams.get_team(team_id)
+    assert team.phase in ("DELIBERATING", "DEADLOCKED") and team.end_reason is None
+    bob_inputs = [h[-1]["content"] for label, h, _, _ in engine.seen
+                  if label == "bob" and h and h[-1].get("role") == "user"]
+    assert any("the backend restarted — carry on" in str(c) for c in bob_inputs)
+
+
+@pytest.mark.asyncio
+async def test_unparseable_output_requeues_a_member(tmp_path, monkeypatch) -> None:
+    bogus = {"type": "not-a-type", "thought": "?"}
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [bogus], "bob": [REPORT]})
+    _quiet(ctrl, monkeypatch)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request()))["team_id"])
+    await _settle(ctrl)
+    kinds = [(e.label, e.kind) for e in store.teams.activity(team_id)]
+    assert ("alice", "requeued") in kinds
+    assert store.teams.member(team_id, "alice").in_quorum is True
+    assert store.teams.get_team(team_id).phase == "DELIBERATING"
+    await ctrl.disband_team(tid, team_id)

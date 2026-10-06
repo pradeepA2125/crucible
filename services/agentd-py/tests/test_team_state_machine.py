@@ -23,6 +23,7 @@ from agentd.teams.state_machine import (
     RaisePlanGate,
     Requeue,
     ResumeMembers,
+    Revive,
     RoundEvaluated,
     SetQuorum,
     StartImplementation,
@@ -116,13 +117,43 @@ def test_deadline_stop_stays_in_quorum_user_stop_leaves() -> None:
     assert actions == [StartRound(2, ("alice", "carol"))]
 
 
-def test_quorum_below_two_fails_the_team() -> None:
+def test_quorum_below_two_pauses_the_team() -> None:
     s = _round1(_state())
     s, actions = apply(s, MemberReported("alice", "failed"))
     assert actions == [SetQuorum("alice", False),
                        Milestone("member_lost", {"label": "alice", "status": "failed"}),
-                       End("FAILED", "fewer than 2 members left in the quorum")]
-    assert s.phase == "FAILED"
+                       CancelTimers(), EnterPhase("PAUSED", 1, "quorum lost"),
+                       Milestone("paused", {"reason": "quorum lost",
+                                            "paused_from": "DELIBERATING"})]
+    assert (s.phase, s.paused_from) == ("PAUSED", "DELIBERATING")
+
+
+def test_resume_restores_the_quorum_and_reruns_the_lost_member() -> None:
+    s = _round1(_state())
+    s, _ = apply(s, MemberReported("bob", "completed"))
+    s, _ = apply(s, MemberReported("alice", "failed"))
+    s, actions = apply(s, MainResume())
+    assert actions == [SetQuorum("alice", True), EnterPhase("DELIBERATING", 1, "resumed"),
+                       ResumeMembers(("alice",))]
+    assert s.members["alice"].in_quorum
+
+
+def test_revive_a_failed_team() -> None:
+    failed = _state(phase="FAILED", round_=2)
+    failed.members["alice"].in_quorum = False
+    s, actions = apply(failed, Revive("DELIBERATING"))
+    assert actions[0] == SetQuorum("alice", True)
+    assert actions[1:] == [StartRound(3, ("alice", "bob"))]
+    assert (s.phase, s.round, s.max_rounds) == ("DELIBERATING", 3, 4)
+    implementing = _state(phase="FAILED")
+    implementing.members["alice"].assigned = True
+    s, actions = apply(implementing, Revive("IMPLEMENTING"))
+    assert actions == [EnterPhase("IMPLEMENTING", 1, "revived"), ResumeMembers(("alice",))]
+    approval = _state(phase="FAILED")
+    s, actions = apply(approval, Revive("AWAITING_APPROVAL", "P4"))
+    assert actions == [EnterPhase("AWAITING_APPROVAL", 1, "revived"), RaisePlanGate("P4")]
+    live = _round1(_state())
+    assert apply(live, Revive("DELIBERATING"))[1] == []      # only an ended team revives
 
 
 def test_deadlock_exits() -> None:

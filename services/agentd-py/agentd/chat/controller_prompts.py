@@ -883,9 +883,11 @@ is built; dispatch_agents fits independent parts that need no discussion.
 - When a member is blocked or the team is stuck, restart the member with post_board mentioning
   it and saying what changed. Doing a member's part yourself leaves its assignment open, so
   the team cannot finish.
-- A team pauses when its request budget runs out, the provider keeps failing, or it is stuck
-  three times in a row. resume_team continues it and spends more requests, so call it only after
-  the user agrees — in the turn that answers you.
+- A team pauses when its request budget runs out, the provider keeps failing, it is stuck three
+  times in a row, or fewer than 2 members are left in its quorum. resume_team continues it (every
+  member back in the quorum) and spends more requests, so call it only after the user agrees —
+  in the turn that answers you. A FAILED team (a backend restart) reopens when you post_board to
+  it.
 Example — you have a plan and want it checked:
 {"type":"tool_call","thought":"two reviewers should check my plan","tool":"create_team","args":{"name":"auth","goal":"Add rate-limited login","members":[{"label":"api","agent":"general-purpose"},{"label":"review","agent":"explore"}],"kickoff":{"kind":"proposal","text":"api adds api/limiter.py and wires it into api/routes.py; review checks the callers.","assignments":[{"member":"api","part":"limiter + wiring","files":["api/limiter.py","api/routes.py"]}]}}}
 Example — you want the members to propose:
