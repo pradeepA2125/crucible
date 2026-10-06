@@ -115,8 +115,9 @@ SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required
 
 @pytest.mark.asyncio
 async def test_generate_json_streams_one_plan_safe_request() -> None:
+    # The structured-text path (the API-key route, or native_tools=False).
     fake = FakeResponses([_delta('{"ok"'), _delta(": true}"), _completed()])
-    payload = await _transport(fake, plan_route=True).generate_json(
+    payload = await _transport(fake, plan_route=True, native_tools=False).generate_json(
         model="m", schema_name="plan document!", schema=SCHEMA,
         system_instructions="sys", user_payload={"goal": "x"})
 
@@ -137,7 +138,8 @@ async def test_api_key_route_may_cap_output_but_plan_route_never_does() -> None:
                          [_delta('{"ok": true}'), _completed()])
     await _transport(fake, max_output_tokens=500).generate_json(
         model="m", schema_name="s", schema=SCHEMA, system_instructions="", user_payload={})
-    await _transport(fake, max_output_tokens=500, plan_route=True).generate_json(
+    plan = _transport(fake, max_output_tokens=500, plan_route=True, native_tools=False)
+    await plan.generate_json(
         model="m", schema_name="s", schema=SCHEMA, system_instructions="", user_payload={})
     assert fake.calls[0]["max_output_tokens"] == 500
     assert "max_output_tokens" not in fake.calls[1]
@@ -206,7 +208,7 @@ async def test_structured_output_takes_the_first_action_and_stops_reading() -> N
         _item_delta("m2", invented), _message_done("m2", "commentary"),
         _item_delta("m3", final), _message_done("m3", "final_answer"), _completed()])
     fake = FakeResponses(stream)
-    assert await _transport(fake, plan_route=True).generate_json(
+    assert await _transport(fake, plan_route=True, native_tools=False).generate_json(
         model="m", schema_name="s", schema=SCHEMA, system_instructions="",
         user_payload={}) == {"ok": True}
     assert stream.closed  # the rest is never read: it costs plan usage and means nothing
@@ -227,7 +229,7 @@ async def test_a_first_message_that_is_not_json_does_not_stop_the_stream() -> No
     fake = FakeResponses([
         _item_delta("m1", "thinking out loud"), _message_done("m1", "commentary"),
         _item_delta("m2", '{"ok": true}'), _message_done("m2", "final_answer"), _completed()])
-    assert await _transport(fake, plan_route=True).generate_json(
+    assert await _transport(fake, plan_route=True, native_tools=False).generate_json(
         model="m", schema_name="s", schema=SCHEMA, system_instructions="",
         user_payload={}) == {"ok": True}
 
@@ -301,7 +303,7 @@ async def test_usage_limit_mid_stream_stops_without_retry() -> None:
 async def test_usage_unavailable_mid_stream_is_transient() -> None:
     fake = FakeResponses([_failed("subscription_sharing_usage_unavailable")],
                          [_delta('{"ok": true}'), _completed()])
-    assert await _transport(fake, plan_route=True).generate_json(
+    assert await _transport(fake, plan_route=True, native_tools=False).generate_json(
         model="m", schema_name="s", schema=SCHEMA, system_instructions="",
         user_payload={}) == {"ok": True}
 
@@ -512,3 +514,84 @@ async def test_summary_parts_reach_thinking_as_separate_lines() -> None:
                                   on_thinking=thinking.append)
     assert fake.calls[0]["reasoning"] == {"summary": "auto", "effort": "high"}
     assert "".join(thinking) == "**Preparing kicks**\n\n**Structuring data**"
+
+
+# ---------------------------------------------------------------- native function calls
+
+
+def _call_done(name: str, arguments: dict[str, object], *, call_id: str = "c1") -> SimpleNamespace:
+    return SimpleNamespace(type="response.output_item.done", item=SimpleNamespace(
+        type="function_call", name=name, arguments=json.dumps(arguments), call_id=call_id,
+        namespace="crucible"))
+
+
+CONTROLLER_UNION = {"anyOf": [
+    {"type": "object", "required": ["type", "thought", "tool", "args"], "properties": {
+        "type": {"type": "string", "const": "tool_call"}, "thought": {"type": "string"},
+        "tool": {"type": "string"}, "args": {"type": "object"}}},
+    {"type": "object", "required": ["type", "thought", "answer"], "properties": {
+        "type": {"type": "string", "const": "answer"}, "thought": {"type": "string"},
+        "answer": {"type": "string"}}},
+]}
+
+
+@pytest.mark.asyncio
+async def test_the_plan_route_asks_for_one_native_function_call() -> None:
+    fake = FakeResponses([_call_done("tool_call", {"thought": "t", "tool": "read_file",
+                                                    "args": '{"path": "a.py"}'}), _completed()])
+    payload = {"workspace_path": "/ws", "conversation_history": [
+        {"role": "user", "content": "read a.py"}], "goal": "read a.py"}
+    result = await _transport(fake, plan_route=True).generate_json(
+        model="m", schema_name="controller_step_response", schema=CONTROLLER_UNION,
+        system_instructions="sys", user_payload=payload)
+
+    assert result == {"type": "tool_call", "thought": "t", "tool": "read_file",
+                      "args": {"path": "a.py"}}
+    call = fake.calls[0]
+    assert "text" not in call
+    assert call["tool_choice"] == "required" and call["parallel_tool_calls"] is False
+    assert call["tools"][0]["type"] == "namespace"
+    assert {f["name"] for f in call["tools"][0]["tools"]} == {"tool_call", "answer"}
+    assert call["instructions"].startswith("sys") and "exactly one action" in call["instructions"]
+    assert call["input"][0] == {"role": "user", "content": json.dumps({"workspace_path": "/ws"})}
+    assert call["input"][1] == {"role": "user", "content": "read a.py"}
+
+
+@pytest.mark.asyncio
+async def test_a_preamble_before_the_call_is_shown_as_thinking() -> None:
+    fake = FakeResponses([
+        _item_delta("m1", "I'll read the file first."), _message_done("m1", "commentary"),
+        _call_done("answer", {"thought": "t", "answer": "done"}), _completed()])
+    thinking: list[str] = []
+    result = await _transport(fake, plan_route=True).generate_json(
+        model="m", schema_name="c", schema=CONTROLLER_UNION, system_instructions="",
+        user_payload={}, on_thinking=thinking.append)
+    assert result == {"type": "answer", "thought": "t", "answer": "done"}
+    assert "I'll read the file first." in "".join(thinking)
+
+
+@pytest.mark.asyncio
+async def test_a_reply_without_a_function_call_is_a_correctable_error() -> None:
+    fake = FakeResponses([_item_delta("m1", "just text"), _message_done("m1", "final_answer"),
+                          _completed()])
+    with pytest.raises(RuntimeError, match="without calling"):
+        await _transport(fake, plan_route=True).generate_json(
+            model="m", schema_name="c", schema=CONTROLLER_UNION, system_instructions="",
+            user_payload={})
+
+
+@pytest.mark.asyncio
+async def test_a_flat_schema_is_a_forced_function() -> None:
+    fake = FakeResponses([_call_done("s", {"ok": True}), _completed()])
+    assert await _transport(fake, plan_route=True).generate_json(
+        model="m", schema_name="s", schema=SCHEMA, system_instructions="",
+        user_payload={}) == {"ok": True}
+    assert fake.calls[0]["tool_choice"] == {"type": "function", "name": "s"}
+
+
+@pytest.mark.asyncio
+async def test_the_api_key_route_keeps_structured_text_output() -> None:
+    fake = FakeResponses([_delta('{"ok": true}'), _completed()])
+    await _transport(fake).generate_json(model="m", schema_name="s", schema=SCHEMA,
+                                         system_instructions="", user_payload={})
+    assert "tools" not in fake.calls[0] and fake.calls[0]["text"]["format"]["strict"] is True

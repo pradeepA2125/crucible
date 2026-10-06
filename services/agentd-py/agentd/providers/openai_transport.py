@@ -18,6 +18,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import openai
@@ -30,6 +31,7 @@ from agentd.providers.openai_compatible_transport import (
     _jittered,
     _within_deadline,
 )
+from agentd.providers.openai_native import native_actions, to_native_input
 from agentd.providers.openai_strict_schema import encode_strict_schema
 from agentd.providers.plan_access import (
     TRANSIENT_PLAN_CODES,
@@ -40,6 +42,7 @@ from agentd.providers.plan_access import (
 )
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 from agentd.providers.token_progress import ProgressTicker, approx_prompt_tokens, int_or_none
+from agentd.runtime.artifacts import provider_debug_root
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,7 @@ logger = logging.getLogger(__name__)
 # previous_response_id, …) is absent by construction; this set makes that checkable.
 PLAN_ROUTE_FIELDS = frozenset({
     "model", "instructions", "input", "stream", "store", "text", "reasoning", "include",
+    "tools", "tool_choice", "parallel_tool_calls",
 })
 _RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504})
 _THINKING_EVENTS = frozenset({
@@ -83,6 +87,12 @@ class StaticBearer:
         return False
 
 
+@dataclass(frozen=True)
+class _Reply:
+    text: str
+    call: tuple[str, str] | None = None  # (function name, arguments JSON) in native mode
+
+
 class _Unauthorized(Exception):
     def __init__(self, cause: openai.APIStatusError) -> None:
         super().__init__(str(cause))
@@ -105,8 +115,13 @@ class OpenAIJsonTransport(ModelJsonTransport):
         max_retries: int = 4,
         retry_base_delay: float = 5.0,
         responses_client: Any | None = None,
+        native_tools: bool | None = None,
     ) -> None:
         self._plan_route = plan_route
+        # Actions as native function calls with history as native items (see
+        # openai_native.py). The plan route's Codex-tuned models need it; the API-key
+        # route keeps schema-constrained text unless asked.
+        self._native_tools = plan_route if native_tools is None else native_tools
         self._max_output_tokens = max_output_tokens
         self._timeout_sec = timeout_sec
         self._stream_timeout_sec = stream_timeout_sec
@@ -170,6 +185,12 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_progress: Callable[..., None] | None = None,
         on_usage: Callable[[int, int], None] | None = None,
     ) -> dict[str, object]:
+        if self._native_tools:
+            return await self._generate_native(
+                model=model, schema_name=schema_name, schema=schema,
+                system_instructions=system_instructions, user_payload=user_payload,
+                on_thinking=on_thinking, on_retry=on_retry, on_progress=on_progress,
+                on_usage=on_usage)
         codec = encode_strict_schema(schema)
         body = self._body(model, system_instructions, user_payload)
         body["text"] = {"format": {
@@ -178,8 +199,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
             "schema": codec.schema,
             "strict": True,
         }}
-        text = await self._run(body, on_thinking, on_retry, on_progress, on_usage,
-                               first_action=True)
+        text = (await self._run(body, on_thinking, on_retry, on_progress, on_usage,
+                                first_action=True)).text
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -199,7 +220,33 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_thinking: Callable[[str], None] | None = None,
     ) -> str:
         body = self._body(model, system_instructions, user_payload)
-        return (await self._run(body, on_thinking, None, None, None)).strip()
+        return (await self._run(body, on_thinking, None, None, None)).text.strip()
+
+    async def _generate_native(
+        self,
+        *,
+        model: str,
+        schema_name: str,
+        schema: dict[str, object],
+        system_instructions: str,
+        user_payload: dict[str, object],
+        on_thinking: Callable[[str], None] | None,
+        on_retry: Callable[[int, int, str, str], None] | None,
+        on_progress: Callable[..., None] | None,
+        on_usage: Callable[[int, int], None] | None,
+    ) -> dict[str, object]:
+        actions = native_actions(schema, schema_name)
+        body = self._body(model, system_instructions + actions.instructions, user_payload)
+        body["input"] = to_native_input(user_payload, actions)
+        body["tools"] = actions.tools
+        # Exactly zero or one call per response, and with "required" exactly one: the
+        # model then stops and waits for its result (function-calling guide).
+        body["tool_choice"] = actions.tool_choice
+        body["parallel_tool_calls"] = False
+        _dump_native_request(schema_name, body)
+        reply = await self._run(body, on_thinking, on_retry, on_progress, on_usage, native=True)
+        assert reply.call is not None  # _stream_once raises when the model didn't call
+        return actions.decode_call(*reply.call)
 
     # ------------------------------------------------------------ request
 
@@ -247,7 +294,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_usage: Callable[[int, int], None] | None,
         *,
         first_action: bool = False,
-    ) -> str:
+        native: bool = False,
+    ) -> _Reply:
         if self._plan_route:
             extra = set(body) - PLAN_ROUTE_FIELDS
             if extra:
@@ -259,7 +307,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         while True:
             try:
                 return await self._stream_once(body, on_thinking, on_progress, on_usage,
-                                               first_action=first_action)
+                                               first_action=first_action, native=native)
             except _Unauthorized as exc:
                 if not refreshed and await self._bearer.on_unauthorized():
                     refreshed = True
@@ -294,9 +342,10 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_usage: Callable[[int, int], None] | None,
         *,
         first_action: bool = False,
-    ) -> str:
+        native: bool = False,
+    ) -> _Reply:
         ticker = ProgressTicker(on_progress, input_n=approx_prompt_tokens(
-            body["instructions"], body["input"][0]["content"]))
+            body["instructions"], json.dumps(body["input"])))
         ticker.start()
         responses = await self._responses()
         try:
@@ -309,6 +358,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
 
         texts: dict[str | None, list[str]] = {}  # per output item: never join items
         phases: dict[str | None, str | None] = {}
+        call: tuple[str, str] | None = None
         completed: Any = None
         summary_parts = 0
         try:
@@ -319,7 +369,16 @@ class OpenAIJsonTransport(ModelJsonTransport):
                     ticker.output(event.delta)
                 elif kind == "response.output_item.done":
                     item = getattr(event, "item", None)
-                    if getattr(item, "type", None) == "message":
+                    if native and getattr(item, "type", None) == "function_call":
+                        if call is None:  # parallel_tool_calls=false: there is one
+                            call = (str(getattr(item, "name", "")),
+                                    str(getattr(item, "arguments", "") or "{}"))
+                    elif native and getattr(item, "type", None) == "message":
+                        # A preamble ("I'll read the file first") — prose, not an action.
+                        preamble = "".join(texts.get(getattr(item, "id", None), []))
+                        if preamble.strip() and callable(on_thinking):
+                            on_thinking(preamble + "\n\n")
+                    elif getattr(item, "type", None) == "message":
                         item_id = getattr(item, "id", None)
                         phases[item_id] = getattr(item, "phase", None)
                         action = "".join(texts.get(item_id, []))
@@ -328,7 +387,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
                             # acting out results it never received; stop paying for it.
                             await _close(stream)
                             ticker.finish()
-                            return action
+                            return _Reply(action)
                 elif kind == "response.reasoning_summary_part.added":
                     # Each part is its own headline; keep them on separate lines.
                     if summary_parts and callable(on_thinking):
@@ -375,10 +434,16 @@ class OpenAIJsonTransport(ModelJsonTransport):
             on_usage(input_tokens, output_tokens)
 
         text = _answer_text(texts, phases)
+        if native:
+            if call is None:
+                # A correctable model error: the loop's malformed-output path retries.
+                msg = f"the model replied without calling a function: {text[:300]!r}"
+                raise RuntimeError(msg)
+            return _Reply(text, call)
         if not text.strip():
             msg = "OpenAI response contained no output_text"
             raise RuntimeError(msg)
-        return text
+        return _Reply(text)
 
     # ------------------------------------------------------------ errors
 
@@ -426,6 +491,19 @@ def _answer_text(texts: dict[str | None, list[str]], phases: dict[str | None, st
     finals = [item for item, phase in phases.items() if phase == "final_answer" and item in texts]
     chosen = finals[-1] if finals else list(texts)[-1]
     return "".join(texts[chosen])
+
+
+def _dump_native_request(schema_name: str, body: dict[str, Any]) -> None:
+    """The exact native request (no credentials: those ride the HTTP header), so what
+    the model saw stays inspectable next to the engine's own turn artifacts."""
+    try:
+        directory = provider_debug_root("chatgpt")
+        directory.mkdir(parents=True, exist_ok=True)
+        name = _SCHEMA_NAME_RE.sub("_", schema_name)[:64]
+        (directory / f"native-{name}.json").write_text(
+            json.dumps(body, indent=1, default=str), encoding="utf-8")
+    except Exception:  # noqa: BLE001 — debugging aid only, never fails a call
+        logger.debug("could not write the native request dump", exc_info=True)
 
 
 def _is_json_object(text: str) -> bool:

@@ -51,6 +51,9 @@ class StrictSchemaDecodeError(RuntimeError):
 class StrictSchemaCodec:
     schema: dict[str, object]
     decode: Callable[[dict[str, object]], dict[str, object]]
+    # The inverse of decode: an engine-shaped value back to the strict shape (JSON
+    # strings for free-form objects). Used to replay past actions as native calls.
+    encode: Callable[[dict[str, object]], dict[str, object]]
 
 
 def encode_strict_schema(schema: dict[str, object]) -> StrictSchemaCodec:
@@ -77,7 +80,7 @@ class _Encoder:
         if isinstance(defs, dict):
             root["$defs"] = {name: self._node(sub) for name, sub in defs.items()}
         decoder = _Decoder(root, self._json_nodes, self._optional_keys, wrapped)
-        return StrictSchemaCodec(schema=root, decode=decoder.decode)
+        return StrictSchemaCodec(schema=root, decode=decoder.decode, encode=decoder.encode)
 
     def _node(self, node: Any) -> dict[str, Any]:
         if not isinstance(node, dict):
@@ -168,6 +171,43 @@ class _Decoder:
         if not isinstance(decoded, dict):
             raise StrictSchemaDecodeError("reply must be a JSON object")
         return decoded
+
+    def encode(self, value: dict[str, object]) -> dict[str, object]:
+        """Engine shape → strict shape. Optional keys that are absent stay absent: this
+        feeds history replay, which is read by the model, not validated."""
+        encoded = self._encode(self._root, {ENVELOPE_KEY: value} if self._wrapped else value)
+        if self._wrapped:
+            encoded = encoded[ENVELOPE_KEY]
+        return encoded  # type: ignore[no-any-return]
+
+    def _encode(self, node: dict[str, Any], value: Any) -> Any:
+        node = self._resolve(node)
+        if id(node) in self._json_nodes:
+            return value if value is None or isinstance(value, str) else json.dumps(value)
+        if value is None:
+            return None
+        if "anyOf" in node:
+            branch = self._pick_engine(node["anyOf"], value)
+            return self._encode(branch, value) if branch is not None else value
+        props = node.get("properties")
+        if isinstance(props, dict) and isinstance(value, dict):
+            return {key: self._encode(props[key], item) if isinstance(props.get(key), dict)
+                    else item for key, item in value.items()}
+        items = node.get("items")
+        if isinstance(items, dict) and isinstance(value, list):
+            return [self._encode(items, item) for item in value]
+        return value
+
+    def _pick_engine(self, branches: list[Any], value: Any) -> dict[str, Any] | None:
+        """Like _pick, but `value` is engine-shaped: a JSON-string branch also matches
+        the object it stands for."""
+        for raw in branches:
+            branch = self._resolve(raw)
+            if branch == {"type": "null"}:
+                continue
+            if id(branch) in self._json_nodes or self._matches(branch, value):
+                return branch
+        return None
 
     def _resolve(self, node: dict[str, Any]) -> dict[str, Any]:
         seen = 0

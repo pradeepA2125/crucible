@@ -1,0 +1,337 @@
+{
+ "schema": {
+  "anyOf": [
+   {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "type",
+     "thought",
+     "tool",
+     "args"
+    ],
+    "properties": {
+     "type": {
+      "const": "tool_call"
+     },
+     "thought": {
+      "type": "string"
+     },
+     "tool": {
+      "type": "string"
+     },
+     "args": {
+      "type": "object"
+     }
+    }
+   },
+   {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "type",
+     "thought",
+     "answer"
+    ],
+    "properties": {
+     "type": {
+      "const": "answer"
+     },
+     "thought": {
+      "type": "string"
+     },
+     "answer": {
+      "type": "string"
+     }
+    }
+   },
+   {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "type",
+     "thought",
+     "question"
+    ],
+    "properties": {
+     "type": {
+      "const": "clarify"
+     },
+     "thought": {
+      "type": "string"
+     },
+     "question": {
+      "type": "string"
+     },
+     "options": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    }
+   },
+   {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "type",
+     "thought",
+     "patch_ops"
+    ],
+    "properties": {
+     "type": {
+      "const": "edit"
+     },
+     "thought": {
+      "type": "string"
+     },
+     "patch_ops": {
+      "type": "array",
+      "items": {
+       "oneOf": [
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "op",
+          "file",
+          "reason",
+          "content"
+         ],
+         "properties": {
+          "op": {
+           "const": "create_file"
+          },
+          "file": {
+           "type": "string"
+          },
+          "reason": {
+           "type": "string"
+          },
+          "content": {
+           "type": "string"
+          }
+         }
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "op",
+          "file",
+          "reason",
+          "search",
+          "replace"
+         ],
+         "properties": {
+          "op": {
+           "const": "search_replace"
+          },
+          "file": {
+           "type": "string"
+          },
+          "reason": {
+           "type": "string"
+          },
+          "search": {
+           "type": "string"
+          },
+          "replace": {
+           "type": "string"
+          }
+         }
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "op",
+          "file",
+          "reason",
+          "diff"
+         ],
+         "properties": {
+          "op": {
+           "const": "apply_diff"
+          },
+          "file": {
+           "type": "string"
+          },
+          "reason": {
+           "type": "string"
+          },
+          "diff": {
+           "type": "string"
+          }
+         }
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "op",
+          "file",
+          "reason",
+          "anchor",
+          "content"
+         ],
+         "properties": {
+          "op": {
+           "const": "replace_range"
+          },
+          "file": {
+           "type": "string"
+          },
+          "reason": {
+           "type": "string"
+          },
+          "anchor": {
+           "type": "object",
+           "additionalProperties": false,
+           "required": [
+            "start_line",
+            "end_line"
+           ],
+           "properties": {
+            "start_line": {
+             "type": "integer"
+            },
+            "end_line": {
+             "type": "integer"
+            }
+           }
+          },
+          "content": {
+           "type": "string"
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "type",
+     "thought",
+     "summary"
+    ],
+    "properties": {
+     "type": {
+      "const": "submit_changes"
+     },
+     "thought": {
+      "type": "string"
+     },
+     "summary": {
+      "type": "string"
+     }
+    }
+   },
+   {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "type",
+     "thought",
+     "note"
+    ],
+    "properties": {
+     "type": {
+      "const": "progress"
+     },
+     "thought": {
+      "type": "string"
+     },
+     "note": {
+      "type": "string"
+     }
+    }
+   }
+  ]
+ },
+ "user_payload": {
+  "workspace_path": "/Users/pradeepkumar/projects/AI editor/workspaces/chatgpt-smoke",
+  "retrieval_seed": {
+   "repository_structure": [],
+   "file_outlines": {},
+   "file_contents": {},
+   "planner_evidence": {
+    "evidence_files": [],
+    "evidence_symbols": [],
+    "confidence_notes": []
+   },
+   "diagnostics_excerpt": [],
+   "snapshot_stats": {
+    "node_count": 0,
+    "edge_count": 0,
+    "diagnostic_count": 0
+   },
+   "graph_neighbor_files": []
+  },
+  "conversation_history": [
+   {
+    "role": "user",
+    "content": "What functions are in src/calc.py, and is there any bug risk in them? Keep it short."
+   },
+   {
+    "role": "assistant",
+    "content": "{\"type\": \"tool_call\", \"tool\": \"read_file\", \"args\": {\"path\": \"src/calc.py\"}}"
+   },
+   {
+    "role": "tool_result",
+    "tool": "read_file",
+    "content": "   1: def add(a, b):\n   2:     return a + b\n   3: \n   4: \n   5: def divide(a, b):\n   6:     return a / b"
+   },
+   {
+    "role": "assistant",
+    "content": "{\"type\": \"answer\", \"answer\": \"`src/calc.py` has `add(a, b)` and `divide(a, b)`. `add` is straightforward; `divide` can raise `ZeroDivisionError` when `b` is zero.\"}"
+   },
+   {
+    "role": "user",
+    "content": "Make divide raise ValueError with a clear message when b is 0."
+   },
+   {
+    "role": "assistant",
+    "content": "{\"type\": \"tool_call\", \"tool\": \"search_code\", \"args\": {\"pattern\": \"def divide\", \"path_filter\": \"src/calc.py\"}}"
+   },
+   {
+    "role": "tool_result",
+    "tool": "search_code",
+    "content": "\n--- src/calc.py ---\n  2|     return a + b\n  3| \n  4| \n  5: def divide(a, b):\n  6|     return a / b"
+   },
+   {
+    "role": "assistant",
+    "content": "{\"type\": \"edit\", \"patch_ops\": [{\"op\": \"search_replace\", \"file\": \"src/calc.py\", \"reason\": \"make zero divisors raise the requested ValueError\", \"search\": \"def divide(a, b):\\n    return a / b\", \"replace\": \"def divide(a, b):\\n    if b == 0:\\n        raise ValueError(\\\"b must not be zero\\\")\\n    return a / b\"}]}"
+   },
+   {
+    "role": "tool_result",
+    "tool": "edit",
+    "content": "applied+promoted: ['src/calc.py']"
+   },
+   {
+    "role": "tool_result",
+    "tool": "retrieval_refresh",
+    "content": "Workspace changed: edited ['src/calc.py']. These edits are live on the real workspace \u2014 use read_file/search_code for current contents and query_graph for updated neighbors. (The retrieval seed is from session start.)"
+   },
+   {
+    "role": "assistant",
+    "content": "{\"type\": \"submit_changes\", \"summary\": \"Updated `divide` to raise `ValueError(\\\"b must not be zero\\\")` when `b` is 0.\"}"
+   },
+   {
+    "role": "user",
+    "content": "Use dispatch_agents to run two explore sub-agents in parallel: one reports every function in src/calc.py with its behavior on bad input, the other reports what .vscode/settings.json configures. Then summarize both reports in two bullets."
+   }
+  ],
+  "recalled_memories": [
+   "- (semantic) `divide` raises `ValueError(\"b must not be zero\")` when `b` is 0."
+  ],
+  "goal": "Use dispatch_agents to run two explore sub-agents in parallel: one reports every function in src/calc.py with its behavior on bad input, the other reports what .vscode/settings.json configures. Then summarize both reports in two bullets.",
+  "instruction": "Phase=ACTIVE. This is your FIRST action and nothing is started yet. Decide the approach:\n\u2022 BIG / multi-part (spans 3+ files, OR several independent parts, OR >~2 edit cycles): START A TODO LIST FIRST. write_todos is a TOOL \u2014 emit type='tool_call', tool='write_todos', args={\"items\":[{\"title\":...,\"status\":\"pending\"}, \u2026]} listing EVERY part. Do NOT emit type='edit' with an empty patch_ops to 'do the todos' \u2014 that applies nothing and wastes the turn. After the list exists, edit items ONE AT A TIME (submit_changes is BLOCKED until none are pending). Or, for independent parts touching disjoint files, dispatch them in parallel with dispatch_agents (a tool_call \u2014 see SUB-AGENTS).\n\u2022 SMALL / cohesive (one file, or a few related ops): SKIP the list \u2014 emit type='edit' now with a NON-EMPTY patch_ops, OR type='answer' if this needs no change at all.\nRead the target region of any EXISTING file before changing it (search_code \u2192 read_file); a brand-new file needs no read. Finish with type='submit_changes'. type='progress' with a short note is also available at any point before you commit, if you want to tell the user what you're about to do without spending the turn on it \u2014 it does not end the turn. (0 of 500 steps used.)",
+  "budget_status": "0/500 steps used"
+ }
+}

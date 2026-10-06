@@ -203,3 +203,22 @@ def test_every_schema_we_send_encodes_to_openai_strict(
 ) -> None:
     encoded = encode_strict_schema(schema).schema
     assert strict_violations(encoded) == [], name
+
+
+def test_encode_is_the_inverse_of_decode() -> None:
+    # Replaying a past action as a native function_call needs the strict shape back:
+    # free-form objects as JSON strings, through unions and refs.
+    schema = {
+        "type": "object",
+        "properties": {"tool": {"type": "string"}, "args": {"type": "object"},
+                       "steps": {"type": "array", "items": {"$ref": "#/$defs/Step"}},
+                       "note": {"type": "string"}},
+        "required": ["tool", "args"],
+        "$defs": {"Step": _obj({"meta": {"type": "object"}}, ["meta"])},
+    }
+    codec = encode_strict_schema(schema)
+    engine_shape = {"tool": "read_file", "args": {"path": "a.py"}, "steps": [{"meta": {"k": 1}}]}
+    strict_shape = codec.encode(engine_shape)
+    assert strict_shape["args"] == '{"path": "a.py"}'
+    assert strict_shape["steps"] == [{"meta": '{"k": 1}'}]
+    assert codec.decode(strict_shape) == engine_shape
