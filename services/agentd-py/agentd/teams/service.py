@@ -71,6 +71,13 @@ class TeamService:
         self._on_activity = on_activity
         self._can_edit = can_edit
 
+    @property
+    def workspace(self) -> Path:
+        return self._workspace
+
+    def member_can_edit(self, team_id: str, label: str) -> bool:
+        return self._can_edit(team_id, label)
+
     # ── helpers ─────────────────────────────────────────────────────────────
 
     def _team(self, team_id: str) -> TeamRecord:

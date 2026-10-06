@@ -310,17 +310,107 @@ async def test_reject_disbands(tmp_path) -> None:
     assert (team.phase, team.end_reason) == ("DISBANDED", "plan rejected")
 
 
-@pytest.mark.asyncio
-async def test_assignments_done_end_implemented(tmp_path) -> None:
-    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
+def _implemented(store, svc, coord):  # type: ignore[no-untyped-def]
     _adopt_round_one(store, svc, coord)
     coord.on_report("alice", "completed", None, files=("a.py",))
-    assert store.member("team-1", "alice").assignment_done
-    assert any(p.text == '● alice finished "api" — files: a.py' for p in store.posts("team-1"))
     coord.on_report("bob", "completed", None, files=("t.py",))
+    return store.get_team("team-1").closing_proposal_id
+
+
+@pytest.mark.asyncio
+async def test_review_after_implementation_agrees(tmp_path) -> None:
+    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
+    closing = _implemented(store, svc, coord)
     team = store.get_team("team-1")
-    assert (team.phase, team.end_reason) == ("DONE", "implemented")
+    assert (team.phase, team.review_cycles) == ("REVIEWING", 1)
+    post = store.get_post("team-1", int(closing[1:]))
+    assert (post.author, post.kind, post.text) == ("system", "proposal",
+                                                   "Implementation complete — verify.")
+    assert post.payload["files_changed"] == {"alice": ["a.py"], "bob": ["t.py"]}
+    assert f"Respond to {closing} with team_agree" in host.extras["alice"]
+    svc.agree("team-1", "alice", closing)
+    svc.agree("team-1", "bob", closing)
+    coord.on_report("alice", "completed", None)
+    coord.on_report("bob", "completed", None)
+    team = store.get_team("team-1")
+    assert (team.phase, team.end_reason) == ("DONE", "reviewed")
+    assert store.get_post("team-1", int(closing[1:])).closed == "reviewed"
     assert host.milestones[-1] == "done"
+    assert any(p.text.startswith(f"Review of {closing}: agree alice, bob")
+               for p in store.posts("team-1"))
+
+
+def _object(svc, label, closing, files):  # type: ignore[no-untyped-def]
+    evidence = {"files": files, "line": 1} if files else {"command": "pytest", "output": "FAILED"}
+    svc.object_("team-1", label, closing, "the limiter is skipped", evidence)
+
+
+@pytest.mark.asyncio
+async def test_objection_routes_to_the_owner_and_runs_a_fix(tmp_path) -> None:
+    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
+    closing = _implemented(store, svc, coord)
+    svc.agree("team-1", "alice", closing)
+    _object(svc, "bob", closing, ["a.py"])
+    host.started.clear()
+    coord.on_report("alice", "completed", None)
+    coord.on_report("bob", "completed", None)
+    assert store.get_team("team-1").phase == "IMPLEMENTING"
+    assert host.started == ["alice"]
+    assert "Fix the objection on" in host.extras["alice"]
+    assert "the limiter is skipped" in host.extras["alice"]
+    assert store.member("team-1", "alice").assignment["fix"]
+    coord.on_report("alice", "completed", None, files=("a.py",))
+    team = store.get_team("team-1")
+    assert (team.phase, team.review_cycles) == ("REVIEWING", 2)
+    assert store.get_post("team-1", int(closing[1:])).closed == "superseded"
+    assert sorted(host.started[-2:]) == ["alice", "bob"]          # objector + fixer
+    coord.close()
+
+
+@pytest.mark.asyncio
+async def test_second_cycle_carries_stances(tmp_path) -> None:
+    labels = ("alice", "bob", "carol")
+    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS, labels=labels)
+    _adopt_round_one(store, svc, coord, labels)
+    coord.on_report("alice", "completed", None, files=("a.py",))
+    coord.on_report("bob", "completed", None, files=("t.py",))
+    closing = store.get_team("team-1").closing_proposal_id
+    svc.agree("team-1", "alice", closing)
+    svc.agree("team-1", "carol", closing)
+    _object(svc, "bob", closing, ["a.py"])
+    for label in labels:
+        coord.on_report(label, "completed", None)
+    coord.on_report("alice", "completed", None, files=("a.py",))
+    second = store.get_team("team-1").closing_proposal_id
+    carried = [p for p in store.posts("team-1") if p.ref_id == second]
+    assert [(p.author, p.kind, p.payload.get("carried")) for p in carried] == [
+        ("carol", "agree", True)]
+    coord.close()
+
+
+@pytest.mark.asyncio
+async def test_unroutable_objection_goes_to_main(tmp_path) -> None:
+    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
+    closing = _implemented(store, svc, coord)
+    svc.agree("team-1", "alice", closing)
+    _object(svc, "bob", closing, [])                      # command evidence, no file
+    coord.on_report("alice", "completed", None)
+    coord.on_report("bob", "completed", None)
+    team = store.get_team("team-1")
+    assert (team.phase, team.end_reason) == ("DONE", "unresolved objections")
+    assert host.milestones[-2:] == ["member_blocked", "done"]
+
+
+@pytest.mark.asyncio
+async def test_cycle_cap_ends_with_unresolved(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_TEAM_REVIEW_CYCLES", "0")
+    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
+    closing = _implemented(store, svc, coord)
+    svc.agree("team-1", "alice", closing)
+    _object(svc, "bob", closing, ["a.py"])
+    coord.on_report("alice", "completed", None)
+    coord.on_report("bob", "completed", None)
+    assert store.get_team("team-1").end_reason == "unresolved objections"
 
 
 @pytest.mark.asyncio

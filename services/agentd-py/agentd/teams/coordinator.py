@@ -8,11 +8,14 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
+from agentd.subagents.framing import frame
 from agentd.teams import state_machine as sm
 from agentd.teams.adoption import evaluate_round
+from agentd.teams.config import team_review_cycles
 from agentd.teams.milestones import milestone_text
 from agentd.teams.models import TeamMember, TeamPost, TeamRecord
-from agentd.teams.service import TeamService
+from agentd.teams.review import Routing, evaluate_review, route_objection
+from agentd.teams.service import PreparedPost, TeamService
 from agentd.teams.store import TeamStore
 from agentd.teams.trace import CoordinatorTrace
 
@@ -67,6 +70,8 @@ class TeamCoordinator:
             phase=team.phase, round=team.round, max_rounds=team.max_rounds,
             members={m.label: _member_state(m) for m in store.members(team_id)},
             approval_gate=team.approval_gate, stuck_count=team.stuck_count)
+        self._state.review_cycle = team.review_cycles
+        self._state.max_review_cycles = team_review_cycles()
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._evaluation: dict[str, object] = {}   # the latest round_ended payload
         self._cutoff = 0                             # highest post seq at the round's start
@@ -77,6 +82,12 @@ class TeamCoordinator:
         self._files: set[str] = set()        # every finished assignment's files
         self._suppress_wakes = False         # after a transient burst, until the user speaks
         self._waits: dict[str, set[str]] = {}  # awaiting_peer member → whom it named
+        self._member_files: dict[str, set[str]] = {}   # label → files its parts changed
+        self._fixes: dict[str, list[Routing]] = {}     # fixer → the objections it fixes
+        self._fixing: set[str] = set()
+        self._fix_changed: set[str] = set()            # files the current fixes changed
+        self._next_reviewers: set[str] = set()
+        self._review: dict[str, object] = {}           # the last cycle's outcome, for `done`
 
     @property
     def phase(self) -> str:
@@ -132,7 +143,7 @@ class TeamCoordinator:
 
     def on_activation_start(self, label: str) -> None:
         self._starting.discard(label)
-        if self._state.phase == "DELIBERATING":
+        if self._state.phase in ("DELIBERATING", "REVIEWING"):
             self._schedule(f"deadline:{label}", self._timeout, lambda: self._check_deadline(label))
 
     def main_adopt(self, proposal_id: str) -> None:
@@ -263,8 +274,19 @@ class TeamCoordinator:
             forced = self._host.force_team_final(self._team_id)
             self._interrupted |= set(forced)
             self._trace.write("budget_forced", labels=sorted(forced))
+        elif isinstance(action, sm.OpenReview):
+            self._open_review(action.cycle)
+        elif isinstance(action, sm.StartReviewRound):
+            self._start_review_round(action)
+        elif isinstance(action, sm.EvaluateReview):
+            self._evaluate_review(action.cycle)
+        elif isinstance(action, sm.StartFixes):
+            self._start_fixes(action.fixers)
         elif isinstance(action, sm.End):
             self.close()
+            closing = self._team().closing_proposal_id
+            if action.phase == "DONE" and closing is not None:
+                self._store.close_proposal(self._team_id, int(closing.lstrip("Pp")), "reviewed")
             self._store.update_team(self._team_id, phase=action.phase,
                                     end_reason=action.reason, ended_at=datetime.now(UTC))
             team = self._team()
@@ -282,6 +304,10 @@ class TeamCoordinator:
             raw = data.get("files")
             data["files"] = sorted(self._files | {str(f) for f in
                                                   (raw if isinstance(raw, list) else [])})
+            data.update(adopted=team.adopted_proposal_id, closing=team.closing_proposal_id,
+                        cycle=team.review_cycles, abstained=self._review.get("abstained", []),
+                        unresolved=(self._review.get("objections", [])
+                                    if data.get("reason") != "reviewed" else []))
         elif action.kind == "stuck":
             data["waits"] = {label: sorted(on) for label, on in self._waits.items()}
         elif action.kind == "paused":
@@ -399,6 +425,9 @@ class TeamCoordinator:
     def _assignment_done(self, action: sm.AssignmentDone) -> None:
         self._store.set_assignment_done(self._team_id, action.label)
         self._files |= set(action.files)
+        self._member_files.setdefault(action.label, set()).update(action.files)
+        if action.label in self._fixing:
+            self._fix_changed |= set(action.files)
         member = self._store.member(self._team_id, action.label)
         part = (member.assignment or {}).get("part", "") if member is not None else ""
         files = ", ".join(action.files) or "none"
@@ -418,6 +447,115 @@ class TeamCoordinator:
                 "changed, then continue your part.", recipient=waiter)
             self._trace.write("wait_answered", waiter=waiter, by=label, status=status)
             self._host.wake_for_post(team, post)
+
+    def _open_review(self, cycle: int) -> None:
+        """Post closing proposal `cycle` and ask who must verify it (spec v2 §8.7 step 1)."""
+        team = self._team()
+        plan = self._adopted()
+        plan_payload = plan.payload if plan is not None else {}
+        quorum = self._state.quorum()
+        if cycle == 1 or not self._next_reviewers:
+            asked = list(quorum)
+        else:
+            owners = {m.label for m in self._store.members(self._team_id) if m.assignment
+                      and self._fix_changed & {str(f) for f in m.assignment.get("files") or []}}
+            asked = [lb for lb in quorum if lb in (self._next_reviewers | owners)]
+        previous = team.closing_proposal_id
+        post = self._svc.closing_proposal(
+            self._team_id, "Implementation complete — verify.",
+            {"assignments": plan_payload.get("assignments", []),
+             "shared_files": plan_payload.get("shared_files", []),
+             "files_changed": {lb: sorted(f) for lb, f in sorted(self._member_files.items())},
+             "closing": True, "cycle": cycle, "supersedes": [previous] if previous else []})
+        if previous is not None:
+            prev_seq = int(previous.lstrip("Pp"))
+            self._store.close_proposal(self._team_id, prev_seq, "superseded")
+            before = self._svc.stances(self._team_id).get(prev_seq, {})
+            for label in quorum:
+                if label not in asked and before.get(label) == "agree":
+                    # Not asked again: its agreement carries over (spec v2 §8.7 step 1).
+                    self._svc.commit(self._team_id, label, PreparedPost(
+                        kind="agree", text="(carried over from the previous cycle)",
+                        ref_id=post.proposal_id, payload={"carried": True}))
+        self._store.update_team(self._team_id, closing_proposal_id=post.proposal_id,
+                                review_cycles=cycle)
+        self._fix_changed.clear()
+        self._fixing.clear()
+        self._next_reviewers.clear()
+        self._trace.write("review_opened", cycle=cycle, closing=post.proposal_id, asked=asked)
+        self._apply(sm.ReviewStarted(cycle, tuple(asked)))
+
+    def _start_review_round(self, action: sm.StartReviewRound) -> None:
+        closing = self._team().closing_proposal_id
+        text = ("Verify the implementation (run tests, read the changes). Respond to "
+                f"{closing} with team_agree or team_object, or put your stance in your "
+                "report's stances field.")
+        for label in action.labels:
+            self._start(label, text)
+
+    def _evaluate_review(self, cycle: int) -> None:
+        team = self._team()
+        closing = team.closing_proposal_id or ""
+        outcome = evaluate_review(self._store.posts(self._team_id), closing,
+                                  self._state.quorum())
+        plan = self._adopted()
+        plan_payload = plan.payload if plan is not None else {}
+        plan_files = {str(f) for a in plan_payload.get("assignments", [])
+                      for f in (a.get("files") or [])} | {
+            str(f) for f in plan_payload.get("shared_files", [])}
+        members = self._store.members(self._team_id)
+        routings = [route_objection(
+            o, members, workspace=self._svc.workspace, approval_gate=team.approval_gate,
+            plan_files=plan_files,
+            can_edit=lambda label: self._svc.member_can_edit(self._team_id, label))
+            for o in outcome.objections]
+        self._fixes = {}
+        for routing in routings:
+            self._trace.write("objection_routed", seq=routing.objection.seq,
+                              by=routing.objection.label, fixer=routing.fixer, why=routing.why)
+            if routing.fixer is None:
+                self._milestone(sm.Milestone("member_blocked", {
+                    "label": routing.objection.label, "status": "objected",
+                    "report": (f"objection #{routing.objection.seq} on {closing} could not be "
+                               f"routed ({routing.why}): {routing.objection.reason}")[:300]}))
+            else:
+                self._fixes.setdefault(routing.fixer, []).append(routing)
+        self._next_reviewers = ({r.objection.label for r in routings if r.fixer is not None}
+                                | set(self._fixes))
+        self._review = {
+            "abstained": outcome.abstained,
+            "objections": [{"seq": o.seq, "label": o.label, "reason": o.reason}
+                           for o in outcome.objections]}
+        verdict = "; ".join(part for part in (
+            "agree " + ", ".join(lb for lb, s in outcome.stances.items() if s == "agree"),
+            "object " + ", ".join(f"{o.label} (#{o.seq})" for o in outcome.objections),
+            "abstained " + ", ".join(outcome.abstained)) if not part.endswith(" "))
+        self._svc.system_post(self._team_id, f"Review of {closing}: {verdict or 'no stances'}.")
+        self._apply(sm.ReviewEvaluated(tuple(sorted(self._fixes)), len(outcome.objections)))
+
+    def _start_fixes(self, fixers: tuple[str, ...]) -> None:
+        closing = self._team().closing_proposal_id
+        for label in fixers:
+            routes = self._fixes.get(label, [])
+            member = self._store.member(self._team_id, label)
+            assignment = dict((member.assignment if member is not None else None)
+                              or {"member": label, "part": "fix", "files": []})
+            files = [str(f) for f in assignment.get("files") or []]
+            for routing in routes:
+                if routing.synthetic:
+                    files += [f for f in routing.objection.files if f not in files]
+            assignment.update(files=files, fix=[f"#{r.objection.seq}" for r in routes])
+            self._store.set_assignment(self._team_id, label, assignment)
+            self._fixing.add(label)
+            framed = "\n\n".join(
+                frame(r.objection.label, f"objection on {closing}", r.objection.reason,
+                      seq=r.objection.seq) for r in routes)
+            plural = "s" if len(routes) > 1 else ""
+            self._start(label, f"Fix the objection{plural} on {closing} raised in review, in "
+                               f"your files, then report completed:\n\n{framed}")
+        self._svc.system_post(self._team_id, "Fixing: " + "; ".join(
+            f"{lb} → " + ", ".join(f"#{r.objection.seq}" for r in self._fixes.get(lb, []))
+            for lb in fixers) + ".")
 
     def _check_stuck(self, reporter: str) -> None:
         """Spec v2 §8.6 step 5. The reporter is excluded from the busy check: on_report runs
@@ -479,7 +617,7 @@ class TeamCoordinator:
     def _check_deadline(self, label: str) -> None:
         """The clock counts active time only (spec v2 §8.3): re-arm for what is left."""
         active = self._host.active_seconds(self._team_id, label)
-        if active is None or self._state.phase != "DELIBERATING":
+        if active is None or self._state.phase not in ("DELIBERATING", "REVIEWING"):
             return
         if active < self._timeout:
             self._schedule(f"deadline:{label}", max(0.01, self._timeout - active),
