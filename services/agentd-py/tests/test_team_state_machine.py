@@ -11,6 +11,7 @@ from agentd.teams.state_machine import (
     Disband,
     End,
     EnterPhase,
+    EvaluateReview,
     EvaluateRound,
     ForceFinalAll,
     Kickoff,
@@ -20,13 +21,18 @@ from agentd.teams.state_machine import (
     MemberReported,
     MemberState,
     Milestone,
+    OpenReview,
     RaisePlanGate,
     Requeue,
     ResumeMembers,
+    ReviewEvaluated,
+    ReviewStarted,
     Revive,
     RoundEvaluated,
     SetQuorum,
+    StartFixes,
     StartImplementation,
+    StartReviewRound,
     StartRound,
     Stuck,
     TeamState,
@@ -234,14 +240,13 @@ def test_reject_disbands() -> None:
     assert actions == [End("DISBANDED", "plan rejected")] and s.phase == "DISBANDED"
 
 
-def test_completed_marks_done_and_last_one_ends_implemented() -> None:
+def test_the_last_assignment_opens_review() -> None:
     s = _adopted(_state())
     s, actions = apply(s, MemberReported("alice", "completed", files=("a.py",)))
     assert actions == [AssignmentDone("alice", ("a.py",))]
     s, actions = apply(s, MemberReported("bob", "completed", files=("b.py",)))
-    assert actions == [AssignmentDone("bob", ("b.py",)),
-                       Milestone("done", {"files": ["b.py"]}),   # widened by the coordinator
-                       End("DONE", "implemented")]
+    assert actions == [AssignmentDone("bob", ("b.py",)), OpenReview(1)]
+    assert s.phase == "IMPLEMENTING"                  # until the coordinator starts it
 
 
 def test_partial_is_blocked_and_assignment_stays_open() -> None:
@@ -342,3 +347,86 @@ def test_main_adopt_from_deadlock_implements() -> None:
     s, actions = apply(s, MainAdopt("P2", ("bob",)))
     assert actions == [Adopt("P2", "main"), EnterPhase("IMPLEMENTING", 1),
                        StartImplementation(("bob",))]
+
+
+def _reviewing(cycle: int = 1, labels: tuple[str, ...] = ("alice", "bob")) -> TeamState:
+    s = _adopted(_state())
+    s, _ = apply(s, MemberReported("alice", "completed"))
+    s, _ = apply(s, MemberReported("bob", "completed"))
+    s, _ = apply(s, ReviewStarted(cycle, labels))
+    return s
+
+
+def test_review_round_then_clean_done() -> None:
+    s = _adopted(_state())
+    s, _ = apply(s, MemberReported("alice", "completed"))
+    s, _ = apply(s, MemberReported("bob", "completed"))
+    s, actions = apply(s, ReviewStarted(1, ("alice", "bob")))
+    assert actions == [EnterPhase("REVIEWING", 1, "cycle 1"),
+                       StartReviewRound(1, ("alice", "bob"))]
+    s, actions = apply(s, MemberReported("alice", "completed"))
+    assert actions == []
+    s, actions = apply(s, MemberReported("bob", "completed"))
+    assert actions == [EvaluateReview(1)]
+    s, actions = apply(s, ReviewEvaluated((), 0))
+    assert actions == [Milestone("done", {"reason": "reviewed", "files": []}),
+                       End("DONE", "reviewed")]
+
+
+def test_routed_objection_runs_fixes_then_the_next_cycle() -> None:
+    s = _reviewing()
+    s, _ = apply(s, MemberReported("alice", "completed"))
+    s, _ = apply(s, MemberReported("bob", "completed"))
+    s, actions = apply(s, ReviewEvaluated(("alice",), 1))
+    assert actions == [EnterPhase("IMPLEMENTING", 1, "fixing"), StartFixes(("alice",))]
+    assert s.members["alice"].assigned and not s.members["alice"].done
+    assert s.members["bob"].done
+    s, actions = apply(s, MemberReported("alice", "completed", files=("a.py",)))
+    assert actions == [AssignmentDone("alice", ("a.py",)), OpenReview(2)]
+
+
+def test_only_unrouted_objections_end_unresolved() -> None:
+    s = _reviewing()
+    s, _ = apply(s, MemberReported("alice", "completed"))
+    s, _ = apply(s, MemberReported("bob", "completed"))
+    s, actions = apply(s, ReviewEvaluated((), 2))
+    assert actions[-1] == End("DONE", "unresolved objections")
+
+
+def test_review_cycles_are_capped() -> None:
+    state = _state()
+    state.max_review_cycles = 1                       # one closing proposal after the first
+    s = _adopted(state)
+    s, _ = apply(s, MemberReported("alice", "completed"))
+    s, _ = apply(s, MemberReported("bob", "completed"))
+    s, _ = apply(s, ReviewStarted(2, ("alice",)))     # the second (last) closing proposal
+    s, _ = apply(s, MemberReported("alice", "completed"))
+    s, actions = apply(s, ReviewEvaluated(("alice",), 1))
+    assert actions[-1] == End("DONE", "unresolved objections")
+
+
+def test_nobody_to_ask_evaluates_at_once() -> None:
+    s = _adopted(_state())
+    s, _ = apply(s, MemberReported("alice", "completed"))
+    s, _ = apply(s, MemberReported("bob", "completed"))
+    s, actions = apply(s, ReviewStarted(2, ()))
+    assert actions == [EnterPhase("REVIEWING", 1, "cycle 2"), EvaluateReview(2)]
+
+
+def test_review_survives_a_transient_and_a_pause() -> None:
+    s = _reviewing()
+    s, actions = apply(s, MemberReported("alice", "failed_transient"))
+    assert isinstance(actions[0], Requeue)
+    s, _ = apply(s, BudgetExhausted())
+    s, _ = apply(s, MemberReported("bob", "completed"))
+    s, actions = apply(s, MainResume())
+    assert actions == [EnterPhase("REVIEWING", 1, "resumed"), ResumeMembers(("alice",))]
+    s, actions = apply(s, MemberReported("alice", "completed"))
+    assert actions == [EvaluateReview(1)]
+
+
+def test_revive_from_review_reopens_it() -> None:
+    failed = _state(phase="FAILED")
+    failed.review_cycle = 1
+    s, actions = apply(failed, Revive("REVIEWING"))
+    assert actions == [OpenReview(1)] and s.phase == "REVIEWING"

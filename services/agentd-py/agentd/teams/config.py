@@ -28,3 +28,8 @@ def team_round_timeout_s() -> int:
     """Active seconds a member gets per round before its loop is forced to report
     (spec v2 §8.3)."""
     return _int_env("CRUCIBLE_TEAM_ROUND_TIMEOUT_SEC", 900, 1)
+
+
+def team_review_cycles() -> int:
+    """Closing proposals after the first one (spec v2 §8.7)."""
+    return _int_env("CRUCIBLE_TEAM_REVIEW_CYCLES", 2, 0)

@@ -1,6 +1,6 @@
-"""The team's rules (spec v2 §8.1–§8.6) — pure, synchronous, no I/O. The coordinator feeds
-events in and executes the actions out. 5B covers approval and implementation; when every
-assignment is done the team ends DONE until 5C adds review."""
+"""The team's rules (spec v2 §8.1–§8.7) — pure, synchronous, no I/O. The coordinator feeds
+events in and executes the actions out. 5C adds review: the last assignment done opens a
+closing proposal, and fixes run until the team agrees or the cycles run out."""
 from __future__ import annotations
 
 import copy
@@ -37,6 +37,8 @@ class TeamState:
     stuck_count: int = 0
     transient_streak: int = 0
     pending_assignees: tuple[str, ...] = ()   # the adopted plan's assignees, awaiting approval
+    review_cycle: int = 0            # the current closing proposal's cycle (1 = the first)
+    max_review_cycles: int = 2       # closing proposals allowed after the first
 
     def quorum(self) -> list[str]:
         return [label for label, m in self.members.items() if m.in_quorum]
@@ -108,8 +110,21 @@ class Revive:
     proposal_id: str | None = None     # the adopted plan, when it failed awaiting approval
 
 
+@dataclass(frozen=True)
+class ReviewStarted:
+    """The coordinator posted closing proposal `cycle` and asks `labels` to verify it."""
+    cycle: int
+    labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReviewEvaluated:
+    fixers: tuple[str, ...]          # members with a routed objection to fix
+    objections: int                  # every objection, routed or not
+
+
 Event = (Kickoff | MemberReported | RoundEvaluated | MainAdopt | MainPost | Disband | Approval
-         | BudgetExhausted | Stuck | MainResume | Revive)
+         | BudgetExhausted | Stuck | MainResume | Revive | ReviewStarted | ReviewEvaluated)
 
 
 # ── actions ──────────────────────────────────────────────────────────────────
@@ -200,9 +215,31 @@ class ForceFinalAll:
     pass
 
 
+@dataclass(frozen=True)
+class OpenReview:
+    cycle: int
+
+
+@dataclass(frozen=True)
+class StartReviewRound:
+    cycle: int
+    labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EvaluateReview:
+    cycle: int
+
+
+@dataclass(frozen=True)
+class StartFixes:
+    fixers: tuple[str, ...]
+
+
 Action = (StartRound | Requeue | EvaluateRound | Adopt | Milestone | SetQuorum | EnterPhase
           | End | RaisePlanGate | ClosePlan | StartImplementation | AssignmentDone
-          | ResumeMembers | CancelTimers | ForceFinalAll)
+          | ResumeMembers | CancelTimers | ForceFinalAll | OpenReview | StartReviewRound
+          | EvaluateReview | StartFixes)
 
 
 def _start_round(state: TeamState, labels: list[str]) -> list[Action]:
@@ -253,7 +290,7 @@ def _pause(state: TeamState, reason: str) -> list[Action]:
 
 
 def _owing(state: TeamState, phase: str) -> tuple[str, ...]:
-    if phase == "DELIBERATING":
+    if phase in ("DELIBERATING", "REVIEWING"):
         return tuple(lb for lb in state.round_members
                      if state.members[lb].in_quorum and not state.members[lb].reported)
     if phase == "IMPLEMENTING":
@@ -284,15 +321,17 @@ def _resume(state: TeamState) -> list[Action]:
     actions: list[Action] = [*restored, EnterPhase(phase, state.round, "resumed")]
     if phase == "DELIBERATING" and not owing:
         return [*actions, EvaluateRound(state.round)]
+    if phase == "REVIEWING" and not owing:
+        return [*actions, EvaluateReview(state.review_cycle)]
     if phase == "IMPLEMENTING" and not owing:
-        return [*actions, *_all_done(state, [])]
+        return [*actions, OpenReview(state.review_cycle + 1)]
     return [*actions, ResumeMembers(owing)] if owing else actions
 
 
-def _all_done(state: TeamState, files: list[str]) -> list[Action]:
-    # The coordinator widens `files` to every member's files when it runs the milestone.
+def _finish(state: TeamState, reason: str) -> list[Action]:
+    # The coordinator fills the milestone in (adopted plan, stances, files) when it runs it.
     state.phase = "DONE"
-    return [Milestone("done", {"files": files}), End("DONE", "implemented")]
+    return [Milestone("done", {"reason": reason, "files": []}), End("DONE", reason)]
 
 
 def _final_transient(state: TeamState, member: MemberState, event: MemberReported,
@@ -311,7 +350,7 @@ def _final_transient(state: TeamState, member: MemberState, event: MemberReporte
     return [], True
 
 
-def _deliberation_report(state: TeamState, event: MemberReported) -> list[Action]:
+def _round_report(state: TeamState, event: MemberReported) -> list[Action]:
     member = state.members.get(event.label)
     if member is None or member.reported or event.label not in state.round_members:
         return []
@@ -338,7 +377,9 @@ def _deliberation_report(state: TeamState, event: MemberReported) -> list[Action
     waiting = [lb for lb in state.round_members
                if state.members[lb].in_quorum and not state.members[lb].reported]
     if not waiting and not paused:
-        actions.append(EvaluateRound(state.round))
+        reviewing = (state.paused_from if paused else state.phase) == "REVIEWING"
+        actions.append(EvaluateReview(state.review_cycle) if reviewing
+                       else EvaluateRound(state.round))
     return actions
 
 
@@ -362,7 +403,7 @@ def _implementation_report(state: TeamState, event: MemberReported) -> list[Acti
         actions.append(AssignmentDone(event.label, event.files))
         if state.phase == "IMPLEMENTING" and all(m.done for m in state.members.values()
                                                  if m.assigned):
-            return [*actions, *_all_done(state, sorted(event.files))]
+            return [*actions, OpenReview(state.review_cycle + 1)]
         return actions
     if event.status in ("partial", "failed", "failed_transient") or (
             event.status == "stopped" and event.stop_reason == "user"):
@@ -380,12 +421,15 @@ def _revive(state: TeamState, event: Revive) -> list[Action]:
     if phase == "IMPLEMENTING":
         state.phase = phase
         owing = _owing(state, phase)
-        return [*restored, EnterPhase(phase, state.round, "revived"),
-                *([ResumeMembers(owing)] if owing else _all_done(state, []))]
+        follow: Action = ResumeMembers(owing) if owing else OpenReview(state.review_cycle + 1)
+        return [*restored, EnterPhase(phase, state.round, "revived"), follow]
     if phase == "AWAITING_APPROVAL" and event.proposal_id is not None:
         state.phase = phase
         return [*restored, EnterPhase(phase, state.round, "revived"),
                 RaisePlanGate(event.proposal_id)]
+    if phase == "REVIEWING":
+        state.phase = "REVIEWING"
+        return [*restored, OpenReview(max(state.review_cycle, 1))]
     # Deliberation (or any other phase): one more round, as a main post in a deadlock does.
     state.round += 1
     state.max_rounds += 1
@@ -450,12 +494,41 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
             return s, _pause(s, "stuck")
         return s, [Milestone("stuck", {"idle": [list(i) for i in event.idle],
                                        "count": s.stuck_count})]
+    if isinstance(event, ReviewStarted):
+        if s.phase not in ("IMPLEMENTING", "REVIEWING"):
+            return s, []
+        s.phase = "REVIEWING"
+        s.review_cycle = event.cycle
+        s.stuck_count = 0
+        s.round_members = [lb for lb in event.labels
+                           if lb in s.members and s.members[lb].in_quorum]
+        for member in s.members.values():
+            member.reported = False
+            member.retries = 0
+        entered: list[Action] = [EnterPhase("REVIEWING", s.round, f"cycle {event.cycle}")]
+        if not s.round_members:
+            return s, [*entered, EvaluateReview(event.cycle)]
+        return s, [*entered, StartReviewRound(event.cycle, tuple(s.round_members))]
+    if isinstance(event, ReviewEvaluated):
+        if s.phase != "REVIEWING":
+            return s, []
+        if event.objections == 0:
+            return s, _finish(s, "reviewed")
+        if event.fixers and s.review_cycle < 1 + s.max_review_cycles:
+            s.phase = "IMPLEMENTING"
+            for label, member in s.members.items():
+                if label in event.fixers:
+                    member.assigned, member.done, member.retries = True, False, 0
+                else:
+                    member.done = True
+            return s, [EnterPhase("IMPLEMENTING", s.round, "fixing"), StartFixes(event.fixers)]
+        return s, _finish(s, "unresolved objections")
     if isinstance(event, MainResume):
         return (s, _resume(s)) if s.phase == "PAUSED" else (s, [])
     assert isinstance(event, MemberReported)
     phase = s.paused_from if s.phase == "PAUSED" else s.phase
-    if phase == "DELIBERATING":
-        return s, _deliberation_report(s, event)
+    if phase in ("DELIBERATING", "REVIEWING"):
+        return s, _round_report(s, event)
     if phase == "IMPLEMENTING":
         return s, _implementation_report(s, event)
     return s, []
