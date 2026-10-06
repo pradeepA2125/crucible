@@ -373,3 +373,22 @@ Then add a CLAUDE.md section.
 - §5.5's `/v1/config` field is `uses_chatgpt_plan: bool` rather than a `billing` enum.
 - §6: the registration id is persisted in `globalState` (`crucible.chatgpt.registration`), not SecretStorage — it is an id, not a secret. ChatGPT is not in the API-key provider dropdowns; it has its own card in Settings and Setup.
 - `main.py`'s chat-model fallback is now empty for `chatgpt` (it was a generic `gpt-4o`).
+
+## 11. Phase 0 findings (live, 2026-10-06, ChatGPT Go account)
+
+| Question | Answer |
+|---|---|
+| Eligibility | A **Go** account signed in with `chatgpt.tokens.use.direct` and completed inference, although the docs name Plus/Pro. |
+| Token response | `access_token, earliest_refresh_at, expires_in (3600), id_token, refresh_token, scope, token_type`. `earliest_refresh_at` is an absolute Unix time. |
+| ID token claims | `aud, auth_time, email, email_verified, exp, iat, iss, jti, name, nonce, sid, sub, at_hash, https://api.openai.com/auth`. |
+| Discovery | Issuer `https://auth.openai.com`; revocation at `/api/accounts/oauth/revoke`. |
+| `/v1/models` | `{"models": [...]}`; two listed models (`gpt-5.6-terra`, `gpt-5.6-luna`), each with `context_window` 272000, `max_context_window` 872000, `supported_reasoning_levels`, `default_reasoning_level`, plus Codex-specific fields (`prefer_websockets`, `use_responses_lite`, …). |
+| Strict `json_schema` | Works. Root `anyOf` → 400 "schema must be … type object"; `oneOf` → 400 "not permitted"; free-form object → 400 "additionalProperties is required … false"; our raw controller schema → 400 (`const` without `type`). **The codec-encoded controller schema succeeds.** |
+| Roles | `system` and `developer` input items were both accepted (the docs say `system` is rejected). We use `instructions`. |
+| Unsupported fields | `temperature` → 400 `{"detail":"Unsupported parameter: temperature"}`; string `input` → `{"detail":"Input must be a list"}`; `store:true` / `stream:false` refused the same way. `max_output_tokens` was **accepted** (docs list it unsupported); we still omit it. |
+| Reasoning | `none/low/medium/high/xhigh/max` accepted; `minimal` → 400 `unsupported_value`, `param: reasoning.effort`. Live through the transport: reasoning tokens 0→52 from off→max. |
+| `prompt_cache_key`, `text.verbosity` | Accepted. |
+| Unknown model | 400 `{"detail":"The 'x' model is not supported when using Codex with a ChatGPT account."}` → now `PlanUnsupportedCapability`. |
+| Usage | `response.completed` carries `usage` (input/output/cached/reasoning tokens, plus an `attribution` breakdown). |
+| Multiple messages | A response can contain a `commentary` message and then a `final_answer` message, both with the full answer; `response.completed.output` is empty. Fixed by per-item selection. |
+| Request ids | No `x-request-id` header was observed on these responses. |
