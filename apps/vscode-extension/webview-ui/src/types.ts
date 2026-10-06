@@ -1,8 +1,19 @@
+/** Mirror of editor-client's ProviderAccess (spec 2026-10-06 §5.4). */
+export interface ProviderAccessView {
+  kind: string;
+  message: string;
+  code: string | null;
+  status: number | null;
+  requestId: string | null;
+}
+
 /** Mirror of src/composer-models.ts ModelOption (webview never imports src/). */
 export interface ModelOption {
   backend: string;
   label: string;
   model: string;
+  /** Human name when the model id isn't one (a ChatGPT catalog's display_name). */
+  display?: string;
   active: boolean;
 }
 
@@ -370,6 +381,7 @@ export type ExtensionMessage =
   | { type: "clearLiveError" }
   | { type: "renderLiveTodos"; todos: LiveTodosView }
   | { type: "clearLiveTodos" }
+  | { type: "renderProviderAccess"; access: ProviderAccessView | null }
   | { type: "renderLiveSessions"; sessions: LiveSessionsView }
   | { type: "clearLiveSessions" }
   | { type: "sessionTranscript"; sessionId: string; transcript: SessionTranscriptView | null }
@@ -453,6 +465,9 @@ export type WebviewMessage =
   | { type: "setReasoningEffort"; level: "off" | "low" | "medium" | "high" | "max" }
   // section (optional) deep-links the Settings pane to a section (from the chat drawer).
   | { type: "openSettings"; section?: string }
+  // Routed to the shared settings handler (chat-panel forwards every settings/*).
+  // Only ChatGPT and OpenAI help URLs are honored there.
+  | { type: "settings/openExternal"; url: string }
   // Chat-window shortcut to the standalone Memory Inspector panel/command.
   | { type: "openMemoryPanel" }
   | { type: "openGraphPanel" }
@@ -488,6 +503,8 @@ export interface AppState {
   liveReview: LiveReviewView | null;
   liveError: LiveErrorView | null;
   liveTodos: LiveTodosView | null;
+  // Why the last turn stopped on the ChatGPT plan's access rules; null when it didn't.
+  providerAccess: ProviderAccessView | null;
   liveSessions: LiveSessionsView | null;
   // sessionId → transcript for expanded strip rows (null = fetch failed).
   sessionTranscripts: Record<string, SessionTranscriptView | null>;

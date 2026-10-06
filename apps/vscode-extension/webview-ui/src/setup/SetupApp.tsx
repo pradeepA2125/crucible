@@ -3,6 +3,8 @@ import { CardShell } from "../components/shared/CardShell";
 import { BtnPrimary } from "../components/shared/buttons";
 import { Icon } from "../components/Icon";
 import { FIELD } from "../settings/ui";
+import { ChatGPTPlanPanel, PlanOffer } from "../settings/sections/ChatGPTPlanPanel";
+import type { SettingsState } from "../settings/types";
 import { StepRail, type Step } from "./StepRail";
 import { COMPONENT_LABELS, PROVIDERS, type SetupOutMsg } from "./types";
 import { vscode } from "./vscodeApi";
@@ -58,12 +60,24 @@ function StatusGlyph({ status }: { status: string }) {
   }
 }
 
+// The API-key form. "Use your ChatGPT plan" signs in instead and has its own card.
+const KEY_PROVIDERS = PROVIDERS.filter((p) => !p.signIn);
+
+// The plan panel reads only `provider`; during setup nothing is active yet.
+const NO_PROVIDER_STATE: SettingsState = {
+  provider: null, runtime: null, mcp: { enabled: false, servers: [] }, skills: [],
+  envFlags: {}, restartRequired: false,
+};
+
 export default function SetupApp() {
   const [step, setStep] = useState<Step>("welcome");
   const [progress, setProgress] = useState<Record<string, ProgressRow>>({});
   const [installOk, setInstallOk] = useState<boolean | null>(null);
-  const [backend, setBackend] = useState(PROVIDERS[0].id);
-  const [model, setModel] = useState(PROVIDERS[0].defaultModel);
+  const [backend, setBackend] = useState(KEY_PROVIDERS[0].id);
+  const [model, setModel] = useState(KEY_PROVIDERS[0].defaultModel);
+  // "Continue with ChatGPT": idle → starting (backend spawning) → ready (panel shown).
+  const [chatgptPhase, setChatgptPhase] = useState<"idle" | "starting" | "ready">("idle");
+  const [usedChatGPT, setUsedChatGPT] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -72,7 +86,7 @@ export default function SetupApp() {
   const [validateWarning, setValidateWarning] = useState<string | null>(null);
 
   const provider = useMemo(
-    () => PROVIDERS.find((p) => p.id === backend) ?? PROVIDERS[0],
+    () => KEY_PROVIDERS.find((p) => p.id === backend) ?? KEY_PROVIDERS[0],
     [backend],
   );
 
@@ -111,6 +125,12 @@ export default function SetupApp() {
           setError(msg.ok ? null : msg.error ?? "validation failed");
           setValidateWarning(msg.warning ?? null);
           break;
+        case "setup/chatgptReady":
+          setBusy(false);
+          setChatgptPhase("ready");
+          // A returning user picks a saved account rather than registering a new client.
+          if (!msg.hasAccounts) vscode.postMessage({ type: "settings/chatgptSignIn" });
+          break;
         case "setup/ready":
           setBusy(false);
           setError(null);
@@ -121,6 +141,7 @@ export default function SetupApp() {
         case "setup/error":
           setBusy(false);
           setError(msg.message);
+          setChatgptPhase((phase) => (phase === "starting" ? "idle" : phase));
           break;
       }
     };
@@ -137,9 +158,18 @@ export default function SetupApp() {
     vscode.postMessage({ type: "setup/install" });
   };
 
+  const continueWithChatGPT = () => {
+    setBusy(true);
+    setError(null);
+    setUsedChatGPT(true);
+    setChatgptPhase("starting");
+    vscode.postMessage({ type: "setup/startForChatGPT" });
+  };
+
   const saveAndStart = () => {
     setBusy(true);
     setError(null);
+    setUsedChatGPT(false);
     setValidateWarning(null);
     vscode.postMessage({
       type: "setup/save",
@@ -220,8 +250,22 @@ export default function SetupApp() {
       )}
 
       {step === "provider" && (
-        <div className="anim-section">
-          <CardShell icon="key" title="Choose a model provider">
+        <div className="anim-section flex flex-col gap-3">
+          {chatgptPhase === "idle" && (
+            <CardShell icon="spark" iconColor="var(--color-text)" title="ChatGPT plan">
+              <div className="px-3 pb-3 pt-1">
+                <PlanOffer pending={false} busy={busy} onContinue={continueWithChatGPT} />
+              </div>
+            </CardShell>
+          )}
+          {chatgptPhase === "starting" && (
+            <p className="text-xs text-text-2" role="status">Starting Crucible for ChatGPT sign-in…</p>
+          )}
+          {chatgptPhase === "ready" && (
+            <ChatGPTPlanPanel state={NO_PROVIDER_STATE} busy={busy}
+                              send={(m) => vscode.postMessage(m)} />
+          )}
+          <CardShell icon="key" title="Or use your own API key">
             <div className="flex flex-col gap-3 px-3 pb-3 pt-1">
               <label className="flex flex-col gap-1 text-xs text-text-2">
                 Provider
@@ -229,7 +273,7 @@ export default function SetupApp() {
                   className={FIELD}
                   value={backend}
                   onChange={(e) => {
-                      const next = PROVIDERS.find((p) => p.id === e.target.value)!;
+                      const next = KEY_PROVIDERS.find((p) => p.id === e.target.value)!;
                       setBackend(next.id);
                       setModel(next.defaultModel);
                       setApiKey("");
@@ -238,7 +282,7 @@ export default function SetupApp() {
                       setValidateWarning(null);
                     }}
                 >
-                  {PROVIDERS.map((p) => (
+                  {KEY_PROVIDERS.map((p) => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
                 </select>
@@ -288,7 +332,9 @@ export default function SetupApp() {
           <CardShell icon="check" iconColor="var(--color-green)" title="Ready" borderColor="var(--green-brd)">
             <div className="flex flex-col items-start gap-3 px-3 pb-3 pt-1">
               <p className="text-xs text-text-2">
-                Backend is running on port {port}. Provider <code>{backend}</code> / <code>{model}</code> validated.
+                {usedChatGPT
+                  ? <>Backend is running on port {port}, using your ChatGPT plan.</>
+                  : <>Backend is running on port {port}. Provider <code>{backend}</code> / <code>{model}</code> validated.</>}
               </p>
               {validateWarning && (
                 <p className="text-xs" style={{ color: "var(--color-amber)" }}>⚠ {validateWarning}</p>

@@ -7,6 +7,7 @@ import { PROVIDERS } from "../types";
 import type { SettingsOutMsg } from "../types";
 import { FIELD } from "../ui";
 import { contextWindowError, defaultContextWindow } from "../contextWindows";
+import { ChatGPTPlanPanel } from "./ChatGPTPlanPanel";
 import type { SectionProps } from "./meta";
 
 /**
@@ -14,9 +15,15 @@ import type { SectionProps } from "./meta";
  * Behavior is identical to the old flat page; the "✓ Saved" chip pops in
  * when a save round-trip lands a new provider snapshot.
  */
+// The API-key form. ChatGPT plan usage signs in instead and has its own card above.
+const KEY_PROVIDERS = PROVIDERS.filter((p) => !p.signIn);
+
 export function ProviderSection({ state, busy, send }: SectionProps) {
-  const [backend, setBackend] = useState(state.provider?.backend ?? PROVIDERS[0].id);
-  const [model, setModel] = useState(state.provider?.model ?? PROVIDERS[0].defaultModel);
+  const activeKeyProvider = KEY_PROVIDERS.some((p) => p.id === state.provider?.backend);
+  const [backend, setBackend] = useState(
+    activeKeyProvider ? state.provider!.backend : KEY_PROVIDERS[0].id);
+  const [model, setModel] = useState(
+    activeKeyProvider ? state.provider!.model : KEY_PROVIDERS[0].defaultModel);
   // The live backend value wins over the table: it is what compaction is actually
   // using, and showing the table's guess over the top of it would be a lie.
   // Falls back from the SAME model string the Model field above initializes
@@ -25,7 +32,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
   // not for "" (both currently resolve to 128,000, which is why this was
   // invisible until now).
   const [contextWindow, setContextWindow] = useState(
-    String(state.provider?.contextWindow ?? defaultContextWindow(state.provider?.model ?? PROVIDERS[0].defaultModel)),
+    String(state.provider?.contextWindow ?? defaultContextWindow(model)),
   );
   // Blocks the save before it can reach the route — see the note in contextWindows.ts
   // for why a backend 422 would reach the user as an unreadable message.
@@ -43,7 +50,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
   >(null);
 
   const provider = useMemo(
-    () => PROVIDERS.find((p) => p.id === backend) ?? PROVIDERS[0],
+    () => KEY_PROVIDERS.find((p) => p.id === backend) ?? KEY_PROVIDERS[0],
     [backend],
   );
 
@@ -89,9 +96,12 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
     <div>
       <SectionHeader
         title="Provider"
-        description="Pick the model provider and model. Saving validates the credentials and hot-swaps the running backend — no restart."
+        description="Use your ChatGPT plan, or pick a model provider with your own API key. Saving validates and hot-swaps the running backend — no restart."
       />
-      <CardShell icon="key" title="Model provider">
+      <div className="mb-3">
+        <ChatGPTPlanPanel state={state} busy={busy} send={send} />
+      </div>
+      <CardShell icon="key" title="API key provider">
         <div className="flex flex-col gap-3 px-3 pb-3 pt-1">
           <label className="flex flex-col gap-1 text-xs text-text-2">
             Provider
@@ -99,7 +109,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
               className={FIELD}
               value={backend}
               onChange={(e) => {
-                const next = PROVIDERS.find((p) => p.id === e.target.value)!;
+                const next = KEY_PROVIDERS.find((p) => p.id === e.target.value)!;
                 setBackend(next.id);
                 setModel(next.defaultModel);
                 setContextWindow(String(defaultContextWindow(next.defaultModel)));
@@ -114,7 +124,7 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
                 setConfirmingTest(false);
               }}
             >
-              {PROVIDERS.map((p) => (
+              {KEY_PROVIDERS.map((p) => (
                 <option key={p.id} value={p.id}>{p.label}</option>
               ))}
             </select>

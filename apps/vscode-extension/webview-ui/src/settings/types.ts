@@ -94,7 +94,41 @@ export type SettingsInMsg =
   | { type: "settings/deleteAgent"; name: string }
   | { type: "settings/trustAgent"; path: string; sha256: string }
   | { type: "settings/openFile"; path: string }
-  | { type: "settings/listModels" };
+  | { type: "settings/listModels" }
+  // Sign in with ChatGPT (mirror of src/chatgpt-settings.ts).
+  | { type: "settings/chatgptLoad" }
+  | { type: "settings/chatgptSignIn"; registrationId?: string; reconsent?: boolean }
+  | { type: "settings/chatgptCancel" }
+  | { type: "settings/chatgptModels"; registrationId: string }
+  | { type: "settings/useChatGPT"; registrationId: string; model: string; contextWindow?: number }
+  | { type: "settings/chatgptSignOut"; registrationId: string }
+  | { type: "settings/chatgptWelcomed"; registrationId: string }
+  | { type: "settings/openExternal"; url: string };
+
+// Mirrors of editor-client's ChatGPTAccount / ChatGPTSignIn / ChatGPTModel.
+export interface ChatGPTAccount {
+  registrationId: string;
+  label: string;
+  email: string | null;
+  name: string | null;
+  planEnabled: boolean;
+  signedIn: boolean;
+}
+
+export interface ChatGPTSignIn {
+  attemptId: string;
+  state: "pending" | "succeeded" | "failed";
+  registrationId: string | null;
+  planEnabled: boolean | null;
+  firstPlanSignIn: boolean;
+  reason: string | null;
+  message: string | null;
+}
+
+export interface ChatGPTModel {
+  slug: string;
+  displayName: string;
+}
 
 // host → webview
 export type SettingsOutMsg =
@@ -107,7 +141,13 @@ export type SettingsOutMsg =
   | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } }
   | { type: "settings/agents"; catalog: AgentCatalog }
   | { type: "settings/agentsError"; message: string }
-  | { type: "settings/models"; models: string[] };
+  | { type: "settings/models"; models: string[] }
+  | { type: "settings/chatgpt"; accounts: ChatGPTAccount[]; activeRegistrationId: string | null }
+  | { type: "settings/chatgptError"; message: string; kind?: string }
+  | { type: "settings/chatgptSignIn"; signIn: ChatGPTSignIn }
+  | { type: "settings/chatgptModels"; registrationId: string; models: ChatGPTModel[] }
+  | { type: "settings/chatgptSignedOut"; registrationId: string; remoteRevoked: boolean }
+  | { type: "settings/chatgptWelcome"; registrationId: string };
 
 export interface ExtraField {
   envVar: string;
@@ -125,6 +165,8 @@ export interface ProviderInfo {
   keyOptional?: boolean;
   defaultModel: string;
   extraFields?: ExtraField[];
+  /** Signs in with an account instead of an API key ("Continue with ChatGPT"). */
+  signIn?: "chatgpt";
 }
 
 // Mirror of src/setup-data.ts PROVIDERS (defaults from agentd/providers/factory.py).
@@ -163,6 +205,9 @@ export const PROVIDERS: ProviderInfo[] = [
       },
     ],
   },
+  // Signs in instead of taking a key: the backend owns the OAuth tokens and the model
+  // list comes from the account (spec 2026-10-06). No default model.
+  { id: "chatgpt", label: "ChatGPT plan", local: false, signIn: "chatgpt", defaultModel: "" },
 ];
 
 // Env-flag settings the panel round-trips (spec §6.2 Policies + Memory sections).

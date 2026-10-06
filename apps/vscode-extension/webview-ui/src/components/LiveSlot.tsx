@@ -1,8 +1,9 @@
 import { sig } from "../hooks/useAppState";
 import type {
   GateAgentView, GateTeamView, LiveGateView, LivePlanView, LiveReviewView, LiveErrorView, LiveTodosView,
-  LiveSessionsView, SessionTranscriptView,
+  LiveSessionsView, ProviderAccessView, SessionTranscriptView,
 } from "../types";
+import { ProviderAccessCard } from "./ProviderAccessCard";
 import { TodoCard } from "./messages/TodoCard";
 import { SessionStrip } from "./messages/SessionStrip";
 import { CommandGate } from "./messages/gates/CommandGate";
@@ -90,6 +91,7 @@ interface Props {
   /** Already filtered for dismissal by the caller. */
   liveError: LiveErrorView | null;
   liveTodos?: LiveTodosView | null;
+  providerAccess?: ProviderAccessView | null;
   liveSessions?: LiveSessionsView | null;
   sessionTranscripts?: Record<string, SessionTranscriptView | null>;
   onExpandSession?: (sessionId: string) => void;
@@ -107,13 +109,13 @@ interface Props {
  * Returns null when all four slots are empty.
  */
 export function LiveSlot({
-  liveGates, livePlan, liveReview, liveError, liveTodos,
+  liveGates, livePlan, liveReview, liveError, liveTodos, providerAccess,
   liveSessions, sessionTranscripts, onExpandSession, onDismissError,
 }: Props) {
   const hasTodos = liveTodos != null && liveTodos.items.length > 0;
   const hasSessions = liveSessions != null && liveSessions.items.length > 0;
   const hasContent = liveGates.length > 0 || livePlan !== null || liveReview !== null
-    || liveError !== null || hasTodos || hasSessions;
+    || liveError !== null || hasTodos || hasSessions || providerAccess != null;
   if (!hasContent) return null;
 
   return (
@@ -125,6 +127,8 @@ export function LiveSlot({
           onExpand={onExpandSession ?? (() => {})}
         />
       )}
+
+      {providerAccess != null && <ProviderAccessCard access={providerAccess} />}
 
       {liveTodos != null && liveTodos.items.length > 0 && <TodoCard items={liveTodos.items} />}
 

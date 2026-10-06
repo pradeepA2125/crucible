@@ -36,6 +36,7 @@ const INITIAL: AppState = {
   liveReview: null,
   liveError: null,
   liveTodos: null,
+  providerAccess: null,
   liveSessions: null,
   sessionTranscripts: {},
   workbar: null,
@@ -364,6 +365,9 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "clearLiveTodos":
       return { ...state, liveTodos: null };
+
+    case "renderProviderAccess":
+      return { ...state, providerAccess: msg.access };
 
     case "renderLiveSessions":
       return { ...state, liveSessions: msg.sessions };

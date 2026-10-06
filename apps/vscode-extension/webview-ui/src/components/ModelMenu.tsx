@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
+import { ChatGPTLogo } from "./shared/ChatGPTBrand";
+import { CHATGPT_USAGE_URL } from "../chatgpt";
 import type { ModelOption } from "../types";
 import { vscode } from "../vscodeApi";
+
+// Several rows can share a backend (each ChatGPT plan model is its own row).
+const optionKey = (opt: { backend: string; model: string }) => `${opt.backend}:${opt.model}`;
 
 function shortModel(model: string): string {
   return model.length > 18 ? `${model.slice(0, 17)}…` : model;
@@ -18,7 +23,8 @@ export function ModelMenu() {
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState<{ backend: string; model: string } | null>(null);
   const [options, setOptions] = useState<ModelOption[]>([]);
-  const [swapping, setSwapping] = useState<string | null>(null); // backend in flight
+  const [swapping, setSwapping] = useState<string | null>(null); // optionKey in flight
+  const [usesPlan, setUsesPlan] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const swappingRef = useRef<string | null>(null);
@@ -31,6 +37,7 @@ export function ModelMenu() {
       if (m?.["type"] === "modelList") {
         setCurrent((m["current"] as { backend: string; model: string } | null) ?? null);
         setOptions((m["options"] as ModelOption[]) ?? []);
+        setUsesPlan(m["usesChatgptPlan"] === true);
         setError(null);
         if (swappingRef.current !== null) {
           setSwapping(null);
@@ -64,20 +71,25 @@ export function ModelMenu() {
 
   function choose(opt: ModelOption) {
     if (opt.active || swapping) return;
-    setSwapping(opt.backend);
+    setSwapping(optionKey(opt));
     setError(null);
     vscode.postMessage({ type: "setModel", backend: opt.backend, model: opt.model });
   }
 
+  // The chip names a ChatGPT plan model by its catalog display name, not its slug.
+  const currentName = current
+    ? options.find((o) => o.active && o.model === current.model)?.display ?? current.model
+    : null;
+
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative flex items-center gap-1.5">
       {/* Chip */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={current ? `Model: ${current.model}` : "Select model"}
+        aria-label={currentName ? `Model: ${currentName}` : "Select model"}
         title={current ? `${current.backend} / ${current.model}` : "Select model"}
         className="flex h-6 items-center gap-1 rounded-[7px] border px-1.5 text-[10px] cursor-pointer transition-colors duration-150 hover:text-text"
         style={{
@@ -88,10 +100,27 @@ export function ModelMenu() {
       >
         <span style={{ color: "var(--color-accent)" }}><Icon name="spark" size={9} /></span>
         <span className="max-w-[130px] truncate font-mono" style={{ fontSize: "9.5px" }}>
-          {current ? shortModel(current.model) : "model"}
+          {currentName ? shortModel(currentName) : "model"}
         </span>
         <Icon name="chev-d" size={8} />
       </button>
+      {/* UI/UX guidelines: when requests use the plan, say so near the model selector,
+          with a Manage usage link to ChatGPT usage settings. */}
+      {usesPlan && (
+        <span className="flex items-center gap-1 whitespace-nowrap text-[9.5px] text-text-3">
+          <ChatGPTLogo size={10} />
+          <span>Using ChatGPT plan</span>
+          <span className="text-text-4">·</span>
+          <button
+            type="button"
+            onClick={() => vscode.postMessage({ type: "settings/openExternal", url: CHATGPT_USAGE_URL })}
+            className="cursor-pointer border-0 bg-transparent p-0 underline-offset-2 hover:underline"
+            style={{ color: "var(--color-accent-ink)", fontSize: "inherit" }}
+          >
+            Manage usage
+          </button>
+        </span>
+      )}
 
       {/* Popover (above the composer) */}
       {open && (
@@ -106,7 +135,7 @@ export function ModelMenu() {
         >
           {options.map((opt) => (
             <button
-              key={opt.backend}
+              key={optionKey(opt)}
               type="button"
               role="menuitem"
               onClick={() => choose(opt)}
@@ -117,7 +146,7 @@ export function ModelMenu() {
                   {opt.label}
                 </span>
                 {opt.active && <span style={{ color: "var(--color-accent)" }}><Icon name="check" size={10} /></span>}
-                {swapping === opt.backend && (
+                {swapping === optionKey(opt) && (
                   <span
                     className="inline-block rounded-full border-2"
                     style={{
@@ -129,7 +158,9 @@ export function ModelMenu() {
                   />
                 )}
               </span>
-              <span className="font-mono text-[10.5px] text-text">{opt.model}</span>
+              {opt.display
+                ? <span className="text-[10.5px] text-text">{opt.display}</span>
+                : <span className="font-mono text-[10.5px] text-text">{opt.model}</span>}
             </button>
           ))}
           {options.length === 0 && (

@@ -1,13 +1,11 @@
 import type { SetupInMsg } from "./types";
+import { acquireVsCodeApiSingleton } from "../sharedVscodeApi";
 
 interface VscodeApi {
   postMessage(msg: SetupInMsg): void;
 }
 
-declare function acquireVsCodeApi(): VscodeApi;
-
-// acquireVsCodeApi() may only be called once per webview lifetime. In tests it's mocked.
-const _api: VscodeApi =
-  typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : { postMessage: () => {} };
-
-export const vscode: VscodeApi = _api;
+// Shared, window-cached handle: the wizard embeds the ChatGPT plan panel, which posts
+// through src/settings/vscodeApi.ts, and acquireVsCodeApi() may be called only once
+// per webview — a second direct call throws.
+export const vscode: VscodeApi = acquireVsCodeApiSingleton<VscodeApi>();

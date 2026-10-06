@@ -1,3 +1,4 @@
+import type { SettingsInMsg } from "../settings/types";
 // Local mirror of src/setup-data.ts message protocol — the webview bundle never
 // imports the extension's src/ (separate Vite bundle).
 
@@ -5,14 +6,19 @@ export type SetupInMsg =
   | { type: "setup/install" }
   | { type: "setup/validate"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
-  | { type: "setup/openChat" };
+  | { type: "setup/openChat" }
+  | { type: "setup/startForChatGPT" }
+  // The embedded ChatGPT plan panel posts the settings/chatgpt* messages; the setup host
+  // runs the same handler (src/chatgpt-settings.ts).
+  | SettingsInMsg;
 
 export type SetupOutMsg =
   | { type: "setup/progress"; component: string; status: string; detail?: string }
   | { type: "setup/installDone"; ok: boolean }
   | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }
   | { type: "setup/ready"; port: number; jsonMode?: string; warning?: string }
-  | { type: "setup/error"; message: string };
+  | { type: "setup/error"; message: string }
+  | { type: "setup/chatgptReady"; hasAccounts: boolean };
 
 export interface ExtraField {
   envVar: string;
@@ -30,6 +36,8 @@ export interface ProviderInfo {
   keyOptional?: boolean;
   defaultModel: string;
   extraFields?: ExtraField[];
+  /** Signs in with an account instead of an API key ("Continue with ChatGPT"). */
+  signIn?: "chatgpt";
 }
 
 // Mirror of src/setup-data.ts PROVIDERS (defaults from agentd/providers/factory.py).
@@ -68,6 +76,9 @@ export const PROVIDERS: ProviderInfo[] = [
       },
     ],
   },
+  // Signs in instead of taking a key: the backend owns the OAuth tokens and the model
+  // list comes from the account (spec 2026-10-06). No default model.
+  { id: "chatgpt", label: "ChatGPT plan", local: false, signIn: "chatgpt", defaultModel: "" },
 ];
 
 export const COMPONENT_LABELS: Record<string, string> = {

@@ -59,3 +59,37 @@ describe("ModelMenu", () => {
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "openSettings" });
   });
 });
+
+describe("ModelMenu on the ChatGPT plan", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const PLAN = {
+    type: "modelList",
+    usesChatgptPlan: true,
+    current: { backend: "chatgpt", model: "gpt-a" },
+    options: [
+      { backend: "chatgpt", label: "ChatGPT plan", model: "gpt-a", display: "GPT A", active: true },
+      { backend: "chatgpt", label: "ChatGPT plan", model: "gpt-b", display: "GPT B", active: false },
+    ],
+  };
+
+  it("names plan models by display name and swaps between them", () => {
+    render(<ModelMenu />);
+    deliver(PLAN);
+    fireEvent.click(screen.getByRole("button", { name: "Model: GPT A" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /GPT B/ }));
+    expect(vscode.postMessage).toHaveBeenCalledWith(
+      { type: "setModel", backend: "chatgpt", model: "gpt-b" });
+  });
+
+  it("shows Using ChatGPT plan with a Manage usage link only while the plan is in use", () => {
+    render(<ModelMenu />);
+    deliver(PLAN);
+    expect(screen.getByText("Using ChatGPT plan")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Manage usage" }));
+    expect(vscode.postMessage).toHaveBeenCalledWith(
+      { type: "settings/openExternal", url: "https://chatgpt.com/#settings" });
+    deliver(LIST);
+    expect(screen.queryByText("Using ChatGPT plan")).toBeNull();
+  });
+});

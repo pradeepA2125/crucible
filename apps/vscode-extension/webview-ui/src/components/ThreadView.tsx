@@ -441,6 +441,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         liveReview={state.liveReview}
         liveError={liveError}
         liveTodos={state.liveTodos}
+        providerAccess={state.providerAccess}
         liveSessions={state.liveSessions}
         sessionTranscripts={state.sessionTranscripts}
         onExpandSession={(sessionId) => vscode.postMessage({ type: "fetchSessionTranscript", sessionId })}
