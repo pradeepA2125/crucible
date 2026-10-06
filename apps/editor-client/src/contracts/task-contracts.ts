@@ -344,6 +344,9 @@ export const TeamSummarySchema = z.object({
   members: z.array(z.object({
     label: z.string(), agentId: z.string(), status: z.string(),
     name: z.string().default(""), description: z.string().default(""),
+    assignment: z.object({ member: z.string(), part: z.string(), files: z.array(z.string()) })
+      .nullable().default(null),
+    assignmentDone: z.boolean().default(false),
   })),
   openProposals: z.array(z.object({
     id: z.string(), author: z.string(), text: z.string(),
@@ -351,6 +354,9 @@ export const TeamSummarySchema = z.object({
   })),
   usage: z.object({ requests: z.number(), budget: z.number() }),
   createdAt: z.string(),
+  endReason: z.string().nullable().default(null),
+  approvalGate: z.boolean().default(false),
+  adoptedProposalId: z.string().nullable().default(null),
 });
 export type TeamSummary = z.infer<typeof TeamSummarySchema>;
 
@@ -465,11 +471,16 @@ export type GateAgent = z.infer<typeof GateAgentSchema>;
 // controller gates (no task) — the Zod enum is the RUNTIME gate: a kind missing here
 // makes ThreadLiveStateSchema.parse() throw, which pollThreadLiveState swallows, so the
 // gate silently never renders.
+export const GateTeamSchema = z.object({ id: z.string(), name: z.string() });
+
 export const PendingGateSchema = z.object({
   gateId: z.string(),
-  kind: z.enum(["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]),
+  kind: z.enum(["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool",
+                "team_plan"]),
   payload: z.record(z.unknown()).default({}),
   agent: GateAgentSchema.nullable().default(null),
+  // A team's card (spec v2 §8.5): not the main agent's, so it never takes the composer.
+  team: GateTeamSchema.nullable().default(null),
 });
 export type PendingGate = z.infer<typeof PendingGateSchema>;
 
@@ -788,6 +799,8 @@ export interface BackendTaskClient {
   listTeams(threadId: string): Promise<TeamSummary[]>;
   getTeam(threadId: string, teamId: string): Promise<TeamDetail>;
   disbandTeam(threadId: string, teamId: string): Promise<{ phase: string | null }>;
+  decideTeamPlan(threadId: string, gateId: string, decision: "approve" | "feedback" | "reject",
+                 feedback?: string): Promise<{ teamId: string; phase: string | null }>;
   // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used
   // to resume the live overlay for a controller turn after a webview reload (chat:{id}).
   streamChannel(channelId: string, signal?: AbortSignal): AsyncIterable<SequencedStreamEvent>;

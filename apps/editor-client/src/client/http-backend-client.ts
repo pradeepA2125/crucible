@@ -521,6 +521,20 @@ export class HttpBackendClient implements BackendTaskClient {
     return { phase: typeof raw["phase"] === "string" ? raw["phase"] : null };
   }
 
+  async decideTeamPlan(
+    threadId: string, gateId: string, decision: "approve" | "feedback" | "reject",
+    feedback?: string,
+  ): Promise<{ teamId: string; phase: string | null }> {
+    const body: Record<string, unknown> = { gate_id: gateId, decision };
+    if (feedback !== undefined) body.feedback = feedback;
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/team-plan-decision`,
+      { method: "POST", body: JSON.stringify(body) }
+    ) as Record<string, unknown>;
+    return { teamId: String(raw["team_id"] ?? ""),
+             phase: typeof raw["phase"] === "string" ? raw["phase"] : null };
+  }
+
 
   // Subscribe-only SSE relay (no turn launch). Reuses the SSE line-parsing already
   // behind postModeDecision/streamPatch. Closes on `done`/`chat_done`.
@@ -726,11 +740,16 @@ export class HttpBackendClient implements BackendTaskClient {
       goal: t["goal"] ?? "",
       members: members.map((m) => ({ label: m["label"], agentId: m["agent_id"],
                                      status: m["status"] ?? "", name: m["name"] ?? "",
-                                     description: m["description"] ?? "" })),
+                                     description: m["description"] ?? "",
+                                     assignment: m["assignment"] ?? null,
+                                     assignmentDone: m["assignment_done"] === true })),
       // Proposal keys (id/author/text) are camel-safe; stances are label → stance.
       openProposals: proposals,
       usage: t["usage"] ?? { requests: 0, budget: 0 },
       createdAt: t["created_at"] ?? "",
+      endReason: t["end_reason"] ?? null,
+      approvalGate: t["approval_gate"] === true,
+      adoptedProposalId: t["adopted_proposal_id"] ?? null,
     };
   }
 
@@ -787,6 +806,7 @@ export class HttpBackendClient implements BackendTaskClient {
       kind: g["kind"],
       payload: g["payload"] ?? {},
       agent: g["agent"] ?? null,
+      team: g["team"] ?? null,
     });
     const rawGates = Array.isArray(raw["pending_gates"])
       ? (raw["pending_gates"] as Record<string, unknown>[])
