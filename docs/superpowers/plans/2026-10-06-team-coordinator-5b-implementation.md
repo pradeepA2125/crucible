@@ -97,7 +97,7 @@
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_team_state_machine.py` (and extend the import list with `AssignmentDone, Approval, BudgetExhausted, CancelTimers, ClosePlan, ForceFinalAll, MainResume, RaisePlanGate, ResumeMembers, StartImplementation, Stuck`):
+Append to `tests/test_team_state_machine.py` (and add `Approval, AssignmentDone, BudgetExhausted, CancelTimers, ClosePlan, ForceFinalAll, MainResume, RaisePlanGate, ResumeMembers, StartImplementation, Stuck` to its import list, keeping it sorted):
 
 ```python
 def _adopted(state: TeamState, assignees: tuple[str, ...] = ("alice", "bob")) -> TeamState:
@@ -766,11 +766,11 @@ def test_done_lists_files() -> None:
     assert "a.py, b.py" in body
 ```
 
-Append to `tests/test_team_store.py` (reuse its `_store()` / `_team()` helpers; read the file's top for their names):
+Append to `tests/test_team_store.py` (its `_store(tmp_path)` returns a `ChatThreadStore`; `_team()` builds a record):
 
 ```python
 def test_assignment_wakes_and_usage(tmp_path) -> None:
-    teams = _store(tmp_path)
+    teams = _store(tmp_path).teams
     team = _team()
     teams.create_team(team)
     teams.add_member(TeamMember(team_id=team.team_id, agent_id="a1", label="alice"))
@@ -789,7 +789,7 @@ def test_assignment_wakes_and_usage(tmp_path) -> None:
     assert (after.requests, after.prompt_tokens, after.completion_tokens) == (3, 10, 2)
 ```
 
-(Add `from agentd.providers.usage import Usage` and `TeamMember` to the imports if missing.)
+(Add `from agentd.providers.usage import Usage` to the imports.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -916,12 +916,9 @@ Spec §8.3's "every part that edits lists ≥ 1 file" cannot be checked (a part'
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_team_validation.py`:
+Add `check_assignments` and `parse_assignments` to the `agentd.teams.validation` import of `tests/test_team_validation.py`, then append:
 
 ```python
-from agentd.teams.validation import check_assignments, parse_assignments
-
-
 def _parts(*items):  # type: ignore[no-untyped-def]
     return [{"member": m, "part": "p", "files": list(f)} for m, f in items]
 
@@ -1555,7 +1552,9 @@ def test_refusals(team, label, path, expected) -> None:
 
 
 def test_team_protection_ownership_and_repeat() -> None:
-    rule = lambda key: f"{key} is owned by bob — team_message bob instead" if key == "t.py" else None  # noqa: E731
+    def rule(key: str) -> str | None:
+        return f"{key} is owned by bob — team_message bob instead" if key == "t.py" else None
+
     protection = TeamProtection(rule)
     with pytest.raises(TeamScopeError) as first:
         protection.check_apply(["t.py"])
@@ -1955,7 +1954,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from agentd.teams import state_machine as sm
 from agentd.teams.adoption import evaluate_round
@@ -1967,6 +1966,7 @@ from agentd.teams.trace import CoordinatorTrace
 
 logger = logging.getLogger(__name__)
 _FORCE_RETRY_S = 5.0   # the member's loop was not built yet: look again shortly
+Delivery = Literal["wake", "notify"]
 
 
 class CoordinatorHost(Protocol):
@@ -1975,7 +1975,7 @@ class CoordinatorHost(Protocol):
     def force_final(self, team_id: str, label: str) -> bool: ...
     def active_seconds(self, team_id: str, label: str) -> float | None: ...
     def team_milestone(self, team: TeamRecord, kind: str, headline: str, body: str,
-                       delivery: str = "wake") -> None: ...
+                       delivery: Delivery = "wake") -> None: ...
     def team_phase_changed(self, team: TeamRecord) -> None: ...
     def wake_for_post(self, team: TeamRecord, post: TeamPost) -> None: ...
     def raise_plan_gate(self, team: TeamRecord, proposal: TeamPost) -> None: ...
@@ -2221,7 +2221,7 @@ class TeamCoordinator:
                 # A provider outage or an exhausted daily quota: waking the main agent
                 # would only burn more failing turns (spec v2 §5.3).
                 self._suppress_wakes = True
-        delivery = "notify" if self._suppress_wakes else "wake"
+        delivery: Delivery = "notify" if self._suppress_wakes else "wake"
         headline, body = milestone_text(team, action.kind, data)
         self._host.team_milestone(team, action.kind, headline, body, delivery)
         self._trace.write("milestone", milestone=action.kind, headline=headline,
@@ -2408,15 +2408,20 @@ class TeamCoordinator:
                        lambda: self._spawn_stop(label, "deadline"))
 ```
 
+Then keep `ChatController` (the host) in step with the two widened host methods, so the controller's team tests stay green. In `agentd/chat/controller.py`:
+- import `Delivery` alongside `TeamCoordinator` from `agentd.teams.coordinator`;
+- `start_member(self, team_id, label, extra: str = "")` passes `extra` through `call_soon` to `_start_member_now(self, team_id, label, extra: str = "")`, which sets `handle.activation_input = TEAM_DELTA + (f"\n\n{extra}" if extra else "")`;
+- `team_milestone(self, team, kind, headline, body, delivery: Delivery = "wake")` stores `delivery=delivery` on the `NoticeRecord` (was the literal `"wake"`).
+
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_team_coordinator.py tests/test_team_state_machine.py --color=no --timeout=120 > /tmp/c.txt 2>&1; echo exit=$?; tail -5 /tmp/c.txt`
+Run: `pytest tests/test_team_coordinator.py tests/test_team_state_machine.py tests/test_team_controller.py tests/test_team_rounds_controller.py tests/test_team_activity_controller.py --color=no --timeout=120 > /tmp/c.txt 2>&1; echo exit=$?; tail -5 /tmp/c.txt`
 Expected: PASS (5A's coordinator tests are unchanged: their kickoff proposals have no assignments, so adoption still ends `DONE`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/agentd-py/agentd/teams/coordinator.py services/agentd-py/tests/test_team_coordinator.py
+git add services/agentd-py/agentd/teams/coordinator.py services/agentd-py/agentd/chat/controller.py services/agentd-py/tests/test_team_coordinator.py
 git commit -m "feat(teams): coordinator runs approval, implementation, pauses and resume"
 ```
 
@@ -2713,13 +2718,16 @@ def _resume_unavailable(_team_id: str, _extra: int | None) -> dict[str, object]:
 
 ```python
             if tool == "resume_team":
+                if status.get("phase") != "PAUSED":
+                    raise TeamInputError(f"resume_team is only for a PAUSED team; this team is "
+                                         f"{status.get('phase')}")
                 extra = args.get("extra_budget")
                 return _ok(self._ops.resume(team_id, extra if isinstance(extra, int) else None))
 ```
 
 - [ ] **Step 4: The controller**
 
-In `agentd/chat/controller.py` (imports: add `GateTeam`, `PendingGate` from `agentd.chat.models` if missing; `TeamProtection` from `agentd.chat.protected_paths`; `Usage` from `agentd.providers.usage`; `team_budget_per_member`, `team_max_budget` from `agentd.teams.config`; `ImplementationReport`, `chain_checks` from `agentd.teams.implementation`; `team_edit_refusal` from `agentd.teams.scope`; `TEXT_MAX`, `TeamPlanConflict`, `TeamPlanInvalid`, `check_assignments`, `parse_assignments` from `agentd.teams.validation`):
+In `agentd/chat/controller.py` (imports: add `GateTeam` from `agentd.chat.models`; `TeamProtection` from `agentd.chat.protected_paths`; `Usage` from `agentd.providers.usage`; `team_budget_per_member`, `team_max_budget` from `agentd.teams.config`; `ImplementationReport`, `chain_checks` from `agentd.teams.implementation`; `team_edit_refusal` from `agentd.teams.scope`; `TEXT_MAX`, `TeamPlanConflict`, `TeamPlanInvalid`, `check_assignments`, `parse_assignments` from `agentd.teams.validation`):
 
 1. **Service wiring.** Where `TeamService(...)` is built in `__init__`, pass `can_edit=self._member_can_edit`, and add:
 
@@ -2773,46 +2781,9 @@ In `agentd/chat/controller.py` (imports: add `GateTeam`, `PendingGate` from `age
                 coordinator.user_spoke()
 ```
 
-4. **Host methods.** Replace `start_member` / `_start_member_now` and `team_milestone`, and add the rest of the host:
+4. **Host methods.** `start_member`, `_start_member_now` and `team_milestone` already take `extra` / `delivery` (Task 7). Add the rest of the host after `team_milestone`:
 
 ```python
-    def start_member(self, team_id: str, label: str, extra: str = "") -> None:
-        """Scheduled, never inline: the round's last reporter calls this from inside its own
-        finishing activation, which is still active until that task ends (the same rule
-        as _on_leftover)."""
-        asyncio.get_running_loop().call_soon(self._start_member_now, team_id, label, extra)
-
-    def _start_member_now(self, team_id: str, label: str, extra: str = "") -> None:
-        assert self._subagents is not None
-        team = self._store.teams.get_team(team_id)
-        member = self._store.teams.member(team_id, label)
-        if team is None or member is None or team.phase not in LIVE_TEAM_PHASES:
-            return
-        if self._subagents.is_active(member.agent_id):
-            logger.warning("[teams] %s of %s still running at its start", label, team.name)
-            return
-        handle = self._handle_from_record(team.thread_id, member.agent_id)
-        handle.activation_input = TEAM_DELTA + (f"\n\n{extra}" if extra else "")
-        self._subagents.enqueue(handle, self._activate)
-
-    def team_milestone(self, team: TeamRecord, kind: str, headline: str, body: str,
-                       delivery: str = "wake") -> None:
-        """A team milestone for the main agent (spec v2 §8.8): a notice, delivered by the
-        same paths as an agent's report (§5.2). `notify` never starts a notice turn."""
-        notice = NoticeRecord(
-            notice_id=uuid4().hex, thread_id=team.thread_id, source_kind="team",
-            source_id=team.team_id, kind=kind,
-            payload={"team_name": team.name, "team_id": team.team_id, "headline": headline,
-                     "body": body, "phase": team.phase},
-            delivery=delivery, created_at=datetime.now(UTC))
-        self._store.insert_notice(notice)
-        if team.thread_id in self._active_loops:
-            self._main_inbox.setdefault(team.thread_id, []).append(InboxItem(
-                kind="note", text=body, wakes=False, source_id=team.team_id,
-                author=notice_author(notice), notice_id=notice.notice_id))
-            return
-        self._rearm_notices(team.thread_id)
-
     def raise_plan_gate(self, team: TeamRecord, proposal: TeamPost) -> None:
         """Spec v2 §8.5: a team's card — not the main agent's, so a user turn keeps it."""
         self._store.add_controller_gate(team.thread_id, PendingGate.new(
@@ -3047,7 +3018,7 @@ In `_create_team`, after the two limit checks and before `now = datetime.now(UTC
             req = replace(req, kickoff_assignments=parts, kickoff_shared_files=shared)
 ```
 
-and change the member loop header from `for spec in req.members:` plus its `context, definition = self._context_for(...)` statement to `for spec, context, definition in built:`.
+and change the member loop header from `for spec in req.members:` plus its `context, definition = self._context_for(...)` statement to `for _spec, context, definition in built:`.
 
 - [ ] **Step 5: Run the tests**
 
@@ -3156,16 +3127,18 @@ Expected: FAIL — 404 from FastAPI for the unknown route (the first `== 404` pa
 
 - [ ] **Step 3: Implement**
 
-`agentd/api/routes.py` — next to the other chat request models:
+`agentd/chat/models.py` — after `ChatMcpDecisionRequest`:
 
 ```python
 class TeamPlanDecisionRequest(BaseModel):
+    """POST /chat/threads/{id}/team-plan-decision body (spec v2 §8.5). Feedback length is
+    checked by the controller, after the gate and team checks (404, then 409, then 422)."""
     gate_id: str
     decision: Literal["approve", "feedback", "reject"]
     feedback: str | None = None
 ```
 
-(import `Literal` from `typing` if the file does not already) and, after the `/teams/{team_id}/disband` route:
+`agentd/api/routes.py` — import `TeamPlanDecisionRequest` with the other `agentd.chat.models` names, and, after the `/teams/{team_id}/disband` route:
 
 ```python
         @router.post("/chat/threads/{thread_id}/team-plan-decision")
@@ -3213,7 +3186,7 @@ class TeamPlanDecisionRequest(BaseModel):
 `agentd/chat/controller_prompts.py`:
 - In `_TEAM_BLOCK`, after the bullet that starts `- Report when your part of this round is done:`, add the bullet:
 
-```
+```text
 - Once a plan is adopted the team implements it, and team_status shows your assignment. Edit only
   your own files and the shared files: a file another member owns is theirs, so send them the
   change with team_message. Report completed when your part is done and checked, awaiting_peer
@@ -3221,9 +3194,14 @@ class TeamPlanDecisionRequest(BaseModel):
   open and the main agent can restart you.
 ```
 
-- In `_TEAMS_MAIN_BLOCK`, replace the sentence `Milestones (a plan adopted, a deadlock, a member lost) wake you — do not poll team_status.` with `Milestones (a plan adopted or waiting for approval, a deadlock, a member lost or blocked, the team stuck, paused or finished) wake you — do not poll team_status.` and add these bullets before `Example — you have a plan and want it checked:`:
+- In `_TEAMS_MAIN_BLOCK`, replace the bullet that starts `- After create_team, answer the user:` with these three bullets (wrapped at 100 columns):
 
-```
+```text
+- After create_team, answer the user: the team runs in the background and the user watches its
+  board. Milestones (a plan adopted or waiting for approval, a deadlock, a member lost or
+  blocked, the team stuck, paused or finished) wake you — do not poll team_status. post_board is
+  how the user's later requests reach the team; for a DEADLOCKED team it runs one more round,
+  and adopt_proposal adopts one of its open proposals.
 - approval_gate: true makes an adopted plan wait for the user on a card: the user approves it,
   sends feedback (one more round of deliberation), or rejects it (the team ends).
 - A team pauses when its request budget runs out, the provider keeps failing, or it is stuck
@@ -3234,7 +3212,7 @@ class TeamPlanDecisionRequest(BaseModel):
 Re-capture the teams golden, then run the prompt tests:
 
 ```bash
-cd services/agentd-py && .venv/bin/python -m tests.test_prompt_goldens_teams
+cd services/agentd-py && python -m tests.test_prompt_goldens_teams
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -3268,11 +3246,9 @@ git commit -m "feat(teams): plan decision route, assignment summaries, implement
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `test/team-contracts.test.ts`:
+Add `import { PendingGateSchema } from "../src/contracts/task-contracts";` to the imports of `test/team-contracts.test.ts`, then append:
 
 ```ts
-import { PendingGateSchema } from "../src/contracts/task-contracts";
-
 describe("team plan gate and implementation fields", () => {
   it("parses a team_plan gate with its team", async () => {
     const live = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({
@@ -3470,17 +3446,17 @@ Append to `webview-ui/src/test/views.test.tsx`, inside the `inputAvailability` d
         liveGates: [{ gateId: "g", kind: "team_plan", taskId: "t", payload: {}, agent: null,
                       team: { id: "team-1", name: "auth" } }],
       });
-      expect(r.disabled).toBe(false);
+      // A team's card waits above like a background agent's: usable composer, a pointer.
+      expect(r).toMatchObject({ disabled: false, placeholder: "1 card needs your answer above" });
     });
 ```
 
 Append to `test/controller.test.ts`, next to the mixed-gate mapping test (reusing its `createStubBackend`, `createUi`, `MemorySessionStore`, `createSettings` set-up):
 
 ```ts
-  test("a team gate keeps its team and a lost-race decision is swallowed", async () => {
+  test("a lost-race team plan decision is swallowed", async () => {
     const state = { submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
                     getResultCalls: [], planFeedbackCalls: [] };
-    const renders: LiveGateView[][] = [];
     const errors: string[] = [];
     const calls: unknown[][] = [];
     const backend: BackendTaskClient = {
@@ -3492,8 +3468,7 @@ Append to `test/controller.test.ts`, next to the mixed-gate mapping test (reusin
     };
     const controller = new CrucibleController(
       () => backend, new MemorySessionStore(), createSettings(),
-      createUi({ renderLiveGates: (g) => { renders.push(g); },
-                 showError: (m: string) => { errors.push(m); } }),
+      createUi({ showError: (m: string) => { errors.push(m); } }),
       { openDiff: async (_entry: ReviewFileEntry) => {} },
       () => "2026-05-11T00:00:00.000Z");
     await controller.decideTeamPlan("chat-1", "g1", "approve");
@@ -3503,7 +3478,7 @@ Append to `test/controller.test.ts`, next to the mixed-gate mapping test (reusin
   });
 ```
 
-(Adapt the `state` literal to whatever `createStubBackend` takes in this file — copy it from the neighboring "lost the race" test.)
+(The `state` literal is the one the neighboring "lost the race" test passes to `createStubBackend`. The `team` field's mapping is covered by the typecheck: `LiveGateView.team` is required.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -3620,7 +3595,7 @@ and in the `WebviewMessage` union, next to `mcpDecision`:
       decision: "approve" | "feedback" | "reject"; feedback?: string }
 ```
 
-`webview-ui/src/components/LiveSlot.tsx`: import `TeamPlanGate`; add `case "team_plan": return <TeamPlanGate gateId={gateId} taskId={taskId} payload={payload} />;` to `GateCard`; give `GateDispatchProps` a `team: GateTeamView | null` and render it like the agent chip:
+`webview-ui/src/components/LiveSlot.tsx`: import `TeamPlanGate`; add `case "team_plan": return <TeamPlanGate gateId={gateId} taskId={taskId} payload={payload} />;` to `GateCard`; give `GateDispatchProps` a `team: GateTeamView | null` and render it like the agent chip (replacing `GateDispatch`):
 
 ```tsx
 function GateDispatch({ agent, team, ...card }: GateDispatchProps) {
@@ -3644,7 +3619,7 @@ function GateDispatch({ agent, team, ...card }: GateDispatchProps) {
 }
 ```
 
-and pass `team={gate.team ?? null}` where `GateDispatch` is rendered.
+pass `team={gate.team ?? null}` where `GateDispatch` is rendered, import `GateTeamView` with the other view types, and narrow `GateCard`'s props to `Omit<GateDispatchProps, "agent" | "team">`.
 
 `webview-ui/src/inputAvailability.ts`:
 
@@ -3678,17 +3653,16 @@ and pass `team={gate.team ?? null}` where `GateDispatch` is rendered.
   }
 ```
 
-(If `isBenignGateMiss` only accepts 404, extend it to 409 as well: a stale card is the same lost race.)
+(`isBenignGateMiss` already treats both 404 and 409 as the benign lost race.)
 
 `src/chat-panel.ts`: add a trailing constructor parameter `private readonly onTeamPlanDecision: (threadId: string, gateId: string, decision: "approve" | "feedback" | "reject", feedback?: string) => Promise<void> = async () => {}` after `onDisbandTeam`, and a branch next to `disbandTeam`:
 
 ```ts
       } else if (m["type"] === "teamPlanDecision") {
         const d = m["decision"];
-        if (d === "approve" || d === "feedback" || d === "reject") {
-          p = this.onTeamPlanDecision(String(m["threadId"] ?? ""), String(m["gateId"] ?? ""), d,
-                                      typeof m["feedback"] === "string" ? m["feedback"] : undefined);
-        }
+        if (d !== "approve" && d !== "feedback" && d !== "reject") return;
+        p = this.onTeamPlanDecision(String(m["threadId"] ?? ""), String(m["gateId"] ?? ""), d,
+                                    typeof m["feedback"] === "string" ? m["feedback"] : undefined);
 ```
 
 `src/extension.ts`: after `(teamId) => controller.disbandTeam(teamId)` in the `ChatPanel` constructor call, add `, (threadId, gateId, decision, feedback) => controller.decideTeamPlan(threadId, gateId, decision, feedback)`.
@@ -3742,7 +3716,7 @@ describe("team tool pills", () => {
   const teams = { "team-1": team("team-1", "auth", "2026-10-06T01:00:00Z"),
                   "team-2": team("team-2", "auth", "2026-10-06T02:00:00Z") };
   const pill = (tool: string, args: Record<string, unknown>, output?: string) => ({
-    id: "p", tool, args, source: "execution" as const, output, done: true });
+    id: 1, tool, args, source: "execution" as const, output, done: true });
 
   it("resolves by id, by newest name, and by create_team's output", () => {
     expect(TEAM_TOOLS.has("post_board")).toBe(true);
@@ -3756,12 +3730,9 @@ describe("team tool pills", () => {
 });
 ```
 
-Append to `webview-ui/src/test/teamCard.test.tsx` (it already renders team UI inside `TeamsContext` — reuse its provider helper):
+Add `PhaseStepper` and `TeamLinks` imports (from `../components/teams/…`) to `webview-ui/src/test/teamCard.test.tsx`, then append:
 
 ```tsx
-import { TeamLinks } from "../components/teams/TeamLinks";
-import { PhaseStepper } from "../components/teams/PhaseStepper";
-
 describe("team links and the stepper", () => {
   it("opens an ended team's board from a pill", () => {
     const openTeam = vi.fn();
@@ -3769,8 +3740,8 @@ describe("team links and the stepper", () => {
       <TeamsContext.Provider value={{ teams: { "team-1": { ...TEAM, phase: "DONE" } },
                                           views: {}, openTeam }}>
         <TeamLinks events={[
-          { id: "a", tool: "team_status", args: { team: "team-1" }, source: "execution", done: true },
-          { id: "b", tool: "post_board", args: { team: "team-1" }, source: "execution", done: true },
+          { id: 1, tool: "team_status", args: { team: "team-1" }, source: "execution", done: true },
+          { id: 2, tool: "post_board", args: { team: "team-1" }, source: "execution", done: true },
         ]} />
       </TeamsContext.Provider>);
     const buttons = screen.getAllByRole("button", { name: `Open board of ${TEAM.name}` });
@@ -3792,7 +3763,7 @@ describe("team links and the stepper", () => {
 });
 ```
 
-(`TEAM` is the fixture this file already defines; if it is named differently, use that one.)
+(`TEAM` is the fixture this file already defines.) Its existing test `an adopted (DONE) team ends its road with the plan` now needs `endReason: "adopted"` on its `DONE` team: a `DONE` without that reason walks the whole road.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -3918,6 +3889,8 @@ In the "Agent teams — foundations" bullet, replace the sentence that starts `*
 ```markdown
 **Implementation (5B, plan `docs/superpowers/plans/2026-10-06-team-coordinator-5b-implementation.md`):** an adopted plan with assignments goes to `AWAITING_APPROVAL` when `approval_gate` is set — a `team_plan` Class-A gate (`PendingGate.team` set, `agent` null, so it never takes the composer or blocks notice turns: filter with `is_main()` / `!g.agent && !g.team`), resolved by `POST /v1/chat/threads/{id}/team-plan-decision {gate_id, decision: approve|feedback|reject, feedback?}` (404 unknown gate, 409 stale card, 422 bad feedback; feedback closes the proposal and runs one more round) — else straight to `IMPLEMENTING`, where each assignee starts with `Your assignment: … Files you own: … Shared files: …`. Check 1 (`TeamProtection` + `teams/scope.py`) refuses edits outside `IMPLEMENTING`, another member's files (`team_message <owner> instead`, a second try adds "already told"), and — with an approval gate — files outside the plan; helpers follow their member's team (`_team_membership_of`). Implementation reports are checked once in the loop (`teams/implementation.py`: `completed` with untouched files or an unanswered DM, `awaiting_peer` with nobody to wait on). `partial`/`failed` raise `member_blocked`; a report with every other member idle raises `stuck` (the reporter is excluded — it is still inside its own task); the third consecutive `stuck`, an exhausted budget (checked at every member/helper iteration top via `iteration_cb`, forcing every running loop to its final iteration; those `partial` reports are *interrupted* and owe their work) or three consecutive final `failed_transient` outcomes pause the team (`PAUSED`, timers cancelled; a transient burst's milestones become `notify` until the user speaks). `resume_team` runs only in a user turn (`turn_kind == "user"`), raises the budget (default per-member × members, capped at `CRUCIBLE_TEAM_MAX_BUDGET`) and restarts whoever owes work. **5B interim:** when every assignment is done the team ends `DONE` (`end_reason "implemented"`, an interim `done` milestone listing the files); a plan with no assignments still ends `DONE` (`"adopted"`). Team usage is summed in `_close_child` over members and helpers. Pills of `create_team`/`post_board`/`team_status`/`adopt_proposal`/`resume_team`/`disband_team` get "Open board" links (`TeamLinks`), the way back to an ended team's board.
 ```
+
+In the same bullet, two Phase-4 notes are now stale: replace `` `CRUCIBLE_TEAM_MAX_BUDGET` (1000 — stored only; enforced in Phase 5) `` with `` `CRUCIBLE_TEAM_MAX_BUDGET` (1000 — enforced since 5B) ``, and `` `adopt_proposal` and `resume_team` refuse until Phase 5) `` with `` `adopt_proposal` works on a `DEADLOCKED` team, `resume_team` on a `PAUSED` one, in a user turn) ``.
 
 - [ ] **Step 2: Full suites**
 
