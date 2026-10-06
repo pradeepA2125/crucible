@@ -63,8 +63,8 @@ async def test_sign_in_list_models_and_sign_out(setup) -> None:  # noqa: ANN001
 
     models = (await client.post(f"/v1/auth/chatgpt/registrations/{reg}/models")).json()
     assert models == {"models": [
-        {"slug": "gpt-plan-large", "display_name": "GPT Plan Large"},
-        {"slug": "gpt-plan-small", "display_name": "GPT Plan Small"}]}
+        {"slug": "gpt-plan-large", "display_name": "GPT Plan Large", "context_window": 272000},
+        {"slug": "gpt-plan-small", "display_name": "GPT Plan Small", "context_window": None}]}
 
     out = (await client.post(f"/v1/auth/chatgpt/registrations/{reg}/sign-out")).json()
     assert out == {"remote_revoked": True}

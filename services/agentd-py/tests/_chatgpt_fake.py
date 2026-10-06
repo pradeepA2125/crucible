@@ -53,7 +53,8 @@ class FakeAuthServer:
     expires_in: int = 3600
     access_tokens: set[str] = field(default_factory=set)
     models: list[dict[str, Any]] = field(default_factory=lambda: [
-        {"slug": "gpt-plan-large", "display_name": "GPT Plan Large", "visibility": "list"},
+        {"slug": "gpt-plan-large", "display_name": "GPT Plan Large", "visibility": "list",
+         "context_window": 272000},
         {"slug": "gpt-internal", "display_name": "Internal", "visibility": "hide"},
         {"slug": "gpt-plan-small", "display_name": "GPT Plan Small", "visibility": "list"},
     ])

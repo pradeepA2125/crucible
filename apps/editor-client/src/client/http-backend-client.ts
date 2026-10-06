@@ -1058,7 +1058,7 @@ export class HttpBackendClient implements BackendTaskClient {
     }
     const models = Array.isArray(body["models"]) ? body["models"] as Record<string, unknown>[] : [];
     return models.map((m) => ChatGPTModelSchema.parse({
-      slug: m["slug"], displayName: m["display_name"] }));
+      slug: m["slug"], displayName: m["display_name"], contextWindow: m["context_window"] ?? null }));
   }
 
   private static toSignIn(raw: Record<string, unknown>): ChatGPTSignIn {

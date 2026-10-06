@@ -71,11 +71,12 @@ describe("ChatGPTPlanPanel", () => {
     expect(vscode.postMessage).toHaveBeenCalledWith(
       { type: "settings/chatgptModels", registrationId: REG });
     deliver({ type: "settings/chatgptModels", registrationId: REG, models: [
-      { slug: "gpt-a", displayName: "GPT A" }, { slug: "gpt-b", displayName: "GPT B" }] });
+      { slug: "gpt-a", displayName: "GPT A", contextWindow: null },
+      { slug: "gpt-b", displayName: "GPT B", contextWindow: 272000 }] });
     fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gpt-b" } });
     fireEvent.click(screen.getByRole("button", { name: "Use this account" }));
     expect(send).toHaveBeenCalledWith({ type: "settings/useChatGPT", registrationId: REG,
-                                        model: "gpt-b" });
+                                        model: "gpt-b", contextWindow: 272000 });
   });
 
   it("while in use, shows Using ChatGPT plan with a Manage usage link", () => {

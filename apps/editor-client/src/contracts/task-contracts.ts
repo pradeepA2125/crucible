@@ -553,7 +553,12 @@ export const ChatGPTSignInSchema = z.object({
 });
 export type ChatGPTSignIn = z.infer<typeof ChatGPTSignInSchema>;
 
-export const ChatGPTModelSchema = z.object({ slug: z.string(), displayName: z.string() });
+export const ChatGPTModelSchema = z.object({
+  slug: z.string(),
+  displayName: z.string(),
+  // The catalog's own window for the model; null when it doesn't say.
+  contextWindow: z.number().nullable().default(null),
+});
 export type ChatGPTModel = z.infer<typeof ChatGPTModelSchema>;
 
 // A thread's current actionable state — what the UI polls and renders from.

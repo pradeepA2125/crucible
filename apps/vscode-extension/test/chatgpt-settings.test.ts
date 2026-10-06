@@ -31,7 +31,7 @@ function setup(overrides: Partial<ChatGPTDeps["client"]> = {}, more: Partial<Cha
       cancelChatGPTSignIn: vi.fn(async () => attempt({ state: "failed", reason: "cancelled" })),
       listChatGPTAccounts: vi.fn(async () => [ACCOUNT]),
       signOutChatGPT: vi.fn(async () => ({ remoteRevoked: false })),
-      listChatGPTModels: vi.fn(async () => [{ slug: "m1", displayName: "Model One" }]),
+      listChatGPTModels: vi.fn(async () => [{ slug: "m1", displayName: "Model One", contextWindow: null }]),
       validateProvider: vi.fn(async () => ({ ok: true })),
       setProvider: vi.fn(async () => ({ backend: "chatgpt", model: "m1" })),
       ...overrides,

@@ -94,6 +94,7 @@ def build_chatgpt_auth_router(service: Callable[[], ChatGPTAuthService]) -> APIR
             raise HTTPException(status_code=409, detail=_access_detail(exc)) from exc
         except (ModelCatalogError, TransientTransportError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"models": [{"slug": m.slug, "display_name": m.display_name} for m in models]}
+        return {"models": [{"slug": m.slug, "display_name": m.display_name,
+                            "context_window": m.context_window} for m in models]}
 
     return router

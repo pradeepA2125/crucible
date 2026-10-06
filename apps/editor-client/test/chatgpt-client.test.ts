@@ -45,9 +45,10 @@ describe("ChatGPT sign-in client", () => {
 
   test("listChatGPTModels maps the catalog in server order", async () => {
     const res = await clientWith(200, { models: [
-      { slug: "b", display_name: "B" }, { slug: "a", display_name: "A" }] })
+      { slug: "b", display_name: "B", context_window: 272000 }, { slug: "a", display_name: "A" }] })
       .listChatGPTModels("reg_aaaaaaaaaaaa");
-    expect(res).toEqual([{ slug: "b", displayName: "B" }, { slug: "a", displayName: "A" }]);
+    expect(res).toEqual([{ slug: "b", displayName: "B", contextWindow: 272000 },
+                         { slug: "a", displayName: "A", contextWindow: null }]);
   });
 
   test("an account refusal on the model catalog is a ProviderAccessError", async () => {

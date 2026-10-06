@@ -128,6 +128,7 @@ export interface ChatGPTSignIn {
 export interface ChatGPTModel {
   slug: string;
   displayName: string;
+  contextWindow: number | null;
 }
 
 // host → webview

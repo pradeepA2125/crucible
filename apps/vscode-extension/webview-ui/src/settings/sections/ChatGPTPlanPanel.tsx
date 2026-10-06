@@ -141,8 +141,13 @@ export function ChatGPTPlanPanel({ state, busy, send }: SectionProps) {
                 <div className="flex items-center gap-2">
                   <BtnPrimary
                     disabled={busy || pending || !model}
-                    onClick={() => send({ type: "settings/useChatGPT",
-                                          registrationId: selected.registrationId, model })}
+                    onClick={() => {
+                      // The catalog knows the model's window: compaction should use it
+                      // rather than a guessed default.
+                      const window = catalog?.find((m) => m.slug === model)?.contextWindow;
+                      send({ type: "settings/useChatGPT", registrationId: selected.registrationId,
+                             model, ...(window ? { contextWindow: window } : {}) });
+                    }}
                   >
                     {usingPlan && selected.registrationId === activeId
                       ? "Switch model" : "Use this account"}
@@ -224,7 +229,7 @@ export function PlanOffer({ pending, busy, onContinue }: {
         <p className="text-[13px] font-medium text-text">Use your ChatGPT plan</p>
         <p className="mt-1 text-xs leading-relaxed text-text-2">
           Complete eligible AI requests in Crucible with usage included in your ChatGPT
-          plan or credits balance. Available to eligible ChatGPT Plus and Pro accounts.
+          plan or credits balance. Available on eligible ChatGPT plans.
         </p>
       </div>
       <ContinueWithChatGPTButton onClick={onContinue} disabled={busy || pending} />

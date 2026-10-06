@@ -24,6 +24,8 @@ _HTTP_TIMEOUT = httpx.Timeout(30.0)
 class CatalogModel:
     slug: str
     display_name: str
+    # The model's usable window, as the catalog reports it (live: 272000 for gpt-5.6).
+    context_window: int | None = None
 
 
 class ModelCatalogError(RuntimeError):
@@ -79,7 +81,8 @@ class ChatGPTAuthService:
             raise self._catalog_error(resp)
         models = resp.json().get("models", [])
         return [
-            CatalogModel(slug=str(m["slug"]), display_name=str(m.get("display_name") or m["slug"]))
+            CatalogModel(slug=str(m["slug"]), display_name=str(m.get("display_name") or m["slug"]),
+                         context_window=_positive_int(m.get("context_window")))
             for m in models
             if isinstance(m, dict) and m.get("visibility") == "list" and m.get("slug")
         ]
@@ -112,6 +115,10 @@ class ChatGPTAuthService:
             return PlanSessionInvalid(message or "ChatGPT sign-in was not accepted",
                                       status=401, request_id=resp.headers.get("x-request-id"))
         return ModelCatalogError(resp.status_code, message or f"HTTP {resp.status_code}")
+
+
+def _positive_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
 _SERVICE: ChatGPTAuthService | None = None
