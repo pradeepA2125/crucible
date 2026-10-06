@@ -297,6 +297,10 @@ class AgentSupervisor:
     def has_pending_report(self, agent_id: str) -> bool:
         return any(i.kind == "report" for i in self._inboxes.get(agent_id, []))
 
+    def has_wakes(self, agent_id: str) -> bool:
+        """Input waiting that will re-activate the agent when its activation ends (§3.6)."""
+        return any(i.wakes for i in self._inboxes.get(agent_id, []))
+
     def _hand_back_leftovers(self, handle: AgentHandle) -> None:
         items = self._inboxes.get(handle.agent_id, [])
         if self._on_leftover is None or not any(i.wakes for i in items):

@@ -145,3 +145,17 @@ def test_propose_stores_canonical_paths_and_checks_can_edit(tmp_path: Path) -> N
         service.propose(tid, "alice", "plan 2",
                         [{"member": "bob", "part": "tests", "files": ["t.py"]}],
                         supersedes=[post.proposal_id])
+
+
+def test_message_is_tracked_and_final_hint_by_phase(tmp_path: Path) -> None:
+    service, tid, teams, _ = _setup(tmp_path)
+    counters = ActivationCounters()
+    post = service.message(tid, "alice", "bob", "which file?", counters)
+    assert counters.messaged == [("bob", post.seq)]
+    teams.update_team(tid, phase="IMPLEMENTING")
+    assert service.final_hint(tid, "alice").startswith("finish or report partial")
+    teams.update_team(tid, phase="DELIBERATING", round=2)
+    teams.append_post(tid, author="bob", kind="proposal", text="P", round=1,
+                      payload={"assignments": [], "shared_files": [], "supersedes": []})
+    assert "state your stances now" in service.final_hint(tid, "alice")
+    assert service.final_hint(tid, "bob") == ""          # its own proposal: nothing owed

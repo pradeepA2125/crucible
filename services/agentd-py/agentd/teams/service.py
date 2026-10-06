@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 class ActivationCounters:
     posts: int = 0
     team_mentions: int = 0
+    messaged: list[tuple[str, int]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -157,9 +158,12 @@ class TeamService:
             raise TeamInputError("you cannot message yourself")
         body = check_text(text, "message")
         self._count(counters, [])
-        return self._emit(team, self._store.append_post(
+        post = self._store.append_post(
             team_id, author=author, kind="post", text=body, recipient=target,
-            mentions=[target]))
+            mentions=[target])
+        if counters is not None:
+            counters.messaged.append((target, post.seq))
+        return self._emit(team, post)
 
     def prepare_propose(self, team_id: str, author: str, text: object, assignments: object,
                         shared_files: object = None, supersedes: object = None, *,
@@ -253,6 +257,29 @@ class TeamService:
         return [p.proposal_id for p in self.open_proposals(team_id)
                 if p.author != label and (p.round or 0) < team.round
                 and label not in stances.get(p.seq, {})]
+
+    def final_hint(self, team_id: str, label: str) -> str:
+        """What the phase needs before a forced report (spec v2 §3.11)."""
+        team = self._store.get_team(team_id)
+        if team is None:
+            return ""
+        if team.phase == "IMPLEMENTING":
+            return ("finish or report partial, listing what is left under 'Unfinished' — "
+                    "your assignment stays open for the next activation")
+        if team.phase != "DELIBERATING":
+            return ""
+        kickoff = self._store.get_post(team_id, 1)
+        asked = (team.round == 1 and kickoff is not None and kickoff.kind == "post"
+                 and label in kickoff.mentions
+                 and not any(p.author == label and p.kind == "proposal"
+                             for p in self._store.posts(team_id)))
+        if asked:
+            return "post your proposal now, in this report's proposal field"
+        owed = self.expected_stances(team_id, label)
+        if owed:
+            return (f"state your stances now on {', '.join(owed)}, in this report's "
+                    "stances field")
+        return ""
 
     def withdraw(self, team_id: str, author: str, proposal_id: object) -> TeamPost:
         team = self._team(team_id)

@@ -1149,8 +1149,11 @@ def build_controller_step_payload(
                 f"it names (search_code{_graph}) and READ it (read_file) before you change or "
                 "claim anything. Stay inside the files your task assigns. Finish with "
                 "type='report' — the only thing your dispatcher receives.")
-        elif iteration >= max_iters:
+        elif iteration >= max_iters or plan_context.get("forced_final"):
+            team_hint = plan_context.get("team_final_hint")
             hint = (
+                f"⚠ BUDGET REACHED: emit type='report' NOW — {team_hint}."
+                if isinstance(team_hint, str) and team_hint else
                 "⚠ BUDGET REACHED: emit type='report' NOW with everything you found and changed, "
                 "and list what is unfinished under 'Unfinished'.")
         elif iteration == max_iters - 1:

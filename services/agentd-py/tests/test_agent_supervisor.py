@@ -164,3 +164,11 @@ def test_discard_reports_keeps_notes_and_other_reports() -> None:
     sup.deliver("lead", InboxItem(kind="note", text="n", wakes=False, source_id="a"))
     sup.discard_reports("lead", {"a"})
     assert [(i.kind, i.source_id) for i in sup.drain("lead")] == [("report", "b"), ("note", "a")]
+
+
+def test_has_wakes() -> None:
+    sup = AgentSupervisor(max_concurrent=2)
+    sup.keep("a1", [InboxItem(kind="team", text="", wakes=False)])
+    assert sup.has_wakes("a1") is False
+    sup.keep("a1", [InboxItem(kind="team", text="", wakes=True)])
+    assert sup.has_wakes("a1") is True

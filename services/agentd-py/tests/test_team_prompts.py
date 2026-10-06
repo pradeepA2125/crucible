@@ -154,3 +154,16 @@ def test_member_prompt_teaches_rounds_and_report_stances() -> None:
     assert "reaches the others at the next round" in text
     assert '"stances":[{"proposal_id":"P3","stance":"agree"' in text
     assert "appears on the board as a one-line notice" not in text
+
+
+def test_forced_final_uses_the_team_hint() -> None:
+    payload = build_controller_step_payload(
+        {"goal": "g", "iteration": 3, "max_iters": 40, "forced_final": True,
+         "team_final_hint": "state your stances now on P1"},
+        [{"role": "user", "content": "x"}], [], phase="AGENT")
+    assert "BUDGET REACHED: emit type='report' NOW — state your stances now on P1." in (
+        payload["instruction"])
+    plain = build_controller_step_payload(
+        {"goal": "g", "iteration": 3, "max_iters": 40, "forced_final": True},
+        [{"role": "user", "content": "x"}], [], phase="AGENT")
+    assert "list what is unfinished under 'Unfinished'" in plain["instruction"]

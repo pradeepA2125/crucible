@@ -77,3 +77,21 @@ async def test_force_final_narrows_and_accepts_partial() -> None:
     assert engine.types[0] == ["report"]
     assert outcome.payload == {"status": "partial"}
     assert seen == [True]
+
+
+@pytest.mark.asyncio
+async def test_forced_final_carries_the_team_hint() -> None:
+    contexts: list[dict[str, object]] = []
+
+    class _Seeing(_Engine):
+        async def create_controller_step(self, plan_context, history, tool_definitions,  # type: ignore[no-untyped-def]
+                                         allowed_types=None, **k):
+            contexts.append(dict(plan_context))
+            return await super().create_controller_step(
+                plan_context, history, tool_definitions, allowed_types, **k)
+
+    loop = _loop(_Seeing([REPORT]))
+    loop.force_final()
+    await loop.run({"goal": "g"}, max_iters=10, final_hint=lambda: "post your proposal now")
+    assert contexts[0]["forced_final"] is True
+    assert contexts[0]["team_final_hint"] == "post your proposal now"

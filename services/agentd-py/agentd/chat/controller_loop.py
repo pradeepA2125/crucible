@@ -919,6 +919,7 @@ class ControllerLoop:
         report_guard: Callable[[], str | None] | None = None,
         terminal_guard: Callable[[], str | None] | None = None,
         status_tail: Callable[[], str] | None = None,
+        final_hint: Callable[[], str] | None = None,
         report_check: ReportCheck | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
@@ -971,6 +972,7 @@ class ControllerLoop:
                 report_guard=report_guard,
                 terminal_guard=terminal_guard,
                 status_tail=status_tail,
+                final_hint=final_hint,
                 report_check=report_check,
             )
             if iteration_cb is not None:
@@ -1023,6 +1025,7 @@ class ControllerLoop:
         report_guard: Callable[[], str | None] | None = None,
         terminal_guard: Callable[[], str | None] | None = None,
         status_tail: Callable[[], str] | None = None,
+        final_hint: Callable[[], str] | None = None,
         report_check: ReportCheck | None = None,
     ) -> ControllerOutcome:
         pending_salvage: list[str] = []
@@ -1230,6 +1233,11 @@ class ControllerLoop:
                 # Rebuilt from the database every iteration (spec v2 §7.6) — cheap, and the
                 # only copy of the phase state that survives a long activation or compaction.
                 plan_context["team_status"] = status_tail()
+            # Spec v2 §3.11: a forced final (deadline or budget) tells the model what its
+            # phase needs before it reports.
+            plan_context["forced_final"] = self._force_final
+            if final_hint is not None and (iteration >= max_iters or self._force_final):
+                plan_context["team_final_hint"] = final_hint()
             # Re-inject activated skill bodies into the tail every iteration (compaction-
             # resilient); empty list -> build_controller_step_payload omits it.
             plan_context["active_skills"] = [
