@@ -15,6 +15,7 @@ from agentd.chat.models import (
     ChatMcpDecisionRequest,
     GateAmbiguousError,
     GateNotFoundError,
+    TeamPlanDecisionRequest,
 )
 from agentd.chat.rewind import resolve_rewind_anchor
 from agentd.domain.models import (
@@ -49,7 +50,7 @@ from agentd.domain.state_machine import transition
 from agentd.orchestrator.engine import AgentOrchestrator
 from agentd.retrieval.artifact_client import RetrievalArtifactClient
 from agentd.storage.base import TaskStore
-from agentd.teams.validation import TeamInputError
+from agentd.teams.validation import TeamInputError, TeamPlanConflict, TeamPlanInvalid
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
 # Backend-internal ChatThread fields kept off the wire: seed substrate for the
@@ -1915,6 +1916,25 @@ def build_router(
                 result: dict[str, object] = await disband(thread_id, team_id)
             except TeamInputError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return result
+
+        @router.post("/chat/threads/{thread_id}/team-plan-decision")
+        async def post_team_plan_decision(
+            thread_id: str, request: TeamPlanDecisionRequest,
+        ) -> dict[str, object]:
+            # Spec v2 §8.5. Plain JSON: approval starts members in the background.
+            decide = getattr(_chat_agent, "decide_team_plan", None)
+            if decide is None:
+                raise HTTPException(status_code=404, detail="Teams are not available")
+            try:
+                result: dict[str, object] = decide(
+                    thread_id, request.gate_id, request.decision, request.feedback)
+            except GateNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except TeamPlanConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except TeamPlanInvalid as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             return result
 
         # ── Chat rewind ──────────────────────────────────────────────────────

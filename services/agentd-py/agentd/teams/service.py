@@ -439,7 +439,8 @@ class TeamService:
             lines.append(f"last round ({evaluation.get('round')}): "
                          f"{evaluation_text(evaluation)}")
         if member.assignment:
-            lines.append(f"your assignment: {json.dumps(member.assignment)}")
+            done = " (done)" if member.assignment_done else ""
+            lines.append(f"your assignment{done}: {json.dumps(member.assignment)}")
         unread = self._store.posts(team_id, since_seq=member.delivered_seq, viewer=label)
         dms = sum(1 for p in unread if p.recipient == label)
         mentions = sum(1 for p in unread if p.recipient is None and
@@ -472,9 +473,12 @@ class TeamService:
             "team_id": team.team_id, "name": team.name, "goal": team.goal, "phase": team.phase,
             "round": team.round, "max_rounds": team.max_rounds,
             "paused_reason": team.paused_reason,
+            "end_reason": team.end_reason, "approval_gate": team.approval_gate,
+            "adopted_proposal_id": team.adopted_proposal_id,
             "members": [{"label": m.label, "agent_id": m.agent_id,
                          "name": (info := self._agent_info(m.agent_id)).name,
-                         "description": info.description, "status": info.status}
+                         "description": info.description, "status": info.status,
+                         "assignment": m.assignment, "assignment_done": m.assignment_done}
                         for m in self._store.members(team_id)],
             "open_proposals": [
                 {"id": p.proposal_id, "author": p.author, "text": p.text[:600],

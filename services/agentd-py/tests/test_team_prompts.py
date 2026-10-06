@@ -167,3 +167,17 @@ def test_forced_final_uses_the_team_hint() -> None:
         {"goal": "g", "iteration": 3, "max_iters": 40, "forced_final": True},
         [{"role": "user", "content": "x"}], [], phase="AGENT")
     assert "list what is unfinished under 'Unfinished'" in plain["instruction"]
+
+
+def test_teaching_covers_implementation_and_pauses() -> None:
+    member = format_controller_system_prompt(
+        [{"name": "team_post"}], task_subsystem_enabled=False, memory_enabled=False,
+        render_ctx=_ctx("Team 'auth'. Goal: add login."), persona="")
+    assert "Edit only\n  your own files and the shared files" in member
+    tools = [d.model_dump() for d in MainTeamToolSource(BUILTIN_AGENTS, MainTeamOps(
+        create=_never, resolve=lambda r: r, post=lambda *a: {}, status=lambda t: {},
+        disband=_never, adopt=lambda *a: {}), first_turn_team_ids=set()).definitions()]
+    main = format_controller_system_prompt(tools, task_subsystem_enabled=False,
+                                           memory_enabled=False)
+    assert "approval_gate: true" in main and "resume_team continues it" in main
+    assert "only after\n  the user agrees" in main

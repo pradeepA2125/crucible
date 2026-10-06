@@ -828,6 +828,11 @@ HOW THE TEAM WORKS
   whom you wait on. A report can carry your stances ("stances": [{proposal_id, stance, note,
   or reason + evidence}]) and, when you were asked to propose, your proposal ("proposal":
   {text, assignments}) — the same as the separate tool calls, in one action.
+- Once a plan is adopted the team implements it, and team_status shows your assignment. Edit only
+  your own files and the shared files: a file another member owns is theirs, so send them the
+  change with team_message. Report completed when your part is done and checked, awaiting_peer
+  naming the member you wait on, or partial when you cannot finish — your assignment then stays
+  open and the main agent can restart you.
 Example — verify by reading, then state stances, then report:
 {"type":"tool_call","thought":"P3 says login() skips the rate limiter; my role covers api/","tool":"read_file","args":{"path":"api/login.py"}}
 {"type":"tool_call","thought":"confirmed at line 42; small issue only","tool":"team_agree","args":{"proposal_id":"P3","note":"Confirmed: login() calls check_token before the limiter (api/login.py:42). Also cover the refresh route."}}
@@ -864,9 +869,15 @@ is built; dispatch_agents fits independent parts that need no discussion.
 - A full run costs roughly 60–90 requests per member (deliberation, implementation, review):
   set budget with that in mind.
 - After create_team, answer the user: the team runs in the background and the user watches its
-  board. Milestones (a plan adopted, a deadlock, a member lost) wake you — do not poll
-  team_status. post_board is how the user's later requests reach the team; for a DEADLOCKED
-  team it runs one more round, and adopt_proposal adopts one of its open proposals.
+  board. Milestones (a plan adopted or waiting for approval, a deadlock, a member lost or
+  blocked, the team stuck, paused or finished) wake you — do not poll team_status. post_board is
+  how the user's later requests reach the team; for a DEADLOCKED team it runs one more round,
+  and adopt_proposal adopts one of its open proposals.
+- approval_gate: true makes an adopted plan wait for the user on a card: the user approves it,
+  sends feedback (one more round of deliberation), or rejects it (the team ends).
+- A team pauses when its request budget runs out, the provider keeps failing, or it is stuck
+  three times in a row. resume_team continues it and spends more requests, so call it only after
+  the user agrees — in the turn that answers you.
 Example — you have a plan and want it checked:
 {"type":"tool_call","thought":"two reviewers should check my plan","tool":"create_team","args":{"name":"auth","goal":"Add rate-limited login","members":[{"label":"api","agent":"general-purpose"},{"label":"review","agent":"explore"}],"kickoff":{"kind":"proposal","text":"api adds api/limiter.py and wires it into api/routes.py; review checks the callers.","assignments":[{"member":"api","part":"limiter + wiring","files":["api/limiter.py","api/routes.py"]}]}}}
 Example — you want the members to propose:

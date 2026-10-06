@@ -131,3 +131,35 @@ async def test_rewind_refused_while_a_team_is_live(tmp_path: Path, monkeypatch) 
     async with _client(tmp_path, ctrl) as client:
         r = await client.post(f"/v1/chat/threads/{tid}/rewind", json={"message_id": message_id})
     assert r.status_code == 409 and "auth" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_team_plan_decision_route_errors(tmp_path: Path, monkeypatch) -> None:
+    from agentd.chat.models import GateNotFoundError
+    from agentd.teams.validation import TeamPlanConflict, TeamPlanInvalid
+
+    store, ctrl, tid, _ = _seed(tmp_path, monkeypatch)
+    outcomes: list[object] = [GateNotFoundError("x"), TeamPlanConflict("y"),
+                              TeamPlanInvalid("z"), {"team_id": "team-1", "phase": "IMPLEMENTING"}]
+    seen: list[tuple[str, str, str, str | None]] = []
+
+    def decide(thread_id, gate_id, decision, feedback):  # type: ignore[no-untyped-def]
+        seen.append((thread_id, gate_id, decision, feedback))
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(ctrl, "decide_team_plan", decide)
+    async with _client(tmp_path, ctrl) as client:
+        url = f"/v1/chat/threads/{tid}/team-plan-decision"
+        body = {"gate_id": "g1", "decision": "approve"}
+        assert (await client.post(url, json=body)).status_code == 404
+        assert (await client.post(url, json=body)).status_code == 409
+        assert (await client.post(url, json={**body, "decision": "feedback",
+                                             "feedback": "x"})).status_code == 422
+        ok = await client.post(url, json=body)
+        assert ok.status_code == 200 and ok.json() == {"team_id": "team-1",
+                                                       "phase": "IMPLEMENTING"}
+        assert (await client.post(url, json={**body, "decision": "maybe"})).status_code == 422
+    assert seen[2] == (tid, "g1", "feedback", "x")

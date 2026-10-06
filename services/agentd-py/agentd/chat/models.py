@@ -316,3 +316,11 @@ class ChatCommandDecisionRequest(CommandDecision):
 class ChatMcpDecisionRequest(McpToolDecision):
     """POST /chat/threads/{id}/mcp-decision body; gate_id as ChatCommandDecisionRequest."""
     gate_id: str | None = None
+
+
+class TeamPlanDecisionRequest(BaseModel):
+    """POST /chat/threads/{id}/team-plan-decision body (spec v2 §8.5). Feedback length is
+    checked by the controller, after the gate and team checks (404, then 409, then 422)."""
+    gate_id: str
+    decision: Literal["approve", "feedback", "reject"]
+    feedback: str | None = None

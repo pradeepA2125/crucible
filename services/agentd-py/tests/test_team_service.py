@@ -159,3 +159,17 @@ def test_message_is_tracked_and_final_hint_by_phase(tmp_path: Path) -> None:
                       payload={"assignments": [], "shared_files": [], "supersedes": []})
     assert "state your stances now" in service.final_hint(tid, "alice")
     assert service.final_hint(tid, "bob") == ""          # its own proposal: nothing owed
+
+
+def test_summary_carries_assignments_and_end(tmp_path: Path) -> None:
+    service, tid, teams, _ = _setup(tmp_path)
+    teams.set_assignment(tid, "alice", {"member": "alice", "part": "api", "files": ["a.py"]})
+    teams.set_assignment_done(tid, "alice")
+    teams.update_team(tid, phase="DONE", end_reason="implemented", adopted_proposal_id="P1")
+    summary = service.summary(tid)
+    assert (summary["end_reason"], summary["adopted_proposal_id"], summary["approval_gate"]) == (
+        "implemented", "P1", False)
+    alice = next(m for m in summary["members"] if m["label"] == "alice")
+    assert alice["assignment"]["part"] == "api" and alice["assignment_done"] is True
+    bob = next(m for m in summary["members"] if m["label"] == "bob")
+    assert bob["assignment"] is None and bob["assignment_done"] is False
