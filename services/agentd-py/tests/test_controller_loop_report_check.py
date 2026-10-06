@@ -95,3 +95,13 @@ async def test_forced_final_carries_the_team_hint() -> None:
     await loop.run({"goal": "g"}, max_iters=10, final_hint=lambda: "post your proposal now")
     assert contexts[0]["forced_final"] is True
     assert contexts[0]["team_final_hint"] == "post your proposal now"
+
+
+@pytest.mark.asyncio
+async def test_a_valid_but_unavailable_type_gets_a_specific_correction() -> None:
+    edit = {"type": "edit", "thought": "write it", "patch_ops": []}
+    engine = _Engine([edit, REPORT])
+    outcome = await _loop(engine).run({"goal": "g"}, max_iters=10)
+    text = str(outcome.history)
+    assert "'edit' is not available right now" in text
+    assert "empty or had no valid" not in text

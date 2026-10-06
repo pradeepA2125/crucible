@@ -267,6 +267,28 @@ _TOOL_AS_TYPE_TEMPLATE = tagged("tool_as_type", (
     '{"type":"tool_call","thought":"…","tool":"{tool}","args":{…}}'))
 
 
+_ACTION_TYPES = frozenset({"answer", "clarify", "propose_mode", "edit", "submit_changes",
+                           "tool_call", "progress", "report"})
+
+
+def _unavailable_type_correction(
+    atype: str, allowed: list[str], render_ctx: RenderContext | None,
+) -> str | None:
+    """A real action type that this iteration does not allow. Telling the model its output
+    was empty (the generic correction) sent a deliberating team member back to `edit` again
+    and again (found in the 5B live smoke)."""
+    if atype not in _ACTION_TYPES:
+        return None
+    if allowed == ["report"]:
+        return (f"'{atype}' is not available right now: your step budget is spent. Emit "
+                "type='report' now with what you found and what is unfinished.")
+    if atype == "edit" and render_ctx is not None and render_ctx.team_brief:
+        return ("'edit' is not available right now: your team is not implementing, and files "
+                "change only in implementation, by each file's owner. Use one of: "
+                f"{', '.join(allowed)} — state your stance or propose the change, then report.")
+    return f"'{atype}' is not available right now. Use one of: {', '.join(allowed)}."
+
+
 def _tool_name_as_type_correction(
     atype: str, tool_names: set[str] | frozenset[str],
 ) -> str | None:
@@ -1359,6 +1381,8 @@ class ControllerLoop:
             # _empty_action_correction). Each is corrected + retried, bounded by _MAX_MALFORMED.
             correction = (
                 (_tool_name_as_type_correction(atype, tool_names)
+                 or _unavailable_type_correction(
+                     atype, self._allowed_action_types(), self._render_ctx)
                  or malformed_correction(self._render_ctx, self._allowed_action_types()))
                 if atype not in self._allowed_action_types()
                 else _propose_mode_correction(resp, self._allowed_modes_for_current_phase()) if atype == "propose_mode"
