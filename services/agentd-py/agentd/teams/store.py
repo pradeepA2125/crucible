@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from agentd.providers.usage import Usage
 from agentd.teams.models import (
     ACTIVITY_KINDS,
     LIVE_TEAM_PHASES,
@@ -192,6 +193,34 @@ class TeamStore:
         return member.wakes_this_phase if member else 0
 
     # ── posts ────────────────────────────────────────────────────────────────
+
+    def set_assignment(self, team_id: str, label: str, assignment: dict[str, object] | None,
+                       ) -> None:
+        self._conn.execute(
+            "UPDATE team_members SET assignment_json = ?, assignment_done = 0 "
+            "WHERE team_id = ? AND label = ?",
+            (json.dumps(assignment) if assignment is not None else None, team_id, label))
+        self._conn.commit()
+
+    def set_assignment_done(self, team_id: str, label: str) -> None:
+        self._conn.execute(
+            "UPDATE team_members SET assignment_done = 1 WHERE team_id = ? AND label = ?",
+            (team_id, label))
+        self._conn.commit()
+
+    def reset_wakes(self, team_id: str) -> None:
+        """The wake cap counts per phase (spec v2 §8.6)."""
+        self._conn.execute("UPDATE team_members SET wakes_this_phase = 0 WHERE team_id = ?",
+                           (team_id,))
+        self._conn.commit()
+
+    def add_usage(self, team_id: str, usage: Usage) -> None:
+        """A team's usage is the sum over its members and their helpers (spec §3.11)."""
+        self._conn.execute(
+            "UPDATE teams SET requests = requests + ?, prompt_tokens = prompt_tokens + ?, "
+            "completion_tokens = completion_tokens + ? WHERE team_id = ?",
+            (usage.requests, usage.prompt_tokens, usage.completion_tokens, team_id))
+        self._conn.commit()
 
     def append_post(
         self, team_id: str, *, author: str, kind: str, text: str,

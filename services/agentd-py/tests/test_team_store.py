@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from agentd.chat.storage import ChatThreadStore
+from agentd.providers.usage import Usage
 from agentd.teams.models import TeamMember, TeamRecord, new_team_id
 
 
@@ -113,3 +114,23 @@ def test_set_in_quorum_and_live_team_names(tmp_path: Path) -> None:
     assert teams.live_team_names("t1") == ["auth"]
     teams.update_team(team.team_id, phase="DONE")
     assert teams.live_team_names("t1") == []
+
+
+def test_assignment_wakes_and_usage(tmp_path) -> None:
+    teams = _store(tmp_path).teams
+    team = _team()
+    teams.create_team(team)
+    teams.add_member(TeamMember(team_id=team.team_id, agent_id="a1", label="alice"))
+    teams.set_assignment(team.team_id, "alice", {"member": "alice", "part": "api",
+                                                 "files": ["a.py"]})
+    teams.bump_wakes(team.team_id, "alice")
+    teams.set_assignment_done(team.team_id, "alice")
+    member = teams.member(team.team_id, "alice")
+    assert member.assignment["files"] == ["a.py"] and member.assignment_done
+    teams.reset_wakes(team.team_id)
+    assert teams.member(team.team_id, "alice").wakes_this_phase == 0
+    teams.set_assignment(team.team_id, "alice", None)
+    assert teams.member(team.team_id, "alice").assignment_done is False
+    teams.add_usage(team.team_id, Usage(requests=3, prompt_tokens=10, completion_tokens=2))
+    after = teams.get_team(team.team_id)
+    assert (after.requests, after.prompt_tokens, after.completion_tokens) == (3, 10, 2)

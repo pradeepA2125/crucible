@@ -57,3 +57,42 @@ def test_trace_appends_lines(tmp_path) -> None:
     trace.write("evaluation", round=1)
     lines = (tmp_path / "x" / "coordinator.jsonl").read_text().splitlines()
     assert [json.loads(line)["kind"] for line in lines] == ["event", "evaluation"]
+
+
+def test_adopted_body_names_what_happens_next() -> None:
+    data = {"proposal_id": "P2", "by": "team",
+            "assignments": [{"member": "alice", "part": "api", "files": ["a.py"]}]}
+    _, implementing = milestone_text(_team(phase="IMPLEMENTING"), "adopted",
+                                     {**data, "next": "implementing"})
+    assert "The members are implementing it" in implementing
+    _, ended = milestone_text(_team(phase="DONE"), "adopted", {**data, "next": "ended"})
+    assert "no assignments" in ended
+
+
+def test_approval_needed_and_paused_and_stuck() -> None:
+    headline, body = milestone_text(_team(phase="AWAITING_APPROVAL"), "approval_needed",
+                                    {"proposal_id": "P4"})
+    assert headline == "Team 'auth' needs your approval for P4"
+    assert "a card is waiting for the user" in body
+    headline, body = milestone_text(_team(phase="PAUSED", paused_reason="budget"), "paused",
+                                    {"reason": "budget", "paused_from": "IMPLEMENTING",
+                                     "done": 1, "total": 3})
+    assert headline == "Team 'auth' paused — its request budget ran out"
+    assert "1 of 3 assignments done" in body and "resume_team" in body
+    _, body = milestone_text(_team(phase="IMPLEMENTING"), "stuck",
+                             {"idle": [["alice", "awaiting_peer"], ["bob", "partial"]],
+                              "count": 2})
+    assert "alice: awaiting_peer" in body and "bob: partial" in body and "2 of 3" in body
+
+
+def test_member_blocked_quotes_300_chars_and_points_to_the_rest() -> None:
+    _, body = milestone_text(_team(phase="IMPLEMENTING"), "member_blocked",
+                             {"label": "bob", "status": "partial", "report": "y" * 300})
+    assert "bob reported partial" in body and "y" * 300 in body
+    assert "post_board" in body
+
+
+def test_done_lists_files() -> None:
+    headline, body = milestone_text(_team(phase="DONE"), "done", {"files": ["a.py", "b.py"]})
+    assert headline == "Team 'auth' finished its assignments"
+    assert "a.py, b.py" in body

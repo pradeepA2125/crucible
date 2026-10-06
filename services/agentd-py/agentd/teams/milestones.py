@@ -14,10 +14,48 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
         parts = raw_parts if isinstance(raw_parts, list) else []
         assigned = [f"{a.get('member')} → {a.get('part')} ({len(a.get('files') or [])} files)"
                     for a in parts if isinstance(a, dict)]
+        following = {
+            "implementing": "The members are implementing it; milestones will report progress.",
+            "ended": "It has no assignments, so the team has ended with the plan adopted: "
+                     "carry it out or tell the user.",
+        }.get(str(data.get("next", "")), "")
         details = [f"{data['proposal_id']} was adopted{by}.",
                    "Assignments: " + ("; ".join(assigned) if assigned else "none"),
-                   "The team has ended with this plan adopted (implementation by the team "
-                   "is not available yet): carry it out or tell the user."]
+                   *([following] if following else [])]
+    elif kind == "approval_needed":
+        headline = f"Team {name} needs your approval for {data['proposal_id']}"
+        details = [f"{data['proposal_id']} was adopted; a card is waiting for the user to "
+                   "approve it, send feedback, or reject it. Tell the user."]
+    elif kind == "member_blocked":
+        headline = f"Team {name}: {data['label']} is blocked"
+        details = [f"{data['label']} reported {data['status']}: {data.get('report', '')}",
+                   f"Its assignment stays open. Read its full report in the team window; "
+                   f"post_board mentioning @{data['label']} restarts it."]
+    elif kind == "stuck":
+        headline = f"Team {name} is stuck"
+        raw_idle = data.get("idle")
+        idle = raw_idle if isinstance(raw_idle, list) else []
+        details = ["Nobody is working and assignments are open:",
+                   *[f"- {pair[0]}: {pair[1]}" for pair in idle
+                     if isinstance(pair, list) and len(pair) == 2],
+                   f"Stuck {data.get('count')} of 3 times in a row (the third pauses the "
+                   "team). post_board to unblock them, or disband_team."]
+    elif kind == "paused":
+        reason = str(data.get("reason", ""))
+        why = {"budget": "its request budget ran out",
+               "transient_burst": "the provider kept failing",
+               "stuck": "it was stuck three times in a row"}.get(reason, reason)
+        headline = f"Team {name} paused — {why}"
+        details = [f"Paused from {data.get('paused_from')}; "
+                   f"{data.get('done', 0)} of {data.get('total', 0)} assignments done.",
+                   "resume_team continues it (only after the user agrees — it spends more "
+                   "requests); disband_team ends it."]
+    elif kind == "done":
+        headline = f"Team {name} finished its assignments"
+        raw_files = data.get("files")
+        files = [str(f) for f in raw_files] if isinstance(raw_files, list) else []
+        details = ["Files changed: " + (", ".join(files) if files else "none"),
+                   "Tell the user what the team built."]
     elif kind == "deadlock":
         headline = f"Team {name} deadlocked after {data['round']} rounds"
         details = []
