@@ -97,10 +97,20 @@ def test_member_blocked_quotes_300_chars_and_points_to_the_rest() -> None:
     assert "post_board" in body
 
 
-def test_done_lists_files() -> None:
-    headline, body = milestone_text(_team(phase="DONE"), "done", {"files": ["a.py", "b.py"]})
-    assert headline == "Team 'auth' finished its assignments"
-    assert "a.py, b.py" in body
+def test_done_body_names_the_review() -> None:
+    headline, body = milestone_text(_team(phase="DONE"), "done", {
+        "reason": "reviewed", "files": ["a.py", "b.py"], "adopted": "P3", "closing": "P9",
+        "cycle": 2, "abstained": ["review"], "unresolved": []})
+    assert headline == "Team 'auth' finished — the review agreed"
+    assert "P3 implemented; closing proposal P9 (review cycle 2)." in body
+    assert "Abstained: review" in body and "a.py, b.py" in body
+    headline, body = milestone_text(_team(phase="DONE"), "done", {
+        "reason": "unresolved objections", "files": [], "adopted": "P3", "closing": "P9",
+        "cycle": 1, "abstained": [],
+        "unresolved": [{"seq": 12, "label": "tests", "reason": "refresh is unlimited"}]})
+    assert headline == "Team 'auth' finished with unresolved objections"
+    assert "- #12 tests: refresh is unlimited" in body
+    assert "what is still open" in body
 
 
 def test_stuck_body_names_waits_and_how_to_restart() -> None:

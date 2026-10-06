@@ -251,6 +251,10 @@ class TeamService:
     def expected_stances(self, team_id: str, label: str) -> list[str]:
         """Open proposals from earlier rounds that `label` has no stance on (spec v2 §8.3)."""
         team = self._store.get_team(team_id)
+        if team is not None and team.phase == "REVIEWING" and team.closing_proposal_id:
+            seq = parse_proposal_id(team.closing_proposal_id)
+            return [] if label in self.stances(team_id).get(seq, {}) else [
+                team.closing_proposal_id]
         if team is None or team.phase != "DELIBERATING":
             return []
         stances = self.stances(team_id)
@@ -266,6 +270,10 @@ class TeamService:
         if team.phase == "IMPLEMENTING":
             return ("finish or report partial, listing what is left under 'Unfinished' — "
                     "your assignment stays open for the next activation")
+        if team.phase == "REVIEWING":
+            owed = self.expected_stances(team_id, label)
+            return (f"state your stance on {owed[0]} now, in this report's stances field"
+                    if owed else "")
         if team.phase != "DELIBERATING":
             return ""
         kickoff = self._store.get_post(team_id, 1)
@@ -314,6 +322,14 @@ class TeamService:
         return self._emit(team, self._store.append_post(
             team_id, author="system", kind="system", text=text, payload=payload,
             recipient=recipient, mentions=[recipient] if recipient else []))
+
+    def closing_proposal(self, team_id: str, text: str, payload: dict[str, Any]) -> TeamPost:
+        """The review's closing proposal (spec v2 §8.7): system-written, so its text is never
+        model text; members state stances on it like on any proposal."""
+        team = self._store.get_team(team_id)
+        assert team is not None
+        return self._emit(team, self._store.append_post(
+            team_id, author="system", kind="proposal", text=text, payload=payload))
 
     # ── what members and the main agent read ────────────────────────────────
 
@@ -414,6 +430,11 @@ class TeamService:
             lines.append("Posts and messages reach the others right away. Report completed when "
                          "your assignment is done, awaiting_peer with \"waiting_on\": [<label>] "
                          "when you wait on a member, or partial when you cannot finish.")
+        elif team.phase == "REVIEWING" and team.closing_proposal_id:
+            lines.append(f"Review: verify the implementation (run tests, read the changes), "
+                         f"then state your stance on {team.closing_proposal_id} — team_agree, "
+                         "team_object with evidence, or your report's stances field. Posts "
+                         "reach the others right away.")
         return "\n".join(lines)
 
     def render_delta_posts(

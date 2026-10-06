@@ -199,3 +199,19 @@ def test_a_round_with_no_open_proposal_asks_for_one(tmp_path: Path) -> None:
     assert f"the user sent P{plan.seq} back with feedback (#{note.seq})" in text
     assert "propose a revised plan" in text
     assert service.final_hint(tid, "alice").startswith("post your proposal now")
+
+
+def test_review_owes_a_stance_on_the_closing_proposal(tmp_path: Path) -> None:
+    service, tid, teams, posted = _setup(tmp_path)
+    closing = service.closing_proposal(tid, "Implementation complete — verify.",
+                                       {"assignments": [], "closing": True, "cycle": 1})
+    assert (closing.author, closing.kind) == ("system", "proposal") and posted[-1] == closing
+    teams.update_team(tid, phase="REVIEWING", closing_proposal_id=closing.proposal_id,
+                      review_cycles=1)
+    assert service.expected_stances(tid, "alice") == [closing.proposal_id]
+    text, _top = service.render_delta(tid, "alice")
+    assert f"state your stance on {closing.proposal_id}" in text
+    assert service.final_hint(tid, "alice") == (
+        f"state your stance on {closing.proposal_id} now, in this report's stances field")
+    service.agree(tid, "alice", closing.proposal_id)
+    assert service.expected_stances(tid, "alice") == []

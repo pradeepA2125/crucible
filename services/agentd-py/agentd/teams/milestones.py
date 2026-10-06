@@ -65,11 +65,27 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
                    "resume_team continues it (only after the user agrees — it spends more "
                    "requests); disband_team ends it."]
     elif kind == "done":
-        headline = f"Team {name} finished its assignments"
+        reviewed = data.get("reason") == "reviewed"
+        headline = (f"Team {name} finished — the review agreed" if reviewed
+                    else f"Team {name} finished with unresolved objections")
         raw_files = data.get("files")
         files = [str(f) for f in raw_files] if isinstance(raw_files, list) else []
-        details = ["Files changed: " + (", ".join(files) if files else "none"),
-                   "Tell the user what the team built."]
+        raw_abstained = data.get("abstained")
+        abstained = [str(a) for a in raw_abstained] if isinstance(raw_abstained, list) else []
+        raw_open = data.get("unresolved")
+        unresolved = ([u for u in raw_open if isinstance(u, dict)]
+                      if isinstance(raw_open, list) else [])
+        details = [f"{data.get('adopted')} implemented; closing proposal {data.get('closing')} "
+                   f"(review cycle {data.get('cycle')})."]
+        if abstained:
+            details.append("Abstained: " + ", ".join(abstained))
+        if unresolved:
+            details.append("Unresolved objections:")
+            details += [f"- #{u.get('seq')} {u.get('label')}: {str(u.get('reason', ''))[:160]}"
+                        for u in unresolved]
+        details.append("Files changed: " + (", ".join(files) if files else "none"))
+        details.append("Tell the user what the team built"
+                       + (" and what is still open." if unresolved else "."))
     elif kind == "deadlock":
         headline = f"Team {name} deadlocked after {data['round']} rounds"
         details = []
