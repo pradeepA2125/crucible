@@ -176,7 +176,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
             "schema": codec.schema,
             "strict": True,
         }}
-        text = await self._run(body, on_thinking, on_retry, on_progress, on_usage)
+        text = await self._run(body, on_thinking, on_retry, on_progress, on_usage,
+                               first_action=True)
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -234,6 +235,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_retry: Callable[[int, int, str, str], None] | None,
         on_progress: Callable[..., None] | None,
         on_usage: Callable[[int, int], None] | None,
+        *,
+        first_action: bool = False,
     ) -> str:
         if self._plan_route:
             extra = set(body) - PLAN_ROUTE_FIELDS
@@ -245,7 +248,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         attempt = 0
         while True:
             try:
-                return await self._stream_once(body, on_thinking, on_progress, on_usage)
+                return await self._stream_once(body, on_thinking, on_progress, on_usage,
+                                               first_action=first_action)
             except _Unauthorized as exc:
                 if not refreshed and await self._bearer.on_unauthorized():
                     refreshed = True
@@ -278,6 +282,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_thinking: Callable[[str], None] | None,
         on_progress: Callable[..., None] | None,
         on_usage: Callable[[int, int], None] | None,
+        *,
+        first_action: bool = False,
     ) -> str:
         ticker = ProgressTicker(on_progress, input_n=approx_prompt_tokens(
             body["instructions"], body["input"][0]["content"]))
@@ -303,7 +309,15 @@ class OpenAIJsonTransport(ModelJsonTransport):
                 elif kind == "response.output_item.done":
                     item = getattr(event, "item", None)
                     if getattr(item, "type", None) == "message":
-                        phases[getattr(item, "id", None)] = getattr(item, "phase", None)
+                        item_id = getattr(item, "id", None)
+                        phases[item_id] = getattr(item, "phase", None)
+                        action = "".join(texts.get(item_id, []))
+                        if first_action and _is_json_object(action):
+                            # The one action we asked for. What follows is the model
+                            # acting out results it never received; stop paying for it.
+                            await _close(stream)
+                            ticker.finish()
+                            return action
                 elif kind in _THINKING_EVENTS:
                     if callable(on_thinking):
                         on_thinking(event.delta)
@@ -376,18 +390,34 @@ class OpenAIJsonTransport(ModelJsonTransport):
 
 
 def _answer_text(texts: dict[str | None, list[str]], phases: dict[str | None, str | None]) -> str:
-    """The reply text: the `final_answer` message, else the last message.
+    """Plain-text reply: the `final_answer` message, else the last message.
 
-    Measured on the ChatGPT plan route: a reasoning model can emit a `commentary`
-    message holding the whole answer, then the `final_answer` message with it again,
-    and `response.completed` carries no output to read instead. Joining every delta
-    produced `{…}{…}`, which no JSON parser accepts.
+    A response can hold several message items (`commentary` ones, then `final_answer`)
+    and `response.completed` carries no output to read instead, so deltas are never
+    joined across items. Structured output doesn't get here: it takes the FIRST
+    complete action and stops (see `_stream_once`).
     """
     if not texts:
         return ""
     finals = [item for item, phase in phases.items() if phase == "final_answer" and item in texts]
     chosen = finals[-1] if finals else list(texts)[-1]
     return "".join(texts[chosen])
+
+
+def _is_json_object(text: str) -> bool:
+    try:
+        return isinstance(json.loads(text), dict)
+    except json.JSONDecodeError:
+        return False
+
+
+async def _close(stream: Any) -> None:
+    close = getattr(stream, "close", None)
+    if callable(close):
+        try:
+            await close()
+        except Exception:  # noqa: BLE001 — abandoning the stream anyway
+            logger.debug("closing an abandoned response stream failed", exc_info=True)
 
 
 def _failed_error(error: Any) -> Exception:

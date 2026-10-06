@@ -44,6 +44,10 @@ class FakeStream:
     def __init__(self, events: list[Any], raise_after: Exception | None = None) -> None:
         self._events = list(events)
         self._raise_after = raise_after
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
 
     def __aiter__(self) -> FakeStream:
         return self
@@ -189,15 +193,39 @@ def _message_done(item_id: str, phase: str | None) -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-async def test_a_commentary_message_before_the_final_answer_is_not_joined_into_it() -> None:
-    # Measured live on the ChatGPT plan route (gpt-5.6-terra, 2 of 6 runs): a reasoning
-    # model emits a `commentary` message carrying the full JSON, then the
-    # `final_answer` message with it again. Joining every delta gave `{…}{…}`.
-    commentary, final = '{"ok": false}', '{"ok": true}'
+async def test_structured_output_takes_the_first_action_and_stops_reading() -> None:
+    # Measured live on the ChatGPT plan route (gpt-5.6-terra): asked for ONE action, the
+    # model plays out its own agent loop inside one response — the real next action as
+    # a `commentary` message, then invented follow-ups (a `wait_agents` tool that does
+    # not exist, ×10) with no results ever returned, then a `final_answer` that can
+    # fabricate those results. The first complete message is the action we asked for.
+    first, invented, final = '{"ok": true}', '{"ok": false}', '{"ok": false}'
+    stream = FakeStream([
+        _item_delta("m1", first[:5]), _item_delta("m1", first[5:]), _message_done("m1", "commentary"),
+        _item_delta("m2", invented), _message_done("m2", "commentary"),
+        _item_delta("m3", final), _message_done("m3", "final_answer"), _completed()])
+    fake = FakeResponses(stream)
+    assert await _transport(fake, plan_route=True).generate_json(
+        model="m", schema_name="s", schema=SCHEMA, system_instructions="",
+        user_payload={}) == {"ok": True}
+    assert stream.closed  # the rest is never read: it costs plan usage and means nothing
+    assert len(stream._events) == 5
+
+
+@pytest.mark.asyncio
+async def test_plain_text_still_uses_the_final_answer() -> None:
     fake = FakeResponses([
-        _item_delta("msg_c", commentary), _message_done("msg_c", "commentary"),
-        _item_delta("msg_f", final[:5]), _item_delta("msg_f", final[5:]),
-        _message_done("msg_f", "final_answer"), _completed()])
+        _item_delta("m1", "Let me think about this."), _message_done("m1", "commentary"),
+        _item_delta("m2", "The answer."), _message_done("m2", "final_answer"), _completed()])
+    assert await _transport(fake, plan_route=True).generate_text(
+        model="m", system_instructions="", user_payload={}) == "The answer."
+
+
+@pytest.mark.asyncio
+async def test_a_first_message_that_is_not_json_does_not_stop_the_stream() -> None:
+    fake = FakeResponses([
+        _item_delta("m1", "thinking out loud"), _message_done("m1", "commentary"),
+        _item_delta("m2", '{"ok": true}'), _message_done("m2", "final_answer"), _completed()])
     assert await _transport(fake, plan_route=True).generate_json(
         model="m", schema_name="s", schema=SCHEMA, system_instructions="",
         user_payload={}) == {"ok": True}
