@@ -4,6 +4,7 @@ import type { BackendClientFactory } from "./controller.js";
 import { PROVIDER_KEY_ENV } from "./runtime/vscode-runtime.js";
 import type { RuntimeManager } from "./runtime/vscode-runtime.js";
 import type { SettingsDeps } from "./settings-data.js";
+import { buildChatGPTDeps } from "./chatgpt-deps.js";
 import { buildModelOptions } from "./composer-models.js";
 import { loadInstructions, saveInstructions } from "./instructions-file.js";
 import { PROVIDERS } from "./setup-data.js";
@@ -93,6 +94,7 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
     readInstructions: () => loadInstructions(workspacePath),
     writeInstructions: (content) => saveInstructions(workspacePath, content),
     restartBackend: () => runtimeManager.restart(workspacePath),
+    chatgpt: buildChatGPTDeps(runtimeManager, client),
     saveContextWindow: (tokens) => runtimeManager.saveContextWindow(tokens),
     // Absolute paths: ~/.claude/agents files live outside the workspace (spec §10.2).
     openFile: async (path) => {

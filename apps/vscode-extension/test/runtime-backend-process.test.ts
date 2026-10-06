@@ -89,6 +89,21 @@ describe("buildBackendEnv", () => {
     expect(env.CRUCIBLE_VECTOR_INDEX_PATH).toBe(join("/ws", ".crucible", "vector-index"));
     expect(env.CRUCIBLE_LOG_DIR).toBe(join("/ws", ".tmp", "reasoning"));
   });
+  it("a ChatGPT plan spawn carries the registration id and model, never a token", () => {
+    const env = buildBackendEnv("/ws", {
+      backend: "chatgpt", model: "gpt-plan-large",
+      extraEnv: { CRUCIBLE_CHATGPT_REGISTRATION: "reg_aaaaaaaaaaaa" },
+    }, "/rt", "darwin-arm64");
+    expect(env.CRUCIBLE_REASONING_BACKEND).toBe("chatgpt");
+    expect(env.CRUCIBLE_CHATGPT_MODEL).toBe("gpt-plan-large");
+    expect(env.CRUCIBLE_CHATGPT_REGISTRATION).toBe("reg_aaaaaaaaaaaa");
+    expect(Object.keys(env).filter((k) => /TOKEN|API_KEY/.test(k))).toEqual([]);
+  });
+  it("a ChatGPT backend started for sign-in, before any model is picked, sets no model var", () => {
+    const env = buildBackendEnv("/ws", { backend: "chatgpt", model: "" }, "/rt", "darwin-arm64");
+    expect(env.CRUCIBLE_REASONING_BACKEND).toBe("chatgpt");
+    expect("CRUCIBLE_CHATGPT_MODEL" in env).toBe(false);
+  });
   it("extraEnv overrides defaults; skillsDisabled joins", () => {
     const env = buildBackendEnv("/ws", {
       ...SETTINGS, extraEnv: { CRUCIBLE_SHELL_POLICY: "allow_all" },

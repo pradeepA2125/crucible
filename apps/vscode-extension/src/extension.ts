@@ -89,6 +89,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   let controller: CrucibleController;
 
+  // What a hot-swap must send so the backend can build the transport even when its
+  // process env predates this provider (factory.py: request credentials override
+  // process env): the stored API key, or for the ChatGPT plan the registration id
+  // (an id, never a token).
+  const providerCredentials = async (backend: string): Promise<Record<string, string> | undefined> => {
+    if (backend === "chatgpt") {
+      const registration = runtimeManager.chatgptRegistration();
+      return registration ? { CRUCIBLE_CHATGPT_REGISTRATION: registration } : undefined;
+    }
+    const key = await runtimeManager.getProviderKey(backend);
+    const envVar = PROVIDER_KEY_ENV[backend];
+    return envVar && key ? { [envVar]: key } : undefined;
+  };
+
+  // The signed-in account's model catalog for the composer menu. Cached briefly: every
+  // modelList refresh would otherwise be a call to OpenAI. A failure (signed out, plan
+  // usage off) just means the menu offers no plan models.
+  let chatgptCatalogCache: { registration: string; at: number; models: { slug: string; displayName: string }[] } | null = null;
+  const chatgptCatalog = async () => {
+    const registration = runtimeManager.chatgptRegistration();
+    if (!registration) return undefined;
+    if (chatgptCatalogCache?.registration === registration
+        && Date.now() - chatgptCatalogCache.at < 5 * 60_000) {
+      return chatgptCatalogCache.models;
+    }
+    try {
+      const models = await controller.configClient().listChatGPTModels(registration);
+      chatgptCatalogCache = { registration, at: Date.now(), models };
+      return models;
+    } catch {
+      return undefined;
+    }
+  };
+
   // Composer model quick-swap: the current provider + the set of providers with a
   // stored key (offered for hot-swap). Rebuilt after every swap.
   const composerModelState = async () => {
@@ -100,7 +134,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const current = config.provider ?? null;
     return {
       current,
-      options: buildModelOptions(current, keyed, PROVIDERS),
+      // Drives "Using ChatGPT plan · Manage usage" beside the model chip (UI/UX guidelines).
+      usesChatgptPlan: config.provider?.usesChatgptPlan ?? false,
+      options: buildModelOptions(current, keyed, PROVIDERS, await chatgptCatalog()),
       effort: {
         level: config.provider?.reasoningEffort ?? null,
         support: config.provider?.reasoningEffortSupport ?? null,
@@ -126,9 +162,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // openai_compatible (a backend spawned as something else has no
     // CRUCIBLE_OPENAI_COMPAT_MODEL in its env) it raises and the chip 400s.
     // credentials likewise: the running backend's env may predate this key.
-    const key = await runtimeManager.getProviderKey(backend);
-    const envVar = PROVIDER_KEY_ENV[backend];
-    const credentials = envVar && key ? { [envVar]: key } : undefined;
+    const credentials = await providerCredentials(backend);
     const model = config.provider?.model;
     const res = await controller.configClient().setProvider({
       backend,
@@ -182,11 +216,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (threadId, decision, gateId) => controller.handleMcpDecisionFromChat(threadId, decision, gateId),
     () => composerModelState(),
     async (backend, model) => {
-      // Pass the stored key as request credentials: the running backend's env may
-      // predate this key (factory.py: request credentials override process env).
-      const key = await runtimeManager.getProviderKey(backend);
-      const envVar = PROVIDER_KEY_ENV[backend];
-      const credentials = envVar && key ? { [envVar]: key } : undefined;
+      const credentials = await providerCredentials(backend);
       await controller.configClient().setProvider({ backend, model, ...(credentials ? { credentials } : {}) });
       await runtimeManager.saveProvider(backend, model);
       return composerModelState();
@@ -394,6 +424,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     renderLiveTodos: (todos) => {
       chatPanel.renderLiveTodos(todos);
+    },
+    renderProviderAccess: (access) => {
+      chatPanel.renderProviderAccess(access);
     },
     clearLiveTodos: () => {
       chatPanel.clearLiveTodos();

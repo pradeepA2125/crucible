@@ -271,6 +271,7 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     clearLiveError: () => {},
     renderLiveTodos: () => {},
     clearLiveTodos: () => {},
+    renderProviderAccess: () => {},
     renderLiveSessions: () => {},
     clearLiveSessions: () => {},
     sendLiveStatus: () => {},
@@ -1274,6 +1275,36 @@ describe("CrucibleController — command-decision", () => {
     state.liveResponse = NULL_LIVE_STATE;
     await controller.pollThreadLiveState();
     expect(gateClears).toBe(1);
+  });
+
+  test("pollThreadLiveState delivers the provider access card and its clearing", async () => {
+    const state: StubBackendState = {
+      submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+      getResultCalls: [], planFeedbackCalls: [], liveCalls: [],
+      liveResponse: NULL_LIVE_STATE,
+    };
+    const backend = createStubBackend(state);
+    const renders: unknown[] = [];
+    const ui = createUi({ renderProviderAccess: (access) => { renders.push(access); } });
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(), ui,
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z"
+    );
+    await controller.switchChatThread("chat-1");
+    await Promise.resolve();
+    controller.dispose();
+    renders.length = 0;
+
+    const access = { kind: "usage_limit", message: "Usage limit reached.", code: null,
+                     status: 429, requestId: null };
+    // Nothing else changes: the card alone must defeat the dedup (signature invariant).
+    state.liveResponse = { ...NULL_LIVE_STATE, providerAccess: access };
+    await controller.pollThreadLiveState();
+    expect(renders).toEqual([access]);
+    state.liveResponse = NULL_LIVE_STATE;
+    await controller.pollThreadLiveState();
+    expect(renders).toEqual([access, null]);
   });
 
   test("pollThreadLiveState renders every pending gate, addressing each to its owner", async () => {

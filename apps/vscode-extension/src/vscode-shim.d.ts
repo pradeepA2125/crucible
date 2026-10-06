@@ -136,6 +136,10 @@ declare module "vscode" {
     detail?: string;
   }
 
+  export namespace env {
+    function openExternal(target: Uri): Thenable<boolean>;
+  }
+
   export namespace window {
     function showInputBox(options?: InputBoxOptions): Thenable<string | undefined>;
     function showInformationMessage(message: string): Thenable<string | undefined>;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createSetupHandler,
   missingRequiredFields,
@@ -17,9 +17,51 @@ function deps(overrides: Partial<SetupDeps> = {}): SetupDeps {
     openChat: () => {},
     keyEnvVar: (b) => (b === "ollama" ? undefined : "X_KEY"),
     storedExtraEnvVars: () => [],
+    startForChatGPT: async () => ({ port: 8124 }),
+    chatgpt: {
+      client: {
+        startChatGPTSignIn: vi.fn(),
+        getChatGPTSignIn: vi.fn(),
+        cancelChatGPTSignIn: vi.fn(),
+        listChatGPTAccounts: vi.fn(async () => []),
+        signOutChatGPT: vi.fn(),
+        listChatGPTModels: vi.fn(),
+        validateProvider: vi.fn(async () => ({ ok: true })),
+        setProvider: vi.fn(async () => ({ backend: "chatgpt", model: "m1" })),
+      },
+      openExternal: vi.fn(async () => {}),
+      activeRegistration: () => undefined,
+      saveActiveRegistration: vi.fn(async () => {}),
+      saveContextWindow: vi.fn(async () => {}),
+      welcomedRegistrations: () => [],
+      markWelcomed: vi.fn(async () => {}),
+      sleep: async () => {},
+      now: () => 0,
+    },
     ...overrides,
   };
 }
+
+describe("setup with the ChatGPT plan", () => {
+  it("starts the backend for sign-in, then finishes setup when an account is put to use", async () => {
+    const posted: unknown[] = [];
+    const handle = createSetupHandler(deps(), (m) => posted.push(m));
+    await handle({ type: "setup/startForChatGPT" });
+    expect(posted).toEqual([{ type: "setup/chatgptReady", hasAccounts: false }]);
+    await handle({ type: "settings/useChatGPT", registrationId: "reg_aaaaaaaaaaaa", model: "m1" });
+    expect(posted).toContainEqual({ type: "setup/ready", port: 8124 });
+  });
+
+  it("reports saved accounts so a returning user reuses one instead of registering anew", async () => {
+    const posted: unknown[] = [];
+    const d = deps();
+    d.chatgpt.client.listChatGPTAccounts = vi.fn(async () => [{
+      registrationId: "reg_aaaaaaaaaaaa", label: "a@x.com", email: "a@x.com", name: null,
+      planEnabled: true, signedIn: true }]);
+    await createSetupHandler(d, (m) => posted.push(m))({ type: "setup/startForChatGPT" });
+    expect(posted).toEqual([{ type: "setup/chatgptReady", hasAccounts: true }]);
+  });
+});
 
 describe("createSetupHandler", () => {
   it("install relays progress then installDone", async () => {
@@ -59,14 +101,18 @@ describe("createSetupHandler", () => {
     expect(posted).toEqual([{ type: "setup/ready", port: 8123 }]);
   });
 
-  it("PROVIDERS covers all ten, locals have no key var", () => {
+  it("PROVIDERS covers all eleven, locals have no key var", () => {
     expect(PROVIDERS.map((p) => p.id).sort()).toEqual([
-      "anthropic", "gemini", "groq", "huggingface", "ollama", "openai",
+      "anthropic", "chatgpt", "gemini", "groq", "huggingface", "ollama", "openai",
       "openai_compatible", "openrouter", "turboquant", "watsonx"]);
     expect(PROVIDERS.find((p) => p.id === "ollama")!.keyEnvVar).toBeUndefined();
-    // openai_compatible is the one deliberate exception: it has no default model
-    // (the user must supply one — see the "openai_compatible provider entry" suite).
-    expect(PROVIDERS.every((p) => p.id === "openai_compatible" || p.defaultModel.length > 0)).toBe(true);
+    // Two deliberate exceptions have no default model: openai_compatible (the user
+    // supplies one) and chatgpt (models come from the signed-in account's catalog).
+    expect(PROVIDERS.every((p) => ["openai_compatible", "chatgpt"].includes(p.id)
+      || p.defaultModel.length > 0)).toBe(true);
+    const chatgpt = PROVIDERS.find((p) => p.id === "chatgpt")!;
+    expect(chatgpt.signIn).toBe("chatgpt");
+    expect(chatgpt.keyEnvVar).toBeUndefined();
   });
 
   it("validate relays jsonMode/warning through to setup/validateResult when present", async () => {

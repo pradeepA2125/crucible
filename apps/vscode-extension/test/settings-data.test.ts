@@ -81,6 +81,26 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
     saveContextWindow: async () => {},
     openFile: vi.fn(async () => {}),
     listModels: async () => ["gpt-5", "m2"],
+    chatgpt: {
+      client: {
+        startChatGPTSignIn: vi.fn(),
+        getChatGPTSignIn: vi.fn(),
+        cancelChatGPTSignIn: vi.fn(),
+        listChatGPTAccounts: vi.fn(async () => []),
+        signOutChatGPT: vi.fn(),
+        listChatGPTModels: vi.fn(),
+        validateProvider: vi.fn(),
+        setProvider: vi.fn(),
+      },
+      openExternal: vi.fn(async () => {}),
+      activeRegistration: () => undefined,
+      saveActiveRegistration: vi.fn(async () => {}),
+      saveContextWindow: vi.fn(async () => {}),
+      welcomedRegistrations: () => [],
+      markWelcomed: vi.fn(async () => {}),
+      sleep: async () => {},
+      now: () => 0,
+    },
     disabled: box.disabled,
     skillsBox: box.skills,
     ...overrides,
@@ -88,6 +108,13 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
 }
 
 describe("createSettingsHandler", () => {
+  it("routes ChatGPT messages to the ChatGPT handler without rebuilding the snapshot", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const d = deps();
+    await createSettingsHandler(d, (m) => posted.push(m))({ type: "settings/chatgptLoad" });
+    expect(posted).toEqual([{ type: "settings/chatgpt", accounts: [], activeRegistrationId: null }]);
+  });
+
   it("load posts a full state snapshot", async () => {
     const posted: SettingsOutMsg[] = [];
     await createSettingsHandler(deps(), (m) => posted.push(m))({ type: "settings/load" });

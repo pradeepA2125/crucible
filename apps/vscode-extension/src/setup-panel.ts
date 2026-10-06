@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import type { BackendClientFactory } from "./controller.js";
 import { PROVIDER_KEY_ENV } from "./runtime/vscode-runtime.js";
 import type { RuntimeManager } from "./runtime/vscode-runtime.js";
+import { buildChatGPTDeps } from "./chatgpt-deps.js";
 import { createSetupHandler, type SetupDeps, type SetupInMsg } from "./setup-data.js";
 
 /** First-run setup wizard: install runtime, pick a provider, start the backend.
@@ -80,6 +81,19 @@ export class SetupPanel {
           ...(result.warning !== undefined ? { warning: result.warning } : {}),
         };
       },
+      startForChatGPT: async () => {
+        // No model yet: the account's catalog is only reachable once signed in.
+        await this.runtimeManager.saveProvider("chatgpt", "");
+        const { port } = await this.runtimeManager.startForWorkspace(this.workspacePath);
+        const url = this.runtimeManager.backendUrl(this.workspacePath) ?? `http://127.0.0.1:${port}`;
+        this.setManagedBackendUrl(url);
+        return { port };
+      },
+      chatgpt: buildChatGPTDeps(this.runtimeManager, () => {
+        const url = this.runtimeManager.backendUrl(this.workspacePath);
+        if (!url) throw new Error("Backend not started yet.");
+        return this.clientFactory(url);
+      }),
       openChat: () => this.openChatCommand(),
       keyEnvVar: (backend) => PROVIDER_KEY_ENV[backend],
       storedExtraEnvVars: (backend) => this.runtimeManager.storedExtraEnvVars(backend),

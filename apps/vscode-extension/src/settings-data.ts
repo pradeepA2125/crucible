@@ -6,6 +6,13 @@ import type {
   McpServerView,
 } from "@crucible/editor-client";
 
+import {
+  createChatGPTHandler,
+  isChatGPTMessage,
+  type ChatGPTDeps,
+  type ChatGPTInMsg,
+  type ChatGPTOutMsg,
+} from "./chatgpt-settings.js";
 import type { SettingsSectionId } from "./settings-sections.js";
 
 // vscode-free message handler for the settings panel (settings-panel.ts wires it to
@@ -58,7 +65,8 @@ export type SettingsInMsg =
   | { type: "settings/deleteAgent"; name: string }
   | { type: "settings/trustAgent"; path: string; sha256: string }
   | { type: "settings/openFile"; path: string }
-  | { type: "settings/listModels" };
+  | { type: "settings/listModels" }
+  | ChatGPTInMsg;
 
 // host → webview
 export type SettingsOutMsg =
@@ -71,7 +79,8 @@ export type SettingsOutMsg =
   | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } }
   | { type: "settings/agents"; catalog: AgentCatalog }
   | { type: "settings/agentsError"; message: string }
-  | { type: "settings/models"; models: string[] };
+  | { type: "settings/models"; models: string[] }
+  | ChatGPTOutMsg;
 
 export interface SettingsDeps {
   client: {
@@ -138,6 +147,8 @@ export interface SettingsDeps {
   openFile(path: string): Promise<void>;
   /** The model options the composer offers, for the agent form's model picker. */
   listModels(): Promise<string[]>;
+  /** Sign in with ChatGPT (spec 2026-10-06 §6). */
+  chatgpt: ChatGPTDeps;
 }
 
 async function buildState(
@@ -200,7 +211,15 @@ export function createSettingsHandler(
     await postAgents();
   };
 
+  // Loaded and reported separately from the snapshot (like agents): an older backend
+  // without the sign-in routes must not blank the whole panel.
+  const chatgpt = createChatGPTHandler(deps.chatgpt, post, postState);
+
   return async (msg: SettingsInMsg): Promise<void> => {
+    if (isChatGPTMessage(msg)) {
+      await chatgpt(msg);
+      return;
+    }
     try {
       switch (msg.type) {
         case "settings/load": {

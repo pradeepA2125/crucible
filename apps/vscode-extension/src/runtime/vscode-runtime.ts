@@ -195,10 +195,12 @@ export class RuntimeManager {
   async getProviderSettings(): Promise<BackendSettings | undefined> {
     const backend = this.context.globalState.get<string>("crucible.provider.backend");
     const model = this.context.globalState.get<string>("crucible.provider.model");
-    if (!backend || !model) return undefined;
+    // A ChatGPT plan backend can start before a model is picked: the model list comes
+    // from the account, which needs a running backend to sign in with.
+    if (!backend || (!model && backend !== "chatgpt")) return undefined;
     const settings: BackendSettings = {
       backend,
-      model,
+      model: model ?? "",
       extraEnv: this.extraEnvFromSettings(),
       skillsDisabled: this.skillsDisabled(),
     };
@@ -210,6 +212,12 @@ export class RuntimeManager {
     if (envVar) {
       const value = await this.context.secrets.get(`crucible.providerKey.${backend}`);
       if (value) settings.apiKey = { envVar, value };
+    }
+    // Which ChatGPT sign-in the backend uses. An id, not a secret: the tokens live in
+    // the backend's own credential store and never enter any environment.
+    const registration = this.chatgptRegistration();
+    if (backend === "chatgpt" && registration) {
+      settings.extraEnv = { ...settings.extraEnv, CRUCIBLE_CHATGPT_REGISTRATION: registration };
     }
     // Restore extra credentials (e.g. WATSONX_SPACE_ID, WATSONX_URL) into extraEnv.
     const extraEnvVars = this.context.globalState.get<string[]>(`crucible.provider.extraEnvVars.${backend}`, []);
@@ -229,6 +237,25 @@ export class RuntimeManager {
     if (extraCredentials) {
       await this._persistExtraCredentials(backend, extraCredentials);
     }
+  }
+
+  chatgptRegistration(): string | undefined {
+    return this.context.globalState.get<string>("crucible.chatgpt.registration");
+  }
+
+  async saveChatGPTRegistration(registrationId: string): Promise<void> {
+    await this.context.globalState.update("crucible.chatgpt.registration", registrationId);
+  }
+
+  /** Registrations already shown the one-time "You're using your ChatGPT plan" modal. */
+  chatgptWelcomed(): string[] {
+    return this.context.globalState.get<string[]>("crucible.chatgpt.welcomed", []);
+  }
+
+  async markChatGPTWelcomed(registrationId: string): Promise<void> {
+    const seen = new Set(this.chatgptWelcomed());
+    seen.add(registrationId);
+    await this.context.globalState.update("crucible.chatgpt.welcomed", Array.from(seen));
   }
 
   /** The declared context window, in tokens. Stored under its own key rather than

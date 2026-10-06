@@ -1,6 +1,14 @@
 // vscode-free message handler for the first-run setup wizard (setup-panel.ts wires it
 // to RuntimeManager + HttpBackendClient). Mirrors memory-data.ts's split.
 
+import {
+  createChatGPTHandler,
+  isChatGPTMessage,
+  type ChatGPTDeps,
+  type ChatGPTInMsg,
+  type ChatGPTOutMsg,
+} from "./chatgpt-settings.js";
+
 export interface SetupDeps {
   install(
     onProgress: (p: { id: string; status: string; detail?: string }) => void,
@@ -25,6 +33,11 @@ export interface SetupDeps {
    * nothing left to type.
    */
   storedExtraEnvVars(backend: string): string[];
+  /** "Continue with ChatGPT" needs a running backend before any model is chosen: save
+   * the chatgpt provider without a model and start it (it boots unsigned-in). */
+  startForChatGPT(): Promise<{ port: number }>;
+  /** The same sign-in host logic as Settings (src/chatgpt-settings.ts). */
+  chatgpt: ChatGPTDeps;
 }
 
 // webview → host
@@ -32,7 +45,9 @@ export type SetupInMsg =
   | { type: "setup/install" }
   | { type: "setup/validate"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
-  | { type: "setup/openChat" };
+  | { type: "setup/openChat" }
+  | { type: "setup/startForChatGPT" }
+  | ChatGPTInMsg;
 
 // host → webview
 export type SetupOutMsg =
@@ -40,7 +55,11 @@ export type SetupOutMsg =
   | { type: "setup/installDone"; ok: boolean }
   | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }
   | { type: "setup/ready"; port: number; jsonMode?: string; warning?: string }
-  | { type: "setup/error"; message: string };
+  | { type: "setup/error"; message: string }
+  // The backend is up for ChatGPT sign-in; with no saved account the wizard signs in
+  // straight away, otherwise it lists them (reusing a registration, not making a new one).
+  | { type: "setup/chatgptReady"; hasAccounts: boolean }
+  | ChatGPTOutMsg;
 
 export interface ExtraField {
   envVar: string;
@@ -59,6 +78,8 @@ export interface ProviderInfo {
   defaultModel: string;
   /** Additional required credential fields beyond the primary API key. */
   extraFields?: ExtraField[];
+  /** Signs in with an account instead of an API key ("Continue with ChatGPT"). */
+  signIn?: "chatgpt";
 }
 
 // Defaults mirror agentd/providers/factory.py::_DEFAULT_MODEL; key vars mirror
@@ -98,6 +119,9 @@ export const PROVIDERS: ProviderInfo[] = [
       },
     ],
   },
+  // Signs in instead of taking a key: the backend owns the OAuth tokens and the model
+  // list comes from the account (spec 2026-10-06). No default model.
+  { id: "chatgpt", label: "ChatGPT plan", local: false, signIn: "chatgpt", defaultModel: "" },
 ];
 
 /**
@@ -140,9 +164,25 @@ export function createSetupHandler(
   deps: SetupDeps,
   post: (msg: SetupOutMsg) => void,
 ): (msg: SetupInMsg) => Promise<void> {
+  let chatgptPort: number | null = null;
+  // Putting an account to use finishes setup, exactly like Save & Start.
+  const chatgpt = createChatGPTHandler(deps.chatgpt, post, async () => {
+    if (chatgptPort !== null) post({ type: "setup/ready", port: chatgptPort });
+  });
   return async (msg: SetupInMsg): Promise<void> => {
+    if (isChatGPTMessage(msg)) {
+      await chatgpt(msg);
+      return;
+    }
     try {
       switch (msg.type) {
+        case "setup/startForChatGPT": {
+          const { port } = await deps.startForChatGPT();
+          chatgptPort = port;
+          const accounts = await deps.chatgpt.client.listChatGPTAccounts();
+          post({ type: "setup/chatgptReady", hasAccounts: accounts.length > 0 });
+          return;
+        }
         case "setup/install": {
           const result = await deps.install((p) =>
             post({

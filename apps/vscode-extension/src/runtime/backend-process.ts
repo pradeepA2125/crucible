@@ -60,6 +60,7 @@ export const MODEL_ENV_VAR: Record<string, string> = {
   openrouter: "CRUCIBLE_OPENROUTER_MODEL", watsonx: "CRUCIBLE_WATSONX_MODEL",
   ollama: "CRUCIBLE_OLLAMA_MODEL", turboquant: "CRUCIBLE_TURBOQUANT_MODEL",
   openai: "CRUCIBLE_OPENAI_MODEL", openai_compatible: "CRUCIBLE_OPENAI_COMPAT_MODEL",
+  chatgpt: "CRUCIBLE_CHATGPT_MODEL",
 };
 
 const HEALTH_ATTEMPTS = 60;
@@ -152,7 +153,7 @@ export function buildBackendEnv(
     CRUCIBLE_SCOPE_TRIGGER: "any",
   };
   const modelVar = MODEL_ENV_VAR[settings.backend];
-  if (modelVar) built[modelVar] = settings.model;
+  if (modelVar && settings.model) built[modelVar] = settings.model;
   if (settings.apiKey) built[settings.apiKey.envVar] = settings.apiKey.value;
   if (settings.skillsDisabled?.length) {
     built.CRUCIBLE_SKILLS_DISABLED = settings.skillsDisabled.join(",");

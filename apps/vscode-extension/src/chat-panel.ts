@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import type {
+  ProviderAccess,
   AgentDetail,
   AgentSummary,
   ChatMessage,
@@ -73,6 +74,8 @@ export type McpDecisionHandler = (threadId: string, decision: McpToolDecision, g
 // as unknown[] here since chat-panel doesn't import that type; the webview mirrors it).
 export interface ComposerModelState {
   current: { backend: string; model: string } | null;
+  /** The ChatGPT plan is in use: show "Using ChatGPT plan · Manage usage". */
+  usesChatgptPlan?: boolean;
   options: unknown[];
   // Reasoning-effort dial state, carried on the same modelList round-trip since
   // capability (EffortSupport) is per-(backend, model) — it's stale the instant
@@ -562,6 +565,10 @@ export class ChatPanel {
 
   renderLiveTodos(todos: LiveTodosView): void {
     this.panel?.webview.postMessage({ type: "renderLiveTodos", todos });
+  }
+
+  renderProviderAccess(access: ProviderAccess | null): void {
+    this.panel?.webview.postMessage({ type: "renderProviderAccess", access });
   }
 
   clearLiveTodos(): void {

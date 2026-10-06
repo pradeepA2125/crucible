@@ -1,4 +1,5 @@
 import type {
+  ProviderAccess,
   AgentDetail,
   AgentSummary,
   BackendTaskClient,
@@ -117,6 +118,9 @@ export interface ControllerUI {
   clearLiveError(): void;
   renderLiveTodos(todos: LiveTodosView): void;
   clearLiveTodos(): void;
+  // Why the last turn stopped on the provider's account rules (ChatGPT plan usage
+  // limit, ended sign-in…); null clears the card.
+  renderProviderAccess(access: ProviderAccess | null): void;
   renderLiveSessions(sessions: LiveSessionsView): void;
   clearLiveSessions(): void;
   sendLiveStatus(
@@ -2182,6 +2186,8 @@ export class CrucibleController {
       agentsRunning: live.agentsRunning,
       // INVARIANT (CLAUDE.md /live dedup): team rows are consumed after this gate.
       teams: live.teams,
+      // INVARIANT (CLAUDE.md /live dedup): the access card is consumed after this gate.
+      providerAccess: live.providerAccess,
       turnKind: live.turnKind,
       messageCount: live.messageCount,
     });
@@ -2292,6 +2298,8 @@ export class CrucibleController {
     } else {
       this.ui.clearLiveTodos();
     }
+
+    this.ui.renderProviderAccess(live.providerAccess ?? null);
 
     if (live.sessions && live.sessions.length > 0) {
       this.ui.renderLiveSessions({ items: live.sessions });

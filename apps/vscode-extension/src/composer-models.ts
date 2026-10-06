@@ -10,23 +10,35 @@ export interface ModelOption {
   backend: string;
   label: string;
   model: string;
+  /** Human name when the model id isn't one (a ChatGPT catalog's display_name). */
+  display?: string;
   active: boolean;
 }
 
+/** `chatgptCatalog` is the signed-in account's model list: with it the plan offers
+ * one row per model (show display_name, send slug); without it, only what is in use. */
 export function buildModelOptions(
   current: { backend: string; model: string } | null,
   keyedBackends: string[],
   providers: ProviderInfo[],
+  chatgptCatalog?: { slug: string; displayName: string }[],
 ): ModelOption[] {
   const keyed = new Set(keyedBackends);
-  return providers
-    .filter((p) => keyed.has(p.id) || p.id === current?.backend)
-    .map((p) => ({
+  return providers.flatMap((p): ModelOption[] => {
+    if (p.signIn === "chatgpt" && chatgptCatalog?.length) {
+      return chatgptCatalog.map((m) => ({
+        backend: p.id, label: p.label, model: m.slug, display: m.displayName,
+        active: current?.backend === p.id && current.model === m.slug,
+      }));
+    }
+    if (!keyed.has(p.id) && p.id !== current?.backend) return [];
+    return [{
       backend: p.id,
       label: p.label,
       model: p.id === current?.backend ? current.model : p.defaultModel,
       active: p.id === current?.backend,
-    }));
+    }];
+  });
 }
 
 export const EFFORT_LADDER: ReasoningEffort[] = ["off", "low", "medium", "high", "max"];
