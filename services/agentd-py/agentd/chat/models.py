@@ -161,7 +161,8 @@ class Checkpoint(BaseModel):
     memory_anchor_md: str | None = None
 
 
-GateKind = Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool"]
+GateKind = Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool",
+                   "team_plan"]
 
 
 class GateAgent(BaseModel):
@@ -204,8 +205,8 @@ class PendingGate(BaseModel):
 
     @classmethod
     def new(cls, kind: GateKind, payload: dict[str, Any],
-            agent: GateAgent | None = None) -> PendingGate:
-        return cls(gate_id=uuid4().hex, kind=kind, payload=payload, agent=agent)
+            agent: GateAgent | None = None, team: GateTeam | None = None) -> PendingGate:
+        return cls(gate_id=uuid4().hex, kind=kind, payload=payload, agent=agent, team=team)
 
 
 class GateNotFoundError(LookupError):

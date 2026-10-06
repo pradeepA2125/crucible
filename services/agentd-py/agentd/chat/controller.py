@@ -41,12 +41,14 @@ from agentd.chat.models import (
     GateAgent,
     GateAmbiguousError,
     GateNotFoundError,
+    GateTeam,
     NoticeRecord,
     PendingGate,
 )
 from agentd.chat.protected_paths import (
     AgentProtection,
     MainProtection,
+    TeamProtection,
     command_mentions_protected,
     is_protected,
 )
@@ -123,8 +125,15 @@ from agentd.subagents.tool_source import (
 from agentd.subagents.transcript import AgentTranscript
 from agentd.subagents.vcs_guard import vcs_refusal
 from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
-from agentd.teams.config import team_max_live_per_thread, team_max_wakes, team_round_timeout_s
+from agentd.teams.config import (
+    team_budget_per_member,
+    team_max_budget,
+    team_max_live_per_thread,
+    team_max_wakes,
+    team_round_timeout_s,
+)
 from agentd.teams.coordinator import Delivery, TeamCoordinator
+from agentd.teams.implementation import ImplementationReport, chain_checks
 from agentd.teams.models import (
     LIVE_TEAM_PHASES,
     TeamActivity,
@@ -134,6 +143,7 @@ from agentd.teams.models import (
     new_team_id,
 )
 from agentd.teams.report_fields import ReportFields
+from agentd.teams.scope import team_edit_refusal
 from agentd.teams.service import ActivationCounters, AgentInfo, TeamService
 from agentd.teams.tools import (
     MEMBER_TOOL_NAMES,
@@ -143,7 +153,14 @@ from agentd.teams.tools import (
     TeamToolSource,
 )
 from agentd.teams.trace import CoordinatorTrace
-from agentd.teams.validation import TeamInputError
+from agentd.teams.validation import (
+    TEXT_MAX,
+    TeamInputError,
+    TeamPlanConflict,
+    TeamPlanInvalid,
+    check_assignments,
+    parse_assignments,
+)
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.workspace.promote import promote_files
@@ -420,7 +437,8 @@ class ChatController:
         # Agent teams (spec v2 §7): the board service; None when sub-agents are off.
         self._teams: TeamService | None = (
             TeamService(thread_store.teams, Path(workspace_path), self._agent_info,
-                        on_post=self._team_posted, on_activity=self._team_activity)
+                        on_post=self._team_posted, on_activity=self._team_activity,
+                        can_edit=self._member_can_edit)
             if is_subagents_enabled() else None)
         # One coordinator per live team (spec v2 §8.1). Teams never survive a restart, so
         # nothing is rebuilt at startup: the reap fails them.
@@ -670,6 +688,9 @@ class ChatController:
         if plan_mode is not None:
             self._plan_mode = plan_mode
         self._store.clear_main_gates(thread_id)
+        for coordinator in self._coordinators.values():
+            if coordinator.thread_id == thread_id:
+                coordinator.user_spoke()
 
     async def _run_user_turn(
         self, thread: ChatThread, thread_id: str, anchor_message_id: str | None,
@@ -728,6 +749,9 @@ class ChatController:
         self._wake_turns.pop(thread_id, None)
         self._wakes_suppressed.discard(thread_id)
         self._wake_cap_noted.discard(thread_id)
+        for coordinator in self._coordinators.values():
+            if coordinator.thread_id == thread_id:
+                coordinator.user_spoke()
         if plan_mode is not None:
             self._plan_mode = plan_mode
         if step_review is not None:
@@ -1864,9 +1888,10 @@ class ChatController:
         membership = self._store.teams.member_for_agent(handle.agent_id)
         if membership is not None:
             team = self._store.teams.get_team(membership.team_id)
-            if team is not None and team.phase == "DELIBERATING":
-                # Nothing reaches a member mid-round (spec v2 E5): the next round's delta
-                # covers the board, and anything else waits in its inbox for that round.
+            if team is not None and team.phase in ("DELIBERATING", "AWAITING_APPROVAL", "PAUSED"):
+                # Nothing reaches a member mid-round (spec v2 E5), and nothing starts while a
+                # plan waits for approval or the team is paused (§8.2): the next activation's
+                # delta covers the board, and anything else waits in the inbox.
                 assert self._subagents is not None
                 self._subagents.keep(handle.agent_id, others)
                 return
@@ -2315,7 +2340,7 @@ class ChatController:
         thread = self._store.get_thread(thread_id)
         if thread is None:
             return True
-        return any(g.agent is None for g in thread.pending_controller_gates)
+        return any(g.is_main() for g in thread.pending_controller_gates)
 
     def _rearm_notices(self, thread_id: str) -> None:
         """Arm a notice turn for undelivered wake notices (spec §5.2 re-arming, §5.3)."""
@@ -2460,7 +2485,8 @@ class ChatController:
             resolve=partial(self._resolve_team, thread_id),
             post=post, status=teams.summary,
             disband=partial(self.disband_team, thread_id),
-            adopt=partial(self._adopt_proposal, thread_id)),
+            adopt=partial(self._adopt_proposal, thread_id),
+            resume=partial(self._resume_team, thread_id)),
             first_turn_team_ids=set())
 
     def _adopt_proposal(self, thread_id: str, team_id: str, proposal_id: str) -> dict[str, object]:
@@ -2476,6 +2502,68 @@ class ChatController:
         after = self._store.teams.get_team(team_id)
         return {"team_id": team_id, "adopted": proposal.proposal_id,
                 "phase": after.phase if after is not None else "DONE"}
+
+    def _resume_team(self, thread_id: str, team_id: str, extra: int | None) -> dict[str, object]:
+        """resume_team (spec v2 §8.2): only from a turn the user started — it spends more of
+        the user's requests."""
+        if self.turn_kind(thread_id) != "user":
+            raise TeamInputError(
+                "resume_team spends more requests, so it runs only in a turn the user started: "
+                "tell the user why the team paused and ask whether to resume it")
+        team = self._store.teams.get_team(team_id)
+        coordinator = self._coordinators.get(team_id)
+        if team is None or team.thread_id != thread_id:
+            raise TeamInputError(f"no team {team_id!r} in this thread")
+        if coordinator is None or coordinator.phase != "PAUSED":
+            raise TeamInputError(f"resume_team is only for a PAUSED team; this team is "
+                                 f"{team.phase}")
+        cap = team_max_budget()
+        members = len(self._store.teams.members(team_id))
+        amount = extra if extra is not None else min(team_budget_per_member() * members, cap)
+        if amount < 1:
+            raise TeamInputError("extra_budget must be at least 1")
+        amount = min(amount, cap - team.budget)
+        used = self.team_requests(team_id)
+        if team.budget + amount <= used:
+            raise TeamInputError(
+                f"the team has used {used} requests and its budget cannot rise above {cap} "
+                "(CRUCIBLE_TEAM_MAX_BUDGET): disband it, or ask the user to raise that limit")
+        coordinator.resume(amount)
+        after = self._store.teams.get_team(team_id)
+        assert after is not None
+        return {"team_id": team_id, "phase": after.phase, "budget": after.budget}
+
+    def decide_team_plan(self, thread_id: str, gate_id: str, decision: str,
+                         feedback: str | None) -> dict[str, object]:
+        """The user's decision on a team_plan card (spec v2 §8.5). Order: unknown gate → 404,
+        a card that no longer matches → 409, invalid feedback → 422; then the gate goes
+        first, so a second click finds nothing."""
+        thread = self._store.get_thread(thread_id)
+        gate = next((g for g in (thread.pending_controller_gates if thread else [])
+                     if g.gate_id == gate_id), None)
+        if gate is None:
+            raise GateNotFoundError(f"no pending gate {gate_id!r} on this thread")
+        team_id = gate.team.id if gate.team is not None else ""
+        team = self._store.teams.get_team(team_id)
+        coordinator = self._coordinators.get(team_id)
+        if (gate.kind != "team_plan" or team is None or coordinator is None
+                or team.phase != "AWAITING_APPROVAL"
+                or team.adopted_proposal_id != gate.payload.get("proposal_id")):
+            raise TeamPlanConflict("this card no longer matches the team's plan")
+        text = (feedback or "").strip()
+        if decision == "feedback" and not 1 <= len(text) <= TEXT_MAX:
+            raise TeamPlanInvalid(f"feedback must be 1 to {TEXT_MAX} characters")
+        if decision not in ("approve", "feedback", "reject"):
+            raise TeamPlanInvalid("decision must be approve, feedback or reject")
+        self._store.remove_controller_gate(thread_id, gate_id)
+        pid = team.adopted_proposal_id
+        crumb = {"approve": f"✓ Approved {pid} of team {team.name!r}",
+                 "feedback": f"↻ Sent {pid} of team {team.name!r} back for another round",
+                 "reject": f"✗ Rejected {pid} of team {team.name!r}"}[decision]
+        self._write_breadcrumb(thread_id, f"chat:{thread_id}", crumb)
+        coordinator.approval(decision, text or None)
+        after = self._store.teams.get_team(team_id)
+        return {"team_id": team_id, "phase": after.phase if after is not None else None}
 
     def live_team_names(self, thread_id: str) -> list[str]:
         """Teams that have not ended block a rewind (spec v2 §8.10)."""
@@ -2507,6 +2595,17 @@ class ChatController:
             raise TeamInputError(
                 f"{live_agents} agents are running in this thread; {len(req.members)} more "
                 f"would pass the limit of {subagent_max_live_per_thread()}")
+        built = [(spec, *self._context_for(
+            agent_id=new_agent_id(), name=spec.agent.name, label=spec.label, depth=1,
+            parent_agent_id=None, snapshot=spec.agent, inherited={})) for spec in req.members]
+        if req.kickoff_kind == "proposal":
+            # The main agent's plan is validated like any proposal (spec v2 §8.3).
+            edit_ok = {ctx.label: "edit" in ctx.allowed_types for _s, ctx, _d in built}
+            parts, shared = check_assignments(
+                parse_assignments(req.kickoff_assignments, [s.label for s in req.members]),
+                req.kickoff_shared_files, workspace=Path(self._workspace_path),
+                can_edit=lambda label: edit_ok.get(label, False))
+            req = replace(req, kickoff_assignments=parts, kickoff_shared_files=shared)
         now = datetime.now(UTC)
         team = TeamRecord(
             team_id=new_team_id(), thread_id=thread_id, name=req.name, goal=req.goal,
@@ -2518,10 +2617,7 @@ class ChatController:
                            payload={"phase": team.phase, "round": team.round})
         thread_channel = f"chat:{thread_id}"
         members: list[dict[str, str]] = []
-        for spec in req.members:
-            context, definition = self._context_for(
-                agent_id=new_agent_id(), name=spec.agent.name, label=spec.label, depth=1,
-                parent_agent_id=None, snapshot=spec.agent, inherited={})
+        for _spec, context, definition in built:
             log.register_agent(context.agent_id)
             self._store.insert_agent(AgentRecord(
                 agent_id=context.agent_id, thread_id=thread_id, turn_id=turn_id,
@@ -2581,24 +2677,39 @@ class ChatController:
 
     # ── CoordinatorHost (spec v2 §8.1) ──────────────────────────────────────
 
-    def start_member(self, team_id: str, label: str, extra: str = "") -> None:
-        """Scheduled, never inline: the round's last reporter calls this from inside its own
-        finishing activation, which is still active until that task ends (the same rule
-        as _on_leftover)."""
-        asyncio.get_running_loop().call_soon(self._start_member_now, team_id, label, extra)
-
-    def _start_member_now(self, team_id: str, label: str, extra: str = "") -> None:
-        assert self._subagents is not None
+    def _member_can_edit(self, team_id: str, label: str) -> bool:
+        """Spec v2 §8.3: a member assigned files must be able to edit (permission not plan,
+        and its definition keeps the edit action)."""
         team = self._store.teams.get_team(team_id)
         member = self._store.teams.member(team_id, label)
-        if team is None or member is None or team.phase not in LIVE_TEAM_PHASES:
-            return
-        if self._subagents.is_active(member.agent_id):
-            logger.warning("[teams] %s of %s still running at its round start", label, team.name)
-            return
+        if team is None or member is None:
+            return False
         handle = self._handle_from_record(team.thread_id, member.agent_id)
-        handle.activation_input = TEAM_DELTA + (f"\n\n{extra}" if extra else "")
-        self._subagents.enqueue(handle, self._activate)
+        return "edit" in handle.context.allowed_types
+
+    def _team_membership_of(self, agent_id: str) -> TeamMember | None:
+        """The team an agent works for: its own membership, or its dispatcher's (a member's
+        helpers follow the team's edit, budget and usage rules)."""
+        current: str | None = agent_id
+        for _ in range(subagent_max_depth() + 1):
+            if current is None:
+                return None
+            membership = self._store.teams.member_for_agent(current)
+            if membership is not None:
+                return membership
+            record = self._store.get_agent(current)
+            current = record.parent_agent_id if record is not None else None
+        return None
+
+    def _team_edit_rule(self, team_id: str, label: str, key: str) -> str | None:
+        team = self._store.teams.get_team(team_id)
+        if team is None:
+            return "the team no longer exists"
+        shared: set[str] = set()
+        if team.adopted_proposal_id is not None:
+            plan = self._store.teams.get_post(team_id, int(team.adopted_proposal_id.lstrip("Pp")))
+            shared = {str(f) for f in (plan.payload if plan else {}).get("shared_files", [])}
+        return team_edit_refusal(team, self._store.teams.members(team_id), label, key, shared)
 
     def _member_handle(self, team_id: str, label: str) -> AgentHandle | None:
         member = self._store.teams.member(team_id, label)
@@ -2624,10 +2735,29 @@ class ChatController:
         handle = self._member_handle(team_id, label)
         return active_seconds(handle, datetime.now(UTC)) if handle is not None else None
 
+    def start_member(self, team_id: str, label: str, extra: str = "") -> None:
+        """Scheduled, never inline: the round's last reporter calls this from inside its own
+        finishing activation, which is still active until that task ends (the same rule
+        as _on_leftover)."""
+        asyncio.get_running_loop().call_soon(self._start_member_now, team_id, label, extra)
+
+    def _start_member_now(self, team_id: str, label: str, extra: str = "") -> None:
+        assert self._subagents is not None
+        team = self._store.teams.get_team(team_id)
+        member = self._store.teams.member(team_id, label)
+        if team is None or member is None or team.phase not in LIVE_TEAM_PHASES:
+            return
+        if self._subagents.is_active(member.agent_id):
+            logger.warning("[teams] %s of %s still running at its start", label, team.name)
+            return
+        handle = self._handle_from_record(team.thread_id, member.agent_id)
+        handle.activation_input = TEAM_DELTA + (f"\n\n{extra}" if extra else "")
+        self._subagents.enqueue(handle, self._activate)
+
     def team_milestone(self, team: TeamRecord, kind: str, headline: str, body: str,
                        delivery: Delivery = "wake") -> None:
-        """A team milestone for the main agent (spec v2 §8.8): a wake notice, delivered by
-        the same paths as an agent's report (§5.2)."""
+        """A team milestone for the main agent (spec v2 §8.8): a notice, delivered by the
+        same paths as an agent's report (§5.2). `notify` never starts a notice turn."""
         notice = NoticeRecord(
             notice_id=uuid4().hex, thread_id=team.thread_id, source_kind="team",
             source_id=team.team_id, kind=kind,
@@ -2642,11 +2772,62 @@ class ChatController:
             return
         self._rearm_notices(team.thread_id)
 
+    def raise_plan_gate(self, team: TeamRecord, proposal: TeamPost) -> None:
+        """Spec v2 §8.5: a team's card — not the main agent's, so a user turn keeps it."""
+        self._store.add_controller_gate(team.thread_id, PendingGate.new(
+            "team_plan",
+            {"team_id": team.team_id, "team_name": team.name,
+             "proposal_id": proposal.proposal_id, "text": proposal.text,
+             "assignments": proposal.payload.get("assignments", []),
+             "shared_files": proposal.payload.get("shared_files", [])},
+            team=GateTeam(id=team.team_id, name=team.name)))
+
+    def _team_agent_ids(self, team_id: str) -> list[tuple[TeamMember, str]]:
+        return [(member, agent_id) for member in self._store.teams.members(team_id)
+                for agent_id in self._store.subtree_agent_ids(member.agent_id)]
+
+    def force_team_final(self, team_id: str) -> list[str]:
+        """Budget pause (spec v2 §3.11): every running member and helper loop of the team
+        reports at its next iteration top."""
+        assert self._subagents is not None
+        forced: list[str] = []
+        for member, agent_id in self._team_agent_ids(team_id):
+            handle = self._subagents.registry.get(agent_id)
+            if (handle is None or not self._subagents.is_active(agent_id)
+                    or not isinstance(handle.loop, ControllerLoop)):
+                continue
+            handle.loop.force_final()
+            if agent_id == member.agent_id:
+                forced.append(member.label)
+        return forced
+
+    def team_requests(self, team_id: str) -> int:
+        """Persisted usage plus what running activations have used so far."""
+        assert self._subagents is not None
+        team = self._store.teams.get_team(team_id)
+        if team is None:
+            return 0
+        live = sum(METER.peek(agent_id).requests for _m, agent_id in self._team_agent_ids(team_id)
+                   if self._subagents.is_active(agent_id))
+        return team.requests + live
+
+    def is_busy(self, team_id: str, label: str) -> bool:
+        assert self._subagents is not None
+        member = self._store.teams.member(team_id, label)
+        return member is not None and (self._subagents.is_active(member.agent_id)
+                                       or self._subagents.has_wakes(member.agent_id))
+
+    def has_wakes(self, team_id: str, label: str) -> bool:
+        assert self._subagents is not None
+        member = self._store.teams.member(team_id, label)
+        return member is not None and self._subagents.has_wakes(member.agent_id)
+
     def team_phase_changed(self, team: TeamRecord) -> None:
         self._broadcaster.broadcast(team_channel(team.thread_id, team.team_id), {
             "type": "team_phase", "payload": {"phase": team.phase, "round": team.round,
                                               "paused_reason": team.paused_reason}})
         if team.phase not in LIVE_TEAM_PHASES:
+            self._store.remove_team_gates(team.thread_id, team.team_id)
             coordinator = self._coordinators.pop(team.team_id, None)
             if coordinator is not None:
                 coordinator.close()
@@ -2736,7 +2917,8 @@ class ChatController:
                                     **in_round})
         coordinator = self._coordinators.get(record.team_id)
         if coordinator is not None:
-            coordinator.on_report(record.label, result.status, stop_reason)
+            coordinator.on_report(record.label, result.status, stop_reason,
+                                  files=tuple(result.files_changed), report=result.report)
 
     async def disband_team(self, thread_id: str, team_id: str) -> dict[str, object]:
         """Stop every member, close the board (spec v2 §8.9's DISBANDED)."""
@@ -2830,12 +3012,16 @@ class ChatController:
         activation = record.activation_count + 1
         activation_input = handle.activation_input or handle.prompt
         membership = self._store.teams.member_for_agent(ctx.agent_id)
+        # A member's helpers live under its team's edit, budget and usage rules too
+        # (spec v2 §3.9, §3.11).
+        team_of = membership or self._team_membership_of(ctx.agent_id)
         team_counters = ActivationCounters()
-        team_row = (self._store.teams.get_team(membership.team_id)
-                    if membership is not None else None)
-        deliberating = team_row is not None and team_row.phase == "DELIBERATING"
-        coordinator = (self._coordinators.get(membership.team_id)
-                       if membership is not None else None)
+        team_row = (self._store.teams.get_team(team_of.team_id)
+                    if team_of is not None else None)
+        deliberating = (membership is not None and team_row is not None
+                        and team_row.phase == "DELIBERATING")
+        coordinator = (self._coordinators.get(team_of.team_id)
+                       if team_of is not None else None)
         if team_row is not None and team_row.phase != "IMPLEMENTING":
             # Edits only where the phase allows them (spec v2 §3.9), recomputed at each
             # activation start; deliberation activations are capped at 40 iterations (§3.11).
@@ -2929,6 +3115,9 @@ class ChatController:
             team_brief=(self._teams.brief(membership.team_id, membership.label)
                         if membership is not None and self._teams is not None else ""))
         registry = AggregatingToolRegistry(sources(render_ctx), allowed_tools=names)
+        protection = (TeamProtection(partial(self._team_edit_rule, team_of.team_id,
+                                             team_of.label))
+                      if team_of is not None else AgentProtection())
         edit_session_factory = (
             (lambda: TurnEditSession(
                 turn_id=f"{thread_id}-{ctx.agent_id}", real_path=workspace,
@@ -2940,7 +3129,7 @@ class ChatController:
                     partial(self._rewind.capture, thread_id)
                     if self._rewind is not None else None),
                 write_guard=WriteGuard(log, ctx.agent_id, ctx.label, ctx.name),
-                protection=AgentProtection()))
+                protection=protection))
             if self._orchestrator is not None else None)
         if ctx.edit_review == "required":
             control = ChatTurnControl(auto_accept_edits=False)   # fixed: never auto-resolved
@@ -2960,13 +3149,13 @@ class ChatController:
             report_statuses=(TEAM_REPORT_STATUSES if membership is not None
                              else LONE_REPORT_STATUSES))
         handle.loop = loop
+        if team_row is not None and team_row.phase == "PAUSED" and membership is not None \
+                and coordinator is not None:
+            # Queued before the pause took effect: report at once, owing its work.
+            loop.force_final()
+            coordinator.mark_interrupted(membership.label)
         if coordinator is not None and membership is not None:
             coordinator.on_activation_start(membership.label)
-        report_check = (
-            ReportFields(self._teams, membership.team_id, membership.label, team_counters,
-                         on_dropped=(partial(coordinator.trace_dropped, membership.label)
-                                     if coordinator is not None else (lambda _errors: None)))
-            if membership is not None and self._teams is not None else None)
         plan_context: dict[str, object] = {
             "goal": activation_input, "workspace_path": self._workspace_path, "run_id": run_id,
             # Nests this child's controller-turn-NN / memory-recall-NN dumps under
@@ -2980,13 +3169,28 @@ class ChatController:
             stored = {f for i in ids for f in (self._store.get_agent(i) or record).files_changed}
             return sorted(stored | set(log.files_changed_by(ids)))
 
+        report_check = (
+            chain_checks(
+                ImplementationReport(self._store.teams, membership.team_id, membership.label,
+                                     team_counters, lambda: set(subtree_files())),
+                ReportFields(self._teams, membership.team_id, membership.label, team_counters,
+                             on_dropped=(partial(coordinator.trace_dropped, membership.label)
+                                         if coordinator is not None
+                                         else (lambda _errors: None))))
+            if membership is not None and self._teams is not None else None)
+
+        def persist_and_meter(history: list[dict[str, object]]) -> None:
+            self._store.set_agent_history(ctx.agent_id, history)
+            if coordinator is not None:
+                coordinator.check_budget()   # spec v2 §3.11: enforced, not advisory
+
         status, report = "failed", ""
         try:
             # No retrieval_delta_cb: the delta references a seed children never had.
             outcome = await loop.run(
                 plan_context, max_iters=ctx.max_iters, turn_control=control,
                 seed_history=[*record.history, {"role": "user", "content": activation_input}],
-                iteration_cb=partial(self._store.set_agent_history, ctx.agent_id),
+                iteration_cb=persist_and_meter,
                 inbox_drain=(
                     partial(self._drain_member, ctx.agent_id, membership.team_id,
                             membership.label)
@@ -2995,6 +3199,9 @@ class ChatController:
                     partial(self._teams.status_text, membership.team_id, membership.label)
                     if membership is not None and self._teams is not None else None),
                 report_guard=partial(self._report_guard, handle),
+                final_hint=(
+                    partial(self._teams.final_hint, membership.team_id, membership.label)
+                    if membership is not None and self._teams is not None else None),
                 report_check=report_check,
                 edit_decision_cb=partial(self._child_edit_decision_cb, handle),
                 edit_record_cb=partial(self._child_edit_record_cb, handle),
@@ -3057,7 +3264,12 @@ class ChatController:
         if handle.broadcaster is not None:
             self._store.update_agent(ctx.agent_id, last_seq=handle.broadcaster.last_seq)
         self._store.update_agent(ctx.agent_id, activation_ended_at=datetime.now(UTC))
-        self._store.add_agent_usage(ctx.agent_id, METER.take(ctx.agent_id))
+        usage = METER.take(ctx.agent_id)
+        self._store.add_agent_usage(ctx.agent_id, usage)
+        team_of = self._team_membership_of(ctx.agent_id)
+        if team_of is not None:
+            # A team's usage is the sum over its members and their helpers (spec §3.11).
+            self._store.teams.add_usage(team_of.team_id, usage)
         # Its gates can never be answered now; its recall caches and replay buffer are
         # done — the replay map is otherwise never pruned (late viewers backfill instead).
         self._store.clear_controller_gates(handle.thread_id, agent_id=ctx.agent_id)

@@ -19,6 +19,14 @@ class TeamInputError(ValueError):
     """Invalid team tool input; shown to the model as the tool's error."""
 
 
+class TeamPlanConflict(ValueError):
+    """The team_plan card no longer matches the team (route → 409)."""
+
+
+class TeamPlanInvalid(ValueError):
+    """A team_plan decision the route cannot accept as sent (route → 422)."""
+
+
 def check_label(label: str) -> str:
     if not LABEL_RE.match(label):
         raise TeamInputError(

@@ -183,6 +183,10 @@ def parse_create_team(
         kickoff_mentions=mentions)
 
 
+def _resume_unavailable(_team_id: str, _extra: int | None) -> dict[str, object]:
+    raise TeamInputError("resume_team is not available here")
+
+
 @dataclass(frozen=True)
 class MainTeamOps:
     create: Callable[[CreateTeamRequest], Awaitable[dict[str, object]]]
@@ -191,6 +195,7 @@ class MainTeamOps:
     status: Callable[[str], dict[str, object]]
     disband: Callable[[str], Awaitable[dict[str, object]]]
     adopt: Callable[[str, str], dict[str, object]]
+    resume: Callable[[str, int | None], dict[str, object]] = _resume_unavailable
 
 
 class MainTeamToolSource:
@@ -270,8 +275,11 @@ class MainTeamToolSource:
                                          f"team is {status.get('phase')}")
                 return _ok(self._ops.adopt(team_id, str(args.get("proposal_id", ""))))
             if tool == "resume_team":
-                raise TeamInputError(f"resume_team is only for a PAUSED team; this team is "
-                                     f"{status.get('phase')}")
+                if status.get("phase") != "PAUSED":
+                    raise TeamInputError(f"resume_team is only for a PAUSED team; this team is "
+                                         f"{status.get('phase')}")
+                extra = args.get("extra_budget")
+                return _ok(self._ops.resume(team_id, extra if isinstance(extra, int) else None))
             if tool == "disband_team":
                 return _ok(await self._ops.disband(team_id))
         except TeamInputError as exc:

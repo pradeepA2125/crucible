@@ -364,6 +364,11 @@ class ChatThreadStore:
         team's gate belongs to work that keeps running (spec §3.8)."""
         self._write_gates(thread_id, [g for g in self._read_gates(thread_id) if not g.is_main()])
 
+    def remove_team_gates(self, thread_id: str, team_id: str) -> None:
+        """An ended team's cards can never be answered (spec v2 §8.9)."""
+        self._write_gates(thread_id, [g for g in self._read_gates(thread_id)
+                                      if g.team is None or g.team.id != team_id])
+
     def set_controller_todos(self, thread_id: str, raw: str | None) -> None:
         """Persist (raw = TodoLedger.to_json()) or clear (raw = None) the request's todo
         ledger. Mirrors set_controller_history: an in-place durable update the next loop

@@ -152,6 +152,9 @@ class TeamCoordinator:
         self._trace.write("resume", extra_budget=extra_budget)
         self._apply(sm.MainResume())
 
+    def mark_interrupted(self, label: str) -> None:
+        self._interrupted.add(label)
+
     def user_spoke(self) -> None:
         self._suppress_wakes = False
 
