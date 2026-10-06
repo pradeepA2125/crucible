@@ -135,6 +135,29 @@ class TeamStore:
 
     # ── members ──────────────────────────────────────────────────────────────
 
+    def teams_from_checkpoint(self, thread_id: str, seq: int) -> list[str]:
+        return [r["team_id"] for r in self._conn.execute(
+            "SELECT team_id FROM teams WHERE thread_id = ? AND checkpoint_seq >= ?",
+            (thread_id, seq)).fetchall()]
+
+    def teams_for_turns(self, thread_id: str, turn_ids: list[str]) -> list[str]:
+        if not turn_ids:
+            return []
+        marks = ", ".join("?" * len(turn_ids))
+        return [r["team_id"] for r in self._conn.execute(
+            f"SELECT team_id FROM teams WHERE thread_id = ? AND created_turn_id IN ({marks})",  # noqa: S608 — placeholders only
+            (thread_id, *turn_ids)).fetchall()]
+
+    def delete_teams(self, team_ids: list[str]) -> None:
+        """A rewind past a team removes it whole (spec v2 §8.10)."""
+        if not team_ids:
+            return
+        marks = ", ".join("?" * len(team_ids))
+        for table in ("team_activity", "team_posts", "team_members", "teams"):
+            self._conn.execute(
+                f"DELETE FROM {table} WHERE team_id IN ({marks})", team_ids)  # noqa: S608 — fixed table names
+        self._conn.commit()
+
     def add_member(self, member: TeamMember) -> None:
         self._conn.execute(
             "INSERT INTO team_members (team_id, agent_id, label, in_quorum, delivered_seq, "

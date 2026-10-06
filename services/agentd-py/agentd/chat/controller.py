@@ -1633,6 +1633,16 @@ class ChatController:
         # Notices of deleted agents go with them; notices folded into the rewound turns
         # are offered again, since the restored history no longer holds them (spec §8.10).
         self._store.delete_notices_for_sources(thread_id, agent_ids)
+        team_ids = sorted(set(
+            (self._store.teams.teams_from_checkpoint(thread_id, from_seq)
+             if from_seq is not None else [])
+            + self._store.teams.teams_for_turns(thread_id, turn_ids)))
+        for team_id in team_ids:
+            coordinator = self._coordinators.pop(team_id, None)
+            if coordinator is not None:
+                coordinator.close()
+        self._store.teams.delete_teams(team_ids)
+        self._store.delete_notices_for_sources(thread_id, team_ids)
         if from_seq is not None:
             # A run started inside the span answered a request that no longer exists:
             # its report goes, and the agent itself rolls back to before it.

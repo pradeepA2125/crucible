@@ -224,3 +224,19 @@ async def test_wake_cap_stops_ping_pong(tmp_path, monkeypatch) -> None:
         await _settle(ctrl)
     capped = [e for e in store.teams.activity(team_id) if e.kind == "capped"]
     assert capped and capped[0].label == "alice"
+
+
+@pytest.mark.asyncio
+async def test_rewind_deletes_teams_in_the_span(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [REPORT], "bob": [REPORT]})
+    monkeypatch.setattr(ctrl, "_rearm_notices", lambda _thread_id: None)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request()))["team_id"])
+    await _settle(ctrl)
+    await ctrl.disband_team(tid, team_id)
+    seq = store.teams.get_team(team_id).checkpoint_seq
+    assert store.unclaimed_notices(tid)                     # its milestones
+    ctrl.forget_rewound_agents(tid, ["turn1"], seq)
+    assert store.teams.get_team(team_id) is None
+    assert store.teams.posts(team_id) == [] and store.teams.activity(team_id) == []
+    assert store.teams.members(team_id) == []
+    assert [n for n in store.unclaimed_notices(tid) if n.source_id == team_id] == []
