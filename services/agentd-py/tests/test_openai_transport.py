@@ -201,7 +201,8 @@ async def test_structured_output_takes_the_first_action_and_stops_reading() -> N
     # fabricate those results. The first complete message is the action we asked for.
     first, invented, final = '{"ok": true}', '{"ok": false}', '{"ok": false}'
     stream = FakeStream([
-        _item_delta("m1", first[:5]), _item_delta("m1", first[5:]), _message_done("m1", "commentary"),
+        _item_delta("m1", first[:5]), _item_delta("m1", first[5:]),
+        _message_done("m1", "commentary"),
         _item_delta("m2", invented), _message_done("m2", "commentary"),
         _item_delta("m3", final), _message_done("m3", "final_answer"), _completed()])
     fake = FakeResponses(stream)
@@ -434,3 +435,46 @@ async def test_other_400s_never_mark_a_rung() -> None:
     with pytest.raises(openai.APIStatusError):
         await transport.generate_text(model="m", system_instructions="", user_payload={})
     assert (await transport.reasoning_effort_support("m")).unsupported == {}
+
+
+# ---------------------------------------------------------------- errors inside a 200 stream
+
+
+def _sdk_stream_error(code: str, message: str = "limit") -> openai.APIError:
+    # What the SDK raises mid-iteration for an SSE `error` event (body = data["error"]).
+    return openai.APIError(message, httpx.Request("POST", "https://api.openai.com/v1/responses"),
+                           body={"code": code, "message": message, "type": "invalid_request_error"})
+
+
+@pytest.mark.asyncio
+async def test_a_usage_limit_inside_a_200_stream_is_an_access_stop() -> None:
+    # Measured live (2026-10-07, a ChatGPT Go account at its limit): HTTP 200, then an
+    # `error` event {"error": {"code": "subscription_sharing_usage_limit_exceeded"}}
+    # and response.failed. The SDK raises a plain APIError for the error event. Left
+    # unclassified it went down the malformed-output path: 4 corrections per member,
+    # then failed_transient and a re-queue against an exhausted plan.
+    fake = FakeResponses(FakeStream([], raise_after=_sdk_stream_error(
+        "subscription_sharing_usage_limit_exceeded",
+        "The ChatGPT user has reached their Subscription Sharing usage limit.")))
+    with pytest.raises(PlanUsageLimitReached, match="Subscription Sharing usage limit"):
+        await _transport(fake, plan_route=True).generate_json(
+            model="m", schema_name="s", schema=SCHEMA, system_instructions="", user_payload={})
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_transient_plan_code_inside_a_stream_is_retried() -> None:
+    fake = FakeResponses(FakeStream([], raise_after=_sdk_stream_error(
+        "subscription_sharing_usage_unavailable")), [_delta("hi"), _completed()])
+    assert await _transport(fake, plan_route=True).generate_text(
+        model="m", system_instructions="", user_payload={}) == "hi"
+
+
+@pytest.mark.asyncio
+async def test_an_error_event_with_a_nested_error_object_is_classified() -> None:
+    event = SimpleNamespace(type="error", error=SimpleNamespace(
+        code="subscription_sharing_usage_limit_exceeded", message="limit", param=None))
+    fake = FakeResponses([event])
+    with pytest.raises(PlanUsageLimitReached):
+        await _transport(fake, plan_route=True).generate_text(
+            model="m", system_instructions="", user_payload={})

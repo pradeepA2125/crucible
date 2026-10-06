@@ -333,9 +333,17 @@ class OpenAIJsonTransport(ModelJsonTransport):
                     msg = f"OpenAI response incomplete ({reason}); output was cut off"
                     raise RuntimeError(msg)
                 elif kind == "error":
-                    raise _failed_error(event)
+                    # The plan route nests the details: {"type": "error", "error": {…}}.
+                    raise _failed_error(getattr(event, "error", None) or event)
         except openai.APIStatusError as exc:
             raise self._status_error(exc) from exc
+        except openai.APIError as exc:
+            # An SSE `error` event inside an HTTP 200 stream: the SDK raises a plain
+            # APIError carrying the event's code. Measured live: this is how the plan
+            # route reports its usage limit, not with the documented 429.
+            if isinstance(exc, openai.APIConnectionError):
+                raise
+            raise _failed_error(exc) from exc
         if completed is None:
             msg = "OpenAI stream ended before response.completed"
             raise TransientTransportError(msg)
