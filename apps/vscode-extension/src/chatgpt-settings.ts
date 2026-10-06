@@ -5,10 +5,9 @@ import { ProviderAccessError } from "@crucible/editor-client";
 // owns OAuth and tokens; this module only starts a sign-in, hands the authorize URL
 // to the system browser, follows the attempt to its end, and switches the provider.
 
-/** Where "Manage usage" goes: ChatGPT settings, where the user reviews usage and app
- * limits (UI/UX guidelines). TODO(chatgpt-plan): the docs name "ChatGPT Settings →
- * Usage" but no URL; confirm the deep link in the Phase 0 spike before release. */
-export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings";
+/** "Manage usage" opens ChatGPT's Usage page, where the user reviews usage and per-app
+ * limits (UI/UX guidelines; URL confirmed from the ChatGPT UI, 2026-10-07). */
+export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage?tab=overview";
 
 // Only these destinations can be opened from a webview message: the panel must not
 // become a way to open arbitrary URLs.

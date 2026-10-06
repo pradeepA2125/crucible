@@ -286,7 +286,12 @@ def build_router(
                     "backend": provider_runtime.backend,  # type: ignore[attr-defined]
                     "model": provider_runtime.model,  # type: ignore[attr-defined]
                     # Drives the composer's "Using ChatGPT plan" label (UI/UX guidelines).
-                    "uses_chatgpt_plan": provider_runtime.backend == "chatgpt",  # type: ignore[attr-defined]
+                    # Only when it can serve requests: the backend starts on chatgpt
+                    # before anyone signs in, which is not "using the plan".
+                    "uses_chatgpt_plan": (
+                        provider_runtime.backend == "chatgpt"  # type: ignore[attr-defined]
+                        and not getattr(provider_runtime, "config_error", None)
+                    ),
                     # The effective window — seeded from CRUCIBLE_MEMORY_WINDOW_TOKENS
                     # at startup, overwritten by a settings-panel save. The panel
                     # pre-fills its field from this, so what it shows is what the

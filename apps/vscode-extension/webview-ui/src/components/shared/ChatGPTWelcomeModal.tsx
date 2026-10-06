@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { BtnGhost, BtnPrimary } from "./buttons";
 import { ChatGPTLogo } from "./ChatGPTBrand";
 
@@ -9,7 +10,9 @@ import { ChatGPTLogo } from "./ChatGPTBrand";
 export function ChatGPTWelcomeModal({ onDismiss, onManageUsage }: {
   onDismiss: () => void; onManageUsage: () => void;
 }) {
-  return (
+  // Portaled to <body>: inside an animated (transformed) section, `fixed` positions
+  // against that section instead of the viewport (found live: off-center, nav undimmed).
+  return createPortal(
     <div className="scrim fixed inset-0 z-50 flex items-center justify-center p-4"
          role="dialog" aria-modal="true" aria-labelledby="chatgpt-welcome-title">
       <div className="surface-card anim-pop flex w-full max-w-[360px] flex-col gap-3 p-5">
@@ -26,6 +29,7 @@ export function ChatGPTWelcomeModal({ onDismiss, onManageUsage }: {
           <BtnPrimary onClick={onDismiss}>Got it</BtnPrimary>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

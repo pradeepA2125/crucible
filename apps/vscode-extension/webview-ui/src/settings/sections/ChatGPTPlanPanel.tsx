@@ -26,7 +26,11 @@ export function ChatGPTPlanPanel({ state, busy, send }: SectionProps) {
   const [signedOut, setSignedOut] = useState<{ remoteRevoked: boolean } | null>(null);
   const [welcome, setWelcome] = useState<string | null>(null);
 
-  const usingPlan = state.provider?.backend === "chatgpt";
+  // In use = the provider is chatgpt AND its account can actually serve requests: the
+  // backend starts on chatgpt before anyone signs in, which is not "using the plan".
+  const activeAccount = accounts?.find((a) => a.registrationId === activeId);
+  const usingPlan = state.provider?.backend === "chatgpt"
+    && activeAccount !== undefined && activeAccount.signedIn && activeAccount.planEnabled;
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<SettingsOutMsg>) => {
@@ -97,7 +101,10 @@ export function ChatGPTPlanPanel({ state, busy, send }: SectionProps) {
       ...(reconsent ? { reconsent: true } : {}),
     });
   };
-  const manageUsage = () => send({ type: "settings/openExternal", url: CHATGPT_USAGE_URL });
+  // Fire-and-forget messages bypass send(): the host answers neither, and send() sets the
+  // panel-wide busy flag that only a host reply clears — every button would stay disabled.
+  const manageUsage = () =>
+    vscode.postMessage({ type: "settings/openExternal", url: CHATGPT_USAGE_URL });
   const catalog = selected && models?.registrationId === selected.registrationId ? models.list : null;
 
   return (
@@ -211,7 +218,7 @@ export function ChatGPTPlanPanel({ state, busy, send }: SectionProps) {
         <ChatGPTWelcomeModal
           onManageUsage={manageUsage}
           onDismiss={() => {
-            send({ type: "settings/chatgptWelcomed", registrationId: welcome });
+            vscode.postMessage({ type: "settings/chatgptWelcomed", registrationId: welcome });
             setWelcome(null);
           }}
         />

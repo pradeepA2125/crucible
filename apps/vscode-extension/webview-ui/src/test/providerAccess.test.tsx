@@ -33,7 +33,7 @@ describe("provider access card", () => {
     expect(screen.queryByText(/Buy/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Manage usage" }));
     expect(vscode.postMessage).toHaveBeenCalledWith(
-      { type: "settings/openExternal", url: "https://chatgpt.com/#settings" });
+      { type: "settings/openExternal", url: "https://chatgpt.com/settings/usage?tab=overview" });
   });
 
   it.each([

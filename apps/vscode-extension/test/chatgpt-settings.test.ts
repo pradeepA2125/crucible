@@ -136,9 +136,9 @@ describe("ChatGPT settings handler", () => {
 
   it("opens only ChatGPT and OpenAI help links", async () => {
     const { handle, opened, posted } = setup();
-    await handle({ type: "settings/openExternal", url: "https://chatgpt.com/#settings" });
+    await handle({ type: "settings/openExternal", url: "https://chatgpt.com/settings/usage?tab=overview" });
     await handle({ type: "settings/openExternal", url: "https://evil.example/" });
-    expect(opened).toEqual(["https://chatgpt.com/#settings"]);
+    expect(opened).toEqual(["https://chatgpt.com/settings/usage?tab=overview"]);
     expect(posted.at(-1)?.type).toBe("settings/chatgptError");
   });
 });

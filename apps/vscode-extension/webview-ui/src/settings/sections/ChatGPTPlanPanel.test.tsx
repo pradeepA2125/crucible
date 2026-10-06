@@ -86,8 +86,9 @@ describe("ChatGPTPlanPanel", () => {
     expect(screen.getByText("In use")).toBeTruthy();
     expect(screen.getByText("Using ChatGPT plan")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Manage usage" }));
-    expect(send).toHaveBeenCalledWith({ type: "settings/openExternal",
-                                        url: "https://chatgpt.com/#settings" });
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "settings/openExternal",
+                                        url: "https://chatgpt.com/settings/usage?tab=overview" });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("says when sign-out could not be confirmed remotely", () => {
@@ -103,7 +104,22 @@ describe("ChatGPTPlanPanel", () => {
     expect(screen.getByRole("dialog", { name: "You're using your ChatGPT plan" })).toBeTruthy();
     expect(screen.getByText(/Eligible usage in this app uses your ChatGPT plan/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Got it" }));
-    expect(send).toHaveBeenCalledWith({ type: "settings/chatgptWelcomed", registrationId: REG });
+    // Posted directly, never through send(): the host answers nothing, so send()'s busy
+    // flag would never clear and every button in Settings would stay disabled (found live).
+    expect(vscode.postMessage).toHaveBeenCalledWith(
+      { type: "settings/chatgptWelcomed", registrationId: REG });
+    expect(send).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("ChatGPTPlanPanel before a working sign-in", () => {
+  it("does not claim the plan is in use when the backend merely starts on chatgpt", () => {
+    render(<ChatGPTPlanPanel state={stateFor("chatgpt", "")} busy={false} send={vi.fn()} />);
+    deliver({ type: "settings/chatgpt", activeRegistrationId: null, accounts: [] });
+    expect(screen.queryByText("Using ChatGPT plan")).toBeNull();
+    deliver({ type: "settings/chatgpt", activeRegistrationId: REG,
+              accounts: [account({ signedIn: false })] });
+    expect(screen.queryByText("Using ChatGPT plan")).toBeNull();
   });
 });

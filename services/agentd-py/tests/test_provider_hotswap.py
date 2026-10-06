@@ -297,3 +297,11 @@ async def test_a_failed_swap_leaves_the_startup_error_in_place(
     with pytest.raises(ProviderValidationError):
         await rt.swap(backend="gemini", model="m2")
     assert rt.config_error == "base url missing"
+
+
+def test_config_reports_the_chatgpt_plan_in_use_only_when_it_works(tmp_path: Path) -> None:
+    rt = ProviderRuntime(backend="chatgpt", model="", engines=[],
+                         config_error="Not signed in with ChatGPT")
+    assert _client(tmp_path, rt).get("/v1/config").json()["provider"]["uses_chatgpt_plan"] is False
+    rt.config_error = None
+    assert _client(tmp_path, rt).get("/v1/config").json()["provider"]["uses_chatgpt_plan"] is True

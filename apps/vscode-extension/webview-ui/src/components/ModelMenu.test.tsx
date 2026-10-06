@@ -88,7 +88,7 @@ describe("ModelMenu on the ChatGPT plan", () => {
     expect(screen.getByText("Using ChatGPT plan")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Manage usage" }));
     expect(vscode.postMessage).toHaveBeenCalledWith(
-      { type: "settings/openExternal", url: "https://chatgpt.com/#settings" });
+      { type: "settings/openExternal", url: "https://chatgpt.com/settings/usage?tab=overview" });
     deliver(LIST);
     expect(screen.queryByText("Using ChatGPT plan")).toBeNull();
   });
