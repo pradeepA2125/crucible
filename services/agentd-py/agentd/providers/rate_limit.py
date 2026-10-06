@@ -76,6 +76,12 @@ class RateLimitedTransport:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 
+    @property
+    def wrapped(self) -> Any:
+        """The real transport. Its signature, not this wrapper's **kwargs, says which
+        optional callbacks a call may carry (see reasoning/engine.py::_accepts)."""
+        return self._inner
+
     def __setattr__(self, name: str, value: Any) -> None:
         setattr(self._inner, name, value)
 

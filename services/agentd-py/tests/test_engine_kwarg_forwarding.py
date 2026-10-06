@@ -62,3 +62,26 @@ async def test_transport_declaring_the_callbacks_still_receives_them():
         on_salvage=lambda *a: None,
     )
     assert transport.seen == {"on_usage": True, "on_salvage": True}
+
+
+@pytest.mark.asyncio
+async def test_the_rate_limit_wrapper_does_not_hide_what_the_transport_declares():
+    # Live-found (ChatGPT plan smoke, 2026-10-07): every production transport is
+    # wrapped in RateLimitedTransport, whose generate_json takes **kwargs, so the
+    # engine read "accepts anything" and every turn on a transport without
+    # on_salvage died with "unexpected keyword argument 'on_salvage'".
+    from agentd.providers.rate_limit import RateLimitedTransport
+
+    class _Limiter:
+        async def acquire(self, priority: str) -> float:
+            return 0.0
+
+    inner = _PartialTransport()
+    engine = DefaultReasoningEngine(model="m", transport=RateLimitedTransport(inner, _Limiter()))
+    out = await engine.create_controller_step(
+        plan_context={"goal": "g"}, history=[], tool_definitions=[], phase="ACTIVE",
+        on_progress=lambda *a, **k: None, on_usage=lambda *a: None,
+        on_salvage=lambda *a: None,
+    )
+    assert out["type"] == "answer"
+    assert inner.seen == {"on_progress": True}

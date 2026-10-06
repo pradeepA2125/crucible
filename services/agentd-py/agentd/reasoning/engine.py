@@ -88,7 +88,9 @@ def _accepts(transport: object, name: str) -> bool:
     several kwargs at once means declaring one capability silently promises all of
     them, and the promise is only checked at runtime, on a real turn.
     """
-    fn = getattr(transport, "generate_json", None)
+    # Look through RateLimitedTransport: its generate_json takes **kwargs, which would
+    # read as "accepts anything" and hand every optional callback to every transport.
+    fn = getattr(getattr(transport, "wrapped", transport), "generate_json", None)
     if fn is None:
         return False
     params = _generate_json_params(fn)
