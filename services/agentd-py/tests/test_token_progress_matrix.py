@@ -19,6 +19,7 @@ SUPPORTED = {
     "gemini_transport",
     "turboquant_transport",
     "groq_transport",
+    "openai_transport",
 }
 
 # generate_json here never streams: on_thinking is either an ignored parameter or is
@@ -26,7 +27,6 @@ SUPPORTED = {
 # Adding the counter means adding streaming first — a real change, not an increment.
 NOT_STREAMING = {
     "anthropic_transport",
-    "openai_transport",
     "huggingface_transport",
     "watsonx_transport",
 }

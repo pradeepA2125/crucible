@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,20 +12,21 @@ from agentd.domain.models import TaskRecord
 from agentd.providers.openai_reasoner import OpenAIReasoningEngine
 
 
-@dataclass
-class FakeResponse:
-    output_text: str
+async def _stream(text: str) -> AsyncIterator[Any]:
+    yield SimpleNamespace(type="response.output_text.delta", delta=text)
+    yield SimpleNamespace(type="response.completed", response=SimpleNamespace(usage=None))
 
 
 class FakeResponsesClient:
+    """Streams each queued payload the way the Responses API does."""
+
     def __init__(self, outputs: list[dict[str, Any]]) -> None:
         self._outputs = outputs
         self.calls: list[dict[str, Any]] = []
 
-    async def create(self, **kwargs: Any) -> FakeResponse:
+    async def create(self, **kwargs: Any) -> AsyncIterator[Any]:
         self.calls.append(kwargs)
-        payload = self._outputs.pop(0)
-        return FakeResponse(output_text=json.dumps(payload))
+        return _stream(json.dumps(self._outputs.pop(0)))
 
 
 @pytest.mark.asyncio
@@ -77,8 +79,9 @@ async def test_openai_reasoner_generates_schema_valid_plan_and_patch(tmp_path: P
     assert plan["steps"][0]["id"] == "S1"
     assert patch["candidates"][0]["patch_ops"][0]["op"] == "create_file"
     assert len(fake_client.calls) == 2
-    first_payload = json.loads(str(fake_client.calls[0]["input"]))
-    second_payload = json.loads(str(fake_client.calls[1]["input"]))
+    # Responses `input` is an item array (the ChatGPT plan route requires it).
+    first_payload = json.loads(fake_client.calls[0]["input"][0]["content"])
+    second_payload = json.loads(fake_client.calls[1]["input"][0]["content"])
     assert first_payload["retrieval_context"]["related_files"] == ["a.py"]
     assert second_payload["retrieval_context"]["related_symbols"] == ["build"]
 

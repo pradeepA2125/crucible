@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from agentd.providers.openai_compatible_transport import TransientTransportError
+from agentd.providers.plan_access import ProviderAccessStopped
 
 _UNAVAILABLE_STATUSES = frozenset({408, 429})
 
@@ -33,6 +34,10 @@ def _is_connection_error(exc: BaseException) -> bool:
 
 
 def is_provider_unavailable(exc: BaseException) -> bool:
+    # A plan usage limit is a 429 too, but waiting it out is the user's call (spec
+    # 2026-10-06 §5.4): re-queueing would just keep hitting the same limit.
+    if any(isinstance(current, ProviderAccessStopped) for current in _chain(exc)):
+        return False
     for current in _chain(exc):
         status = getattr(current, "status_code", None)
         if isinstance(status, int) and (status in _UNAVAILABLE_STATUSES or status >= 500):
