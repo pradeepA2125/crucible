@@ -61,6 +61,7 @@ class PatchFailureCode(StrEnum):
     NO_OP = "no_op"
     # An agent tried to edit a control-plane file (spec §3.9).
     PROTECTED_PATH = "protected_path"
+    TEAM_SCOPE = "team_scope"
 
 
 class TaskBudget(BaseModel):

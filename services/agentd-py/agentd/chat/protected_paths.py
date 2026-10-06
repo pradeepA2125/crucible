@@ -1,6 +1,7 @@
 """Files that control what agents may do are not editable by agents (spec §3.9)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from fnmatch import fnmatchcase
 
 from agentd.domain.models import PatchFailureCode, PatchPreflightIssue
@@ -38,6 +39,37 @@ class AgentProtection:
                 raise ProtectedPathError(
                     key, f"`{key}` is a protected Crucible configuration file; agents cannot "
                     "edit it. Tell your dispatcher what should change instead.")
+
+
+class TeamScopeError(PatchPreflightFailed):
+    def __init__(self, path: str, message: str) -> None:
+        super().__init__(message, [PatchPreflightIssue(
+            code=PatchFailureCode.TEAM_SCOPE, file=path, message=message)])
+        self.path = path
+
+
+class TeamProtection(AgentProtection):
+    """A team member or its helper (spec v2 §3.9, §8.6): protected paths first, then the
+    team's phase and plan, checked at Check 1 before any edit gate. One per activation, so
+    a repeated ownership refusal for the same path can say so."""
+
+    def __init__(self, rule: Callable[[str], str | None]) -> None:
+        self._rule = rule
+        self._told: set[str] = set()
+
+    def check_apply(self, keys: list[str]) -> None:
+        super().check_apply(keys)
+        for key in keys:
+            message = self._rule(key)
+            if message is None:
+                continue
+            if " is owned by " in message:
+                if key in self._told:
+                    owner = message.split(" is owned by ", 1)[1].split(" ", 1)[0]
+                    message += (f" You were already told this file is owned by {owner}. "
+                                "Do not retry the edit.")
+                self._told.add(key)
+            raise TeamScopeError(key, message)
 
 
 class MainProtection:
