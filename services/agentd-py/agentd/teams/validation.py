@@ -6,6 +6,8 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+from agentd.chat.protected_paths import is_protected
+
 LABEL_RE = re.compile(r"^[a-z0-9-]{1,32}$")
 TEXT_MAX = 8000
 MAX_POSTS_PER_ACTIVATION = 6
@@ -114,3 +116,70 @@ def validate_evidence(
             raise TeamInputError(f"quote_seq {quote_seq}: there is no post with that seq")
         out["quote_seq"] = quote_seq
     return out
+
+
+def parse_assignments(raw: object, roster: list[str]) -> list[dict[str, object]]:
+    if not isinstance(raw, list):
+        raise TeamInputError("assignments must be a list of {member, part, files}")
+    parts: list[dict[str, object]] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise TeamInputError(f"assignments[{i}] must be an object")
+        member = str(item.get("member", "")).lstrip("@").casefold()
+        if member not in roster:
+            raise TeamInputError(
+                f"assignments[{i}]: unknown member {item.get('member')!r}; "
+                f"the team is: {', '.join(roster)}")
+        files = item.get("files") or []
+        if not isinstance(files, list):
+            raise TeamInputError(f"assignments[{i}].files must be a list of paths")
+        parts.append({"member": member, "part": check_text(item.get("part"), "part"),
+                      "files": [str(f) for f in files]})
+    return parts
+
+
+def _assignable(workspace: Path, raw: str) -> str:
+    root = workspace.resolve()
+    target = (root / raw).resolve()
+    if target == root or root not in target.parents:
+        raise TeamInputError(f"{raw!r} is outside the workspace")
+    key = target.relative_to(root).as_posix()
+    if is_protected(key):
+        raise TeamInputError(f"{key} is a protected Crucible configuration file; no "
+                             "assignment can include it")
+    return key
+
+
+def check_assignments(
+    parts: list[dict[str, object]], shared: list[str], *, workspace: Path,
+    can_edit: Callable[[str], bool],
+) -> tuple[list[dict[str, object]], list[str]]:
+    """Spec v2 §8.3: canonical paths inside the workspace, never protected, one owner per
+    file, no file both owned and shared, and only members that can edit own files."""
+    owner: dict[str, str] = {}
+    seen_members: set[str] = set()
+    out: list[dict[str, object]] = []
+    for part in parts:
+        member = str(part["member"])
+        if member in seen_members:
+            raise TeamInputError(f"one assignment per member: merge {member}'s parts into one")
+        seen_members.add(member)
+        raw_files = part.get("files")
+        files = [_assignable(workspace, str(f)) for f in
+                 (raw_files if isinstance(raw_files, list) else [])]
+        if files and not can_edit(member):
+            raise TeamInputError(
+                f"{member} cannot edit files (its agent definition is read-only); give its "
+                "files to a member that can edit, or give it a part without files")
+        for key in files:
+            if key in owner and owner[key] != member:
+                raise TeamInputError(
+                    f"{key} is assigned to both {owner[key]} and {member}; each file has one "
+                    "owner (list it under shared_files to let both edit it)")
+            owner[key] = member
+        out.append({**part, "files": sorted(set(files), key=files.index)})
+    shared_keys = [_assignable(workspace, str(f)) for f in shared]
+    for key in shared_keys:
+        if key in owner:
+            raise TeamInputError(f"{key} is both assigned to {owner[key]} and shared; pick one")
+    return out, sorted(set(shared_keys), key=shared_keys.index)

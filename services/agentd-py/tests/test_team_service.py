@@ -132,3 +132,16 @@ def test_status_text_and_summary(tmp_path: Path) -> None:
     assert summary["phase"] == "DELIBERATING"
     assert [m["label"] for m in summary["members"]] == ["alice", "bob", "carol"]
     assert summary["open_proposals"][0]["id"] == p.proposal_id
+
+
+def test_propose_stores_canonical_paths_and_checks_can_edit(tmp_path: Path) -> None:
+    service, tid, teams, _ = _setup(tmp_path)
+    service = TeamService(teams, tmp_path / "ws", service._agent_info,
+                          can_edit=lambda _team, label: label != "bob")
+    post = service.propose(tid, "alice", "plan",
+                           [{"member": "alice", "part": "api", "files": ["./src/auth.py"]}])
+    assert post.payload["assignments"][0]["files"] == ["src/auth.py"]
+    with pytest.raises(TeamInputError, match="bob cannot edit files"):
+        service.propose(tid, "alice", "plan 2",
+                        [{"member": "bob", "part": "tests", "files": ["t.py"]}],
+                        supersedes=[post.proposal_id])

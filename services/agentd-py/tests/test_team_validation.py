@@ -7,9 +7,11 @@ import pytest
 
 from agentd.teams.validation import (
     TeamInputError,
+    check_assignments,
     check_label,
     check_text,
     effective_mentions,
+    parse_assignments,
     parse_proposal_id,
     validate_evidence,
 )
@@ -89,3 +91,44 @@ def test_evidence_may_name_a_file_the_proposal_assigns(tmp_path: Path) -> None:
     ev = validate_evidence({"files": ["src/new.py"], "line": 1}, workspace=_ws(tmp_path),
                            assignment_files={"src/new.py"}, post_exists=lambda s: False)
     assert ev["files"] == ["src/new.py"]
+
+
+
+def _parts(*items):  # type: ignore[no-untyped-def]
+    return [{"member": m, "part": "p", "files": list(f)} for m, f in items]
+
+
+def test_parse_assignments_checks_shape_and_roster() -> None:
+    assert parse_assignments([{"member": "@Alice", "part": "api", "files": ["a.py"]}],
+                             ["alice"]) == [{"member": "alice", "part": "api", "files": ["a.py"]}]
+    with pytest.raises(TeamInputError, match="unknown member 'carol'"):
+        parse_assignments([{"member": "carol", "part": "x", "files": []}], ["alice"])
+    with pytest.raises(TeamInputError, match="must be a list"):
+        parse_assignments("nope", ["alice"])
+
+
+def test_check_assignments_canonicalizes(tmp_path) -> None:
+    parts, shared = check_assignments(_parts(("alice", ["src/../a.py"])), ["./b.py"],
+                                      workspace=tmp_path, can_edit=lambda _m: True)
+    assert parts[0]["files"] == ["a.py"] and shared == ["b.py"]
+
+
+@pytest.mark.parametrize("parts,shared,message", [
+    (_parts(("alice", ["a.py"]), ("bob", ["a.py"])), [], "assigned to both alice and bob"),
+    (_parts(("alice", ["a.py"])), ["a.py"], "both assigned to alice and shared"),
+    (_parts(("alice", ["../x.py"])), [], "outside the workspace"),
+    (_parts(("alice", [".crucible/mcp.json"])), [], "protected"),
+    (_parts(("alice", ["a.py"]), ("alice", ["b.py"])), [], "one assignment per member"),
+])
+def test_check_assignments_refusals(tmp_path, parts, shared, message) -> None:
+    with pytest.raises(TeamInputError, match=message):
+        check_assignments(parts, shared, workspace=tmp_path, can_edit=lambda _m: True)
+
+
+def test_a_read_only_member_cannot_own_files(tmp_path) -> None:
+    with pytest.raises(TeamInputError, match="review cannot edit files"):
+        check_assignments(_parts(("review", ["a.py"])), [], workspace=tmp_path,
+                          can_edit=lambda m: m != "review")
+    # A part without files is fine for a read-only member.
+    check_assignments(_parts(("review", [])), [], workspace=tmp_path,
+                      can_edit=lambda m: m != "review")

@@ -19,8 +19,10 @@ from agentd.teams.store import TeamStore
 from agentd.teams.validation import (
     MAX_POSTS_PER_ACTIVATION,
     TeamInputError,
+    check_assignments,
     check_text,
     effective_mentions,
+    parse_assignments,
     parse_proposal_id,
     validate_evidence,
 )
@@ -59,12 +61,14 @@ class TeamService:
         self, store: TeamStore, workspace: Path, agent_info: Callable[[str], AgentInfo],
         on_post: Callable[[TeamRecord, TeamPost], None] = lambda _t, _p: None,
         on_activity: Callable[[TeamRecord, TeamActivity], None] = lambda _t, _a: None,
+        can_edit: Callable[[str, str], bool] = lambda _team, _label: True,
     ) -> None:
         self._store = store
         self._workspace = workspace
         self._agent_info = agent_info
         self._on_post = on_post
         self._on_activity = on_activity
+        self._can_edit = can_edit
 
     # ── helpers ─────────────────────────────────────────────────────────────
 
@@ -172,23 +176,11 @@ class TeamService:
             raise TeamInputError(
                 f"State your stance on {', '.join(owed)} first (team_agree, with a note for "
                 "small changes, or team_object).")
-        if not isinstance(assignments, list):
-            raise TeamInputError("assignments must be a list of {member, part, files}")
-        parts: list[dict[str, object]] = []
-        for i, item in enumerate(assignments):
-            if not isinstance(item, dict):
-                raise TeamInputError(f"assignments[{i}] must be an object")
-            member = str(item.get("member", "")).lstrip("@").casefold()
-            if member not in roster:
-                raise TeamInputError(
-                    f"assignments[{i}]: unknown member {item.get('member')!r}; "
-                    f"the team is: {', '.join(roster)}")
-            files = item.get("files") or []
-            if not isinstance(files, list):
-                raise TeamInputError(f"assignments[{i}].files must be a list of paths")
-            parts.append({"member": member, "part": check_text(item.get("part"), "part"),
-                          "files": [str(f) for f in files]})
-        shared = [str(f) for f in shared_files] if isinstance(shared_files, list) else []
+        parts = parse_assignments(assignments, roster)
+        raw_shared = [str(f) for f in shared_files] if isinstance(shared_files, list) else []
+        parts, shared = check_assignments(
+            parts, raw_shared, workspace=self._workspace,
+            can_edit=lambda member: self._can_edit(team_id, member))
         closes: list[TeamPost] = []
         if supersedes is not None:
             if not isinstance(supersedes, list):
