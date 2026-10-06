@@ -392,3 +392,36 @@ Then add a CLAUDE.md section.
 | Usage | `response.completed` carries `usage` (input/output/cached/reasoning tokens, plus an `attribution` breakdown). |
 | Multiple messages | A response can contain a `commentary` message and then a `final_answer` message, both with the full answer; `response.completed.output` is empty. Fixed by per-item selection. |
 | Request ids | No `x-request-id` header was observed on these responses. |
+
+## 12. How output arrives, and native function calling (2026-10-07)
+
+**Research.** A streamed response is a sequence of output items — reasoning (optional
+summary), messages, function calls — each with added/delta/done events, closed by
+`response.completed`. Messages carry `phase`: `commentary` for preambles and status
+updates, `final_answer` for the message that ends the turn ([reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)).
+Actions are meant to be `function_call` items; after them the model "stop[s] and wait[s]"
+for `function_call_output` ([function calling](https://developers.openai.com/api/docs/guides/function-calling)).
+`tool_choice: "required"` + `parallel_tool_calls: false` guarantees exactly one call.
+Prompting can change how many preambles appear but no parameter does
+([Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide));
+`max_tool_calls` is unsupported on this route. Other harnesses hit the same text-mode
+failure ([camunda #9285](https://github.com/camunda/connectors/issues/9285)).
+
+**Live findings (Plus account).** With actions as schema-constrained text, `gpt-5.6-terra`
+put several actions in one response (commentary messages = invented steps, final message =
+fabricated results); `gpt-6-astra` and `gpt-5.6-sol` did not. Function tools alone gave one
+call per response but `terra` still looped (3/3) while history was role-labelled JSON in
+one user message; with history as native items it progressed (3/3 `create_team`), even
+without reasoning-item replay.
+
+**Cache.** Exact-prefix caching; measured `cached_tokens` over 4–6-step loops: native with
+reasoning replay, native without, and the old JSON payload all cache the same ~8.8k-token
+instructions+tools prefix; misses were scattered across formats (per-machine routing).
+Reasoning replay matters for quality, not caching — a later step if long runs need it
+(it needs reasoning items stored with the controller's history, outside the provider).
+
+**Design.** `providers/openai_native.py`: actions → function tools (union → namespace
+`crucible`, one function per action type; flat → one forced function), history →
+`function_call` / `function_call_output` / messages, payload fields before the history
+open the input and later ones close it. Lossless by construction and by test
+(`from_native_input` round trip, synthetic shapes + real payloads).
