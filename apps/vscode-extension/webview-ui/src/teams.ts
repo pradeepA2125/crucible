@@ -70,6 +70,17 @@ export function stanceOf(posts: TeamPostView[], proposalSeq: number, label: stri
   return stance;
 }
 
+const STATE_WORD: Record<string, string> = {
+  running: "working", queued: "working", waiting: "needs your approval",
+  awaiting_peer: "waiting on a teammate", failed: "failed", stopped: "stopped",
+};
+
+/** A member's state in one or two words, from its agent status; "idle" for one that reported
+ * and is resting. Shared by the window header and the member tab so they never disagree. */
+export function memberStateWord(status: string): string {
+  return STATE_WORD[status] ?? "idle";
+}
+
 export type PhraseTone = "work" | "ok" | "wait" | "bad" | "idle";
 
 /** A member's one-line state on the transcript card (spec 2026-10-05 §8): live work from the

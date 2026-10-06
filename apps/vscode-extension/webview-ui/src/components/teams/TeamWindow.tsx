@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { isTerminalAgent } from "../../agents";
-import { isTerminalTeam } from "../../teams";
+import { isTerminalTeam, memberStateWord } from "../../teams";
 import { identityFor } from "../../teamIdentity";
 import { vscode } from "../../vscodeApi";
 import { Icon } from "../Icon";
@@ -93,7 +93,7 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
                   <span className="grid text-left leading-tight">
                     <span className="text-[12px] font-semibold" style={{ color: identityFor(m.label, roster).color }}>{m.label}</span>
                     <small className="text-[10.5px] text-text-3">
-                      {working ? "working" : status === "awaiting_peer" ? "waiting on a teammate" : "idle"}
+                      {memberStateWord(status)}
                     </small>
                   </span>
                 </button>

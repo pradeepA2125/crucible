@@ -54,11 +54,13 @@ const agent = (id: string, label: string, status: string): AgentSummaryView => (
   endedAt: null, reportPreview: "", activationStartedAt: T(25), activationEndedAt: null,
 });
 
-function renderWindow(tab = "board", team = TEAM, posts = POSTS) {
+function renderWindow(tab = "board", team = TEAM, posts = POSTS,
+                      statuses: { review: string; impl: string } = { review: "completed", impl: "running" }) {
   const onTab = vi.fn();
   const onClose = vi.fn();
   const agentsUi: AgentsUi = {
-    agents: { "agent-r": agent("agent-r", "review", "completed"), "agent-i": agent("agent-i", "impl", "running") },
+    agents: { "agent-r": agent("agent-r", "review", statuses.review),
+              "agent-i": agent("agent-i", "impl", statuses.impl) },
     views: {}, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
   };
   const teamsUi: TeamsUi = { teams: { "team-1": team },
@@ -135,6 +137,18 @@ describe("TeamWindow board", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "disbandTeam", teamId: "team-1" });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("header names a failed, stopped or approval-waiting member's state instead of idle", () => {
+    renderWindow("board", TEAM, POSTS, { review: "failed", impl: "waiting" });
+    expect(screen.getByRole("button", { name: "Open review's tab" })).toHaveTextContent("failed");
+    expect(screen.getByRole("button", { name: "Open impl's tab" })).toHaveTextContent("needs your approval");
+  });
+
+  it("header says idle only for a member that reported and is resting", () => {
+    renderWindow("board", TEAM, POSTS, { review: "completed", impl: "stopped" });
+    expect(screen.getByRole("button", { name: "Open review's tab" })).toHaveTextContent("idle");
+    expect(screen.getByRole("button", { name: "Open impl's tab" })).toHaveTextContent("stopped");
   });
 
   it("an ended team has no Disband and no now strip", () => {

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { formatElapsed, isTerminalAgent } from "../../agents";
 import { buildChapters, chapterHeading, type MemberChapter } from "../../teamChapters";
 import { identityFor } from "../../teamIdentity";
+import { memberStateWord } from "../../teams";
 import type { TeamPostView, ToolEventView } from "../../types";
 import { MessageRow } from "../MessageRow";
 import { AgentRow } from "../messages/AgentRow";
@@ -10,11 +11,6 @@ import { Avatar } from "./Avatar";
 import { SaidPost, STATUS_CHIP, beatText } from "./Journey";
 import { PostBody } from "./PostBody";
 import { useTeamsUi } from "./TeamsContext";
-
-const STATE_WORD: Record<string, string> = {
-  running: "working", queued: "working", waiting: "needs your approval",
-  awaiting_peer: "waiting on a teammate", failed: "failed", stopped: "stopped",
-};
 
 const firstLine = (text: string) =>
   text.split("\n").map((l) => l.replace(/^[#>\-*\s]+/, "").replace(/\*\*|`/g, "").trim()).find((l) => l) ?? "";
@@ -59,7 +55,7 @@ export function MemberView({ teamId, agentId }: { teamId: string; agentId: strin
             <strong className="text-[14px]" style={{ color: identityFor(label, roster).color }}>{label}</strong>
             {member.name && <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10.5px]" style={{ color: "var(--color-accent-ink)", background: "var(--accent-bg)", borderColor: "var(--accent-brd)" }}>{member.name}</span>}
             <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10.5px]" style={{ color: working ? "var(--color-accent-ink)" : "var(--color-text-3)", borderColor: "var(--color-border-strong)" }}>
-              ● {STATE_WORD[status] ?? "idle"}
+              ● {memberStateWord(status)}
             </span>
           </div>
           {member.description && <div className="text-[12px] text-text-2">{member.description}</div>}
