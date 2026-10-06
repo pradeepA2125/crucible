@@ -816,7 +816,8 @@ class ChatController:
                 write_guard=(
                     WriteGuard(write_log, MAIN_AGENT_ID, "main", "main")
                     if write_log is not None else None),
-                protection=MainProtection()))
+                protection=MainProtection(
+                    team_rule=partial(self._main_team_rule, thread_id))))
             if self._orchestrator is not None else None)
         # run_command (ACTIVE-only; PLAN rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
@@ -2575,6 +2576,26 @@ class ChatController:
         coordinator.approval(decision, text or None)
         after = self._store.teams.get_team(team_id)
         return {"team_id": team_id, "phase": after.phase if after is not None else None}
+
+    def _main_team_rule(self, thread_id: str, key: str) -> str | None:
+        """A file a live team's plan covers is the team's: the main agent restarts the
+        member that owns it instead of editing it (spec v2 §8.6, tightened after the 5B
+        live smoke)."""
+        for team in self._store.teams.list_teams(thread_id):
+            if team.phase not in LIVE_TEAM_PHASES:
+                continue
+            plans = [p for p in self._store.teams.posts(team.team_id) if p.kind == "proposal"
+                     and (p.closed is None or p.proposal_id == team.adopted_proposal_id)]
+            for plan in plans:
+                for part in plan.payload.get("assignments", []):
+                    if isinstance(part, dict) and key in (part.get("files") or []):
+                        owner = str(part.get("member"))
+                        return (f"{key} belongs to team {team.name!r} ({owner}) — post_board "
+                                f"mentioning @{owner} instead of editing it yourself")
+                if key in (plan.payload.get("shared_files") or []):
+                    return (f"{key} is shared by team {team.name!r} — post_board to the team "
+                            "instead of editing it yourself")
+        return None
 
     def _failed_from(self, team_id: str) -> str:
         """The live phase a FAILED team was in (its activity record), PAUSED skipped."""

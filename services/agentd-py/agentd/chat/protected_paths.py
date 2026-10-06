@@ -74,13 +74,21 @@ class TeamProtection(AgentProtection):
 
 class MainProtection:
     """The main agent may propose the edit, but it always raises a review card; at accept,
-    a path that became protected after apply (a symlink created in between) is refused."""
+    a path that became protected after apply (a symlink created in between) is refused.
+    `team_rule` refuses files a live team's plan covers: in the 5B live smoke the main
+    agent kept doing a member's part itself, leaving its assignment open for good."""
 
-    def __init__(self) -> None:
+    def __init__(self, team_rule: Callable[[str], str | None] | None = None) -> None:
         self.requires_review = False
         self._approved: set[str] = set()
+        self._team_rule = team_rule
 
     def check_apply(self, keys: list[str]) -> None:
+        if self._team_rule is not None:
+            for key in keys:
+                message = self._team_rule(key)
+                if message is not None:
+                    raise TeamScopeError(key, message)
         self._approved = {k for k in keys if is_protected(k)}
         self.requires_review = bool(self._approved)
 

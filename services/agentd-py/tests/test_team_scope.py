@@ -61,3 +61,16 @@ def test_team_protection_ownership_and_repeat() -> None:
 def test_protected_paths_still_come_first() -> None:
     with pytest.raises(ProtectedPathError):
         TeamProtection(lambda _k: None).check_apply([".crucible/mcp.json"])
+
+
+def test_main_protection_refuses_team_files() -> None:
+    from agentd.chat.protected_paths import MainProtection
+
+    def rule(key: str) -> str | None:
+        return f"{key} belongs to team 'auth'" if key == "a.py" else None
+
+    protection = MainProtection(team_rule=rule)
+    with pytest.raises(TeamScopeError, match="belongs to team 'auth'"):
+        protection.check_apply(["b.py", "a.py"])
+    protection.check_apply(["b.py"])                       # outside every live plan
+    assert MainProtection().requires_review is False       # no rule: unchanged behavior

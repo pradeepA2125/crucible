@@ -406,8 +406,9 @@ _EDIT_GUIDANCE_BY_CODE: dict[PatchFailureCode, str] = {
         "That file is protected. Describe the change in your report or answer instead "
         "of editing it."),
     PatchFailureCode.TEAM_SCOPE: (
-        "Your team's plan decides who edits which file. Send the change to the file's owner "
-        "with team_message, or tell the main agent with team_post, instead of editing."),
+        "A team's plan decides who edits which file. Ask the file's owner instead of editing "
+        "it: a member uses team_message (or team_post to reach the main agent); the main "
+        "agent uses post_board mentioning the owner."),
     PatchFailureCode.NO_OP: (
         "Your edit changes nothing: the file already has exactly that content (for "
         "search_replace, 'replace' is identical to 'search'). Emit an edit that makes the "

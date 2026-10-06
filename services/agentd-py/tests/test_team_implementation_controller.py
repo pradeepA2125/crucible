@@ -290,3 +290,19 @@ async def test_unparseable_output_requeues_a_member(tmp_path, monkeypatch) -> No
     assert store.teams.member(team_id, "alice").in_quorum is True
     assert store.teams.get_team(team_id).phase == "DELIBERATING"
     await ctrl.disband_team(tid, team_id)
+
+
+@pytest.mark.asyncio
+async def test_main_agent_cannot_edit_a_live_teams_files(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {"alice": [AGREE], "bob": [AGREE]})
+    _quiet(ctrl, monkeypatch)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request(
+        approval_gate=True, kickoff_assignments=PARTS, kickoff_shared_files=["s.py"])))["team_id"])
+    await _settle(ctrl)
+    assert ctrl._main_team_rule(tid, "a.py") == (
+        "a.py belongs to team 'auth' (alice) — post_board mentioning @alice instead of "
+        "editing it yourself")
+    assert "post_board to the team" in str(ctrl._main_team_rule(tid, "s.py"))
+    assert ctrl._main_team_rule(tid, "other.py") is None
+    await ctrl.disband_team(tid, team_id)
+    assert ctrl._main_team_rule(tid, "a.py") is None            # ended teams own nothing
