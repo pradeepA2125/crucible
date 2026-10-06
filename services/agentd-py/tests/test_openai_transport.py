@@ -394,7 +394,7 @@ async def test_effort_rides_the_request_on_both_routes(level: str, wire: str) ->
     transport = _transport(fake, plan_route=True)
     transport.set_reasoning_effort(ReasoningEffort(level))
     await transport.generate_text(model="m", system_instructions="", user_payload={})
-    assert fake.calls[0]["reasoning"] == {"effort": wire}
+    assert fake.calls[0]["reasoning"] == {"summary": "auto", "effort": wire}
 
 
 @pytest.mark.asyncio
@@ -418,7 +418,7 @@ async def test_a_rejected_rung_is_marked_and_the_call_retried_without_it() -> No
     transport.set_reasoning_effort(ReasoningEffort.MAX)
     assert await transport.generate_text(model="m", system_instructions="",
                                          user_payload={}) == "hi"
-    assert "reasoning" not in fake.calls[1]
+    assert fake.calls[1]["reasoning"] == {"summary": "auto"}  # only the rung is dropped
     support = await transport.reasoning_effort_support("m")
     assert support.state(ReasoningEffort.MAX) == "unsupported"
     assert support.state(ReasoningEffort.HIGH) == "unknown"
@@ -478,3 +478,37 @@ async def test_an_error_event_with_a_nested_error_object_is_classified() -> None
     with pytest.raises(PlanUsageLimitReached):
         await _transport(fake, plan_route=True).generate_text(
             model="m", system_instructions="", user_payload={})
+
+
+# ---------------------------------------------------------------- reasoning summaries
+
+
+@pytest.mark.asyncio
+async def test_the_plan_route_asks_for_reasoning_summaries() -> None:
+    # Live: every plan model defaults to default_reasoning_summary "none", so without
+    # asking, the thinking pane stays empty for the whole turn.
+    fake = FakeResponses([_delta("hi"), _completed()], [_delta("hi"), _completed()])
+    await _transport(fake, plan_route=True).generate_text(
+        model="m", system_instructions="", user_payload={})
+    assert fake.calls[0]["reasoning"] == {"summary": "auto"}
+    await _transport(fake).generate_text(model="m", system_instructions="", user_payload={})
+    assert "reasoning" not in fake.calls[1]  # the API-key route may need org verification
+
+
+@pytest.mark.asyncio
+async def test_summary_parts_reach_thinking_as_separate_lines() -> None:
+    from agentd.providers.reasoning_effort import ReasoningEffort
+
+    fake = FakeResponses([
+        SimpleNamespace(type="response.reasoning_summary_part.added"),
+        SimpleNamespace(type="response.reasoning_summary_text.delta", delta="**Preparing kicks**"),
+        SimpleNamespace(type="response.reasoning_summary_part.added"),
+        SimpleNamespace(type="response.reasoning_summary_text.delta", delta="**Structuring data**"),
+        _delta("hi"), _completed()])
+    transport = _transport(fake, plan_route=True)
+    transport.set_reasoning_effort(ReasoningEffort.HIGH)
+    thinking: list[str] = []
+    await transport.generate_text(model="m", system_instructions="", user_payload={},
+                                  on_thinking=thinking.append)
+    assert fake.calls[0]["reasoning"] == {"summary": "auto", "effort": "high"}
+    assert "".join(thinking) == "**Preparing kicks**\n\n**Structuring data**"

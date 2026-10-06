@@ -141,7 +141,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
     def _note_effort_rejection(self, exc: Exception, body: dict[str, Any]) -> bool:
         """A 400 naming `reasoning.effort` proves THIS rung is unsupported: mark it,
         drop the field for this process, and let the caller retry once without it."""
-        if self._effort is None or "reasoning" not in body:
+        if self._effort is None or "effort" not in body.get("reasoning", {}):
             return False
         if getattr(exc, "status_code", None) != 400:
             return False
@@ -150,7 +150,9 @@ class OpenAIJsonTransport(ModelJsonTransport):
         self._effort_rejected[self._effort] = f"this model rejected '{self._effort}'"
         logger.warning("[effort] OpenAI rejected reasoning effort %s; dropping it", self._effort)
         self._effort = None
-        body.pop("reasoning", None)
+        body["reasoning"].pop("effort", None)
+        if not body["reasoning"]:
+            body.pop("reasoning")
         return True
 
     # ------------------------------------------------------------ public API
@@ -213,8 +215,16 @@ class OpenAIJsonTransport(ModelJsonTransport):
         }
         if self._max_output_tokens is not None and not self._plan_route:
             body["max_output_tokens"] = self._max_output_tokens
+        reasoning: dict[str, str] = {}
+        if self._plan_route:
+            # Plan models default to no summary, which leaves the thinking pane empty for
+            # the whole turn. Not asked for on the API-key route: summaries there can
+            # require organization verification.
+            reasoning["summary"] = "auto"
         if self._effort is not None:
-            body["reasoning"] = {"effort": _EFFORT_WIRE[self._effort]}
+            reasoning["effort"] = _EFFORT_WIRE[self._effort]
+        if reasoning:
+            body["reasoning"] = reasoning
         return body
 
     async def _responses(self) -> Any:
@@ -300,6 +310,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         texts: dict[str | None, list[str]] = {}  # per output item: never join items
         phases: dict[str | None, str | None] = {}
         completed: Any = None
+        summary_parts = 0
         try:
             async for event in _within_deadline(stream, self._stream_timeout_sec):
                 kind = getattr(event, "type", "")
@@ -318,6 +329,11 @@ class OpenAIJsonTransport(ModelJsonTransport):
                             await _close(stream)
                             ticker.finish()
                             return action
+                elif kind == "response.reasoning_summary_part.added":
+                    # Each part is its own headline; keep them on separate lines.
+                    if summary_parts and callable(on_thinking):
+                        on_thinking("\n\n")
+                    summary_parts += 1
                 elif kind in _THINKING_EVENTS:
                     if callable(on_thinking):
                         on_thinking(event.delta)
