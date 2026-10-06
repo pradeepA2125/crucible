@@ -829,6 +829,9 @@ HOW THE TEAM WORKS
   whom you wait on. A report can carry your stances ("stances": [{proposal_id, stance, note,
   or reason + evidence}]) and, when you were asked to propose, your proposal ("proposal":
   {text, assignments}) — the same as the separate tool calls, in one action.
+- Until a plan is adopted and approved, change no files — neither with edits nor through
+  run_command (a script that writes a file is an edit). Propose the change instead; it is
+  made in implementation by the member who owns the file.
 - Once a plan is adopted the team implements it, and team_status shows your assignment. Edit only
   your own files and the shared files: a file another member owns is theirs, so send them the
   change with team_message. Report completed when your part is done and checked, awaiting_peer
