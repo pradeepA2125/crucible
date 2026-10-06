@@ -185,3 +185,17 @@ def test_delta_header_follows_the_phase(tmp_path: Path) -> None:
     text, _top = service.render_delta(tid, "alice")
     assert "next round" not in text
     assert "reach the others right away" in text and '"waiting_on"' in text
+
+
+def test_a_round_with_no_open_proposal_asks_for_one(tmp_path: Path) -> None:
+    service, tid, teams, _ = _setup(tmp_path)
+    plan = teams.append_post(tid, author="main", kind="proposal", text="plan", round=0,
+                             payload={"assignments": [], "shared_files": [], "supersedes": []})
+    teams.close_proposal(tid, plan.seq, "feedback")
+    note = teams.append_post(tid, author="user", kind="post", text="use Decimal", round=None)
+    teams.update_team(tid, round=3)
+    text, _top = service.render_delta(tid, "alice")
+    assert "No proposal is open" in text
+    assert f"the user sent P{plan.seq} back with feedback (#{note.seq})" in text
+    assert "propose a revised plan" in text
+    assert service.final_hint(tid, "alice").startswith("post your proposal now")

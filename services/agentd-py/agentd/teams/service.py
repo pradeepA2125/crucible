@@ -272,7 +272,8 @@ class TeamService:
         asked = (team.round == 1 and kickoff is not None and kickoff.kind == "post"
                  and label in kickoff.mentions
                  and not any(p.author == label and p.kind == "proposal"
-                             for p in self._store.posts(team_id)))
+                             for p in self._store.posts(team_id))) or (
+            team.round > 1 and not self.open_proposals(team_id))
         if asked:
             return "post your proposal now, in this report's proposal field"
         owed = self.expected_stances(team_id, label)
@@ -387,6 +388,17 @@ class TeamService:
             lead = (f"Round 1 of {total}: the main agent asked for proposals. Check the code "
                     "your role covers, then propose an approach (team_propose, or the "
                     "proposal field of your report).")
+        elif not self.open_proposals(team.team_id):
+            # Found live, 2026-10-06: after feedback closed the only proposal, members were
+            # told to state stances on nothing, and waited instead of re-proposing.
+            sent_back = [p for p in self._store.posts(team.team_id)
+                         if p.kind == "proposal" and p.closed == "feedback"]
+            feedback = [p for p in self._store.posts(team.team_id) if p.author == "user"]
+            why = (f": the user sent {sent_back[-1].proposal_id} back with feedback "
+                   f"(#{feedback[-1].seq})" if sent_back and feedback else "")
+            lead = (f"Round {n} of {total}. No proposal is open{why}. Read it, then "
+                    "propose a revised plan (team_propose, or the proposal field of your "
+                    "report) — or agree with one a teammate posts next round.")
         else:
             lead = (f"Round {n} of {total}: others have posted their views. Check the claims "
                     "relevant to your role, then state your stance on each open proposal.")
