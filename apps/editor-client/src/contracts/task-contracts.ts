@@ -518,6 +518,44 @@ export const SessionTranscriptSchema = z.object({
 });
 export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
 
+// Why a thread's last turn stopped on the provider's account rules — a ChatGPT plan
+// usage limit, an ineligible account, an ended sign-in (spec 2026-10-06 §5.4). Drives
+// the access cards in the live slot. `kind` stays a plain string so a new backend kind
+// degrades to the generic card instead of failing the whole /live parse.
+export const ProviderAccessSchema = z.object({
+  kind: z.string(),
+  message: z.string(),
+  code: z.string().nullable().default(null),
+  status: z.number().nullable().default(null),
+  requestId: z.string().nullable().default(null),
+});
+export type ProviderAccess = z.infer<typeof ProviderAccessSchema>;
+
+// ── Sign in with ChatGPT (spec 2026-10-06 §5.5). Never carries a token.
+export const ChatGPTAccountSchema = z.object({
+  registrationId: z.string(),
+  label: z.string(),
+  email: z.string().nullable(),
+  name: z.string().nullable(),
+  planEnabled: z.boolean(),
+  signedIn: z.boolean(),
+});
+export type ChatGPTAccount = z.infer<typeof ChatGPTAccountSchema>;
+
+export const ChatGPTSignInSchema = z.object({
+  attemptId: z.string(),
+  state: z.enum(["pending", "succeeded", "failed"]),
+  registrationId: z.string().nullable(),
+  planEnabled: z.boolean().nullable(),
+  firstPlanSignIn: z.boolean(),
+  reason: z.string().nullable(),
+  message: z.string().nullable(),
+});
+export type ChatGPTSignIn = z.infer<typeof ChatGPTSignInSchema>;
+
+export const ChatGPTModelSchema = z.object({ slug: z.string(), displayName: z.string() });
+export type ChatGPTModel = z.infer<typeof ChatGPTModelSchema>;
+
 // A thread's current actionable state — what the UI polls and renders from.
 // Resolved server-side from the thread's active task (GET /chat/threads/{id}/live),
 // so reloads and resume task-id churn self-heal on the next poll.
@@ -544,6 +582,7 @@ export const ThreadLiveStateSchema = z.object({
   turnKind: z.enum(["user", "notice"]).nullable().default(null),
   // A change the host did not stream triggers a transcript reconcile (spec §6).
   messageCount: z.number().default(0),
+  providerAccess: ProviderAccessSchema.nullable().default(null),
 });
 export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 
@@ -573,6 +612,8 @@ export const BackendConfigSchema = z.object({
   provider: z.object({
     backend: z.string(),
     model: z.string(),
+    // The composer shows "Using ChatGPT plan · Manage usage" when true.
+    usesChatgptPlan: z.boolean().default(false),
     contextWindow: z.number().nullable().optional(),
     reasoningEffort: ReasoningEffortSchema.nullable().optional(),
     reasoningEffortNote: z.string().nullable().optional(),
@@ -773,6 +814,14 @@ export interface BackendTaskClient {
   setProvider(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow?: number; reasoningEffort?: ReasoningEffort }): Promise<{ backend: string; model: string; reasoningEffort?: ReasoningEffort | null; reasoningEffortNote?: string | null; reasoningEffortSupport?: EffortSupport }>;
   testContextWindow(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow: number }): Promise<ContextTestResult>;
   listMcpServers(): Promise<McpServerList>;
+  // Sign in with ChatGPT. startChatGPTSignIn's authorizeUrl may carry an ID-token hint:
+  // open it in the system browser, never log it.
+  startChatGPTSignIn(req?: { registrationId?: string; reconsent?: boolean }): Promise<ChatGPTSignIn & { authorizeUrl: string }>;
+  getChatGPTSignIn(attemptId: string): Promise<ChatGPTSignIn>;
+  cancelChatGPTSignIn(attemptId: string): Promise<ChatGPTSignIn>;
+  listChatGPTAccounts(): Promise<ChatGPTAccount[]>;
+  signOutChatGPT(registrationId: string): Promise<{ remoteRevoked: boolean }>;
+  listChatGPTModels(registrationId: string): Promise<ChatGPTModel[]>;
   upsertMcpServer(name: string, entry: Record<string, unknown>, disabled: string[]): Promise<McpServerList>;
   deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
   reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>;

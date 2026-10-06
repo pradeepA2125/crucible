@@ -78,7 +78,8 @@ describe("settings client methods", () => {
       memory_enabled: false, skills_enabled: true, mcp_enabled: true,
       provider: { backend: "gemini", model: "gemini-flash-latest" },
     }).getConfig();
-    expect(res.provider).toEqual({ backend: "gemini", model: "gemini-flash-latest" });
+    expect(res.provider).toEqual({
+      backend: "gemini", model: "gemini-flash-latest", usesChatgptPlan: false });
   });
 
   test("deleteMcpServer and reconnectMcpServer send the disabled list", async () => {

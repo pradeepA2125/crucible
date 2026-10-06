@@ -75,6 +75,12 @@ import {
   type SendChatOptions,
   type SendChatResult,
   type ThreadAttention,
+  ChatGPTAccountSchema,
+  ChatGPTModelSchema,
+  ChatGPTSignInSchema,
+  type ChatGPTAccount,
+  type ChatGPTModel,
+  type ChatGPTSignIn,
 } from "../contracts/task-contracts.js";
 import type { TaskStatus } from "../domain/types.js";
 
@@ -95,6 +101,14 @@ const AUTH_FAILURE_STATUSES = new Set([401, 403, 421]);
 
 /** The backend refused this client (spec §3.5): wrong/missing token, wrong host, or
  * a check that failed before the request was sent. Not retried. */
+/** The provider refused on account grounds (ChatGPT plan: signed out, plan usage off). */
+export class ProviderAccessError extends Error {
+  constructor(readonly kind: string, message: string) {
+    super(message);
+    this.name = "ProviderAccessError";
+  }
+}
+
 export class BackendAuthError extends Error {
   constructor(message: string, readonly status: number | null) {
     super(message);
@@ -838,7 +852,17 @@ export class HttpBackendClient implements BackendTaskClient {
         : null,
       turnKind: raw["turn_kind"] ?? null,
       messageCount: raw["message_count"] ?? 0,
+      providerAccess: HttpBackendClient.toProviderAccess(raw["provider_access"]),
     });
+  }
+
+  private static toProviderAccess(raw: unknown): unknown {
+    if (raw === null || typeof raw !== "object") return null;
+    const a = raw as Record<string, unknown>;
+    return {
+      kind: a["kind"], message: a["message"], code: a["code"] ?? null,
+      status: a["status"] ?? null, requestId: a["request_id"] ?? null,
+    };
   }
 
   async getSessionTranscript(threadId: string, sessionId: string): Promise<SessionTranscript> {
@@ -868,6 +892,7 @@ export class HttpBackendClient implements BackendTaskClient {
     return {
       backend: p["backend"],
       model: p["model"],
+      usesChatgptPlan: p["uses_chatgpt_plan"] ?? false,
       // Absent on an older backend; null when the process has no window configured.
       ...(p["context_window"] !== undefined ? { contextWindow: p["context_window"] } : {}),
       ...(p["reasoning_effort"] !== undefined ? { reasoningEffort: p["reasoning_effort"] } : {}),
@@ -975,6 +1000,74 @@ export class HttpBackendClient implements BackendTaskClient {
   async trustAgentDefinition(path: string, sha256: string): Promise<void> {
     await this.fetchJsonDetail("/v1/agents/trust", {
       method: "POST", body: JSON.stringify({ path, sha256 }) });
+  }
+
+  async startChatGPTSignIn(
+    req: { registrationId?: string; reconsent?: boolean } = {},
+  ): Promise<ChatGPTSignIn & { authorizeUrl: string }> {
+    const raw = await this.fetchJsonDetail("/v1/auth/chatgpt/attempts", {
+      method: "POST",
+      body: JSON.stringify({
+        registration_id: req.registrationId ?? null, reconsent: req.reconsent ?? false }),
+    }) as Record<string, unknown>;
+    return { ...HttpBackendClient.toSignIn(raw), authorizeUrl: String(raw["authorize_url"]) };
+  }
+
+  async getChatGPTSignIn(attemptId: string): Promise<ChatGPTSignIn> {
+    return HttpBackendClient.toSignIn(await this.fetchJsonDetail(
+      `/v1/auth/chatgpt/attempts/${encodeURIComponent(attemptId)}`) as Record<string, unknown>);
+  }
+
+  async cancelChatGPTSignIn(attemptId: string): Promise<ChatGPTSignIn> {
+    return HttpBackendClient.toSignIn(await this.fetchJsonDetail(
+      `/v1/auth/chatgpt/attempts/${encodeURIComponent(attemptId)}/cancel`,
+      { method: "POST" }) as Record<string, unknown>);
+  }
+
+  async listChatGPTAccounts(): Promise<ChatGPTAccount[]> {
+    const raw = await this.fetchJsonDetail("/v1/auth/chatgpt/registrations") as {
+      registrations?: Record<string, unknown>[] };
+    return (raw.registrations ?? []).map((r) => ChatGPTAccountSchema.parse({
+      registrationId: r["registration_id"], label: r["label"], email: r["email"] ?? null,
+      name: r["name"] ?? null, planEnabled: r["plan_enabled"], signedIn: r["signed_in"],
+    }));
+  }
+
+  async signOutChatGPT(registrationId: string): Promise<{ remoteRevoked: boolean }> {
+    const raw = await this.fetchJsonDetail(
+      `/v1/auth/chatgpt/registrations/${encodeURIComponent(registrationId)}/sign-out`,
+      { method: "POST" }) as Record<string, unknown>;
+    return { remoteRevoked: raw["remote_revoked"] === true };
+  }
+
+  /** The account's model catalog. A refusal on account grounds (signed out, plan usage
+   * off) throws ProviderAccessError so the UI can show the right action. */
+  async listChatGPTModels(registrationId: string): Promise<ChatGPTModel[]> {
+    const path = `/v1/auth/chatgpt/registrations/${encodeURIComponent(registrationId)}/models`;
+    const response = await this.fetchFn(`${this.options.baseUrl}${path}`, {
+      method: "POST", headers: { "content-type": "application/json" } });
+    const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok) {
+      const detail = body["detail"];
+      if (detail !== null && typeof detail === "object") {
+        const d = detail as Record<string, unknown>;
+        throw new ProviderAccessError(String(d["kind"]), String(d["message"]));
+      }
+      throw new Error(typeof detail === "string" ? detail
+        : `Backend request failed (${response.status}) for ${path}`);
+    }
+    const models = Array.isArray(body["models"]) ? body["models"] as Record<string, unknown>[] : [];
+    return models.map((m) => ChatGPTModelSchema.parse({
+      slug: m["slug"], displayName: m["display_name"] }));
+  }
+
+  private static toSignIn(raw: Record<string, unknown>): ChatGPTSignIn {
+    return ChatGPTSignInSchema.parse({
+      attemptId: raw["attempt_id"], state: raw["state"],
+      registrationId: raw["registration_id"] ?? null, planEnabled: raw["plan_enabled"] ?? null,
+      firstPlanSignIn: raw["first_plan_sign_in"] ?? false, reason: raw["reason"] ?? null,
+      message: raw["message"] ?? null,
+    });
   }
 
   async listSkills(workspace: string): Promise<SkillSummary[]> {
