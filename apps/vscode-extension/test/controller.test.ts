@@ -1312,6 +1312,29 @@ describe("CrucibleController — command-decision", () => {
     ]);
   });
 
+  test("a lost-race team plan decision is swallowed", async () => {
+    const state = { submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [],
+                    getResultCalls: [], planFeedbackCalls: [] };
+    const errors: string[] = [];
+    const calls: unknown[][] = [];
+    const backend: BackendTaskClient = {
+      ...createStubBackend(state),
+      decideTeamPlan: async (...args: unknown[]) => {
+        calls.push(args);
+        throw Object.assign(new Error("gone"), { status: 404 });
+      },
+    };
+    const controller = new CrucibleController(
+      () => backend, new MemorySessionStore(), createSettings(),
+      createUi({ showError: (m: string) => { errors.push(m); } }),
+      { openDiff: async (_entry: ReviewFileEntry) => {} },
+      () => "2026-05-11T00:00:00.000Z");
+    await controller.decideTeamPlan("chat-1", "g1", "approve");
+    expect(calls).toEqual([["chat-1", "g1", "approve", undefined]]);
+    expect(errors).toEqual([]);
+    controller.dispose();
+  });
+
   test("a gate decision that lost the race (404) is swallowed, not shown as an error", async () => {
     const errors: string[] = [];
     const backend: BackendTaskClient = {

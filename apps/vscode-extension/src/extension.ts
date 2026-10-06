@@ -229,7 +229,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (agentId) => controller.stopAgent(agentId),
     () => controller.stopAllAgents(),
     (teamIds) => controller.setOpenTeams(teamIds),
-    (teamId) => controller.disbandTeam(teamId)
+    (teamId) => controller.disbandTeam(teamId),
+    (threadId, gateId, decision, feedback) =>
+      controller.decideTeamPlan(threadId, gateId, decision, feedback)
   );
 
   const ui: ControllerUI = {

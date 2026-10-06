@@ -141,12 +141,15 @@ export interface ControllerUI {
 
 export interface LiveGateView {
   gateId: string;
-  kind: "command" | "step" | "scope" | "validation" | "mode" | "edit" | "clarify" | "mcp_tool";
+  kind: "command" | "step" | "scope" | "validation" | "mode" | "edit" | "clarify" | "mcp_tool"
+    | "team_plan";
   payload: Record<string, unknown>;
   // The active task for task gates ("task:" ids); the thread for controller gates.
   taskId: string;
   // The sub-agent that raised the gate; null for the main agent.
   agent: { id: string; label: string; name: string } | null;
+  // The team whose card it is (spec v2 §8.5); null for every other gate.
+  team: { id: string; name: string } | null;
 }
 
 export interface LivePlanView {
@@ -735,6 +738,21 @@ export class CrucibleController {
     this.lastLiveSignature = null;
     void this.pollThreadLiveState();
     void this.refreshTeams(threadId);
+  }
+
+  async decideTeamPlan(
+    threadId: string, gateId: string, decision: "approve" | "feedback" | "reject",
+    feedback?: string,
+  ): Promise<void> {
+    try {
+      await this.clientForChat().decideTeamPlan(threadId, gateId, decision, feedback);
+    } catch (err) {
+      if (this.isBenignGateMiss(err)) return;   // the card was already answered or stale
+      this.ui.showError(`Failed to send the plan decision: ${formatError(err)}`);
+      return;
+    }
+    this.lastLiveSignature = null;
+    void this.pollThreadLiveState();
   }
 
   /** Team summaries from the routes (spec §9): thread open, turn end, a team ending. */
@@ -2185,6 +2203,7 @@ export class CrucibleController {
         kind: g.kind,
         payload: g.payload,
         agent: g.agent,
+        team: g.team,
         // Per gate: controller gates have no task (their decisions go to the thread),
         // task gates carry "task:" ids — so a mixed list addresses each correctly.
         taskId: g.gateId.startsWith("task:") ? (live.activeTaskId ?? threadId) : threadId,

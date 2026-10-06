@@ -67,12 +67,16 @@ export interface ToolEventView {
 // ── Live slot views ──────────────────────────────────────────────────────────
 export interface GateAgentView { id: string; label: string; name: string }
 
+export interface GateTeamView { id: string; name: string }
+
 export interface LiveGateView {
   gateId: string;
-  kind: "command" | "scope" | "validation" | "step" | "mode" | "edit" | "clarify" | "mcp_tool" | "doc_write";
+  kind: "command" | "scope" | "validation" | "step" | "mode" | "edit" | "clarify" | "mcp_tool"
+    | "doc_write" | "team_plan";
   taskId: string;
   payload: Record<string, unknown>;  // pending_* payload, snake_case
   agent?: GateAgentView | null;      // the sub-agent that raised it; absent/null = main
+  team?: GateTeamView | null;        // the team whose card it is (spec v2 §8.5)
 }
 
 export interface LivePlanView { taskId: string; planMarkdown: string }
@@ -411,6 +415,9 @@ export type WebviewMessage =
   | { type: "commandDecision"; taskId: string; gateId: string; approve: boolean; remember?: boolean; scope?: string; ruleValue?: string }
   // Controller mcp_tool gate: approve/reject an external MCP tool call (threadId — no task)
   | { type: "mcpDecision"; threadId: string; gateId: string; approve: boolean; remember: boolean }
+  // A team's plan card (spec v2 §8.5): approve / feedback / reject.
+  | { type: "teamPlanDecision"; threadId: string; gateId: string;
+      decision: "approve" | "feedback" | "reject"; feedback?: string }
   // Controller doc_write gate: approve/reject a write_doc file write (threadId — no task)
   | { type: "docDecision"; threadId: string; approve: boolean }
   | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" }

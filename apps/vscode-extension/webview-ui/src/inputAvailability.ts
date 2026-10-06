@@ -53,9 +53,9 @@ export function inputAvailability(
 ): InputAvailability {
   const { inputEnabled, liveStatus, workbar, liveGates, turnActive } = state;
   const turnKind = state.turnKind ?? null;
-  // Composer rules key on the MAIN agent's gates only (spec §6): a background agent's
-  // card waits above without taking the composer away.
-  const mainGates = liveGates.filter((g) => !g.agent);
+  // Composer rules key on the MAIN agent's gates only (spec §6): a background agent's or a
+  // team's card waits above without taking the composer away.
+  const mainGates = liveGates.filter((g) => !g.agent && !g.team);
   const backgroundGates = liveGates.length - mainGates.length;
   const hasGate = (kind: LiveGateView["kind"]) => mainGates.some((g) => g.kind === kind);
   const taskStop = liveStatus !== null && ABORTABLE_STATUSES.has(liveStatus);

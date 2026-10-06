@@ -1,6 +1,6 @@
 import { sig } from "../hooks/useAppState";
 import type {
-  GateAgentView, LiveGateView, LivePlanView, LiveReviewView, LiveErrorView, LiveTodosView,
+  GateAgentView, GateTeamView, LiveGateView, LivePlanView, LiveReviewView, LiveErrorView, LiveTodosView,
   LiveSessionsView, SessionTranscriptView,
 } from "../types";
 import { TodoCard } from "./messages/TodoCard";
@@ -13,6 +13,7 @@ import { ModeGate } from "./messages/gates/ModeGate";
 import { ClarifyGate } from "./messages/gates/ClarifyGate";
 import { EditGate } from "./messages/gates/EditGate";
 import { McpGate } from "./messages/gates/McpGate";
+import { TeamPlanGate } from "./messages/gates/TeamPlanGate";
 import { PlanCard } from "./messages/PlanCard";
 import { ReviewCard } from "./messages/ReviewCard";
 import { ErrorCard } from "./messages/ErrorCard";
@@ -26,22 +27,31 @@ interface GateDispatchProps {
   kind: LiveGateView["kind"];
   payload: Record<string, unknown>;
   agent: GateAgentView | null;
+  team: GateTeamView | null;
 }
 
 /** Routes a live gate to its card; a sub-agent's gate gets an agent chip above it. */
-function GateDispatch({ agent, ...card }: GateDispatchProps) {
-  if (agent === null) return <GateCard {...card} />;
+function GateDispatch({ agent, team, ...card }: GateDispatchProps) {
+  if (agent === null && team === null) return <GateCard {...card} />;
   return (
     <div className="flex flex-col gap-1">
-      <span className="self-start" title={`Raised by sub-agent ${agent.label} (${agent.name})`}>
-        <AgentChip name={agent.name} label={agent.label} />
-      </span>
+      {agent !== null ? (
+        <span className="self-start" title={`Raised by sub-agent ${agent.label} (${agent.name})`}>
+          <AgentChip name={agent.name} label={agent.label} />
+        </span>
+      ) : team !== null && (
+        <span className="self-start rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+          style={{ background: "var(--accent-bg)", color: "var(--color-accent-ink)" }}
+          title={`Raised by team ${team.name}`}>
+          team {team.name}
+        </span>
+      )}
       <GateCard {...card} />
     </div>
   );
 }
 
-function GateCard({ gateId, taskId, kind, payload }: Omit<GateDispatchProps, "agent">) {
+function GateCard({ gateId, taskId, kind, payload }: Omit<GateDispatchProps, "agent" | "team">) {
   switch (kind) {
     case "command":
       return <CommandGate gateId={gateId} taskId={taskId} payload={payload} />;
@@ -59,6 +69,8 @@ function GateCard({ gateId, taskId, kind, payload }: Omit<GateDispatchProps, "ag
       return <EditGate gateId={gateId} taskId={taskId} payload={payload} />;
     case "mcp_tool":
       return <McpGate gateId={gateId} taskId={taskId} payload={payload} />;
+    case "team_plan":
+      return <TeamPlanGate gateId={gateId} taskId={taskId} payload={payload} />;
   }
 }
 
@@ -126,6 +138,7 @@ export function LiveSlot({
           kind={gate.kind}
           payload={gate.payload}
           agent={gate.agent ?? null}
+          team={gate.team ?? null}
         />
       ))}
 

@@ -7,6 +7,7 @@ import { StepGate } from "../components/messages/gates/StepGate";
 import { ModeGate } from "../components/messages/gates/ModeGate";
 import { EditGate } from "../components/messages/gates/EditGate";
 import { McpGate } from "../components/messages/gates/McpGate";
+import { TeamPlanGate } from "../components/messages/gates/TeamPlanGate";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
@@ -577,5 +578,50 @@ describe("McpGate", () => {
     fireEvent.click(screen.getByText("Reject"));
     postMessage.mockClear();
     expect(screen.queryByText("Approve once")).toBeNull();
+  });
+});
+
+describe("TeamPlanGate", () => {
+  const payload = {
+    team_id: "team-1", team_name: "auth", proposal_id: "P3", text: "Add a limiter.",
+    assignments: [{ member: "alice", part: "limiter", files: ["api/limiter.py"] },
+                  { member: "bob", part: "tests", files: [] }],
+    shared_files: ["api/routes.py"],
+  };
+
+  it("shows the plan with its assignments", () => {
+    render(<TeamPlanGate gateId="g1" taskId="thread-1" payload={payload} />);
+    expect(screen.getByText(/Team auth adopted P3/)).toBeInTheDocument();
+    expect(screen.getByText("Add a limiter.")).toBeInTheDocument();
+    expect(screen.getByText(/alice → limiter/)).toBeInTheDocument();
+    expect(screen.getByText(/api\/limiter\.py/)).toBeInTheDocument();
+    expect(screen.getByText(/Shared: api\/routes\.py/)).toBeInTheDocument();
+  });
+
+  it("approves once", () => {
+    render(<TeamPlanGate gateId="g1" taskId="thread-1" payload={payload} />);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getByText("Approved"));
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "teamPlanDecision", threadId: "thread-1",
+                                               gateId: "g1", decision: "approve" });
+  });
+
+  it("sends feedback only with text", () => {
+    render(<TeamPlanGate gateId="g1" taskId="thread-1" payload={payload} />);
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    expect(postMessage).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Feedback for the team"),
+                     { target: { value: "use redis" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    expect(postMessage).toHaveBeenCalledWith({ type: "teamPlanDecision", threadId: "thread-1",
+                                               gateId: "g1", decision: "feedback",
+                                               feedback: "use redis" });
+  });
+
+  it("rejects", () => {
+    render(<TeamPlanGate gateId="g1" taskId="thread-1" payload={payload} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ decision: "reject" }));
   });
 });

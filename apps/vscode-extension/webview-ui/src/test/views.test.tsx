@@ -192,6 +192,16 @@ describe("LiveSlot — returns null when all slots are null", () => {
 // ── 3. inputAvailability — all 5 precedence rules ────────────────────────────
 
 describe("inputAvailability", () => {
+    it("a team gate leaves the composer usable", () => {
+      const r = inputAvailability({
+        inputEnabled: true, liveStatus: null, workbar: null, turnActive: false,
+        liveGates: [{ gateId: "g", kind: "team_plan", taskId: "t", payload: {}, agent: null,
+                      team: { id: "team-1", name: "auth" } }],
+      });
+      // A team's card waits above like a background agent's: usable composer, a pointer.
+      expect(r).toMatchObject({ disabled: false, placeholder: "1 card needs your answer above" });
+    });
+
   it("a pending command or MCP gate during a turn points the composer at the card", () => {
     for (const kind of ["command", "mcp_tool"] as const) {
       const r = inputAvailability({

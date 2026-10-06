@@ -165,7 +165,11 @@ export class ChatPanel {
     private readonly onStopAgent: (agentId: string) => Promise<void> = async () => {},
     private readonly onStopAllAgents: () => Promise<void> = async () => {},
     private readonly onSetOpenTeams: (teamIds: string[]) => void = () => {},
-    private readonly onDisbandTeam: (teamId: string) => Promise<void> = async () => {}
+    private readonly onDisbandTeam: (teamId: string) => Promise<void> = async () => {},
+    private readonly onTeamPlanDecision: (
+      threadId: string, gateId: string, decision: "approve" | "feedback" | "reject",
+      feedback?: string,
+    ) => Promise<void> = async () => {}
   ) {}
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
@@ -350,6 +354,11 @@ export class ChatPanel {
         return;
       } else if (m["type"] === "disbandTeam") {
         p = this.onDisbandTeam(String(m["teamId"] ?? ""));
+      } else if (m["type"] === "teamPlanDecision") {
+        const d = m["decision"];
+        if (d !== "approve" && d !== "feedback" && d !== "reject") return;
+        p = this.onTeamPlanDecision(String(m["threadId"] ?? ""), String(m["gateId"] ?? ""), d,
+                                    typeof m["feedback"] === "string" ? m["feedback"] : undefined);
       } else if (m["type"] === "stopTurn") {
         this.onStopTurn();
         return;
