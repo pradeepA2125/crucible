@@ -76,9 +76,14 @@ def test_approval_needed_and_paused_and_stuck() -> None:
     assert "a card is waiting for the user" in body
     headline, body = milestone_text(_team(phase="PAUSED", paused_reason="budget"), "paused",
                                     {"reason": "budget", "paused_from": "IMPLEMENTING",
-                                     "done": 1, "total": 3})
+                                     "done": 1, "total": 3, "used": 161})
     assert headline == "Team 'auth' paused — its request budget ran out"
     assert "1 of 3 assignments done" in body and "resume_team" in body
+    assert "161 / 160 requests" in body
+    _, deliberating = milestone_text(_team(phase="PAUSED"), "paused",
+                                     {"reason": "budget", "paused_from": "DELIBERATING",
+                                      "done": 0, "total": 0})
+    assert "Paused from DELIBERATING." in deliberating and "assignments" not in deliberating
     _, body = milestone_text(_team(phase="IMPLEMENTING"), "stuck",
                              {"idle": [["alice", "awaiting_peer"], ["bob", "partial"]],
                               "count": 2})

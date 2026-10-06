@@ -59,8 +59,9 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
                "stuck": "it was stuck three times in a row",
                "quorum lost": "fewer than 2 members were left in the quorum"}.get(reason, reason)
         headline = f"Team {name} paused — {why}"
-        details = [f"Paused from {data.get('paused_from')}; "
-                   f"{data.get('done', 0)} of {data.get('total', 0)} assignments done.",
+        progress = (f"; {data.get('done', 0)} of {data.get('total')} assignments done"
+                    if data.get("total") else "")
+        details = [f"Paused from {data.get('paused_from')}{progress}.",
                    "resume_team continues it (only after the user agrees — it spends more "
                    "requests); disband_team ends it."]
     elif kind == "done":
@@ -88,7 +89,9 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
     else:
         headline = f"Team {name} ended — {data.get('reason', team.end_reason or '')}"
         details = []
+    # `used` counts running activations too: the persisted total lags until they end.
+    used = data.get("used", team.requests)
     lines = [headline, f"phase {team.phase} · round {team.round} · "
-             f"{team.requests} / {team.budget} requests", *details,
+             f"{used} / {team.budget} requests", *details,
              "Read more with team_status, or the board in the team window."]
     return headline, "\n".join(lines)

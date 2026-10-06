@@ -285,6 +285,7 @@ class TeamCoordinator:
         elif action.kind == "stuck":
             data["waits"] = {label: sorted(on) for label, on in self._waits.items()}
         elif action.kind == "paused":
+            data["used"] = self._host.team_requests(self._team_id)
             assigned = [m for m in self._state.members.values() if m.assigned]
             data.update(done=sum(m.done for m in assigned), total=len(assigned))
             if data.get("reason") == "transient_burst":
