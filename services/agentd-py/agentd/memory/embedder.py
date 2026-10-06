@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import math
-import threading
 from collections.abc import Callable
 from typing import Any
+
+from agentd.model_loading import MODEL_LOAD_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,6 @@ class Embedder:
         self._encoder = encoder
         self._available = True
         self._model: Any = None  # lazy SentenceTransformer
-        # Guards lazy construction: the background warmup thread (harness.py) and a real
-        # turn's demand-triggered embed() can both race to construct the model the first
-        # time (found live — this was still a crash even after serializing the embedder/
-        # reranker warmup threads against each other, because warmup-vs-real-call was a
-        # SEPARATE unlocked race on the same `if self._model is None` check).
-        self._load_lock = threading.Lock()
 
     @property
     def dim(self) -> int:
@@ -58,7 +53,7 @@ class Embedder:
         if self._encoder is not None:
             return self._encoder(texts)
         if self._model is None:
-            with self._load_lock:
+            with MODEL_LOAD_LOCK:  # shared with every model load — see model_loading
                 if self._model is None:  # re-check: another thread may have won the race
                     from sentence_transformers import SentenceTransformer
                     self._model = SentenceTransformer(self._model_name)

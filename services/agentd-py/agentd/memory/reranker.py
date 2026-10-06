@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-import threading
 from collections.abc import Callable
 from typing import Any
 
 from agentd.memory.models import Memory
+from agentd.model_loading import MODEL_LOAD_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,6 @@ class Reranker:
         self._scorer = scorer
         self._available = True
         self._model: Any = None
-        # See Embedder._load_lock — same warmup-thread-vs-real-call race, same fix.
-        self._load_lock = threading.Lock()
 
     @property
     def available(self) -> bool:
@@ -35,7 +33,7 @@ class Reranker:
         if self._scorer is not None:
             return self._scorer(pairs)
         if self._model is None:
-            with self._load_lock:
+            with MODEL_LOAD_LOCK:  # shared with every model load — see model_loading
                 if self._model is None:
                     from sentence_transformers import CrossEncoder
                     self._model = CrossEncoder(self._model_name)

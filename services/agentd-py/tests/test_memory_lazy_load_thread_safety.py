@@ -12,6 +12,10 @@ crashed again right as the first real chat turn arrived, even though the
 warmup itself completed cleanly and sequentially.
 
 Fix: a lock around the lazy-construct-and-use path in both classes.
+
+Counts only this test's own model name: a real-model warmup daemon thread left behind by an
+earlier test can still be queued on the process-wide MODEL_LOAD_LOCK and, once it gets it,
+import this test's fake module.
 """
 from __future__ import annotations
 
@@ -30,6 +34,8 @@ def test_concurrent_embed_constructs_model_only_once(monkeypatch):
 
     class FakeModel:
         def __init__(self, name):
+            if name != "fake-model":
+                return
             with counting_lock:
                 construct_count["n"] += 1
             time.sleep(0.05)  # widen the race window
@@ -67,6 +73,8 @@ def test_concurrent_rerank_constructs_model_only_once(monkeypatch):
 
     class FakeCrossEncoder:
         def __init__(self, name):
+            if name != "fake-model":
+                return
             with counting_lock:
                 construct_count["n"] += 1
             time.sleep(0.05)

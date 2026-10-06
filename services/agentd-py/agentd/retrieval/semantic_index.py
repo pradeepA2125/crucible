@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agentd.model_loading import MODEL_LOAD_LOCK
 from agentd.retrieval.chunker import CodeChunk, CodeChunker, ScoredChunk
 
 logger = logging.getLogger(__name__)
@@ -226,7 +227,9 @@ class SemanticIndex:
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
-                self._model = SentenceTransformer(self._model_name)
+                with MODEL_LOAD_LOCK:  # shared with every model load — see model_loading
+                    if self._model is None:  # re-check: another thread may have won
+                        self._model = SentenceTransformer(self._model_name)
                 # Update dim from actual model in case it differs from our table
                 get_dim = getattr(
                     self._model, "get_embedding_dimension",
