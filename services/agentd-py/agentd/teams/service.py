@@ -393,9 +393,15 @@ class TeamService:
         lines = [lead]
         if first:
             lines.append(f"Goal: {team.goal}")
-        lines.append("What you post this round reaches the others at the next round. Report "
-                     "when your part of this round is done; your stances can ride on the "
-                     "report.")
+        if team.phase == "DELIBERATING":
+            lines.append("What you post this round reaches the others at the next round. "
+                         "Report when your part of this round is done; your stances can ride "
+                         "on the report.")
+        elif team.phase == "IMPLEMENTING":
+            # Live delivery (spec v2 §8.6): the round wording would tell a member to wait.
+            lines.append("Posts and messages reach the others right away. Report completed when "
+                         "your assignment is done, awaiting_peer with \"waiting_on\": [<label>] "
+                         "when you wait on a member, or partial when you cannot finish.")
         return "\n".join(lines)
 
     def render_delta_posts(

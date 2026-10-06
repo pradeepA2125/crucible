@@ -173,3 +173,15 @@ def test_summary_carries_assignments_and_end(tmp_path: Path) -> None:
     assert alice["assignment"]["part"] == "api" and alice["assignment_done"] is True
     bob = next(m for m in summary["members"] if m["label"] == "bob")
     assert bob["assignment"] is None and bob["assignment_done"] is False
+
+
+def test_delta_header_follows_the_phase(tmp_path: Path) -> None:
+    service, tid, teams, _ = _setup(tmp_path)
+    teams.append_post(tid, author="main", kind="proposal", text="plan", round=0,
+                      payload={"assignments": [], "shared_files": [], "supersedes": []})
+    text, _top = service.render_delta(tid, "alice")
+    assert "reaches the others at the next round" in text
+    teams.update_team(tid, phase="IMPLEMENTING")
+    text, _top = service.render_delta(tid, "alice")
+    assert "next round" not in text
+    assert "reach the others right away" in text and '"waiting_on"' in text
