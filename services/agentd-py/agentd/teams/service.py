@@ -305,11 +305,14 @@ class TeamService:
         return self._store.posts(team_id, since_seq=since_seq, viewer=viewer)
 
     def system_post(self, team_id: str, text: str,
-                    payload: dict[str, Any] | None = None) -> TeamPost:
+                    payload: dict[str, Any] | None = None,
+                    recipient: str | None = None) -> TeamPost:
+        """A system-written post; with a recipient, a note only that member sees."""
         team = self._store.get_team(team_id)
         assert team is not None
         return self._emit(team, self._store.append_post(
-            team_id, author="system", kind="system", text=text, payload=payload))
+            team_id, author="system", kind="system", text=text, payload=payload,
+            recipient=recipient, mentions=[recipient] if recipient else []))
 
     # ── what members and the main agent read ────────────────────────────────
 

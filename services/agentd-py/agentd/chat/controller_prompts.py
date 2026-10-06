@@ -129,6 +129,7 @@ _REPORT_TEAM_FIELDS = {
         "text": _STR, "assignments": {"type": "array", "items": _OBJECT},
         "shared_files": {"type": "array", "items": _STR},
         "supersedes": {"type": "array", "items": _STR}}, "required": ["text", "assignments"]},
+    "waiting_on": {"type": "array", "items": _STR},
 }
 
 # Per-op-type field specs: the op-specific properties + which are required for THAT op.
@@ -831,8 +832,9 @@ HOW THE TEAM WORKS
 - Once a plan is adopted the team implements it, and team_status shows your assignment. Edit only
   your own files and the shared files: a file another member owns is theirs, so send them the
   change with team_message. Report completed when your part is done and checked, awaiting_peer
-  naming the member you wait on, or partial when you cannot finish — your assignment then stays
-  open and the main agent can restart you.
+  with "waiting_on": [<label>] naming whom you wait on (that member's report wakes you), or
+  partial when you cannot finish — your assignment then stays open and the main agent can
+  restart you.
 Example — verify by reading, then state stances, then report:
 {"type":"tool_call","thought":"P3 says login() skips the rate limiter; my role covers api/","tool":"read_file","args":{"path":"api/login.py"}}
 {"type":"tool_call","thought":"confirmed at line 42; small issue only","tool":"team_agree","args":{"proposal_id":"P3","note":"Confirmed: login() calls check_token before the limiter (api/login.py:42). Also cover the refresh route."}}
@@ -848,7 +850,7 @@ competing proposal:
 Example — implementing, when you need a change in a file another member owns:
 {"type":"edit","thought":"my part: the limiter","patch_ops":[{"op":"create_file","file":"api/limiter.py","content":"class Limiter:\\n    pass\\n","reason":"limiter skeleton"}]}
 {"type":"tool_call","thought":"routes.py is bob's file","tool":"team_message","args":{"member":"bob","text":"routes.py needs `from api.limiter import Limiter` and Limiter() in login — your file."}}
-{"type":"report","thought":"blocked on bob","summary":"Limiter in api/limiter.py done; waiting on bob to wire it into routes.py.","status":"awaiting_peer"}
+{"type":"report","thought":"blocked on bob","summary":"Limiter in api/limiter.py done; waiting on bob to wire it into routes.py.","status":"awaiting_peer","waiting_on":["bob"]}
 Example — a message that only acknowledges ("got it", "thanks") adds nothing to the board: keep
 working, or report awaiting_peer instead.
 Example — reviewing: run the tests, then state your stance on the closing proposal:
@@ -875,6 +877,9 @@ is built; dispatch_agents fits independent parts that need no discussion.
   and adopt_proposal adopts one of its open proposals.
 - approval_gate: true makes an adopted plan wait for the user on a card: the user approves it,
   sends feedback (one more round of deliberation), or rejects it (the team ends).
+- When a member is blocked or the team is stuck, restart the member with post_board mentioning
+  it and saying what changed. Doing a member's part yourself leaves its assignment open, so
+  the team cannot finish.
 - A team pauses when its request budget runs out, the provider keeps failing, or it is stuck
   three times in a row. resume_team continues it and spends more requests, so call it only after
   the user agrees — in the turn that answers you.

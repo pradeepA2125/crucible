@@ -96,3 +96,12 @@ def test_done_lists_files() -> None:
     headline, body = milestone_text(_team(phase="DONE"), "done", {"files": ["a.py", "b.py"]})
     assert headline == "Team 'auth' finished its assignments"
     assert "a.py, b.py" in body
+
+
+def test_stuck_body_names_waits_and_how_to_restart() -> None:
+    _, body = milestone_text(_team(phase="IMPLEMENTING"), "stuck", {
+        "idle": [["tests", "awaiting_peer"], ["api", "completed"]], "count": 1,
+        "waits": {"tests": ["api"]}})
+    assert "- tests: awaiting_peer (waiting on api)" in body
+    assert 'post_board mentioning the member, e.g. "@tests' in body
+    assert "leaves its assignment open" in body

@@ -76,6 +76,7 @@ class TeamCoordinator:
         self._last_status: dict[str, str] = {}
         self._files: set[str] = set()        # every finished assignment's files
         self._suppress_wakes = False         # after a transient burst, until the user speaks
+        self._waits: dict[str, set[str]] = {}  # awaiting_peer member → whom it named
 
     @property
     def phase(self) -> str:
@@ -108,7 +109,8 @@ class TeamCoordinator:
         # AWAITING_APPROVAL and PAUSED: an ordinary post, read at the next activation.
 
     def on_report(self, label: str, status: str, stop_reason: str | None, *,
-                  files: tuple[str, ...] | list[str] = (), report: str = "") -> None:
+                  files: tuple[str, ...] | list[str] = (), report: str = "",
+                  waiting_on: tuple[str, ...] | list[str] = ()) -> None:
         self._cancel(f"deadline:{label}")
         self._cancel(f"grace:{label}")
         self._starting.discard(label)
@@ -119,7 +121,13 @@ class TeamCoordinator:
                 # before the forcing took effect reported for real (spec v2 §8.2).
                 stop_reason = sm.BUDGET_STOP
         self._last_status[label] = status
+        if status == "awaiting_peer":
+            self._waits[label] = set(waiting_on)
+        else:
+            self._waits.pop(label, None)
         self._apply(sm.MemberReported(label, status, stop_reason, tuple(files), report))
+        if status != "awaiting_peer" and stop_reason != sm.BUDGET_STOP:
+            self._wake_waiters(label, status)
         self._check_stuck(label)
 
     def on_activation_start(self, label: str) -> None:
@@ -269,6 +277,8 @@ class TeamCoordinator:
             raw = data.get("files")
             data["files"] = sorted(self._files | {str(f) for f in
                                                   (raw if isinstance(raw, list) else [])})
+        elif action.kind == "stuck":
+            data["waits"] = {label: sorted(on) for label, on in self._waits.items()}
         elif action.kind == "paused":
             assigned = [m for m in self._state.members.values() if m.assigned]
             data.update(done=sum(m.done for m in assigned), total=len(assigned))
@@ -387,6 +397,21 @@ class TeamCoordinator:
         part = (member.assignment or {}).get("part", "") if member is not None else ""
         files = ", ".join(action.files) or "none"
         self._svc.system_post(self._team_id, f'● {action.label} finished "{part}" — files: {files}')
+
+    def _wake_waiters(self, label: str, status: str) -> None:
+        """A member that named `label` in its awaiting_peer report is woken when `label`
+        reports — the reply to its wait (found live, 2026-10-06: a finished peer woke
+        nobody, the team went stuck, and the main agent did the waiting member's part)."""
+        if self._state.phase != "IMPLEMENTING":
+            return
+        team = self._team()
+        for waiter in [w for w, on in self._waits.items() if label in on and w != label]:
+            self._waits.pop(waiter, None)
+            post = self._svc.system_post(
+                self._team_id, f"{label} reported {status} — you were waiting on it. Read what "
+                "changed, then continue your part.", recipient=waiter)
+            self._trace.write("wait_answered", waiter=waiter, by=label, status=status)
+            self._host.wake_for_post(team, post)
 
     def _check_stuck(self, reporter: str) -> None:
         """Spec v2 §8.6 step 5. The reporter is excluded from the busy check: on_report runs

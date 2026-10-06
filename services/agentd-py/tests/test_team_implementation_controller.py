@@ -1,10 +1,14 @@
 """A team implements its adopted plan inside the controller (spec v2 §8.5, §8.6, §8.2)."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agentd.chat.models import GateNotFoundError
 from agentd.providers.usage import METER, Usage
+from agentd.subagents.definitions import BUILTIN_AGENTS
+from agentd.teams.tools import TeamMemberSpec
 from agentd.teams.validation import TeamInputError, TeamPlanConflict, TeamPlanInvalid
 from tests.test_team_controller import REPORT, _make, _request, _settle
 
@@ -21,6 +25,10 @@ PARTS = [{"member": "alice", "part": "api", "files": ["a.py"]},
 def _edit(path: str, content: str) -> dict[str, object]:
     return {"type": "edit", "thought": f"write {path}", "patch_ops": [
         {"op": "create_file", "file": path, "content": content, "reason": "part"}]}
+
+
+def _member(label: str) -> TeamMemberSpec:
+    return TeamMemberSpec(label, BUILTIN_AGENTS["general-purpose"])
 
 
 def _quiet(ctrl, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -204,3 +212,33 @@ async def test_kickoff_assignments_are_validated(tmp_path, monkeypatch) -> None:
         await ctrl._create_team(tid, "turn1", _request(kickoff_assignments=[
             {"member": "alice", "part": "cfg", "files": [".crucible/mcp.json"]}]))
     assert store.teams.list_teams(tid) == []
+
+
+@pytest.mark.asyncio
+async def test_a_named_wait_is_answered_when_the_peer_finishes(tmp_path, monkeypatch) -> None:
+    wait_api = {**WAITING, "waiting_on": ["api"]}
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {
+        "api": [AGREE, _edit("a.py", "A\n"), DONE],
+        "tests": [AGREE, wait_api, _edit("b.py", "B\n"), DONE]})
+    _quiet(ctrl, monkeypatch)
+    original = engine.create_controller_step
+
+    async def api_is_slow(*args, **kwargs):  # type: ignore[no-untyped-def]
+        if getattr(kwargs.get("render_ctx"), "agent_label", "") == "api" and \
+                "edit" in (kwargs.get("allowed_types") or []):
+            await asyncio.sleep(0.2)          # tests reaches its wait while api still works
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "create_controller_step", api_is_slow)
+    parts = [{"member": "api", "part": "api", "files": ["a.py"]},
+             {"member": "tests", "part": "tests", "files": ["b.py"]}]
+    team_id = str((await ctrl._create_team(tid, "turn1", _request(
+        members=[_member("api"), _member("tests")], kickoff_assignments=parts)))["team_id"])
+    await _settle(ctrl)
+    team = store.teams.get_team(team_id)
+    assert (team.phase, team.end_reason, team.stuck_count) == ("DONE", "implemented", 0)
+    assert "stuck" not in [n.kind for n in store.unclaimed_notices(tid)]
+    tests_inputs = [h[-1]["content"] for label, h, _, _ in engine.seen
+                    if label == "tests" and h and h[-1].get("role") == "user"]
+    assert any("api reported completed — you were waiting on it" in str(c)
+               for c in tests_inputs)

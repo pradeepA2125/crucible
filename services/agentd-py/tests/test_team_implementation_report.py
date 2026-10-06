@@ -66,18 +66,45 @@ def test_a_reply_clears_the_wait() -> None:
     assert check(COMPLETED, False) == ReportVerdict()
 
 
-def test_awaiting_peer_with_nobody_to_wait_on_is_redirected() -> None:
+def test_awaiting_peer_must_name_whom() -> None:
+    check = ImplementationReport(_store(), "team-1", "alice", ActivationCounters(),
+                                 lambda: set())
+    verdict = check(WAITING, False)
+    assert verdict.message is not None and '"waiting_on": ["bob"]' in verdict.message
+
+
+def test_awaiting_peer_on_a_finished_member_is_redirected() -> None:
     store = _store()
     store.set_assignment_done("team-1", "bob")
     check = ImplementationReport(store, "team-1", "alice", ActivationCounters(), lambda: set())
-    verdict = check(WAITING, False)
-    assert verdict.message is not None and "You are not waiting on anyone" in verdict.message
+    verdict = check({**WAITING, "waiting_on": ["bob"]}, False)
+    assert verdict.message is not None and "bob has already finished its part" in verdict.message
+
+
+def test_awaiting_peer_on_unknown_or_self_is_redirected() -> None:
+    for names in (["carol"], ["alice"]):
+        check = ImplementationReport(_store(), "team-1", "alice", ActivationCounters(),
+                                     lambda: set())
+        verdict = check({**WAITING, "waiting_on": names}, False)
+        assert verdict.message is not None and "waiting_on" in verdict.message
 
 
 def test_awaiting_peer_while_another_member_works_is_accepted() -> None:
     check = ImplementationReport(_store(), "team-1", "alice", ActivationCounters(),
                                  lambda: set())
+    assert check({**WAITING, "waiting_on": ["@Bob"]}, False) == ReportVerdict()
+    assert check.waiting_on == ["bob"]
+
+
+def test_an_unanswered_message_counts_as_a_named_wait() -> None:
+    store = _store()
+    counters = ActivationCounters()
+    sent = store.append_post("team-1", author="alice", kind="post", text="?",
+                             recipient="bob", mentions=["bob"])
+    counters.messaged.append(("bob", sent.seq))
+    check = ImplementationReport(store, "team-1", "alice", counters, lambda: set())
     assert check(WAITING, False) == ReportVerdict()
+    assert check.waiting_on == ["bob"]
 
 
 def test_final_iteration_and_other_phases_pass() -> None:

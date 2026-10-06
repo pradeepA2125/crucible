@@ -443,6 +443,8 @@ class ChatController:
         # One coordinator per live team (spec v2 §8.1). Teams never survive a restart, so
         # nothing is rebuilt at startup: the reap fails them.
         self._coordinators: dict[str, TeamCoordinator] = {}
+        # A member's accepted awaiting_peer wait, from its activation to its report route.
+        self._member_waits: dict[str, list[str]] = {}
         # The turn whose dispatch tree /live reports (spec §11.1) — registered for exactly
         # loop.run's lifetime, like _active_loops.
         self._live_turns: dict[str, str] = {}
@@ -2918,7 +2920,8 @@ class ChatController:
         coordinator = self._coordinators.get(record.team_id)
         if coordinator is not None:
             coordinator.on_report(record.label, result.status, stop_reason,
-                                  files=tuple(result.files_changed), report=result.report)
+                                  files=tuple(result.files_changed), report=result.report,
+                                  waiting_on=self._member_waits.pop(record.agent_id, []))
 
     async def disband_team(self, thread_id: str, team_id: str) -> dict[str, object]:
         """Stop every member, close the board (spec v2 §8.9's DISBANDED)."""
@@ -3169,15 +3172,19 @@ class ChatController:
             stored = {f for i in ids for f in (self._store.get_agent(i) or record).files_changed}
             return sorted(stored | set(log.files_changed_by(ids)))
 
+        impl_check = (
+            ImplementationReport(self._store.teams, membership.team_id, membership.label,
+                                 team_counters, lambda: set(subtree_files()))
+            if membership is not None else None)
         report_check = (
             chain_checks(
-                ImplementationReport(self._store.teams, membership.team_id, membership.label,
-                                     team_counters, lambda: set(subtree_files())),
+                impl_check,
                 ReportFields(self._teams, membership.team_id, membership.label, team_counters,
                              on_dropped=(partial(coordinator.trace_dropped, membership.label)
                                          if coordinator is not None
                                          else (lambda _errors: None))))
-            if membership is not None and self._teams is not None else None)
+            if impl_check is not None and membership is not None and self._teams is not None
+            else None)
 
         def persist_and_meter(history: list[dict[str, object]]) -> None:
             self._store.set_agent_history(ctx.agent_id, history)
@@ -3210,6 +3217,8 @@ class ChatController:
                 status = str((outcome.payload or {}).get("status", "completed"))
                 if status == "awaiting_peer" and membership is None:
                     status = "partial"  # a lone agent has no peer to wait on
+                if status == "awaiting_peer" and impl_check is not None:
+                    self._member_waits[ctx.agent_id] = list(impl_check.waiting_on)
                 report = outcome.text
                 if status == "partial":
                     # The forced-final report: stop the agents it never waited for (§4.2).

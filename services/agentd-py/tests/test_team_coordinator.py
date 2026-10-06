@@ -55,6 +55,8 @@ class _Host:
 
     def wake_for_post(self, team, post) -> None:  # type: ignore[no-untyped-def]
         self.woken.append(post.seq)
+        if post.recipient is not None:
+            self.busy.add(post.recipient)        # like the controller: a woken member runs
 
     def raise_plan_gate(self, team, proposal) -> None:  # type: ignore[no-untyped-def]
         self.gates.append(proposal.proposal_id)
@@ -399,4 +401,34 @@ async def test_posts_wake_only_while_implementing(tmp_path) -> None:
                              mentions=["alice"])
     coord.on_post(post)
     assert host.woken == [post.seq]
+    coord.close()
+
+
+@pytest.mark.asyncio
+async def test_a_named_wait_wakes_the_waiter_instead_of_stuck(tmp_path) -> None:
+    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
+    _adopt_round_one(store, svc, coord)
+    host.busy = {"alice"}                        # alice still working when bob waits on her
+    coord.on_report("bob", "awaiting_peer", None, waiting_on=("alice",))
+    host.busy = {"alice"}                        # alice reports from inside her own task
+    coord.on_report("alice", "completed", None, files=("a.py",))
+    note = store.posts("team-1")[-1]
+    assert (note.author, note.kind, note.recipient) == ("system", "system", "bob")
+    assert note.text.startswith("alice reported completed — you were waiting on it")
+    assert host.woken[-1] == note.seq
+    assert "stuck" not in host.milestones
+    coord.close()
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_member_also_wakes_its_waiters(tmp_path) -> None:
+    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
+    _adopt_round_one(store, svc, coord)
+    host.busy = {"bob"}
+    coord.on_report("alice", "awaiting_peer", None, waiting_on=("bob",))
+    host.busy = {"bob"}
+    coord.on_report("bob", "partial", None, report="blocked on a missing fixture")
+    note = store.posts("team-1")[-1]
+    assert note.recipient == "alice" and note.text.startswith("bob reported partial")
+    assert host.milestones[-1] == "member_blocked"
     coord.close()

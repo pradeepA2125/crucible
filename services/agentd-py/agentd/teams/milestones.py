@@ -35,11 +35,23 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
         headline = f"Team {name} is stuck"
         raw_idle = data.get("idle")
         idle = raw_idle if isinstance(raw_idle, list) else []
+        raw_waits = data.get("waits")
+        waits = raw_waits if isinstance(raw_waits, dict) else {}
+
+        def idle_line(label: str, status: str) -> str:
+            on = waits.get(label)
+            return f"- {label}: {status}" + (f" (waiting on {', '.join(on)})" if on else "")
+        first = next((str(p[0]) for p in idle if isinstance(p, list) and len(p) == 2
+                      and p[1] == "awaiting_peer"), None) or next(
+            (str(p[0]) for p in idle if isinstance(p, list) and len(p) == 2), "member")
         details = ["Nobody is working and assignments are open:",
-                   *[f"- {pair[0]}: {pair[1]}" for pair in idle
-                     if isinstance(pair, list) and len(pair) == 2],
+                   *[idle_line(str(p[0]), str(p[1])) for p in idle
+                     if isinstance(p, list) and len(p) == 2],
                    f"Stuck {data.get('count')} of 3 times in a row (the third pauses the "
-                   "team). post_board to unblock them, or disband_team."]
+                   "team). Restart a member with post_board mentioning the member, e.g. "
+                   f'"@{first} <what changed>; continue your part". Doing a member\'s part '
+                   "yourself leaves its assignment open, so the team cannot finish; "
+                   "disband_team ends it."]
     elif kind == "paused":
         reason = str(data.get("reason", ""))
         why = {"budget": "its request budget ran out",
