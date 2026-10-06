@@ -205,7 +205,8 @@ def _last_view(event: TeamActivity | None) -> dict[str, object] | None:
         return None
     return {"kind": event.kind, "at": event.at.isoformat(), "cause_seq": event.cause_seq,
             "by": event.payload.get("by"), "status": event.payload.get("status"),
-            "activation": event.activation}
+            "activation": event.activation,
+            "waiting_on": event.payload.get("waiting_on") or []}
 
 
 def _team_counts(posts: list[TeamPost], labels: list[str]) -> dict[str, object]:
@@ -1897,7 +1898,8 @@ class ChatController:
         membership = self._store.teams.member_for_agent(handle.agent_id)
         if membership is not None:
             team = self._store.teams.get_team(membership.team_id)
-            if team is not None and team.phase in ("DELIBERATING", "AWAITING_APPROVAL", "PAUSED"):
+            if team is not None and team.phase in (
+                    "DELIBERATING", "AWAITING_APPROVAL", "PAUSED", "REVIEWING"):
                 # Nothing reaches a member mid-round (spec v2 E5), and nothing starts while a
                 # plan waits for approval or the team is paused (§8.2): the next activation's
                 # delta covers the board, and anything else waits in the inbox.
@@ -2977,16 +2979,17 @@ class ChatController:
         team = self._store.teams.get_team(record.team_id)
         in_round = ({"round": team.round}
                     if team is not None and team.phase == "DELIBERATING" else {})
+        waiting_on = self._member_waits.pop(record.agent_id, [])
         self._teams.record(record.team_id, record.label, "wrapped_up",
                            activation=record.activation_count,
                            payload={"status": result.status, "report": report,
                                     "files_changed": list(result.files_changed), **stats,
-                                    **in_round})
+                                    "waiting_on": waiting_on, **in_round})
         coordinator = self._coordinators.get(record.team_id)
         if coordinator is not None:
             coordinator.on_report(record.label, result.status, stop_reason,
                                   files=tuple(result.files_changed), report=result.report,
-                                  waiting_on=self._member_waits.pop(record.agent_id, []))
+                                  waiting_on=waiting_on)
 
     async def disband_team(self, thread_id: str, team_id: str) -> dict[str, object]:
         """Stop every member, close the board (spec v2 §8.9's DISBANDED)."""
@@ -3091,10 +3094,13 @@ class ChatController:
         coordinator = (self._coordinators.get(team_of.team_id)
                        if team_of is not None else None)
         if team_row is not None and team_row.phase != "IMPLEMENTING":
+            reviewing = membership is not None and team_row.phase == "REVIEWING"
             # Edits only where the phase allows them (spec v2 §3.9), recomputed at each
-            # activation start; deliberation activations are capped at 40 iterations (§3.11).
+            # activation start; deliberation activations are capped at 40 iterations and
+            # review activations at 25 (§3.11).
+            cap = 40 if deliberating else 25 if reviewing else ctx.max_iters
             ctx = replace(ctx, allowed_types=tuple(t for t in ctx.allowed_types if t != "edit"),
-                          max_iters=min(ctx.max_iters, 40) if deliberating else ctx.max_iters)
+                          max_iters=min(ctx.max_iters, cap))
             handle.context = ctx
         if membership is not None and activation_input.startswith(TEAM_DELTA):
             assert self._teams is not None

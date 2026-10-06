@@ -36,7 +36,7 @@ def _quiet(ctrl, monkeypatch) -> None:  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.asyncio
-async def test_adoption_runs_implementation_and_ends_implemented(tmp_path, monkeypatch) -> None:
+async def test_adoption_runs_implementation_and_review(tmp_path, monkeypatch) -> None:
     ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {
         "alice": [AGREE, _edit("a.py", "A = 1\n"), DONE],
         "bob": [AGREE, _edit("b.py", "B = 1\n"), DONE]})
@@ -45,7 +45,7 @@ async def test_adoption_runs_implementation_and_ends_implemented(tmp_path, monke
         tid, "turn1", _request(kickoff_assignments=PARTS)))["team_id"])
     await _settle(ctrl)
     team = store.teams.get_team(team_id)
-    assert (team.phase, team.end_reason) == ("DONE", "implemented")
+    assert (team.phase, team.end_reason) == ("DONE", "reviewed")
     ws = tmp_path / "ws"
     assert (ws / "a.py").read_text() == "A = 1\n" and (ws / "b.py").read_text() == "B = 1\n"
     assert [n.kind for n in store.unclaimed_notices(tid)] == ["adopted", "done"]
@@ -190,7 +190,7 @@ async def test_budget_exhaustion_pauses_and_resume_continues(tmp_path, monkeypat
     assert out["budget"] == 50 + 160
     await _settle(ctrl)
     team = store.teams.get_team(team_id)
-    assert (team.phase, team.end_reason) == ("DONE", "implemented")
+    assert (team.phase, team.end_reason) == ("DONE", "reviewed")
     assert (tmp_path / "ws" / "a.py").read_text() == "A\n"
 
 
@@ -236,7 +236,7 @@ async def test_a_named_wait_is_answered_when_the_peer_finishes(tmp_path, monkeyp
         members=[_member("api"), _member("tests")], kickoff_assignments=parts)))["team_id"])
     await _settle(ctrl)
     team = store.teams.get_team(team_id)
-    assert (team.phase, team.end_reason, team.stuck_count) == ("DONE", "implemented", 0)
+    assert (team.phase, team.end_reason, team.stuck_count) == ("DONE", "reviewed", 0)
     assert "stuck" not in [n.kind for n in store.unclaimed_notices(tid)]
     tests_inputs = [h[-1]["content"] for label, h, _, _ in engine.seen
                     if label == "tests" and h and h[-1].get("role") == "user"]
@@ -306,3 +306,45 @@ async def test_main_agent_cannot_edit_a_live_teams_files(tmp_path, monkeypatch) 
     assert ctrl._main_team_rule(tid, "other.py") is None
     await ctrl.disband_team(tid, team_id)
     assert ctrl._main_team_rule(tid, "a.py") is None            # ended teams own nothing
+
+
+@pytest.mark.asyncio
+async def test_missing_review_stance_redirects_then_abstains(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {
+        "alice": [AGREE, _edit("a.py", "A\n"), DONE],
+        "bob": [AGREE, _edit("b.py", "B\n"), DONE]})
+    _quiet(ctrl, monkeypatch)
+    team_id = str((await ctrl._create_team(
+        tid, "turn1", _request(kickoff_assignments=PARTS)))["team_id"])
+    await _settle(ctrl)
+    team = store.teams.get_team(team_id)
+    assert (team.phase, team.end_reason, team.review_cycles) == ("DONE", "reviewed", 1)
+    alice_history = [str(m.get("content")) for label, h, _, _ in engine.seen
+                     if label == "alice" for m in h]
+    assert any(f"no stance on {team.closing_proposal_id}" in c for c in alice_history)
+    done = [n for n in store.unclaimed_notices(tid) if n.kind == "done"][0]
+    assert "Abstained: alice, bob" in done.payload["body"]
+    wraps = [e for e in store.teams.activity(team_id) if e.kind == "wrapped_up"]
+    assert all("waiting_on" in e.payload for e in wraps)
+
+
+@pytest.mark.asyncio
+async def test_reviewers_cannot_edit_and_are_capped(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {
+        "alice": [AGREE, _edit("a.py", "A\n"), DONE],
+        "bob": [AGREE, _edit("b.py", "B\n"), DONE]})
+    _quiet(ctrl, monkeypatch)
+    seen: list[tuple[str, list[str], object]] = []
+    original = engine.create_controller_step
+
+    async def spy(plan_context, *args, **kwargs):  # type: ignore[no-untyped-def]
+        team = store.teams.list_teams(tid)[0] if store.teams.list_teams(tid) else None
+        seen.append((team.phase if team else "", list(kwargs.get("allowed_types") or []),
+                     plan_context.get("max_iters")))
+        return await original(plan_context, *args, **kwargs)
+
+    monkeypatch.setattr(engine, "create_controller_step", spy)
+    await ctrl._create_team(tid, "turn1", _request(kickoff_assignments=PARTS))
+    await _settle(ctrl)
+    review = [(types, cap) for phase, types, cap in seen if phase == "REVIEWING"]
+    assert review and all("edit" not in types and cap == 25 for types, cap in review)
