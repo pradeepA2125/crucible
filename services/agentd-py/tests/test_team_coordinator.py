@@ -24,6 +24,7 @@ class _Host:
         self.forced: list[str] = []
         self.milestones: list[str] = []
         self.deliveries: list[tuple[str, str]] = []
+        self.bodies: list[str] = []
         self.phases: list[str] = []
         self.active: dict[str, float | None] = {}
         self.woken: list[int] = []
@@ -48,6 +49,7 @@ class _Host:
 
     def team_milestone(self, team, kind, headline, body, delivery="wake") -> None:  # type: ignore[no-untyped-def]
         self.milestones.append(kind)
+        self.bodies.append(body)
         self.deliveries.append((kind, delivery))
 
     def team_phase_changed(self, team) -> None:  # type: ignore[no-untyped-def]
@@ -336,6 +338,7 @@ async def test_review_after_implementation_agrees(tmp_path) -> None:
     assert (team.phase, team.end_reason) == ("DONE", "reviewed")
     assert store.get_post("team-1", int(closing[1:])).closed == "reviewed"
     assert host.milestones[-1] == "done"
+    assert "phase DONE" in host.bodies[-1]
     assert any(p.text.startswith(f"Review of {closing}: agree alice, bob")
                for p in store.posts("team-1"))
 

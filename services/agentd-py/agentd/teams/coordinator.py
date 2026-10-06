@@ -301,6 +301,8 @@ class TeamCoordinator:
         if action.kind == "deadlock":
             data["proposals"] = self._evaluation.get("proposals", [])
         elif action.kind == "done":
+            # Written just before End flips the row: the body names the phase it ends in.
+            team = team.model_copy(update={"phase": "DONE"})
             raw = data.get("files")
             data["files"] = sorted(self._files | {str(f) for f in
                                                   (raw if isinstance(raw, list) else [])})
