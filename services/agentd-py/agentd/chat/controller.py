@@ -124,7 +124,7 @@ from agentd.subagents.transcript import AgentTranscript
 from agentd.subagents.vcs_guard import vcs_refusal
 from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
 from agentd.teams.config import team_max_live_per_thread, team_max_wakes, team_round_timeout_s
-from agentd.teams.coordinator import TeamCoordinator
+from agentd.teams.coordinator import Delivery, TeamCoordinator
 from agentd.teams.models import (
     LIVE_TEAM_PHASES,
     TeamActivity,
@@ -2581,13 +2581,13 @@ class ChatController:
 
     # ── CoordinatorHost (spec v2 §8.1) ──────────────────────────────────────
 
-    def start_member(self, team_id: str, label: str) -> None:
+    def start_member(self, team_id: str, label: str, extra: str = "") -> None:
         """Scheduled, never inline: the round's last reporter calls this from inside its own
         finishing activation, which is still active until that task ends (the same rule
         as _on_leftover)."""
-        asyncio.get_running_loop().call_soon(self._start_member_now, team_id, label)
+        asyncio.get_running_loop().call_soon(self._start_member_now, team_id, label, extra)
 
-    def _start_member_now(self, team_id: str, label: str) -> None:
+    def _start_member_now(self, team_id: str, label: str, extra: str = "") -> None:
         assert self._subagents is not None
         team = self._store.teams.get_team(team_id)
         member = self._store.teams.member(team_id, label)
@@ -2597,7 +2597,7 @@ class ChatController:
             logger.warning("[teams] %s of %s still running at its round start", label, team.name)
             return
         handle = self._handle_from_record(team.thread_id, member.agent_id)
-        handle.activation_input = TEAM_DELTA
+        handle.activation_input = TEAM_DELTA + (f"\n\n{extra}" if extra else "")
         self._subagents.enqueue(handle, self._activate)
 
     def _member_handle(self, team_id: str, label: str) -> AgentHandle | None:
@@ -2624,7 +2624,8 @@ class ChatController:
         handle = self._member_handle(team_id, label)
         return active_seconds(handle, datetime.now(UTC)) if handle is not None else None
 
-    def team_milestone(self, team: TeamRecord, kind: str, headline: str, body: str) -> None:
+    def team_milestone(self, team: TeamRecord, kind: str, headline: str, body: str,
+                       delivery: Delivery = "wake") -> None:
         """A team milestone for the main agent (spec v2 §8.8): a wake notice, delivered by
         the same paths as an agent's report (§5.2)."""
         notice = NoticeRecord(
@@ -2632,7 +2633,7 @@ class ChatController:
             source_id=team.team_id, kind=kind,
             payload={"team_name": team.name, "team_id": team.team_id, "headline": headline,
                      "body": body, "phase": team.phase},
-            delivery="wake", created_at=datetime.now(UTC))
+            delivery=delivery, created_at=datetime.now(UTC))
         self._store.insert_notice(notice)
         if team.thread_id in self._active_loops:
             self._main_inbox.setdefault(team.thread_id, []).append(InboxItem(
