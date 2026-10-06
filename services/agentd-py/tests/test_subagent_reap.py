@@ -81,3 +81,19 @@ def test_explicit_subagents_without_the_controller_warns(
     with caplog.at_level(logging.WARNING):
         warn_if_incoherent_flags(logging.getLogger("t"))
     assert not any("CRUCIBLE_SUBAGENTS_ENABLED" in r.message for r in caplog.records)
+
+
+def test_teams_warn_only_when_explicitly_on_without_subagents(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Teams default on: turning sub-agents off must not warn about a flag the user never set.
+    monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "0")
+    monkeypatch.delenv("CRUCIBLE_TEAMS_ENABLED")
+    with caplog.at_level(logging.WARNING):
+        warn_if_incoherent_flags(logging.getLogger("t"))
+    assert not any("CRUCIBLE_TEAMS_ENABLED" in r.message for r in caplog.records)
+    caplog.clear()
+    monkeypatch.setenv("CRUCIBLE_TEAMS_ENABLED", "1")
+    with caplog.at_level(logging.WARNING):
+        warn_if_incoherent_flags(logging.getLogger("t"))
+    assert any("CRUCIBLE_TEAMS_ENABLED" in r.message for r in caplog.records)

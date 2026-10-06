@@ -96,10 +96,13 @@ def test_restart_fails_live_teams(tmp_path: Path) -> None:
     assert teams.get_team(done.team_id).phase == "DONE"
 
 
-def test_flag_default_off_and_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flag_default_on_with_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:
     from agentd.chat.controller_factory import is_teams_enabled
     monkeypatch.delenv("CRUCIBLE_TEAMS_ENABLED", raising=False)
-    assert is_teams_enabled() is False
+    assert is_teams_enabled() is True
+    for off in ("0", "false", "no", "off"):
+        monkeypatch.setenv("CRUCIBLE_TEAMS_ENABLED", off)
+        assert is_teams_enabled() is False
     monkeypatch.setenv("CRUCIBLE_TEAMS_ENABLED", "1")
     assert is_teams_enabled() is True
 

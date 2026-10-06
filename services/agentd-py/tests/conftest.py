@@ -5,7 +5,8 @@ built in a test would offer dispatch_agents, append the SUB-AGENTS teaching bloc
 reads in a write log — changing prompts, tool lists and goldens that have nothing to do
 with sub-agents. So the suite runs with it OFF; sub-agent tests opt in with
 monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "1") (spec §14).
-CRUCIBLE_TEAMS_ENABLED (default off) is forced off for the same reason; team tests opt in.
+CRUCIBLE_TEAMS_ENABLED (default ON since Phase 6) is forced off for the same reason; team tests
+opt in with "1". To test "off", set "0" explicitly: delenv now means the default, which is ON.
 """
 import pytest
 

@@ -59,9 +59,10 @@ def is_subagents_enabled() -> bool:
 
 
 def is_teams_enabled() -> bool:
-    """Agent teams (spec v2 §7–§9). Default OFF while being built; switched on after the
-    live smoke (Phase 6). Requires sub-agents: inert without them."""
-    return os.getenv("CRUCIBLE_TEAMS_ENABLED", "0").strip().lower() in _TRUTHY
+    """Agent teams (spec v2 §7–§9). Default ON since Phase 6 (after the live smoke).
+    Kill-switch: CRUCIBLE_TEAMS_ENABLED=0 (or false/no/off). Requires sub-agents: inert
+    without them."""
+    return os.getenv("CRUCIBLE_TEAMS_ENABLED", "1").strip().lower() in _TRUTHY
 
 
 def is_mcp_enabled() -> bool:
@@ -86,7 +87,8 @@ def warn_if_incoherent_flags(logger: logging.Logger) -> None:
         logger.warning(
             "incoherent flags: CRUCIBLE_SUBAGENTS_ENABLED is on but CRUCIBLE_CHAT_CONTROLLER "
             "is off — sub-agents are controller-only. Set CRUCIBLE_CHAT_CONTROLLER=1.")
-    if is_teams_enabled() and not is_subagents_enabled():
+    explicit_teams = os.getenv("CRUCIBLE_TEAMS_ENABLED", "").strip().lower() in _TRUTHY
+    if explicit_teams and not is_subagents_enabled():
         logger.warning(
             "incoherent flags: CRUCIBLE_TEAMS_ENABLED is on but sub-agents are off — "
             "teams need CRUCIBLE_SUBAGENTS_ENABLED.")
