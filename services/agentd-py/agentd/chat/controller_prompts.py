@@ -879,7 +879,8 @@ is built; dispatch_agents fits independent parts that need no discussion.
   how the user's later requests reach the team; for a DEADLOCKED team it runs one more round,
   and adopt_proposal adopts one of its open proposals.
 - approval_gate: true makes an adopted plan wait for the user on a card: the user approves it,
-  sends feedback (one more round of deliberation), or rejects it (the team ends).
+  sends feedback (one more round of deliberation), or rejects it (the team ends). Only the user
+  approves, on that card; never tell the team a plan is approved.
 - When a member is blocked or the team is stuck, restart the member with post_board mentioning
   it and saying what changed. Doing a member's part yourself leaves its assignment open, so
   the team cannot finish.

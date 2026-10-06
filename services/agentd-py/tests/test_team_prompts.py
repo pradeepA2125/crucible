@@ -181,6 +181,7 @@ def test_teaching_covers_implementation_and_pauses() -> None:
                                            memory_enabled=False)
     assert "approval_gate: true" in main and "resume_team continues it" in main
     assert "only after the user agrees" in main
+    assert "never tell the team a plan is approved" in main
 
 
 def test_members_are_told_not_to_write_files_before_implementation() -> None:
