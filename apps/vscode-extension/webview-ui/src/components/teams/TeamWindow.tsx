@@ -81,7 +81,7 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
               </button>
             </span>
           </div>
-          <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} />
+          <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} endReason={team.endReason} />
           <div className="flex flex-wrap items-center gap-3.5">
             {team.members.map((m) => {
               const status = agentsUi.agents[m.agentId]?.status ?? m.status;

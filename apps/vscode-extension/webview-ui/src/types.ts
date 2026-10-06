@@ -299,6 +299,7 @@ export interface TeamSummaryView {
   openProposals: { id: string; author: string; text: string; stances: Record<string, string> }[];
   usage: { requests: number; budget: number };
   createdAt: string;
+  endReason?: string | null;
   latest?: TeamLatestView | null;
   counts?: TeamCountsView;
   roundProgress?: TeamRoundProgressView | null;

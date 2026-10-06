@@ -46,7 +46,7 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
             Open board
           </button>
         </div>
-        {team.maxRounds > 0 && <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} mini />}
+        {team.maxRounds > 0 && <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} endReason={team.endReason} mini />}
         {progress && (
           <div data-testid="round-progress" className="flex items-center gap-2.5 text-[11px] text-text-2">
             <span>{progress.text}</span>

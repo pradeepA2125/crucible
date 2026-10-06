@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   applyTeamEvent, countsText, isTerminalTeam, latestText, memberPhrase, mergeLiveTeam,
-  roundProgressText, stanceOf, summaryWithEvent, viewFromTeamDetail, waitingOn,
+  roundProgressText, stanceOf, summaryWithEvent, TEAM_TOOLS, teamForPill, viewFromTeamDetail,
+  waitingOn,
 } from "../teams";
 import type { AgentSummaryView, TeamDetailView, TeamPostView, TeamSummaryView } from "../types";
 
@@ -129,5 +130,25 @@ describe("round progress on the card", () => {
     expect(roundProgressText({ round: 2, members: ["alice", "bob"], reported: ["alice"] }, team, agents, now))
       .toEqual({ text: "Round 2 · 1 of 2 reported · waiting on bob (42s)", pct: 50 });
     expect(roundProgressText(null, team, agents, now)).toBeNull();
+  });
+});
+
+describe("team tool pills", () => {
+  const team = (id: string, name: string, createdAt: string) => ({
+    teamId: id, name, goal: "", phase: "DONE", round: 1, maxRounds: 3, pausedReason: null,
+    members: [], openProposals: [], usage: { requests: 0, budget: 0 }, createdAt });
+  const teams = { "team-1": team("team-1", "auth", "2026-10-06T01:00:00Z"),
+                  "team-2": team("team-2", "auth", "2026-10-06T02:00:00Z") };
+  const pill = (tool: string, args: Record<string, unknown>, output?: string) => ({
+    id: 1, tool, args, source: "execution" as const, output, done: true });
+
+  it("resolves by id, by newest name, and by create_team's output", () => {
+    expect(TEAM_TOOLS.has("post_board")).toBe(true);
+    expect(teamForPill(pill("team_status", { team: "team-1" }), teams)?.teamId).toBe("team-1");
+    expect(teamForPill(pill("post_board", { team: "auth" }), teams)?.teamId).toBe("team-2");
+    expect(teamForPill(pill("create_team", {}, '{"team_id": "team-1"}'), teams)?.teamId)
+      .toBe("team-1");
+    expect(teamForPill(pill("read_file", { team: "auth" }), teams)).toBeNull();
+    expect(teamForPill(pill("create_team", {}, "Error: limit"), teams)).toBeNull();
   });
 });

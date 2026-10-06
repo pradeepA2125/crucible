@@ -6,7 +6,9 @@ vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
 import { AgentsContext, type AgentsUi } from "../components/agents/AgentsContext";
 import { MessageRow } from "../components/MessageRow";
+import { PhaseStepper } from "../components/teams/PhaseStepper";
 import { TeamCard } from "../components/teams/TeamCard";
+import { TeamLinks } from "../components/teams/TeamLinks";
 import { TeamsContext, type TeamsUi } from "../components/teams/TeamsContext";
 import type { AgentSummaryView, TeamSummaryView } from "../types";
 
@@ -84,8 +86,37 @@ describe("TeamCard", () => {
 
   it("an adopted (DONE) team ends its road with the plan", () => {
     wrap(<TeamCard teamId="team-1" agentIds={["agent-r"]} />, {
-      teams: { "team-1": { ...TEAM, phase: "DONE" } } });
+      teams: { "team-1": { ...TEAM, phase: "DONE", endReason: "adopted" } } });
     expect(screen.getByTestId("team-card")).toHaveTextContent("Plan adopted");
     expect(screen.getByTestId("team-card")).not.toHaveTextContent("Implementing");
+  });
+});
+
+describe("team links and the stepper", () => {
+  it("opens an ended team's board from a pill", () => {
+    const openTeam = vi.fn();
+    render(
+      <TeamsContext.Provider value={{ teams: { "team-1": { ...TEAM, phase: "DONE" } },
+                                          views: {}, openTeam }}>
+        <TeamLinks events={[
+          { id: 1, tool: "team_status", args: { team: "team-1" }, source: "execution", done: true },
+          { id: 2, tool: "post_board", args: { team: "team-1" }, source: "execution", done: true },
+        ]} />
+      </TeamsContext.Provider>);
+    const buttons = screen.getAllByRole("button", { name: `Open board of ${TEAM.name}` });
+    expect(buttons).toHaveLength(1);                         // one link per team
+    fireEvent.click(buttons[0]);
+    expect(openTeam).toHaveBeenCalledWith("team-1");
+  });
+
+  it("shows the implemented road and pauses", () => {
+    const { rerender } = render(
+      <PhaseStepper phase="DONE" endReason="implemented" round={1} maxRounds={3} />);
+    expect(screen.getByText("Implementing")).toBeInTheDocument();
+    expect(screen.getByText("Done")).toBeInTheDocument();
+    rerender(<PhaseStepper phase="DONE" endReason="adopted" round={1} maxRounds={3} />);
+    expect(screen.getByText("Plan adopted")).toBeInTheDocument();
+    rerender(<PhaseStepper phase="PAUSED" round={1} maxRounds={3} />);
+    expect(screen.getByText("Paused")).toBeInTheDocument();
   });
 });

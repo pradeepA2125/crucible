@@ -4,6 +4,7 @@ import { Avatar } from "../shared/Avatar";
 import { MarkdownContent } from "../shared/MarkdownContent";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { ToolTrack } from "../shared/ToolTrack";
+import { TeamLinks } from "../teams/TeamLinks";
 import { Icon } from "../Icon";
 
 interface Props {
@@ -70,6 +71,7 @@ export function AgentRow({
 
         {/* Tool pills, threaded onto a serpentine track */}
         {pills.length > 0 && <ToolTrack events={pills} />}
+        {pills.length > 0 && <TeamLinks events={pills} />}
 
         {/* Content. Finished messages get the same markdown treatment as
             QAMessage (a turn with pills must not lose answer formatting);

@@ -7,16 +7,20 @@ const INDEX: Record<string, number> = {
 };
 
 /** The road the team travels (spec 2026-10-05 §6/§8). An ended team shows how it ended. */
-export function PhaseStepper({ phase, round, maxRounds, mini = false }: {
-  phase: string; round: number; maxRounds: number; mini?: boolean;
+export function PhaseStepper({ phase, round, maxRounds, endReason = null, mini = false }: {
+  phase: string; round: number; maxRounds: number; endReason?: string | null; mini?: boolean;
 }) {
   const at = INDEX[phase] ?? 1;
-  // In 5A a team reaches DONE only by adopting a plan; 5B restores the full road once
-  // implementation exists.
-  const ended = isTerminalTeam(phase);
+  // A plan adopted with nothing to implement ends after deliberation; an implemented team
+  // walks the whole road (5C adds the review step's own state).
+  const adoptedOnly = phase === "DONE" && endReason === "adopted";
+  const ended = isTerminalTeam(phase) && !(phase === "DONE" && !adoptedOnly);
   const label = (step: string, i: number) =>
     i === 1 && at === 1 && !ended
-      ? (phase === "DEADLOCKED" ? `Deadlocked · round ${round} of ${maxRounds}` : `Deliberating · round ${round} of ${maxRounds}`)
+      ? (phase === "DEADLOCKED" ? `Deadlocked · round ${round} of ${maxRounds}`
+        : phase === "PAUSED" ? "Paused"
+        : phase === "AWAITING_APPROVAL" ? "Awaiting approval"
+        : `Deliberating · round ${round} of ${maxRounds}`)
       : step;
   return (
     <div className={`flex flex-wrap items-center gap-y-1 ${mini ? "text-[10.5px]" : "text-[11px]"}`} aria-label="Phase">
@@ -41,7 +45,7 @@ export function PhaseStepper({ phase, round, maxRounds, mini = false }: {
           <span className={mini ? "mx-1 h-px w-2.5" : "mx-1.5 h-px w-[18px]"} style={{ background: "var(--color-border-strong)" }} />
           <span className="mr-1.5 h-2 w-2 rounded-full" style={{ background: phase === "FAILED" ? "var(--color-red)" : phase === "DONE" ? "var(--color-green)" : "var(--color-text-3)" }} />
           <span style={{ color: phase === "FAILED" ? "var(--color-red)" : phase === "DONE" ? "var(--color-green)" : "var(--color-text-2)", fontWeight: 600 }}>
-            {phase === "FAILED" ? "Failed" : phase === "DONE" ? "Plan adopted" : "Disbanded"}
+            {phase === "FAILED" ? "Failed" : adoptedOnly ? "Plan adopted" : "Disbanded"}
           </span>
         </span>
       )}

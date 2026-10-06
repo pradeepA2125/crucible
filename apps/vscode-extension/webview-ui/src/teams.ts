@@ -2,6 +2,7 @@ import { elapsedMs, formatElapsed, isTerminalAgent } from "./agents";
 import type {
   AgentSummaryView, TeamCountsView, TeamDetailView, TeamEventView, TeamLatestView, TeamLiveView,
   TeamMemberView, TeamPostView, TeamRoundProgressView, TeamSummaryView, TeamViewState,
+  ToolEventView,
 } from "./types";
 
 // Phases a team never leaves (spec v2 §8.2).
@@ -152,4 +153,24 @@ export function teamPhaseText(team: TeamSummaryView): string {
     case "PAUSED": return team.pausedReason ? `Paused — ${team.pausedReason}` : "Paused";
     default: return team.phase.charAt(0) + team.phase.slice(1).toLowerCase();
   }
+}
+
+export const TEAM_TOOLS: ReadonlySet<string> = new Set([
+  "create_team", "post_board", "team_status", "adopt_proposal", "resume_team", "disband_team"]);
+
+/** The team a main-agent tool pill is about, if the thread knows it. */
+export function teamForPill(
+  event: ToolEventView, teams: Record<string, TeamSummaryView>,
+): TeamSummaryView | null {
+  if (!TEAM_TOOLS.has(event.tool)) return null;
+  if (event.tool === "create_team") {
+    const match = /"team_id":\s*"([^"]+)"/.exec(event.output ?? "");
+    return match ? teams[match[1]] ?? null : null;
+  }
+  const ref = typeof event.args.team === "string" ? event.args.team : "";
+  if (ref === "") return null;
+  if (teams[ref]) return teams[ref];
+  const named = Object.values(teams).filter((t) => t.name === ref)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return named[0] ?? null;
 }
