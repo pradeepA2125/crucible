@@ -218,11 +218,11 @@ def evaluate_review(posts: list[TeamPost], closing_id: str,
     stances = {r: latest[r].kind if r in latest else "none" for r in reviewers}
     objections = []
     for label in reviewers:
-        post = latest.get(label)
-        if post is not None and post.kind == "object":
-            evidence = post.payload.get("evidence") or {}
+        stance = latest.get(label)
+        if stance is not None and stance.kind == "object":
+            evidence = stance.payload.get("evidence") or {}
             files = tuple(str(f) for f in (evidence.get("files") or []))
-            objections.append(Objection(label, post.seq, post.text, files))
+            objections.append(Objection(label, stance.seq, stance.text, files))
     return ReviewOutcome(stances, objections, [r for r in reviewers if stances[r] == "none"])
 
 
@@ -247,7 +247,8 @@ def route_objection(
             return Routing(objection, None, False, f"{path} is outside the approved plan")
     if not can_edit(objection.label):
         return Routing(objection, None, False, f"{objection.label} cannot edit files")
-    return Routing(objection, objection.label, True, "nobody owns the files: the objector fixes them")
+    return Routing(objection, objection.label, True,
+                   "nobody owns the files: the objector fixes them")
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -396,7 +397,13 @@ def team_review_cycles() -> int:
 
 `agentd/teams/state_machine.py`:
 
-1. Module docstring: replace its last sentence with `5C adds review: the last assignment done opens a closing proposal, and fixes run until the team agrees or the cycles run out.`
+1. Module docstring:
+
+```python
+"""The team's rules (spec v2 §8.1–§8.7) — pure, synchronous, no I/O. The coordinator feeds
+events in and executes the actions out. 5C adds review: the last assignment done opens a
+closing proposal, and fixes run until the team agrees or the cycles run out."""
+```
 2. `TeamState` gains, after `pending_assignees`:
 
 ```python
@@ -465,7 +472,13 @@ def _finish(state: TeamState, reason: str) -> list[Action]:
     return [Milestone("done", {"reason": reason, "files": []}), End("DONE", reason)]
 ```
 
-and in `_resume` and `_revive` replace `_all_done(state, [])` with `[OpenReview(state.review_cycle + 1)]` (in `_resume`: `return [*actions, OpenReview(state.review_cycle + 1)]`; in `_revive`: `*([ResumeMembers(owing)] if owing else [OpenReview(state.review_cycle + 1)])`).
+and replace the two remaining `_all_done(state, [])` uses. In `_resume`: `return [*actions, OpenReview(state.review_cycle + 1)]`. In `_revive`'s `IMPLEMENTING` branch (typed, so mypy accepts the mixed list):
+
+```python
+        owing = _owing(state, phase)
+        follow: Action = ResumeMembers(owing) if owing else OpenReview(state.review_cycle + 1)
+        return [*restored, EnterPhase(phase, state.round, "revived"), follow]
+```
 
 6. `_owing`: treat `REVIEWING` like `DELIBERATING`:
 
@@ -548,7 +561,7 @@ and at the end of `apply` route review reports:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_team_state_machine.py --color=no --timeout=120 > /tmp/sm.txt 2>&1; echo exit=$?; tail -5 /tmp/sm.txt`
-Expected: PASS.
+Expected: PASS. Five tests elsewhere assert 5B's ending (`DONE`, `implemented`) and stay red until the coordinator runs the review: `test_team_coordinator.py::test_assignments_done_end_implemented` (replaced in Task 4) and four in `test_team_implementation_controller.py` (updated in Task 5). Run the whole `tests/test_team_*.py` set after Task 5.
 
 - [ ] **Step 5: Commit**
 
@@ -630,7 +643,8 @@ Expected: FAIL — `AttributeError: 'TeamService' object has no attribute 'closi
         raw_abstained = data.get("abstained")
         abstained = [str(a) for a in raw_abstained] if isinstance(raw_abstained, list) else []
         raw_open = data.get("unresolved")
-        unresolved = [u for u in raw_open if isinstance(u, dict)] if isinstance(raw_open, list) else []
+        unresolved = ([u for u in raw_open if isinstance(u, dict)]
+                      if isinstance(raw_open, list) else [])
         details = [f"{data.get('adopted')} implemented; closing proposal {data.get('closing')} "
                    f"(review cycle {data.get('cycle')})."]
         if abstained:
@@ -1112,7 +1126,12 @@ In `agentd/chat/controller.py`:
                           max_iters=min(ctx.max_iters, cap))
 ```
 
-2. In `_on_leftover`, add `"REVIEWING"` to the kept phases: `team.phase in ("DELIBERATING", "AWAITING_APPROVAL", "PAUSED", "REVIEWING")`.
+2. In `_on_leftover`, add `"REVIEWING"` to the kept phases:
+
+```python
+            if team is not None and team.phase in (
+                    "DELIBERATING", "AWAITING_APPROVAL", "PAUSED", "REVIEWING"):
+```
 3. In `_team_member_reported`, the `wrapped_up` payload gains the named wait — read it before `on_report` pops it:
 
 ```python
@@ -1125,7 +1144,7 @@ In `agentd/chat/controller.py`:
 ```
 
 and pass `waiting_on=waiting_on` to `coordinator.on_report(...)` (instead of popping there).
-4. `_last_view` adds `"waiting_on": event.payload.get("waiting_on") or []`.
+4. `_last_view` adds `"waiting_on": event.payload.get("waiting_on") or []` (on its own line — the dict is at the 100-column limit).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1359,7 +1378,7 @@ Expected: FAIL — `waitingOn` undefined, `edits` undefined, missing test ids.
 
 - [ ] **Step 3: Implement**
 
-editor-client `task-contracts.ts`: `TeamMemberLastSchema` gains `waitingOn: z.array(z.string()).default([]),`; the summary member `assignment` object gains `fix: z.array(z.string()).optional(),`. `http-backend-client.ts` `toTeamLive`'s `last` mapping gains `waitingOn: last["waiting_on"] ?? [],`. Then `npm run -w @crucible/editor-client build`.
+editor-client `task-contracts.ts`: `TeamMemberLastSchema` gains `waitingOn: z.array(z.string()).default([]),` (and `test/team-activity-contracts.test.ts`'s exact `members[0].last` expectation gains `waitingOn: []`); the summary member `assignment` object gains `fix: z.array(z.string()).optional(),`. `http-backend-client.ts` `toTeamLive`'s `last` mapping gains `waitingOn: last["waiting_on"] ?? [],`. Then `npm run -w @crucible/editor-client build`.
 
 webview `types.ts`: `TeamMemberLastView` gains `waitingOn?: string[];`; `TeamMemberView` gains `assignment?: { member: string; part: string; files: string[]; fix?: string[] } | null;` and `assignmentDone?: boolean;`.
 
