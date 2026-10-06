@@ -35,8 +35,10 @@ from agentd.providers.plan_access import (
     TRANSIENT_PLAN_CODES,
     PlanNotEligible,
     PlanSessionInvalid,
+    PlanUnsupportedCapability,
     classify_plan_error,
 )
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 from agentd.providers.token_progress import ProgressTicker, approx_prompt_tokens, int_or_none
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,12 @@ _THINKING_EVENTS = frozenset({
     "response.reasoning_summary_text.delta", "response.reasoning_text.delta",
 })
 _SCHEMA_NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
+# Our rungs to the Responses API's values. OFF is "none": the live plan route lists
+# none/low/medium/high/xhigh/max for gpt-5.6 models.
+_EFFORT_WIRE: dict[ReasoningEffort, str] = {
+    ReasoningEffort.OFF: "none", ReasoningEffort.LOW: "low",
+    ReasoningEffort.MEDIUM: "medium", ReasoningEffort.HIGH: "high", ReasoningEffort.MAX: "max",
+}
 
 
 class BearerSource(Protocol):
@@ -105,6 +113,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         self._max_retries = max(0, max_retries)
         self._retry_base_delay = retry_base_delay
         self._fixed_responses = responses_client
+        self._effort: ReasoningEffort | None = None
+        self._effort_rejected: dict[ReasoningEffort, str] = {}
         self._client_token: str | None = None
         self._client_responses: Any = None
         if bearer is not None:
@@ -115,6 +125,33 @@ class OpenAIJsonTransport(ModelJsonTransport):
                 msg = "OPENAI_API_KEY is required for OpenAIJsonTransport"
                 raise RuntimeError(msg)
             self._bearer = StaticBearer(resolved or "")
+
+    # ------------------------------------------------------------ reasoning effort
+
+    def set_reasoning_effort(self, level: ReasoningEffort | None) -> None:
+        """The effective rung (already clamped by the runtime). None sends no field."""
+        self._effort = level
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        """Every rung UNKNOWN until the endpoint proves otherwise: which rungs a model
+        takes varies per model (live: gpt-5.6 rejects 'minimal' but takes
+        none…max), so only a probative rejection marks one unsupported."""
+        return EffortSupport(unsupported=dict(self._effort_rejected))
+
+    def _note_effort_rejection(self, exc: Exception, body: dict[str, Any]) -> bool:
+        """A 400 naming `reasoning.effort` proves THIS rung is unsupported: mark it,
+        drop the field for this process, and let the caller retry once without it."""
+        if self._effort is None or "reasoning" not in body:
+            return False
+        if getattr(exc, "status_code", None) != 400:
+            return False
+        if getattr(exc, "param", None) != "reasoning.effort":
+            return False
+        self._effort_rejected[self._effort] = f"this model rejected '{self._effort}'"
+        logger.warning("[effort] OpenAI rejected reasoning effort %s; dropping it", self._effort)
+        self._effort = None
+        body.pop("reasoning", None)
+        return True
 
     # ------------------------------------------------------------ public API
 
@@ -175,6 +212,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         }
         if self._max_output_tokens is not None and not self._plan_route:
             body["max_output_tokens"] = self._max_output_tokens
+        if self._effort is not None:
+            body["reasoning"] = {"effort": _EFFORT_WIRE[self._effort]}
         return body
 
     async def _responses(self) -> Any:
@@ -213,6 +252,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
                     continue
                 raise self._unauthorized_error(exc.cause) from exc.cause
             except Exception as exc:
+                if self._note_effort_rejection(exc, body):
+                    continue
                 if not _is_transient(exc) or attempt >= self._max_retries:
                     raise
                 attempt += 1
@@ -250,14 +291,19 @@ class OpenAIJsonTransport(ModelJsonTransport):
         except openai.APIStatusError as exc:
             raise self._status_error(exc) from exc
 
-        parts: list[str] = []
+        texts: dict[str | None, list[str]] = {}  # per output item: never join items
+        phases: dict[str | None, str | None] = {}
         completed: Any = None
         try:
             async for event in _within_deadline(stream, self._stream_timeout_sec):
                 kind = getattr(event, "type", "")
                 if kind == "response.output_text.delta":
-                    parts.append(event.delta)
+                    texts.setdefault(getattr(event, "item_id", None), []).append(event.delta)
                     ticker.output(event.delta)
+                elif kind == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if getattr(item, "type", None) == "message":
+                        phases[getattr(item, "id", None)] = getattr(item, "phase", None)
                 elif kind in _THINKING_EVENTS:
                     if callable(on_thinking):
                         on_thinking(event.delta)
@@ -290,7 +336,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         if on_usage is not None and input_tokens is not None and output_tokens is not None:
             on_usage(input_tokens, output_tokens)
 
-        text = "".join(parts)
+        text = _answer_text(texts, phases)
         if not text.strip():
             msg = "OpenAI response contained no output_text"
             raise RuntimeError(msg)
@@ -311,6 +357,10 @@ class OpenAIJsonTransport(ModelJsonTransport):
             return TransientTransportError(f"{code}: {message}")
         if exc.status_code == 401:
             return _Unauthorized(exc)
+        if self._plan_route and exc.status_code == 400 and code is None and "detail" in body:
+            # A direct-route admission refusal ({"detail": …}), e.g. a model this account
+            # can't use. Input-determined: a retry or a correction message can't fix it.
+            return PlanUnsupportedCapability(message, status=400, request_id=exc.request_id)
         if self._plan_route and exc.status_code == 403:
             # A direct-route admission refusal ({"detail": …}): policy or region.
             return PlanNotEligible(message, status=403, request_id=exc.request_id)
@@ -323,6 +373,21 @@ class OpenAIJsonTransport(ModelJsonTransport):
         message = str(body.get("message") or body.get("detail") or exc.message)
         return PlanSessionInvalid(message, status=401, request_id=exc.request_id,
                                   code=getattr(exc, "code", None))
+
+
+def _answer_text(texts: dict[str | None, list[str]], phases: dict[str | None, str | None]) -> str:
+    """The reply text: the `final_answer` message, else the last message.
+
+    Measured on the ChatGPT plan route: a reasoning model can emit a `commentary`
+    message holding the whole answer, then the `final_answer` message with it again,
+    and `response.completed` carries no output to read instead. Joining every delta
+    produced `{…}{…}`, which no JSON parser accepts.
+    """
+    if not texts:
+        return ""
+    finals = [item for item, phase in phases.items() if phase == "final_answer" and item in texts]
+    chosen = finals[-1] if finals else list(texts)[-1]
+    return "".join(texts[chosen])
 
 
 def _failed_error(error: Any) -> Exception:

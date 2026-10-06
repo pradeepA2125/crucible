@@ -179,6 +179,51 @@ async def test_progress_thinking_and_usage_are_reported() -> None:
     assert usage == [(40, 9)]
 
 
+def _item_delta(item_id: str, text: str) -> SimpleNamespace:
+    return SimpleNamespace(type="response.output_text.delta", delta=text, item_id=item_id)
+
+
+def _message_done(item_id: str, phase: str | None) -> SimpleNamespace:
+    return SimpleNamespace(type="response.output_item.done", item=SimpleNamespace(
+        type="message", id=item_id, phase=phase))
+
+
+@pytest.mark.asyncio
+async def test_a_commentary_message_before_the_final_answer_is_not_joined_into_it() -> None:
+    # Measured live on the ChatGPT plan route (gpt-5.6-terra, 2 of 6 runs): a reasoning
+    # model emits a `commentary` message carrying the full JSON, then the
+    # `final_answer` message with it again. Joining every delta gave `{…}{…}`.
+    commentary, final = '{"ok": false}', '{"ok": true}'
+    fake = FakeResponses([
+        _item_delta("msg_c", commentary), _message_done("msg_c", "commentary"),
+        _item_delta("msg_f", final[:5]), _item_delta("msg_f", final[5:]),
+        _message_done("msg_f", "final_answer"), _completed()])
+    assert await _transport(fake, plan_route=True).generate_json(
+        model="m", schema_name="s", schema=SCHEMA, system_instructions="",
+        user_payload={}) == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_without_phases_the_last_message_wins() -> None:
+    fake = FakeResponses([
+        _item_delta("a", "first"), _message_done("a", None),
+        _item_delta("b", "second"), _message_done("b", None), _completed()])
+    assert await _transport(fake).generate_text(
+        model="m", system_instructions="", user_payload={}) == "second"
+
+
+@pytest.mark.asyncio
+async def test_a_plan_route_admission_refusal_is_an_unsupported_capability() -> None:
+    # Measured live: an unknown model is refused before the stream with a bare
+    # {"detail": …} body. Retrying or correcting the model can't fix the request.
+    fake = FakeResponses(_status_error(400, {"detail": "The 'x' model is not supported "
+                                                       "when using Codex with a ChatGPT account."}))
+    with pytest.raises(PlanUnsupportedCapability, match="model is not supported"):
+        await _transport(fake, plan_route=True).generate_text(
+            model="x", system_instructions="", user_payload={})
+    assert len(fake.calls) == 1
+
+
 # ---------------------------------------------------------------- terminal events
 
 
@@ -305,3 +350,59 @@ async def test_static_bearer_never_refreshes() -> None:
     bearer = StaticBearer("sk-x")
     assert await bearer.bearer() == "sk-x"
     assert await bearer.on_unauthorized() is False
+
+
+# ---------------------------------------------------------------- reasoning effort
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("level", "wire"), [
+    ("off", "none"), ("low", "low"), ("medium", "medium"), ("high", "high"), ("max", "max")])
+async def test_effort_rides_the_request_on_both_routes(level: str, wire: str) -> None:
+    from agentd.providers.reasoning_effort import ReasoningEffort
+
+    fake = FakeResponses([_delta("hi"), _completed()])
+    transport = _transport(fake, plan_route=True)
+    transport.set_reasoning_effort(ReasoningEffort(level))
+    await transport.generate_text(model="m", system_instructions="", user_payload={})
+    assert fake.calls[0]["reasoning"] == {"effort": wire}
+
+
+@pytest.mark.asyncio
+async def test_no_effort_sends_no_reasoning_field() -> None:
+    fake = FakeResponses([_delta("hi"), _completed()])
+    await _transport(fake).generate_text(model="m", system_instructions="", user_payload={})
+    assert "reasoning" not in fake.calls[0]
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_rung_is_marked_and_the_call_retried_without_it() -> None:
+    from agentd.providers.reasoning_effort import ReasoningEffort
+
+    # The live plan route's answer to an unsupported rung (spike, gpt-5.6-terra).
+    rejection = _status_error(400, {"error": {
+        "message": "Unsupported value: 'max' is not supported with the 'm' model.",
+        "type": "invalid_request_error", "param": "reasoning.effort",
+        "code": "unsupported_value"}})
+    fake = FakeResponses(rejection, [_delta("hi"), _completed()])
+    transport = _transport(fake, plan_route=True)
+    transport.set_reasoning_effort(ReasoningEffort.MAX)
+    assert await transport.generate_text(model="m", system_instructions="",
+                                         user_payload={}) == "hi"
+    assert "reasoning" not in fake.calls[1]
+    support = await transport.reasoning_effort_support("m")
+    assert support.state(ReasoningEffort.MAX) == "unsupported"
+    assert support.state(ReasoningEffort.HIGH) == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_other_400s_never_mark_a_rung() -> None:
+    from agentd.providers.reasoning_effort import ReasoningEffort
+
+    fake = FakeResponses(_status_error(400, {"error": {
+        "message": "bad schema", "param": "text.format.schema", "code": "invalid_json_schema"}}))
+    transport = _transport(fake)
+    transport.set_reasoning_effort(ReasoningEffort.HIGH)
+    with pytest.raises(openai.APIStatusError):
+        await transport.generate_text(model="m", system_instructions="", user_payload={})
+    assert (await transport.reasoning_effort_support("m")).unsupported == {}
