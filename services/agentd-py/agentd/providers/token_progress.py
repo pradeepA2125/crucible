@@ -51,7 +51,9 @@ class ProgressTicker:
         self._input_n = input_n
         self._thinking_chars = 0
         self._output_chars = 0
-        self._last_emit = 0.0
+        # None until the first tick: monotonic() counts from boot, so a 0.0 here throttled
+        # the first tick on a host up for less than the interval.
+        self._last_emit: float | None = None
 
     def start(self) -> None:
         """Report the prompt size before any delta arrives.
@@ -103,7 +105,7 @@ class ProgressTicker:
         if self._on_progress is None:
             return
         now = time.monotonic()
-        if now - self._last_emit < self._interval:
+        if self._last_emit is not None and now - self._last_emit < self._interval:
             return
         self._last_emit = now
         self._on_progress(

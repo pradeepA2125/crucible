@@ -4,7 +4,6 @@ Four transports (gemini, groq, turboquant, watsonx) each have a streaming loop t
 already separates reasoning from output but reported no counts. Rather than paste
 the same char-accumulate/throttle/final-exact-tick into each, they share this.
 """
-import pytest
 
 from agentd.providers.token_progress import ProgressTicker
 
@@ -41,6 +40,17 @@ def test_first_tick_is_immediate_then_the_rest_are_throttled():
     assert len(seen) == 1, "subsequent ticks must be throttled"
     t.finish()
     assert len(seen) == 2, "the closing tick must always fire"
+
+
+def test_first_tick_is_immediate_on_a_freshly_booted_host(monkeypatch):
+    """time.monotonic() counts from boot: on a CI VM up for less than the interval, a
+    last-emit of 0.0 throttled even the first tick (failed the v0.6.0 release run)."""
+    import agentd.providers.token_progress as tp
+    monkeypatch.setattr(tp.time, "monotonic", lambda: 5.0)
+    seen, cb = _rec()
+    t = ProgressTicker(cb, interval_sec=1000.0)
+    t.thinking("x" * 400)
+    assert len(seen) == 1
 
 
 def test_estimates_are_marked_inexact_and_provider_counts_exact():

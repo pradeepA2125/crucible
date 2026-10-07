@@ -3,11 +3,15 @@ live run 4 got hits from .crucible/state/agentd.log, noise in the agent's contex
 
 rg skips hidden directories on its own, but a positive -g glob overrides that: the
 run's path_filter "*.*" matches the directory name ".crucible" itself."""
+import shutil
 from pathlib import Path
 
 import pytest
 
 from agentd.tools.search import search_code
+
+# search_code shells out to ripgrep; the GitHub runner has none installed.
+pytestmark = pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep (rg) not installed")
 
 
 async def _search(root: Path, path_filter: str | None = None) -> str:
