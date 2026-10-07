@@ -68,6 +68,11 @@ class TeamStore:
                 label TEXT NOT NULL, kind TEXT NOT NULL, activation INTEGER,
                 cause_seq INTEGER, payload_json TEXT NOT NULL DEFAULT '{}',
                 PRIMARY KEY (team_id, aseq))""")
+        # Added after the table shipped: databases created before it gain the column.
+        existing = {r[1] for r in self._conn.execute("PRAGMA table_info(teams)")}
+        if "cached_tokens" not in existing:
+            self._conn.execute(
+                "ALTER TABLE teams ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0")
         self._conn.commit()
 
     # ── teams ────────────────────────────────────────────────────────────────
@@ -241,8 +246,10 @@ class TeamStore:
         """A team's usage is the sum over its members and their helpers (spec §3.11)."""
         self._conn.execute(
             "UPDATE teams SET requests = requests + ?, prompt_tokens = prompt_tokens + ?, "
-            "completion_tokens = completion_tokens + ? WHERE team_id = ?",
-            (usage.requests, usage.prompt_tokens, usage.completion_tokens, team_id))
+            "completion_tokens = completion_tokens + ?, cached_tokens = cached_tokens + ? "
+            "WHERE team_id = ?",
+            (usage.requests, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens,
+             team_id))
         self._conn.commit()
 
     def append_post(

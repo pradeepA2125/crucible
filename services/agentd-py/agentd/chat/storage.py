@@ -40,9 +40,10 @@ _AGENT_V2_COLUMNS: tuple[tuple[str, str], ...] = (
     ("prompt_tokens", "INTEGER NOT NULL DEFAULT 0"),
     ("completion_tokens", "INTEGER NOT NULL DEFAULT 0"),
     ("limiter_wait_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("cached_tokens", "INTEGER NOT NULL DEFAULT 0"),
 )
 _USAGE_COLUMNS: tuple[str, ...] = (
-    "requests", "prompt_tokens", "completion_tokens", "limiter_wait_ms")
+    "requests", "prompt_tokens", "completion_tokens", "limiter_wait_ms", "cached_tokens")
 
 
 class ChatThreadStore:
@@ -1060,30 +1061,30 @@ class ChatThreadStore:
     def add_agent_usage(self, agent_id: str, usage: Usage) -> None:
         self._conn.execute(
             "UPDATE chat_agents SET requests = requests + ?, prompt_tokens = prompt_tokens + ?, "
-            "completion_tokens = completion_tokens + ?, limiter_wait_ms = limiter_wait_ms + ? "
-            "WHERE agent_id = ?",
+            "completion_tokens = completion_tokens + ?, limiter_wait_ms = limiter_wait_ms + ?, "
+            "cached_tokens = cached_tokens + ? WHERE agent_id = ?",
             (usage.requests, usage.prompt_tokens, usage.completion_tokens, usage.wait_ms,
-             agent_id))
+             usage.cached_tokens, agent_id))
         self._conn.commit()
 
     def add_thread_usage(self, thread_id: str, usage: Usage) -> None:
         self._conn.execute(
             "UPDATE chat_threads SET requests = requests + ?, prompt_tokens = prompt_tokens + ?, "
-            "completion_tokens = completion_tokens + ?, limiter_wait_ms = limiter_wait_ms + ? "
-            "WHERE thread_id = ?",
+            "completion_tokens = completion_tokens + ?, limiter_wait_ms = limiter_wait_ms + ?, "
+            "cached_tokens = cached_tokens + ? WHERE thread_id = ?",
             (usage.requests, usage.prompt_tokens, usage.completion_tokens, usage.wait_ms,
-             thread_id))
+             usage.cached_tokens, thread_id))
         self._conn.commit()
 
     def thread_usage(self, thread_id: str) -> Usage:
         row = self._conn.execute(
-            "SELECT requests, prompt_tokens, completion_tokens, limiter_wait_ms "
+            "SELECT requests, prompt_tokens, completion_tokens, limiter_wait_ms, cached_tokens "
             "FROM chat_threads WHERE thread_id = ?", (thread_id,)).fetchone()
         if row is None:
             return Usage()
         return Usage(requests=row["requests"], prompt_tokens=row["prompt_tokens"],
                      completion_tokens=row["completion_tokens"],
-                     wait_ms=row["limiter_wait_ms"])
+                     wait_ms=row["limiter_wait_ms"], cached_tokens=row["cached_tokens"])
 
     def set_agent_inherited(self, agent_id: str, inherited: dict[str, bool]) -> None:
         self._conn.execute(
@@ -1139,7 +1140,7 @@ class ChatThreadStore:
             activation_ended_at=when(row["activation_ended_at"]),
             requests=row["requests"], prompt_tokens=row["prompt_tokens"],
             completion_tokens=row["completion_tokens"],
-            limiter_wait_ms=row["limiter_wait_ms"])
+            limiter_wait_ms=row["limiter_wait_ms"], cached_tokens=row["cached_tokens"])
 
     def set_agent_transcript(self, agent_id: str, messages: list[ChatMessage]) -> None:
         self._conn.execute(

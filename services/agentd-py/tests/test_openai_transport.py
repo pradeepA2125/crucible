@@ -595,3 +595,46 @@ async def test_the_api_key_route_keeps_structured_text_output() -> None:
     await _transport(fake).generate_json(model="m", schema_name="s", schema=SCHEMA,
                                          system_instructions="", user_payload={})
     assert "tools" not in fake.calls[0] and fake.calls[0]["text"]["format"]["strict"] is True
+
+
+# ---------------------------------------------------------------- prompt cache
+
+
+def _completed_cached(input_tokens: int, cached: int, output_tokens: int = 5) -> SimpleNamespace:
+    usage = SimpleNamespace(
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        input_tokens_details=SimpleNamespace(cached_tokens=cached),
+        output_tokens_details=SimpleNamespace(reasoning_tokens=0))
+    return SimpleNamespace(type="response.completed", response=SimpleNamespace(usage=usage))
+
+
+@pytest.mark.asyncio
+async def test_no_prompt_cache_key_is_sent() -> None:
+    # Measured live (2026-10-07, plan route, identical requests): with our own
+    # prompt_cache_key no call was ever served from cache (0 of 4, cache_write_tokens 0);
+    # without one, repeats hit (9856 and 8832 of ~10k). The route assigns its own key —
+    # a failed response echoed a server UUID we never sent — so a custom key only moves
+    # requests into a partition that is never written.
+    fake = FakeResponses([_call_done("answer", {"thought": "t", "answer": "a"}), _completed()],
+                         [_delta("hi"), _completed()])
+    t = _transport(fake, plan_route=True)
+    await t.generate_json(model="m", schema_name="c", schema=CONTROLLER_UNION,
+                          system_instructions="s", user_payload={})
+    await t.generate_text(model="m", system_instructions="s", user_payload={})
+    assert all("prompt_cache_key" not in c for c in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_cached_tokens_are_recorded_for_the_current_owner() -> None:
+    from agentd.providers.usage import METER, USAGE_OWNER
+
+    fake = FakeResponses([_call_done("answer", {"thought": "t", "answer": "a"}),
+                          _completed_cached(10000, 8832)])
+    token = USAGE_OWNER.set("agent-cache-test")
+    try:
+        await _transport(fake, plan_route=True).generate_json(
+            model="m", schema_name="c", schema=CONTROLLER_UNION, system_instructions="s",
+            user_payload={})
+    finally:
+        USAGE_OWNER.reset(token)
+    assert METER.take("agent-cache-test").cached_tokens == 8832

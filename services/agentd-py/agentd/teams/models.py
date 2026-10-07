@@ -37,6 +37,7 @@ class TeamRecord(BaseModel):
     requests: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_tokens: int = 0
     created_turn_id: str
     checkpoint_seq: int = -1
     created_at: datetime

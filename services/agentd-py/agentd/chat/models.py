@@ -87,6 +87,7 @@ class AgentRecord(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     limiter_wait_ms: int = 0
+    cached_tokens: int = 0
 
     def summary(self) -> dict[str, Any]:
         """The list view (spec §11.3): no transcript, a 200-character UI-only preview."""

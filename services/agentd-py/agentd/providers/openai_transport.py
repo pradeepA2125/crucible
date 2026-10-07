@@ -42,6 +42,7 @@ from agentd.providers.plan_access import (
 )
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 from agentd.providers.token_progress import ProgressTicker, approx_prompt_tokens, int_or_none
+from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.runtime.artifacts import provider_debug_root
 
 logger = logging.getLogger(__name__)
@@ -430,6 +431,12 @@ class OpenAIJsonTransport(ModelJsonTransport):
             getattr(usage, "output_tokens_details", None), "reasoning_tokens", None))
         ticker.finish(thinking_tokens=reasoning_tokens, output_tokens=output_tokens,
                       input_tokens=input_tokens)
+        cached = int_or_none(getattr(
+            getattr(usage, "input_tokens_details", None), "cached_tokens", None))
+        if cached:
+            # Per agent/thread/team, next to the prompt tokens the loop records: the
+            # share of input the provider served from cache (what a plan can discount).
+            METER.record(USAGE_OWNER.get(), cached=cached)
         if on_usage is not None and input_tokens is not None and output_tokens is not None:
             on_usage(input_tokens, output_tokens)
 
