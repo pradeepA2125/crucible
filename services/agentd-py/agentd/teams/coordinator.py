@@ -134,7 +134,12 @@ class TeamCoordinator:
                 stop_reason = sm.BUDGET_STOP
         self._last_status[label] = status
         if status == "awaiting_peer":
-            self._waits[label] = set(waiting_on)
+            # A wait that names nobody (the loop's one redirect was not enough) waits on
+            # every member still owing an assignment, so their report wakes it (live
+            # 2026-10-08: waiting_on [] left it asleep and the team went stuck).
+            self._waits[label] = set(waiting_on) or {
+                lb for lb, m in self._state.members.items()
+                if m.assigned and not m.done and lb != label}
         else:
             self._waits.pop(label, None)
         self._apply(sm.MemberReported(label, status, stop_reason, tuple(files), report))

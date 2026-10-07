@@ -514,6 +514,22 @@ async def test_a_named_wait_wakes_the_waiter_instead_of_stuck(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_unnamed_wait_waits_on_whoever_still_owes_work(tmp_path) -> None:
+    """Live 2026-10-08: a reviewer reported awaiting_peer with waiting_on [] — nobody woke it
+    when the builder finished, the team went stuck, and the main agent woke it by hand."""
+    store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
+    _adopt_round_one(store, svc, coord)
+    host.busy = {"alice"}
+    coord.on_report("bob", "awaiting_peer", None, waiting_on=())
+    host.busy = {"alice"}
+    coord.on_report("alice", "completed", None, files=("a.py",))
+    note = store.posts("team-1")[-1]
+    assert (note.recipient, host.woken[-1]) == ("bob", note.seq)
+    assert "stuck" not in host.milestones
+    coord.close()
+
+
+@pytest.mark.asyncio
 async def test_a_blocked_member_also_wakes_its_waiters(tmp_path) -> None:
     store, svc, host, coord, _ = _setup(tmp_path, assignments=PARTS)
     _adopt_round_one(store, svc, coord)
