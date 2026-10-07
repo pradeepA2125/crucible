@@ -518,6 +518,16 @@ describe("useAppState", () => {
     expect(result.current.state.agentViews).toEqual({});
   });
 
+  it("stores thread usage and clears it on null", () => {
+    const { result } = renderHook(() => useAppState());
+    const u = { requests: 1, input: 10, output: 2, cached: 0 };
+    const usage = { total: u, main: u, agents: {}, teams: {} };
+    act(() => { fireMessage({ type: "renderThreadUsage", usage }); });
+    expect(result.current.state.threadUsage).toEqual(usage);
+    act(() => { fireMessage({ type: "renderThreadUsage", usage: null }); });
+    expect(result.current.state.threadUsage).toBeNull();
+  });
+
   it("tracks team summaries, live merges, boards and clears them with the thread", () => {
     const { result } = renderHook(() => useAppState());
     const team = { teamId: "team-1", name: "auth", goal: "g", phase: "DELIBERATING", round: 1,

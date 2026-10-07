@@ -1901,6 +1901,17 @@ def build_router(
         # ── Teams (spec v2 §9) ───────────────────────────────────────────────
         # Read routes stay readable with the flag off (rows written while it was on);
         # /live only reports live teams when it is on (ChatController.live_teams).
+        @router.get("/chat/threads/{thread_id}/usage")
+        async def get_thread_usage(thread_id: str) -> dict[str, object]:
+            """Token usage: main, every agent, every team by member (read-only)."""
+            if _chat_agent._store.get_thread(thread_id) is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            breakdown = getattr(_chat_agent, "usage_breakdown", None)
+            if breakdown is None:
+                return {"total": None, "main": None, "agents": {}, "teams": {}}
+            result: dict[str, object] = breakdown(thread_id)
+            return result
+
         @router.get("/chat/threads/{thread_id}/teams")
         async def list_thread_teams(thread_id: str) -> dict[str, object]:
             if _chat_agent._store.get_thread(thread_id) is None:

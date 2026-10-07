@@ -75,7 +75,7 @@ from agentd.providers.plan_access import (
     find_access_stop,
 )
 from agentd.providers.rate_limit import CALL_PRIORITY
-from agentd.providers.usage import METER, USAGE_OWNER
+from agentd.providers.usage import METER, USAGE_OWNER, Usage
 from agentd.runtime.artifacts import chat_turn_artifacts_root
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
@@ -213,6 +213,22 @@ def _last_view(event: TeamActivity | None) -> dict[str, object] | None:
             "by": event.payload.get("by"), "status": event.payload.get("status"),
             "activation": event.activation,
             "waiting_on": event.payload.get("waiting_on") or []}
+
+
+def _usage_view(usage: Usage) -> dict[str, int]:
+    return {"requests": usage.requests, "input": usage.prompt_tokens,
+            "output": usage.completion_tokens, "cached": usage.cached_tokens}
+
+
+def _usage_sum(parts: list[Usage]) -> Usage:
+    total = Usage()
+    for part in parts:
+        total.requests += part.requests
+        total.prompt_tokens += part.prompt_tokens
+        total.completion_tokens += part.completion_tokens
+        total.cached_tokens += part.cached_tokens
+        total.wait_ms += part.wait_ms
+    return total
 
 
 def _team_counts(posts: list[TeamPost], labels: list[str]) -> dict[str, object]:
@@ -1879,6 +1895,37 @@ class ChatController:
                 "last_seq": max((p.seq for p in posts), default=0),
                 "activity": [e.model_dump(mode="json") for e in activity],
                 "last_aseq": max((e.aseq for e in activity), default=0),}
+
+    def usage_breakdown(self, thread_id: str) -> dict[str, object]:
+        """Token usage for the composer total, the team board and agent tabs: persisted
+        counts plus what running loops have used so far (METER keeps an owner's counts
+        until its turn or activation ends, then they move to the rows — never both).
+        Its own route, not /live: these change on every model call."""
+        stored = self._store.thread_usage(thread_id)
+        main = _usage_sum([stored, METER.peek(f"thread:{thread_id}")])
+        agents: dict[str, Usage] = {}
+        for record in self._store.list_agents(thread_id):
+            agents[record.agent_id] = _usage_sum([
+                Usage(requests=record.requests, prompt_tokens=record.prompt_tokens,
+                      completion_tokens=record.completion_tokens,
+                      cached_tokens=record.cached_tokens, wait_ms=record.limiter_wait_ms),
+                METER.peek(record.agent_id)])
+        teams: dict[str, object] = {}
+        if self._teams is not None:
+            for team in self._store.teams.list_teams(thread_id):
+                # A member's usage includes its helpers' (spec §3.11).
+                members = {
+                    m.label: _usage_sum([agents[a] for a in
+                                         self._store.subtree_agent_ids(m.agent_id)
+                                         if a in agents])
+                    for m in self._store.teams.members(team.team_id)}
+                teams[team.team_id] = {
+                    "total": _usage_view(_usage_sum(list(members.values()))),
+                    "members": {label: _usage_view(u) for label, u in members.items()}}
+        return {"total": _usage_view(_usage_sum([main, *agents.values()])),
+                "main": _usage_view(main),
+                "agents": {agent_id: _usage_view(u) for agent_id, u in agents.items()},
+                "teams": teams}
 
     def provider_access(self, thread_id: str) -> dict[str, object] | None:
         """Why this thread's last turn stopped on provider access, for /live's cards."""

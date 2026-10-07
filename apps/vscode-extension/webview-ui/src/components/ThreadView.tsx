@@ -78,6 +78,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   const agentsUi = useMemo<AgentsUi>(() => ({
     agents: state.agents,
     views: state.agentViews,
+    usage: state.threadUsage,
     expanded,
     toggleExpanded: (agentId) => setExpanded((prev) => {
       const next = new Set(prev);
@@ -86,18 +87,21 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
       return next;
     }),
     openWindow: (agentId, siblings) => setAgentWindow({ agentId, siblings }),
-  }), [state.agents, state.agentViews, expanded]);
+  }), [state.agents, state.agentViews, state.threadUsage, expanded]);
 
   const openTeamId = teamWindow?.teamId ?? "";
   useEffect(() => {
     vscode.postMessage({ type: "setOpenTeams", teamIds: openTeamId ? [openTeamId] : [] });
   }, [openTeamId]);
 
+  const teamNames = useMemo(() => Object.fromEntries(
+    Object.values(state.teams).map((t) => [t.teamId, t.name])), [state.teams]);
   const teamsUi = useMemo<TeamsUi>(() => ({
     teams: state.teams,
     views: state.teamViews,
+    usage: state.threadUsage,
     openTeam: (teamId) => setTeamWindow({ teamId, tab: "board" }),
-  }), [state.teams, state.teamViews]);
+  }), [state.teams, state.teamViews, state.threadUsage]);
 
   useEffect(() => {
     function onHostMessage(event: MessageEvent) {
@@ -466,6 +470,8 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           onOpenSettings={() => setSettingsSection("overview")}
           planMode={state.planMode}
           stepReview={state.stepReview}
+          threadUsage={state.threadUsage}
+          teamNames={teamNames}
         />
       </div>
       </div>

@@ -47,12 +47,14 @@ import {
   TeamActivitySchema,
   TeamPostSchema,
   TeamSummarySchema,
+  ThreadUsageSchema,
   type AgentDetail,
   type AgentSummary,
   type TeamDetail,
   type TeamActivity,
   type TeamPost,
   type TeamSummary,
+  type ThreadUsage,
   type BackendTaskClient,
   type ThreadLiveState,
   type PatchStreamEvent,
@@ -504,6 +506,11 @@ export class HttpBackendClient implements BackendTaskClient {
     ) as Record<string, unknown>;
     return { ok: raw["ok"] === true };
   }
+  async getThreadUsage(threadId: string): Promise<ThreadUsage> {
+    return ThreadUsageSchema.parse(await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/usage`));
+  }
+
   async listTeams(threadId: string): Promise<TeamSummary[]> {
     const raw = await this.fetchJson(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/teams`

@@ -301,6 +301,22 @@ export interface TeamMemberView {
   assignmentDone?: boolean;
 }
 
+/** Token usage (GET /chat/threads/{id}/usage): persisted plus in-flight counts. */
+export interface TokenUsageView {
+  requests: number;
+  input: number;
+  output: number;
+  cached: number;
+}
+
+export interface ThreadUsageView {
+  total: TokenUsageView | null;
+  main: TokenUsageView | null;
+  agents: Record<string, TokenUsageView>;
+  // A member's usage includes its helpers'.
+  teams: Record<string, { total: TokenUsageView; members: Record<string, TokenUsageView> }>;
+}
+
 export interface TeamSummaryView {
   teamId: string;
   name: string;
@@ -407,6 +423,7 @@ export type ExtensionMessage =
   | { type: "renderAgents"; agents: AgentSummaryView[] }
   | { type: "agentDetail"; agentId: string; detail: AgentDetailView }
   | { type: "agentEvent"; agentId: string; event: AgentEventView }
+  | { type: "renderThreadUsage"; usage: ThreadUsageView | null }
   | { type: "renderTeams"; teams: TeamSummaryView[] }
   | { type: "renderLiveTeams"; teams: TeamLiveView[] }
   | { type: "teamDetail"; teamId: string; detail: TeamDetailView }
@@ -505,6 +522,8 @@ export interface AppState {
   liveTodos: LiveTodosView | null;
   // Why the last turn stopped on the ChatGPT plan's access rules; null when it didn't.
   providerAccess: ProviderAccessView | null;
+  // Token usage of the thread: main, agents, teams. Null until fetched.
+  threadUsage: ThreadUsageView | null;
   liveSessions: LiveSessionsView | null;
   // sessionId → transcript for expanded strip rows (null = fetch failed).
   sessionTranscripts: Record<string, SessionTranscriptView | null>;

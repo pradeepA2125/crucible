@@ -11,6 +11,7 @@ import { Avatar } from "./Avatar";
 import { SaidPost, STATUS_CHIP, beatText } from "./Journey";
 import { PostBody } from "./PostBody";
 import { useTeamsUi } from "./TeamsContext";
+import { usageText, usageTitle } from "../../usage";
 
 const firstLine = (text: string) =>
   text.split("\n").map((l) => l.replace(/^[#>\-*\s]+/, "").replace(/\*\*|`/g, "").trim()).find((l) => l) ?? "";
@@ -37,6 +38,7 @@ export function MemberView({ teamId, agentId }: { teamId: string; agentId: strin
   if (!aview) return <div className="text-[11px] text-text-3">Loading…</div>;
 
   const label = member.label;
+  const mineUsage = teamsUi.usage?.teams[teamId]?.members[label];
   const wakes = (tview?.activity ?? []).filter((e) => e.label === label && e.kind === "woke").length;
   const tools = chapters.reduce((n, c) => n + c.tools, 0) + (working ? aview.live.length : 0);
   const active = chapters.reduce((n, c) => n + (c.durationMs ?? 0), 0);
@@ -67,6 +69,10 @@ export function MemberView({ teamId, agentId }: { teamId: string; agentId: strin
             <span><b className="text-text">{mine.filter((p) => p.recipient !== null).length}</b> messages</span>
             {active > 0 && <span><b className="text-text">{formatElapsed(active)}</b> active</span>}
           </div>
+          {mineUsage && mineUsage.requests > 0 && (
+            <div data-testid="member-tokens" className="font-mono text-[10.5px] tabular-nums text-text-2"
+              title={`${usageTitle(mineUsage)} (includes its helpers)`}>{usageText(mineUsage)}</div>
+          )}
           {member.assignment && (
             <div data-testid="member-assignment" className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-text-2">
               <span className="text-[10px] uppercase tracking-[.08em] text-text-3">Assignment</span>

@@ -280,6 +280,7 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     agentDetail: () => {},
     agentEvent: () => {},
     renderTeams: () => {},
+    renderThreadUsage: () => {},
     renderLiveTeams: () => {},
     teamDetail: () => {},
     teamEvent: () => {},
@@ -2447,6 +2448,53 @@ describe("CrucibleController — sub-agents", () => {
     await controller.pollThreadLiveState();
     await Promise.resolve(); await Promise.resolve();
     expect(teamLists).toEqual(["chat-1"]);
+  });
+  const U = (input: number) => ({ requests: 1, input, output: 1, cached: 0 });
+  const usageOf = (input: number) => ({ total: U(input), main: U(input), agents: {}, teams: {} });
+
+  test("usage loads on thread open, refreshes while busy, once on idle, and dedups", async () => {
+    vi.useFakeTimers();
+    try {
+      let input = 100;
+      const fetched: string[] = [];
+      const rendered: unknown[] = [];
+      const { state, controller } = setup({
+        getThreadUsage: async (threadId: string) => { fetched.push(threadId); return usageOf(input); },
+      }, { renderThreadUsage: (u) => { rendered.push(u); } });
+      await controller.switchChatThread("chat-1");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetched).toEqual(["chat-1"]);
+      expect(rendered.at(-1)).toEqual(usageOf(100));
+
+      state.liveResponse = { ...NULL_LIVE_STATE, turnActive: true };
+      await controller.pollThreadLiveState();
+      expect(fetched).toHaveLength(1);              // throttled: < 3s since the last
+      vi.advanceTimersByTime(3000);
+      input = 250;
+      await controller.pollThreadLiveState();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetched).toHaveLength(2);
+      expect(rendered.at(-1)).toEqual(usageOf(250));
+
+      const renders = rendered.length;
+      state.liveResponse = NULL_LIVE_STATE;          // the turn ended: one final fetch
+      await controller.pollThreadLiveState();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetched).toHaveLength(3);
+      expect(rendered).toHaveLength(renders);        // unchanged numbers → not re-sent
+      vi.advanceTimersByTime(10000);
+      await controller.pollThreadLiveState();
+      expect(fetched).toHaveLength(3);               // idle: no polling
+
+      await controller.switchChatThread("chat-1");   // a reopened webview starts empty
+      await controller.pollThreadLiveState();         // the next tick of the running poll
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetched).toHaveLength(4);
+      expect(rendered.at(-1)).toEqual(usageOf(250)); // re-sent though unchanged
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

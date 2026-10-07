@@ -8,6 +8,7 @@ import { TONE_COLOR, rosterRow, toneOf } from "./AgentRosterCard";
 import { useAgentsUi } from "./AgentsContext";
 import { useFollowBottom } from "./useFollowBottom";
 import { useNow } from "./useNow";
+import { usageText, usageTitle } from "../../usage";
 
 interface Props {
   agentId: string;
@@ -24,6 +25,7 @@ export function AgentWindow({ agentId, siblings, onSwitch, onClose }: Props) {
   const running = !isTerminalAgent(agent.status);
   const now = useNow(running);
   const ms = elapsedMs(agent, now);
+  const tokens = ui.usage?.agents[agentId];
   const { ref, onScroll } = useFollowBottom(`${agentId}|${viewToken(ui.views[agentId])}`);
 
   useEffect(() => {
@@ -66,6 +68,9 @@ export function AgentWindow({ agentId, siblings, onSwitch, onClose }: Props) {
             <span><b className="font-semibold text-text-2">{agent.toolCount}</b> tools</span>
             <span><b className="font-semibold text-text-2">{agent.filesChangedCount}</b> file{agent.filesChangedCount === 1 ? "" : "s"} changed</span>
             <span>depth {agent.depth}</span>
+            {tokens && tokens.requests > 0 && (
+              <span data-testid="agent-tokens" className="ml-auto font-mono tabular-nums"
+                title={usageTitle(tokens)}>{usageText(tokens)}</span>)}
           </div>
         </div>
         {siblings.length > 1 && (

@@ -36,7 +36,7 @@ const DETAIL = {
   transcript: [], lastSeq: 0,
 } as AgentDetailView;
 
-function renderView() {
+function renderView(usage: TeamsUi["usage"] = null) {
   const messages = [msg({ tool_events: [{ id: 1, tool: "read_file", args: {}, source: "execution", done: true }] }),
     msg({ report: true, status: "completed" }, "Objected: **missing case**"),
     msg({ divider: true, activation: 2 }, "↩ woken")];
@@ -44,7 +44,7 @@ function renderView() {
     agents: { "agent-r": { ...DETAIL } }, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
     views: { "agent-r": { detail: DETAIL, messages, live: [], callIds: {}, nextId: 1 } },
   };
-  const teamsUi: TeamsUi = { teams: { "team-1": TEAM }, openTeam: vi.fn(), views: { "team-1": {
+  const teamsUi: TeamsUi = { teams: { "team-1": TEAM }, openTeam: vi.fn(), usage, views: { "team-1": {
     posts: POSTS, lastSeq: 5, lastAseq: 7, activity: [
       ev(1, 1, "woke", 1, { cause: "kickoff", by: "main", post_seq: 1 }, 1),
       ev(2, 2, "took_up", 1, { posts: [1], from: ["main"] }),
@@ -58,6 +58,18 @@ function renderView() {
 }
 
 describe("MemberView", () => {
+  it("shows the member's token usage (with its helpers) when the tab is selected", () => {
+    const u = { requests: 12, input: 48_000, output: 1_200, cached: 24_000 };
+    renderView({ total: u, main: null, agents: {},
+      teams: { "team-1": { total: u, members: { review: u } } } });
+    expect(screen.getByTestId("member-tokens")).toHaveTextContent("↑48k ↓1.2k · 12 req · 50% cached");
+  });
+
+  it("shows no token line before usage loads", () => {
+    renderView();
+    expect(screen.queryByTestId("member-tokens")).toBeNull();
+  });
+
   it("profile: name, role, description, state, stats and stances", () => {
     renderView();
     const profile = screen.getByTestId("member-profile");

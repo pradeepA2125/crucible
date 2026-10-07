@@ -15,6 +15,7 @@ import type {
   TeamDetail,
   TeamLive,
   TeamSummary,
+  ThreadUsage,
 } from "@crucible/editor-client";
 import type { TeamViewEvent } from "./team-views.js";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
@@ -620,6 +621,10 @@ export class ChatPanel {
 
   agentEvent(agentId: string, event: SequencedStreamEvent): void {
     this.panel?.webview.postMessage({ type: "agentEvent", agentId, event });
+  }
+
+  renderThreadUsage(usage: ThreadUsage | null): void {
+    this.panel?.webview.postMessage({ type: "renderThreadUsage", usage });
   }
 
   renderTeams(teams: TeamSummary[]): void {

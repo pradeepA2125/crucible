@@ -334,6 +334,27 @@ const TeamMemberLastSchema = z.object({
   waitingOn: z.array(z.string()).default([]),
 });
 
+// Token usage (GET /chat/threads/{id}/usage): persisted plus in-flight counts.
+export const TokenUsageSchema = z.object({
+  requests: z.number().int().nonnegative(),
+  input: z.number().int().nonnegative(),
+  output: z.number().int().nonnegative(),
+  cached: z.number().int().nonnegative(),
+});
+export type TokenUsage = z.infer<typeof TokenUsageSchema>;
+
+export const ThreadUsageSchema = z.object({
+  total: TokenUsageSchema.nullable(),
+  main: TokenUsageSchema.nullable(),
+  agents: z.record(z.string(), TokenUsageSchema),
+  // Team id → its total and each member's usage (a member's includes its helpers').
+  teams: z.record(z.string(), z.object({
+    total: TokenUsageSchema,
+    members: z.record(z.string(), TokenUsageSchema),
+  })),
+});
+export type ThreadUsage = z.infer<typeof ThreadUsageSchema>;
+
 export const TeamSummarySchema = z.object({
   teamId: z.string(),
   name: z.string(),
@@ -852,6 +873,7 @@ export interface BackendTaskClient {
   getAgent(threadId: string, agentId: string): Promise<AgentDetail>;
   stopAgent(threadId: string, agentId: string): Promise<{ ok: boolean }>;
   // Agent teams (spec v2 §9).
+  getThreadUsage(threadId: string): Promise<ThreadUsage>;
   listTeams(threadId: string): Promise<TeamSummary[]>;
   getTeam(threadId: string, teamId: string): Promise<TeamDetail>;
   disbandTeam(threadId: string, teamId: string): Promise<{ phase: string | null }>;

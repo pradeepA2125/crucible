@@ -12,7 +12,9 @@ import { Avatar } from "./Avatar";
 import { Journey } from "./Journey";
 import { MemberView } from "./MemberView";
 import { PhaseStepper } from "./PhaseStepper";
+import { TeamUsage } from "./TeamUsage";
 import { useTeamsUi } from "./TeamsContext";
+import { usageText, usageTitle } from "../../usage";
 
 interface Props {
   teamId: string;
@@ -43,6 +45,7 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
 
   if (!team) return null;
   const live = !isTerminalTeam(team.phase);
+  const teamUsage = teamsUi.usage?.teams[teamId]?.total;
   const roster = team.members.map((m) => m.label);
   return (
     <div role="presentation" className="scrim absolute inset-0 z-40"
@@ -51,7 +54,7 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
       }}>
       <div role="dialog" aria-modal="true" aria-label={`Team ${team.name}`}
         className="surface-card anim-pop absolute inset-x-3 bottom-3 top-10 flex flex-col overflow-hidden">
-        <div className="accent-wash grid gap-2.5 px-3.5 pb-2.5 pt-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+        <div className="accent-wash grid grid-cols-[minmax(0,1fr)] gap-2.5 px-3.5 pb-2.5 pt-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
           <div className="flex flex-wrap items-center gap-2.5">
             <Avatar label="main" roster={roster} />
             <span className="truncate text-[14px] font-semibold text-text">{team.name}</span>
@@ -99,7 +102,14 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
                 </button>
               );
             })}
-            {team.usage.budget > 0 && <span className="ml-auto text-[11px] text-text-3">budget {team.usage.budget} requests</span>}
+            {(teamUsage || team.usage.budget > 0) && (
+              <span className="ml-auto grid text-right text-[11px] leading-tight text-text-3">
+                {teamUsage && teamUsage.requests > 0 && (
+                  <span data-testid="team-usage-total" className="font-mono tabular-nums text-text-2"
+                    title={usageTitle(teamUsage)}>{usageText(teamUsage)}</span>)}
+                {team.usage.budget > 0 && <span>budget {team.usage.budget} requests</span>}
+              </span>
+            )}
           </div>
         </div>
         <div role="tablist" className="flex gap-0.5 overflow-x-auto px-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
@@ -123,7 +133,9 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
           })}
         </div>
         <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
-          {tab === "board" ? <Journey teamId={teamId} /> : <MemberView teamId={teamId} agentId={tab} />}
+          {tab === "board"
+            ? <><TeamUsage team={team} onMember={onTab} /><Journey teamId={teamId} /></>
+            : <MemberView teamId={teamId} agentId={tab} />}
         </div>
       </div>
     </div>

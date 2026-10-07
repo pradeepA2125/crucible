@@ -8,6 +8,7 @@ import { useNow } from "../agents/useNow";
 import { Avatar } from "./Avatar";
 import { PhaseStepper } from "./PhaseStepper";
 import { useTeamsUi } from "./TeamsContext";
+import { usageText, usageTitle } from "../../usage";
 
 const TONE: Record<string, string> = {
   work: "var(--color-accent-ink)", ok: "var(--color-text-2)", wait: "var(--color-amber)",
@@ -33,6 +34,7 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
   const anyWorking = team.members.some((m) => !isTerminalAgent(agentsUi.agents[m.agentId]?.status ?? m.status));
   const now = useNow(!ended && anyWorking);
   const counts = countsText(team.counts, team.usage.budget);
+  const teamUsage = teamsUi.usage?.teams[teamId]?.total;
   const progress = roundProgressText(team.roundProgress, team, agentsUi.agents, now);
   return (
     <div className="surface-card overflow-hidden" data-testid="team-card">
@@ -83,7 +85,14 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
           <span className="min-w-0 truncate">{latestText(team.latest)}</span>
         </div>
       )}
-      {counts && <div className="px-3 pb-2.5 pt-1.5 text-[10.5px] text-text-3">{counts}</div>}
+      {(counts || (teamUsage && teamUsage.requests > 0)) && (
+        <div className="flex flex-wrap items-baseline gap-x-3 px-3 pb-2.5 pt-1.5 text-[10.5px] text-text-3">
+          {counts && <span>{counts}</span>}
+          {teamUsage && teamUsage.requests > 0 && (
+            <span data-testid="team-card-usage" className="ml-auto font-mono tabular-nums"
+              title={usageTitle(teamUsage)}>{usageText(teamUsage)}</span>)}
+        </div>
+      )}
     </div>
   );
 }

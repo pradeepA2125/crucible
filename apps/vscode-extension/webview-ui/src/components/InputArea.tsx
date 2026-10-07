@@ -2,11 +2,13 @@ import { useRef, useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { ModelMenu } from "./ModelMenu";
 import { EffortMenu } from "./EffortMenu";
+import { UsageChip } from "./UsageChip";
 import { vscode } from "../vscodeApi";
 import { parseSlashCommand, resolveSkillCommand, buildSlashDropdownItems } from "../slash";
 import { detectTrigger } from "../composerTrigger";
 import { TriggerDropdown } from "./TriggerDropdown";
 import type { InputAvailability } from "../inputAvailability";
+import type { ThreadUsageView } from "../types";
 
 interface Props {
   availability: InputAvailability;
@@ -17,6 +19,8 @@ interface Props {
   onOpenSettings?: () => void;
   planMode?: boolean;  // hydrated from the extension's globalState via planModeState
   stepReview?: boolean;  // hydrated from globalState via reviewPrefState
+  threadUsage?: ThreadUsageView | null;  // the thread's running token total
+  teamNames?: Record<string, string>;
 }
 
 // 5 lines × ~19.2px line-height ≈ 96px. Caps the textarea's auto-grow.
@@ -29,7 +33,7 @@ const MAX_TEXTAREA_HEIGHT = 96;
  * newline. When availability.showStop is true, a Stop button appears on the
  * left side of the footer row and posts { type: "stopTurn" } once.
  */
-export function InputArea({ availability, draft, onDraftChange, onOpenSettings, planMode = false, stepReview = true }: Props) {
+export function InputArea({ availability, draft, onDraftChange, onOpenSettings, planMode = false, stepReview = true, threadUsage, teamNames }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [stopping, setStopping] = useState(false);
   // One-shot guard for the Tier B task-abort buttons (keep / revert).
@@ -348,6 +352,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
         >
           <Icon name="gear" size={12} />
         </button>
+        <UsageChip usage={threadUsage ?? null} teamNames={teamNames ?? {}} />
 
         {/* Tier B: task-abort buttons — shown while a task is in an abortable phase.
             "Stop & keep" leaves applied changes; "Stop & revert" rolls the workspace back. */}

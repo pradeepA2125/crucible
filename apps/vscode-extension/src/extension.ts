@@ -461,6 +461,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     agentEvent: (agentId, event) => {
       chatPanel.agentEvent(agentId, event);
     },
+    renderThreadUsage: (usage) => {
+      chatPanel.renderThreadUsage(usage);
+    },
     renderTeams: (teams) => {
       chatPanel.renderTeams(teams);
     },

@@ -55,7 +55,8 @@ const agent = (id: string, label: string, status: string): AgentSummaryView => (
 });
 
 function renderWindow(tab = "board", team = TEAM, posts = POSTS,
-                      statuses: { review: string; impl: string } = { review: "completed", impl: "running" }) {
+                      statuses: { review: string; impl: string } = { review: "completed", impl: "running" },
+                      usage: TeamsUi["usage"] = null) {
   const onTab = vi.fn();
   const onClose = vi.fn();
   const agentsUi: AgentsUi = {
@@ -64,7 +65,7 @@ function renderWindow(tab = "board", team = TEAM, posts = POSTS,
     views: {}, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
   };
   const teamsUi: TeamsUi = { teams: { "team-1": team },
-    views: { "team-1": { posts, lastSeq: 4, activity: ACTIVITY, lastAseq: 6 } }, openTeam: vi.fn() };
+    views: { "team-1": { posts, lastSeq: 4, activity: ACTIVITY, lastAseq: 6 } }, openTeam: vi.fn(), usage };
   render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={teamsUi}>
     <TeamWindow teamId="team-1" tab={tab} onTab={onTab} onClose={onClose} />
   </TeamsContext.Provider></AgentsContext.Provider>);
@@ -72,6 +73,24 @@ function renderWindow(tab = "board", team = TEAM, posts = POSTS,
 }
 
 describe("TeamWindow board", () => {
+  it("breaks token usage down by member, and a row opens that member's tab", () => {
+    const u = (requests: number, input: number) => ({ requests, input, output: 100, cached: 0 });
+    const { onTab } = renderWindow("board", TEAM, POSTS, undefined, {
+      total: u(10, 30_000), main: u(4, 10_000), agents: {},
+      teams: { "team-1": { total: u(6, 20_000), members: { review: u(2, 5_000), impl: u(4, 15_000) } } },
+    });
+    expect(screen.getByTestId("team-usage-total")).toHaveTextContent("↑20k ↓100 · 6 req");
+    expect(screen.getByTestId("member-usage-review")).toHaveTextContent("↑5k ↓100 · 2 req");
+    expect(screen.getByTestId("member-usage-impl")).toHaveTextContent("↑15k ↓100 · 4 req");
+    fireEvent.click(screen.getByTestId("member-usage-impl"));
+    expect(onTab).toHaveBeenCalledWith("agent-i");
+  });
+
+  it("shows no usage section before usage loads", () => {
+    renderWindow();
+    expect(screen.queryByTestId("team-usage")).toBeNull();
+  });
+
   it("labels a closing proposal and its changed files", () => {
     const closing = post(9, 40, { author: "system", kind: "proposal", round: null,
       text: "Implementation complete — verify.",
@@ -163,7 +182,7 @@ describe("ThreadView team wiring", () => {
     const state = {
       view: "thread", threads: [], activeThreadId: "t", streaming: null, thinkingStatus: null,
       inputEnabled: true, liveGates: [], livePlan: null, liveReview: null, liveError: null,
-      liveTodos: null, providerAccess: null, liveSessions: null, sessionTranscripts: {}, workbar: null,
+      liveTodos: null, providerAccess: null, threadUsage: null, liveSessions: null, sessionTranscripts: {}, workbar: null,
       retryStatus: null, tokenProgress: null, editFailure: null, liveStatus: null,
       turnActive: false, turnKind: null, queuedIds: [], agentsRunning: 0, planMode: false, stepReview: true,
       agents: {}, agentViews: {}, teams: { "team-1": TEAM }, teamViews: {},

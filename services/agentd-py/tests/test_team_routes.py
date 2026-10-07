@@ -163,3 +163,41 @@ async def test_team_plan_decision_route_errors(tmp_path: Path, monkeypatch) -> N
                                                        "phase": "IMPLEMENTING"}
         assert (await client.post(url, json={**body, "decision": "maybe"})).status_code == 422
     assert seen[2] == (tid, "g1", "feedback", "x")
+
+
+@pytest.mark.asyncio
+async def test_usage_breaks_down_main_agents_and_team_members(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from agentd.providers.usage import METER, Usage
+    store, ctrl, tid, _other = _seed(tmp_path, monkeypatch)
+    store.insert_agent(AgentRecord(
+        agent_id="agent-helper", thread_id=tid, turn_id="turn-1", depth=2,
+        parent_agent_id="agent-alice", name="explore", label="helper", prompt="p",
+        status="completed"))
+    store.add_thread_usage(tid, Usage(requests=2, prompt_tokens=1000, completion_tokens=50,
+                                      cached_tokens=600))
+    store.add_agent_usage("agent-alice", Usage(requests=3, prompt_tokens=3000,
+                                               completion_tokens=90, cached_tokens=1000))
+    store.add_agent_usage("agent-helper", Usage(requests=1, prompt_tokens=500,
+                                                completion_tokens=10))
+    # bob is mid-activation: nothing persisted yet, only the meter has his counts.
+    METER.record("agent-bob", requests=1, prompt=800, completion=20, cached=400)
+    try:
+        async with _client(tmp_path, ctrl) as client:
+            usage = (await client.get(f"/v1/chat/threads/{tid}/usage")).json()
+            missing = await client.get("/v1/chat/threads/nope/usage")
+    finally:
+        METER.take("agent-bob")
+    assert missing.status_code == 404
+    assert usage["main"] == {"requests": 2, "input": 1000, "output": 50, "cached": 600}
+    assert usage["agents"]["agent-helper"] == {
+        "requests": 1, "input": 500, "output": 10, "cached": 0}
+    assert usage["agents"]["agent-bob"]["input"] == 800
+    team = usage["teams"]["team-1"]
+    # alice's row includes her helper's usage; the team total is the members' sum.
+    assert team["members"]["alice"] == {"requests": 4, "input": 3500, "output": 100,
+                                        "cached": 1000}
+    assert team["members"]["bob"] == {"requests": 1, "input": 800, "output": 20, "cached": 400}
+    assert team["total"] == {"requests": 5, "input": 4300, "output": 120, "cached": 1400}
+    assert usage["total"] == {"requests": 7, "input": 5300, "output": 170, "cached": 2000}

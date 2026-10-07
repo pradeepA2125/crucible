@@ -20,6 +20,7 @@ import type {
   TaskSubmission,
   TaskView,
   ThreadLiveState,
+  ThreadUsage,
   RewindPreview,
   SendChatResult,
   ThreadAttention,
@@ -27,6 +28,8 @@ import type {
 import { parseWireChatMessage } from "@crucible/editor-client";
 import { AgentViewManager } from "./agent-views.js";
 import { TeamViewManager, type TeamViewEvent } from "./team-views.js";
+
+const USAGE_REFRESH_MS = 3000;
 
 import * as path from "path";
 import type { MemoryDataSource } from "./memory-data.js";
@@ -139,6 +142,8 @@ export interface ControllerUI {
   // Agent teams (spec v2 §9): summaries, live slow fields, and the open teams' boards.
   renderTeams(teams: TeamSummary[]): void;
   renderLiveTeams(teams: TeamLive[]): void;
+  // Token usage for the composer total, team cards/boards and agent tabs. Null clears.
+  renderThreadUsage(usage: ThreadUsage | null): void;
   teamDetail(teamId: string, detail: TeamDetail): void;
   teamEvent(teamId: string, event: TeamViewEvent): void;
 }
@@ -206,6 +211,13 @@ export class CrucibleController {
   // The previous poll's turnActive: a true→false edge is when /live stops reporting the
   // turn's agents, so the final roster comes from the routes then.
   private lastTurnActive = false;
+  // Token usage changes on every model call, so it has its own route and cadence rather
+  // than riding /live (whose dedup signature would churn): fetched on thread open, every
+  // USAGE_REFRESH_MS while anything runs, and once more when everything stops.
+  private usageThreadId: string | null = null;
+  private usageFetchedAt = 0;
+  private usageWasBusy = false;
+  private lastUsageSignature: string | null = null;
   // Set only from a getChatThread result (spec §6): the transcript length the webview has.
   private lastReconciledCount = 0;
   private reconcilePending = false;
@@ -661,6 +673,7 @@ export class CrucibleController {
     // Re-derive any pending gate/plan from persisted state so cards survive the
     // reload/reopen that just discarded the SSE-rendered ones.
     this.lastLiveSignature = null;
+    this.forgetUsage();
     this.startLiveStatePolling();
   }
 
@@ -685,6 +698,7 @@ export class CrucibleController {
     this.teamViews.closeAll();
     this.lastLiveTeamIds = new Set();
     this.lastTurnActive = false;
+    this.forgetUsage();
     let threads: ChatThreadSummary[];
     try {
       threads = await client.listChatThreads(workspacePath);
@@ -709,6 +723,7 @@ export class CrucibleController {
     this.teamViews.closeAll();
     this.lastLiveTeamIds = new Set();
     this.lastTurnActive = false;
+    this.forgetUsage();
     for (const message of thread.messages) {
       this.ui.appendChatMessage(message);
     }
@@ -757,6 +772,44 @@ export class CrucibleController {
     }
     this.lastLiveSignature = null;
     void this.pollThreadLiveState();
+  }
+
+  /** A fresh webview or another thread has no usage yet: the next poll fetches it and
+   * re-sends it even when the numbers did not change. */
+  private forgetUsage(): void {
+    this.usageThreadId = null;
+    this.lastUsageSignature = null;
+  }
+
+  private maybeRefreshUsage(threadId: string, live: ThreadLiveState): void {
+    const busy = (live.turnActive ?? false) || (live.agentsRunning ?? 0) > 0;
+    const now = Date.now();
+    const due = threadId !== this.usageThreadId
+      || (busy && now - this.usageFetchedAt >= USAGE_REFRESH_MS)
+      || (this.usageWasBusy && !busy);
+    this.usageWasBusy = busy;
+    if (!due) return;
+    if (threadId !== this.usageThreadId) {
+      this.lastUsageSignature = null;
+      this.ui.renderThreadUsage(null);
+    }
+    this.usageThreadId = threadId;
+    this.usageFetchedAt = now;
+    void this.refreshUsage(threadId);
+  }
+
+  private async refreshUsage(threadId: string): Promise<void> {
+    let usage: ThreadUsage;
+    try {
+      usage = await this.clientForChat().getThreadUsage(threadId);
+    } catch {
+      return; // transient, or a backend without the route; the next due tick retries
+    }
+    if (threadId !== this.activeThreadId) return;
+    const signature = JSON.stringify(usage);
+    if (signature === this.lastUsageSignature) return;
+    this.lastUsageSignature = signature;
+    this.ui.renderThreadUsage(usage);
   }
 
   /** Team summaries from the routes (spec §9): thread open, turn end, a team ending. */
@@ -2129,6 +2182,7 @@ export class CrucibleController {
       for (const listener of this.backendReachableListeners) listener();
     }
     this.latestLiveState = live;
+    this.maybeRefreshUsage(threadId, live);
 
     // Live-resume: a fresh webview (reload mid-turn) reconstructs the transcript from
     // the thread fetch, but the live overlay (streaming pills/chunks) died with the old

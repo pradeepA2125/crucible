@@ -53,6 +53,13 @@ describe("TeamCard", () => {
     expect(card).toHaveTextContent("9 posts · P1 2 ✓ · budget 60 requests");
   });
 
+  it("shows the team's token total once usage loads", () => {
+    const total = { requests: 31, input: 690_000, output: 12_000, cached: 345_000 };
+    wrap(<TeamCard teamId="team-1" agentIds={["agent-r", "agent-i"]} />, {
+      usage: { total, main: null, agents: {}, teams: { "team-1": { total, members: {} } } } });
+    expect(screen.getByTestId("team-card-usage")).toHaveTextContent("↑690k ↓12k · 31 req · 50% cached");
+  });
+
   it("Open board opens the team window", () => {
     const { teamsUi } = wrap(<TeamCard teamId="team-1" agentIds={["agent-r", "agent-i"]} />);
     fireEvent.click(screen.getByRole("button", { name: "Open board" }));
