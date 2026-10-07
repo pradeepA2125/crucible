@@ -55,6 +55,9 @@ async def test_member_propose_and_stances(tmp_path: Path) -> None:
         "text": "Plan", "assignments": [{"member": "bob", "part": "api", "files": []}]})).output)
     assert out["proposal_id"] == "P1"
     bob = TeamToolSource(svc, tid, "bob", ActivationCounters())
+    same_round = await bob.execute("team_agree", {"proposal_id": "P1"})
+    assert same_round.is_error and "posted this round" in same_round.output
+    svc._store.update_team(tid, round=2)
     assert not (await bob.execute("team_agree", {"proposal_id": "P1", "note": "ok"})).is_error
 
 

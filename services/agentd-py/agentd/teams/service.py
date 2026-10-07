@@ -117,6 +117,18 @@ class TeamService:
             raise TeamInputError(f"P{seq} is closed ({post.closed})")
         return post
 
+    def _round_cutoff(self, team: TeamRecord) -> int | None:
+        """While a round runs, members see the board as it stood when it started (spec v2
+        E5). Elsewhere delivery is live."""
+        return team.round_cutoff_seq if team.phase == "DELIBERATING" else None
+
+    @staticmethod
+    def _within(posts: list[TeamPost], cutoff: int | None, viewer: str) -> list[TeamPost]:
+        """Posts up to the cutoff, plus the viewer's own (always theirs to see)."""
+        if cutoff is None:
+            return posts
+        return [p for p in posts if p.seq <= cutoff or p.author == viewer]
+
     def _require_phase(self, team: TeamRecord, allowed: tuple[str, ...], action: str) -> None:
         if team.phase not in allowed:
             raise TeamInputError(
@@ -125,6 +137,12 @@ class TeamService:
 
     def _stance_phase(self, team: TeamRecord, proposal: TeamPost, action: str) -> None:
         if team.phase == "DELIBERATING":
+            # Adoption ignores a proposal from the round that just ended (§8.3); a stance on
+            # one is refused so the board and the rule agree (spec 2026-10-07 §3).
+            if (proposal.round or 0) >= team.round:
+                raise TeamInputError(
+                    f"{proposal.proposal_id} was posted this round; you can respond to it "
+                    "next round")
             return
         if team.phase == "REVIEWING" and team.closing_proposal_id == proposal.proposal_id:
             return
@@ -318,7 +336,9 @@ class TeamService:
         return ended[-1].payload if ended else None
 
     def read(self, team_id: str, viewer: str, since_seq: int = 0) -> list[TeamPost]:
-        return self._store.posts(team_id, since_seq=since_seq, viewer=viewer)
+        posts = self._store.posts(team_id, since_seq=since_seq, viewer=viewer)
+        team = self._store.get_team(team_id)
+        return self._within(posts, self._round_cutoff(team), viewer) if team else posts
 
     def system_post(self, team_id: str, text: str,
                     payload: dict[str, Any] | None = None,
@@ -454,8 +474,9 @@ class TeamService:
         member = self._store.member(team_id, label)
         assert team is not None and member is not None
         visible = self._store.posts(team_id, since_seq=member.delivered_seq, viewer=label)
-        if until_seq is not None:
-            visible = [p for p in visible if p.seq <= until_seq]
+        limit = until_seq if until_seq is not None else self._round_cutoff(team)
+        if limit is not None:
+            visible = [p for p in visible if p.seq <= limit]
         top = max((p.seq for p in visible), default=member.delivered_seq)
         others = [p for p in visible if p.author != label]
         body = "\n\n".join(self._render_post(team_id, p, label) for p in others)
@@ -472,13 +493,14 @@ class TeamService:
         member = self._store.member(team_id, label)
         assert team is not None and member is not None
         stances = self.stances(team_id)
+        cutoff = self._round_cutoff(team)
         lines = [f"team {team.name!r}: phase {team.phase}, round {team.round} of "
                  f"{team.max_rounds}", f"goal: {team.goal}", "roster:"]
         for m in self._store.members(team_id):
             info = self._agent_info(m.agent_id)
             you = " (you)" if m.label == label else ""
             lines.append(f"- {m.label}{you}: {info.name} — {info.description} [{info.status}]")
-        open_ps = self.open_proposals(team_id)
+        open_ps = self._within(self.open_proposals(team_id), cutoff, label)
         lines.append("open proposals:" if open_ps else "open proposals: none")
         for p in open_ps:
             mine = "yours" if p.author == label else stances.get(p.seq, {}).get(label, "none")
@@ -490,7 +512,9 @@ class TeamService:
         if member.assignment:
             done = " (done)" if member.assignment_done else ""
             lines.append(f"your assignment{done}: {json.dumps(member.assignment)}")
-        unread = self._store.posts(team_id, since_seq=member.delivered_seq, viewer=label)
+        unread = self._within(
+            self._store.posts(team_id, since_seq=member.delivered_seq, viewer=label),
+            cutoff, label)
         dms = sum(1 for p in unread if p.recipient == label)
         mentions = sum(1 for p in unread if p.recipient is None and
                        (label in p.mentions or "team" in p.mentions) and p.author != label)

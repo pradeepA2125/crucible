@@ -84,6 +84,7 @@ def test_agree_object_withdraw_rules(tmp_path: Path) -> None:
     service, tid, teams, _ = _setup(tmp_path)
     p = service.propose(tid, "alice", "Plan",
                         [{"member": "bob", "part": "api", "files": ["src/new.py"]}])
+    teams.update_team(tid, round=2)   # stances answer proposals from an earlier round
     with pytest.raises(TeamInputError, match="your own proposal"):
         service.agree(tid, "alice", p.proposal_id)
     service.agree(tid, "bob", p.proposal_id, note="ok")

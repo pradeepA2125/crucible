@@ -74,7 +74,7 @@ class TeamCoordinator:
         self._state.max_review_cycles = team_review_cycles()
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._evaluation: dict[str, object] = {}   # the latest round_ended payload
-        self._cutoff = 0                             # highest post seq at the round's start
+        self._cutoff = team.round_cutoff_seq or 0    # highest post seq at the round's start
         self._stops: set[asyncio.Task[None]] = set()
         self._starting: set[str] = set()     # start scheduled, activation not begun yet
         self._interrupted: set[str] = set()  # forced to report by a budget pause
@@ -355,6 +355,7 @@ class TeamCoordinator:
                              payload={"phase": "DELIBERATING", "round": action.round})
             self._host.team_phase_changed(self._team())
         self._cutoff = max((p.seq for p in self._store.posts(self._team_id)), default=0)
+        self._store.update_team(self._team_id, round_cutoff_seq=self._cutoff)
         members = []
         for label in action.labels:
             member = self._store.member(self._team_id, label)

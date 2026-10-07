@@ -43,6 +43,12 @@ class TeamRecord(BaseModel):
     created_at: datetime
     ended_at: datetime | None = None
     end_reason: str | None = None
+    round_cutoff_seq: int | None = None   # the board's top seq when the current round started
+    vote_between: str = ""                # a vote round's candidates, comma-separated ("P4,P7")
+
+    @property
+    def vote_ids(self) -> list[str]:
+        return [p for p in self.vote_between.split(",") if p]
 
 
 class TeamMember(BaseModel):
