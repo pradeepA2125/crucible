@@ -122,16 +122,17 @@ activation is capped at **15** iterations (beside today's 40 deliberation / 25 r
 
 ## 6. Main agent
 
-`milestone_text` gains `vote_tie`, compact:
-`Team X's vote tied: P4 (1 vote: reviewer — "…"), P7 (1 vote: ui — "…"). Choose with
-adopt_proposal, or post_board to discuss.` It is a wake notice (`source_kind "team"`) like
-`deadlock`; the notice-turn hint already treats `adopt_proposal`/`post_board` as acting.
+`milestone_text` gains `vote_tie`, compact (ids and counts only, like every milestone):
+`Team X's vote between P4 and P7 tied` / `P4: 1 vote (reviewer)` / `P7: 1 vote (ui)` /
+`Next: adopt_proposal to choose one, post_board to run one more round, or disband_team.` The vote
+notes stay on the board. It is a wake notice (`source_kind "team"`) like `deadlock`.
 
 ## 7. Board, live state, UI
 
-- Activity: `voted` beat (`ACTIVITY_KINDS`), written when a vote post lands.
+- No new activity kind: the `vote` post itself is the board's record of a vote.
 - `round_ended` payload carries `vote: {between, counts, winner | null}` for a vote round.
-- `/live` teams gain `vote_between` (slow field → add to `lastLiveSignature` in `controller.ts`).
+- `/live` teams: `round_progress` gains `vote: [ids] | null` (already inside `lastLiveSignature`,
+  since the whole `teams` array is).
 - Webview: `vote` post kind in `teamJourney.ts`/`Journey.tsx` ("ui votes for P7 — note"); the
   round strip reads `Round 3 · vote`; the round verdict shows `P7 adopted by vote (2–1)` or
   `vote tied → main agent`; `TeamStrip` shows `voting: 2 of 3 in`.
