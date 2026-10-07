@@ -743,6 +743,14 @@ class ControllerLoop:
         # the clean entry hint (write_todos-as-tool_call) instead of the mid-turn reconcile
         # hint, so the first-action case isn't mis-routed.
         self._edit_applied = False
+        # Work this turn handed off: teams it created and agents it dispatched, and whether
+        # wait_agents has collected their reports. Set from successful tool results, it ends
+        # the entry hint ("nothing is started yet") and selects the delegated hint —
+        # without it a model that delegated was told every call to start the work again
+        # (live 2026-10-07, gpt-5.6-luna: it re-dispatched a team's whole job).
+        self._delegated_teams: list[str] = []
+        self._delegated_agents: list[str] = []
+        self._agents_collected = False
         # The provider's exact size for the last call this loop made, pinned to the
         # history length it measured (see ObservedPrompt). Seeded from run()'s
         # observed_prompt param — the caller's carried cross-turn state — updated in
@@ -928,6 +936,32 @@ class ControllerLoop:
         thread the value through every ControllerOutcome construction site."""
         return self._observed_prompt
 
+    def _note_delegation(self, tool: str, args: object) -> None:
+        """Record work a successful tool call handed off (see _delegated_teams)."""
+        fields = args if isinstance(args, dict) else {}
+        if tool == "create_team":
+            name = str(fields.get("name") or "the team")
+            if name not in self._delegated_teams:
+                self._delegated_teams.append(name)
+        elif tool == "dispatch_agents":
+            agents = fields.get("agents")
+            for entry in agents if isinstance(agents, list) else []:
+                label = str(entry.get("label") or entry.get("agent") or "agent") if isinstance(
+                    entry, dict) else "agent"
+                if label not in self._delegated_agents:
+                    self._delegated_agents.append(label)
+            self._agents_collected = False
+        elif tool == "wait_agents" and self._delegated_agents:
+            self._agents_collected = True
+
+    def _delegation(self) -> dict[str, object] | None:
+        """What this turn handed off, for the per-turn hint — None when nothing was, or
+        once the turn applied an edit itself (the edit hints take over then)."""
+        if self._edit_applied or not (self._delegated_teams or self._delegated_agents):
+            return None
+        return {"teams": list(self._delegated_teams), "agents": list(self._delegated_agents),
+                "agents_collected": self._agents_collected}
+
     async def run(
         self,
         plan_context: dict[str, object],
@@ -948,6 +982,7 @@ class ControllerLoop:
         status_tail: Callable[[], str] | None = None,
         final_hint: Callable[[], str] | None = None,
         report_check: ReportCheck | None = None,
+        live_work: Callable[[], dict[str, object] | None] | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -980,6 +1015,8 @@ class ControllerLoop:
         self._thinking_segment_start = 0
         self._pills_boundary_pending = False
         self._edit_applied = False
+        self._delegated_teams, self._delegated_agents = [], []
+        self._agents_collected = False
         try:
             outcome = await self._iterate(
                 plan_context, history, tool_defs, seen, max_iters,
@@ -1001,6 +1038,7 @@ class ControllerLoop:
                 status_tail=status_tail,
                 final_hint=final_hint,
                 report_check=report_check,
+                live_work=live_work,
             )
             if iteration_cb is not None:
                 iteration_cb(history)
@@ -1054,6 +1092,7 @@ class ControllerLoop:
         status_tail: Callable[[], str] | None = None,
         final_hint: Callable[[], str] | None = None,
         report_check: ReportCheck | None = None,
+        live_work: Callable[[], dict[str, object] | None] | None = None,
     ) -> ControllerOutcome:
         pending_salvage: list[str] = []
         # Set when preflight rejects generated code for a SYNTAX error, cleared as soon
@@ -1260,6 +1299,14 @@ class ControllerLoop:
                 # Rebuilt from the database every iteration (spec v2 §7.6) — cheap, and the
                 # only copy of the phase state that survives a long activation or compaction.
                 plan_context["team_status"] = status_tail()
+            if live_work is not None:
+                # The thread's teams and agents still at work — read every iteration, since
+                # a team moves phase and agents finish while this turn runs.
+                live = live_work()
+                if live:
+                    plan_context["live_work"] = live
+                else:
+                    plan_context.pop("live_work", None)
             # Spec v2 §3.11: a forced final (deadline or budget) tells the model what its
             # phase needs before it reports.
             plan_context["forced_final"] = self._force_final
@@ -1279,9 +1326,15 @@ class ControllerLoop:
             # sees "nothing started yet" rather than falling through to the mid-turn
             # "reflect on your last edit's result" text written for a LANDED edit. This is a
             # previously-fixed thrash bug — do not add an iteration gate here.
+            delegated = self._delegation()
+            if delegated is not None:
+                plan_context["delegated"] = delegated
+            else:
+                plan_context.pop("delegated", None)
             plan_context["active_entry"] = (
                 self._sm.phase == "ACTIVE" and not self._ledger.items
-                and not self._edit_applied and not plan_context.get("edit_is_resume"))
+                and not self._edit_applied and not plan_context.get("edit_is_resume")
+                and delegated is None)
             # skill_check_due (C1b): the first model call of THIS run only (iteration is
             # the for-loop counter above, fresh every run() — unlike `history`, which
             # seeds from the whole thread's replayed conversation and is non-empty for
@@ -1581,6 +1634,8 @@ class ControllerLoop:
                 if tool == "write_todos":
                     plan_context.pop("pending_reconcile_files", None)
                     plan_context.pop("reconcile_item", None)
+                if not out.is_error:
+                    self._note_delegation(tool, args)
                 logger.info("[controller] tool_result tool=%s is_error=%s chars=%d",
                             tool, out.is_error, len(out.output or ""))
                 self._broadcaster.broadcast(self._channel_id, {

@@ -814,6 +814,7 @@ class ChatController:
         seed_history: list[dict[str, object]] | None, step_review: bool | None,
         phase: str | None = None, turn_id: str | None = None,
         edit_is_resume: bool = False, forced_skills: list[str] | None = None,
+        notice_turn: bool = False,
     ) -> ControllerOutcome:
         # Three callers feed `phase` with different intents: handle_message (the
         # plan_mode-derived starting phase — Task 7), resolve_mode's "implement"
@@ -933,6 +934,10 @@ class ChatController:
         # (A history scan can't tell this feature's prior edit from an earlier feature's — this
         # explicit flag can.) resolve_mode("implement") is a fresh entry → default False.
         plan_context["edit_is_resume"] = edit_is_resume
+        # A turn started by notices (agent reports, team milestones), not by the user: the
+        # entry hint ("nothing is started yet, decide the approach") read as an order to
+        # start the work again; the notice hint says what woke it instead.
+        plan_context["notice_turn"] = notice_turn
         # Debug-artifact keys (KV-safe: build_controller_step_payload ignores them) so
         # create_controller_step can dump the exact per-iteration LLM bytes under
         # chat/<thread_id>/<turn_id>/ (controller analog of the task path's plan-turn-NN).
@@ -981,7 +986,8 @@ class ChatController:
                 edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
                 on_pills_update=pills_cb,
                 inbox_drain=partial(self._drain_main, thread_id, turn_id) if turn_id else None,
-                terminal_guard=partial(self._main_terminal_guard, thread_id))
+                terminal_guard=partial(self._main_terminal_guard, thread_id),
+                live_work=partial(self._live_work, thread_id))
         except asyncio.CancelledError:
             # /stop cancels the turn's asyncio.Task, raising here BEFORE the normal post-run
             # persistence below ever runs. Capture what the turn accumulated — its exploration
@@ -1827,6 +1833,23 @@ class ChatController:
         return await self._edit_decision_cb(
             child.thread_id, f"chat:{child.thread_id}", diff, child=child)
 
+    def _live_work(self, thread_id: str) -> dict[str, object] | None:
+        """Teams and agents of this thread still at work, for the main agent's per-turn
+        hint: their work is not the main agent's to redo (live 2026-10-07: woken by a
+        milestone, the main agent began building what the team had just planned)."""
+        teams: list[dict[str, object]] = []
+        if self._teams is not None and is_teams_enabled():
+            teams = [{"name": t.name, "phase": t.phase, "goal": t.goal}
+                     for t in self._store.teams.list_teams(thread_id)
+                     if t.phase in LIVE_TEAM_PHASES]
+        agents: list[str] = []
+        if self._subagents is not None:
+            agents = [r.label for r in self._store.list_agents(thread_id)
+                      if r.status in LIVE_STATUSES and r.team_id is None and r.depth == 1]
+        if not teams and not agents:
+            return None
+        return {"teams": teams, "agents": agents}
+
     def live_teams(self, thread_id: str) -> list[dict[str, object]]:
         """Slow-changing fields only — this rides /live, whose dedup signature must not
         change on every model call (no usage or stances; a row status moves only at
@@ -2501,7 +2524,7 @@ class ChatController:
         outcome = await self._run_loop(
             thread_id, channel_id, _NOTICE_TURN_INPUT, seed_history=seed_history,
             step_review=review, phase="PLAN" if self._plan_mode else "ACTIVE",
-            turn_id=turn_id)
+            turn_id=turn_id, notice_turn=True)
         await self._finish(thread_id, channel_id, outcome, step_review=review, turn_id=turn_id)
 
     def _end_turn(self, thread_id: str) -> None:

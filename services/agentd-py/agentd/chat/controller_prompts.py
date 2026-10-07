@@ -976,6 +976,60 @@ def format_controller_system_prompt(
     return base
 
 
+def _delegated_hint(delegated: dict[str, object]) -> str:
+    """The per-turn hint once this turn handed work to a team or agents (and applied no edit
+    itself): say what is running and how the turn ends, instead of the entry hint's
+    "nothing is started yet", which a model takes as an order to start the work again."""
+    raw_teams, raw_agents = delegated.get("teams"), delegated.get("agents")
+    teams = [str(t) for t in raw_teams] if isinstance(raw_teams, list) else []
+    agents = [str(a) for a in raw_agents] if isinstance(raw_agents, list) else []
+    parts: list[str] = []
+    if teams:
+        parts.append(
+            f"You started team {', '.join(teams)}; it works in the background and the user "
+            "watches its board. Answer the user now (type='answer'): say what the team is "
+            "doing and that you will report at its milestones — they wake you. Do not poll "
+            "team_status, call wait_agents for its members, or post_board/adopt_proposal "
+            "unless the user asks. If your todo list holds the work you handed over, first "
+            "mark those items 'blocked' (note 'delegated to team <name>') in one write_todos.")
+    if agents and delegated.get("agents_collected"):
+        parts.append(
+            f"The reports of {', '.join(agents)} are in: check each (re-read any file in "
+            "files_changed before you edit it), then continue or answer the user.")
+    elif agents:
+        parts.append(
+            f"You started agents {', '.join(agents)} in the background. If your answer needs "
+            "their results, call wait_agents now; otherwise answer the user now, saying they "
+            "are running and will report back. Do not redo their work yourself.")
+    return " ".join(parts)
+
+
+def _live_work_clause(live: dict[str, object], delegated: object) -> str:
+    """Leads the main agent's hint while teams or agents of the thread are at work — in
+    every turn, not just the one that started them. A team started in THIS turn is left to
+    the delegated hint, so nothing is said twice."""
+    started = set()
+    if isinstance(delegated, dict):
+        raw = delegated.get("teams")
+        started = {str(t) for t in raw} if isinstance(raw, list) else set()
+    raw_teams, raw_agents = live.get("teams"), live.get("agents")
+    teams = [t for t in raw_teams if isinstance(t, dict) and str(t.get("name")) not in started] \
+        if isinstance(raw_teams, list) else []
+    agents = [str(a) for a in raw_agents] if isinstance(raw_agents, list) else []
+    if not teams and not agents:
+        return ""
+    parts = [f"Team {t.get('name')} ({str(t.get('phase', '')).lower()}) is working on: "
+             f"{t.get('goal')}." for t in teams]
+    if agents:
+        parts.append(f"Agents {', '.join(agents)} are running.")
+    parts.append(
+        "That work is not yours: do not edit its files or redo or re-check it yourself; tell "
+        "the user how it is going, and pass the user's new requests to a team with "
+        "post_board. Do the work yourself only if the user's latest message asks you to. "
+        "wait_agents is for agents you dispatched, not for team members.")
+    return " ".join(parts)
+
+
 def build_controller_step_payload(
     plan_context: dict[str, object],
     history: list[dict[str, object]],
@@ -1074,7 +1128,16 @@ def build_controller_step_payload(
             " Or, for independent parts touching disjoint files, dispatch them in parallel "
             "with dispatch_agents (a tool_call — see SUB-AGENTS)."
             if plan_context.get("dispatch_available") else "")
-        if plan_context.get("active_entry") or not history:
+        if (plan_context.get("active_entry") or not history) and plan_context.get("notice_turn"):
+            hint = (
+                "Notices woke you — the agent reports or team milestones above; the user sent "
+                "no new message. Tell the user, briefly, what happened and what it means for "
+                "their request. Act only on something the user asked for that is still undone: "
+                "work a team or agent finished (and a team reviewed) is not yours to redo or "
+                "re-check. If your todo list holds items they finished, mark them 'done' "
+                "citing the report in one write_todos first."
+            )
+        elif plan_context.get("active_entry") or not history:
             hint = (
                 skill_check +
                 "This is your FIRST action and nothing is started yet. Decide the approach:\n"
@@ -1094,6 +1157,8 @@ def build_controller_step_payload(
                 "commit, if you want to tell the user what you're about to do without spending "
                 "the turn on it — it does not end the turn."
             )
+        elif isinstance(plan_context.get("delegated"), dict):
+            hint = _delegated_hint(plan_context["delegated"])  # type: ignore[arg-type]
         elif final_call:
             hint = (
                 "⚠ FINAL STEP: emit type='submit_changes' now (a non-empty summary) to end the "
@@ -1263,6 +1328,11 @@ def build_controller_step_payload(
                 "with (A) or (B). Neither (A) nor (B) is penalized — pick what your reflection "
                 "supports."
             )
+    if phase in ("ACTIVE", "PLAN") and isinstance(plan_context.get("live_work"), dict):
+        live = _live_work_clause(plan_context["live_work"],  # type: ignore[arg-type]
+                                 plan_context.get("delegated"))
+        if live:
+            hint = live + " " + hint
     payload["instruction"] = f"Phase={phase}. {hint} ({iteration} of {max_iters} steps used.)"
     payload["budget_status"] = f"{iteration}/{max_iters} steps used"  # LAST (varies every turn)
     return payload
