@@ -132,3 +132,11 @@ def test_deadlock_points_at_an_unobjected_proposal() -> None:
         "round": 3, "proposals": [{"id": "P7", "stances": {"alice": "agree", "bob": "object"}}]})
     assert "has no objection" not in objected
 
+
+
+def test_done_offers_a_follow_up() -> None:
+    _, body = milestone_text(_team(phase="DONE"), "done", {
+        "reason": "reviewed", "files": ["a.py"], "adopted": "P3", "closing": "P9", "cycle": 1,
+        "abstained": [], "unresolved": []})
+    assert ("For a follow-up request, post_board to this team: it reopens with its members' "
+            "context.") in body

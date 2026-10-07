@@ -171,8 +171,10 @@ export function buildJourney(
     const e = entry.event as TeamActivityView;
     if (e.kind === "phase") {
       const phase = String(e.payload.phase ?? "");
+      const round = Number(e.payload.round ?? 1);
       items.push({ kind: "chapter", key: `a${e.aseq}`,
-                   title: chapterTitle(phase, Number(e.payload.round ?? 1)),
+                   title: e.payload.reason === "reopened" ? `Reopened · round ${round}`
+                     : chapterTitle(phase, round),
                    current: false, ended: ENDED_PHASES.has(phase) });
       continue;
     }

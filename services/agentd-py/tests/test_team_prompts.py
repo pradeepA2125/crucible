@@ -203,3 +203,21 @@ def test_report_proposal_assignments_survive_the_strict_codec() -> None:
     assert set(item["properties"]) == {"member", "part", "files"}
     encoded = json.dumps(encode_strict_schema(schema).schema)
     assert '"member"' in encoded and '"part"' in encoded
+
+
+def test_the_main_agent_learns_a_done_team_reopens() -> None:
+    from agentd.chat.controller_prompts import _TEAMS_MAIN_BLOCK
+    from agentd.prompting.tagged import RenderContext, render_prompt
+    from agentd.subagents.definitions import BUILTIN_AGENTS
+    from agentd.teams.tools import MainTeamOps, MainTeamToolSource
+    text = render_prompt(_TEAMS_MAIN_BLOCK, RenderContext.main())
+    assert "A DONE team reopens with post_board for a follow-up request" in text
+
+    async def never(*_a, **_k):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    defs = MainTeamToolSource(BUILTIN_AGENTS, MainTeamOps(
+        create=never, resolve=lambda r: r, post=lambda *a: {}, status=lambda t: {},
+        disband=never, adopt=lambda *a: {}), first_turn_team_ids=set()).definitions()
+    post_board = next(d for d in defs if d.name == "post_board")
+    assert "A post to a DONE team reopens it" in post_board.description

@@ -129,6 +129,17 @@ class TeamService:
             return posts
         return [p for p in posts if p.seq <= cutoff or p.author == viewer]
 
+    def _reopen_request(self, team: TeamRecord) -> int | None:
+        """The main agent's post that reopened a DONE team this round, if it was reopened."""
+        reopened = any(a.kind == "phase" and a.payload.get("reason") == "reopened"
+                       and a.payload.get("round") == team.round
+                       for a in self._store.activity(team.team_id))
+        if not reopened:
+            return None
+        mains = [p for p in self._store.posts(team.team_id)
+                 if p.author == "main" and p.recipient is None]
+        return mains[-1].seq if mains else None
+
     def _lead_plan(self, team_id: str, lead: str) -> TeamPost | None:
         """The lead's open proposal, if it has one (the main agent's kickoff is not)."""
         mine = [p for p in self.open_proposals(team_id) if p.author == lead]
@@ -502,9 +513,16 @@ class TeamService:
             feedback = [p for p in self._store.posts(team.team_id) if p.author == "user"]
             why = (f": the user sent {sent_back[-1].proposal_id} back with feedback "
                    f"(#{feedback[-1].seq})" if sent_back and feedback else "")
+            request = self._reopen_request(team)
+            if request is not None:
+                why = f": the main agent sent a new request (#{request})"
             if team_lead is not None and not is_lead:
                 lead = (f"Round {n} of {total}. No proposal is open{why}. {team_lead} revises "
                         "the plan; post what it must account for.")
+            elif request is not None:
+                lead = (f"Round {n} of {total}. No proposal is open{why}. Read it, then "
+                        "propose a plan for it (team_propose, or the proposal field of your "
+                        "report).")
             else:
                 lead = (f"Round {n} of {total}. No proposal is open{why}. Read it, then "
                         "propose a revised plan (team_propose, or the proposal field of your "

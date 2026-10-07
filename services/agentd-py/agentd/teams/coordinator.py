@@ -74,6 +74,7 @@ class TeamCoordinator:
         self._state.max_review_cycles = team_review_cycles()
         self._state.lead = team.lead
         self._timers: dict[str, asyncio.TimerHandle] = {}
+        self._start_reason = ""
         self._evaluation: dict[str, object] = {}   # the latest round_ended payload
         self._cutoff = team.round_cutoff_seq or 0    # highest post seq at the round's start
         self._stops: set[asyncio.Task[None]] = set()
@@ -104,7 +105,8 @@ class TeamCoordinator:
 
     # ── inputs ──────────────────────────────────────────────────────────────
 
-    def kickoff(self, kind: str, mentions: list[str]) -> None:
+    def kickoff(self, kind: str, mentions: list[str], reason: str = "") -> None:
+        self._start_reason = reason   # recorded on the first round's phase entry
         self._apply(sm.Kickoff(kind, tuple(mentions)))
 
     def on_post(self, post: TeamPost) -> None:
@@ -356,9 +358,12 @@ class TeamCoordinator:
         now = datetime.now(UTC)
         self._store.update_team(self._team_id, phase="DELIBERATING", round=action.round,
                                 max_rounds=self._state.max_rounds, round_started_at=now)
+        reason, self._start_reason = self._start_reason, ""
         if action.round > 1:
-            self._svc.record(self._team_id, "team", "phase",
-                             payload={"phase": "DELIBERATING", "round": action.round})
+            payload: dict[str, object] = {"phase": "DELIBERATING", "round": action.round}
+            if reason:
+                payload["reason"] = reason
+            self._svc.record(self._team_id, "team", "phase", payload=payload)
             self._host.team_phase_changed(self._team())
         self._cutoff = max((p.seq for p in self._store.posts(self._team_id)), default=0)
         self._store.update_team(self._team_id, round_cutoff_seq=self._cutoff)

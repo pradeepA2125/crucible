@@ -2592,6 +2592,8 @@ class ChatController:
             team = self._store.teams.get_team(team_id)
             if team is not None and team.phase == "FAILED":
                 return self._revive_team(thread_id, team, text, mentions)
+            if team is not None and team.phase == "DONE" and team.thread_id == thread_id:
+                return self._reopen_team(thread_id, team, text, mentions)
             p = teams.post(team_id, "main", text, mentions)
             after = self._store.teams.get_team(team_id)
             return {"seq": p.seq, "mentions": p.mentions,
@@ -2736,6 +2738,45 @@ class ChatController:
         after = self._store.teams.get_team(team.team_id)
         assert after is not None
         return {"seq": p.seq, "mentions": p.mentions, "revived": True,
+                "phase": after.phase, "round": after.round}
+
+    def _reopen_team(self, thread_id: str, team: TeamRecord, text: str,
+                     mentions: object) -> dict[str, object]:
+        """post_board to a DONE team reopens it for a follow-up request: a new deliberation
+        round on the same board, with the members' transcripts (their context) intact and a
+        fresh default budget. A DISBANDED team stays closed."""
+        assert self._teams is not None
+        live = self._store.teams.count_live_teams(thread_id)
+        if live >= team_max_live_per_thread():
+            raise TeamInputError(f"this thread already has {live} live teams (limit "
+                                 f"{team_max_live_per_thread()}) — disband one first")
+        members = self._store.teams.members(team.team_id)
+        fresh = min(team_budget_per_member() * len(members), team_max_budget())
+        new_round = team.round + 1
+        for member in members:
+            self._store.teams.set_assignment(team.team_id, member.label, None)
+            self._store.teams.set_in_quorum(team.team_id, member.label, True)
+        self._store.teams.reset_wakes(team.team_id)
+        self._store.teams.update_team(
+            team.team_id, phase="DELIBERATING", round=new_round, max_rounds=new_round + 3,
+            budget=team.requests + fresh, adopted_proposal_id=None, closing_proposal_id=None,
+            review_cycles=0, stuck_count=0, paused_reason=None, end_reason=None,
+            ended_at=None)
+        p = self._teams.post(team.team_id, "main", text, mentions)
+        coordinator = TeamCoordinator(
+            team.team_id, self._store.teams, self._teams, self,
+            CoordinatorTrace(chat_turn_artifacts_root(thread_id, team.created_turn_id,
+                                                      self._workspace_path)
+                             / "teams" / team.team_id / "coordinator.jsonl"),
+            round_timeout_s=team_round_timeout_s())
+        self._coordinators[team.team_id] = coordinator
+        wake = list(p.mentions)
+        if wake and team.lead and team.lead not in wake:
+            wake.append(team.lead)          # the lead writes the plan for the request
+        coordinator.kickoff("post", wake, reason="reopened")
+        after = self._store.teams.get_team(team.team_id)
+        assert after is not None
+        return {"seq": p.seq, "mentions": p.mentions, "reopened": True,
                 "phase": after.phase, "round": after.round}
 
     def live_team_names(self, thread_id: str) -> list[str]:

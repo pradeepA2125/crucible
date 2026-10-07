@@ -242,7 +242,9 @@ class MainTeamToolSource:
             ToolDefinition(name="post_board", description=(
                 "Post on a team's board as the main agent — how the user's requests reach "
                 "the team. Mention members with @label. A post to a FAILED team (after a "
-                "backend restart, for instance) reopens it where it stopped."),
+                "backend restart, for instance) reopens it where it stopped. A post to a DONE "
+                "team reopens it for a follow-up request: its members keep their context and "
+                "it gets a fresh budget."),
                 parameters={"type": _OBJ, "properties": {**team, "text": _STR,
                                                          "mentions": _STRS},
                             "required": ["team", "text"]}),

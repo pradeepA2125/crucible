@@ -186,3 +186,13 @@ describe("journey with rounds (spec 2026-10-05 §9)", () => {
       [null, 2, 1], ["P1", null, 0]]);
   });
 });
+
+describe("reopened team", () => {
+  it("a reopened round gets its own chapter title", () => {
+    const reopen = ev(9, 30, "team", "phase", { activation: null,
+      payload: { phase: "DELIBERATING", round: 3, reason: "reopened" } });
+    const items = buildJourney([KICKOFF], [PHASE, reopen], ROSTER);
+    expect(items.filter((i) => i.kind === "chapter").map((i) => i.kind === "chapter" && i.title))
+      .toContain("Reopened · round 3");
+  });
+});

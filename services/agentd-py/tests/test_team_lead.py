@@ -162,3 +162,16 @@ def test_an_objection_posted_this_round_does_not_unlock_a_revision_yet(tmp_path:
     with pytest.raises(TeamInputError, match="nobody objects"):
         service.propose(tid, "alice", "revised", [])
 
+
+
+def test_a_reopened_round_names_the_new_request(tmp_path: Path) -> None:
+    service, tid, teams = _team(tmp_path)
+    teams.update_team(tid, round=3)
+    service.record(tid, "team", "phase",
+                   payload={"phase": "DELIBERATING", "round": 3, "reason": "reopened"})
+    request = service.post(tid, "main", "add a pause button")
+    lead_text, _, _ = service.render_delta_posts(tid, "alice")
+    assert f"the main agent sent a new request (#{request.seq})" in lead_text
+    assert "propose a plan for it" in lead_text
+    other, _, _ = service.render_delta_posts(tid, "bob")
+    assert f"the main agent sent a new request (#{request.seq})" in other

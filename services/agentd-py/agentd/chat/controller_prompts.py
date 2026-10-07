@@ -884,6 +884,9 @@ is built; dispatch_agents fits independent parts that need no discussion.
   blocked, the team stuck, paused or finished) wake you — do not poll team_status. post_board is
   how the user's later requests reach the team; for a DEADLOCKED team it runs one more round,
   and adopt_proposal adopts one of its open proposals.
+- A DONE team reopens with post_board for a follow-up request: its members keep their context
+  of what they built, and it gets a fresh budget. When the user asks for more on work a team
+  finished, post_board to that team rather than creating a new one.
 - approval_gate: true makes an adopted plan wait for the user on a card: the user approves it,
   sends feedback (one more round of deliberation), or rejects it (the team ends). Only the user
   approves, on that card; never tell the team a plan is approved.

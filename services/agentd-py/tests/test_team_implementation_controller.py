@@ -348,3 +348,50 @@ async def test_reviewers_cannot_edit_and_are_capped(tmp_path, monkeypatch) -> No
     await _settle(ctrl)
     review = [(types, cap) for phase, types, cap in seen if phase == "REVIEWING"]
     assert review and all("edit" not in types and cap == 25 for types, cap in review)
+
+
+def _finish(ctrl, store, team_id: str) -> None:  # type: ignore[no-untyped-def]
+    """Put a team in the state a reviewed DONE leaves it in."""
+    store.teams.set_assignment(team_id, "alice", {"member": "alice", "part": "p",
+                                                  "files": ["a.py"]})
+    store.teams.set_assignment_done(team_id, "alice")
+    store.teams.update_team(team_id, phase="DONE", end_reason="reviewed", round=2,
+                            adopted_proposal_id="P1", closing_proposal_id="P5",
+                            review_cycles=1, requests=150, budget=160)
+    ctrl._coordinators.pop(team_id, None)
+
+
+@pytest.mark.asyncio
+async def test_post_board_reopens_a_done_team_for_a_follow_up(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, _engine = _make(tmp_path, monkeypatch, {"alice": [REPORT],
+                                                              "bob": [REPORT]})
+    _quiet(ctrl, monkeypatch)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request(lead="alice")))["team_id"])
+    await _settle(ctrl)
+    _finish(ctrl, store, team_id)
+    ops = ctrl._main_team_source(tid, "turn2")._ops
+    out = ops.post(team_id, "@bob add a pause button", None)
+    assert out["reopened"] is True and out["phase"] == "DELIBERATING" and out["round"] == 3
+    team = store.teams.get_team(team_id)
+    assert (team.end_reason, team.adopted_proposal_id, team.closing_proposal_id,
+            team.review_cycles) == (None, None, None, 0)
+    assert team.budget == 150 + 160 and team.max_rounds == 6
+    assert store.teams.member(team_id, "alice").assignment is None
+    started = [a for a in store.teams.activity(team_id) if a.kind == "round_started"][-1]
+    assert {m["label"] for m in started.payload["members"]} == {"bob", "alice"}  # + the lead
+    phase = [a for a in store.teams.activity(team_id) if a.kind == "phase"][-1]
+    assert phase.payload == {"phase": "DELIBERATING", "round": 3, "reason": "reopened"}
+    await _settle(ctrl)
+
+
+@pytest.mark.asyncio
+async def test_a_disbanded_team_stays_closed(tmp_path, monkeypatch) -> None:
+    ctrl, store, tid, _engine = _make(tmp_path, monkeypatch, {"alice": [REPORT],
+                                                              "bob": [REPORT]})
+    _quiet(ctrl, monkeypatch)
+    team_id = str((await ctrl._create_team(tid, "turn1", _request()))["team_id"])
+    await _settle(ctrl)
+    store.teams.update_team(team_id, phase="DISBANDED", end_reason="disbanded")
+    ctrl._coordinators.pop(team_id, None)
+    with pytest.raises(TeamInputError, match="has ended"):
+        ctrl._main_team_source(tid, "turn2")._ops.post(team_id, "more please", None)

@@ -86,6 +86,8 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
         details.append("Files changed: " + (", ".join(files) if files else "none"))
         details.append("Tell the user what the team built"
                        + (" and what is still open." if unresolved else "."))
+        details.append("For a follow-up request, post_board to this team: it reopens with its "
+                       "members' context.")
     elif kind == "deadlock":
         headline = f"Team {name} deadlocked after {data['round']} rounds"
         details = []
