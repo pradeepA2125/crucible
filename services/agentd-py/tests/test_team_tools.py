@@ -129,3 +129,24 @@ def test_create_team_note_hands_the_todo_list_to_the_team_and_ends_the_turn() ->
     from agentd.teams.tools import BACKGROUND_NOTE
     assert "'blocked'" in BACKGROUND_NOTE and "delegated to team" in BACKGROUND_NOTE
     assert "Answer the user now" in BACKGROUND_NOTE
+
+
+@pytest.mark.asyncio
+async def test_post_board_says_who_it_reached() -> None:
+    # Live 2026-10-07: a result of only {seq, mentions, phase} read as "nothing changed",
+    # so the main agent restarted the same stuck member five more times.
+    async def create(req):
+        return {"team_id": "team-1"}
+
+    async def disband(team_id):
+        return {}
+
+    ops = MainTeamOps(
+        create=create, resolve=lambda t: "team-1",
+        post=lambda tid, text, mentions: {"seq": 10, "mentions": ["builder"],
+                                          "phase": "IMPLEMENTING"},
+        status=lambda tid: {}, disband=disband, adopt=lambda tid, pid: {})
+    source = MainTeamToolSource(_catalog(), ops, first_turn_team_ids=set())
+    out = json.loads((await source.execute(
+        "post_board", {"team": "t", "text": "@builder continue", "mentions": ["builder"]})).output)
+    assert "@builder" in out["note"] and "next milestone" in out["note"]

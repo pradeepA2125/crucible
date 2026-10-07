@@ -265,3 +265,72 @@ def test_outside_notice_turns_the_progress_redirects_are_unchanged() -> None:
     from agentd.chat import controller_loop as cl
     repeat = cl._progress_repeat_correction({"note": "x"}, "progress", True)
     assert repeat is not None and "does NOT count as doing the work" in repeat
+
+
+# ---------------------------------------------------------------- a notice turn that acted
+# Live 2026-10-07 (gpt-5.6-luna, run 3): woken by "team is stuck", the main agent restarted
+# the builder with post_board — right — then did it five more times: the notice still said
+# "stuck", the result showed no change and the hint still said "act when the notice asks".
+
+
+class _Board:
+    name = "board"
+
+    def definitions(self) -> list[ToolDefinition]:
+        return [ToolDefinition(name="post_board", description="p", parameters={"type": "object"})]
+
+    def owns(self, tool: str) -> bool:
+        return tool == "post_board"
+
+    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+        self.posts = getattr(self, "posts", 0) + 1
+        return ToolOutput(output='{"seq": 10}')
+
+
+async def _notice_run(*steps: dict[str, object]) -> tuple[list[dict], _Board, list]:
+    rec = _RecordingPlanCtx([*steps, {"type": "answer", "thought": "t", "answer": "done"}])
+    board = _Board()
+    ledger = TodoLedger()
+    loop = ControllerLoop(
+        rec, AggregatingToolRegistry([TodoToolSource(ledger), board]),
+        EventBroadcaster(), channel_id="c", phase_sm=ControllerPhaseSM(), todo_ledger=ledger)
+    out = await loop.run({"goal": "g", "workspace_path": "/tmp", "notice_turn": True},
+                         max_iters=10)
+    return rec.plan_contexts, board, out.history or []
+
+
+@pytest.mark.asyncio
+async def test_after_acting_on_a_notice_the_hint_says_answer() -> None:
+    ctx, _board, _hist = await _notice_run(
+        _call("post_board", team="snake-game", mentions=["builder"], text="@builder go on"))
+    assert not ctx[0].get("notice_acted")
+    assert ctx[1]["notice_acted"] == ["post_board to @builder (snake-game)"]
+    payload = build_controller_step_payload(
+        {**ctx[1], "active_entry": True}, history=HISTORY, tool_definitions=[], phase="ACTIVE")
+    text = str(payload["instruction"])
+    assert "You acted on the notice" in text and "@builder" in text
+    assert "type='answer'" in text and "Do not post again" in text
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_post_to_the_same_members_in_a_notice_turn_is_refused() -> None:
+    _ctx, board, hist = await _notice_run(
+        _call("post_board", team="snake-game", mentions=["builder"], text="@builder go on"),
+        _call("post_board", team="snake-game", mentions=["builder"], text="@builder close out"))
+    assert board.posts == 1
+    assert any("already posted to @builder" in str(m.get("content")) for m in hist)
+
+
+@pytest.mark.asyncio
+async def test_outside_notice_turns_posts_are_not_limited() -> None:
+    rec = _RecordingPlanCtx([
+        _call("post_board", team="t", mentions=["builder"], text="a"),
+        _call("post_board", team="t", mentions=["builder"], text="b"),
+        {"type": "answer", "thought": "t", "answer": "done"}])
+    board = _Board()
+    ledger = TodoLedger()
+    loop = ControllerLoop(rec, AggregatingToolRegistry([TodoToolSource(ledger), board]),
+                          EventBroadcaster(), channel_id="c", phase_sm=ControllerPhaseSM(),
+                          todo_ledger=ledger)
+    await loop.run({"goal": "g", "workspace_path": "/tmp"}, max_iters=10)
+    assert board.posts == 2 and not rec.plan_contexts[1].get("notice_acted")

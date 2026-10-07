@@ -266,8 +266,20 @@ class MainTeamToolSource:
                 return _ok({**result, "note": BACKGROUND_NOTE})
             team_id = self._ops.resolve(str(args.get("team", "")))
             if tool == "post_board":
-                return _ok(self._ops.post(team_id, check_text(args.get("text"), "text"),
-                                          args.get("mentions")))
+                posted = self._ops.post(team_id, check_text(args.get("text"), "text"),
+                                        args.get("mentions"))
+                raw = posted.get("mentions")
+                mentioned = [str(m) for m in raw] if isinstance(raw, list) else []
+                # Say who it reached: a bare {seq, phase} read as "nothing changed", and the
+                # main agent posted the same restart again and again (live 2026-10-07).
+                if mentioned:
+                    reach = (", ".join(f"@{m}" for m in mentioned) + " get it as their next "
+                             "input (an idle member is woken; while the team deliberates it "
+                             "arrives at the next round)")
+                else:
+                    reach = "Members read it with their next input"
+                return _ok({**posted, "note": f"Posted. {reach}. The team reports at its next "
+                                              "milestone."})
             status = self._ops.status(team_id)
             if tool == "team_status":
                 if team_id in self._created:

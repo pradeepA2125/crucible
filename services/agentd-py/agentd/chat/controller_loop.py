@@ -513,6 +513,14 @@ _PROGRESS_DEDUP_TEMPLATE = tagged("progress_dedup", (
 ))
 
 
+_NOTICE_ACTION_TOOLS = frozenset({"post_board", "adopt_proposal", "resume_team", "disband_team"})
+
+
+def _mention_set(args: dict[str, object]) -> frozenset[str]:
+    raw = args.get("mentions")
+    return frozenset(str(m).lstrip("@") for m in raw) if isinstance(raw, list) else frozenset()
+
+
 # In a notice turn there is usually no work left: "take the next action" sent the main
 # agent looking for some (polling team_status, nudging a busy team — live 2026-10-07).
 _NOTICE_TURN_PROGRESS = (
@@ -765,6 +773,12 @@ class ControllerLoop:
         self._delegated_teams: list[str] = []
         self._delegated_agents: list[str] = []
         self._agents_collected = False
+        # In a notice turn: the team actions this turn already took (for the hint) and the
+        # member sets it posted to (a repeat is refused). Without them the notice ("team is
+        # stuck") stays the only news, every call looks like the first, and the model
+        # repeats the action (live 2026-10-07: six post_boards to one builder).
+        self._notice_actions: list[str] = []
+        self._notice_posts: set[frozenset[str]] = set()
         # The provider's exact size for the last call this loop made, pinned to the
         # history length it measured (see ObservedPrompt). Seeded from run()'s
         # observed_prompt param — the caller's carried cross-turn state — updated in
@@ -968,6 +982,33 @@ class ControllerLoop:
         elif tool == "wait_agents" and self._delegated_agents:
             self._agents_collected = True
 
+    def _note_notice_action(self, tool: str, args: dict[str, object]) -> None:
+        """Record a team action taken in a notice turn (post_board, adopt, resume…)."""
+        if tool not in _NOTICE_ACTION_TOOLS:
+            return
+        team = str(args.get("team") or "the team")
+        if tool == "post_board":
+            mentions = _mention_set(args)
+            self._notice_posts.add(mentions)
+            who = ", ".join(f"@{m}" for m in sorted(mentions)) or "the board"
+            self._notice_actions.append(f"post_board to {who} ({team})")
+        else:
+            self._notice_actions.append(f"{tool} ({team})")
+
+    def _notice_repeat(self, tool: str, args: dict[str, object],
+                       plan_context: dict[str, object]) -> str | None:
+        """In a notice turn, a second post_board to the same members is refused: the first
+        already reached them and nothing new can arrive before the next milestone."""
+        if not plan_context.get("notice_turn") or tool != "post_board":
+            return None
+        mentions = _mention_set(args)
+        if mentions not in self._notice_posts:
+            return None
+        who = ", ".join(f"@{m}" for m in sorted(mentions)) or "the board"
+        return (f"Not posted: you already posted to {who} this turn and they are working on "
+                "it; nothing new can arrive before the team's next milestone. Tell the user "
+                "in one type='answer' — that ends this turn.")
+
     def _delegation(self) -> dict[str, object] | None:
         """What this turn handed off, for the per-turn hint — None when nothing was, or
         once the turn applied an edit itself (the edit hints take over then)."""
@@ -1031,6 +1072,7 @@ class ControllerLoop:
         self._edit_applied = False
         self._delegated_teams, self._delegated_agents = [], []
         self._agents_collected = False
+        self._notice_actions, self._notice_posts = [], set()
         try:
             outcome = await self._iterate(
                 plan_context, history, tool_defs, seen, max_iters,
@@ -1340,6 +1382,10 @@ class ControllerLoop:
             # sees "nothing started yet" rather than falling through to the mid-turn
             # "reflect on your last edit's result" text written for a LANDED edit. This is a
             # previously-fixed thrash bug — do not add an iteration gate here.
+            if plan_context.get("notice_turn") and self._notice_actions:
+                plan_context["notice_acted"] = list(self._notice_actions)
+            else:
+                plan_context.pop("notice_acted", None)
             delegated = self._delegation()
             if delegated is not None:
                 plan_context["delegated"] = delegated
@@ -1608,6 +1654,10 @@ class ControllerLoop:
                     "content": (
                         f'Progress note posted to the user: "{note}". This did NOT end the '
                         "turn — now take the actual next action."
+                        if not plan_context.get("notice_turn") else
+                        f'Progress note posted to the user: "{note}". This did NOT end the '
+                        "turn — if that is all this notice needs, end it now with "
+                        "type='answer'."
                     ),
                 })
                 continue
@@ -1627,6 +1677,11 @@ class ControllerLoop:
                     })
                     continue
                 seen[key] = iteration + 1
+                repeat = self._notice_repeat(tool, args, plan_context)
+                if repeat is not None:
+                    history.append(assistant_turn(resp))
+                    history.append({"role": "tool_result", "tool": tool, "content": repeat})
+                    continue
                 # Observability: log every tool call/result (ToolLoop does the same).
                 # Without this, controller turns are invisible in logs — you can't tell
                 # whether a turn explored or emitted straight from seed_history.
@@ -1654,6 +1709,8 @@ class ControllerLoop:
                     plan_context.pop("reconcile_item", None)
                 if not out.is_error:
                     self._note_delegation(tool, args)
+                    if plan_context.get("notice_turn"):
+                        self._note_notice_action(tool, args)
                 logger.info("[controller] tool_result tool=%s is_error=%s chars=%d",
                             tool, out.is_error, len(out.output or ""))
                 self._broadcaster.broadcast(self._channel_id, {

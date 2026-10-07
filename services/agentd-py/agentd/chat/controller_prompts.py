@@ -1128,7 +1128,15 @@ def build_controller_step_payload(
             " Or, for independent parts touching disjoint files, dispatch them in parallel "
             "with dispatch_agents (a tool_call — see SUB-AGENTS)."
             if plan_context.get("dispatch_available") else "")
-        if (plan_context.get("active_entry") or not history) and plan_context.get("notice_turn"):
+        acted = plan_context.get("notice_acted")
+        if plan_context.get("notice_turn") and isinstance(acted, list) and acted:
+            hint = (
+                f"You acted on the notice this turn: {'; '.join(str(a) for a in acted)}. "
+                "They now continue; the team reports at its next milestone, which wakes you. "
+                "Do not post again or check team_status. Tell the user, briefly, what "
+                "happened and what you did, in one type='answer' — that ends this turn."
+            )
+        elif (plan_context.get("active_entry") or not history) and plan_context.get("notice_turn"):
             hint = (
                 "Notices woke you — the agent reports or team milestones above; the user sent "
                 "no new message. The notice already holds the team's state (phase, "
