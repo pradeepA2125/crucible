@@ -12,6 +12,7 @@ from agentd.teams.validation import TeamInputError, parse_proposal_id
 _SHAPE = ('"stances": [{"proposal_id": "P1", "stance": "agree", "note": "what you checked"}] '
           'or [{"proposal_id": "P1", "stance": "object", "reason": "...", '
           '"evidence": {"files": ["path"], "line": 12}}]')
+_VOTE_SHAPE = '"vote": {"proposal_id": "P4", "note": "why the team should build it"}'
 
 
 class ReportFields:
@@ -86,6 +87,19 @@ class ReportFields:
                     proposal.get("supersedes"), also_stated=frozenset(stated)))
             except TeamInputError as exc:
                 errors.append(f"proposal: {exc}")
+        voted = False
+        vote = resp.get("vote")
+        if vote is not None:
+            try:
+                if not isinstance(vote, dict):
+                    raise TeamInputError("must be {proposal_id, note?}")
+                pid = f"P{parse_proposal_id(vote.get('proposal_id'))}"
+                if self._svc.current_vote(self._team_id, self._label) != pid:
+                    prepared.append(self._svc.prepare_vote(
+                        self._team_id, self._label, pid, vote.get("note")))
+                voted = True
+            except TeamInputError as exc:
+                errors.append(f"vote: {exc}")
         if errors and not final:
             key = json.dumps(resp, sort_keys=True, default=str)
             malformed = key == self._last_refused
@@ -103,6 +117,14 @@ class ReportFields:
                 f"this report's stances field — {_SHAPE} — then report again. If you could "
                 "not check something, agree and say so in the note, or object with what "
                 "you found."))
+        candidates = self._svc.vote_candidates(self._team_id, self._label)
+        owes_vote = (bool(candidates) and not voted
+                     and self._svc.current_vote(self._team_id, self._label) is None)
+        if owes_vote and not final and not self._redirected:
+            self._redirected = True
+            return ReportVerdict(message=(
+                f"This round is a vote and your report has none. Add {_VOTE_SHAPE} — one of "
+                f"{', '.join(candidates)} — then report again."))
         for p in prepared:
             try:
                 self._svc.commit(self._team_id, self._label, p, self._counters,

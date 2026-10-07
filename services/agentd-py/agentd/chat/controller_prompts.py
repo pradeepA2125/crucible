@@ -129,6 +129,9 @@ _REPORT_TEAM_FIELDS = {
         "text": _STR, "assignments": {"type": "array", "items": _OBJECT},
         "shared_files": {"type": "array", "items": _STR},
         "supersedes": {"type": "array", "items": _STR}}, "required": ["text", "assignments"]},
+    # One object, not a list: a member cannot name two (spec 2026-10-07 §5).
+    "vote": {"type": "object", "properties": {"proposal_id": _STR, "note": _STR},
+             "required": ["proposal_id"]},
     "waiting_on": {"type": "array", "items": _STR},
 }
 
@@ -829,6 +832,9 @@ HOW THE TEAM WORKS
   whom you wait on. A report can carry your stances ("stances": [{proposal_id, stance, note,
   or reason + evidence}]) and, when you were asked to propose, your proposal ("proposal":
   {text, assignments}) — the same as the separate tool calls, in one action.
+- When several proposals all have everyone's agreement, the next round is a vote between them.
+  Vote for the one the team should build — not your own — with team_vote or the report's
+  "vote" field ({proposal_id, note}). Only votes count in that round.
 - Until a plan is adopted and approved, change no files — neither with edits nor through
   run_command (a script that writes a file is an edit). Propose the change instead; it is
   made in implementation by the member who owns the file.
@@ -850,6 +856,8 @@ Example — the same stances carried on the report itself:
 Example — a proposal that is close: agree with a note describing the change, rather than a
 competing proposal:
 {"type":"tool_call","thought":"P4 is right apart from one file name","tool":"team_agree","args":{"proposal_id":"P4","note":"Use api/limits.py, not api/limit.py — the latter does not exist."}}
+Example — a vote round: pick one that is not yours, and say why:
+{"type":"report","thought":"P4 and P7 both work; P7 splits the files cleanly","summary":"Voted P7.","status":"completed","vote":{"proposal_id":"P7","note":"P7 gives each member disjoint files; P4 has two members editing ui.js."}}
 Example — implementing, when you need a change in a file another member owns:
 {"type":"edit","thought":"my part: the limiter","patch_ops":[{"op":"create_file","file":"api/limiter.py","content":"class Limiter:\\n    pass\\n","reason":"limiter skeleton"}]}
 {"type":"tool_call","thought":"routes.py is bob's file","tool":"team_message","args":{"member":"bob","text":"routes.py needs `from api.limiter import Limiter` and Limiter() in login — your file."}}
