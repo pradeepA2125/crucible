@@ -126,7 +126,12 @@ _STANCE_ENTRY = {"type": "object", "properties": {
 _REPORT_TEAM_FIELDS = {
     "stances": {"type": "array", "items": _STANCE_ENTRY},
     "proposal": {"type": "object", "properties": {
-        "text": _STR, "assignments": {"type": "array", "items": _OBJECT},
+        # A real schema, not a free-form object: strict mode (the ChatGPT route) would send
+        # a free-form object as a JSON string, and the model filled it with prose.
+        "text": _STR, "assignments": {"type": "array", "items": {
+            "type": "object", "properties": {
+                "member": _STR, "part": _STR, "files": {"type": "array", "items": _STR}},
+            "required": ["member", "part", "files"]}},
         "shared_files": {"type": "array", "items": _STR}}, "required": ["text", "assignments"]},
     "waiting_on": {"type": "array", "items": _STR},
 }

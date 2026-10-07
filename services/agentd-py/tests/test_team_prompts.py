@@ -189,3 +189,17 @@ def test_members_are_told_not_to_write_files_before_implementation() -> None:
         [{"name": "team_post"}], task_subsystem_enabled=False, memory_enabled=False,
         render_ctx=_ctx("Team 'auth'. Goal: add login."), persona="")
     assert "change no files — neither with edits nor through\n  run_command" in member
+
+
+def test_report_proposal_assignments_survive_the_strict_codec() -> None:
+    """On the ChatGPT route a free-form object becomes a JSON string; the report's
+    proposal.assignments must stay {member, part, files} objects like team_propose's (live:
+    the lead's report failed to decode four times and each retry re-posted its proposal)."""
+    from agentd.providers.openai_strict_schema import encode_strict_schema
+    schema = controller_response_schema(phase="AGENT", allowed_types=["report"],
+                                        team_member=True)
+    item = schema["properties"]["proposal"]["properties"]["assignments"]["items"]
+    assert item["required"] == ["member", "part", "files"]
+    assert set(item["properties"]) == {"member", "part", "files"}
+    encoded = json.dumps(encode_strict_schema(schema).schema)
+    assert '"member"' in encoded and '"part"' in encoded
