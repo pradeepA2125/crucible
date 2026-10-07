@@ -39,7 +39,6 @@ class TeamState:
     pending_assignees: tuple[str, ...] = ()   # the adopted plan's assignees, awaiting approval
     review_cycle: int = 0            # the current closing proposal's cycle (1 = the first)
     max_review_cycles: int = 2       # closing proposals allowed after the first
-    vote_between: tuple[str, ...] = ()  # a vote round's candidates (spec 2026-10-07 §4)
 
     def quorum(self) -> list[str]:
         return [label for label, m in self.members.items() if m.in_quorum]
@@ -65,15 +64,6 @@ class MemberReported:
 @dataclass(frozen=True)
 class RoundEvaluated:
     adopted: str | None
-    assignees: tuple[str, ...] = ()
-    tied: tuple[str, ...] = ()       # two or more qualifying proposals → a vote round
-    voters: tuple[str, ...] = ()     # quorum members with a candidate they did not write
-
-
-@dataclass(frozen=True)
-class VoteEvaluated:
-    """A vote round ended: the unique top-voted candidate, or None for a tie / no votes."""
-    winner: str | None
     assignees: tuple[str, ...] = ()
 
 
@@ -142,7 +132,7 @@ class ReviewEvaluated:
 
 Event = (Kickoff | MemberReported | RoundEvaluated | MainAdopt | MainPost | Disband | Approval
          | BudgetExhausted | ProviderStopped | Stuck | MainResume | Revive | ReviewStarted
-         | ReviewEvaluated | VoteEvaluated)
+         | ReviewEvaluated)
 
 
 # ── actions ──────────────────────────────────────────────────────────────────
@@ -307,14 +297,6 @@ def _pause(state: TeamState, reason: str) -> list[Action]:
     return actions
 
 
-def _vote_tie(state: TeamState) -> list[Action]:
-    """A tied vote (or nobody able to vote) is the main agent's call (spec 2026-10-07 §2)."""
-    state.vote_between = ()
-    state.phase = "DEADLOCKED"
-    return [EnterPhase("DEADLOCKED", state.round, "vote tie"),
-            Milestone("vote_tie", {"round": state.round})]
-
-
 def _owing(state: TeamState, phase: str) -> tuple[str, ...]:
     if phase in ("DELIBERATING", "REVIEWING"):
         return tuple(lb for lb in state.round_members
@@ -457,7 +439,6 @@ def _revive(state: TeamState, event: Revive) -> list[Action]:
         state.phase = "REVIEWING"
         return [*restored, OpenReview(max(state.review_cycle, 1))]
     # Deliberation (or any other phase): one more round, as a main post in a deadlock does.
-    state.vote_between = ()
     state.round += 1
     state.max_rounds += 1
     return [*restored, *_start_round(state, state.quorum())]
@@ -491,27 +472,12 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
             return s, []
         if event.adopted is not None:
             return s, _adopt(s, event.adopted, "team", event.assignees)
-        if len(event.tied) >= 2:
-            if not event.voters:
-                return s, _vote_tie(s)
-            # The vote round never counts toward the round limit (spec 2026-10-07 §2).
-            s.round += 1
-            s.max_rounds += 1
-            s.vote_between = event.tied
-            return s, _start_round(s, list(event.voters))
         if s.round >= s.max_rounds:
             s.phase = "DEADLOCKED"
             return s, [EnterPhase("DEADLOCKED", s.round, "round limit"),
                        Milestone("deadlock", {"round": s.round})]
         s.round += 1
         return s, _start_round(s, s.quorum())
-    if isinstance(event, VoteEvaluated):
-        if s.phase != "DELIBERATING" or not s.vote_between:
-            return s, []
-        s.vote_between = ()
-        if event.winner is not None:
-            return s, _adopt(s, event.winner, "team", event.assignees)
-        return s, _vote_tie(s)
     if isinstance(event, Approval):
         if s.phase != "AWAITING_APPROVAL":
             return s, []

@@ -10,7 +10,7 @@ from typing import Any, Literal, Protocol
 
 from agentd.subagents.framing import frame
 from agentd.teams import state_machine as sm
-from agentd.teams.adoption import evaluate_round, tally_votes
+from agentd.teams.adoption import evaluate_round
 from agentd.teams.config import team_review_cycles
 from agentd.teams.milestones import milestone_text
 from agentd.teams.models import TeamMember, TeamPost, TeamRecord
@@ -72,7 +72,6 @@ class TeamCoordinator:
             approval_gate=team.approval_gate, stuck_count=team.stuck_count)
         self._state.review_cycle = team.review_cycles
         self._state.max_review_cycles = team_review_cycles()
-        self._state.vote_between = tuple(team.vote_ids)
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._evaluation: dict[str, object] = {}   # the latest round_ended payload
         self._cutoff = team.round_cutoff_seq or 0    # highest post seq at the round's start
@@ -230,16 +229,11 @@ class TeamCoordinator:
 
     def _apply(self, event: sm.Event) -> None:
         before = self._state.stuck_count
-        before_vote = self._state.vote_between
         self._state, actions = sm.apply(self._state, event)
         self._trace.write("event", name=type(event).__name__, event=repr(event),
                           actions=[repr(a) for a in actions])
         if self._state.stuck_count != before:
             self._store.update_team(self._team_id, stuck_count=self._state.stuck_count)
-        if self._state.vote_between != before_vote:
-            # Persisted before StartRound runs: the voters' header and checks read it.
-            self._store.update_team(self._team_id,
-                                    vote_between=",".join(self._state.vote_between))
         for action in actions:
             self._execute(action)
 
@@ -312,14 +306,6 @@ class TeamCoordinator:
         data: dict[str, object] = dict(action.data)
         if action.kind == "deadlock":
             data["proposals"] = self._evaluation.get("proposals", [])
-        elif action.kind == "vote_tie":
-            vote = self._evaluation.get("vote")
-            if isinstance(vote, dict):
-                data.update(between=vote.get("between", []), counts=vote.get("counts", {}),
-                            votes=vote.get("votes", []))
-            else:   # nobody could vote: the tie came straight from the deliberation round
-                data.update(between=self._evaluation.get("qualifying", []), counts={},
-                            votes=[])
         elif action.kind == "done":
             # Written just before End flips the row: the body names the phase it ends in.
             team = team.model_copy(update={"phase": "DONE"})
@@ -384,41 +370,15 @@ class TeamCoordinator:
 
     def _evaluate(self, ended_round: int) -> None:
         posts = self._store.posts(self._team_id)
-        new_posts = sum(1 for p in posts if p.round == ended_round and p.kind != "system")
-        if self._state.vote_between:
-            self._evaluate_vote(posts, ended_round, new_posts)
-            return
         evaluation = evaluate_round(posts, self._state.quorum(), ended_round)
+        new_posts = sum(1 for p in posts if p.round == ended_round and p.kind != "system")
         payload = {**evaluation.as_payload(), "new_posts": new_posts}
         self._svc.record(self._team_id, "team", "round_ended", payload=payload)
         self._trace.write("evaluation", **evaluation.as_payload())
-        # The deadlock / vote_tie milestones read this payload (spec §8.8).
+        # The deadlock milestone carries the per-proposal counts (spec §8.8).
         self._evaluation = payload
         adopted = evaluation.adopted
-        tied = evaluation.qualifying if adopted is None else ()
-        self._apply(sm.RoundEvaluated(adopted, self._assignees(adopted) if adopted else (),
-                                      tied=tied, voters=self._voters(tied)))
-
-    def _evaluate_vote(self, posts: list[TeamPost], ended_round: int, new_posts: int) -> None:
-        tally = tally_votes(posts, self._state.vote_between, self._state.round_members,
-                            ended_round)
-        payload = {"round": ended_round, "adopted": tally.winner, "proposals": [],
-                   "vote": tally.as_payload(), "new_posts": new_posts}
-        self._svc.record(self._team_id, "team", "round_ended", payload=payload)
-        self._trace.write("vote", round=ended_round, **tally.as_payload())
-        self._evaluation = payload
-        winner = tally.winner
-        self._apply(sm.VoteEvaluated(winner, self._assignees(winner) if winner else ()))
-
-    def _voters(self, tied: tuple[str, ...]) -> tuple[str, ...]:
-        """Quorum members with a candidate they did not write (no self-votes)."""
-        if not tied:
-            return ()
-        authors = []
-        for pid in tied:
-            post = self._store.get_post(self._team_id, int(pid.lstrip("Pp")))
-            authors.append(post.author if post is not None else "")
-        return tuple(lb for lb in self._state.quorum() if any(a != lb for a in authors))
+        self._apply(sm.RoundEvaluated(adopted, self._assignees(adopted) if adopted else ()))
 
     def _adopt(self, action: sm.Adopt) -> None:
         seq = int(action.proposal_id.lstrip("Pp"))
@@ -623,7 +583,7 @@ class TeamCoordinator:
 
     def _hold(self, post: TeamPost) -> None:
         """Posts made during round N reach members at round N+1 (spec v2 E5, §8.3)."""
-        if post.kind in ("agree", "object", "withdraw", "vote"):
+        if post.kind in ("agree", "object", "withdraw"):
             return
         others = [lb for lb in self._state.quorum() if lb != post.author]
         if post.recipient is not None:

@@ -99,26 +99,6 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
         details = details or ["No open proposals."]
         details.append("Next: post_board to run one more round, adopt_proposal to adopt one "
                        "of its open proposals, or disband_team.")
-    elif kind == "vote_tie":
-        raw_between = data.get("between")
-        between = [str(p) for p in raw_between] if isinstance(raw_between, list) else []
-        raw_votes = data.get("votes")
-        votes = ([v for v in raw_votes if isinstance(v, dict)]
-                 if isinstance(raw_votes, list) else [])
-        joined = (", ".join(between[:-1]) + f" and {between[-1]}" if len(between) > 1
-                  else "".join(between))
-        headline = f"Team {name}'s vote between {joined} tied"
-        details = []
-        for pid in between:
-            backers = [str(v.get("label")) for v in votes if v.get("proposal_id") == pid]
-            n = len(backers)
-            details.append(f"{pid}: {n} vote{'' if n == 1 else 's'}"
-                           + (f" ({', '.join(backers)})" if backers else ""))
-        if not votes:
-            details.append("No member could vote (each candidate was its voter's own), "
-                           "or nobody voted.")
-        details.append("The notes behind each vote are on the board. Next: adopt_proposal to "
-                       "choose one, post_board to run one more round, or disband_team.")
     elif kind == "member_lost":
         headline = f"Team {name} lost {data['label']} ({data['status']})"
         details = [f"{data['label']} left the quorum; the team continues without it."]

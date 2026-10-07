@@ -15,7 +15,7 @@ from agentd.tools.registry import ToolDefinition, ToolOutput
 
 MEMBER_TOOL_NAMES = frozenset({
     "team_post", "team_message", "team_propose", "team_agree", "team_object", "team_withdraw",
-    "team_vote", "team_read"})
+    "team_read"})
 MAIN_TOOL_NAMES = frozenset({
     "create_team", "post_board", "team_status", "adopt_proposal", "resume_team", "disband_team"})
 BACKGROUND_NOTE = ("The team runs in the background and the user can watch its board. "
@@ -74,9 +74,6 @@ class TeamToolSource:
                  ["proposal_id", "reason", "evidence"]),
             tool("team_withdraw", "Withdraw one of your own open proposals.",
                  {"proposal_id": _STR}, ["proposal_id"]),
-            tool("team_vote", "In a vote round, vote for the tied proposal the team should "
-                 "build (not your own). Voting again replaces your vote. The note says why.",
-                 {"proposal_id": _STR, "note": _STR}, ["proposal_id"]),
             tool("team_read", "Re-read board posts and your direct messages after since_seq "
                  "(all of them when omitted).", {"since_seq": {"type": "integer"}}, []),
         ]
@@ -107,9 +104,6 @@ class TeamToolSource:
             if tool == "team_withdraw":
                 post = self._svc.withdraw(tid, me, args.get("proposal_id"))
                 return _ok({"seq": post.seq, "withdrawn": post.ref_id})
-            if tool == "team_vote":
-                post = self._svc.vote(tid, me, args.get("proposal_id"), args.get("note"))
-                return _ok({"seq": post.seq, "voted": post.ref_id})
             if tool == "team_read":
                 since = args.get("since_seq")
                 posts = self._svc.read(tid, me, since if isinstance(since, int) else 0)

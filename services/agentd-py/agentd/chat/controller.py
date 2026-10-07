@@ -265,8 +265,7 @@ def _round_progress(team: TeamRecord, activity: list[TeamActivity]) -> dict[str,
         if e.aseq > start.aseq and e.kind in ("wrapped_up", "requeued") and e.label in labels:
             last[e.label] = e.kind
     return {"round": team.round, "members": labels,
-            "reported": [lb for lb in labels if last.get(lb) == "wrapped_up"],
-            "vote": team.vote_ids or None}
+            "reported": [lb for lb in labels if last.get(lb) == "wrapped_up"]}
 
 
 def _activation_stats(record: AgentRecord, posts: list[TeamPost]) -> dict[str, object]:
@@ -3200,10 +3199,9 @@ class ChatController:
         if team_row is not None and team_row.phase != "IMPLEMENTING":
             reviewing = membership is not None and team_row.phase == "REVIEWING"
             # Edits only where the phase allows them (spec v2 §3.9), recomputed at each
-            # activation start; deliberation activations are capped at 40 iterations (15 in
-            # a vote round, spec 2026-10-07 §4.3) and review activations at 25 (§3.11).
-            voting = deliberating and bool(team_row.vote_ids)
-            cap = 15 if voting else 40 if deliberating else 25 if reviewing else ctx.max_iters
+            # activation start; deliberation activations are capped at 40 iterations and
+            # review activations at 25 (§3.11).
+            cap = 40 if deliberating else 25 if reviewing else ctx.max_iters
             ctx = replace(ctx, allowed_types=tuple(t for t in ctx.allowed_types if t != "edit"),
                           max_iters=min(ctx.max_iters, cap))
             handle.context = ctx

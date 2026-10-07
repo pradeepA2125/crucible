@@ -189,13 +189,3 @@ def test_members_are_told_not_to_write_files_before_implementation() -> None:
         [{"name": "team_post"}], task_subsystem_enabled=False, memory_enabled=False,
         render_ctx=_ctx("Team 'auth'. Goal: add login."), persona="")
     assert "change no files — neither with edits nor through\n  run_command" in member
-
-
-def test_team_report_schema_has_a_single_vote() -> None:
-    flat = controller_response_schema(phase="AGENT", team_member=True)
-    vote = flat["properties"]["vote"]
-    assert vote["type"] == "object" and vote["required"] == ["proposal_id"]
-    tight = controller_response_schema(phase="AGENT", tight=True, team_member=True)
-    report = next(b for b in tight["oneOf"] if b["properties"]["type"]["const"] == "report")
-    assert "vote" in report["properties"] and "vote" not in report["required"]
-    assert "vote" not in controller_response_schema(phase="AGENT")["properties"]

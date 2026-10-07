@@ -11,7 +11,7 @@ TEAM_PHASES: tuple[str, ...] = (
     "DELIBERATING", "AWAITING_APPROVAL", "IMPLEMENTING", "REVIEWING", "DEADLOCKED", "PAUSED",
     "DONE", "DISBANDED", "FAILED")
 LIVE_TEAM_PHASES = frozenset(TEAM_PHASES[:6])
-POST_KINDS = frozenset({"post", "proposal", "agree", "object", "withdraw", "vote", "system"})
+POST_KINDS = frozenset({"post", "proposal", "agree", "object", "withdraw", "system"})
 
 
 def new_team_id() -> str:
@@ -67,7 +67,7 @@ class TeamPost(BaseModel):
     team_id: str
     seq: int
     author: str          # member label | "main" | "user" | "system"
-    kind: str            # post | proposal | agree | object | withdraw | vote | system
+    kind: str            # post | proposal | agree | object | withdraw | system
     recipient: str | None = None   # None = the board; a label = a direct message
     text: str
     mentions: list[str] = Field(default_factory=list)
