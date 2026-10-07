@@ -513,8 +513,17 @@ _PROGRESS_DEDUP_TEMPLATE = tagged("progress_dedup", (
 ))
 
 
+# In a notice turn there is usually no work left: "take the next action" sent the main
+# agent looking for some (polling team_status, nudging a busy team — live 2026-10-07).
+_NOTICE_TURN_PROGRESS = (
+    "You already told the user with a progress note. If that is all this notice needs, end "
+    "the turn now with type='answer' (a short summary) — answer ends this turn, progress "
+    "does not. Otherwise do the one action the notice asks for.")
+
+
 def _progress_repeat_correction(
     resp: dict[str, object], atype: str, last_was_progress: bool, ctx: RenderContext = _MAIN,
+    *, notice_turn: bool = False,
 ) -> str | None:
     """Reject a `progress` note that immediately follows another `progress` with no real
     action between — a weak model can turn a free non-terminal action into a narration
@@ -522,11 +531,14 @@ def _progress_repeat_correction(
     routes through the same _MAX_MALFORMED correction chain (no new retry primitive)."""
     if atype != "progress" or not last_was_progress:
         return None
+    if notice_turn and ctx.is_main:
+        return _NOTICE_TURN_PROGRESS
     return render_prompt(_PROGRESS_REPEAT_TEMPLATE, ctx)
 
 
 def _progress_dedup_correction(
     resp: dict[str, object], atype: str, seen_notes: set[str], ctx: RenderContext = _MAIN,
+    *, notice_turn: bool = False,
 ) -> str | None:
     """Reject an exact-duplicate progress note already emitted this turn (same attractor
     class as _progress_repeat_correction, but catches non-adjacent repeats)."""
@@ -536,6 +548,8 @@ def _progress_dedup_correction(
     # An empty note is _empty_action_correction's business (it fires earlier in the
     # chain); never let "" match a stored value here.
     if note and note in seen_notes:
+        if notice_turn and ctx.is_main:
+            return _NOTICE_TURN_PROGRESS
         return render_prompt(_PROGRESS_DEDUP_TEMPLATE, ctx)
     return None
 
@@ -1455,8 +1469,12 @@ class ControllerLoop:
                 or _answer_intent_divergence_correction(resp, atype, tool_names)
                 # After _empty_action_correction on purpose: a blank note must be
                 # reported as EMPTY, not misdiagnosed as a duplicate of "".
-                or _progress_repeat_correction(resp, atype, last_was_progress, self._render_ctx)
-                or _progress_dedup_correction(resp, atype, seen_notes, self._render_ctx)
+                or _progress_repeat_correction(
+                    resp, atype, last_was_progress, self._render_ctx,
+                    notice_turn=bool(plan_context.get("notice_turn")))
+                or _progress_dedup_correction(
+                    resp, atype, seen_notes, self._render_ctx,
+                    notice_turn=bool(plan_context.get("notice_turn")))
             )
             if correction is not None:
                 if atype == "propose_mode":

@@ -1131,11 +1131,15 @@ def build_controller_step_payload(
         if (plan_context.get("active_entry") or not history) and plan_context.get("notice_turn"):
             hint = (
                 "Notices woke you — the agent reports or team milestones above; the user sent "
-                "no new message. Tell the user, briefly, what happened and what it means for "
-                "their request. Act only on something the user asked for that is still undone: "
+                "no new message. The notice already holds the team's state (phase, "
+                "assignments, reports): do not call team_status for it. Act only when the "
+                "notice asks for an action — restart a blocked member or a stuck team with "
+                "post_board, ask the user about a paused team or a plan awaiting approval; "
                 "work a team or agent finished (and a team reviewed) is not yours to redo or "
                 "re-check. If your todo list holds items they finished, mark them 'done' "
-                "citing the report in one write_todos first."
+                "citing the report in one write_todos. Then tell the user, briefly, what "
+                "happened and what it means for their request, in one type='answer' — that "
+                "ends this turn (progress does not end it)."
             )
         elif plan_context.get("active_entry") or not history:
             hint = (

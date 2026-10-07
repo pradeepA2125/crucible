@@ -128,7 +128,7 @@ def test_a_notice_turn_gets_the_notice_hint_not_nothing_is_started() -> None:
         history=HISTORY, tool_definitions=[], phase="ACTIVE")
     text = str(payload["instruction"])
     assert "FIRST action" not in text and "nothing is started" not in text
-    assert "woke you" in text and "Tell the user" in text
+    assert "woke you" in text and "tell the user" in text.lower()
     assert "not yours to redo" in text
 
 
@@ -224,3 +224,44 @@ async def test_a_later_main_turn_is_told_about_the_live_team(tmp_path, monkeypat
     await ctrl.handle_message(tid, "how is it going?", channel_id=f"chat:{tid}")
     assert seen[0]["live_work"]["teams"] == [
         {"name": "snake-game", "phase": "DELIBERATING", "goal": "build snake"}]
+
+
+# ---------------------------------------------------------------- notice turns end with answer
+# Live 2026-10-07 (gpt-5.6-luna): woken by "team adopted P1", the main agent told the user the
+# status with `progress` (which does not end a turn), was redirected with "a progress note
+# does NOT count as doing the work — take the actual next action", and then polled
+# team_status and nudged the busy team with post_board: 9 calls instead of one answer.
+
+
+def _notice_instruction() -> str:
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w", "active_entry": True, "notice_turn": True},
+        history=HISTORY, tool_definitions=[], phase="ACTIVE")
+    return str(payload["instruction"])
+
+
+def test_the_notice_hint_names_the_action_that_ends_the_turn() -> None:
+    text = _notice_instruction()
+    assert "type='answer'" in text and "ends this turn" in text
+    assert "progress does not end" in text
+
+
+def test_the_notice_hint_says_the_notice_already_has_the_team_state() -> None:
+    text = _notice_instruction()
+    assert "do not call team_status" in text
+    assert "only when the notice asks" in text and "post_board" in text
+
+
+def test_a_repeated_progress_in_a_notice_turn_says_end_the_turn() -> None:
+    from agentd.chat import controller_loop as cl
+    repeat = cl._progress_repeat_correction({"note": "x"}, "progress", True, notice_turn=True)
+    dedup = cl._progress_dedup_correction({"note": "x"}, "progress", {"x"}, notice_turn=True)
+    for text in (repeat or "", dedup or ""):
+        assert "type='answer'" in text and "ends this turn" in text
+        assert "next action" not in text and "next real action" not in text
+
+
+def test_outside_notice_turns_the_progress_redirects_are_unchanged() -> None:
+    from agentd.chat import controller_loop as cl
+    repeat = cl._progress_repeat_correction({"note": "x"}, "progress", True)
+    assert repeat is not None and "does NOT count as doing the work" in repeat
