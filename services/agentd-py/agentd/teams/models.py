@@ -44,6 +44,7 @@ class TeamRecord(BaseModel):
     ended_at: datetime | None = None
     end_reason: str | None = None
     round_cutoff_seq: int | None = None   # the board's top seq when the current round started
+    lead: str | None = None               # the member who alone proposes (None: anyone may)
     vote_between: str = ""                # a vote round's candidates, comma-separated ("P4,P7")
 
     @property

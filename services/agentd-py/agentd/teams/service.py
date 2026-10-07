@@ -548,6 +548,7 @@ class TeamService:
             "paused_reason": team.paused_reason,
             "end_reason": team.end_reason, "approval_gate": team.approval_gate,
             "adopted_proposal_id": team.adopted_proposal_id,
+            "lead": team.lead,
             "members": [{"label": m.label, "agent_id": m.agent_id,
                          "name": (info := self._agent_info(m.agent_id)).name,
                          "description": info.description, "status": info.status,

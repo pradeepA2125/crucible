@@ -133,6 +133,7 @@ class CreateTeamRequest:
     kickoff_assignments: list[dict[str, object]]
     kickoff_shared_files: list[str]
     kickoff_mentions: list[str]
+    lead: str | None = None
 
 
 def parse_create_team(
@@ -162,8 +163,13 @@ def parse_create_team(
     kind = str(kickoff["kind"])
     text = check_text(kickoff.get("text"), "kickoff.text")
     roster = [m.label for m in members]
+    lead = str(args.get("lead") or "").strip().lstrip("@").casefold()
+    if lead not in roster:
+        raise TeamInputError(f"lead must be one of the members: {', '.join(roster)}")
     mentions = (effective_mentions(text, kickoff.get("mentions"), roster)
                 if kind == "post" else [])
+    if mentions and lead not in mentions:
+        mentions = [*mentions, lead]   # round 1 always starts the lead
     assignments = kickoff.get("assignments") or []
     if kind == "proposal" and not isinstance(assignments, list):
         raise TeamInputError("kickoff.assignments must be a list of {member, part, files}")
@@ -183,7 +189,7 @@ def parse_create_team(
         max_rounds=max_rounds, budget=budget, kickoff_kind=kind, kickoff_text=text,
         kickoff_assignments=[a for a in assignments if isinstance(a, dict)],
         kickoff_shared_files=[str(f) for f in shared] if isinstance(shared, list) else [],
-        kickoff_mentions=mentions)
+        kickoff_mentions=mentions, lead=lead)
 
 
 def _resume_unavailable(_team_id: str, _extra: int | None) -> dict[str, object]:
@@ -222,14 +228,17 @@ class MainTeamToolSource:
         return [
             ToolDefinition(name="create_team", description=(
                 "Start a team of agents that deliberate on a shared board and then implement "
-                "together. Each member's role is its agent definition. kickoff \"proposal\" "
-                "opens with your own plan for them to check; \"post\" asks the mentioned "
-                "members to propose. Returns at once; the team runs in the background."),
+                "together. Each member's role is its agent definition. lead is the member who "
+                "writes and revises the plan — the only one who proposes; pick the member whose "
+                "role owns the overall design. kickoff \"proposal\" opens with your own plan for "
+                "them to check; \"post\" asks the lead to propose. Returns at once; the team runs "
+                "in the background."),
                 parameters={"type": _OBJ, "properties": {
-                    "name": _STR, "goal": _STR, "members": {"type": "array", "items": member},
+                    "name": _STR, "goal": _STR, "lead": _STR,
+                    "members": {"type": "array", "items": member},
                     "approval_gate": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                     "budget": {"type": "integer"}, "kickoff": kickoff},
-                    "required": ["name", "goal", "members", "kickoff"]}),
+                    "required": ["name", "goal", "lead", "members", "kickoff"]}),
             ToolDefinition(name="post_board", description=(
                 "Post on a team's board as the main agent — how the user's requests reach "
                 "the team. Mention members with @label. A post to a FAILED team (after a "

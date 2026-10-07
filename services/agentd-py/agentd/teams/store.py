@@ -75,6 +75,8 @@ class TeamStore:
                 "ALTER TABLE teams ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0")
         if "round_cutoff_seq" not in existing:
             self._conn.execute("ALTER TABLE teams ADD COLUMN round_cutoff_seq INTEGER")
+        if "lead" not in existing:
+            self._conn.execute("ALTER TABLE teams ADD COLUMN lead TEXT")
         if "vote_between" not in existing:
             self._conn.execute(
                 "ALTER TABLE teams ADD COLUMN vote_between TEXT NOT NULL DEFAULT ''")

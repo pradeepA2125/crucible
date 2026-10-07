@@ -66,7 +66,7 @@ def _catalog():
 
 
 def _args(**over):
-    args = {"name": "auth", "goal": "Add login",
+    args = {"name": "auth", "goal": "Add login", "lead": "alice",
             "members": [{"label": "alice", "agent": "explore"},
                         {"label": "bob", "agent": "general-purpose"}],
             "kickoff": {"kind": "post", "text": "Propose a design", "mentions": ["alice"]}}

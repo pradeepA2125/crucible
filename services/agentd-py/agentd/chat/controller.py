@@ -1864,6 +1864,7 @@ class ChatController:
             posts = self._store.teams.posts(team.team_id)
             out.append({
                 "team_id": team.team_id, "name": team.name, "phase": team.phase,
+                "lead": team.lead,
                 "round": team.round, "max_rounds": team.max_rounds,
                 "paused_reason": team.paused_reason,
                 "members": [{"label": m.label, "agent_id": m.agent_id,
@@ -2782,7 +2783,7 @@ class ChatController:
         team = TeamRecord(
             team_id=new_team_id(), thread_id=thread_id, name=req.name, goal=req.goal,
             max_rounds=req.max_rounds, round_started_at=now, approval_gate=req.approval_gate,
-            budget=req.budget, created_turn_id=turn_id,
+            budget=req.budget, created_turn_id=turn_id, lead=req.lead,
             checkpoint_seq=self._store.current_checkpoint_seq(thread_id), created_at=now)
         self._store.teams.create_team(team)
         self._teams.record(team.team_id, "team", "phase",
