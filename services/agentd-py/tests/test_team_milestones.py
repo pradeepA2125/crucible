@@ -120,3 +120,20 @@ def test_stuck_body_names_waits_and_how_to_restart() -> None:
     assert "- tests: awaiting_peer (waiting on api)" in body
     assert 'post_board mentioning the member, e.g. "@tests' in body
     assert "leaves its assignment open" in body
+
+
+def test_vote_tie_text() -> None:
+    team = TeamRecord(team_id="t", thread_id="th", name="auth", goal="g", max_rounds=4,
+                      budget=100, created_turn_id="u", created_at=datetime.now(UTC),
+                      phase="DEADLOCKED", round=3)
+    headline, body = milestone_text(team, "vote_tie", {
+        "round": 3, "between": ["P4", "P7"], "counts": {"P4": 1, "P7": 1},
+        "votes": [{"label": "ui", "proposal_id": "P7", "note": "never shown"},
+                  {"label": "reviewer", "proposal_id": "P4", "note": "never shown"}]})
+    assert headline == "Team 'auth''s vote between P4 and P7 tied"
+    assert "P4: 1 vote (reviewer)" in body and "P7: 1 vote (ui)" in body
+    assert "never shown" not in body
+    assert "adopt_proposal to choose one" in body
+    _, nobody = milestone_text(team, "vote_tie", {"round": 3, "between": ["P2", "P3"],
+                                                  "counts": {}, "votes": []})
+    assert "No member could vote" in nobody

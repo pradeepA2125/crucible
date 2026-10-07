@@ -187,7 +187,7 @@ async def test_status_and_live_progress(tmp_path, monkeypatch) -> None:
         if live["round_progress"]["reported"]:
             break
     assert live["round_progress"] == {"round": 1, "members": ["alice", "bob"],
-                                      "reported": ["alice"]}
+                                      "reported": ["alice"], "vote": None}
     assert ctrl.live_team_names(tid) == ["auth"]
     await ctrl.disband_team(tid, team_id)
     await _settle(ctrl)
