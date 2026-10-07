@@ -37,6 +37,7 @@ from agentd.teams.state_machine import (
     StartRound,
     Stuck,
     TeamState,
+    VoteEvaluated,
     apply,
 )
 
@@ -445,3 +446,65 @@ def test_a_provider_access_stop_pauses_instead_of_requeueing() -> None:
     assert actions == []                                          # already paused
     s, actions = apply(s, MainResume())
     assert actions == [EnterPhase("IMPLEMENTING", 1, "resumed"), ResumeMembers(("alice", "bob"))]
+
+
+def test_several_qualifying_start_a_vote_round_outside_the_limit() -> None:
+    state = _round1(_state("alice", "bob", "carol", max_rounds=3))
+    state, actions = apply(state, RoundEvaluated(None, tied=("P4", "P7"),
+                                                 voters=("alice", "bob")))
+    assert state.round == 2 and state.max_rounds == 4
+    assert state.vote_between == ("P4", "P7")
+    assert actions == [StartRound(2, ("alice", "bob"))]
+
+
+def test_a_vote_at_the_round_limit_still_runs() -> None:
+    state = _round1(_state(max_rounds=1))
+    state, actions = apply(state, RoundEvaluated(None, tied=("P2", "P3"), voters=("alice",)))
+    assert state.phase == "DELIBERATING" and actions == [StartRound(2, ("alice",))]
+
+
+def test_no_voters_goes_straight_to_the_tie() -> None:
+    state = _round1(_state())
+    state, actions = apply(state, RoundEvaluated(None, tied=("P2", "P3"), voters=()))
+    assert state.phase == "DEADLOCKED" and state.vote_between == () and state.round == 1
+    assert actions == [EnterPhase("DEADLOCKED", 1, "vote tie"),
+                       Milestone("vote_tie", {"round": 1})]
+
+
+def _voting() -> TeamState:
+    state = _round1(_state())
+    state, _ = apply(state, RoundEvaluated(None, tied=("P2", "P3"), voters=("alice", "bob")))
+    return state
+
+
+def test_a_vote_winner_is_adopted() -> None:
+    state, actions = apply(_voting(), VoteEvaluated("P3", ("alice",)))
+    assert state.vote_between == ()
+    assert actions[0] == Adopt("P3", "team")
+    assert state.phase == "IMPLEMENTING"
+
+
+def test_a_vote_tie_goes_to_the_main_agent() -> None:
+    state, actions = apply(_voting(), VoteEvaluated(None))
+    assert state.phase == "DEADLOCKED" and state.vote_between == ()
+    assert actions == [EnterPhase("DEADLOCKED", 2, "vote tie"),
+                       Milestone("vote_tie", {"round": 2})]
+
+
+def test_vote_evaluated_outside_a_vote_is_ignored() -> None:
+    state = _round1(_state())
+    assert apply(state, VoteEvaluated("P2")) == (state, [])
+
+
+def test_a_vote_round_ends_like_any_round() -> None:
+    state = _voting()
+    state, _ = apply(state, MemberReported("alice", "completed"))
+    state, actions = apply(state, MemberReported("bob", "completed"))
+    assert actions == [EvaluateRound(2)]
+
+
+def test_revive_from_a_failed_vote_starts_a_normal_round() -> None:
+    state = _voting()
+    state.phase = "FAILED"
+    state, _ = apply(state, Revive("DELIBERATING"))
+    assert state.vote_between == ()
