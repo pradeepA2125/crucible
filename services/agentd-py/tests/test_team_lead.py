@@ -109,3 +109,29 @@ def test_a_team_without_a_lead_keeps_the_old_rules(tmp_path: Path) -> None:
     service.agree(tid, "bob", "P1")
     service.propose(tid, "bob", "mine", [])
     assert len(service.open_proposals(tid)) == 2           # nothing closed implicitly
+
+
+def test_the_brief_names_the_lead(tmp_path: Path) -> None:
+    service, tid, _ = _team(tmp_path)
+    brief = service.brief(tid, "bob")
+    assert "- alice (lead): gp" in brief
+    assert "alice is the lead: only alice proposes; the others review." in brief
+
+
+def test_round_one_headers_for_a_post_kickoff(tmp_path: Path) -> None:
+    service, tid, teams = _team(tmp_path)
+    teams.append_post(tid, author="main", kind="post", text="Plan it", round=0)
+    lead_text, _, _ = service.render_delta_posts(tid, "alice")
+    assert "the main agent asked for a plan, and you are the lead" in lead_text
+    other, _, _ = service.render_delta_posts(tid, "bob")
+    assert "alice is drafting the plan" in other
+
+
+def test_later_round_reminds_the_lead_it_revises(tmp_path: Path) -> None:
+    service, tid, teams = _team(tmp_path)
+    service.propose(tid, "alice", "draft", [])
+    teams.update_team(tid, round=2)
+    lead_text, _, _ = service.render_delta_posts(tid, "alice")
+    assert "your new proposal replaces the current one" in lead_text
+    other, _, _ = service.render_delta_posts(tid, "bob")
+    assert "your new proposal replaces" not in other

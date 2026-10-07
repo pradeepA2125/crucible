@@ -430,14 +430,27 @@ class TeamService:
             body = post.text
         return frame(self._who(team_id, post.author), kind, body, seq=post.seq)
 
-    def _header(self, team: TeamRecord, first: bool) -> str:
+    def _header(self, team: TeamRecord, first: bool, label: str) -> str:
         n, total = team.round, team.max_rounds
         kickoff = self._store.get_post(team.team_id, 1)
+        team_lead = team.lead
+        is_lead = team_lead is not None and team_lead == label
         if team.phase != "DELIBERATING":
             lead = f"Team {team.name!r} — phase {team.phase}."
         elif n == 1 and kickoff is not None and kickoff.kind == "proposal":
             lead = (f"Round 1 of {total}: the main agent proposed {kickoff.proposal_id}. "
                     "Check the claims relevant to your role, then state your stance.")
+            if is_lead:
+                lead += (" As the lead, revise it with team_propose if it needs changes; your "
+                         "proposal replaces it.")
+        elif n == 1 and team_lead is not None and not is_lead:
+            lead = (f"Round 1 of {total}: {team_lead} is drafting the plan. Check the code your "
+                    f"role covers and post what the plan must account for — {team_lead} reads "
+                    "it next round.")
+        elif n == 1 and is_lead:
+            lead = (f"Round 1 of {total}: the main agent asked for a plan, and you are the "
+                    "lead. Check the code your role covers, then propose (team_propose, or the "
+                    "proposal field of your report).")
         elif n == 1:
             lead = (f"Round 1 of {total}: the main agent asked for proposals. Check the code "
                     "your role covers, then propose an approach (team_propose, or the "
@@ -450,12 +463,19 @@ class TeamService:
             feedback = [p for p in self._store.posts(team.team_id) if p.author == "user"]
             why = (f": the user sent {sent_back[-1].proposal_id} back with feedback "
                    f"(#{feedback[-1].seq})" if sent_back and feedback else "")
-            lead = (f"Round {n} of {total}. No proposal is open{why}. Read it, then "
-                    "propose a revised plan (team_propose, or the proposal field of your "
-                    "report) — or agree with one a teammate posts next round.")
+            if team_lead is not None and not is_lead:
+                lead = (f"Round {n} of {total}. No proposal is open{why}. {team_lead} revises "
+                        "the plan; post what it must account for.")
+            else:
+                lead = (f"Round {n} of {total}. No proposal is open{why}. Read it, then "
+                        "propose a revised plan (team_propose, or the proposal field of your "
+                        "report) — or agree with one a teammate posts next round.")
         else:
             lead = (f"Round {n} of {total}: others have posted their views. Check the claims "
                     "relevant to your role, then state your stance on each open proposal.")
+            if is_lead:
+                lead += (" Revise with team_propose when an objection or note calls for it — "
+                         "your new proposal replaces the current one.")
         lines = [lead]
         if first:
             lines.append(f"Goal: {team.goal}")
@@ -491,7 +511,7 @@ class TeamService:
         top = max((p.seq for p in visible), default=member.delivered_seq)
         others = [p for p in visible if p.author != label]
         body = "\n\n".join(self._render_post(team_id, p, label) for p in others)
-        header = self._header(team, first=member.delivered_seq == 0)
+        header = self._header(team, first=member.delivered_seq == 0, label=label)
         text = f"{header}\n\n{body}" if body else f"{header}\n\nNo new posts."
         return text, top, others
 
@@ -545,7 +565,11 @@ class TeamService:
         for m in self._store.members(team_id):
             info = self._agent_info(m.agent_id)
             you = " (you)" if m.label == label else ""
-            lines.append(f"- {m.label}{you}: {info.name} — {info.description}")
+            lead = " (lead)" if m.label == team.lead else ""
+            lines.append(f"- {m.label}{lead}{you}: {info.name} — {info.description}")
+        if team.lead is not None:
+            lines.append(f"{team.lead} is the lead: only {team.lead} proposes; the others "
+                         "review.")
         return "\n".join(lines)
 
     def summary(self, team_id: str) -> dict[str, object]:

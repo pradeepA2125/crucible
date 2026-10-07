@@ -820,13 +820,14 @@ HOW THE TEAM WORKS
   stances in this round rather than waiting for a reply. The main agent created the team;
   the user watches the board.
 - team_post reaches everyone; @label (or mentions) brings it to those members' attention, @team
-  to everyone's. team_message reaches one member. team_propose sets out an approach with
-  assignments (member, part, files). team_agree and team_object state your stance on an open
+  to everyone's. team_message reaches one member. The lead (named in your brief) sets out the approach with
+  team_propose — assignments (member, part, files); a new proposal from the lead replaces the open
+  one. Everyone else shapes it with stances, notes and objections. team_agree and team_object state your stance on an open
   proposal; an objection carries evidence: files + line, command + output, or quote_seq.
   team_withdraw closes one of your own proposals. team_read re-reads the board.
 - Report when your part of this round is done: status "completed", or "awaiting_peer" naming
   whom you wait on. A report can carry your stances ("stances": [{proposal_id, stance, note,
-  or reason + evidence}]) and, when you were asked to propose, your proposal ("proposal":
+  or reason + evidence}]) and, when you are the lead, your proposal ("proposal":
   {text, assignments}) — the same as the separate tool calls, in one action.
 - Until a plan is adopted and approved, change no files — neither with edits nor through
   run_command (a script that writes a file is an edit). Propose the change instead; it is
@@ -868,8 +869,9 @@ create_team starts a team of agents that talk on a shared board: they post findi
 approaches with assignments, and agree or object with evidence. Each member's role is its agent
 definition. It fits work where several perspectives should check one plan before and while it
 is built; dispatch_agents fits independent parts that need no discussion.
-- kickoff "proposal" opens with your own plan for the members to check; kickoff "post" asks the
-  mentioned members to propose.
+- lead names the member who writes and revises the plan (the only one who proposes). kickoff
+  "proposal" opens with your own plan for the members to check; kickoff "post" asks the lead to
+  propose.
 - A full run costs roughly 60–90 requests per member (deliberation, implementation, review):
   set budget with that in mind.
 - After create_team, answer the user: the team runs in the background and the user watches its
