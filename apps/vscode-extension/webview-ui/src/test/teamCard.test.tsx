@@ -53,6 +53,13 @@ describe("TeamCard", () => {
     expect(card).toHaveTextContent("9 posts · P1 2 ✓ · budget 60 requests");
   });
 
+  it("marks the lead", () => {
+    wrap(<TeamCard teamId="team-1" agentIds={["agent-r", "agent-i"]} />,
+         { teams: { "team-1": { ...TEAM, lead: "impl" } } });
+    expect(screen.getByTestId("member-row-impl")).toHaveTextContent("lead");
+    expect(screen.getByTestId("member-row-review")).not.toHaveTextContent("lead");
+  });
+
   it("shows the team's token total once usage loads", () => {
     const total = { requests: 31, input: 690_000, output: 12_000, cached: 345_000 };
     wrap(<TeamCard teamId="team-1" agentIds={["agent-r", "agent-i"]} />, {

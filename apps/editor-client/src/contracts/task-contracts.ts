@@ -358,6 +358,8 @@ export type ThreadUsage = z.infer<typeof ThreadUsageSchema>;
 export const TeamSummarySchema = z.object({
   teamId: z.string(),
   name: z.string(),
+  // The member who alone proposes (spec 2026-10-07 lead proposer); null for older teams.
+  lead: z.string().nullable().default(null),
   goal: z.string(),
   phase: z.string(),
   round: z.number(),
@@ -395,6 +397,7 @@ export type TeamDetail = z.infer<typeof TeamDetailSchema>;
 export const TeamLiveSchema = z.object({
   teamId: z.string(),
   name: z.string(),
+  lead: z.string().nullable().default(null),
   phase: z.string(),
   round: z.number(),
   maxRounds: z.number(),

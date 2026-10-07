@@ -749,6 +749,7 @@ export class HttpBackendClient implements BackendTaskClient {
     return {
       teamId: t["team_id"], name: t["name"], phase: t["phase"], round: t["round"],
       maxRounds: t["max_rounds"], pausedReason: t["paused_reason"] ?? null,
+      lead: t["lead"] ?? null,
     };
   }
 

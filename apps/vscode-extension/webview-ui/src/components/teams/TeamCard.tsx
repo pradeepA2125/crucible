@@ -70,6 +70,7 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
             <div className="min-w-0">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-[12px] font-semibold" style={{ color: identityFor(m.label, roster).color }}>{m.label}</span>
+                {team.lead === m.label && <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10.5px] font-semibold" style={{ color: "var(--color-amber)", borderColor: "var(--color-amber)" }}>lead</span>}
                 {m.name && <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10.5px]" style={{ color: "var(--color-accent-ink)", background: "var(--accent-bg)", borderColor: "var(--accent-brd)" }}>{m.name}</span>}
               </div>
               <div className="truncate text-[11.5px]" style={{ color: TONE[phrase.tone] }}>{phrase.text}</div>

@@ -96,7 +96,7 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
                   <span className="grid text-left leading-tight">
                     <span className="text-[12px] font-semibold" style={{ color: identityFor(m.label, roster).color }}>{m.label}</span>
                     <small className="text-[10.5px] text-text-3">
-                      {memberStateWord(status)}
+                      {team.lead === m.label && "lead · "}{memberStateWord(status)}
                     </small>
                   </span>
                 </button>

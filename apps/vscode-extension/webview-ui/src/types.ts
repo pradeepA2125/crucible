@@ -325,6 +325,7 @@ export interface TeamSummaryView {
   round: number;
   maxRounds: number;
   pausedReason: string | null;
+  lead?: string | null;
   members: TeamMemberView[];
   openProposals: { id: string; author: string; text: string; stances: Record<string, string> }[];
   usage: { requests: number; budget: number };
@@ -342,6 +343,7 @@ export interface TeamLiveView {
   round: number;
   maxRounds: number;
   pausedReason: string | null;
+  lead?: string | null;
   members: TeamMemberView[];
   latest?: TeamLatestView | null;
   counts?: TeamCountsView;

@@ -65,13 +65,16 @@ describe("team activity contracts", () => {
       fetchFn: vi.fn().mockResolvedValue({ ok: true, json: async () => ({
         active_task_id: null, status: null, pending_gates: [], plan: null, teams }) }) });
     const base = { team_id: "team-1", name: "auth", phase: "DELIBERATING", round: 2,
-      max_rounds: 3, paused_reason: null, members: [] };
+      max_rounds: 3, paused_reason: null, members: [], lead: "alice" };
     const withProgress = await live([{ ...base,
       round_progress: { round: 2, members: ["alice", "bob"], reported: ["alice"] } }])
       .getThreadLiveState("t");
     expect(withProgress.teams![0].roundProgress).toEqual(
       { round: 2, members: ["alice", "bob"], reported: ["alice"] });
+    expect(withProgress.teams![0].lead).toBe("alice");
     const without = await live([base]).getThreadLiveState("t");
     expect(without.teams![0].roundProgress).toBeNull();
+    const noLead = await live([{ ...base, lead: undefined }]).getThreadLiveState("t");
+    expect(noLead.teams![0].lead).toBeNull();
   });
 });

@@ -164,6 +164,12 @@ describe("TeamWindow board", () => {
     expect(screen.getByRole("button", { name: "Open impl's tab" })).toHaveTextContent("needs your approval");
   });
 
+  it("header marks the lead's tab", () => {
+    renderWindow("board", { ...TEAM, lead: "impl" }, POSTS, { review: "completed", impl: "running" });
+    expect(screen.getByRole("button", { name: "Open impl's tab" })).toHaveTextContent("lead");
+    expect(screen.getByRole("button", { name: "Open review's tab" })).not.toHaveTextContent("lead");
+  });
+
   it("header says idle only for a member that reported and is resting", () => {
     renderWindow("board", TEAM, POSTS, { review: "completed", impl: "stopped" });
     expect(screen.getByRole("button", { name: "Open review's tab" })).toHaveTextContent("idle");
