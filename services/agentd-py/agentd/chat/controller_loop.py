@@ -426,6 +426,15 @@ _EDIT_GUIDANCE_FALLBACK = (
     "code goes in 'content'.")
 
 
+def _reopened(output: str) -> bool:
+    """post_board's result says it reopened a DONE team."""
+    try:
+        data = json.loads(output)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(data, dict) and data.get("reopened") is True
+
+
 def _edit_failure_guidance(exc: Exception) -> str:
     """Guidance matched to why the edit actually failed.
 
@@ -1000,11 +1009,14 @@ class ControllerLoop:
         thread the value through every ControllerOutcome construction site."""
         return self._observed_prompt
 
-    def _note_delegation(self, tool: str, args: object) -> None:
+    def _note_delegation(self, tool: str, args: object, output: str = "") -> None:
         """Record work a successful tool call handed off (see _delegated_teams)."""
         fields = args if isinstance(args, dict) else {}
-        if tool == "create_team":
-            name = str(fields.get("name") or "the team")
+        reopened = tool == "post_board" and _reopened(output)
+        if tool == "create_team" or reopened:
+            # A post_board that reopened a DONE team hands it work like create_team does
+            # (live 2026-10-08: the main agent then posted three more nudges in that turn).
+            name = str(fields.get("name") or fields.get("team") or "the team")
             if name not in self._delegated_teams:
                 self._delegated_teams.append(name)
         elif tool == "dispatch_agents":
@@ -1744,7 +1756,7 @@ class ControllerLoop:
                     plan_context.pop("pending_reconcile_files", None)
                     plan_context.pop("reconcile_item", None)
                 if not out.is_error:
-                    self._note_delegation(tool, args)
+                    self._note_delegation(tool, args, out.output)
                     if plan_context.get("notice_turn"):
                         self._note_notice_action(tool, args)
                 logger.info("[controller] tool_result tool=%s is_error=%s chars=%d",

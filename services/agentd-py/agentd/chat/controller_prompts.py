@@ -829,6 +829,8 @@ HOW THE TEAM WORKS
   team_propose — assignments (member, part, files); a new proposal from the lead replaces the open
   one. Everyone else shapes it with stances, notes and objections. team_agree and team_object state your stance on an open
   proposal; an objection carries evidence: files + line, command + output, or quote_seq.
+  A proposal is a plan for work not done yet: object when the plan is wrong or incomplete,
+  never because the code does not have it yet.
   team_withdraw closes one of your own proposals. team_read re-reads the board.
 - Report when your part of this round is done: status "completed", or "awaiting_peer" naming
   whom you wait on. A report can carry your stances ("stances": [{proposal_id, stance, note,

@@ -7,6 +7,7 @@ adopt_proposal, then dispatched two fresh agents to rebuild the game the team wa
 """
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,14 +37,20 @@ class _Delegation:
 
     def definitions(self) -> list[ToolDefinition]:
         return [ToolDefinition(name=n, description=n, parameters={"type": "object"})
-                for n in ("create_team", "dispatch_agents", "wait_agents", "team_status")]
+                for n in ("create_team", "dispatch_agents", "wait_agents", "team_status",
+                          "post_board")]
 
     def owns(self, tool: str) -> bool:
-        return tool in {"create_team", "dispatch_agents", "wait_agents", "team_status"}
+        return tool in {"create_team", "dispatch_agents", "wait_agents", "team_status",
+                        "post_board"}
 
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
         if tool == "create_team" and args.get("fail"):
             return ToolOutput(output="Error: bad team", is_error=True)
+        if tool == "post_board":
+            return ToolOutput(output=json.dumps(
+                {"seq": 22, "mentions": [], "phase": "DELIBERATING", "round": 3,
+                 **({"reopened": True} if args.get("reopens") else {})}))
         return ToolOutput(output=f"{tool} ok")
 
 
@@ -67,6 +74,17 @@ async def test_create_team_ends_the_entry_hint_and_names_the_team() -> None:
     assert ctx[0].get("active_entry") is True
     assert ctx[1].get("active_entry") is False
     assert ctx[1]["delegated"] == {"teams": ["snake-game"], "agents": [], "agents_collected": False}
+
+
+@pytest.mark.asyncio
+async def test_a_post_board_that_reopens_a_team_delegates_it() -> None:
+    """Live 2026-10-08: after post_board reopened the snake team, the main agent posted three
+    more nudges in the same turn instead of answering."""
+    ctx = await _contexts(_call("post_board", team="snake-game", text="add wrap", reopens=True))
+    assert ctx[1].get("active_entry") is False
+    assert ctx[1]["delegated"]["teams"] == ["snake-game"]
+    plain = await _contexts(_call("post_board", team="snake-game", text="status?"))
+    assert not plain[1].get("delegated")
 
 
 @pytest.mark.asyncio

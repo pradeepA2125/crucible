@@ -221,3 +221,18 @@ def test_the_main_agent_learns_a_done_team_reopens() -> None:
         disband=never, adopt=lambda *a: {}), first_turn_team_ids=set()).definitions()
     post_board = next(d for d in defs if d.name == "post_board")
     assert "A post to a DONE team reopens it" in post_board.description
+
+
+def test_members_learn_a_proposal_is_a_plan_not_finished_code() -> None:
+    """Live 2026-10-08: a reviewer objected to a plan because the code did not have the
+    feature yet, which cost the reopened team two rounds."""
+    from agentd.chat.controller_prompts import _TEAM_BLOCK
+    from agentd.prompting.tagged import render_prompt
+    agent = AgentContext(agent_id="a", name="general-purpose", label="alice", depth=1,
+                         parent_agent_id=None, permission="default",
+                         allowed_types=("tool_call", "report"), persona="", max_iters=5)
+    ctx = RenderContext.for_agent(agent, tools=frozenset({"team_post"}), shell_policy="ask",
+                                  team_brief="Team 'x'.")
+    text = " ".join(render_prompt(_TEAM_BLOCK, ctx).split())
+    assert ("A proposal is a plan for work not done yet: object when the plan is wrong or "
+            "incomplete, never because the code does not have it yet.") in text
