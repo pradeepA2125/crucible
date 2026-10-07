@@ -9,6 +9,8 @@ only via TEST_PASSED.
 """
 from __future__ import annotations
 
+import shlex
+import sys
 from pathlib import Path
 
 import pytest
@@ -94,7 +96,9 @@ class _RunTestsEngine:
         if not self._ran:
             self._ran = True
             return {"type": "tool_call", "thought": "run the suite",
-                    "tool": "run_command", "args": {"command": "python -c \"print('ok')\""}}
+                    # The running interpreter: a bare `python` is missing on macOS (python3).
+                    "tool": "run_command",
+                    "args": {"command": f"{shlex.quote(sys.executable)} -c \"print('ok')\""}}
         return {"type": "verify_done", "thought": "tests pass", "verified": True,
                 "test_output": "ok"}
 

@@ -157,7 +157,8 @@ async def test_whole_line_command_is_split(tmp_path):
     """Models pack the whole line into `command` — _split_command must recover
     (exec does no word-splitting; without this every such spawn FileNotFoundErrors)."""
     m = SessionManager(tmp_path)
-    r = await m.start("t1", f"{PY} -c print('split_ok')", [], None, 5000)
+    # Shell quoting, as in a terminal: the quotes group the program and are removed.
+    r = await m.start("t1", f"{PY} -c \"print('split_ok')\"", [], None, 5000)
     assert r.exit_code == 0 and "split_ok" in r.new_output
     await m.shutdown()
 

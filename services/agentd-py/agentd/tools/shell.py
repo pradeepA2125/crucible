@@ -78,8 +78,19 @@ def _split_command(
     for i in range(len(tokens), 0, -1):
         candidate = " ".join(tokens[:i])
         if Path(candidate).is_file() or (real_workspace / candidate).is_file():
-            return candidate, [*tokens[i:], *args]
-    return tokens[0], [*tokens[1:], *args]
+            return candidate, [*_shell_words(" ".join(tokens[i:])), *args]
+    words = _shell_words(command)
+    return words[0], [*words[1:], *args]
+
+
+def _shell_words(text: str) -> list[str]:
+    """Split like a shell: quotes group words and are removed (live 2026-10-08: a plain
+    split turned `grep -q "Resume game" f` into a search of a file named `game`).
+    Unbalanced quotes fall back to whitespace splitting."""
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return text.split()
 
 
 def _resolve_workspace_cwd(shadow_root: Path, cwd: str | None) -> Path:
@@ -189,7 +200,7 @@ async def run_command(
 
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # wait_for cancels the communicate() coroutine, not the underlying OS
         # process — proc.communicate() being abandoned does not send it a signal.
         # Confirmed empirically: a deadlocked child (e.g. a hung `go test -race`

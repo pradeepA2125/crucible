@@ -126,6 +126,32 @@ def test_split_command_no_whitespace_unchanged(tmp_path: Path) -> None:
     assert args == ["-x"]
 
 
+def test_split_command_keeps_a_quoted_argument_whole(tmp_path: Path) -> None:
+    """Live 2026-10-08: `grep -q "Resume game" script.js` packed into `command` was split on
+    spaces, so grep searched a file named `game`; quotes reached the program literally."""
+    from agentd.tools.shell import _split_command
+
+    cmd, args = _split_command('grep -q "Resume game" script.js', [], tmp_path)
+    assert (cmd, args) == ("grep", ["-q", "Resume game", "script.js"])
+    cmd, args = _split_command("python3 -c \"print('ok')\"", [], tmp_path)
+    assert (cmd, args) == ("python3", ["-c", "print('ok')"])
+
+
+def test_split_command_quoted_path_with_space(tmp_path: Path) -> None:
+    from agentd.tools.shell import _split_command
+
+    binp = tmp_path / "AI editor" / "bin"
+    binp.mkdir(parents=True)
+    py = binp / "python"
+    py.write_text("#!/bin/sh\n")
+    py.chmod(0o755)
+    cmd, args = _split_command(f"'{py}' -c \"print('ok')\"", [], tmp_path)
+    assert (cmd, args) == (str(py), ["-c", "print('ok')"])
+    # An unquoted path with a space, followed by a quoted argument.
+    cmd, args = _split_command(f"{py} -c \"print('a b')\"", [], tmp_path)
+    assert (cmd, args) == (str(py), ["-c", "print('a b')"])
+
+
 def _fake_echo_uv_env(tmp_path: Path) -> Path:
     script = tmp_path / "echo_uv_env"
     script.write_text(
