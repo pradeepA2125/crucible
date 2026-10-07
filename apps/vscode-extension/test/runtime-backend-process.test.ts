@@ -7,6 +7,9 @@ import { BackendProcess, buildBackendEnv, finalSpawnEnv, isOurBackend, readOwned
   RuntimeUpdateRequiredError,
   type ChildHandle, type ProcessDeps } from "../src/runtime/backend-process.js";
 
+// The lock's owner check compares against the real file owner, so the fake process must
+// carry this process's uid (501 on a Mac, 1001 on the GitHub Linux runner).
+const UID = process.getuid?.() ?? 501;
 const TOKEN = "k".repeat(43);
 
 function stubChild(pid: number, handshake: { pid: number; port: number } | null): ChildHandle & { killed: string[] } {
@@ -47,7 +50,7 @@ function deps(overrides: Partial<ProcessDeps> = {}, child = stubChild(4242, { pi
     isPidAlive: () => false,
     log: () => {},
     platform: "darwin-arm64",
-    uid: 501,
+    uid: UID,
     spawned,
     ...overrides,
   };
@@ -390,19 +393,19 @@ describe("reuse", () => {
 describe("reap", () => {
   const lock = { pid: 777, port: 8000, started_at: 1000 };
   const ours = (command: string, over: Partial<{ uid: number; startedAtSec: number }> = {}) =>
-    ({ uid: 501, startedAtSec: 999, command, ...over });
+    ({ uid: UID, startedAtSec: 999, command, ...over });
 
   it("matches only this workspace's agentd.serve, started before the lock", () => {
-    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj"), lock, "/a/proj", 501)).toBe(true);
-    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj 2"), lock, "/a/proj", 501)).toBe(false);
-    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj", { uid: 0 }), lock, "/a/proj", 501)).toBe(false);
-    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj", { startedAtSec: 1005 }), lock, "/a/proj", 501)).toBe(false);
+    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj"), lock, "/a/proj", UID)).toBe(true);
+    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj 2"), lock, "/a/proj", UID)).toBe(false);
+    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj", { uid: 0 }), lock, "/a/proj", UID)).toBe(false);
+    expect(isOurBackend(ours("py -m agentd.serve --port 0 --workspace-lock /a/proj", { startedAtSec: 1005 }), lock, "/a/proj", UID)).toBe(false);
   });
 
   it("matches a legacy agentd.main:app backend on the lock's exact port", () => {
-    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 8000"), lock, "/a/proj", 501)).toBe(true);
-    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 80"), lock, "/a/proj", 501)).toBe(false);
-    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 80001"), lock, "/a/proj", 501)).toBe(false);
+    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 8000"), lock, "/a/proj", UID)).toBe(true);
+    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 80"), lock, "/a/proj", UID)).toBe(false);
+    expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 80001"), lock, "/a/proj", UID)).toBe(false);
   });
 
   it("signals a verified stale backend, escalating to SIGKILL", async () => {
@@ -411,7 +414,7 @@ describe("reap", () => {
     const signals: string[] = [];
     const d = deps({
       isPidAlive: (pid) => pid === 777,
-      processInfo: async () => ({ uid: 501, startedAtSec: Date.now() / 1000 - 700,
+      processInfo: async () => ({ uid: UID, startedAtSec: Date.now() / 1000 - 700,
         command: `py -m agentd.serve --port 0 --workspace-lock ${currentWs}` }),
       signal: (_pid, sig) => { signals.push(sig); },
       fetchRaw: async (url) => {
@@ -427,9 +430,9 @@ describe("reap", () => {
   });
 
   it.each([
-    ["a recycled pid", { uid: 501, startedAtSec: Date.now() / 1000 + 100, command: "py -m agentd.serve --workspace-lock X" }],
+    ["a recycled pid", { uid: UID, startedAtSec: Date.now() / 1000 + 100, command: "py -m agentd.serve --workspace-lock X" }],
     ["another user's process", { uid: 0, startedAtSec: 0, command: "py -m agentd.serve --workspace-lock X" }],
-    ["an unrelated process", { uid: 501, startedAtSec: 0, command: "/usr/bin/vim" }],
+    ["an unrelated process", { uid: UID, startedAtSec: 0, command: "/usr/bin/vim" }],
   ])("never signals %s, and still spawns", async (_name, info) => {
     const w = ws();
     writeLock(w, { pid: 777, port: 9001, started_at: Date.now() / 1000 - 600 });
@@ -451,7 +454,7 @@ describe("reap", () => {
     writeLock(w, { pid: 1, port: 9001, started_at: Date.now() / 1000 - 600 });
     const signals: string[] = [];
     const d = deps({ signal: (_p, s) => { signals.push(s); },
-      processInfo: async () => ({ uid: 501, startedAtSec: 0,
+      processInfo: async () => ({ uid: UID, startedAtSec: 0,
         command: `x agentd.serve --workspace-lock ${currentWs}` }) });
     await new BackendProcess(d).start(w, SETTINGS);
     expect(signals).toEqual([]);
