@@ -54,6 +54,11 @@ async def search_code(
             glob = "**/" + glob
         if glob:
             cmd += ["-g", glob]
+    # Crucible's own state (log, DBs, shadows, artifacts) is never search material. rg
+    # skips hidden dirs by itself, but a positive glob overrides that — "*.*" matches the
+    # directory name ".crucible" (live: the agent got hits from its own agentd.log). It
+    # goes LAST because rg lets a later glob win over an earlier one.
+    cmd += ["-g", "!**/.crucible/state"]
     cmd += [pattern, str(shadow_root)]
 
     try:
