@@ -50,7 +50,8 @@ class _Delegation:
         if tool == "post_board":
             return ToolOutput(output=json.dumps(
                 {"seq": 22, "mentions": [], "phase": "DELIBERATING", "round": 3,
-                 **({"reopened": True} if args.get("reopens") else {})}))
+                 **({"reopened": True} if args.get("reopens") else {}),
+                 **({"revived": True} if args.get("revives") else {})}))
         return ToolOutput(output=f"{tool} ok")
 
 
@@ -85,6 +86,8 @@ async def test_a_post_board_that_reopens_a_team_delegates_it() -> None:
     assert ctx[1]["delegated"]["teams"] == ["snake-game"]
     plain = await _contexts(_call("post_board", team="snake-game", text="status?"))
     assert not plain[1].get("delegated")
+    revived = await _contexts(_call("post_board", team="snake-game", text="go on", revives=True))
+    assert revived[1]["delegated"]["teams"] == ["snake-game"]
 
 
 @pytest.mark.asyncio

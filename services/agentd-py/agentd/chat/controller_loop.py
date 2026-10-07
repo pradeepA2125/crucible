@@ -427,12 +427,13 @@ _EDIT_GUIDANCE_FALLBACK = (
 
 
 def _reopened(output: str) -> bool:
-    """post_board's result says it reopened a DONE team."""
+    """post_board's result says it reopened a DONE team or revived a FAILED one."""
     try:
         data = json.loads(output)
     except (ValueError, TypeError):
         return False
-    return isinstance(data, dict) and data.get("reopened") is True
+    return isinstance(data, dict) and (data.get("reopened") is True
+                                       or data.get("revived") is True)
 
 
 def _edit_failure_guidance(exc: Exception) -> str:
