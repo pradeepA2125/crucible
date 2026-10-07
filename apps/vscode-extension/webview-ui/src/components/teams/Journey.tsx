@@ -315,7 +315,11 @@ export function Journey({ teamId }: { teamId: string }) {
   );
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Show">
+      {/* Pinned: the board scrolls long, and the toggles scrolled out of reach. -top-3/pt-3
+          cover the scroll container's top padding so posts never show above the row. */}
+      <div className="sticky -top-3 z-10 -mx-3.5 mb-2 flex flex-wrap items-center gap-1.5 px-3.5 pb-2 pt-3"
+        style={{ background: "var(--color-surface-2)", borderBottom: "1px solid var(--color-border)" }}
+        role="group" aria-label="Show">
         {toggle("posts", "Posts")}{toggle("activity", "Activity")}{toggle("messages", "Messages")}
         <span className="ml-auto text-[10.5px] text-text-3">newest at the bottom</span>
       </div>

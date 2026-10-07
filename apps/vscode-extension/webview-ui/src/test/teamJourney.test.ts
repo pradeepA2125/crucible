@@ -43,11 +43,12 @@ describe("buildJourney", () => {
   it("hidden DM wake becomes a standalone beat", () => {
     const dm = post(2, 10, { author: "impl", recipient: "review" });
     const wake = ev(2, 10, "review", "woke", { causeSeq: 2, payload: { cause: "message", by: "impl" } });
-    const hidden = buildJourney([KICKOFF, dm], [PHASE, wake], ROSTER);
+    expect(DEFAULT_FILTERS.messages).toBe(true);     // direct messages show by default
+    const hidden = buildJourney([KICKOFF, dm], [PHASE, wake], ROSTER,
+                                { ...DEFAULT_FILTERS, messages: false });
     expect(hidden.filter((i) => i.kind === "beat")).toHaveLength(1);
     expect(hidden.some((i) => i.kind === "post" && i.post.seq === 2)).toBe(false);
-    const shown = buildJourney([KICKOFF, dm], [PHASE, wake], ROSTER,
-                               { ...DEFAULT_FILTERS, messages: true });
+    const shown = buildJourney([KICKOFF, dm], [PHASE, wake], ROSTER);
     expect(shown.some((i) => i.kind === "beat")).toBe(false);
     const card = shown.find((i) => i.kind === "post" && i.post.seq === 2);
     expect(card?.kind === "post" && card.footer.woke).toEqual(["review"]);

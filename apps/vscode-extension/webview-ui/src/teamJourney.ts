@@ -4,7 +4,9 @@ import type { TeamActivityView, TeamPostView } from "./types";
 // components only draw the items.
 
 export interface JourneyFilters { posts: boolean; activity: boolean; messages: boolean }
-export const DEFAULT_FILTERS: JourneyFilters = { posts: true, activity: true, messages: false };
+// Direct messages show by default: the board's #seq references include them, and a hidden
+// one read as a missing post.
+export const DEFAULT_FILTERS: JourneyFilters = { posts: true, activity: true, messages: true };
 
 export type Stance = "agree" | "object";
 export interface TallyChip { label: string; stance: Stance | "pending"; was: Stance | null; seq: number | null }

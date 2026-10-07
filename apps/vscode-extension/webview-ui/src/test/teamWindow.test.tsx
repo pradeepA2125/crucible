@@ -86,6 +86,13 @@ describe("TeamWindow board", () => {
     expect(onTab).toHaveBeenCalledWith("agent-i");
   });
 
+  it("the filter row is pinned, with Messages on by default", () => {
+    renderWindow("board");
+    const row = screen.getByRole("group", { name: "Show" });
+    expect(row.className).toContain("sticky");
+    expect(screen.getByRole("button", { name: "Messages" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("shows no usage section before usage loads", () => {
     renderWindow();
     expect(screen.queryByTestId("team-usage")).toBeNull();
@@ -129,13 +136,14 @@ describe("TeamWindow board", () => {
     expect(screen.getByText("verified").tagName).toBe("STRONG");
   });
 
-  it("a wake whose message is hidden stands alone; Messages shows the message with the footer", () => {
+  it("a message shows with its wake footer; hiding Messages leaves the wake standing alone", () => {
     renderWindow();
-    expect(screen.getByTestId("beat-a6")).toHaveTextContent("review woke — direct message from impl #4");
-    fireEvent.click(screen.getByRole("button", { name: "Messages" }));
     expect(screen.queryByTestId("beat-a6")).toBeNull();
     expect(screen.getByText("which file holds the cap?")).toBeInTheDocument();
     expect(screen.getByTestId("footer-p4")).toHaveTextContent("woke review");
+    fireEvent.click(screen.getByRole("button", { name: "Messages" }));
+    expect(screen.getByTestId("beat-a6")).toHaveTextContent("review woke — direct message from impl #4");
+    expect(screen.queryByText("which file holds the cap?")).toBeNull();
   });
 
   it("the now strip shows who is working and who is idle", () => {
