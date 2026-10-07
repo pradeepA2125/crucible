@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agentd.chat.edit_session import StaleWriteError
@@ -34,6 +35,7 @@ from agentd.reasoning.react_common import (
 )
 from agentd.skills.config import skills_body_max_chars
 from agentd.subagents.framing import frame
+from agentd.subagents.write_log import canonical_path
 from agentd.teams.tools import MAIN_TOOL_NAMES, MEMBER_TOOL_NAMES
 
 if TYPE_CHECKING:
@@ -434,6 +436,40 @@ def _edit_failure_guidance(exc: Exception) -> str:
     if not issues:
         return _EDIT_GUIDANCE_FALLBACK
     return _EDIT_GUIDANCE_BY_CODE.get(issues[0].code, _EDIT_GUIDANCE_FALLBACK)
+
+
+def _allow_reread_of_stale(
+    seen: dict[str, int], exc: Exception, workspace_path: object,
+) -> None:
+    """Forget earlier read_file calls of every file a STALE_READ refusal names.
+
+    The refusal tells the model to read the file again; without this the
+    duplicate-call guard blocked that exact re-read when the file had already been read
+    this turn, and the two guards sent the model in circles (live: the main agent gave
+    up on styles.css). Paths are compared canonically because the read's spelling
+    ("./a.css") and the refusal's ("a.css") differ.
+    """
+    issues = getattr(exc, "issues", None) or []
+    stale = {i.file for i in issues if i.code == PatchFailureCode.STALE_READ and i.file}
+    if not stale:
+        return
+    root = Path(str(workspace_path)) if workspace_path else None
+
+    def canonical(raw: str) -> str:
+        key = canonical_path(root, raw) if root is not None else None
+        return key if key is not None else raw.strip().removeprefix("./")
+
+    stale_keys = {canonical(p) for p in stale}
+    for key in list(seen):
+        tool, _, raw_args = key.partition(":")
+        if tool != "read_file":
+            continue
+        try:
+            path = json.loads(raw_args).get("path")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(path, str) and canonical(path) in stale_keys:
+            del seen[key]
 
 
 # A forward-looking, first-person intent phrase — "I'm about to do X" rather than
@@ -1852,6 +1888,7 @@ class ControllerLoop:
                     intent = {k: v for k, v in resp.items() if k != "patch_ops"}
                     history.append(assistant_turn(intent))
                     guidance = _edit_failure_guidance(exc)
+                    _allow_reread_of_stale(seen, exc, plan_context.get("workspace_path"))
                     history.append({
                         "role": "tool_result", "tool": "edit",
                         "content": f"PATCH FAILED: {exc}"
@@ -1909,6 +1946,7 @@ class ControllerLoop:
                             diff, "stale",
                             f"{stale.path} changed since it was read (by {stale.writer_label})",
                             was_gated)
+                    _allow_reread_of_stale(seen, stale, plan_context.get("workspace_path"))
                     history.append(assistant_turn(
                         {k: v for k, v in resp.items() if k != "patch_ops"}))
                     history.append({
