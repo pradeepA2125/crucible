@@ -30,6 +30,13 @@ from agentd.teams.validation import (
 _STANCE_KINDS = ("agree", "object")
 
 
+def ids_text(ids: list[str]) -> str:
+    """'P4', 'P4 and P7', 'P4, P5 and P7'."""
+    if len(ids) <= 1:
+        return "".join(ids)
+    return f"{', '.join(ids[:-1])} and {ids[-1]}"
+
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -117,6 +124,18 @@ class TeamService:
             raise TeamInputError(f"P{seq} is closed ({post.closed})")
         return post
 
+    def _refuse_during_vote(self, team: TeamRecord) -> None:
+        """A vote round is vote-only: the candidates cannot change mid-vote (spec
+        2026-10-07 §4.3)."""
+        if team.phase == "DELIBERATING" and team.vote_ids:
+            raise TeamInputError(
+                f"This round is a vote between {ids_text(team.vote_ids)}; only votes count. "
+                "Use team_vote, or the vote field of your report.")
+
+    def _author_of(self, team_id: str, proposal_id: str) -> str:
+        post = self._store.get_post(team_id, parse_proposal_id(proposal_id))
+        return post.author if post is not None else ""
+
     def _round_cutoff(self, team: TeamRecord) -> int | None:
         """While a round runs, members see the board as it stood when it started (spec v2
         E5). Elsewhere delivery is live."""
@@ -195,6 +214,7 @@ class TeamService:
                         also_stated: frozenset[int] = frozenset()) -> PreparedPost:
         team = self._team(team_id)
         self._require_phase(team, ("DELIBERATING",), "team_propose")
+        self._refuse_during_vote(team)
         body = check_text(text, "proposal")
         roster = self._roster(team_id)
         stances = self.stances(team_id)
@@ -224,6 +244,7 @@ class TeamService:
     def prepare_agree(self, team_id: str, author: str, proposal_id: object,
                       note: object = None) -> PreparedPost:
         team = self._team(team_id)
+        self._refuse_during_vote(team)
         proposal = self._open_proposal(team_id, proposal_id)
         self._stance_phase(team, proposal, "team_agree")
         if proposal.author == author:
@@ -235,6 +256,7 @@ class TeamService:
     def prepare_object(self, team_id: str, author: str, proposal_id: object, reason: object,
                        evidence: object) -> PreparedPost:
         team = self._team(team_id)
+        self._refuse_during_vote(team)
         proposal = self._open_proposal(team_id, proposal_id)
         self._stance_phase(team, proposal, "team_object")
         body = check_text(reason, "reason")
@@ -273,6 +295,44 @@ class TeamService:
         return self.commit(team_id, author, self.prepare_object(
             team_id, author, proposal_id, reason, evidence))
 
+    def prepare_vote(self, team_id: str, author: str, proposal_id: object,
+                     note: object = None) -> PreparedPost:
+        team = self._team(team_id)
+        ids = team.vote_ids
+        if team.phase != "DELIBERATING" or not ids:
+            raise TeamInputError("team_vote is only for a vote round; state stances with "
+                                 "team_agree or team_object")
+        pid = f"P{parse_proposal_id(proposal_id)}"
+        others = [p for p in ids if self._author_of(team_id, p) != author]
+        if pid not in ids:
+            raise TeamInputError(f"{pid} is not in this vote; pick one of {ids_text(others)}")
+        if pid not in others:
+            raise TeamInputError(
+                f"you can't vote for your own proposal; pick one of {ids_text(others)}")
+        payload = {"note": check_text(note, "note")} if note not in (None, "") else {}
+        return PreparedPost(kind="vote", text=str(payload.get("note", "")), ref_id=pid,
+                            payload=payload)
+
+    def vote(self, team_id: str, author: str, proposal_id: object,
+             note: object = None) -> TeamPost:
+        return self.commit(team_id, author, self.prepare_vote(team_id, author, proposal_id, note))
+
+    def vote_candidates(self, team_id: str, label: str) -> list[str]:
+        """The vote round's candidates `label` may vote for (not its own); [] outside one."""
+        team = self._store.get_team(team_id)
+        if team is None or team.phase != "DELIBERATING" or not team.vote_ids:
+            return []
+        return [p for p in team.vote_ids if self._author_of(team_id, p) != label]
+
+    def current_vote(self, team_id: str, label: str) -> str | None:
+        """`label`'s latest vote in the current round."""
+        team = self._store.get_team(team_id)
+        if team is None:
+            return None
+        votes = [p for p in self._store.posts(team_id)
+                 if p.kind == "vote" and p.author == label and p.round == team.round]
+        return votes[-1].ref_id if votes else None
+
     def expected_stances(self, team_id: str, label: str) -> list[str]:
         """Open proposals from earlier rounds that `label` has no stance on (spec v2 §8.3)."""
         team = self._store.get_team(team_id)
@@ -282,6 +342,8 @@ class TeamService:
                 team.closing_proposal_id]
         if team is None or team.phase != "DELIBERATING":
             return []
+        if team.vote_ids:
+            return []        # a vote round asks for a vote, not stances
         stances = self.stances(team_id)
         return [p.proposal_id for p in self.open_proposals(team_id)
                 if p.author != label and (p.round or 0) < team.round
@@ -318,6 +380,7 @@ class TeamService:
     def withdraw(self, team_id: str, author: str, proposal_id: object) -> TeamPost:
         team = self._team(team_id)
         self._require_phase(team, ("DELIBERATING",), "team_withdraw")
+        self._refuse_during_vote(team)
         proposal = self._open_proposal(team_id, proposal_id)
         if proposal.author != author:
             raise TeamInputError(f"you can only withdraw your own proposals; "
@@ -387,6 +450,20 @@ class TeamService:
         name = self._agent_info(member.agent_id).name if member else "?"
         return f"{label} ({name})"
 
+    def _vote_card(self, team_id: str, proposal_id: str) -> str:
+        """One candidate, compact: members compare them side by side without team_read."""
+        post = self._store.get_post(team_id, parse_proposal_id(proposal_id))
+        if post is None:
+            return f"candidate {proposal_id}: (missing)"
+        text = post.text if len(post.text) <= 300 else post.text[:300] + "…"
+        parts = "; ".join(
+            f"{a.get('member')} → {a.get('part')} "
+            f"({', '.join(a.get('files') or []) or 'no files'})"
+            for a in post.payload.get("assignments", []) if isinstance(a, dict))
+        body = text + (f"\nassignments: {parts}" if parts else "")
+        return frame(self._who(team_id, post.author), f"candidate {proposal_id}", body,
+                     seq=post.seq)
+
     def _render_post(self, team_id: str, post: TeamPost, viewer: str) -> str:
         if post.kind == "system":
             return f"● system: {post.text}"   # system-written: never model text
@@ -410,6 +487,9 @@ class TeamService:
         elif post.kind == "withdraw":
             kind = f"withdraws {post.ref_id}"
             body = "(withdrawn)"
+        elif post.kind == "vote":
+            kind = f"votes for {post.ref_id}"
+            body = post.text or "(no note)"
         elif post.recipient is not None:
             kind = "direct message to you" if post.recipient == viewer else (
                 f"direct message to {post.recipient}")
@@ -424,6 +504,11 @@ class TeamService:
         kickoff = self._store.get_post(team.team_id, 1)
         if team.phase != "DELIBERATING":
             lead = f"Team {team.name!r} — phase {team.phase}."
+        elif team.vote_ids:
+            lead = (f"Round {n} (vote) of {total}: {ids_text(team.vote_ids)} each have "
+                    "everyone's agreement, so the team picks one. Vote for the proposal the "
+                    "team should build — not your own — with team_vote or the vote field of "
+                    "your report, and a note saying why. Only votes count this round.")
         elif n == 1 and kickoff is not None and kickoff.kind == "proposal":
             lead = (f"Round 1 of {total}: the main agent proposed {kickoff.proposal_id}. "
                     "Check the claims relevant to your role, then state your stance.")
@@ -446,6 +531,8 @@ class TeamService:
             lead = (f"Round {n} of {total}: others have posted their views. Check the claims "
                     "relevant to your role, then state your stance on each open proposal.")
         lines = [lead]
+        if team.phase == "DELIBERATING" and team.vote_ids:
+            lines.extend(self._vote_card(team.team_id, pid) for pid in team.vote_ids)
         if first:
             lines.append(f"Goal: {team.goal}")
         if team.phase == "DELIBERATING":
@@ -505,6 +592,9 @@ class TeamService:
         for p in open_ps:
             mine = "yours" if p.author == label else stances.get(p.seq, {}).get(label, "none")
             lines.append(f"- {p.proposal_id} by {p.author} — your stance: {mine}")
+        if team.phase == "DELIBERATING" and team.vote_ids:
+            lines.append(f"vote: {', '.join(team.vote_ids)} — your vote: "
+                         f"{self.current_vote(team_id, label) or 'none'}")
         evaluation = self.latest_evaluation(team_id)
         if evaluation is not None:
             lines.append(f"last round ({evaluation.get('round')}): "
