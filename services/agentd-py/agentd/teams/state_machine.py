@@ -66,6 +66,7 @@ class MemberReported:
 class RoundEvaluated:
     adopted: str | None
     assignees: tuple[str, ...] = ()
+    idle: tuple[str, ...] = ()       # not woken next round (a lead whose plan is unobjected)
 
 
 @dataclass(frozen=True)
@@ -481,7 +482,8 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
             return s, [EnterPhase("DEADLOCKED", s.round, "round limit"),
                        Milestone("deadlock", {"round": s.round})]
         s.round += 1
-        return s, _start_round(s, s.quorum())
+        woken = [lb for lb in s.quorum() if lb not in event.idle]
+        return s, _start_round(s, woken or s.quorum())
     if isinstance(event, Approval):
         if s.phase != "AWAITING_APPROVAL":
             return s, []

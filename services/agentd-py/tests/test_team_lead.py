@@ -76,6 +76,9 @@ def test_the_lead_replaces_every_open_proposal_without_a_stance_first(tmp_path: 
     _kickoff(teams, tid)                                    # P1, no stance from alice
     p2 = service.propose(tid, "alice", "draft", [])
     assert teams.get_post(tid, 1).closed == "superseded"   # type: ignore[union-attr]
+    teams.update_team(tid, round=2, round_cutoff_seq=p2.seq)
+    obj = service.object_(tid, "bob", p2.proposal_id, "misses walls", {"quote_seq": 1})
+    teams.update_team(tid, round=3, round_cutoff_seq=obj.seq)
     p3 = service.propose(tid, "alice", "revised", [])
     assert teams.get_post(tid, p2.seq).closed == "superseded"  # type: ignore[union-attr]
     assert [p.proposal_id for p in service.open_proposals(tid)] == [p3.proposal_id]
@@ -132,6 +135,30 @@ def test_later_round_reminds_the_lead_it_revises(tmp_path: Path) -> None:
     service.propose(tid, "alice", "draft", [])
     teams.update_team(tid, round=2)
     lead_text, _, _ = service.render_delta_posts(tid, "alice")
-    assert "your new proposal replaces the current one" in lead_text
+    assert "Your P1 is under review" in lead_text
+    assert "otherwise report that you are waiting" in lead_text
+    assert "note calls for it" not in lead_text
     other, _, _ = service.render_delta_posts(tid, "bob")
-    assert "your new proposal replaces" not in other
+    assert "under review" not in other
+
+
+def test_the_lead_keeps_an_unobjected_plan(tmp_path: Path) -> None:
+    service, tid, teams = _team(tmp_path)
+    p1 = service.propose(tid, "alice", "draft", [])
+    teams.update_team(tid, round=2, round_cutoff_seq=p1.seq)
+    service.agree(tid, "bob", p1.proposal_id, note="also handle walls")
+    teams.update_team(tid, round=3, round_cutoff_seq=99)
+    with pytest.raises(TeamInputError, match=(
+            "P1 is under review and nobody objects to it. Keep it: teammates' notes are "
+            "applied during implementation. Report that you are waiting for the review.")):
+        service.propose(tid, "alice", "revised with the note", [])
+
+
+def test_an_objection_posted_this_round_does_not_unlock_a_revision_yet(tmp_path: Path) -> None:
+    service, tid, teams = _team(tmp_path)
+    p1 = service.propose(tid, "alice", "draft", [])
+    teams.update_team(tid, round=2, round_cutoff_seq=p1.seq)   # the objection lands after it
+    service.object_(tid, "bob", p1.proposal_id, "misses walls", {"quote_seq": 1})
+    with pytest.raises(TeamInputError, match="nobody objects"):
+        service.propose(tid, "alice", "revised", [])
+

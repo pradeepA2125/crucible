@@ -129,6 +129,36 @@ class TeamService:
             return posts
         return [p for p in posts if p.seq <= cutoff or p.author == viewer]
 
+    def _lead_plan(self, team_id: str, lead: str) -> TeamPost | None:
+        """The lead's open proposal, if it has one (the main agent's kickoff is not)."""
+        mine = [p for p in self.open_proposals(team_id) if p.author == lead]
+        return mine[-1] if mine else None
+
+    def _objected(self, team: TeamRecord, proposal: TeamPost, viewer: str) -> bool:
+        """Some member's latest stance on `proposal`, among the posts `viewer` can see this
+        round, is an objection."""
+        latest: dict[str, str] = {}
+        for post in self._within(self._store.posts(team.team_id), self._round_cutoff(team),
+                                 viewer):
+            if post.kind in _STANCE_KINDS and post.ref_id == proposal.proposal_id:
+                latest[post.author] = post.kind
+        return "object" in latest.values()
+
+    def lead_waits(self, team_id: str) -> bool:
+        """At a round's end: the lead's plan is open and nobody objects to it, so the lead has
+        nothing to do next round (spec 2026-10-07 lead proposer)."""
+        team = self._store.get_team(team_id)
+        if team is None or team.lead is None:
+            return False
+        current = self._lead_plan(team_id, team.lead)
+        if current is None:
+            return False
+        latest: dict[str, str] = {}
+        for post in self._store.posts(team_id):
+            if post.kind in _STANCE_KINDS and post.ref_id == current.proposal_id:
+                latest[post.author] = post.kind
+        return "object" not in latest.values()
+
     def _require_phase(self, team: TeamRecord, allowed: tuple[str, ...], action: str) -> None:
         if team.phase not in allowed:
             raise TeamInputError(
@@ -200,6 +230,15 @@ class TeamService:
             raise TeamInputError(
                 f"Only {lead} (the team's lead) proposes. Suggest your change with a note on "
                 "your stance, an objection with evidence, or a post.")
+        if lead is not None:
+            current = self._lead_plan(team_id, lead)
+            if current is not None and not self._objected(team, current, author):
+                # Live 2026-10-08: the lead revised every round to fold in agree-notes, closing
+                # the plan everyone had just agreed to, and nothing was ever adopted.
+                raise TeamInputError(
+                    f"{current.proposal_id} is under review and nobody objects to it. Keep it: "
+                    "teammates' notes are applied during implementation. Report that you are "
+                    "waiting for the review.")
         body = check_text(text, "proposal")
         roster = self._roster(team_id)
         if lead is None:
@@ -473,9 +512,12 @@ class TeamService:
         else:
             lead = (f"Round {n} of {total}: others have posted their views. Check the claims "
                     "relevant to your role, then state your stance on each open proposal.")
-            if is_lead:
-                lead += (" Revise with team_propose when an objection or note calls for it — "
-                         "your new proposal replaces the current one.")
+            current = self._lead_plan(team.team_id, label) if is_lead else None
+            if current is not None:
+                lead += (f" Your {current.proposal_id} is under review. If an objection "
+                         "arrived, revise it with team_propose (your new proposal replaces "
+                         "it); otherwise report that you are waiting — teammates' notes are "
+                         "applied during implementation.")
         lines = [lead]
         if first:
             lines.append(f"Goal: {team.goal}")

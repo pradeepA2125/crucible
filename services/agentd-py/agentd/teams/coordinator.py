@@ -379,7 +379,10 @@ class TeamCoordinator:
         # The deadlock milestone carries the per-proposal counts (spec §8.8).
         self._evaluation = payload
         adopted = evaluation.adopted
-        self._apply(sm.RoundEvaluated(adopted, self._assignees(adopted) if adopted else ()))
+        idle = (self._state.lead,) if (
+            adopted is None and self._state.lead and self._svc.lead_waits(self._team_id)) else ()
+        self._apply(sm.RoundEvaluated(adopted, self._assignees(adopted) if adopted else (),
+                                      idle=idle))
 
     def _adopt(self, action: sm.Adopt) -> None:
         seq = int(action.proposal_id.lstrip("Pp"))

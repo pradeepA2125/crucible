@@ -541,3 +541,44 @@ async def test_resume_after_lead_lost_restarts_the_lead(tmp_path) -> None:
     host.started.clear()
     coord.resume(0)
     assert "alice" in host.started
+
+
+def _lead_round_one(store, svc, host, tmp_path):  # type: ignore[no-untyped-def]
+    store.update_team("team-1", lead="alice")
+    store.close_proposal("team-1", 1, "withdrawn")
+    coord = TeamCoordinator("team-1", store, svc, host,
+                            CoordinatorTrace(tmp_path / "lead.jsonl"), round_timeout_s=900.0,
+                            grace_s=0.05)
+    coord.kickoff("post", [])
+    svc.propose("team-1", "alice", "plan", [])
+    return coord
+
+
+@pytest.mark.asyncio
+async def test_the_lead_is_not_woken_while_its_plan_is_unobjected(tmp_path) -> None:
+    store, svc, host, coord, _ = _setup(tmp_path, labels=("alice", "bob", "carol"))
+    coord = _lead_round_one(store, svc, host, tmp_path)
+    for label in ("alice", "bob", "carol"):
+        coord.on_report(label, "completed", None)
+    rounds = [a for a in store.activity("team-1") if a.kind == "round_started"]
+    assert [m["label"] for m in rounds[-1].payload["members"]] == ["bob", "carol"]
+    svc.agree("team-1", "bob", "P2")
+    svc.agree("team-1", "carol", "P2")
+    coord.on_report("bob", "completed", None)
+    coord.on_report("carol", "completed", None)
+    assert store.get_team("team-1").adopted_proposal_id == "P2"
+
+
+@pytest.mark.asyncio
+async def test_an_objection_wakes_the_lead(tmp_path) -> None:
+    store, svc, host, coord, _ = _setup(tmp_path, labels=("alice", "bob", "carol"))
+    coord = _lead_round_one(store, svc, host, tmp_path)
+    for label in ("alice", "bob", "carol"):
+        coord.on_report(label, "completed", None)
+    svc.agree("team-1", "bob", "P2")
+    svc.object_("team-1", "carol", "P2", "no walls", {"quote_seq": 1})
+    coord.on_report("bob", "completed", None)
+    coord.on_report("carol", "completed", None)
+    rounds = [a for a in store.activity("team-1") if a.kind == "round_started"]
+    assert "alice" in [m["label"] for m in rounds[-1].payload["members"]]
+

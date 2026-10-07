@@ -120,3 +120,15 @@ def test_stuck_body_names_waits_and_how_to_restart() -> None:
     assert "- tests: awaiting_peer (waiting on api)" in body
     assert 'post_board mentioning the member, e.g. "@tests' in body
     assert "leaves its assignment open" in body
+
+
+def test_deadlock_points_at_an_unobjected_proposal() -> None:
+    _, body = milestone_text(_team(), "deadlock", {
+        "round": 3, "proposals": [{"id": "P7", "stances": {"alice": "agree", "bob": "agree",
+                                                            "carol": "none"}}]})
+    assert ("P7 has no objection: adopt_proposal adopts it now; post_board only runs "
+            "another round.") in body
+    _, objected = milestone_text(_team(), "deadlock", {
+        "round": 3, "proposals": [{"id": "P7", "stances": {"alice": "agree", "bob": "object"}}]})
+    assert "has no objection" not in objected
+

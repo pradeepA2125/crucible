@@ -96,6 +96,11 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
             stances = list((p.get("stances") or {}).values())
             details.append(f"{p['id']}: {stances.count('agree')} agree, "
                            f"{stances.count('object')} object, {stances.count('none')} no stance")
+            if stances and "object" not in stances:
+                # Live 2026-10-08: the main agent asked the team to "adopt the strongest
+                # proposal" with post_board three times instead of adopting it.
+                details.append(f"{p['id']} has no objection: adopt_proposal adopts it now; "
+                               "post_board only runs another round.")
         details = details or ["No open proposals."]
         details.append("Next: post_board to run one more round, adopt_proposal to adopt one "
                        "of its open proposals, or disband_team.")
