@@ -1838,17 +1838,21 @@ class ChatController:
         hint: their work is not the main agent's to redo (live 2026-10-07: woken by a
         milestone, the main agent began building what the team had just planned)."""
         teams: list[dict[str, object]] = []
+        finished: list[dict[str, object]] = []
         if self._teams is not None and is_teams_enabled():
+            rows = self._store.teams.list_teams(thread_id)
             teams = [{"name": t.name, "phase": t.phase, "goal": t.goal}
-                     for t in self._store.teams.list_teams(thread_id)
-                     if t.phase in LIVE_TEAM_PHASES]
+                     for t in rows if t.phase in LIVE_TEAM_PHASES]
+            # A DONE team takes follow-ups (post_board reopens it): its members know the code
+            # (live 2026-10-08: the main agent edited a team's game itself instead).
+            finished = [{"name": t.name, "goal": t.goal} for t in rows if t.phase == "DONE"]
         agents: list[str] = []
         if self._subagents is not None:
             agents = [r.label for r in self._store.list_agents(thread_id)
                       if r.status in LIVE_STATUSES and r.team_id is None and r.depth == 1]
-        if not teams and not agents:
+        if not teams and not agents and not finished:
             return None
-        return {"teams": teams, "agents": agents}
+        return {"teams": teams, "agents": agents, "finished": finished}
 
     def live_teams(self, thread_id: str) -> list[dict[str, object]]:
         """Slow-changing fields only — this rides /live, whose dedup signature must not

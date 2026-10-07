@@ -226,6 +226,42 @@ async def test_a_later_main_turn_is_told_about_the_live_team(tmp_path, monkeypat
         {"name": "snake-game", "phase": "DELIBERATING", "goal": "build snake"}]
 
 
+def test_a_finished_team_takes_follow_ups() -> None:
+    """Live 2026-10-08: asked to add levels to the snake a team had just built, the main agent
+    edited the files itself; the team, which knew the code, was never asked."""
+    done = {"teams": [], "agents": [],
+            "finished": [{"name": "snake-game", "goal": "build snake"}]}
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w", "active_entry": True, "live_work": done},
+        history=HISTORY, tool_definitions=[], phase="ACTIVE")
+    text = str(payload["instruction"])
+    assert "Team snake-game finished: build snake." in text
+    assert ("A request that changes or extends that work goes to the team with post_board: it "
+            "reopens with its members' context.") in text
+    assert "Do it yourself only if the user's latest message asks you to" in text
+
+
+@pytest.mark.asyncio
+async def test_a_later_main_turn_is_told_about_a_finished_team(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_TEAMS_ENABLED", "1")
+    ctrl, store, tid = _setup(Path(tmp_path), monkeypatch, [ANSWER], {})
+    now = datetime.now(UTC)
+    store.teams.create_team(TeamRecord(
+        team_id="team-1", thread_id=tid, name="snake-game", goal="build snake", max_rounds=3,
+        phase="DONE", round_started_at=now, approval_gate=False, budget=60,
+        created_turn_id="t0", checkpoint_seq=0, created_at=now))
+    seen: list[dict] = []
+    original = ctrl._reasoning.create_controller_step
+
+    async def spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(dict(kwargs.get("plan_context") or {}))
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(ctrl._reasoning, "create_controller_step", spy)
+    await ctrl.handle_message(tid, "add levels", channel_id=f"chat:{tid}")
+    assert seen[0]["live_work"]["finished"] == [{"name": "snake-game", "goal": "build snake"}]
+
+
 # ---------------------------------------------------------------- notice turns end with answer
 # Live 2026-10-07 (gpt-5.6-luna): woken by "team adopted P1", the main agent told the user the
 # status with `progress` (which does not end a turn), was redirected with "a progress note

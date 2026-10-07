@@ -1025,17 +1025,25 @@ def _live_work_clause(live: dict[str, object], delegated: object) -> str:
     teams = [t for t in raw_teams if isinstance(t, dict) and str(t.get("name")) not in started] \
         if isinstance(raw_teams, list) else []
     agents = [str(a) for a in raw_agents] if isinstance(raw_agents, list) else []
-    if not teams and not agents:
-        return ""
-    parts = [f"Team {t.get('name')} ({str(t.get('phase', '')).lower()}) is working on: "
-             f"{t.get('goal')}." for t in teams]
-    if agents:
-        parts.append(f"Agents {', '.join(agents)} are running.")
-    parts.append(
-        "That work is not yours: do not edit its files or redo or re-check it yourself; tell "
-        "the user how it is going, and pass the user's new requests to a team with "
-        "post_board. Do the work yourself only if the user's latest message asks you to. "
-        "wait_agents is for agents you dispatched, not for team members.")
+    raw_done = live.get("finished")
+    finished = [t for t in raw_done if isinstance(t, dict)] if isinstance(raw_done, list) else []
+    parts: list[str] = []
+    if teams or agents:
+        parts += [f"Team {t.get('name')} ({str(t.get('phase', '')).lower()}) is working on: "
+                  f"{t.get('goal')}." for t in teams]
+        if agents:
+            parts.append(f"Agents {', '.join(agents)} are running.")
+        parts.append(
+            "That work is not yours: do not edit its files or redo or re-check it yourself; "
+            "tell the user how it is going, and pass the user's new requests to a team with "
+            "post_board. Do the work yourself only if the user's latest message asks you to. "
+            "wait_agents is for agents you dispatched, not for team members.")
+    if finished:
+        parts += [f"Team {t.get('name')} finished: {t.get('goal')}." for t in finished]
+        parts.append(
+            "A request that changes or extends that work goes to the team with post_board: it "
+            "reopens with its members' context. Do it yourself only if the user's latest "
+            "message asks you to, or the request has nothing to do with that work.")
     return " ".join(parts)
 
 
