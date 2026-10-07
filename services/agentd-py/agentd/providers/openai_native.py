@@ -17,8 +17,11 @@ https://developers.openai.com/api/docs/guides/function-calling
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
+import uuid
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -288,3 +291,77 @@ def from_native_input(
         else:
             history.append({"role": str(item.get("role")), "content": item.get("content")})
     return {**head, HISTORY_KEY: history, **tail}
+
+
+# ---------------------------------------------------------------- prompt cache
+
+
+# Marks the per-turn message (goal, instruction, budget…). Earlier ones stay in the input
+# so each request starts with the whole previous one; this line says which is current.
+CURRENT_STEP = "Current step (supersedes earlier step messages):\n"
+
+
+def session_id_for(owner: str | None, instructions: str,
+                   first_item: dict[str, Any] | None) -> str | None:
+    """The plan route's cache key for one prompt stream. Measured live: the route takes its
+    prompt_cache_key from the session_id header and gives a request without one a random
+    key, so nothing is ever reused.
+
+    One id per stream: the usage owner (thread:<id> for the main agent, the agent id for a
+    sub-agent or member) plus a digest of what stays fixed while that stream's history
+    grows — the instructions and the first input item. An owner's other calls (the memory
+    consolidator under the thread, a member after it gains `edit`) send other instructions
+    and get their own id; membrane#77 measured 1 in 20 misses with an id per stream against
+    3 in 13 with one id shared across interleaved prompts. Stable across restarts."""
+    if not owner:
+        return None
+    stream = _digest(instructions, first_item)[:16]
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"crucible:{owner}:{stream}"))
+
+
+def _digest(*parts: object) -> str:
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+
+
+class SessionInputs:
+    """Keeps each loop's input append-only, so the server's automatic cache breakpoint —
+    the end of the previous request's input — is a prefix of the next request.
+
+    The engine rebuilds its payload every iteration with a new per-turn message at the
+    end. Sent as-is, the next request differs from the previous one at that message and
+    only the instructions+tools block is reused (measured: 8.8k of 21k). Here, when the new
+    history starts with the history sent last time, the input is the previous input plus
+    the new history items plus the new per-turn message; anything else (a compaction, a
+    call left without a result, another loop) starts over. Commit only after a request
+    succeeds, so a failed one never leaves its per-turn message behind."""
+
+    def __init__(self, limit: int = 64) -> None:
+        self._limit = limit
+        self._state: OrderedDict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = (
+            OrderedDict())
+
+    @staticmethod
+    def key(session: str, schema_name: str, instructions: str,
+            tools: list[dict[str, Any]]) -> str:
+        return _digest(session, schema_name, instructions, tools)
+
+    def build(self, key: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """`items` is to_native_input's output for a payload with history: everything but
+        the last item is head + history, the last is the per-turn message."""
+        body, tail = items[:-1], _labelled(items[-1])
+        previous = self._state.get(key)
+        if previous is not None:
+            sent_body, sent = previous
+            if body[:len(sent_body)] == sent_body:
+                return sent + body[len(sent_body):] + [tail]
+        return body + [tail]
+
+    def commit(self, key: str, items: list[dict[str, Any]], sent: list[dict[str, Any]]) -> None:
+        self._state[key] = (items[:-1], sent)
+        self._state.move_to_end(key)
+        while len(self._state) > self._limit:
+            self._state.popitem(last=False)
+
+
+def _labelled(tail: dict[str, Any]) -> dict[str, Any]:
+    return {**tail, "content": CURRENT_STEP + str(tail.get("content", ""))}

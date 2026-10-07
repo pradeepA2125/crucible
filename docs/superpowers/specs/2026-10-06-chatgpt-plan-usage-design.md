@@ -387,7 +387,7 @@ Then add a CLAUDE.md section.
 | Roles | `system` and `developer` input items were both accepted (the docs say `system` is rejected). We use `instructions`. |
 | Unsupported fields | `temperature` → 400 `{"detail":"Unsupported parameter: temperature"}`; string `input` → `{"detail":"Input must be a list"}`; `store:true` / `stream:false` refused the same way. `max_output_tokens` was **accepted** (docs list it unsupported); we still omit it. |
 | Reasoning | `none/low/medium/high/xhigh/max` accepted; `minimal` → 400 `unsupported_value`, `param: reasoning.effort`. Live through the transport: reasoning tokens 0→52 from off→max. |
-| `prompt_cache_key`, `text.verbosity` | Accepted. But a custom `prompt_cache_key` gave 0 cache hits (2026-10-07: 0/4 calls incl. repeats, vs 9856/8832 of ~10k cached without it); the route sets its own key, so we send none. |
+| `prompt_cache_key`, `text.verbosity` | Accepted, but the body `prompt_cache_key` is overwritten with a random per-request key. The `session_id` header sets it (measured 2026-10-07); with it plus an append-only input, 91–95% of input is reused. See CLAUDE.md "Prompt caching". |
 | Unknown model | 400 `{"detail":"The 'x' model is not supported when using Codex with a ChatGPT account."}` → now `PlanUnsupportedCapability`. |
 | Usage | `response.completed` carries `usage` (input/output/cached/reasoning tokens, plus an `attribution` breakdown). |
 | Multiple messages | A response can contain a `commentary` message and then a `final_answer` message, both with the full answer; `response.completed.output` is empty. Fixed by per-item selection. |

@@ -638,3 +638,166 @@ async def test_cached_tokens_are_recorded_for_the_current_owner() -> None:
     finally:
         USAGE_OWNER.reset(token)
     assert METER.take("agent-cache-test").cached_tokens == 8832
+
+
+# ---------------------------------------------------------------- prompt cache (plan route)
+# Measured live (2026-10-07, plan route): without a session_id header the route gives every
+# request its own random prompt_cache_key — an exact repeat cached 0 of 21k tokens, and a
+# prompt_cache_key in the body is overwritten. With session_id it becomes the key. The
+# server's automatic breakpoint sits at the end of each request's input, so the next
+# request must start with that whole input: replacing the per-turn message reused only the
+# instructions+tools block (8.8k of 21k); keeping it and appending reused 91–95%.
+
+def _owner(name: str):
+    from agentd.providers.usage import USAGE_OWNER
+    return USAGE_OWNER.set(name)
+
+
+def _payload(history: list[dict[str, object]], step: int) -> dict[str, object]:
+    return {"workspace_path": "/ws", "conversation_history": history,
+            "instruction": f"step {step}"}
+
+
+ACTION = {"role": "assistant", "content": json.dumps(
+    {"type": "tool_call", "thought": "t", "tool": "read_file", "args": {"path": "a.py"}})}
+RESULT = {"role": "tool_result", "tool": "read_file", "content": "def a(): ..."}
+ANSWER = _call_done("answer", {"thought": "t", "answer": "a"})
+
+
+async def _two_steps(t: OpenAIJsonTransport, first: list, second: list, *,
+                     schema_names: tuple[str, str] = ("c", "c")) -> None:
+    await t.generate_json(model="m", schema_name=schema_names[0], schema=CONTROLLER_UNION,
+                          system_instructions="s", user_payload=_payload(first, 1))
+    await t.generate_json(model="m", schema_name=schema_names[1], schema=CONTROLLER_UNION,
+                          system_instructions="s", user_payload=_payload(second, 2))
+
+
+@pytest.mark.asyncio
+async def test_a_session_id_header_names_the_owner_and_stays_stable() -> None:
+    fake = FakeResponses([ANSWER, _completed()], [ANSWER, _completed()], [ANSWER, _completed()])
+    t = _transport(fake, plan_route=True)
+    token = _owner("agent-1")
+    try:
+        go = [{"role": "user", "content": "go"}]
+        await _two_steps(t, go, go)
+    finally:
+        from agentd.providers.usage import USAGE_OWNER
+        USAGE_OWNER.reset(token)
+    await t.generate_json(model="m", schema_name="c", schema=CONTROLLER_UNION,
+                          system_instructions="s", user_payload={})   # no owner
+    first, second, unowned = (c.get("extra_headers") for c in fake.calls)
+    assert first == second and set(first) == {"session_id"}
+    assert unowned is None
+    assert all("prompt_cache_key" not in c for c in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_the_next_request_starts_with_the_whole_previous_input() -> None:
+    fake = FakeResponses([ANSWER, _completed()], [ANSWER, _completed()])
+    t = _transport(fake, plan_route=True)
+    goal = {"role": "user", "content": "read a.py"}
+    token = _owner("agent-1")
+    try:
+        await _two_steps(t, [goal], [goal, ACTION, RESULT])
+    finally:
+        from agentd.providers.usage import USAGE_OWNER
+        USAGE_OWNER.reset(token)
+    one, two = fake.calls[0]["input"], fake.calls[1]["input"]
+    assert two[:len(one)] == one                      # the old per-turn message stays
+    assert [i.get("type", i.get("role")) for i in two[len(one):]] == [
+        "function_call", "function_call_output", "user"]
+    assert "step 2" in two[-1]["content"] and "step 1" in one[-1]["content"]
+    assert two[-1]["content"].startswith("Current step")   # the newest one says it is current
+
+
+@pytest.mark.asyncio
+async def test_a_rewritten_history_starts_over() -> None:
+    # Compaction (or any rewrite) means the old input is no longer a prefix.
+    fake = FakeResponses([ANSWER, _completed()], [ANSWER, _completed()])
+    t = _transport(fake, plan_route=True)
+    token = _owner("agent-1")
+    try:
+        await _two_steps(t, [{"role": "user", "content": "a"}, ACTION, RESULT],
+                         [{"role": "user", "content": "[MEMORY] summary"}, ACTION, RESULT])
+    finally:
+        from agentd.providers.usage import USAGE_OWNER
+        USAGE_OWNER.reset(token)
+    two = fake.calls[1]["input"]
+    assert sum(1 for i in two if i.get("role") == "user" and "step" in str(i.get("content"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_another_schema_under_the_same_owner_has_its_own_input() -> None:
+    fake = FakeResponses([ANSWER, _completed()], [ANSWER, _completed()])
+    t = _transport(fake, plan_route=True)
+    goal = {"role": "user", "content": "go"}
+    token = _owner("agent-1")
+    try:
+        await _two_steps(t, [goal], [goal, ACTION, RESULT], schema_names=("loop", "summary"))
+    finally:
+        from agentd.providers.usage import USAGE_OWNER
+        USAGE_OWNER.reset(token)
+    assert "step 1" not in json.dumps(fake.calls[1]["input"])
+
+
+@pytest.mark.asyncio
+async def test_a_failed_request_does_not_advance_the_session() -> None:
+    fake = FakeResponses([ANSWER, _completed()],
+                         _status_error(400, {"error": {"message": "bad", "code": "x"}}),
+                         [ANSWER, _completed()])
+    t = _transport(fake, plan_route=True, max_retries=0)
+    goal = {"role": "user", "content": "go"}
+    token = _owner("agent-1")
+    try:
+        await t.generate_json(model="m", schema_name="c", schema=CONTROLLER_UNION,
+                              system_instructions="s", user_payload=_payload([goal], 1))
+        with pytest.raises(openai.APIStatusError):
+            await t.generate_json(model="m", schema_name="c", schema=CONTROLLER_UNION,
+                                  system_instructions="s",
+                                  user_payload=_payload([goal, ACTION, RESULT], 2))
+        await t.generate_json(model="m", schema_name="c", schema=CONTROLLER_UNION,
+                              system_instructions="s",
+                              user_payload=_payload([goal, ACTION, RESULT], 3))
+    finally:
+        from agentd.providers.usage import USAGE_OWNER
+        USAGE_OWNER.reset(token)
+    three = json.dumps(fake.calls[2]["input"])
+    assert "step 1" in three and "step 2" not in three   # the failed step's message is not kept
+
+
+@pytest.mark.asyncio
+async def test_a_payload_without_history_is_never_appended_to() -> None:
+    fake = FakeResponses([ANSWER, _completed()], [ANSWER, _completed()])
+    t = _transport(fake, plan_route=True)
+    token = _owner("agent-1")
+    try:
+        for step in (1, 2):
+            await t.generate_json(model="m", schema_name="c", schema=CONTROLLER_UNION,
+                                  system_instructions="s", user_payload={"goal": f"g{step}"})
+    finally:
+        from agentd.providers.usage import USAGE_OWNER
+        USAGE_OWNER.reset(token)
+    assert len(fake.calls[1]["input"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_each_prompt_stream_of_an_owner_gets_its_own_session_id() -> None:
+    # membrane#77 (same plan backend): one id per prompt stream missed 1 in 20 calls, one id
+    # shared across interleaved prompts 3 in 13. An owner's other calls (e.g. the memory
+    # consolidator under the thread) send different instructions, so a different id.
+    fake = FakeResponses(*([ANSWER, _completed()] for _ in range(3)))
+    t = _transport(fake, plan_route=True)
+    goal = {"role": "user", "content": "go"}
+    token = _owner("agent-1")
+    try:
+        for instructions, history in (("loop", [goal]), ("loop", [goal, ACTION, RESULT]),
+                                      ("consolidate", [goal])):
+            await t.generate_json(model="m", schema_name="c", schema=CONTROLLER_UNION,
+                                  system_instructions=instructions,
+                                  user_payload=_payload(history, 1))
+    finally:
+        from agentd.providers.usage import USAGE_OWNER
+        USAGE_OWNER.reset(token)
+    loop1, loop2, other = (c["extra_headers"]["session_id"] for c in fake.calls)
+    assert loop1 == loop2          # a growing history keeps its stream's id
+    assert other != loop1          # another prompt under the same owner does not share it

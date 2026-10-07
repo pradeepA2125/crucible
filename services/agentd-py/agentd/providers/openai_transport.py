@@ -31,7 +31,13 @@ from agentd.providers.openai_compatible_transport import (
     _jittered,
     _within_deadline,
 )
-from agentd.providers.openai_native import native_actions, to_native_input
+from agentd.providers.openai_native import (
+    HISTORY_KEY,
+    SessionInputs,
+    native_actions,
+    session_id_for,
+    to_native_input,
+)
 from agentd.providers.openai_strict_schema import encode_strict_schema
 from agentd.providers.plan_access import (
     TRANSIENT_PLAN_CODES,
@@ -133,6 +139,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         self._effort_rejected: dict[ReasoningEffort, str] = {}
         self._client_token: str | None = None
         self._client_responses: Any = None
+        self._sessions = SessionInputs()
         if bearer is not None:
             self._bearer: BearerSource = bearer
         else:
@@ -237,15 +244,31 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_usage: Callable[[int, int], None] | None,
     ) -> dict[str, object]:
         actions = native_actions(schema, schema_name)
-        body = self._body(model, system_instructions + actions.instructions, user_payload)
-        body["input"] = to_native_input(user_payload, actions)
+        instructions = system_instructions + actions.instructions
+        body = self._body(model, instructions, user_payload)
+        items = to_native_input(user_payload, actions)
         body["tools"] = actions.tools
         # Exactly zero or one call per response, and with "required" exactly one: the
         # model then stops and waits for its result (function-calling guide).
         body["tool_choice"] = actions.tool_choice
         body["parallel_tool_calls"] = False
+        has_history = isinstance(user_payload.get(HISTORY_KEY), list)
+        # Without history the one message changes every call: the stream is its instructions.
+        session = (session_id_for(USAGE_OWNER.get(), instructions,
+                                  items[0] if has_history else None)
+                   if self._plan_route else None)
+        key = None
+        if session is not None and has_history:
+            key = SessionInputs.key(session, schema_name, instructions, actions.tools)
+            body["input"] = self._sessions.build(key, items)
+        else:
+            body["input"] = items
+        headers = {"session_id": session} if session is not None else None
         _dump_native_request(schema_name, body)
-        reply = await self._run(body, on_thinking, on_retry, on_progress, on_usage, native=True)
+        reply = await self._run(body, on_thinking, on_retry, on_progress, on_usage,
+                                native=True, headers=headers)
+        if key is not None:
+            self._sessions.commit(key, items, body["input"])
         assert reply.call is not None  # _stream_once raises when the model didn't call
         return actions.decode_call(*reply.call)
 
@@ -296,6 +319,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         *,
         first_action: bool = False,
         native: bool = False,
+        headers: dict[str, str] | None = None,
     ) -> _Reply:
         if self._plan_route:
             extra = set(body) - PLAN_ROUTE_FIELDS
@@ -308,7 +332,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         while True:
             try:
                 return await self._stream_once(body, on_thinking, on_progress, on_usage,
-                                               first_action=first_action, native=native)
+                                               first_action=first_action, native=native,
+                                               headers=headers)
             except _Unauthorized as exc:
                 if not refreshed and await self._bearer.on_unauthorized():
                     refreshed = True
@@ -344,13 +369,16 @@ class OpenAIJsonTransport(ModelJsonTransport):
         *,
         first_action: bool = False,
         native: bool = False,
+        headers: dict[str, str] | None = None,
     ) -> _Reply:
         ticker = ProgressTicker(on_progress, input_n=approx_prompt_tokens(
             body["instructions"], json.dumps(body["input"])))
         ticker.start()
         responses = await self._responses()
         try:
-            stream = await asyncio.wait_for(responses.create(**body), timeout=self._timeout_sec)
+            extra = {"extra_headers": headers} if headers else {}
+            stream = await asyncio.wait_for(responses.create(**body, **extra),
+                                            timeout=self._timeout_sec)
         except TimeoutError as exc:
             msg = f"OpenAI responses.create timed out after {self._timeout_sec}s"
             raise TransientTransportError(msg) from exc
@@ -437,6 +465,11 @@ class OpenAIJsonTransport(ModelJsonTransport):
             # Per agent/thread/team, next to the prompt tokens the loop records: the
             # share of input the provider served from cache (what a plan can discount).
             METER.record(USAGE_OWNER.get(), cached=cached)
+        if self._plan_route and input_tokens:
+            # One line per call, so a miss shows up with its owner instead of only in totals.
+            logger.info("[cache] owner=%s session=%s input=%d cached=%d (%d%%)",
+                        USAGE_OWNER.get(), bool(headers), input_tokens, cached or 0,
+                        100 * (cached or 0) // input_tokens)
         if on_usage is not None and input_tokens is not None and output_tokens is not None:
             on_usage(input_tokens, output_tokens)
 
