@@ -39,6 +39,7 @@ class TeamState:
     pending_assignees: tuple[str, ...] = ()   # the adopted plan's assignees, awaiting approval
     review_cycle: int = 0            # the current closing proposal's cycle (1 = the first)
     max_review_cycles: int = 2       # closing proposals allowed after the first
+    lead: str | None = None          # the member who alone proposes (spec 2026-10-07)
 
     def quorum(self) -> list[str]:
         return [label for label, m in self.members.items() if m.in_quorum]
@@ -378,6 +379,9 @@ def _round_report(state: TeamState, event: MemberReported) -> list[Action]:
         member.in_quorum = False
         actions += [SetQuorum(event.label, False),
                     Milestone("member_lost", {"label": event.label, "status": event.status})]
+        if event.label == state.lead and state.phase == "DELIBERATING":
+            # Nobody else may propose, so the team cannot go on without its lead.
+            return [*actions, *_pause(state, "lead lost")]
         if len(state.quorum()) < 2:
             # Paused, not failed: a member often fails on the provider, not on the work,
             # and resume_team brings it back (asked for after the 5B live smoke).

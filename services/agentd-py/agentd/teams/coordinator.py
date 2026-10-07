@@ -72,6 +72,7 @@ class TeamCoordinator:
             approval_gate=team.approval_gate, stuck_count=team.stuck_count)
         self._state.review_cycle = team.review_cycles
         self._state.max_review_cycles = team_review_cycles()
+        self._state.lead = team.lead
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._evaluation: dict[str, object] = {}   # the latest round_ended payload
         self._cutoff = team.round_cutoff_seq or 0    # highest post seq at the round's start

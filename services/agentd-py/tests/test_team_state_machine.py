@@ -445,3 +445,26 @@ def test_a_provider_access_stop_pauses_instead_of_requeueing() -> None:
     assert actions == []                                          # already paused
     s, actions = apply(s, MainResume())
     assert actions == [EnterPhase("IMPLEMENTING", 1, "resumed"), ResumeMembers(("alice", "bob"))]
+
+
+def test_lead_lost_while_deliberating_pauses() -> None:
+    state = _round1(_state("alice", "bob", "carol"))
+    state.lead = "alice"
+    state, actions = apply(state, MemberReported("alice", "failed"))
+    assert state.phase == "PAUSED"
+    assert EnterPhase("PAUSED", 1, "lead lost") in actions
+
+
+def test_another_member_lost_does_not_pause() -> None:
+    state = _round1(_state("alice", "bob", "carol"))
+    state.lead = "alice"
+    state, _ = apply(state, MemberReported("bob", "failed"))
+    assert state.phase == "DELIBERATING"
+
+
+def test_lead_lost_outside_deliberation_does_not_pause() -> None:
+    state = _state("alice", "bob", "carol", phase="REVIEWING")
+    state.lead = "alice"
+    state.round_members = ["alice", "bob", "carol"]
+    state, _ = apply(state, MemberReported("alice", "failed"))
+    assert state.phase == "REVIEWING"

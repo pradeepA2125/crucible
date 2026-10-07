@@ -525,3 +525,19 @@ async def test_a_blocked_member_also_wakes_its_waiters(tmp_path) -> None:
     assert note.recipient == "alice" and note.text.startswith("bob reported partial")
     assert host.milestones[-1] == "member_blocked"
     coord.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_after_lead_lost_restarts_the_lead(tmp_path) -> None:
+    store, svc, host, coord, _ = _setup(tmp_path, labels=("alice", "bob", "carol"))
+    store.update_team("team-1", lead="alice")
+    coord = TeamCoordinator("team-1", store, svc, host,
+                            CoordinatorTrace(tmp_path / "c2.jsonl"), round_timeout_s=900.0,
+                            grace_s=0.05)
+    coord.kickoff("proposal", [])
+    coord.on_report("alice", "stopped", "user")
+    assert store.get_team("team-1").phase == "PAUSED"
+    assert store.get_team("team-1").paused_reason == "lead lost"
+    host.started.clear()
+    coord.resume(0)
+    assert "alice" in host.started
