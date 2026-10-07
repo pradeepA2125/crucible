@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agentd.model_loading import MODEL_LOAD_LOCK
+from agentd.model_loading import MODEL_LOAD_LOCK, MODEL_LOCK
 from agentd.retrieval.chunker import CodeChunk, CodeChunker, ScoredChunk
 
 logger = logging.getLogger(__name__)
@@ -245,9 +245,15 @@ class SemanticIndex:
         return self._model
 
     def _embed_single(self, text: str) -> list[float]:
+        return self._encode_batch([text])[0]
+
+    def _encode_batch(self, texts: list[str]) -> list[list[float]]:
+        """One encode call under the process-wide model lock (see model_loading), held per
+        batch so a long index build never starves the memory models."""
         model = self._get_model()
-        vec = model.encode([text], normalize_embeddings=True)[0]
-        return vec.tolist()
+        with MODEL_LOCK:
+            vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        return [v.tolist() if hasattr(v, "tolist") else list(v) for v in vecs]
 
     def _get_or_create_table(self, index_path: Path) -> Any:
         try:
@@ -347,15 +353,13 @@ class SemanticIndex:
         if not chunks:
             return
 
-        model = self._get_model()
         texts = [self._chunker.make_embedding_text(c) for c in chunks]
 
         # Batch embedding — keeps peak GPU/CPU memory bounded
         all_vectors: list[list[float]] = []
         for i in range(0, len(texts), self._embed_batch_size):
             batch = texts[i : i + self._embed_batch_size]
-            vecs = model.encode(batch, normalize_embeddings=True, show_progress_bar=False)
-            all_vectors.extend(v.tolist() for v in vecs)
+            all_vectors.extend(self._encode_batch(batch))
 
         rows = [self._chunk_to_row(chunk, vec) for chunk, vec in zip(chunks, all_vectors)]
         table.add(rows)

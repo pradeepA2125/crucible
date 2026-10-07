@@ -27,6 +27,8 @@ class _OverlapProbe:
         self.active = 0
         self.max_active = 0
         self.loads = 0
+        self.calls_active = 0
+        self.max_calls_active = 0
 
     def construct(self, name: str) -> None:
         if not name.startswith("fake-"):
@@ -39,6 +41,14 @@ class _OverlapProbe:
         with self._guard:
             self.active -= 1
 
+    def call(self) -> None:
+        with self._guard:
+            self.calls_active += 1
+            self.max_calls_active = max(self.max_calls_active, self.calls_active)
+        time.sleep(0.05)  # widen the window a racing call would hit
+        with self._guard:
+            self.calls_active -= 1
+
 
 @pytest.fixture
 def probe(monkeypatch: pytest.MonkeyPatch) -> _OverlapProbe:
@@ -48,10 +58,12 @@ def probe(monkeypatch: pytest.MonkeyPatch) -> _OverlapProbe:
         def __init__(self, name: str) -> None:
             probe.construct(name)
 
-        def encode(self, texts: list[str]) -> list[list[float]]:
+        def encode(self, texts: list[str], **_kw: object) -> list[list[float]]:
+            probe.call()
             return [[1.0] + [0.0] * 383 for _ in texts]
 
         def predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+            probe.call()
             return [0.0 for _ in pairs]
 
         def get_embedding_dimension(self) -> int:
@@ -79,3 +91,31 @@ def test_loads_across_all_three_models_never_overlap(probe: _OverlapProbe, tmp_p
         t.join(timeout=10)
     assert probe.max_active == 1
     assert probe.loads == 3  # double-checked: one construction per instance
+
+
+def test_model_calls_across_all_three_models_never_overlap(
+    probe: _OverlapProbe, tmp_path: Path,
+) -> None:
+    """Live 2026-10-08 (v0.6.0, Apple silicon): with only the loads locked, the semantic index
+    encoding the repo while the memory models warmed up crashed the backend on a Metal
+    assertion (IOGPUMetalCommandBuffer setCurrentCommandEncoder) every ~30 s. Reproduced
+    outside agentd: two models encoding on MPS from two threads exit 139; locked, they don't."""
+    embedder, reranker = Embedder("fake-embedder"), Reranker("fake-reranker")
+    index = SemanticIndex(tmp_path / "idx", model_name="fake-index")
+    for warm in (lambda: embedder.embed(["x"]), lambda: reranker._score([("q", "c")]),
+                 index._get_model):
+        warm()                      # loads first: this test is about the calls
+    probe.max_calls_active = 0
+    calls = [
+        lambda: embedder.embed(["x"]),
+        lambda: reranker._score([("q", "c")]),
+        lambda: index._embed_single("x"),
+        lambda: index._encode_batch(["a", "b"]),
+    ] * 2
+    threads = [threading.Thread(target=fn) for fn in calls]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert probe.max_calls_active == 1
+

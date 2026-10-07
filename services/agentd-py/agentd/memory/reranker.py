@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from agentd.memory.models import Memory
-from agentd.model_loading import MODEL_LOAD_LOCK
+from agentd.model_loading import MODEL_LOAD_LOCK, MODEL_LOCK
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,9 @@ class Reranker:
                 if self._model is None:
                     from sentence_transformers import CrossEncoder
                     self._model = CrossEncoder(self._model_name)
-        return [float(s) for s in self._model.predict(pairs)]
+        with MODEL_LOCK:  # every model call too — see model_loading
+            scores = self._model.predict(pairs)
+        return [float(s) for s in scores]
 
     def rerank(self, query: str, candidates: list[Memory]) -> list[tuple[Memory, float]]:
         if not candidates:
