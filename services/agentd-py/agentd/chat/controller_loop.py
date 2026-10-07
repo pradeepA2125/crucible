@@ -1046,9 +1046,18 @@ class ControllerLoop:
 
     def _notice_repeat(self, tool: str, args: dict[str, object],
                        plan_context: dict[str, object]) -> str | None:
-        """In a notice turn, a second post_board to the same members is refused: the first
-        already reached them and nothing new can arrive before the next milestone."""
-        if not plan_context.get("notice_turn") or tool != "post_board":
+        """A post_board that would repeat a hand-off is refused: to a team handed work this
+        turn, or (in a notice turn) a second post to the same members."""
+        if tool != "post_board":
+            return None
+        team = str(args.get("team") or "")
+        if team and team in self._delegated_teams:
+            # Any turn: the team was handed this request by create_team or a reopening /
+            # reviving post_board already (live 2026-10-08: ten nudges in one turn).
+            return (f"Not posted: you already handed {team} this request this turn and it is "
+                    "working on it; nothing new can arrive before its next milestone. Tell "
+                    "the user in one type='answer' — that ends this turn.")
+        if not plan_context.get("notice_turn"):
             return None
         mentions = _mention_set(args)
         if mentions not in self._notice_posts:

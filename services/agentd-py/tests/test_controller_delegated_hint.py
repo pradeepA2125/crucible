@@ -34,6 +34,7 @@ HISTORY = [{"role": "assistant", "content": "{}"},
 class _Delegation:
     """create_team / dispatch_agents / wait_agents answering like the real tools."""
     name = "delegation"
+    executed: list[str] = []
 
     def definitions(self) -> list[ToolDefinition]:
         return [ToolDefinition(name=n, description=n, parameters={"type": "object"})
@@ -45,6 +46,7 @@ class _Delegation:
                         "post_board"}
 
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+        _Delegation.executed.append(tool)
         if tool == "create_team" and args.get("fail"):
             return ToolOutput(output="Error: bad team", is_error=True)
         if tool == "post_board":
@@ -88,6 +90,22 @@ async def test_a_post_board_that_reopens_a_team_delegates_it() -> None:
     assert not plain[1].get("delegated")
     revived = await _contexts(_call("post_board", team="snake-game", text="go on", revives=True))
     assert revived[1]["delegated"]["teams"] == ["snake-game"]
+
+
+@pytest.mark.asyncio
+async def test_a_second_post_board_to_a_team_handed_work_this_turn_is_not_sent() -> None:
+    """Live 2026-10-08: after reopening the snake team the main agent posted ten more nudges
+    in the same turn ("implement now", "stop deliberating", ...)."""
+    _Delegation.executed.clear()
+    await _contexts(
+        _call("post_board", team="snake-game", text="add wrap", reopens=True),
+        _call("post_board", team="snake-game", text="implement it now"),
+        _call("post_board", team="other", text="hello"))
+    assert _Delegation.executed == ["post_board", "post_board"]   # the nudge never ran
+    _Delegation.executed.clear()
+    await _contexts(_call("create_team", name="snake-game", members=[]),
+                    _call("post_board", team="snake-game", text="go"))
+    assert _Delegation.executed == ["create_team"]
 
 
 @pytest.mark.asyncio
