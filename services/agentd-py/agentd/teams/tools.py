@@ -60,11 +60,11 @@ class TeamToolSource:
             tool("team_message", "Send one member a direct message only they (and the user) "
                  "see — for something that concerns one person.",
                  {"member": _STR, "text": _STR}, ["member", "text"]),
-            tool("team_propose", "Propose how the team does the work: the approach, and who "
-                 "does which part with which files. shared_files may be edited by any "
-                 "assignee. supersedes closes earlier proposals yours replaces.",
-                 {"text": _STR, "assignments": _ASSIGNMENTS, "shared_files": _STRS,
-                  "supersedes": _STRS}, ["text", "assignments"]),
+            tool("team_propose", "Propose how the team does the work (the lead only): the "
+                 "approach, and who does which part with which files. shared_files may be "
+                 "edited by any assignee. A new proposal replaces the open one.",
+                 {"text": _STR, "assignments": _ASSIGNMENTS, "shared_files": _STRS},
+                 ["text", "assignments"]),
             tool("team_agree", "Agree with an open proposal. A note carries a small change "
                  "or an open question without a competing proposal.",
                  {"proposal_id": _STR, "note": _STR}, ["proposal_id"]),
@@ -92,7 +92,7 @@ class TeamToolSource:
                 return _ok({"seq": post.seq, "to": post.recipient})
             if tool == "team_propose":
                 post = self._svc.propose(tid, me, args.get("text"), args.get("assignments"),
-                                         args.get("shared_files"), args.get("supersedes"), n)
+                                         args.get("shared_files"), None, n)
                 return _ok({"proposal_id": post.proposal_id, "seq": post.seq})
             if tool == "team_agree":
                 post = self._svc.agree(tid, me, args.get("proposal_id"), args.get("note"))

@@ -79,11 +79,14 @@ class ReportFields:
         if proposal is not None:
             try:
                 if not isinstance(proposal, dict):
-                    raise TeamInputError("must be {text, assignments, shared_files?, supersedes?}")
-                prepared.append(self._svc.prepare_propose(
+                    raise TeamInputError("must be {text, assignments, shared_files?}")
+                drafted = self._svc.prepare_propose(
                     self._team_id, self._label, proposal.get("text"),
                     proposal.get("assignments"), proposal.get("shared_files"),
-                    proposal.get("supersedes"), also_stated=frozenset(stated)))
+                    None, also_stated=frozenset(stated))
+                prepared.append(drafted)
+                # A lead's proposal replaces the ones it closes: no stance is owed on them.
+                stated |= set(drafted.closes)
             except TeamInputError as exc:
                 errors.append(f"proposal: {exc}")
         if errors and not final:

@@ -195,23 +195,34 @@ class TeamService:
                         also_stated: frozenset[int] = frozenset()) -> PreparedPost:
         team = self._team(team_id)
         self._require_phase(team, ("DELIBERATING",), "team_propose")
+        lead = team.lead
+        if lead is not None and author != lead:
+            raise TeamInputError(
+                f"Only {lead} (the team's lead) proposes. Suggest your change with a note on "
+                "your stance, an objection with evidence, or a post.")
         body = check_text(text, "proposal")
         roster = self._roster(team_id)
-        stances = self.stances(team_id)
-        owed = [p.proposal_id for p in self.open_proposals(team_id)
-                if p.author != author and (p.round or 0) < team.round
-                and author not in stances.get(p.seq, {}) and p.seq not in also_stated]
-        if owed:
-            raise TeamInputError(
-                f"State your stance on {', '.join(owed)} first (team_agree, with a note for "
-                "small changes, or team_object).")
+        if lead is None:
+            # The lead's proposal replaces the open ones, so it owes them no stance first.
+            stances = self.stances(team_id)
+            owed = [p.proposal_id for p in self.open_proposals(team_id)
+                    if p.author != author and (p.round or 0) < team.round
+                    and author not in stances.get(p.seq, {}) and p.seq not in also_stated]
+            if owed:
+                raise TeamInputError(
+                    f"State your stance on {', '.join(owed)} first (team_agree, with a note "
+                    "for small changes, or team_object).")
         parts = parse_assignments(assignments, roster)
         raw_shared = [str(f) for f in shared_files] if isinstance(shared_files, list) else []
         parts, shared = check_assignments(
             parts, raw_shared, workspace=self._workspace,
             can_edit=lambda member: self._can_edit(team_id, member))
         closes: list[TeamPost] = []
-        if supersedes is not None:
+        if lead is not None:
+            # One open plan at a time: the lead's proposal replaces its previous draft and
+            # the main agent's kickoff (spec 2026-10-07 lead proposer §3.2).
+            closes = self.open_proposals(team_id)
+        elif supersedes is not None:
             if not isinstance(supersedes, list):
                 raise TeamInputError("supersedes must be a list of proposal ids")
             closes = [self._open_proposal(team_id, raw) for raw in supersedes]

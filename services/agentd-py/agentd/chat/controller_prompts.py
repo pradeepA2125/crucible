@@ -127,8 +127,7 @@ _REPORT_TEAM_FIELDS = {
     "stances": {"type": "array", "items": _STANCE_ENTRY},
     "proposal": {"type": "object", "properties": {
         "text": _STR, "assignments": {"type": "array", "items": _OBJECT},
-        "shared_files": {"type": "array", "items": _STR},
-        "supersedes": {"type": "array", "items": _STR}}, "required": ["text", "assignments"]},
+        "shared_files": {"type": "array", "items": _STR}}, "required": ["text", "assignments"]},
     "waiting_on": {"type": "array", "items": _STR},
 }
 
