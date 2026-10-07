@@ -1,5 +1,7 @@
 # Team Vote Round Implementation Plan
 
+> **Superseded** by `docs/superpowers/specs/2026-10-07-team-lead-proposer-design.md` (the vote round was reverted in 450b881; only round-bounded visibility, 424445b, shipped).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** When a deliberation round ends with several unanimously agreed proposals, run one vote round between them (no self-votes, vote-only, ties go to the main agent), and stop members from seeing or answering posts made during the current round.

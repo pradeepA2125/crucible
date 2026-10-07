@@ -1,5 +1,7 @@
 # Team vote round + round-bounded visibility — design
 
+> **Superseded** by `docs/superpowers/specs/2026-10-07-team-lead-proposer-design.md` (the vote round was reverted in 450b881; only round-bounded visibility, 424445b, shipped).
+
 Date: 2026-10-07 · Branch: `feat/chatgpt-plan` · Extends spec v2 §8.3 (`2026-10-02-subagents-v2-design.md`)
 
 ## 1. Problem
