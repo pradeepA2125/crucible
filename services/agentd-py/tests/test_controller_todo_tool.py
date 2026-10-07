@@ -71,3 +71,32 @@ async def test_on_mutate_not_fired_on_rejected_write():
 
     await TodoToolSource(TodoLedger(), on_mutate=_cb).execute("write_todos", {"items": []})
     assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_a_rewrite_that_changes_no_status_keeps_the_notes_but_says_so():
+    # Live 2026-10-07 (gpt-5.6-terra): the main agent re-sent an unchanged list 26 times,
+    # varying only `note`, while a team did the work — ~20% of the run's input tokens.
+    led = TodoLedger()
+    src = TodoToolSource(led)
+    await src.execute("write_todos", {"items": [
+        {"title": "Survey", "status": "in_progress"}, {"title": "Build", "status": "pending"}]})
+    out = await src.execute("write_todos", {"items": [
+        {"title": "Survey", "status": "in_progress", "note": "still surveying"},
+        {"title": "Build", "status": "pending"}]})
+    assert out.is_error is False
+    assert led.items[0].note == "still surveying"          # the note is kept
+    assert out.output.startswith("No status changed")
+    assert "Do not call write_todos again" in out.output
+
+
+@pytest.mark.asyncio
+async def test_a_status_change_or_a_reshape_is_a_normal_update():
+    led = TodoLedger()
+    src = TodoToolSource(led)
+    await src.execute("write_todos", {"items": [{"title": "A", "status": "in_progress"}]})
+    flipped = await src.execute("write_todos", {"items": [{"title": "A", "status": "done"}]})
+    reshaped = await src.execute("write_todos", {"items": [
+        {"title": "A", "status": "done"}, {"title": "B", "status": "pending"}]})
+    assert flipped.output.startswith("Todo list updated")
+    assert reshaped.output.startswith("Todo list updated")

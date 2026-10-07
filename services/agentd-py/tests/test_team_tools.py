@@ -120,3 +120,12 @@ async def test_main_tools_phase_refusals_and_status() -> None:
     assert "runs in the background" in status["note"]  # same turn as create_team
     created = json.loads((await source.execute("create_team", _args())).output)
     assert created["team_id"] == "team-1"
+
+
+def test_create_team_note_hands_the_todo_list_to_the_team_and_ends_the_turn() -> None:
+    # Live 2026-10-07: the main agent kept "reconciling" its own list for the work it had
+    # just handed to the team instead of answering. Delegated items are 'blocked' (they do
+    # not block the turn's end) until a milestone reports them.
+    from agentd.teams.tools import BACKGROUND_NOTE
+    assert "'blocked'" in BACKGROUND_NOTE and "delegated to team" in BACKGROUND_NOTE
+    assert "Answer the user now" in BACKGROUND_NOTE

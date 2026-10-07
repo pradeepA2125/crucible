@@ -101,7 +101,22 @@ class TodoToolSource:
                     is_error=True)
             new_items.append(TodoItem(
                 title=str(it["title"]).strip(), status=status, note=str(it.get("note", ""))))
+        # A rewrite that changes no title or status is a no-op for the ledger's meaning.
+        # Its notes are kept, but the reply says so: a model told to keep the list current
+        # otherwise re-sends it every iteration (live 2026-10-07, gpt-5.6-terra: 26 calls
+        # while a team did the work).
+        unchanged = bool(self._ledger.items) and _shape(self._ledger.items) == _shape(new_items)
         self._ledger.replace(new_items)
         if self._on_mutate is not None:
             await self._on_mutate(self._ledger.to_json())
+        if unchanged:
+            return ToolOutput(output=(
+                "No status changed — the list already matches. Notes saved. "
+                "Do not call write_todos again until an item starts, finishes, is blocked "
+                "or is cancelled; continue with the work, or end the turn if nothing is left "
+                "for you to do.\n" + self._ledger.render()))
         return ToolOutput(output="Todo list updated:\n" + self._ledger.render())
+
+
+def _shape(items: list[TodoItem]) -> list[tuple[str, str]]:
+    return [(i.title, i.status) for i in items]

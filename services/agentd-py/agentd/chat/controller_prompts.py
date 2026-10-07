@@ -478,7 +478,7 @@ it spans 3+ files; OR it's a feature that edits multiple places with big chunks 
 added / replaced / deleted; OR it needs more than ~2 edit cycles. For that shape the list is your
 contract: implement items ONE AT A TIME, flipping each item's status as you go — 'pending'→
 'in_progress' when you START it, →'done' (with evidence) the moment it is finished, BEFORE you
-begin the next one (reconcile the ledger every turn; never leave all items 'pending' and mark them
+begin the next one (update the ledger the moment a status changes; never leave all items 'pending' and mark them
 'done' only at the end). Resend the WHOLE list each call (reshape freely — split/insert/reorder by
 resending in the new shape), and <<main>>submit_changes<</main>><<child>>report<</child>> stays BLOCKED until nothing is pending — this is
 how you finish the whole change instead of stopping after one part.
@@ -1129,13 +1129,15 @@ def build_controller_step_payload(
             hint = checkpoint + (
                 "FIRST reflect on your last edit's result (if any): did it apply "
                 "('applied+promoted') or fail ('PATCH FAILED: …')? "
-                "If a todo list is active, RECONCILE it NOW — a separate write_todos call THIS "
-                "turn, never batched for the end: (1) if the item you were working is now FULLY "
-                "done, flip it to 'done' and cite the applied edit as evidence in 'note'; (2) if it "
-                "is only PARTIALLY done, leave it 'in_progress' and keep editing THAT SAME item — do "
-                "not start a new one; (3) when you start a new item, flip it 'pending'→'in_progress' "
-                "in that same call. Keep the ledger matching reality every turn so the user sees live "
-                "progress — NEVER leave everything 'pending' and mark it all 'done' at the very end. "
+                "If a todo list is active, reconcile it when an item's status changes — a "
+                "separate write_todos call at that moment, never batched for the end: (1) when the "
+                "item you were working is FULLY done, flip it to 'done' and cite the applied edit "
+                "as evidence in 'note'; (2) if it is only PARTIALLY done, leave it 'in_progress' "
+                "and keep editing THAT SAME item — do not start a new one; (3) when you start a new "
+                "item, flip it 'pending'→'in_progress' in that same call. If no status changed since "
+                "your last write_todos, do not call write_todos — continue the work. Keep the ledger "
+                "matching reality so the user sees live progress — NEVER leave everything 'pending' "
+                "and mark it all 'done' at the very end. "
                 "If the change is BIG (3+ files, big chunks across many places, or >~2 edit cycles) "
                 "and no list is active yet, call write_todos NOW to record every part as 'pending'. "
                 "For a small or cohesive change, skip the list and edit directly. "

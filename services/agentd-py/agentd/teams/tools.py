@@ -19,7 +19,10 @@ MEMBER_TOOL_NAMES = frozenset({
 MAIN_TOOL_NAMES = frozenset({
     "create_team", "post_board", "team_status", "adopt_proposal", "resume_team", "disband_team"})
 BACKGROUND_NOTE = ("The team runs in the background and the user can watch its board. "
-                   "Answer the user now; milestones will wake you.")
+                   "If your todo list holds the work you just handed over, mark those items "
+                   "'blocked' with the note 'delegated to team <name>' in one write_todos "
+                   "(blocked items do not stop you from answering; a milestone tells you when to "
+                   "mark them done). Answer the user now; milestones will wake you.")
 _OBJ = "object"
 _STR = {"type": "string"}
 _STRS = {"type": "array", "items": _STR}

@@ -249,3 +249,19 @@ def test_step_budget_still_lands_the_turn_when_this_turn_is_spent():
         phase="ACTIVE",
     )
     assert "FINAL STEP" in str(payload["instruction"])
+
+
+def test_active_hint_asks_for_write_todos_only_when_a_status_changes():
+    """Live 2026-10-07 (gpt-5.6-terra): 'RECONCILE it NOW — a separate write_todos call THIS
+    turn' on every iteration made the main agent re-send an unchanged list while a team did
+    the work. The hint asks for an update when a status changes, and says to skip it
+    otherwise."""
+    seeded = [{"role": "user", "content": "big multi-file feature"},
+              {"role": "assistant", "content": "{}"}]
+    payload = build_controller_step_payload(
+        {"goal": "g", "workspace_path": "/w", "todo_status": "3 items (0 done) — [...]"},
+        history=seeded, tool_definitions=[], phase="ACTIVE")
+    instr = str(payload["instruction"])
+    assert "THIS turn" not in instr and "RECONCILE it NOW" not in instr
+    assert "status changes" in instr
+    assert "If no status changed" in instr and "do not call write_todos" in instr
