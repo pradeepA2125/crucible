@@ -20,6 +20,7 @@ import type {
 import type { TeamViewEvent } from "./team-views.js";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
+import type { FileReferenceBridge, FileReferenceCatalogMessage } from "./file-references/bridge.js";
 
 // Builds a settings message handler bound to a poster into THIS webview — the chat
 // bundle now embeds the settings UI (floating overlay), so its settings/* messages
@@ -114,6 +115,15 @@ export type SetPlanModeHandler = (enabled: boolean) => Promise<void>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
+  private fileReferenceBridge: FileReferenceBridge | null = null;
+
+  setFileReferenceBridge(bridge: FileReferenceBridge): void {
+    this.fileReferenceBridge = bridge;
+  }
+
+  postFileReferenceCatalog(message: FileReferenceCatalogMessage): void {
+    void this.panel?.webview.postMessage(message);
+  }
   // Settings handler for the embedded floating settings overlay. The factory is
   // injected by extension.ts (it needs clientFactory, defined after this panel is
   // constructed); the concrete handler is (re)built per webview mount in
@@ -232,7 +242,14 @@ export class ChatPanel {
         })
       : null;
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
+      if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
       const m = msg as Record<string, unknown>;
+      if (m["type"] === "requestFileReferenceCatalog" || m["type"] === "openFileReference") {
+        void this.fileReferenceBridge?.handle(msg).catch(() => {
+          void vscode.window.showInformationMessage("Unable to refresh workspace file links.");
+        });
+        return;
+      }
       // Settings overlay (embedded SettingsApp) speaks settings/* — route to the
       // dedicated handler, which posts settings/state|error|instructions back.
       if (typeof m["type"] === "string" && (m["type"] as string).startsWith("settings/")) {

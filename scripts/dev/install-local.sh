@@ -38,38 +38,34 @@ echo "==> building (editor-client -> extension -> webview)"
 # not its source, so a stale dist yields phantom type errors.
 ( cd "$REPO" && npm run build )
 
-echo "==> pinning the bundled manifest to the INSTALLED runtime"
-# resources/runtime-manifest.json is checked in as a placeholder: releaseTag
-# "dev-unpinned", agentd/indexer at 0.0.0, and NO urls or sha256 for any component —
-# the release workflow generates the real one. Packaging it as-is makes the extension
-# compare "dev-unpinned" against the installed runtime.json tag, mismatch, and prompt
-# "run setup" on every launch. Running that setup would then try to download from a
-# manifest with no artifact URLs and could damage a working runtime.
-#
-# So: stamp the placeholder with whatever runtime is already installed, purely to keep
-# the version check quiet. This never installs anything — a local build has no
-# artifacts to offer — it just stops the extension nagging about an upgrade it cannot
-# perform. Restored after packaging so the checkout stays clean.
+echo "==> fetching a complete runtime manifest"
+# Local VSIX builds still need released tools and their content hashes. Copying
+# only version labels into the placeholder breaks setup/resume after venv removal.
 MANIFEST="$EXT_DIR/resources/runtime-manifest.json"
 INSTALLED="$HOME/.crucible/runtime/runtime.json"
-RESTORE=0
-if [[ -f "$INSTALLED" ]]; then
-  cp "$MANIFEST" "$MANIFEST.bak"; RESTORE=1
-  python3 - "$MANIFEST" "$INSTALLED" <<'PY'
-import json, sys
-mpath, ipath = sys.argv[1], sys.argv[2]
-m = json.load(open(mpath)); inst = json.load(open(ipath))
-m["releaseTag"] = inst.get("releaseTag", m.get("releaseTag"))
-for cid, ver in (inst.get("components") or {}).items():
-    if cid in m.get("components", {}):
-        m["components"][cid]["version"] = ver
-json.dump(m, open(mpath, "w"), indent=2)
-print(f"    pinned to {m['releaseTag']}")
-PY
-  trap '[[ "$RESTORE" == "1" ]] && mv -f "$MANIFEST.bak" "$MANIFEST"' EXIT
+RELEASE_TAG="$(python3 - "$INSTALLED" <<'PYTAG'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+print(json.loads(p.read_text()).get("releaseTag", "") if p.exists() else "")
+PYTAG
+)"
+RELEASE_BASE="https://github.com/pradeepA2125/crucible/releases"
+if [[ -n "$RELEASE_TAG" && "$RELEASE_TAG" != "dev-unpinned" ]]; then
+  MANIFEST_URL="$RELEASE_BASE/download/$RELEASE_TAG/manifest.json"
 else
-  echo "    no installed runtime — leaving the placeholder (setup will be offered)"
+  MANIFEST_URL="$RELEASE_BASE/latest/download/manifest.json"
 fi
+MANIFEST_TMP="$(mktemp)"
+MANIFEST_BACKUP="$(mktemp)"
+cp "$MANIFEST" "$MANIFEST_BACKUP"
+restore_manifest() {
+  cp "$MANIFEST_BACKUP" "$MANIFEST"
+  rm -f "$MANIFEST_TMP" "$MANIFEST_BACKUP"
+}
+trap restore_manifest EXIT
+curl --fail --location --retry 3 --output "$MANIFEST_TMP" "$MANIFEST_URL"
+python3 "$REPO/scripts/dev/validate_local_manifest.py" "$MANIFEST_TMP"
+cp "$MANIFEST_TMP" "$MANIFEST"
 
 echo "==> packaging VSIX"
 cd "$EXT_DIR"
@@ -90,6 +86,7 @@ if [[ "$DO_BACKEND" == "1" ]]; then
   echo "    Set this in VS Code settings (Cmd+,) so agentd installs EDITABLE:"
   echo
   echo "        \"crucible.devSourcePath\": \"$REPO\""
+  echo "    In the Settings UI text field, enter the path WITHOUT surrounding quotes."
   echo
   # Deliberately NOT written for you: it lives in user settings, and silently editing
   # a user's settings.json is the kind of surprise this repo avoids elsewhere.

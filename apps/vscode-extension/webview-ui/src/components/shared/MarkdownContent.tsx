@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MessageMarkdown } from "../../file-references/MessageMarkdown";
 
 interface Props {
   content: string;
@@ -26,6 +26,12 @@ export const MARKDOWN_COMPONENTS = {
  */
 export const MARKDOWN_PLUGINS = [remarkGfm];
 
+/** Anywhere wrapping also reduces min-content width in nested grid/flex layouts. */
+export const MARKDOWN_WRAP_CLASSES = [
+  "min-w-0 max-w-full [overflow-wrap:anywhere]",
+  "[&_pre]:min-w-0 [&_pre]:max-w-full [&_pre]:whitespace-pre-wrap",
+];
+
 /** Table styling, shared with PlanCard so both markdown surfaces match. */
 export const MARKDOWN_TABLE_CLASSES = [
   "[&_table]:w-full [&_table]:border-collapse [&_table]:text-[11px]",
@@ -50,11 +56,12 @@ export function MarkdownContent({ content }: Props) {
       }}
       className={[
         "self-start px-3 py-2",
+        ...MARKDOWN_WRAP_CLASSES,
         "text-xs text-text-2 leading-relaxed",
         // Inline code
         "[&_code]:mono [&_code]:text-code [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:rounded",
         // Pre blocks
-        "[&_pre]:mono [&_pre]:bg-surface-2 [&_pre]:rounded [&_pre]:p-2 [&_pre]:overflow-x-auto",
+        "[&_pre]:mono [&_pre]:bg-surface-2 [&_pre]:rounded [&_pre]:p-2",
         // Paragraphs
         "[&_p]:mb-2 [&_p:last-child]:mb-0",
         // Lists
@@ -64,9 +71,7 @@ export function MarkdownContent({ content }: Props) {
         ...MARKDOWN_TABLE_CLASSES,
       ].join(" ")}
     >
-      <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
-        {content}
-      </ReactMarkdown>
+      <MessageMarkdown content={content} />
     </div>
   );
 }

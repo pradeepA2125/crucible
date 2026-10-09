@@ -1,11 +1,9 @@
 import { useState, useRef } from "react";
-import ReactMarkdown from "react-markdown";
+import { MessageMarkdown } from "../../file-references/MessageMarkdown";
 import { Icon } from "../Icon";
 import { vscode } from "../../vscodeApi";
 import { BtnPrimary, BtnGhost } from "../shared/buttons";
 import {
-  MARKDOWN_COMPONENTS,
-  MARKDOWN_PLUGINS,
   MARKDOWN_TABLE_CLASSES,
 } from "../shared/MarkdownContent";
 
@@ -142,9 +140,7 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
             ...MARKDOWN_TABLE_CLASSES,
           ].join(" ")}
         >
-          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
-            {content}
-          </ReactMarkdown>
+          <MessageMarkdown content={content} />
         </div>
 
         {/* Fade overlay — hidden when expanded */}

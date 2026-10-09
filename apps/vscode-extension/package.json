@@ -198,6 +198,7 @@
   "dependencies": {
     "@crucible/editor-client": "0.4.4",
     "extract-zip": "^2.0.1",
+    "minimatch": "^9.0.9",
     "tar": "^7.5.19"
   },
   "devDependencies": {

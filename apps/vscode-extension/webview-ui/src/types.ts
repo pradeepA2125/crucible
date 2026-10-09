@@ -415,6 +415,7 @@ export type ExtensionMessage =
   | { type: "promptList"; names: string[] }
   | { type: "promptExpanded"; name: string; found: boolean; text: string }
   | { type: "workspaceFileList"; paths: string[] }
+  | { type: "fileReferenceCatalog"; revision: number; entries: import("../../src/file-references/matching").FileReferenceEntry[] }
   // Sticky Plan Mode toggle hydration (extension globalState), pushed on webviewReady
   // and whenever the composer/ModeGate posts setPlanMode back to the host.
   | { type: "planModeState"; enabled: boolean }
@@ -499,6 +500,8 @@ export type WebviewMessage =
   | { type: "stopAgent"; agentId: string }
   | { type: "stopAllAgents" }
   | { type: "listWorkspaceFiles" }
+  | { type: "requestFileReferenceCatalog" }
+  | { type: "openFileReference"; reference: string }
   | { type: "openFile"; path: string };
 
 // ── App state ─────────────────────────────────────────────────────────────────

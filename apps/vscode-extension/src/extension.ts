@@ -3,6 +3,10 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 
 import { ChatPanel } from "./chat-panel.js";
+import { FileReferenceCatalog } from "./file-references/catalog.js";
+import { createWorkspaceAdapter } from "./file-references/workspace-adapter.js";
+import { openFileReference } from "./file-references/open-reference.js";
+import { createFileReferenceBridge } from "./file-references/bridge.js";
 import { MemoryPanel } from "./memory-panel.js";
 import { GraphPanel } from "./graph-panel.js";
 import { AuthStatusSink } from "./backend-auth/auth-status-sink.js";
@@ -106,7 +110,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // The signed-in account's model catalog for the composer menu. Cached briefly: every
   // modelList refresh would otherwise be a call to OpenAI. A failure (signed out, plan
   // usage off) just means the menu offers no plan models.
-  let chatgptCatalogCache: { registration: string; at: number; models: { slug: string; displayName: string }[] } | null = null;
+  let chatgptCatalogCache: { registration: string; at: number; models: { slug: string; displayName: string; contextWindow: number | null }[] } | null = null;
   const chatgptCatalog = async () => {
     const registration = runtimeManager.chatgptRegistration();
     if (!registration) return undefined;
@@ -217,8 +221,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => composerModelState(),
     async (backend, model) => {
       const credentials = await providerCredentials(backend);
-      await controller.configClient().setProvider({ backend, model, ...(credentials ? { credentials } : {}) });
+      // Resolve on the host from the signed-in account's cached catalog, not
+      // from webview input. Unknown windows leave the user's setting intact.
+      const catalogWindow = backend === "chatgpt"
+        ? (await chatgptCatalog())?.find((m) => m.slug === model)?.contextWindow
+        : undefined;
+      // Match ProviderSwapRequest's sanity bounds; unusable catalog metadata
+      // must not make an otherwise valid model swap fail validation.
+      const contextWindow = typeof catalogWindow === "number"
+        && Number.isSafeInteger(catalogWindow)
+        && catalogWindow >= 1024 && catalogWindow <= 10_000_000
+        ? catalogWindow : undefined;
+      await controller.configClient().setProvider({
+        backend, model,
+        ...(credentials ? { credentials } : {}),
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+      });
       await runtimeManager.saveProvider(backend, model);
+      // A rejected swap must not change the next managed spawn's window either.
+      if (contextWindow !== undefined) await runtimeManager.saveContextWindow(contextWindow);
       return composerModelState();
     },
     (level: ReasoningEffort) => setReasoningEffort(level),
@@ -263,6 +284,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (threadId, gateId, decision, feedback) =>
       controller.decideTeamPlan(threadId, gateId, decision, feedback)
   );
+
+  const fileReferenceAdapter = createWorkspaceAdapter(vscode, error => {
+    runtimeOutput.appendLine(`[file-links] workspace inventory failed: ${String(error)}`);
+  });
+  const fileReferenceCatalog = new FileReferenceCatalog(fileReferenceAdapter.port);
+  const fileReferenceBridge = createFileReferenceBridge(
+    fileReferenceCatalog,
+    reference => openFileReference(reference, {
+      refresh: () => fileReferenceCatalog.current(),
+      identity: uri => uri.toString(),
+      isCurrentFile: fileReferenceAdapter.isCurrentFile,
+      pick: async files => {
+        const items = files.map(file => ({
+          label: file.entry.relativePath,
+          description: file.entry.workspaceLabel,
+          detail: `${file.entry.workspaceLabel}/${file.entry.relativePath}`,
+          file,
+        }));
+        return (await vscode.window.showQuickPick(items, {
+          placeHolder: "Choose the workspace file to open",
+        }))?.file;
+      },
+      open: async (uri, location) => {
+        const editor = await vscode.window.showTextDocument(uri);
+        if (location) {
+          const start = new vscode.Position(location.line - 1, 0);
+          const end = new vscode.Position(location.endLine - 1, 0);
+          editor.selection = new vscode.Selection(start, start);
+          editor.revealRange(new vscode.Range(start, end));
+        }
+      },
+      notice: text => { void vscode.window.showInformationMessage(text); },
+    }),
+    message => {
+      runtimeOutput.appendLine(`[file-links] publishing catalog revision=${message.revision} files=${message.entries.length}`);
+      chatPanel.postFileReferenceCatalog(message);
+    },
+  );
+  chatPanel.setFileReferenceBridge(fileReferenceBridge);
+  context.subscriptions.push(fileReferenceBridge, fileReferenceCatalog, fileReferenceAdapter);
 
   const ui: ControllerUI = {
     getWorkspacePath: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,

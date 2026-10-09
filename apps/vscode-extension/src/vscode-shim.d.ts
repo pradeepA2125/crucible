@@ -53,7 +53,22 @@ declare module "vscode" {
     readonly uri: Uri;
   }
 
+  export enum FileType { Unknown = 0, File = 1, Directory = 2, SymbolicLink = 64 }
+
+  export class RelativePattern {
+    constructor(base: WorkspaceFolder | Uri | string, pattern: string);
+  }
+
+  export interface FileSystemWatcher extends Disposable {
+    onDidCreate(listener: (uri: Uri) => unknown): Disposable;
+    onDidChange(listener: (uri: Uri) => unknown): Disposable;
+    onDidDelete(listener: (uri: Uri) => unknown): Disposable;
+  }
+
   export interface Uri {
+    readonly scheme: string;
+    readonly authority: string;
+    readonly path: string;
     readonly fsPath: string;
     toString(skipEncoding?: boolean): string;
   }
@@ -204,7 +219,18 @@ declare module "vscode" {
 
   export namespace workspace {
     const workspaceFolders: readonly WorkspaceFolder[] | undefined;
-    function getConfiguration(section?: string): Configuration;
+    function getConfiguration(section?: string, scope?: Uri): Configuration;
+    function getWorkspaceFolder(uri: Uri): WorkspaceFolder | undefined;
+    namespace fs {
+      function stat(uri: Uri): Thenable<{ type: FileType }>;
+    }
+    function createFileSystemWatcher(globPattern: string | RelativePattern): FileSystemWatcher;
+    function onDidChangeWorkspaceFolders(listener: (event: {
+      added: readonly WorkspaceFolder[]; removed: readonly WorkspaceFolder[];
+    }) => unknown): Disposable;
+    function onDidChangeConfiguration(listener: (event: {
+      affectsConfiguration(section: string): boolean;
+    }) => unknown): Disposable;
     function openTextDocument(
       uriOrOptions:
         | Uri
@@ -213,7 +239,7 @@ declare module "vscode" {
             content?: string;
           }
     ): Thenable<TextDocument>;
-    function findFiles(include: string, exclude?: string | null, maxResults?: number): Thenable<Uri[]>;
+    function findFiles(include: string | RelativePattern, exclude?: string | RelativePattern | null, maxResults?: number): Thenable<Uri[]>;
     function asRelativePath(pathOrUri: string | Uri, includeWorkspaceFolder?: boolean): string;
   }
 

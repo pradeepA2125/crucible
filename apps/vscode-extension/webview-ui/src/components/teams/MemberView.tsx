@@ -16,6 +16,21 @@ import { usageText, usageTitle } from "../../usage";
 const firstLine = (text: string) =>
   text.split("\n").map((l) => l.replace(/^[#>\-*\s]+/, "").replace(/\*\*|`/g, "").trim()).find((l) => l) ?? "";
 
+export function HandedPost({ post, reference, roster }: {
+  post?: TeamPostView; reference: string; roster: string[];
+}) {
+  return (
+    <div className="flex min-w-0 max-w-full items-start gap-1.5 rounded-md border px-2 py-1 text-[11.5px] text-text-2"
+      style={{ background: "var(--color-panel)", borderColor: "var(--color-border-strong)" }}>
+      <span className="shrink-0 font-mono text-[10.5px] font-semibold text-text-3">{reference}</span>
+      {post && <>
+        <span className="shrink-0"><Avatar label={post.author} roster={roster} size="sm" /></span>
+        <span className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{post.author} · {post.text}</span>
+      </>}
+    </div>
+  );
+}
+
 /** A member's own journey (spec 2026-10-05 §7). */
 export function MemberView({ teamId, agentId }: { teamId: string; agentId: string }) {
   const agentsUi = useAgentsUi();
@@ -49,7 +64,7 @@ export function MemberView({ teamId, agentId }: { teamId: string; agentId: strin
     return { id: `P${p.seq}`, stance: last?.kind ?? null };
   });
   return (
-    <div className="grid gap-3.5">
+    <div className="grid min-w-0 max-w-full [overflow-wrap:anywhere] gap-3.5">
       <section data-testid="member-profile" className="grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-[10px] border border-border bg-surface p-3">
         <Avatar label={label} roster={roster} size="lg" ring={working ? "working" : "idle"} />
         <div className="grid min-w-0 gap-1.5">
@@ -94,7 +109,7 @@ export function MemberView({ teamId, agentId }: { teamId: string; agentId: strin
           )}
         </div>
       </section>
-      <div className="relative grid gap-2.5 pl-[22px] before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-[1.5px] before:bg-[var(--color-border-strong)] before:content-['']">
+      <div className="relative grid min-w-0 gap-2.5 pl-[22px] before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-[1.5px] before:bg-[var(--color-border-strong)] before:content-['']">
         {chapters.map((c, i) => (
           <Chapter key={c.n} chapter={c} defaultOpen={i === chapters.length - 1} label={label} roster={roster}
             posts={posts} isProposal={isProposal} live={c.current ? aview.live : []} now={row?.now ?? ""} />
@@ -115,7 +130,7 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
   const postBySeq = (seq: number) => posts.find((p) => p.seq === seq);
   const ref = (seq: number) => (isProposal(seq) ? `P${seq}` : `#${seq}`);
   return (
-    <div data-testid={`chapter-${c.n}`} className="relative rounded-[10px] border border-border bg-surface">
+    <div data-testid={`chapter-${c.n}`} className="relative min-w-0 rounded-[10px] border border-border bg-surface">
       <span aria-hidden="true" className="absolute left-[-24px] top-[9px] grid h-[18px] w-[18px] place-items-center rounded-full text-[10px] font-semibold"
         style={{ background: color, color: "var(--color-panel)", boxShadow: "0 0 0 3px var(--color-surface-2)" }}>{c.n}</span>
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
@@ -133,18 +148,15 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
       </button>
       {!open && c.report && <div className="px-3 pb-2.5 pl-[30px] text-[11.5px] text-text-3">{firstLine(c.report)}</div>}
       {open && (
-        <div className="grid gap-2.5 px-3 pb-3">
+        <div className="grid min-w-0 gap-2.5 px-3 pb-3">
           {c.handed.length > 0 && (
-            <div className="grid gap-1.5">
+            <div className="grid min-w-0 gap-1.5">
               <span className="text-[10px] uppercase tracking-[.08em] text-text-3">Handed · {c.handed.length} post{c.handed.length === 1 ? "" : "s"}</span>
-              <div data-testid={`handed-${c.n}`} className="flex flex-wrap gap-1.5">
+              <div data-testid={`handed-${c.n}`} className="grid min-w-0 gap-1.5">
                 {c.handed.map((seq) => {
                   const p = postBySeq(seq);
                   return (
-                    <span key={seq} className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-[11.5px] text-text-2" style={{ background: "var(--color-panel)", borderColor: "var(--color-border-strong)" }}>
-                      <span className="font-mono text-[10.5px] font-semibold text-text-3">{ref(seq)}</span>
-                      {p && <><Avatar label={p.author} roster={roster} size="sm" /><span className="min-w-0 truncate">{p.author} · {firstLine(p.text)}</span></>}
-                    </span>
+                    <HandedPost key={seq} post={p} reference={ref(seq)} roster={roster} />
                   );
                 })}
               </div>
@@ -172,8 +184,8 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
               <span className="text-[10px] uppercase tracking-[.08em] text-text-3">Edits</span>
               <div data-testid={`edits-${c.n}`} className="grid gap-0.5">
                 {c.edits.map((e, i) => (
-                  <div key={`${e.path}-${i}`} className="flex items-center gap-2 text-[11.5px]">
-                    <code className="font-mono text-[11px] text-[var(--color-code)]">{e.path}</code>
+                  <div key={`${e.path}-${i}`} className="flex min-w-0 items-start gap-2 text-[11.5px]">
+                    <code className="min-w-0 flex-1 [overflow-wrap:anywhere] font-mono text-[11px] text-[var(--color-code)]">{e.path}</code>
                     <span style={{ color: "var(--color-green)" }}>+{e.additions}</span>
                     <span style={{ color: "var(--color-red)" }}>−{e.deletions}</span>
                     <span className="text-text-3">{e.status === "applied" ? "applied" : "not applied"}</span>
@@ -191,14 +203,14 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
           {c.report && (
             <div className="grid gap-1.5 rounded-[9px] border px-3 py-2"
               style={{ borderColor: "var(--green-brd)", background: "linear-gradient(180deg, var(--green-bg), transparent 60%), var(--color-panel)" }}>
-              <div className="flex items-center gap-2 text-[11.5px]">{chip && <span style={{ color: chip.color }}>{chip.text}</span>}<strong>Report</strong></div>
+              <div className="flex min-w-0 items-start gap-2 text-[11.5px]">{chip && <span style={{ color: chip.color }}>{chip.text}</span>}<strong>Report</strong></div>
               <PostBody text={c.report} />
             </div>
           )}
           {c.current && (
-            <div className="flex items-center gap-2 text-[11.5px]" style={{ color: "var(--color-accent-ink)" }}>
-              <span className="h-[7px] w-[7px] rounded-full" style={{ background: "var(--color-accent)", boxShadow: "0 0 0 3px var(--accent-bg-2)" }} />
-              working{now ? ` — ${now}` : ""}
+            <div className="flex min-w-0 items-start gap-2 text-[11.5px]" style={{ color: "var(--color-accent-ink)" }}>
+              <span className="mt-1 shrink-0 h-[7px] w-[7px] rounded-full" style={{ background: "var(--color-accent)", boxShadow: "0 0 0 3px var(--accent-bg-2)" }} />
+              <span className="min-w-0 [overflow-wrap:anywhere]">working{now ? ` — ${now}` : ""}</span>
             </div>
           )}
         </div>

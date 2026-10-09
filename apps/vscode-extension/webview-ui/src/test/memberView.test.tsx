@@ -36,7 +36,7 @@ const DETAIL = {
   transcript: [], lastSeq: 0,
 } as AgentDetailView;
 
-function renderView(usage: TeamsUi["usage"] = null) {
+function renderView(usage: TeamsUi["usage"] = null, posts = POSTS) {
   const messages = [msg({ tool_events: [{ id: 1, tool: "read_file", args: {}, source: "execution", done: true }] }),
     msg({ report: true, status: "completed" }, "Objected: **missing case**"),
     msg({ divider: true, activation: 2 }, "↩ woken")];
@@ -45,7 +45,7 @@ function renderView(usage: TeamsUi["usage"] = null) {
     views: { "agent-r": { detail: DETAIL, messages, live: [], callIds: {}, nextId: 1 } },
   };
   const teamsUi: TeamsUi = { teams: { "team-1": TEAM }, openTeam: vi.fn(), usage, views: { "team-1": {
-    posts: POSTS, lastSeq: 5, lastAseq: 7, activity: [
+    posts, lastSeq: 5, lastAseq: 7, activity: [
       ev(1, 1, "woke", 1, { cause: "kickoff", by: "main", post_seq: 1 }, 1),
       ev(2, 2, "took_up", 1, { posts: [1], from: ["main"] }),
       ev(3, 20, "wrapped_up", 1, { status: "completed", report: "Objected", duration_ms: 18000, tools: 1 }),
@@ -58,6 +58,14 @@ function renderView(usage: TeamsUi["usage"] = null) {
 }
 
 describe("MemberView", () => {
+  it("keeps the full handed message, including later lines", () => {
+    const text = "@design @telemetry @ui " + "Plan a UI feature with verified code citations. ".repeat(40)
+      + "\nA second paragraph that must remain visible.";
+    renderView(null, POSTS.map((p) => p.seq === 5 ? { ...p, text } : p));
+    const handed = screen.getByTestId("handed-2");
+    expect(handed.textContent).toContain(text);
+  });
+
   it("shows the member's token usage (with its helpers) when the tab is selected", () => {
     const u = { requests: 12, input: 48_000, output: 1_200, cached: 24_000 };
     renderView({ total: u, main: null, agents: {},
