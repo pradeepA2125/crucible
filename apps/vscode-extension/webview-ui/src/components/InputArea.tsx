@@ -3,12 +3,13 @@ import { Icon } from "./Icon";
 import { ModelMenu } from "./ModelMenu";
 import { EffortMenu } from "./EffortMenu";
 import { UsageChip } from "./UsageChip";
+import { ContextMeter } from "./ContextMeter";
 import { vscode } from "../vscodeApi";
 import { parseSlashCommand, resolveSkillCommand, buildSlashDropdownItems } from "../slash";
 import { detectTrigger } from "../composerTrigger";
 import { TriggerDropdown } from "./TriggerDropdown";
 import type { InputAvailability } from "../inputAvailability";
-import type { ThreadUsageView } from "../types";
+import type { ContextUsage, ThreadUsageView } from "../types";
 
 interface Props {
   availability: InputAvailability;
@@ -21,6 +22,8 @@ interface Props {
   stepReview?: boolean;  // hydrated from globalState via reviewPrefState
   threadUsage?: ThreadUsageView | null;  // the thread's running token total
   teamNames?: Record<string, string>;
+  contextUsage?: ContextUsage | null;
+  contextUsageStale?: boolean;
 }
 
 // 5 lines × ~19.2px line-height ≈ 96px. Caps the textarea's auto-grow.
@@ -33,7 +36,7 @@ const MAX_TEXTAREA_HEIGHT = 96;
  * newline. When availability.showStop is true, a Stop button appears on the
  * left side of the footer row and posts { type: "stopTurn" } once.
  */
-export function InputArea({ availability, draft, onDraftChange, onOpenSettings, planMode = false, stepReview = true, threadUsage, teamNames }: Props) {
+export function InputArea({ availability, draft, onDraftChange, onOpenSettings, planMode = false, stepReview = true, threadUsage, teamNames, contextUsage = null, contextUsageStale = false }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [stopping, setStopping] = useState(false);
   // One-shot guard for the Tier B task-abort buttons (keep / revert).
@@ -337,7 +340,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
       />
 
       {/* Footer row */}
-      <div className="flex items-center gap-1.5 pt-1">
+      <div data-testid="composer-footer" className="relative flex flex-wrap items-center gap-1.5 pt-1 [&>*]:shrink-0">
         {/* Reasoning-effort chip + model hot-swap chip + settings shortcut. */}
         <EffortMenu />
         <ModelMenu />
@@ -353,6 +356,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
           <Icon name="gear" size={12} />
         </button>
         <UsageChip usage={threadUsage ?? null} teamNames={teamNames ?? {}} />
+        <ContextMeter usage={contextUsage} stale={contextUsageStale} />
 
         {/* Tier B: task-abort buttons — shown while a task is in an abortable phase.
             "Stop & keep" leaves applied changes; "Stop & revert" rolls the workspace back. */}

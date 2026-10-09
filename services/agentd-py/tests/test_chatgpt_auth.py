@@ -205,6 +205,7 @@ async def test_returning_sign_in_reuses_the_issued_client_and_hints(
     assert done.first_plan_sign_in is False
     again = store.require(reg)
     assert again.access_token != first.access_token and again.client_id == first.client_id
+    assert first.auth_session_id and again.auth_session_id != first.auth_session_id
     assert len(store.list()) == 1
 
 
@@ -294,6 +295,7 @@ async def test_near_expiry_refreshes_and_saves_the_rotated_tokens(
     assert refresh["resource"] == "https://api.openai.com/v1" and "scope" not in refresh
     assert token == after.access_token != before.access_token
     assert after.refresh_token != before.refresh_token
+    assert before.auth_session_id and after.auth_session_id == before.auth_session_id
     assert after.expires_at is not None and after.expires_at > after.saved_at + 3000
 
 
@@ -316,12 +318,14 @@ async def test_an_unusable_refresh_token_needs_a_new_sign_in(
     manager: AttemptManager, fake: FakeAuthServer, store: CredentialStore, oidc: OidcClient,
 ) -> None:
     reg = await _sign_in(manager, fake)
+    before = store.require(reg)
     await _expiring(store, reg, -10)
     fake.refresh_error = (400, "refresh_token_reused")
     with pytest.raises(PlanSessionInvalid):
         await ChatGPTPlanBearer(reg, store, oidc).bearer()
     record = store.require(reg)
     assert record.needs_sign_in and record.access_token is None and record.refresh_token is None
+    assert record.auth_session_id != before.auth_session_id
     assert record.client_id.startswith("oaiapp_")  # kept for the next sign-in
 
 
@@ -376,6 +380,7 @@ async def test_sign_out_revokes_then_clears_tokens_but_keeps_the_registration(
                                  "client_id": before.client_id}]
     after = store.require(reg)
     assert (after.access_token, after.refresh_token, after.id_token) == (None, None, None)
+    assert after.auth_session_id != before.auth_session_id
     assert (after.client_id, after.subject, after.label) == (
         before.client_id, before.subject, before.label)
     with pytest.raises(PlanSessionInvalid):

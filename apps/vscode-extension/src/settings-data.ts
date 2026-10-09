@@ -177,9 +177,12 @@ async function buildState(
   };
 }
 
+export type SettingsMutationHandler = (kind: "provider" | "auth") => Promise<void>;
+
 export function createSettingsHandler(
   deps: SettingsDeps,
   post: (msg: SettingsOutMsg) => void,
+  afterMutation: SettingsMutationHandler = async () => {},
 ): (msg: SettingsInMsg) => Promise<void> {
   let restartRequired = false;
   let providerWarning: string | null = null;
@@ -213,7 +216,10 @@ export function createSettingsHandler(
 
   // Loaded and reported separately from the snapshot (like agents): an older backend
   // without the sign-in routes must not blank the whole panel.
-  const chatgpt = createChatGPTHandler(deps.chatgpt, post, postState);
+  const chatgpt = createChatGPTHandler(deps.chatgpt, post, async (kind) => {
+    await afterMutation(kind);
+    await postState();
+  });
 
   return async (msg: SettingsInMsg): Promise<void> => {
     if (isChatGPTMessage(msg)) {
@@ -275,6 +281,7 @@ export function createSettingsHandler(
           if (msg.contextWindow !== undefined) {
             await deps.saveContextWindow(msg.contextWindow);
           }
+          await afterMutation("provider");
           await postState();
           return;
         }

@@ -263,6 +263,9 @@ class ChatEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+from agentd.chat.context_usage import ContextUsage
+
+
 class ThreadLiveState(BaseModel):
     """Everything the chat UI needs to render a thread's current actionable state.
 
@@ -271,6 +274,8 @@ class ThreadLiveState(BaseModel):
     The UI renders from this (state-driven), so reloads and resume task-id churn
     self-heal on the next poll.
     """
+    process_id: str | None = None
+    context_usage: ContextUsage | None = None
     active_task_id: str | None = None
     # True while a controller turn (or a held-open controller gate) is in flight. The
     # /live route sets it from ChatController._active_turns so the FE can keep input

@@ -360,6 +360,16 @@ if reasoning_backend != "scripted":
         reasoning_effort=parse_effort(os.getenv("CRUCIBLE_REASONING_EFFORT")),
     )
 
+    async def _attach_context_runtime() -> None:
+        attach = getattr(_chat_agent, 'attach_context_runtime', None)
+        if attach is not None:
+            attach(provider_runtime)
+
+    app.router.add_event_handler('startup', _attach_context_runtime)
+    _close_context_usage = getattr(_chat_agent, 'close_context_usage', None)
+    if _close_context_usage is not None:
+        app.router.add_event_handler('shutdown', _close_context_usage)
+
     async def _apply_startup_reasoning_effort() -> None:
         # __init__ cannot await, and apply_reasoning_effort is otherwise only reached
         # through swap(). Without this the seeded rung would be reported by

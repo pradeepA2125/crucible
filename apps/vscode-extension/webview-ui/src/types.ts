@@ -371,6 +371,32 @@ export interface TeamViewState {
   lastAseq: number;
 }
 
+// Main model request input occupancy, not cumulative thread or account usage.
+// The host validates safe integer ranges and UTC ISO8601 timestamps.
+interface ContextUsageBase {
+  thread_id: string;
+  process_id: string;
+  provider: string;
+  model: string;
+  scope: "main";
+  generation: number; // nonnegative safe integer
+  revision: number; // nonnegative safe integer
+  turn_id: string | null;
+  request_id: string | null;
+  context_window: number | null; // positive safe integer when known
+  capacity_source: "chatgpt_catalog" | "configured" | "unknown";
+  observed_at: string | null; // UTC ISO8601
+}
+
+export type ContextUsage = ContextUsageBase & (
+  | { status: "awaiting_request" | "invalidated" | "unavailable";
+      input_tokens: null; input_quality: "unavailable" }
+  | { status: "in_flight" | "last_request";
+      input_tokens: number; input_quality: "estimated" | "provider_reported" }
+  | { status: "in_flight" | "last_request";
+      input_tokens: null; input_quality: "unavailable" }
+);
+
 // ── Extension → Webview ──────────────────────────────────────────────────────
 export type ExtensionMessage =
   | { type: "appendMessage"; message: ChatMsg }
@@ -427,6 +453,7 @@ export type ExtensionMessage =
   | { type: "agentDetail"; agentId: string; detail: AgentDetailView }
   | { type: "agentEvent"; agentId: string; event: AgentEventView }
   | { type: "renderThreadUsage"; usage: ThreadUsageView | null }
+  | { type: "renderContextUsage"; usage: ContextUsage | null; stale: boolean }
   | { type: "renderTeams"; teams: TeamSummaryView[] }
   | { type: "renderLiveTeams"; teams: TeamLiveView[] }
   | { type: "teamDetail"; teamId: string; detail: TeamDetailView }
@@ -529,6 +556,8 @@ export interface AppState {
   providerAccess: ProviderAccessView | null;
   // Token usage of the thread: main, agents, teams. Null until fetched.
   threadUsage: ThreadUsageView | null;
+  contextUsage: ContextUsage | null;
+  contextUsageStale: boolean;
   liveSessions: LiveSessionsView | null;
   // sessionId → transcript for expanded strip rows (null = fetch failed).
   sessionTranscripts: Record<string, SessionTranscriptView | null>;

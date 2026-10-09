@@ -302,6 +302,7 @@ class AttemptManager:
             access_token=tokens.access_token, refresh_token=tokens.refresh_token,
             expires_at=tokens.expires_at, earliest_refresh_at=tokens.earliest_refresh_at,
             scopes=tokens.scopes, saved_at=tokens.received_at,
+            auth_session_id=secrets.token_hex(16),
         )
         self._store.save(record)
         attempt.status.registration_id = registration_id

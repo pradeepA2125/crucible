@@ -10,6 +10,12 @@ from typing import Any
 
 from openai import APIConnectionError, AsyncOpenAI
 
+from agentd.providers.context_observation import (
+    ContextInputObserver,
+    begin_context,
+    finish_context,
+    report_context,
+)
 from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
 from agentd.providers.reasoning_effort import LADDER, EffortSupport, ReasoningEffort
 from agentd.runtime.artifacts import provider_debug_root
@@ -413,6 +419,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         # other transport having to grow the kwarg (same getattr-defensive idiom as
         # supports_oneof_grammar / requires_all_fields).
         self.supports_token_progress = True
+        self.supports_context_input = True
         # The EFFECTIVE rung (already clamped by ProviderRuntime), or None to send
         # no effort field at all — which is both the default and the escape hatch
         # back to pre-feature behavior.
@@ -658,6 +665,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_usage: Any = None,
         on_salvage: Any = None,
         unconstrained: bool = False,
+        on_context_input: ContextInputObserver | None = None,
     ) -> dict[str, object]:
         # on_usage is per LOGICAL call, but one call can stream more than once: a
         # strict attempt can complete, fail to parse, and fall back to json_object
@@ -689,6 +697,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 on_usage=recorder,
                 on_salvage=on_salvage,
                 unconstrained=unconstrained,
+                on_context_input=on_context_input,
             )
             # Type-specific narrowing: the tight anyOf schema enforces each variant's
             # required fields at the token level, but if the grammar was ignored (an
@@ -720,6 +729,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         on_usage=recorder,
                         on_salvage=on_salvage,
                         unconstrained=unconstrained,
+                        on_context_input=on_context_input,
                     )
             succeeded = True
             return result
@@ -735,6 +745,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
     async def _get_completion_output(
         self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
         on_progress: Any = None, on_usage: Any = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> tuple[str, str | None]:
         """Route through the streaming path (forwarding reasoning deltas to
         on_thinking live, as they arrive) when a callback is given, else the plain
@@ -754,19 +765,24 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             return await self._stream_with_finish_reason(
                 create_kwargs, on_thinking=on_thinking, on_retry=on_retry,
                 on_progress=on_progress, on_usage=on_usage,
+                on_context_input=on_context_input,
             )
-        response = await self._call_with_retry(create_kwargs, on_retry=on_retry)
+        response = await self._call_with_retry(
+            create_kwargs, on_retry=on_retry, on_context_input=on_context_input,
+        )
         return self._extract_text(response), _response_finish_reason(response)
 
     async def _get_completion_text(
         self, create_kwargs: dict[str, Any], on_thinking: Any, on_retry: Any = None,
         on_progress: Any = None, on_usage: Any = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> str:
         """Text-only view of _get_completion_output, for callers that have no use
         for the finish_reason (the json_object fallback — it never decides a
         downgrade, so truncation there is just a malformed-JSON retry)."""
         text, _finish_reason = await self._get_completion_output(
-            create_kwargs, on_thinking, on_retry, on_progress, on_usage
+            create_kwargs, on_thinking, on_retry, on_progress, on_usage,
+            on_context_input=on_context_input,
         )
         return text
 
@@ -784,6 +800,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_usage: Any = None,
         on_salvage: Any = None,
         unconstrained: bool = False,
+        on_context_input: ContextInputObserver | None = None,
     ) -> dict[str, object]:
         safe_schema_name = "".join(c for c in schema_name if c.isalnum())
 
@@ -842,7 +859,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 finish_reason: str | None = None
                 try:
                     output_text, finish_reason = await self._get_completion_output(
-                        create_kwargs, on_thinking, on_retry, on_progress, recorder
+                        create_kwargs, on_thinking, on_retry, on_progress, recorder,
+                        on_context_input=on_context_input,
                     )
                     result = self._parse_output_object(
                         output_text, schema_name, on_salvage,
@@ -909,6 +927,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 on_usage=recorder,
                 on_salvage=on_salvage,
                 unconstrained=unconstrained,
+                on_context_input=on_context_input,
             )
             succeeded = True
             return result
@@ -964,6 +983,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_usage: Any = None,
         on_salvage: Any = None,
         unconstrained: bool = False,
+        on_context_input: ContextInputObserver | None = None,
     ) -> dict[str, object]:
         """json_object mode with the schema injected into the system prompt.
 
@@ -1033,7 +1053,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # process lives in permanently — could never tell a truncated response
                 # from a malformed one, and reported the wrong cause every time.
                 output_text, fb_finish_reason = await self._get_completion_output(
-                    fallback_kwargs, on_thinking, on_retry, on_progress, on_usage
+                    fallback_kwargs, on_thinking, on_retry, on_progress, on_usage,
+                    on_context_input=on_context_input,
                 )
                 return self._parse_output_object(
                     output_text, schema_name, on_salvage,
@@ -1082,6 +1103,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_thinking: object = None,
         on_usage: Any = None,
         max_tokens: int | None = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> str:
         is_reasoning, temperature = await self._reasoning_config(model)
 
@@ -1106,11 +1128,14 @@ class OpenAICompatibleTransport(ModelJsonTransport):
 
         if callable(on_thinking):
             return await self._stream_with_thinking(
-                create_kwargs, on_thinking=on_thinking, on_usage=on_usage
+                create_kwargs, on_thinking=on_thinking, on_usage=on_usage,
+                on_context_input=on_context_input,
             )
 
         try:
-            response = await self._call_with_retry(create_kwargs)
+            response = await self._call_with_retry(
+                create_kwargs, on_context_input=on_context_input,
+            )
             # The non-streaming response already carries usage; it was simply being
             # dropped. Reading it is what lets the context test print the provider's
             # OWN prompt_tokens beside its verdict instead of only our estimate.
@@ -1139,7 +1164,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 if retry_extra:
                     create_kwargs["extra_body"] = retry_extra
                 try:
-                    response = await self._call_with_retry(create_kwargs)
+                    response = await self._call_with_retry(
+                        create_kwargs, on_context_input=on_context_input,
+                    )
                 except Exception as retry_exc:
                     # The retry gets the SAME wrapping as every other failure path
                     # out of generate_text. Without this the second failure escapes
@@ -1157,6 +1184,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_retry: Any = None,
         on_progress: Any = None,
         on_usage: Any = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> str:
         """Text-only view of _stream_with_finish_reason (generate_text's entry
         point, and the long-standing public-ish shape of this method).
@@ -1168,10 +1196,26 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         text, _finish_reason = await self._stream_with_finish_reason(
             create_kwargs, on_thinking=on_thinking, on_retry=on_retry,
             on_progress=on_progress, on_usage=on_usage,
+            on_context_input=on_context_input,
         )
         return text
 
-    async def _open_stream(self, kwargs: dict[str, Any]) -> Any:
+    async def _create_observed_stream(
+        self, kwargs: dict[str, Any], observer: ContextInputObserver | None,
+    ) -> Any:
+        begin_context(observer, kwargs)
+        try:
+            return await asyncio.wait_for(
+                self._completions.create(**kwargs), timeout=self._timeout_sec,
+            )
+        except BaseException:
+            finish_context(observer)
+            raise
+
+    async def _open_stream(
+        self, kwargs: dict[str, Any],
+        on_context_input: ContextInputObserver | None = None,
+    ) -> Any:
         """Open the stream, asking for the exact-usage chunk.
 
         `stream_options` is the only way to get that chunk — without it a
@@ -1193,9 +1237,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         while self._stream_usage_mode != "off":
             probe = {**kwargs, "stream_options": _STREAM_USAGE_LADDER[self._stream_usage_mode]}
             try:
-                return await asyncio.wait_for(
-                    self._completions.create(**probe), timeout=self._timeout_sec
-                )
+                return await self._create_observed_stream(probe, on_context_input)
             except TimeoutError:
                 raise
             except Exception as exc:
@@ -1207,9 +1249,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     self._label, self._stream_usage_mode, nxt, exc,
                 )
                 self._stream_usage_mode = nxt
-        return await asyncio.wait_for(
-            self._completions.create(**kwargs), timeout=self._timeout_sec
-        )
+        return await self._create_observed_stream(kwargs, on_context_input)
 
     async def _stream_with_finish_reason(
         self,
@@ -1219,6 +1259,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         on_retry: Any = None,
         on_progress: Any = None,
         on_usage: Any = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> tuple[str, str | None]:
         """Stream response forwarding reasoning chunks to on_thinking callback.
 
@@ -1257,7 +1298,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     on_retry(attempt, self._max_retries, reason, message)
                 await asyncio.sleep(delay)
             try:
-                stream = await self._open_stream(kwargs)
+                stream = await self._open_stream(kwargs, on_context_input=on_context_input)
             except TimeoutError as exc:
                 # TransientTransportError subclasses RuntimeError: same type for
                 # every existing handler, but distinguishable by the downgrade check.
@@ -1303,6 +1344,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     # only exact number the provider ever hands us.
                     chunk_usage = getattr(chunk, "usage", None)
                     if chunk_usage is not None:
+                        report_context(on_context_input, chunk_usage, "prompt_tokens")
                         usage_payload = chunk_usage
                         reported, _ = _usage_token_counts(chunk_usage)
                         if reported is not None:
@@ -1421,6 +1463,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     f"{self._label} stream failed mid-response: "
                     f"{_describe_exception(exc)}"
                 ) from exc
+            finally:
+                finish_context(on_context_input)
 
         assert last_exc is not None
         raise last_exc
@@ -1430,6 +1474,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         create_kwargs: dict[str, Any],
         *,
         on_retry: Any = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> Any:
         """Call chat.completions.create with timeout and exponential backoff."""
         last_exc: Exception | None = None
@@ -1448,11 +1493,14 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     )
                     on_retry(attempt, self._max_retries, reason, message)
                 await asyncio.sleep(delay)
+            begin_context(on_context_input, create_kwargs)
             try:
-                return await asyncio.wait_for(
+                response = await asyncio.wait_for(
                     self._completions.create(**create_kwargs),
                     timeout=self._timeout_sec,
                 )
+                report_context(on_context_input, getattr(response, "usage", None), "prompt_tokens")
+                return response
             except TimeoutError as exc:
                 raise TransientTransportError(
                     f"{self._label} chat.completions timed out after {self._timeout_sec}s"
@@ -1462,6 +1510,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     last_exc = exc
                     continue
                 raise
+            finally:
+                finish_context(on_context_input)
 
         assert last_exc is not None
         raise last_exc

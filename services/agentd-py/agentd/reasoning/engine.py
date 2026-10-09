@@ -311,6 +311,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         allowed_types: Sequence[str] | None = None,
         render_ctx: RenderContext | None = None,
         persona: str | None = None,
+        on_context_input: object | None = None,
     ) -> dict[str, object]:
         from agentd.chat.controller_prompts import (
             build_controller_step_payload,
@@ -350,6 +351,10 @@ class DefaultReasoningEngine(ReasoningEngine):
             phase=phase, allowed_types=allowed_types, tight=tight, anyof=anyof,
             all_fields_required=all_fields_required,
             team_member=render_ctx is not None and render_ctx.has_team)
+        if on_context_input is not None and not _accepts(self._transport, "on_context_input"):
+            unavailable = getattr(on_context_input, "unavailable", None)
+            if unavailable is not None:
+                unavailable()
         result = await self._transport.generate_json(
             model=self._model,
             schema_name="controller_step_response",
@@ -369,6 +374,9 @@ class DefaultReasoningEngine(ReasoningEngine):
             # cannot drift the way a hand-maintained flag can.
             **({"on_progress": on_progress}
                if on_progress is not None and _accepts(self._transport, "on_progress")
+               else {}),
+            **({"on_context_input": on_context_input}
+               if on_context_input is not None and _accepts(self._transport, "on_context_input")
                else {}),
             **({"on_usage": on_usage}
                if on_usage is not None and _accepts(self._transport, "on_usage")

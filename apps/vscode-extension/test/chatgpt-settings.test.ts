@@ -53,6 +53,40 @@ function setup(overrides: Partial<ChatGPTDeps["client"]> = {}, more: Partial<Cha
 }
 
 describe("ChatGPT settings handler", () => {
+  it.each([false, true])("refreshes on successful same-registration sign-in (reconsent=%s)", async (reconsent) => {
+    const h = setup({}, { activeRegistration: () => REG });
+    await h.handle({ type: "settings/chatgptSignIn", registrationId: REG, reconsent });
+    expect(h.afterProviderChange).toHaveBeenCalledExactlyOnceWith("auth");
+  });
+
+  it("refreshes after successful sign-out even for an unrelated account", async () => {
+    const h = setup({}, { activeRegistration: () => "other" });
+    await h.handle({ type: "settings/chatgptSignOut", registrationId: REG });
+    expect(h.afterProviderChange).toHaveBeenCalledExactlyOnceWith("auth");
+  });
+
+  it.each(["failed", "expired"] as const)("does not refresh a %s sign-in", async (state) => {
+    const h = setup({ getChatGPTSignIn: vi.fn(async () => attempt({ state })) });
+    await h.handle({ type: "settings/chatgptSignIn", registrationId: REG, reconsent: true });
+    expect(h.afterProviderChange).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh failed sign-out or ordinary account/catalog loads", async () => {
+    const h = setup({ signOutChatGPT: vi.fn(async () => { throw new Error("offline"); }) });
+    await h.handle({ type: "settings/chatgptSignOut", registrationId: REG });
+    await h.handle({ type: "settings/chatgptLoad" });
+    await h.handle({ type: "settings/chatgptModels", registrationId: REG });
+    expect(h.afterProviderChange).not.toHaveBeenCalled();
+  });
+
+  it("does not persist or refresh a rejected account swap", async () => {
+    const h = setup({ setProvider: vi.fn(async () => { throw new Error("busy"); }) });
+    await h.handle({ type: "settings/useChatGPT", registrationId: REG, model: "m1", contextWindow: 200000 });
+    expect(h.deps.saveActiveRegistration).not.toHaveBeenCalled();
+    expect(h.deps.saveContextWindow).not.toHaveBeenCalled();
+    expect(h.afterProviderChange).not.toHaveBeenCalled();
+  });
+
   it("follows a sign-in to its end and welcomes a first plan sign-in once", async () => {
     const { handle, posted, opened } = setup();
     await handle({ type: "settings/chatgptSignIn" });
@@ -107,7 +141,7 @@ describe("ChatGPT settings handler", () => {
     expect(deps.client.setProvider).toHaveBeenCalledWith(
       { backend: "chatgpt", model: "m1", credentials: creds, contextWindow: 200000 });
     expect(deps.saveActiveRegistration).toHaveBeenCalledWith(REG);
-    expect(afterProviderChange).toHaveBeenCalled();
+    expect(afterProviderChange).toHaveBeenCalledExactlyOnceWith("auth");
   });
 
   it("a failed validation changes nothing", async () => {

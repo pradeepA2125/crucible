@@ -111,6 +111,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // modelList refresh would otherwise be a call to OpenAI. A failure (signed out, plan
   // usage off) just means the menu offers no plan models.
   let chatgptCatalogCache: { registration: string; at: number; models: { slug: string; displayName: string; contextWindow: number | null }[] } | null = null;
+  let chatgptCatalogEpoch = 0;
+  const invalidateChatgptCatalog = (): void => {
+    chatgptCatalogEpoch += 1;
+    chatgptCatalogCache = null;
+  };
   const chatgptCatalog = async () => {
     const registration = runtimeManager.chatgptRegistration();
     if (!registration) return undefined;
@@ -118,8 +123,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         && Date.now() - chatgptCatalogCache.at < 5 * 60_000) {
       return chatgptCatalogCache.models;
     }
+    const epoch = chatgptCatalogEpoch;
     try {
       const models = await controller.configClient().listChatGPTModels(registration);
+      if (epoch !== chatgptCatalogEpoch || runtimeManager.chatgptRegistration() !== registration) {
+        return undefined;
+      }
       chatgptCatalogCache = { registration, at: Date.now(), models };
       return models;
     } catch {
@@ -240,6 +249,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await runtimeManager.saveProvider(backend, model);
       // A rejected swap must not change the next managed spawn's window either.
       if (contextWindow !== undefined) await runtimeManager.saveContextWindow(contextWindow);
+      await controller.refreshContextUsage();
       return composerModelState();
     },
     (level: ReasoningEffort) => setReasoningEffort(level),
@@ -525,6 +535,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     renderThreadUsage: (usage) => {
       chatPanel.renderThreadUsage(usage);
     },
+    renderContextUsage: (usage, stale) => {
+      chatPanel.renderContextUsage(usage, stale);
+    },
     renderTeams: (teams) => {
       chatPanel.renderTeams(teams);
     },
@@ -573,6 +586,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
   };
 
+  const afterSettingsMutation = async (kind: "auth" | "provider"): Promise<void> => {
+    if (kind === "auth") invalidateChatgptCatalog();
+    // Both reads are backend-authoritative; catalog windows never drive the meter.
+    await Promise.all([controller.refreshContextUsage(), chatPanel.refreshModels()]);
+  };
+
   // The chat webview embeds the settings UI (floating overlay); give it a settings
   // handler that shares the exact host wiring the standalone SettingsPanel uses.
   // Bound per webview mount (registerHandlers) so workspace/backend are resolved live.
@@ -585,6 +604,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         resolveBackendUrl: () => settings.getBackendBaseUrl(),
       }),
       post,
+      afterSettingsMutation,
     ),
   );
 
@@ -776,6 +796,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             folder,
             clientFactory,
             () => settings.getBackendBaseUrl(),
+            afterSettingsMutation,
           );
         }
         settingsPanel.open(asSettingsSectionId(sectionArg));

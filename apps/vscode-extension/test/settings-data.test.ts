@@ -108,6 +108,33 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
 }
 
 describe("createSettingsHandler", () => {
+  it("notifies only accepted provider mutations, not ordinary snapshot/account loads", async () => {
+    const d = deps();
+    const changed = vi.fn(async () => {});
+    const handle = createSettingsHandler(d, () => {}, changed);
+    await handle({ type: "settings/load" });
+    await handle({ type: "settings/chatgptLoad" });
+    expect(changed).not.toHaveBeenCalled();
+    await handle({ type: "settings/setProvider", backend: "groq", model: "m" });
+    expect(changed).toHaveBeenCalledExactlyOnceWith("provider");
+  });
+
+  it.each(["validation", "swap"])("does not notify rejected provider %s", async (failure) => {
+    const d = deps();
+    if (failure === "validation") d.client.validateProvider = async () => ({ ok: false });
+    else d.client.setProvider = async () => { throw new Error("busy"); };
+    const changed = vi.fn(async () => {});
+    await createSettingsHandler(d, () => {}, changed)({ type: "settings/setProvider", backend: "groq", model: "m" });
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("forwards successful auth mutations without conflating them with snapshot refresh", async () => {
+    const d = deps();
+    d.chatgpt.client.signOutChatGPT = vi.fn(async () => ({ remoteRevoked: false }));
+    const changed = vi.fn(async () => {});
+    await createSettingsHandler(d, () => {}, changed)({ type: "settings/chatgptSignOut", registrationId: "reg" });
+    expect(changed).toHaveBeenCalledExactlyOnceWith("auth");
+  });
   it("routes ChatGPT messages to the ChatGPT handler without rebuilding the snapshot", async () => {
     const posted: SettingsOutMsg[] = [];
     const d = deps();

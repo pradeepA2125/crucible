@@ -82,7 +82,7 @@ export function ModelMenu() {
     : null;
 
   return (
-    <div ref={rootRef} className="relative flex items-center gap-1.5">
+    <div ref={rootRef} className="relative flex max-w-full flex-wrap items-center gap-1.5 [&>*]:shrink-0">
       {/* Chip */}
       <button
         type="button"

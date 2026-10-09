@@ -17,6 +17,7 @@ import {
   ChatEventSchema,
   ChatMessageSchema,
   ThreadLiveStateSchema,
+  parseContextUsage,
   SessionTranscriptSchema,
   type SessionTranscript,
   BackendConfigSchema,
@@ -835,6 +836,8 @@ export class HttpBackendClient implements BackendTaskClient {
       ? (raw["pending_gates"] as Record<string, unknown>[])
       : [];
     return ThreadLiveStateSchema.parse({
+      processId: typeof raw["process_id"] === "string" && raw["process_id"].length > 0 ? raw["process_id"] : null,
+      contextUsage: parseContextUsage(raw["context_usage"]),
       activeTaskId: raw["active_task_id"] ?? null,
       status: raw["status"] ?? null,
       pendingGates: rawGates.map(toGate),

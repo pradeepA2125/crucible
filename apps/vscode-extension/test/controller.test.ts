@@ -281,6 +281,7 @@ function createUi(overrides?: Partial<ControllerUI>): ControllerUI {
     agentEvent: () => {},
     renderTeams: () => {},
     renderThreadUsage: () => {},
+    renderContextUsage: () => {},
     renderLiveTeams: () => {},
     teamDetail: () => {},
     teamEvent: () => {},
@@ -2317,6 +2318,131 @@ describe("rewind", () => {
 
     expect(errors.length).toBe(1);
     expect(threadFetched).toBe(false);
+  });
+});
+
+describe("CrucibleController — context capacity", () => {
+  const THREAD = { threadId: "chat-1", workspacePath: "/ws", title: "t", messages: [], createdAt: "", updatedAt: "" } as any;
+  const context = (revision = 1) => ({ thread_id: "chat-1", provider: "chatgpt", model: "gpt", scope: "main", process_id: "p", generation: 1, revision, turn_id: "t", request_id: "r", status: "in_flight", input_tokens: revision * 100, input_quality: "estimated", context_window: 1000, capacity_source: "chatgpt_catalog", observed_at: "2026-10-08T00:00:00Z" });
+  function setup(extra: Record<string, unknown> = {}) {
+    const state: StubBackendState = { submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [], getResultCalls: [], planFeedbackCalls: [], liveResponse: { ...NULL_LIVE_STATE, processId: "p", contextUsage: context() as any } };
+    const rendered: Array<{ usage: any; stale: boolean }> = [];
+    const controller = new CrucibleController(() => ({ ...createStubBackend(state), ...extra }), new MemorySessionStore(), createSettings(), createUi({ renderContextUsage: (usage: any, stale: boolean) => rendered.push({ usage, stale }) } as any), { openDiff: async () => {} });
+    controller.activeThreadId = "chat-1";
+    return { controller, state, rendered };
+  }
+  test("live context updates before unrelated signature dedup and unchanged recovery clears stale", async () => {
+    let fails = false;
+    const { controller, state, rendered } = setup({ getThreadLiveState: async () => { if (fails) throw new Error("offline"); return state.liveResponse; } });
+    await controller.pollThreadLiveState();
+    expect(rendered.at(-1)).toMatchObject({ usage: { input_tokens: 100 }, stale: false });
+    state.liveResponse = { ...state.liveResponse!, contextUsage: context(2) as any };
+    await controller.pollThreadLiveState();
+    expect(rendered.at(-1)?.usage.input_tokens).toBe(200);
+    fails = true; await controller.pollThreadLiveState();
+    expect(rendered.at(-1)?.stale).toBe(true);
+    fails = false; await controller.pollThreadLiveState();
+    expect(rendered.at(-1)).toMatchObject({ usage: { input_tokens: 200, observed_at: context().observed_at }, stale: false });
+    controller.dispose();
+  });
+  test("SSE context goes through validation/order and never reads output token progress", async () => {
+    const { controller, rendered } = setup({ sendChatMessage: asStream(async function* () {
+      yield { type: "context_usage", payload: context(3) } as any;
+      yield { type: "context_usage", payload: context(2) } as any;
+      yield { type: "context_usage", payload: { ...context(4), input_tokens: true } } as any;
+      yield { type: "chat_done", payload: {} } as any;
+    }) });
+    await controller.pollThreadLiveState(); await controller.sendChatMessage("draft");
+    expect(rendered.at(-1)?.usage.input_tokens).toBe(300);
+    controller.dispose();
+  });
+  test("an EOF without chat_done retains a visibly stale observation", async () => {
+    const { controller, rendered } = setup({ sendChatMessage: asStream(async function* () { yield { type: "context_usage", payload: context(3) } as any; }) });
+    await controller.pollThreadLiveState(); await controller.sendChatMessage("draft");
+    expect(rendered.at(-1)).toMatchObject({ usage: { input_tokens: 300 }, stale: true }); controller.dispose();
+  });
+  test("refresh preserves no-op measurement when hydration fails", async () => {
+    let fail = false;
+    const { controller, state, rendered } = setup({ getThreadLiveState: async () => { if (fail) throw new Error("offline"); return state.liveResponse; } });
+    await controller.pollThreadLiveState(); fail = true;
+    await controller.refreshContextUsage();
+    expect(rendered.at(-1)).toMatchObject({ usage: { input_tokens: 100 }, stale: true });
+    controller.dispose();
+  });
+  test("a send response arriving after A-B-A cannot start a new stream", async () => {
+    let resolve!: (result: SendChatResult) => void;
+    let consumed = false;
+    const { controller, rendered } = setup({ sendChatMessage: async () => new Promise<SendChatResult>(r => { resolve = r; }) });
+    await controller.pollThreadLiveState();
+    const send = controller.sendChatMessage("old");
+    await controller.switchChatThread("chat-2"); await controller.switchChatThread("chat-1");
+    resolve({ kind: "stream", events: (async function* () { consumed = true; yield { type: "context_usage", payload: context(99) } as any; })() });
+    await send;
+    expect(consumed).toBe(false);
+    expect(rendered.at(-1)?.usage?.revision).not.toBe(99); controller.dispose();
+  });
+  test("open transcript fetched before A-B-A is retired", async () => {
+    let release!: (thread: ChatThread) => void; let first = true;
+    const { controller } = setup({ getConfig: async () => ({ provider: "chatgpt" }), getChatThread: async () => { if (first) { first = false; return new Promise<ChatThread>(r => { release = r; }); } return THREAD; } });
+    const clears = vi.spyOn((controller as any).ui, "clearChatThread");
+    const opened = controller.openChat(); await new Promise(r => setTimeout(r, 0));
+    await controller.switchChatThread("chat-2"); await controller.switchChatThread("chat-1");
+    const count = clears.mock.calls.length; release(THREAD); await opened;
+    expect(clears.mock.calls.length).toBe(count); controller.dispose();
+  });
+  test("new-thread create started before navigation is retired", async () => {
+    let release!: (thread: ChatThread) => void;
+    const { controller } = setup({ createChatThread: async () => new Promise<ChatThread>(r => { release = r; }) });
+    const created = controller.newChatThread(); await controller.switchChatThread("chat-2");
+    release(THREAD); await created; expect(controller.activeThreadId).toBe("chat-2"); controller.dispose();
+  });
+  test("context arriving before transcript survives clear and unchanged dedup", async () => {
+    let finish!: (thread: ChatThread) => void;
+    let first = true;
+    const { controller } = setup({ getChatThread: async () => { if (first) { first = false; return new Promise<ChatThread>(r => { finish = r; }); } return THREAD; } });
+    let view: any = null;
+    (controller as any).ui.renderContextUsage = (usage: any) => { view = usage; };
+    (controller as any).ui.clearChatThread = () => { view = null; };
+    const switching = controller.switchChatThread("chat-1"); await controller.pollThreadLiveState();
+    expect(view?.input_tokens).toBe(100); finish(THREAD); await switching;
+    await controller.pollThreadLiveState(); expect(view?.input_tokens).toBe(100); controller.dispose();
+  });
+  test("transcript reconciliation started before A-B-A cannot replace current messages", async () => {
+    let finish!: (thread: ChatThread) => void; let first = true;
+    const { controller } = setup({ getChatThread: async () => { if (first) { first = false; return new Promise<ChatThread>(r => { finish = r; }); } return THREAD; } });
+    const replaced = vi.spyOn((controller as any).ui, "replaceChatMessages");
+    const reconcile = (controller as any).reconcileTranscript("chat-1", 3);
+    await controller.switchChatThread("chat-2"); await controller.switchChatThread("chat-1"); finish(THREAD); await reconcile;
+    expect(replaced).not.toHaveBeenCalled(); controller.dispose();
+  });
+  test("same-URL connection replacement retires pending send and poll", async () => {
+    let finishPoll!: (live: ThreadLiveState) => void;
+    let finishSend!: (result: SendChatResult) => void; let consumed = false; let first = true;
+    const { controller, rendered } = setup({
+      getThreadLiveState: async () => { if (first) { first = false; return new Promise<ThreadLiveState>(r => { finishPoll = r; }); } return { ...NULL_LIVE_STATE, processId: "new", contextUsage: { ...context(), process_id: "new" } }; },
+      sendChatMessage: async () => new Promise<SendChatResult>(r => { finishSend = r; }),
+    });
+    const poll = controller.pollThreadLiveState(); const send = controller.sendChatMessage("old");
+    await controller.reconnectContextUsage();
+    finishPoll({ ...NULL_LIVE_STATE, processId: "p", contextUsage: context(99) as any }); await poll;
+    finishSend({ kind: "stream", events: (async function* () { consumed = true; })() }); await send;
+    expect(consumed).toBe(false); expect(rendered.at(-1)?.usage.process_id).toBe("new"); controller.dispose();
+  });
+  test("create-on-send response cannot select a thread after navigation", async () => {
+    let finish!: (thread: ChatThread) => void; let sent = false;
+    const { controller } = setup({ createChatThread: async () => new Promise<ChatThread>(r => { finish = r; }), sendChatMessage: async () => { sent = true; return { kind: "queued" }; } });
+    controller.activeThreadId = null;
+    const send = controller.sendChatMessage("old"); await controller.switchChatThread("chat-2");
+    finish(THREAD); await send; expect(controller.activeThreadId).toBe("chat-2"); expect(sent).toBe(false); controller.dispose();
+  });
+  test("navigation retires a deferred old poll before it can populate the new view", async () => {
+    let resolve!: (live: ThreadLiveState) => void;
+    let first = true;
+    const { controller, rendered } = setup({ getThreadLiveState: async () => { if (first) { first = false; return new Promise<ThreadLiveState>(r => { resolve = r; }); } return { ...NULL_LIVE_STATE, processId: "p", contextUsage: null }; } });
+    const old = controller.pollThreadLiveState();
+    await controller.switchChatThread("chat-2");
+    resolve({ ...NULL_LIVE_STATE, processId: "p", contextUsage: context(99) as any }); await old;
+    expect(rendered.at(-1)?.usage).toBeNull(); controller.dispose();
   });
 });
 

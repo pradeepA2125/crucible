@@ -25,6 +25,8 @@ import type {
   SendChatResult,
   ThreadAttention,
 } from "@crucible/editor-client";
+import { ContextUsageState } from "./context-usage-state.js";
+import type { ContextUsage } from "@crucible/editor-client";
 import { parseWireChatMessage } from "@crucible/editor-client";
 import { AgentViewManager } from "./agent-views.js";
 import { TeamViewManager, type TeamViewEvent } from "./team-views.js";
@@ -144,6 +146,7 @@ export interface ControllerUI {
   renderLiveTeams(teams: TeamLive[]): void;
   // Token usage for the composer total, team cards/boards and agent tabs. Null clears.
   renderThreadUsage(usage: ThreadUsage | null): void;
+  renderContextUsage(usage: ContextUsage | null, stale: boolean): void;
   teamDetail(teamId: string, detail: TeamDetail): void;
   teamEvent(teamId: string, event: TeamViewEvent): void;
 }
@@ -235,6 +238,46 @@ export class CrucibleController {
   private seenStepIds = new Set<string>();
   private latestLiveReview: { taskId: string; shadowWorkspacePath: string | null } | null = null;
   private livePollInFlight = false;
+  private readonly contextState = new ContextUsageState();
+  private contextSignature = "";
+  private streamEpoch = 0;
+  private contextPollEpoch = 0;
+
+  private contextView(reset = false): number {
+    const url = this.settings.getBackendBaseUrl();
+    if (reset || this.contextState.thread !== this.activeThreadId || this.contextState.url !== url) {
+      this.contextState.navigate(this.activeThreadId, url);
+      this.livePollInFlight = false;
+      this.streamEpoch++;
+      this.turnAbort?.abort();
+      this.turnAbort = null;
+    }
+    this.renderContext();
+    return this.contextState.epoch;
+  }
+
+  private renderContext(force = false): void {
+    const signature = JSON.stringify([this.contextState.usage, this.contextState.stale]);
+    if (!force && signature === this.contextSignature) return;
+    this.contextSignature = signature;
+    this.ui.renderContextUsage(this.contextState.usage, this.contextState.stale);
+  }
+
+  async reconnectContextUsage(): Promise<void> {
+    this.contextView(true);
+    this._liveResumeThreadId = null;
+    this.lastLiveSignature = null;
+    await this.pollThreadLiveState();
+  }
+
+  async refreshContextUsage(): Promise<void> {
+    // Backend identity/generation decides invalidation. Preserve no-op/effort-only
+    // observations, but supersede pre-mutation polls before obtaining a fresh snapshot.
+    this.contextView();
+    ++this.contextPollEpoch;
+    this.livePollInFlight = false;
+    await this.pollThreadLiveState();
+  }
   // Tracks which task id the seenStepIds set belongs to, independently of deviationsTaskId.
   private stepTrackingTaskId: string | null = null;
 
@@ -619,6 +662,8 @@ export class CrucibleController {
   }
 
   async openChat(): Promise<void> {
+    let epoch = this.contextView(true);
+    const current = () => this.contextState.current(epoch, this.settings.getBackendBaseUrl());
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
     // First-run gate: an unreachable backend or an unconfigured provider means the
@@ -626,11 +671,13 @@ export class CrucibleController {
     // later with a confusing "Failed to create chat thread" error.
     try {
       const config = await client.getConfig();
+      if (!current()) return;
       if (!config.provider) {
         this.ui.promptSetup("Choose a model provider to start chatting.");
         return;
       }
     } catch {
+      if (!current()) return;
       this.ui.promptSetup(
         "Crucible isn't set up yet — install the runtime and pick a model provider.",
       );
@@ -642,12 +689,14 @@ export class CrucibleController {
     } catch {
       threads = [];
     }
+    if (!current()) return;
     const first = threads[0];
     if (first && !this.activeThreadId) {
       this.activeThreadId = first.threadId;
     } else if (!this.activeThreadId) {
       try {
         const thread = await client.createChatThread(workspacePath);
+        if (!current()) return;
         this.activeThreadId = thread.threadId;
         threads = [thread];
       } catch (error) {
@@ -655,12 +704,15 @@ export class CrucibleController {
         return;
       }
     }
+    epoch = this.contextView();
     this.ui.openChatPanel();
     this.ui.renderChatThreadList(threads, this.activeThreadId ?? "");
     if (this.activeThreadId) {
       try {
         const thread = await client.getChatThread(this.activeThreadId);
+        if (!current()) return;
         this.ui.clearChatThread();
+        this.renderContext(true);
         for (const message of thread.messages) {
           this.ui.appendChatMessage(message);
         }
@@ -670,6 +722,7 @@ export class CrucibleController {
         // non-fatal — panel opens empty
       }
     }
+    if (!current()) return;
     // Re-derive any pending gate/plan from persisted state so cards survive the
     // reload/reopen that just discarded the SSE-rendered ones.
     this.lastLiveSignature = null;
@@ -678,6 +731,8 @@ export class CrucibleController {
   }
 
   async newChatThread(): Promise<void> {
+    let epoch = this.contextView(true);
+    const current = () => this.contextState.current(epoch, this.settings.getBackendBaseUrl());
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
     let thread;
@@ -687,7 +742,9 @@ export class CrucibleController {
       this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
       return;
     }
+    if (!current()) return;
     this.activeThreadId = thread.threadId;
+    epoch = this.contextView();
     this.ui.openChatPanel();
     this.ui.clearChatThread();
     this.ui.clearLiveGates();
@@ -705,15 +762,20 @@ export class CrucibleController {
     } catch {
       threads = [thread];
     }
+    if (!current()) return;
     this.ui.renderChatThreadList(threads, thread.threadId);
     this.startLiveStatePolling();
   }
 
   async switchChatThread(threadId: string): Promise<void> {
     this.activeThreadId = threadId;
-    const client = this.createClient(this.settings.getBackendBaseUrl());
+    const epoch = this.contextView(true);
+    const url = this.settings.getBackendBaseUrl();
+    const client = this.createClient(url);
     const thread = await client.getChatThread(threadId);
+    if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl()) || url !== this.settings.getBackendBaseUrl()) return;
     this.ui.clearChatThread();
+    this.renderContext(true);
     // Drop the previous thread's live cards; the new thread's /live poll repopulates.
     this.ui.clearLiveGates();
     this.ui.clearLivePlan();
@@ -842,6 +904,7 @@ export class CrucibleController {
    * thread — a notice marker, a breadcrumb — reach the webview without a reload. Swaps
    * the messages only; agents, views, live cards and subscriptions are untouched. */
   private async reconcileTranscript(threadId: string, expected: number): Promise<void> {
+    const epoch = this.contextView();
     if (expected === this.lastReconciledCount) {
       this.reconcilePending = false;
       return;
@@ -852,6 +915,7 @@ export class CrucibleController {
     } catch {
       return; // the next poll retries
     }
+    if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
     if (this.activeThreadId !== threadId || this.turnAbort !== null) {
       this.reconcilePending = true;
       return;
@@ -959,10 +1023,14 @@ export class CrucibleController {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
 
+    let sendEpoch = this.contextView();
+    const currentSend = () => this.contextState.current(sendEpoch, this.settings.getBackendBaseUrl());
     if (!this.activeThreadId) {
       try {
         const thread = await client.createChatThread(workspacePath);
+        if (!currentSend()) return;
         this.activeThreadId = thread.threadId;
+        sendEpoch = this.contextView();
         this.ui.openChatPanel();
       } catch (error) {
         this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
@@ -1001,6 +1069,7 @@ export class CrucibleController {
         messageId,
       });
     } catch (error) {
+      if (!currentSend()) return;
       // InputArea already cleared the draft: give the text back (spec §5.3).
       this.ui.removeChatMessage(messageId);
       this.ui.restoreDraft(text);
@@ -1010,6 +1079,7 @@ export class CrucibleController {
       }
       return;
     }
+    if (!currentSend()) return;
     if (result.kind === "queued") {
       // A notice turn took the message; its relay is already live (spec §5.3). The
       // bubble says it is queued until that turn takes it.
@@ -1032,12 +1102,14 @@ export class CrucibleController {
    * transcript, not here.
    */
   private async resumeLiveOverlay(threadId: string): Promise<void> {
+    const epoch = this.contextView();
     try {
       this.turnAbort = new AbortController();
       await this.streamTurn(this.clientForChat().streamChannel(`chat:${threadId}`));
     } catch (error) {
       // A closed/empty channel is expected (turn already done) — clear the guard so a
       // later turn can resume, and let the /live poll keep driving durable state.
+      if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
       this._liveResumeThreadId = null;
       if (!(error instanceof Error && error.name === "AbortError")) {
         // non-fatal
@@ -1051,7 +1123,12 @@ export class CrucibleController {
    * The caller disables input + sets `turnAbort`; this owns the loop and teardown.
    */
   private async streamTurn(stream: AsyncIterable<StreamEvent>): Promise<void> {
+    const epoch = this.contextView();
+    const url = this.settings.getBackendBaseUrl();
+    const streamEpoch = ++this.streamEpoch;
+    const current = () => this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && this.streamEpoch === streamEpoch;
     let currentTaskId: string | undefined;
+    let completed = false;
     try {
       this.openToolEvent = {}; // defensive: clear any stale ids from a previous turn
       // Clear the token counter HERE, at turn start — NOT in the finally below. The
@@ -1062,7 +1139,12 @@ export class CrucibleController {
       // the turn-end clear was actually protecting against.
       this.ui.updateTokenProgress(null);
       for await (const event of stream) {
-        if (event.type === "chat_agent_thinking") {
+        if (!current()) break;
+        if (event.type === "context_usage") {
+          const result = this.contextState.accept(event.payload, epoch, url, "sse");
+          this.renderContext();
+          if (result === "hydrate") void this.pollThreadLiveState();
+        } else if (event.type === "chat_agent_thinking") {
           const message = (event.payload["message"] as string) ?? "Thinking…";
           this.ui.appendChatThinkingEntry(message);
         } else if (event.type === "chat_agent_thinking_chunk") {
@@ -1252,6 +1334,7 @@ export class CrucibleController {
         ) {
           this.ui.appendChatMessage(parseWireChatMessage(event.payload.message));
         } else if (event.type === "chat_done") {
+          completed = true;
           this.ui.updateWorkbar(null);
           this.ui.finalizeAgentMessage();
           break;
@@ -1262,9 +1345,13 @@ export class CrucibleController {
       if (error instanceof Error && error.name === "AbortError") {
         // do nothing
       } else {
+        this.contextState.fail(epoch, url);
+        this.renderContext();
         throw error;
       }
     } finally {
+      if (current()) {
+      if (!completed) { this.contextState.fail(epoch, url); this.renderContext(); }
       this.openToolEvent = {}; // clear cross-turn stale ids
       this.ui.updateWorkbar(null);
       this.turnAbort = null;
@@ -1274,6 +1361,7 @@ export class CrucibleController {
       this.ui.updateEditFailure(null);
       this.ui.finalizeAgentMessage();
       this.ui.setChatInputEnabled(true);
+      }
     }
   }
 
@@ -1522,6 +1610,7 @@ export class CrucibleController {
    * so consume it through streamTurn exactly like a normal message turn.
    */
   async handleModeDecisionFromChat(threadId: string, mode: string): Promise<void> {
+    if (threadId !== this.activeThreadId) return;
     const client = this.clientForChat();
     this.ui.setChatInputEnabled(false);
     this.turnAbort = new AbortController();
@@ -1534,6 +1623,7 @@ export class CrucibleController {
    * consume via streamTurn like a normal turn (mirror of handleModeDecisionFromChat).
    */
   async handleClarifyDecisionFromChat(threadId: string, answer: string): Promise<void> {
+    if (threadId !== this.activeThreadId) return;
     const client = this.clientForChat();
     this.ui.setChatInputEnabled(false);
     this.turnAbort = new AbortController();
@@ -1743,6 +1833,7 @@ export class CrucibleController {
   }
 
   dispose(): void {
+    this.contextView(true);
     this.stopPolling();
     this.stopStream();
     this.stopLiveStatePolling();
@@ -2162,6 +2253,10 @@ export class CrucibleController {
    * This is what makes gate/plan cards reappear after a webview reload.
    */
   async pollThreadLiveState(): Promise<void> {
+    const epoch = this.contextView();
+    const pollEpoch = this.contextPollEpoch;
+    const currentPoll = () => pollEpoch === this.contextPollEpoch && this.contextState.current(epoch, this.settings.getBackendBaseUrl());
+    const url = this.settings.getBackendBaseUrl();
     if (this.livePollInFlight) return;
     this.livePollInFlight = true;
     try {
@@ -2174,9 +2269,15 @@ export class CrucibleController {
       live = await this.clientForChat().getThreadLiveState(threadId);
     } catch {
       // Transient backend/poll error — keep the last rendered cards; next tick retries.
+      if (!currentPoll()) return;
+      this.contextState.fail(epoch, url);
+      this.renderContext();
       this.livePollFailing = true;
       return;
     }
+    if (!currentPoll() || threadId !== this.activeThreadId) return;
+    this.contextState.accept(live.contextUsage, epoch, url, "live", live.processId);
+    this.renderContext();
     if (this.livePollFailing) {
       this.livePollFailing = false;
       for (const listener of this.backendReachableListeners) listener();
@@ -2290,6 +2391,7 @@ export class CrucibleController {
         // result. If a future change lets the result mutate at unchanged status, add a
         // result fingerprint to the signature (same class as the turnActive fix above).
         const result = await this.clientForChat().getTaskResult(live.activeTaskId);
+        if (!currentPoll()) return;
         // Tier B: prefer the durable run_summary (survives reload) over extension-observed
         // ephemeral counts; fall back to the ephemeral values for live-feel before it lands.
         const rs = live.runSummary;
@@ -2314,6 +2416,7 @@ export class CrucibleController {
         this.ui.renderLiveReview(review);
       } catch {
         // result not ready yet — reset signature so the next poll retries instead of deduping
+        if (!currentPoll()) return;
         this.lastLiveSignature = null;
       }
     } else {
@@ -2384,7 +2487,7 @@ export class CrucibleController {
       turnKind: live.turnKind, agentsRunning: live.agentsRunning,
     });
     } finally {
-      this.livePollInFlight = false;
+      if (currentPoll()) this.livePollInFlight = false;
     }
   }
 

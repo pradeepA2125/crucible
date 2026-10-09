@@ -732,8 +732,12 @@ class ControllerLoop:
         render_ctx: RenderContext | None = None,
         agent: AgentContext | None = None,
         report_statuses: frozenset[str] = LONE_REPORT_STATUSES,
+        context_observer_factory: Callable[[], object] | None = None,
+        context_invalidate: Callable[[], None] | None = None,
     ) -> None:
         self._reasoning = reasoning
+        self._context_observer_factory = context_observer_factory
+        self._context_invalidate = context_invalidate
         self._registry = registry
         self._broadcaster = broadcaster
         self._channel_id = channel_id
@@ -1371,6 +1375,8 @@ class ControllerLoop:
             if _prep.compacted:
                 # The pinned message_count no longer refers to this history.
                 self._observed_prompt = None
+                if self._context_invalidate is not None:
+                    self._context_invalidate()
             # Recalled long-term memories → the payload tail (KV-safe). Empty list omits it.
             plan_context["recalled_memories"] = _prep.recalled_memories
             # Phase 3: persist the recall trace next to the controller-turn artifacts (inspector).
@@ -1462,6 +1468,12 @@ class ControllerLoop:
                 # New keywords only for engines that declare them — the same ask-the-callee
                 # rule as engine._accepts, so fixed-signature fakes keep working.
                 seam_kwargs: dict[str, object] = {}
+                if self._context_observer_factory is not None:
+                    observer = self._context_observer_factory()
+                    if accepts_kwarg(step_fn, "on_context_input"):
+                        seam_kwargs["on_context_input"] = observer
+                    else:
+                        observer.unavailable()
                 if accepts_kwarg(step_fn, "allowed_types"):
                     seam_kwargs["allowed_types"] = self._allowed_action_types()
                 if accepts_kwarg(step_fn, "render_ctx"):

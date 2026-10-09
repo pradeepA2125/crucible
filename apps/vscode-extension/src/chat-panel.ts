@@ -16,6 +16,7 @@ import type {
   TeamLive,
   TeamSummary,
   ThreadUsage,
+  ContextUsage,
 } from "@crucible/editor-client";
 import type { TeamViewEvent } from "./team-views.js";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
@@ -258,6 +259,7 @@ export class ChatPanel {
       }
       let p: Promise<void>;
       if (m["type"] === "webviewReady") {
+        this.renderContextUsage(this.lastContextUsage, this.contextUsageStale);
         // Webview state resets on reload; the workbar is SSE-fed (not in the
         // /live poll), so replay the last posted value or step progress shows
         // a bare "Executing…" until the next step_started event.
@@ -432,10 +434,7 @@ export class ChatPanel {
           });
         })();
       } else if (m["type"] === "listModels") {
-        p = (async () => {
-          const result = await this.onListModels();
-          this.panel?.webview.postMessage({ type: "modelList", ...result });
-        })();
+        p = this.refreshModels();
       } else if (m["type"] === "setModel") {
         // Handles its own errors so a swap failure never re-enables input via
         // the generic p.catch — it renders in-popover and the composer stays put.
@@ -638,6 +637,26 @@ export class ChatPanel {
 
   agentEvent(agentId: string, event: SequencedStreamEvent): void {
     this.panel?.webview.postMessage({ type: "agentEvent", agentId, event });
+  }
+
+  private modelRefreshEpoch = 0;
+
+  async refreshModels(): Promise<void> {
+    const panel = this.panel;
+    const epoch = ++this.modelRefreshEpoch;
+    const result = await this.onListModels();
+    if (epoch === this.modelRefreshEpoch && panel === this.panel) {
+      panel?.webview.postMessage({ type: "modelList", ...result });
+    }
+  }
+
+  private lastContextUsage: ContextUsage | null = null;
+  private contextUsageStale = false;
+
+  renderContextUsage(usage: ContextUsage | null, stale: boolean): void {
+    this.lastContextUsage = usage;
+    this.contextUsageStale = stale;
+    this.panel?.webview.postMessage({ type: "renderContextUsage", usage, stale });
   }
 
   renderThreadUsage(usage: ThreadUsage | null): void {

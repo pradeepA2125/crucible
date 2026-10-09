@@ -38,6 +38,8 @@ const INITIAL: AppState = {
   liveTodos: null,
   providerAccess: null,
   threadUsage: null,
+  contextUsage: null,
+  contextUsageStale: false,
   liveSessions: null,
   sessionTranscripts: {},
   workbar: null,
@@ -134,6 +136,8 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         messages: [],
+        contextUsage: null,
+        contextUsageStale: false,
         streaming: null,
         thinkingStatus: null,
         workbar: null,
@@ -371,6 +375,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, providerAccess: msg.access };
     case "renderThreadUsage":
       return { ...state, threadUsage: msg.usage };
+    case "renderContextUsage":
+      return { ...state, contextUsage: msg.usage, contextUsageStale: msg.stale };
 
     case "renderLiveSessions":
       return { ...state, liveSessions: msg.sessions };

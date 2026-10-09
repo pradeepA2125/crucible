@@ -24,6 +24,12 @@ from typing import Any, Protocol
 import openai
 from openai import AsyncOpenAI
 
+from agentd.providers.context_observation import (
+    ContextInputObserver,
+    begin_context,
+    finish_context,
+    report_context,
+)
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.providers.openai_compatible_transport import (
     TransientTransportError,
@@ -109,6 +115,7 @@ class _Unauthorized(Exception):
 class OpenAIJsonTransport(ModelJsonTransport):
     supports_anyof_grammar: bool = True
     supports_token_progress: bool = True
+    supports_context_input: bool = True
 
     def __init__(
         self,
@@ -192,13 +199,14 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_retry: Callable[[int, int, str, str], None] | None = None,
         on_progress: Callable[..., None] | None = None,
         on_usage: Callable[[int, int], None] | None = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> dict[str, object]:
         if self._native_tools:
             return await self._generate_native(
                 model=model, schema_name=schema_name, schema=schema,
                 system_instructions=system_instructions, user_payload=user_payload,
                 on_thinking=on_thinking, on_retry=on_retry, on_progress=on_progress,
-                on_usage=on_usage)
+                on_usage=on_usage, on_context_input=on_context_input)
         codec = encode_strict_schema(schema)
         body = self._body(model, system_instructions, user_payload)
         body["text"] = {"format": {
@@ -208,7 +216,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
             "strict": True,
         }}
         text = (await self._run(body, on_thinking, on_retry, on_progress, on_usage,
-                                first_action=True)).text
+                                first_action=True, on_context_input=on_context_input)).text
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -226,9 +234,11 @@ class OpenAIJsonTransport(ModelJsonTransport):
         system_instructions: str,
         user_payload: dict[str, object],
         on_thinking: Callable[[str], None] | None = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> str:
         body = self._body(model, system_instructions, user_payload)
-        return (await self._run(body, on_thinking, None, None, None)).text.strip()
+        return (await self._run(body, on_thinking, None, None, None,
+                               on_context_input=on_context_input)).text.strip()
 
     async def _generate_native(
         self,
@@ -242,6 +252,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         on_retry: Callable[[int, int, str, str], None] | None,
         on_progress: Callable[..., None] | None,
         on_usage: Callable[[int, int], None] | None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> dict[str, object]:
         actions = native_actions(schema, schema_name)
         instructions = system_instructions + actions.instructions
@@ -266,7 +277,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         headers = {"session_id": session} if session is not None else None
         _dump_native_request(schema_name, body)
         reply = await self._run(body, on_thinking, on_retry, on_progress, on_usage,
-                                native=True, headers=headers)
+                                native=True, headers=headers, on_context_input=on_context_input)
         if key is not None:
             self._sessions.commit(key, items, body["input"])
         assert reply.call is not None  # _stream_once raises when the model didn't call
@@ -320,6 +331,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         first_action: bool = False,
         native: bool = False,
         headers: dict[str, str] | None = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> _Reply:
         if self._plan_route:
             extra = set(body) - PLAN_ROUTE_FIELDS
@@ -333,7 +345,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
             try:
                 return await self._stream_once(body, on_thinking, on_progress, on_usage,
                                                first_action=first_action, native=native,
-                                               headers=headers)
+                                               headers=headers, on_context_input=on_context_input)
             except _Unauthorized as exc:
                 if not refreshed and await self._bearer.on_unauthorized():
                     refreshed = True
@@ -370,11 +382,36 @@ class OpenAIJsonTransport(ModelJsonTransport):
         first_action: bool = False,
         native: bool = False,
         headers: dict[str, str] | None = None,
+        on_context_input: ContextInputObserver | None = None,
+    ) -> _Reply:
+        # Client acquisition is not a physical request and must not replace context.
+        responses = await self._responses()
+        # Keep observation settlement outside all early-return/error paths.
+        begin_context(on_context_input, body)
+        try:
+            return await self._stream_once_observed(
+                responses, body, on_thinking, on_progress, on_usage,
+                first_action=first_action, native=native, headers=headers,
+                on_context_input=on_context_input)
+        finally:
+            finish_context(on_context_input)
+
+    async def _stream_once_observed(
+        self,
+        responses: Any,
+        body: dict[str, Any],
+        on_thinking: Callable[[str], None] | None,
+        on_progress: Callable[..., None] | None,
+        on_usage: Callable[[int, int], None] | None,
+        *,
+        first_action: bool = False,
+        native: bool = False,
+        headers: dict[str, str] | None = None,
+        on_context_input: ContextInputObserver | None = None,
     ) -> _Reply:
         ticker = ProgressTicker(on_progress, input_n=approx_prompt_tokens(
             body["instructions"], json.dumps(body["input"])))
         ticker.start()
-        responses = await self._responses()
         try:
             extra = {"extra_headers": headers} if headers else {}
             stream = await asyncio.wait_for(responses.create(**body, **extra),
@@ -428,6 +465,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
                     ticker.thinking(event.delta)
                 elif kind == "response.completed":
                     completed = event.response
+                    report_context(
+                        on_context_input, getattr(completed, "usage", None), "input_tokens")
                     break
                 elif kind == "response.failed":
                     raise _failed_error(getattr(event.response, "error", None))

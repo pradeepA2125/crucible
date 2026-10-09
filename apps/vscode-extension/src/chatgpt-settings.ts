@@ -68,12 +68,11 @@ export function isChatGPTMessage(msg: { type: string }): msg is ChatGPTInMsg {
     || msg.type === "settings/openExternal";
 }
 
-/** Handler for the ChatGPT messages. `afterProviderChange` re-posts the settings
- * snapshot (the provider row changes when an account is put to use). */
+/** Notify the host only after accepted auth/account mutations, including reconsent. */
 export function createChatGPTHandler(
   deps: ChatGPTDeps,
   post: (msg: ChatGPTOutMsg) => void,
-  afterProviderChange: () => Promise<void>,
+  afterProviderChange: (kind: "auth") => Promise<void>,
 ): (msg: ChatGPTInMsg) => Promise<void> {
   let pendingAttempt: string | null = null;
 
@@ -122,6 +121,7 @@ export function createChatGPTHandler(
           const done = await followSignIn(started);
           if (pendingAttempt === started.attemptId) pendingAttempt = null;
           post({ type: "settings/chatgptSignIn", signIn: done });
+          if (done.state === "succeeded") await afterProviderChange("auth");
           const reg = done.registrationId;
           if (done.state === "succeeded" && reg && done.planEnabled && done.firstPlanSignIn
               && !deps.welcomedRegistrations().includes(reg)) {
@@ -158,12 +158,13 @@ export function createChatGPTHandler(
           });
           await deps.saveActiveRegistration(msg.registrationId);
           if (msg.contextWindow !== undefined) await deps.saveContextWindow(msg.contextWindow);
-          await afterProviderChange();
+          await afterProviderChange("auth");
           await postAccounts();
           return;
         }
         case "settings/chatgptSignOut": {
           const { remoteRevoked } = await deps.client.signOutChatGPT(msg.registrationId);
+          await afterProviderChange("auth");
           post({ type: "settings/chatgptSignedOut", registrationId: msg.registrationId,
                  remoteRevoked });
           await postAccounts();

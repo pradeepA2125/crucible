@@ -5,8 +5,11 @@ leaves everything untouched. Known v1 limitation: the memory-harness summarizer
 keeps its construction-time transport until restart."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Callable, Sequence
 
+from agentd.chatgpt_auth.service import ChatGPTAuthService, chatgpt_auth_service
+from agentd.chatgpt_auth.session import ChatGPTPlanBearer
 from agentd.providers.factory import build_transport, resolve_model
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 from agentd.providers.validate import ProviderValidationError, ping_transport
@@ -24,6 +27,7 @@ class ProviderRuntime:
         config_error: str | None = None,
         transport: object | None = None,
         reasoning_effort: ReasoningEffort | None = None,
+        auth_service: ChatGPTAuthService | None = None,
     ) -> None:
         self.backend = backend
         self.model = model
@@ -52,6 +56,112 @@ class ProviderRuntime:
         # also what leaves each transport's own env-configured behavior in place.
         self.reasoning_effort = reasoning_effort
         self.reasoning_effort_note: str | None = None
+        self._auth_service = auth_service
+        self._context_listeners: list[Callable[[], None]] = []
+        self._auth_unsubscribe: Callable[[], None] | None = None
+        self._context_observed: tuple[object, ...] | None = None
+        self._context_loop: asyncio.AbstractEventLoop | None = None
+
+    def _context_registration(self) -> str | None:
+        # Read the EFFECTIVE transport, not saved settings or candidate env vars.
+        bearer = getattr(self._transport, "_bearer", None)
+        if self.backend == "chatgpt" and isinstance(bearer, ChatGPTPlanBearer):
+            return bearer.registration_id
+        return None
+
+    def _context_auth(self) -> ChatGPTAuthService:
+        if self._auth_service is None:
+            self._auth_service = chatgpt_auth_service()
+        return self._auth_service
+
+    def context_identity(self) -> tuple[object, ...]:
+        """Private equality key. Never serialize this into public state/events.
+
+        No network calls. Rereading the private epoch catches external-process
+        signout/reauthorization even when there was no process-local callback.
+        Ordinary token refresh and reasoning effort do not change this key.
+        """
+        auth: tuple[object, ...] = ()
+        registration = self._context_registration()
+        if registration is not None:
+            auth = self._context_auth().context_identity(registration)
+        return (self.backend, self.model, self.context_window, self.config_error, auth)
+
+    async def context_capacity(self) -> tuple[int | None, str]:
+        """Resolve capacity from a BACKGROUND state task, not the chat path.
+
+        ChatGPT is catalog-only (unknown never falls back to configured window).
+        API-key/local providers use the runtime's effective configured window.
+        """
+        if self.backend != "chatgpt":
+            value = self.context_window
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return value, "configured"
+            return None, "unknown"
+        registration = self._context_registration()
+        if registration is None:
+            return None, "unknown"
+        identity = self.context_identity()
+        try:
+            value = await self._context_auth().context_capacity(registration, self.model)
+        except Exception:
+            return None, "unknown"
+        if self.context_identity() != identity:
+            return None, "unknown"
+        return (value, "catalog") if value is not None else (None, "unknown")
+
+    def subscribe_context(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Subscribe to no-payload effective changes; return an unsubscribe hook.
+
+        Subscribe on the state manager's running loop: auth saves may run on a
+        worker thread and are marshalled back to that loop. This is process-local;
+        consumers must also compare context_identity() before accepting results.
+        """
+        if not self._context_listeners:
+            try:
+                self._context_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._context_loop = None
+            self._context_observed = self.context_identity()
+        self._context_listeners.append(callback)
+        self._bind_context_auth()
+
+        def unsubscribe() -> None:
+            if callback in self._context_listeners:
+                self._context_listeners.remove(callback)
+            if not self._context_listeners and self._auth_unsubscribe is not None:
+                self._auth_unsubscribe()
+                self._auth_unsubscribe = None
+
+        return unsubscribe
+
+    def _bind_context_auth(self) -> None:
+        if self._auth_unsubscribe is not None:
+            self._auth_unsubscribe()
+            self._auth_unsubscribe = None
+        registration = self._context_registration()
+        if self._context_listeners and registration is not None:
+            self._auth_unsubscribe = self._context_auth().subscribe(
+                registration, self._on_context_auth_change)
+
+    def _on_context_auth_change(self) -> None:
+        loop = self._context_loop
+        if loop is not None:
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(self._publish_context_change)
+        else:
+            self._publish_context_change()
+
+    def _publish_context_change(self) -> None:
+        identity = self.context_identity()
+        if identity == self._context_observed:
+            return
+        self._context_observed = identity
+        for callback in tuple(self._context_listeners):
+            try:
+                callback()
+            except Exception:
+                pass  # state observers must never break auth or provider swaps
 
     async def effort_support(self) -> EffortSupport:
         """What the current transport can express for the current model.
@@ -127,6 +237,8 @@ class ProviderRuntime:
             self.context_window = context_window
             for sink in self._window_sinks:
                 sink.set_window_tokens(context_window)  # type: ignore[attr-defined]
+        self._bind_context_auth()
+        self._publish_context_change()
         result: dict[str, object] = {"backend": backend, "model": resolved}
         if self.context_window is not None:
             result["context_window"] = self.context_window

@@ -32,6 +32,7 @@ function makeState(overrides: Partial<AppState> = {}): AppState {
     liveError: null,
     liveTodos: null,
     providerAccess: null, threadUsage: null,
+    contextUsage: null, contextUsageStale: false,
     liveSessions: null,
     sessionTranscripts: {},
     workbar: null,

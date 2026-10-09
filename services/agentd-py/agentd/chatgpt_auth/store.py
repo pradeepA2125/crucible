@@ -18,7 +18,7 @@ import os
 import re
 import secrets
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -58,6 +58,14 @@ class CredentialRecord(BaseModel):
     scopes: list[str] = []
     saved_at: float
     needs_sign_in: bool = False
+    # Private on-disk epoch, deliberately absent from RegistrationSummary. Legacy
+    # records have a stable None epoch until their next sign-in/sign-out.
+    auth_session_id: str | None = None
+
+    @property
+    def context_identity(self) -> tuple[object, ...]:
+        return (self.registration_id, self.auth_session_id, self.issuer, self.subject,
+                self.signed_in, self.plan_enabled)
 
     @property
     def plan_enabled(self) -> bool:
@@ -92,6 +100,18 @@ class UnknownRegistration(KeyError):
 class CredentialStore:
     def __init__(self, root: Path | None = None) -> None:
         self._root = root or default_auth_root()
+        self._listeners: dict[str, list[Callable[[], None]]] = {}
+
+    def subscribe(self, registration_id: str, callback: Callable[[], None]) -> Callable[[], None]:
+        """Private no-payload hook; callbacks may run in the save worker thread."""
+        self._check_id(registration_id)
+        listeners = self._listeners.setdefault(registration_id, [])
+        listeners.append(callback)
+
+        def unsubscribe() -> None:
+            if callback in listeners:
+                listeners.remove(callback)
+        return unsubscribe
 
     @property
     def root(self) -> Path:
@@ -133,8 +153,15 @@ class CredentialStore:
         return record
 
     def save(self, record: CredentialRecord) -> None:
+        previous = self.get(record.registration_id)
         ensure_private_dir(self._root / "registrations")
         write_private_json(self._path(record.registration_id), record.model_dump())
+        if previous is None or previous.context_identity != record.context_identity:
+            for callback in tuple(self._listeners.get(record.registration_id, ())):
+                try:
+                    callback()
+                except Exception:
+                    pass  # best-effort observers never interfere with auth
 
     def unique_label(self, email: str | None, exclude: str | None = None) -> str:
         """Email when free, else `email (2)`, `email (3)`… — labels must stay distinct."""

@@ -22,6 +22,7 @@ const js = ts.transpile(`const swap = ${callback.getText(tree)};`, {
 
 function setup(catalog: { slug: string; displayName: string; contextWindow?: number | null }[] | undefined) {
   const setProvider = vi.fn(async () => ({ backend: "chatgpt", model: "gpt-b" }));
+  const refreshContextUsage = vi.fn(async () => {});
   const runtimeManager = {
     saveProvider: vi.fn(async () => {}),
     saveContextWindow: vi.fn(async () => {}),
@@ -33,10 +34,10 @@ function setup(catalog: { slug: string; displayName: string; contextWindow?: num
   const composerModelState = vi.fn(async () => state);
   const swap = new Function("controller", "runtimeManager", "providerCredentials",
     "chatgptCatalog", "composerModelState", `${js}\nreturn swap;`)(
-    { configClient: () => ({ setProvider }) }, runtimeManager,
+    { configClient: () => ({ setProvider }), refreshContextUsage }, runtimeManager,
     providerCredentials, chatgptCatalog, composerModelState,
   ) as (backend: string, model: string) => Promise<unknown>;
-  return { swap, setProvider, runtimeManager, chatgptCatalog, composerModelState, credentials, state };
+  return { swap, setProvider, refreshContextUsage, runtimeManager, chatgptCatalog, composerModelState, credentials, state };
 }
 
 const catalog = [
@@ -45,6 +46,13 @@ const catalog = [
 ];
 
 describe("composer model swap context window", () => {
+  it.each(["chatgpt", "openai"])("hydrates backend context after accepted %s swap", async (backend) => {
+    const h = setup(catalog);
+    await h.swap(backend, "gpt-b");
+    expect(h.refreshContextUsage).toHaveBeenCalledTimes(1);
+    expect(h.setProvider.mock.invocationCallOrder[0]).toBeLessThan(h.refreshContextUsage.mock.invocationCallOrder[0]!);
+    expect(h.composerModelState).toHaveBeenCalledTimes(1);
+  });
   it("forwards the selected ChatGPT model's window and persists it after a successful swap", async () => {
     const h = setup(catalog);
     expect(await h.swap("chatgpt", "gpt-b")).toEqual(h.state);
@@ -107,5 +115,6 @@ describe("composer model swap context window", () => {
     expect(h.runtimeManager.saveProvider).not.toHaveBeenCalled();
     expect(h.runtimeManager.saveContextWindow).not.toHaveBeenCalled();
     expect(h.composerModelState).not.toHaveBeenCalled();
+    expect(h.refreshContextUsage).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,9 @@ in-process refresh lock; the file lock in the store covers other processes.
 from __future__ import annotations
 
 import asyncio
+import math
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -42,6 +45,9 @@ class ChatGPTAuthService:
         http: httpx.AsyncClient | None = None,
         issuer: str = DEFAULT_ISSUER,
         api_base: str = API_RESOURCE,
+        capacity_ttl_sec: float = 60.0,
+        capacity_timeout_sec: float = 5.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.store = store or CredentialStore()
         # No redirects: a token request or model listing that redirects is not one we
@@ -51,6 +57,64 @@ class ChatGPTAuthService:
         self.oidc = OidcClient(self._http, issuer)
         self.attempts = AttemptManager(self.store, self.oidc)
         self._bearers: dict[str, ChatGPTPlanBearer] = {}
+        if not math.isfinite(capacity_ttl_sec) or capacity_ttl_sec <= 0:
+            raise ValueError("capacity TTL must be positive and finite")
+        if not math.isfinite(capacity_timeout_sec) or capacity_timeout_sec <= 0:
+            raise ValueError("capacity timeout must be positive and finite")
+        self._capacity_ttl = capacity_ttl_sec
+        self._capacity_timeout = capacity_timeout_sec
+        self._clock = clock
+        self._capacities: dict[tuple[object, ...], tuple[float, int | None]] = {}
+        self._capacity_tasks: dict[tuple[object, ...], asyncio.Task[int | None]] = {}
+
+    def context_identity(self, registration_id: str) -> tuple[object, ...]:
+        """Private equality key, never suitable for an event or public response."""
+        try:
+            record = self.store.get(registration_id)
+            return record.context_identity if record is not None else (registration_id, None)
+        except Exception:
+            return (registration_id, None)
+
+    def subscribe(self, registration_id: str, callback: Callable[[], None]) -> Callable[[], None]:
+        return self.store.subscribe(registration_id, callback)
+
+    async def context_capacity(self, registration_id: str, model: str) -> int | None:
+        """Best effort catalog-only resolution. Call from a background state task,
+        never await on the inference path. No tokens or full catalogs are cached.
+        """
+        identity = self.context_identity(registration_id)
+        key = (*identity, model)
+        now = self._clock()
+        self._capacities = {k: v for k, v in self._capacities.items() if v[0] > now}
+        cached = self._capacities.get(key)
+        if cached is not None:
+            return cached[1]
+        task = self._capacity_tasks.get(key)
+        if task is None:
+            task = asyncio.create_task(
+                self._resolve_capacity(registration_id, model, identity, key))
+            self._capacity_tasks[key] = task
+        # Cancellation of one viewer must not cancel a coalesced lookup.
+        return await asyncio.shield(task)
+
+    async def _resolve_capacity(
+        self, registration_id: str, model: str, identity: tuple[object, ...],
+        key: tuple[object, ...],
+    ) -> int | None:
+        value = None
+        try:
+            async with asyncio.timeout(self._capacity_timeout):
+                models = await self.list_models(registration_id)
+                value = next((m.context_window for m in models if m.slug == model), None)
+                value = _positive_int(value)
+        except Exception:
+            pass  # capacity is optional; transport/plan errors remain on the chat path
+        finally:
+            self._capacity_tasks.pop(key, None)
+        if self.context_identity(registration_id) != identity:
+            return None  # external-process reauthorization/signout won the race
+        self._capacities[key] = (self._clock() + self._capacity_ttl, value)
+        return value
 
     def bearer(self, registration_id: str) -> ChatGPTPlanBearer:
         bearer = self._bearers.get(registration_id)
@@ -88,6 +152,10 @@ class ChatGPTAuthService:
         ]
 
     async def aclose(self) -> None:
+        tasks = tuple(self._capacity_tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await self.attempts.aclose()
         await self._http.aclose()
 

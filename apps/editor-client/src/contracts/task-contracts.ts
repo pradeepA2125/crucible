@@ -235,6 +235,7 @@ export type StreamEvent =
   // A failed edit has its own channel rather than chat_agent_thinking: a
   // preflight/engine error is not model reasoning and must not render as a
   // numbered reasoning step (same rule as retry_status).
+  | { type: "context_usage"; payload: ContextUsage }
   | { type: "edit_failed"; payload: { reason: string; ops: number } };
 
 /** What a channel subscription yields: a sub-agent channel's events carry a seq. */
@@ -585,10 +586,43 @@ export const ChatGPTModelSchema = z.object({
 });
 export type ChatGPTModel = z.infer<typeof ChatGPTModelSchema>;
 
+// Dedicated MAIN request input, never ThreadUsage or plan quota. Preserve wire keys
+// so SSE and /live pass through the same validation/acceptance path.
+export const ContextUsageSchema = z.object({
+  thread_id: z.string().min(1), process_id: z.string().min(1),
+  provider: z.string(), model: z.string(), scope: z.literal("main"),
+  generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  turn_id: z.string().nullable(), request_id: z.string().nullable(),
+  status: z.enum(["awaiting_request", "in_flight", "last_request", "invalidated", "unavailable"]),
+  input_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+  input_quality: z.enum(["estimated", "provider_reported", "unavailable"]),
+  context_window: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+  capacity_source: z.enum(["chatgpt_catalog", "configured", "unknown"]),
+  observed_at: z.string().datetime({ offset: true }).nullable(),
+}).superRefine((v, ctx) => {
+  if ((v.input_tokens === null) !== (v.input_quality === "unavailable")
+      || (v.context_window === null) !== (v.capacity_source === "unknown")
+      || (["awaiting_request", "invalidated", "unavailable"].includes(v.status) && v.input_tokens !== null)
+      || (v.input_tokens === null && v.observed_at !== null)
+      || (v.input_tokens !== null && v.observed_at === null)
+      || (v.provider === "chatgpt" && v.capacity_source === "configured")
+      || (v.provider !== "chatgpt" && v.capacity_source === "chatgpt_catalog")) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Inconsistent context provenance" });
+  }
+});
+export type ContextUsage = z.infer<typeof ContextUsageSchema>;
+export function parseContextUsage(raw: unknown): ContextUsage | null {
+  const parsed = ContextUsageSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 // A thread's current actionable state — what the UI polls and renders from.
 // Resolved server-side from the thread's active task (GET /chat/threads/{id}/live),
 // so reloads and resume task-id churn self-heal on the next poll.
 export const ThreadLiveStateSchema = z.object({
+  processId: z.string().min(1).nullable().optional(),
+  contextUsage: ContextUsageSchema.nullable().optional(),
   activeTaskId: z.string().nullable(),
   status: z.string().nullable(),
   // Every pending gate, controller gates first (spec §4.5).

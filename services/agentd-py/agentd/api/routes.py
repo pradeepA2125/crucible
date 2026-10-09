@@ -1512,6 +1512,20 @@ def build_router(
             if _provider_access is not None:
                 live.provider_access = _provider_access(thread_id)
             live.message_count = len(thread.messages)
+            _process_id = getattr(_chat_agent, "context_process_id", None)
+            if _process_id is not None:
+                live.process_id = _process_id()
+            _context_usage = getattr(_chat_agent, "context_usage", None)
+            if _context_usage is not None:
+                try:
+                    from agentd.chat.context_usage import ContextUsage
+                    value = _context_usage(thread_id)
+                    if value is not None:
+                        snapshot = ContextUsage.model_validate(value)
+                        if snapshot.process_id == live.process_id:
+                            live.context_usage = snapshot
+                except Exception:
+                    pass  # optional telemetry never drops gates or the handshake
             return live.model_dump()
 
         @router.get("/chat/threads/{thread_id}/sessions/{session_id}/transcript")

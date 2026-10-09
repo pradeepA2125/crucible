@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 
 import type { BackendClientFactory } from "./controller.js";
 import type { RuntimeManager } from "./runtime/vscode-runtime.js";
-import { createSettingsHandler, type SettingsInMsg } from "./settings-data.js";
+import { createSettingsHandler, type SettingsInMsg, type SettingsMutationHandler } from "./settings-data.js";
 import { buildSettingsDeps } from "./settings-deps.js";
 import type { SettingsSectionId } from "./settings-sections.js";
 
@@ -27,6 +27,7 @@ export class SettingsPanel {
     // managed backend. runtimeManager.backendUrl() alone only knows the managed
     // port, so the panel could never reach a dev backend without this.
     private readonly resolveBackendUrl: () => string,
+    private readonly afterMutation?: SettingsMutationHandler,
   ) {}
 
   open(section?: SettingsSectionId): void {
@@ -47,7 +48,9 @@ export class SettingsPanel {
       }
     );
     this.panel.webview.html = this.buildHtml();
-    const handle = createSettingsHandler(this.buildDeps(), (msg) => this.panel?.webview.postMessage(msg));
+    const handle = createSettingsHandler(
+      this.buildDeps(), (msg) => this.panel?.webview.postMessage(msg), this.afterMutation,
+    );
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
       const inbound = msg as SettingsInMsg;
       // The webview posts `settings/load` on mount — the reliable "I'm ready"

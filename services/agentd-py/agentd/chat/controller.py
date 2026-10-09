@@ -400,6 +400,10 @@ class ChatController:
         self._store = thread_store
         self._orchestrator = orchestrator
         self._broadcaster = broadcaster
+        from agentd.chat.context_usage import ContextUsageTracker
+        self._context_usage = ContextUsageTracker(
+            lambda thread, payload: broadcaster.broadcast(
+                f"chat:{thread}", {"type": "context_usage", "payload": payload}))
         self._retrieval = retrieval_client
         self._memory_harness = memory_harness
         # Rewind checkpoints. None when no store is wired (tests, legacy factories) —
@@ -912,6 +916,8 @@ class ChatController:
                                   extra_sources=dispatch_sources), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session_factory=edit_session_factory,
             todo_ledger=ledger,
+            context_observer_factory=lambda: self._context_usage.observer(thread_id, turn_id),
+            context_invalidate=lambda: self._context_usage.invalidate(thread_id),
             task_subsystem_enabled=self._task_subsystem_enabled,
             memory_harness=self._memory_harness, active_skills=active_skills,
             skill_catalog_loader=skill_catalog_loader,
@@ -1649,6 +1655,19 @@ class ChatController:
         logger.info("[subagent] reap rows=%d notices_released=%d teams=%d", reaped, released,
                     len(failed_teams))
 
+    def attach_context_runtime(self, runtime) -> None:
+        self._context_usage.attach_runtime(runtime)
+
+    def context_process_id(self) -> str:
+        return self._context_usage.process_id
+
+    async def close_context_usage(self) -> None:
+        await self._context_usage.close()
+
+    def context_usage(self, thread_id: str):
+        """The exact object published on the dedicated context_usage channel."""
+        return self._context_usage.snapshot(thread_id)
+
     def forget_turn_caches(self, thread_id: str) -> None:
         """A rewind restored the thread's stored controller state; drop what this process
         cached from before it, or the next turn re-seeds from the rewound history and
@@ -1657,6 +1676,7 @@ class ChatController:
         self._histories.pop(thread_id, None)
         self._seeds.pop(thread_id, None)
         self._observed_prompts.pop(thread_id, None)
+        self._context_usage.invalidate(thread_id)
 
     def forget_rewound_agents(
         self, thread_id: str, turn_ids: list[str], from_seq: int | None = None,

@@ -56,6 +56,7 @@ describe("ThreadView sub-agent wiring", () => {
     const state = {
       view: "thread", threads: [], activeThreadId: "t", streaming: null, thinkingStatus: null,
       inputEnabled: true, liveGates: [], livePlan: null, liveReview: null, liveError: null,
+      contextUsage: null, contextUsageStale: false,
       liveTodos: null, providerAccess: null, threadUsage: null, liveSessions: null, sessionTranscripts: {}, workbar: null,
       retryStatus: null, tokenProgress: null, editFailure: null, liveStatus: null,
       turnActive: false, turnKind: null, queuedIds: [], agentsRunning: 0, planMode: false, stepReview: true,

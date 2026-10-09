@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -145,7 +146,8 @@ class ChatGPTPlanBearer:
 
     async def _mark_signed_out(self, record: CredentialRecord) -> None:
         await asyncio.to_thread(self._store.save, record.model_copy(update={
-            "access_token": None, "refresh_token": None, "needs_sign_in": True}))
+            "access_token": None, "refresh_token": None, "needs_sign_in": True,
+            "auth_session_id": secrets.token_hex(16)}))
 
     async def _read(self) -> CredentialRecord | None:
         return await asyncio.to_thread(self._store.get, self._registration_id)
@@ -202,5 +204,6 @@ async def sign_out(
                     await asyncio.sleep(retry_delay_sec * (2 ** attempt))
         await asyncio.to_thread(store.save, record.model_copy(update={
             "access_token": None, "refresh_token": None, "id_token": None,
-            "expires_at": None, "earliest_refresh_at": None, "needs_sign_in": False}))
+            "expires_at": None, "earliest_refresh_at": None, "needs_sign_in": False,
+            "auth_session_id": secrets.token_hex(16)}))
     return SignOutResult(remote_revoked=revoked)

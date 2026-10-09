@@ -1,8 +1,9 @@
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, act } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { ThreadView } from "./ThreadView";
 import { vscode } from "../vscodeApi";
 import type { AppState } from "../types";
+import { contextUsage } from "../test/contextUsageFixture";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
@@ -28,6 +29,7 @@ const base: AppState = {
   liveError: null,
   liveTodos: null,
   providerAccess: null, threadUsage: null,
+  contextUsage: null, contextUsageStale: false,
   liveSessions: null,
   sessionTranscripts: {},
   workbar: null,
@@ -52,6 +54,21 @@ function renderView() {
     <ThreadView state={base} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />,
   );
 }
+
+describe("ThreadView context integration", () => {
+  it("forwards the authoritative snapshot and stale flag without replacing Manage usage", () => {
+    render(<ThreadView state={{ ...base, contextUsage, contextUsageStale: true }}
+      onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("Context ~18% · stale");
+    act(() => window.dispatchEvent(new MessageEvent("message", { data: {
+      type: "modelList", usesChatgptPlan: true,
+      current: { backend: "chatgpt", model: "different-composer-model" }, options: [],
+    } })));
+    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("Context ~18% · stale");
+    fireEvent.click(screen.getByRole("button", { name: /manage usage/i }));
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "settings/openExternal", url: "https://chatgpt.com/settings/usage?tab=overview" });
+  });
+});
 
 describe("ThreadView settings overlay", () => {
   it("opens the settings popup at the picked section and closes the drawer", () => {

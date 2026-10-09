@@ -471,6 +471,8 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           planMode={state.planMode}
           stepReview={state.stepReview}
           threadUsage={state.threadUsage}
+          contextUsage={state.contextUsage}
+          contextUsageStale={state.contextUsageStale}
           teamNames={teamNames}
         />
       </div>
