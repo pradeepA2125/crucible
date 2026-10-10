@@ -530,10 +530,10 @@ or fallback provider. Exact free quotas are not established.
 
 ## Release checklist
 
-- [x] Confirm third-party product integration permission with Exa.
-- [x] Confirm keyless limits and acceptable service expectations.
-- [x] Review privacy disclosure and permission behavior.
-- [x] Complete mocked backend/UI regression tests and optional live smoke.
+- [ ] Confirm third-party product integration permission with Exa.
+- [ ] Confirm keyless limits and acceptable service expectations.
+- [ ] Review privacy disclosure and permission behavior.
+- [ ] Complete mocked backend/UI regression tests and optional live smoke.
 
 Do not activate the public production default until these checks pass.
 ```
@@ -595,3 +595,21 @@ Task commits:
 - Task 2: `bc10be4` — native tool contract and persistent controls.
 - Task 3: `5d0fa57` — registration and controller permissions.
 - Task 4: saved with the privacy card, user documentation and this execution record.
+
+Implementation discrepancies and workflow notes:
+
+- The existing Task 1 transport is stricter than the plan's sample: it requests
+  identity encoding, rejects compressed responses and bounds the raw stream.
+  This avoids automatic decompression allocating data before the byte limit.
+  It also rejects boolean reply IDs and translates JSON recursion errors.
+- A separate runtime mapper regression was added to prove the actual VS Code
+  setting reaches managed spawn, beyond the two named extension test files.
+- Work continued on the existing `feat/native-web-search` branch rather than
+  creating the plan's isolated worktree. Unrelated files were excluded from commits.
+  The named superpowers execution skills were unavailable in this session.
+- Implementation and self-review are complete; independent review and optional
+  live smoke remain open. The provider-independence check used real transport
+  classes with mocked SDK replies, not live configured model accounts.
+- Corrected a tracking mistake: marking Task 4 complete had checked release gates
+  inside its fenced documentation example. Those example gates are now open again,
+  matching `docs/native-web-search.md`; no release confirmations were obtained.
