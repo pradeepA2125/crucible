@@ -336,9 +336,10 @@ class DefaultReasoningEngine(ReasoningEngine):
             full = self._skill_catalog_loader.load_catalog()  # type: ignore[attr-defined]
             shown, _hidden = select_catalog_for_budget(full, skills_catalog_max_chars())
             skills_catalog = shown
+        component_sizes: dict[str, int] = {}
         system_instructions = format_controller_system_prompt(
             tool_definitions, project_instructions=instructions, skills_catalog=skills_catalog,
-            render_ctx=render_ctx, persona=persona,
+            render_ctx=render_ctx, persona=persona, component_sizes=component_sizes,
         )
         user_payload = build_controller_step_payload(
             plan_context, history, tool_definitions, phase=phase,
@@ -353,6 +354,14 @@ class DefaultReasoningEngine(ReasoningEngine):
             phase=phase, allowed_types=allowed_types, tight=tight, anyof=anyof,
             all_fields_required=all_fields_required,
             team_member=render_ctx is not None and render_ctx.has_team)
+        from agentd.context_metrics import logical_context
+        from agentd.performance import capturing, context_measurement
+        if capturing():
+            context_measurement(logical_context(
+                system_instructions, user_payload, schema, component_sizes))
+        from agentd.tools.read_policy import ResultBudgetObserver, adaptive_reads_enabled
+        if adaptive_reads_enabled():
+            on_context_input = ResultBudgetObserver(plan_context, on_context_input)
         if on_context_input is not None and not _accepts(self._transport, "on_context_input"):
             unavailable = getattr(on_context_input, "unavailable", None)
             if unavailable is not None:
@@ -422,6 +431,8 @@ class DefaultReasoningEngine(ReasoningEngine):
                     "json_mode": getattr(self._transport, "json_mode", None),
                     "original_goal": original_goal,
                     "system_instructions": system_instructions,
+                    "context_measurement": logical_context(
+                        system_instructions, user_payload, schema, component_sizes),
                     "user_payload": user_payload,
                     "schema": schema,
                     "raw_result": result,

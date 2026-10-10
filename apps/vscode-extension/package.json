@@ -174,6 +174,24 @@
           "description": "Scope-extension policy for out-of-plan file writes. 'ask' pauses for approval; 'strict' auto-rejects; 'auto' silently approves and audit-logs.",
           "scope": "machine"
         },
+        "crucible.performance.toolBatching": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Enable multiple tool calls with dependency-aware command/network scheduling. Requires a backend restart."
+        },
+        "crucible.performance.adaptiveReads": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Enable larger bounded file reads and request-local result budgets. Requires a backend restart."
+        },
+        "crucible.performance.compactContext": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Compact tool catalog JSON and bound repository trees for new chats. Requires a backend restart."
+        },
         "crucible.webFetch.enabled": {
           "type": "boolean",
           "default": true,

@@ -565,6 +565,10 @@ class ChatThreadStore:
             md = m.get("metadata") or {}
             if md.get("inflight_turn_id") is not None:
                 md.pop("inflight_turn_id", None)
+                for event in md.get("tool_events", []):
+                    if not event.get("done", False):
+                        event.update(done=True, isError=True, status="interrupted",
+                                     output="Not completed: prior execution was interrupted.")
                 m["metadata"] = md
                 changed = True
         if changed:

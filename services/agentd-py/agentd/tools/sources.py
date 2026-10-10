@@ -61,14 +61,25 @@ class BuiltinToolSource:
     def owns(self, tool: str) -> bool:
         return any(d.name == tool for d in self.definitions())
 
+    async def prepare(self, tool: str, args: dict[str, object]):
+        if tool == "run_command":
+            return await self._inner.prepare_command(args)
+        async def run():
+            return await self.execute(tool, args)
+        return run
+
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
         out = await self._inner.execute(tool, args)
         if tool == "read_file" and not out.is_error and self._read_observer is not None:
-            # The write guard's read watermark (spec §7.3): only a read that actually
-            # returned content counts; an errored read proves nothing was seen.
-            raw = normalize_tool_args(tool, args).get("path")
-            if isinstance(raw, str):
-                self._read_observer(raw)
+            metadata = out.delivered_read
+            if metadata is not None and metadata.has_content:
+                delivered = getattr(self._read_observer, "delivered", None)
+                if callable(delivered):
+                    delivered(metadata)
+                else:
+                    raw = normalize_tool_args(tool, args).get("path")
+                    if isinstance(raw, str):
+                        self._read_observer(raw)
         return out
 
 
@@ -91,16 +102,48 @@ class AggregatingToolRegistry:
         self._sources = sources
         # A sub-agent's tool set (spec §5.3): None = every tool the sources offer.
         self._allowed = allowed_tools
+        builtin = next((s for s in sources if isinstance(s, BuiltinToolSource)), None)
+        self.shadow_root = builtin._inner._shadow_root if builtin else Path.cwd()
+        self.real_root = builtin._inner._real_workspace_path if builtin else Path.cwd()
 
     def definitions(self) -> list[ToolDefinition]:
         return [d for s in self._sources for d in s.definitions()
                 if self._allowed is None or d.name in self._allowed]
 
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+        from agentd.tools.batching import Call, batching_enabled, resources_for, workspace_pool
+        prepared = await self.prepare(tool, args)
+        if isinstance(prepared, ToolOutput):
+            return prepared
+        if not batching_enabled() or tool in {"dispatch_agents", "wait_agents"}:
+            return await prepared()
+        async with workspace_pool(self.real_root).lease(resources_for(
+                Call("single", tool, args), self.shadow_root, self.real_root)):
+            return await prepared()
+
+    def validate_call(self, tool: str, args: dict[str, object]) -> None:
+        # Only local filesystem tools use these keys as workspace paths.
+        if tool in {"read_file", "list_directory", "run_command", "setup_env", "init_workspace"}:
+            key = "path" if tool in {"read_file", "list_directory"} else "cwd"
+            root = self.real_root if key == "path" else self.shadow_root
+            path = (root / str(args.get(key) or ".")).resolve()
+            if not path.is_relative_to(root.resolve()):
+                raise ValueError(f"{tool}: {key} is outside the workspace")
+
+    def read_root_for(self, path: str) -> Path:
+        builtin = next((s for s in self._sources if isinstance(s, BuiltinToolSource)), None)
+        return builtin._inner._read_root_for(path) if builtin else self.real_root
+
+    async def prepare(self, tool: str, args: dict[str, object]):
         if self._allowed is None or tool in self._allowed:
             for s in self._sources:
                 if s.owns(tool):
-                    return await s.execute(tool, args)
+                    prepare = getattr(s, "prepare", None)
+                    if callable(prepare):
+                        return await prepare(tool, args)
+                    async def run(source=s):
+                        return await source.execute(tool, args)
+                    return run
         return ToolOutput(output=f"Error: unknown tool '{tool}'", is_error=True)
 
     def use_shadow_for_reads(self) -> None:

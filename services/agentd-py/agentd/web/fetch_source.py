@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from agentd.tools.approvals import McpApprovalCallback, denial_text
+from agentd.tools.batching import Prepared
 from agentd.tools.registry import ToolDefinition, ToolOutput
 from agentd.web.config import FETCH_SERVER, FETCH_TOOL
 from agentd.web.fetch import (
@@ -93,7 +94,7 @@ class WebFetchToolSource:
     def owns(self, tool: str) -> bool:
         return tool == FETCH_TOOL
 
-    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+    async def prepare(self, tool: str, args: dict[str, object]) -> Prepared | ToolOutput:
         if not self.owns(tool) or not self._enabled():
             return ToolOutput("Error: web fetch unavailable", is_error=True)
         value = args.get("url")
@@ -121,12 +122,18 @@ class WebFetchToolSource:
                     subject="Web fetch",
                     user_text="Web fetch rejected. Do not retry the rejected call.",
                 ),
-                is_error=True,
+                is_error=True, status="denied",
             )
-        if not self._enabled():
-            return ToolOutput("Error: web fetch disabled", is_error=True)
-        try:
-            result = await self._client.fetch(url, format, timeout)
-            return ToolOutput(bounded_fetch_output(result))
-        except FetchError as exc:
-            return ToolOutput(f"Error: {exc}", is_error=True)
+        async def run():
+            if not self._enabled():
+                return ToolOutput("Error: web fetch disabled", is_error=True)
+            try:
+                result = await self._client.fetch(url, format, timeout)
+                return ToolOutput(bounded_fetch_output(result))
+            except FetchError as exc:
+                return ToolOutput(f"Error: {exc}", is_error=True)
+        return run
+
+    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+        prepared = await self.prepare(tool, args)
+        return prepared if isinstance(prepared, ToolOutput) else await prepared()

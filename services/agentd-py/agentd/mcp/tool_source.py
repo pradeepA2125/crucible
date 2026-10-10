@@ -65,7 +65,7 @@ class McpToolSource:
     def owns(self, tool: str) -> bool:
         return tool.startswith(_PREFIX)
 
-    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+    async def prepare(self, tool: str, args: dict[str, object]) -> ToolOutput:
         parsed = parse_tool_name(tool)
         if parsed is None:
             return ToolOutput(output=f"Error: malformed MCP tool name '{tool}'", is_error=True)
@@ -77,13 +77,19 @@ class McpToolSource:
             return ToolOutput(
                 output=denial_text(outcome, subject=f"MCP tool `{server}.{tool_name}`",
                                    user_text=user_text),
-                is_error=True)
-        try:
-            result = await self._manager.call_tool(server, tool_name, dict(args))  # type: ignore[attr-defined]
-        except Exception as exc:
-            return ToolOutput(
-                output=f"Error: MCP tool {server}.{tool_name} failed: {exc}", is_error=True)
-        return _flatten_result(server, tool_name, result)
+                is_error=True, status="denied")
+        async def run():
+            try:
+                result = await self._manager.call_tool(server, tool_name, dict(args))  # type: ignore[attr-defined]
+            except Exception as exc:
+                return ToolOutput(
+                    output=f"Error: MCP tool {server}.{tool_name} failed: {exc}", is_error=True)
+            return _flatten_result(server, tool_name, result)
+        return run
+
+    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+        prepared = await self.prepare(tool, args)
+        return prepared if isinstance(prepared, ToolOutput) else await prepared()
 
 
 def _flatten_result(server: str, tool_name: str, result: object) -> ToolOutput:

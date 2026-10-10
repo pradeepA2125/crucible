@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from agentd.tools.approvals import McpApprovalCallback, denial_text
+from agentd.tools.batching import Prepared
 from agentd.tools.registry import ToolDefinition, ToolOutput
 from agentd.web.config import NATIVE_SERVER, NATIVE_TOOL
 from agentd.web.exa import WebSearchError
@@ -52,7 +53,7 @@ class WebSearchToolSource:
     def owns(self, tool: str) -> bool:
         return tool == NATIVE_TOOL
 
-    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+    async def prepare(self, tool: str, args: dict[str, object]) -> Prepared | ToolOutput:
         if not self.owns(tool) or not self._enabled():
             return ToolOutput("Error: web search unavailable", is_error=True)
         query = args.get("query")
@@ -64,11 +65,24 @@ class WebSearchToolSource:
         normalized = {"query": query.strip(), "max_results": count}
         outcome = await self._approve(NATIVE_SERVER, NATIVE_TOOL, normalized)
         if not outcome.approved:
-            return ToolOutput(denial_text(outcome, subject="Web search",
-                user_text="Web search rejected. Do not retry the rejected call."), is_error=True)
-        if not self._enabled():
-            return ToolOutput("Error: web search disabled", is_error=True)
-        try:
-            return ToolOutput(bounded_output(await self._client.search(query.strip(), count)))
-        except WebSearchError as exc:
-            return ToolOutput(f"Error: {exc}", is_error=True)
+            return ToolOutput(
+                denial_text(
+                    outcome,
+                    subject="Web search",
+                    user_text="Web search rejected. Do not retry the rejected call.",
+                ),
+                is_error=True,
+                status="denied",
+            )
+        async def run():
+            if not self._enabled():
+                return ToolOutput("Error: web search disabled", is_error=True)
+            try:
+                return ToolOutput(bounded_output(await self._client.search(query.strip(), count)))
+            except WebSearchError as exc:
+                return ToolOutput(f"Error: {exc}", is_error=True)
+        return run
+
+    async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
+        prepared = await self.prepare(tool, args)
+        return prepared if isinstance(prepared, ToolOutput) else await prepared()

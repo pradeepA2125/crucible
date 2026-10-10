@@ -67,6 +67,11 @@ def main() -> None:
     for row in report['functions'][:25]:
         lines.append(f"| {row['function']} | {row['calls']} | {row['self_ms']:.3f} | "
                      f"{row['inclusive_ms']:.3f} |")
+    lines += ['', 'Context measurements (characters are estimates; tokens are provider usage):', '',
+              '| Layer | Numeric fields |', '|---|---|']
+    for row in report.get('context', []):
+        counts = {k: v for k, v in row.items() if k not in {'trace', 'parent', 'kind', 'layer'}}
+        lines.append(f"| {row.get('layer', 'unknown')} | {json.dumps(counts, sort_keys=True)} |")
     lines += ['', report['note'], '',
               'Function rows retain the top 40 self-time entries from each profiled call. '
               'p50/p95 describe this capture, not a production benchmark. '

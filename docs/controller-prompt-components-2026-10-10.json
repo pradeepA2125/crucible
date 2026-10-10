@@ -1,0 +1,39 @@
+{
+  "method": "Controlled current main formatter with catalog extracted from retained smoke; memory/task guidance enabled, no project/skill/persona blocks. This does not reconstruct the old full prompt.",
+  "variants": {
+    "0": {
+      "system_chars": 71969,
+      "components": {
+        "core_rules": 14808,
+        "tool_catalog": 44883,
+        "team_guidance": 0,
+        "web_guidance": 2605,
+        "memory_guidance": 660,
+        "project_instructions": 0,
+        "skills_catalog": 0,
+        "mcp_guidance": 686,
+        "sessions_guidance": 1157,
+        "dispatch_guidance": 3789,
+        "teams_main_guidance": 3381,
+        "batch_guidance": 0
+      }
+    },
+    "1": {
+      "system_chars": 58651,
+      "components": {
+        "core_rules": 14808,
+        "tool_catalog": 31565,
+        "team_guidance": 0,
+        "web_guidance": 2605,
+        "memory_guidance": 660,
+        "project_instructions": 0,
+        "skills_catalog": 0,
+        "mcp_guidance": 686,
+        "sessions_guidance": 1157,
+        "dispatch_guidance": 3789,
+        "teams_main_guidance": 3381,
+        "batch_guidance": 0
+      }
+    }
+  }
+}

@@ -162,6 +162,13 @@ class WorkspaceWriteLog:
             key = canonical_path(workspace_root, raw)
             if key is not None:
                 self.note_read(agent_id, key, file_digest(workspace_root / key))
+        def delivered(metadata) -> None:
+            if (metadata.has_content and metadata.revision is not None
+                    and Path(metadata.root).resolve() == workspace_root.resolve()):
+                key = canonical_path(workspace_root, metadata.path)
+                if key is not None:
+                    self.note_read(agent_id, key, metadata.revision)
+        observe.delivered = delivered
         return observe
 
 

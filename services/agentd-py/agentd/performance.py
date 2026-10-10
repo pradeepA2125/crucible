@@ -69,6 +69,14 @@ def mark(name: str) -> None:
                 "at_ns": time.perf_counter_ns()})
 
 
+def context_measurement(measurement: dict[str, object]) -> None:
+    _write({"kind": "context", "parent": _parent.get(), **measurement})
+
+
+def capturing() -> bool:
+    return _capture.get() is not None
+
+
 def profile_async(name: str) -> Callable:
     def decorate(fn: Callable) -> Callable:
         @functools.wraps(fn)
@@ -94,7 +102,13 @@ def profile_sync(name: str) -> Callable:
                 stats = pstats.Stats(profiler)
                 rows = []
                 for (file, line, function), (_, calls, own, cumulative, _) in stats.stats.items():
-                    rows.append({"function": f"{file}:{line}:{function}",
+                    path = Path(file)
+                    package = Path(__file__).resolve().parent
+                    try:
+                        label = "agentd/" + str(path.resolve().relative_to(package))
+                    except ValueError:
+                        label = path.name
+                    rows.append({"function": f"{label}:{line}:{function}",
                                  "calls": calls, "self_ms": own * 1000,
                                  "inclusive_ms": cumulative * 1000})
                 rows.sort(key=lambda row: row["self_ms"], reverse=True)
@@ -106,6 +120,9 @@ def profile_sync(name: str) -> Callable:
 def profile_controller_run(fn: Callable) -> Callable:
     @functools.wraps(fn)
     async def wrapped(self: Any, plan_context: dict, *args: Any, **kwargs: Any) -> Any:
+        if capturing():
+            with span("controller.turn"):
+                return await fn(self, plan_context, *args, **kwargs)
         workspace = plan_context.get("workspace_path")
         state = Path(workspace) / ".crucible" / "state" if workspace else None
         if state is None or not (state / "performance.enabled").is_file():
@@ -115,6 +132,25 @@ def profile_controller_run(fn: Callable) -> Callable:
         try:
             with span("controller.turn"):
                 return await fn(self, plan_context, *args, **kwargs)
+        finally:
+            _parent.reset(parent_token)
+            _capture.reset(token)
+    return wrapped
+
+
+def profile_workspace_turn(fn: Callable) -> Callable:
+    """Include controller setup/retrieval, before ControllerLoop.run starts."""
+    @functools.wraps(fn)
+    async def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        workspace = getattr(self, "_workspace_path", None)
+        state = Path(workspace) / ".crucible" / "state" if workspace else None
+        if capturing() or state is None or not (state / "performance.enabled").is_file():
+            return await fn(self, *args, **kwargs)
+        token = _capture.set(Capture(state / "performance.jsonl", uuid.uuid4().hex))
+        parent_token = _parent.set(None)
+        try:
+            with span("controller.backend_turn"):
+                return await fn(self, *args, **kwargs)
         finally:
             _parent.reset(parent_token)
             _capture.reset(token)
@@ -170,7 +206,8 @@ def summarize(records: list[dict]) -> dict[str, object]:
                 "function": row["function"], "calls": 0, "self_ms": 0.0, "inclusive_ms": 0.0})
             for key in ("calls", "self_ms", "inclusive_ms"):
                 target[key] += row[key]
-    return {"milestones": {name: {"calls": len(values), "mean_ms": sum(values) / len(values),
+    return {"context": [r for r in records if r.get("kind") == "context"],
+            "milestones": {name: {"calls": len(values), "mean_ms": sum(values) / len(values),
                             "max_ms": max(values)} for name, values in milestones.items()},
             "blocks": result, "functions": sorted(functions.values(),
             key=lambda r: r["self_ms"], reverse=True),

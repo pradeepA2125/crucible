@@ -18,7 +18,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import openai
@@ -104,7 +104,8 @@ class StaticBearer:
 @dataclass(frozen=True)
 class _Reply:
     text: str
-    call: tuple[str, str] | None = None  # (function name, arguments JSON) in native mode
+    call: tuple[str, str] | None = None  # legacy singleton
+    calls: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 class _Unauthorized(Exception):
@@ -260,10 +261,10 @@ class OpenAIJsonTransport(ModelJsonTransport):
         body = self._body(model, instructions, user_payload)
         items = to_native_input(user_payload, actions)
         body["tools"] = actions.tools
-        # Exactly zero or one call per response, and with "required" exactly one: the
+        # Capability-gated multiple call per response, and with "required" exactly one: the
         # model then stops and waits for its result (function-calling guide).
         body["tool_choice"] = actions.tool_choice
-        body["parallel_tool_calls"] = False
+        body["parallel_tool_calls"] = actions.multicall
         has_history = isinstance(user_payload.get(HISTORY_KEY), list)
         # Without history the one message changes every call: the stream is its instructions.
         session = (session_id_for(USAGE_OWNER.get(), instructions,
@@ -282,7 +283,19 @@ class OpenAIJsonTransport(ModelJsonTransport):
         if key is not None:
             self._sessions.commit(key, items, body["input"])
         assert reply.call is not None  # _stream_once raises when the model didn't call
-        return actions.decode_call(*reply.call)
+        if not actions.multicall:
+            if len(reply.calls) > 1:
+                raise RuntimeError("multiple function calls on a single-action provider path")
+            return actions.decode_call(*reply.call)
+        decoded = [dict(actions.decode_call(name, arguments), provider_call_id=identity)
+                   for name, arguments, identity in reply.calls]
+        if len(decoded) == 1 and decoded[0].get("type") != "tool_call":
+            return decoded[0]
+        if not decoded or any(node.get("type") != "tool_call" for node in decoded):
+            raise RuntimeError("tool calls cannot be mixed with exclusive controller actions")
+        return {"type": "tool_calls", "thought": decoded[0].get("thought", ""),
+                "calls": [{k: v for k, v in node.items() if k not in {"type", "thought"}}
+                          for node in decoded]}
 
     # ------------------------------------------------------------ request
 
@@ -430,6 +443,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         texts: dict[str | None, list[str]] = {}  # per output item: never join items
         phases: dict[str | None, str | None] = {}
         call: tuple[str, str] | None = None
+        calls: dict[int, tuple[str, str, str]] = {}
         completed: Any = None
         summary_parts = 0
         first_content = True
@@ -447,9 +461,16 @@ class OpenAIJsonTransport(ModelJsonTransport):
                 elif kind == "response.output_item.done":
                     item = getattr(event, "item", None)
                     if native and getattr(item, "type", None) == "function_call":
-                        if call is None:  # parallel_tool_calls=false: there is one
-                            call = (str(getattr(item, "name", "")),
-                                    str(getattr(item, "arguments", "") or "{}"))
+                        name = str(getattr(item, "name", ""))
+                        arguments = str(getattr(item, "arguments", "") or "{}")
+                        identity = str(getattr(item, "call_id", "") or getattr(item, "id", ""))
+                        calls[int(getattr(event, "output_index", len(calls)))] = (
+                            name,
+                            arguments,
+                            identity,
+                        )
+                        if call is None:
+                            call = (name, arguments)
                     elif native and getattr(item, "type", None) == "message":
                         # A preamble ("I'll read the file first") — prose, not an action.
                         preamble = "".join(texts.get(getattr(item, "id", None), []))
@@ -511,6 +532,10 @@ class OpenAIJsonTransport(ModelJsonTransport):
                       input_tokens=input_tokens)
         cached = int_or_none(getattr(
             getattr(usage, "input_tokens_details", None), "cached_tokens", None))
+        from agentd.performance import context_measurement
+        context_measurement({"layer": "provider_usage", "input_tokens": input_tokens,
+                             "output_tokens": output_tokens, "cached_input_tokens": cached,
+                             "reasoning_tokens": reasoning_tokens})
         if cached:
             # Per agent/thread/team, next to the prompt tokens the loop records: the
             # share of input the provider served from cache (what a plan can discount).
@@ -529,7 +554,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
                 # A correctable model error: the loop's malformed-output path retries.
                 msg = f"the model replied without calling a function: {text[:300]!r}"
                 raise RuntimeError(msg)
-            return _Reply(text, call)
+            return _Reply(text, call, [calls[key] for key in sorted(calls)])
         if not text.strip():
             msg = "OpenAI response contained no output_text"
             raise RuntimeError(msg)

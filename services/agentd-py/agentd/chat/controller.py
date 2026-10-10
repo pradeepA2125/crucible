@@ -66,7 +66,7 @@ from agentd.domain.models import (
 )
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
-from agentd.performance import span
+from agentd.performance import profile_workspace_turn, span
 from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
 from agentd.providers.plan_access import (
@@ -317,7 +317,23 @@ def _explore_context_from_history(
             action = json.loads(raw)
         except (ValueError, TypeError):
             continue
-        if not isinstance(action, dict) or action.get("type") != "tool_call":
+        if not isinstance(action, dict):
+            continue
+        if action.get("type") == "tool_calls":
+            batch_id = action.get("batch_id")
+            results = {str(r.get("id")): r for r in history
+                       if r.get("role") == "tool_result" and r.get("batch_id") == batch_id}
+            for node in action.get("calls", []):
+                result = results.get(str(node.get("id")))
+                if (
+                    result is not None
+                    and result.get("status") == "success"
+                    and not result.get("is_error")
+                ):
+                    out.append({"tool": node.get("tool", ""), "args": node.get("args", {}),
+                                "result": result.get("content", ""), "is_error": False})
+            continue
+        if action.get("type") != "tool_call":
             continue
         nxt = history[index + 1] if index + 1 < len(history) else None
         result = ""
@@ -660,6 +676,11 @@ class ChatController:
             return cached
         thread = self._store.get_thread(thread_id)
         history = (thread.controller_conversation_history if thread else None) or []
+        from agentd.chat.batch_history import interrupted_history
+        recovered = interrupted_history(history)
+        if recovered != history:
+            self._store.set_controller_history(thread_id, recovered)
+            history = recovered
         self._histories[thread_id] = history
         return history
 
@@ -682,6 +703,10 @@ class ChatController:
             try:
                 context, _ = self._retrieval.load_context(self._workspace_path, goal)
                 seed = context.as_prompt_payload()
+                from agentd.tools.read_policy import compact_context_enabled
+                if compact_context_enabled() and isinstance(seed.get("repository_structure"), list):
+                    from agentd.context_compaction import bounded_tree
+                    seed["repository_structure"] = bounded_tree(seed["repository_structure"])
             except Exception:
                 logger.debug("[controller] retrieval seed failed", exc_info=True)
         self._seeds[thread_id] = seed
@@ -832,6 +857,7 @@ class ChatController:
             plan_mode=self._plan_mode,
             forced_skills=list(forced) if isinstance(forced, list) else None)
 
+    @profile_workspace_turn
     async def _run_loop(
         self, thread_id: str, channel_id: str, goal: str, *,
         seed_history: list[dict[str, object]] | None, step_review: bool | None,
@@ -972,6 +998,10 @@ class ChatController:
             # Baseline so per-iteration artifact numbering is 0-based WITHIN this turn
             # (history includes the replayed seed_history from prior turns).
             plan_context["artifact_seed_len"] = len(seed_history or [])
+        capacity, capacity_source, capacity_model = self._context_usage.capacity()
+        plan_context["context_capacity"] = capacity
+        plan_context["capacity_source"] = capacity_source
+        plan_context["capacity_model"] = capacity_model
         seed = self._retrieval_seed(thread_id, goal)
         if seed:
             plan_context["retrieval_seed"] = seed
@@ -1010,6 +1040,7 @@ class ChatController:
                 turn_control=self._review_control, edit_decision_cb=edit_cb,
                 edit_record_cb=record_cb, retrieval_delta_cb=self._retrieval_delta_cb,
                 on_pills_update=pills_cb,
+                history_update_cb=partial(self._store.set_controller_history, thread_id),
                 inbox_drain=partial(self._drain_main, thread_id, turn_id) if turn_id else None,
                 terminal_guard=partial(self._main_terminal_guard, thread_id),
                 live_work=partial(self._live_work, thread_id))
@@ -1319,7 +1350,7 @@ class ChatController:
             self._pending_edit.pop(gate.gate_id, None)
             self._pending_edit_gates.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
-            self._set_child_status(child, "running")
+            self._refresh_child_gate_status(thread_id, child)
 
     async def _edit_record_cb(
         self, thread_id: str, channel_id: str,
@@ -1538,7 +1569,7 @@ class ChatController:
         finally:
             self._pending_command.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
-            self._set_child_status(child, "running")
+            self._refresh_child_gate_status(thread_id, child)
 
         rule = rule_from_decision(decision, command, args)
         if rule is not None:
@@ -1633,7 +1664,7 @@ class ChatController:
         finally:
             self._pending_mcp.pop(gate.gate_id, None)
             self._store.remove_controller_gate(thread_id, gate.gate_id)
-            self._set_child_status(child, "running")
+            self._refresh_child_gate_status(thread_id, child)
 
         if decision.approve and decision.remember:
             rules.add(server, tool)
@@ -1843,6 +1874,16 @@ class ChatController:
         if child is None:
             return None
         return GateAgent(id=child.agent_id, label=child.context.label, name=child.context.name)
+
+    def _refresh_child_gate_status(self, thread_id: str, child: AgentHandle | None) -> None:
+        if child is None:
+            return
+        thread = self._store.get_thread(thread_id)
+        waiting = thread is not None and any(
+            g.agent is not None and g.agent.id == child.agent_id
+            for g in thread.pending_controller_gates
+        )
+        self._set_child_status(child, "waiting" if waiting else "running")
 
     def _set_child_status(self, child: AgentHandle | None, status: str) -> None:
         if child is not None and self._subagents is not None:
@@ -3520,6 +3561,8 @@ class ChatController:
             if impl_check is not None and membership is not None and self._teams is not None
             else None)
 
+        from agentd.chat.batch_history import interrupted_history
+
         def persist_and_meter(history: list[dict[str, object]]) -> None:
             self._store.set_agent_history(ctx.agent_id, history)
             if coordinator is not None:
@@ -3529,24 +3572,36 @@ class ChatController:
         try:
             # No retrieval_delta_cb: the delta references a seed children never had.
             outcome = await loop.run(
-                plan_context, max_iters=ctx.max_iters, turn_control=control,
-                seed_history=[*record.history, {"role": "user", "content": activation_input}],
+                plan_context,
+                max_iters=ctx.max_iters,
+                turn_control=control,
+                seed_history=[
+                    *interrupted_history(record.history),
+                    {"role": "user", "content": activation_input},
+                ],
                 iteration_cb=persist_and_meter,
+                history_update_cb=partial(self._store.set_agent_history, ctx.agent_id),
                 inbox_drain=(
-                    partial(self._drain_member, ctx.agent_id, membership.team_id,
-                            membership.label)
-                    if membership is not None else partial(self._drain_and_mark, ctx.agent_id)),
+                    partial(self._drain_member, ctx.agent_id, membership.team_id, membership.label)
+                    if membership is not None
+                    else partial(self._drain_and_mark, ctx.agent_id)
+                ),
                 status_tail=(
                     partial(self._teams.status_text, membership.team_id, membership.label)
-                    if membership is not None and self._teams is not None else None),
+                    if membership is not None and self._teams is not None
+                    else None
+                ),
                 report_guard=partial(self._report_guard, handle),
                 final_hint=(
                     partial(self._teams.final_hint, membership.team_id, membership.label)
-                    if membership is not None and self._teams is not None else None),
+                    if membership is not None and self._teams is not None
+                    else None
+                ),
                 report_check=report_check,
                 edit_decision_cb=partial(self._child_edit_decision_cb, handle),
                 edit_record_cb=partial(self._child_edit_record_cb, handle),
-                on_pills_update=transcript.upsert_pills)
+                on_pills_update=transcript.upsert_pills,
+            )
             if outcome.kind == "report":
                 status = str((outcome.payload or {}).get("status", "completed"))
                 if status == "awaiting_peer" and membership is None:

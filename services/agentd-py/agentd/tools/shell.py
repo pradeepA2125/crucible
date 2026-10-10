@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import shlex
-import signal
 from asyncio.subprocess import PIPE, STDOUT
 from pathlib import Path
 
@@ -198,8 +196,15 @@ async def run_command(
             is_error=True,
         )
 
+    from agentd.tools.batching import output_budget
+    from agentd.tools.processes import bounded_communicate, kill_and_reap
+    limit = min(_MAX_OUTPUT_CHARS, output_budget.get())
     try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+        stdout, _ = await asyncio.wait_for(
+            bounded_communicate(proc, limit=max(128, limit - 400), tail=True), timeout=timeout_sec)
+    except asyncio.CancelledError:
+        await kill_and_reap(proc, group=True)
+        raise
     except TimeoutError:
         # wait_for cancels the communicate() coroutine, not the underlying OS
         # process — proc.communicate() being abandoned does not send it a signal.
@@ -209,23 +214,25 @@ async def run_command(
         # (start_new_session=True above), not just the tracked shell PID — a
         # pipeline's later stages are separate children the shell wrapper doesn't
         # forward signals to on its own.
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            await proc.wait()
-        except ProcessLookupError:
-            pass  # already exited between the timeout firing and kill()
+        await kill_and_reap(proc, group=True)
         return ToolOutput(
             output=f"Error: command '{command}' timed out after {timeout_sec}s "
             f"and was killed",
-            is_error=True,
+            is_error=True, status="timed_out",
         )
     except Exception as exc:
+        await kill_and_reap(proc, group=True)
         return ToolOutput(output=f"Error running '{command}': {exc}", is_error=True)
 
     output = stdout.decode("utf-8", errors="replace")
     exit_code = proc.returncode or 0
     header = f"$ {shell_command_line}\n(exit code: {exit_code})\n"
-    full = header + output
+    capture_notice = (
+        "[Output capture bounded; showing retained tail.]\n"
+        if len(stdout) >= max(128, limit - 400)
+        else ""
+    )
+    full = header + capture_notice + output
 
     if len(full) > _MAX_OUTPUT_CHARS:
         # Keep the tail (more useful for error messages)
@@ -233,4 +240,4 @@ async def run_command(
         full = header + f"... (output truncated, showing last {keep} chars)\n" + output[-keep:]
 
     is_error = exit_code != 0
-    return ToolOutput(output=full, is_error=is_error)
+    return ToolOutput(output=full, is_error=is_error, exit_code=exit_code)

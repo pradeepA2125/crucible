@@ -1,0 +1,133 @@
+{
+  "method": "Real command processes; fixed 50ms model and 100ms web delays. No live provider/cache claim.",
+  "scenarios": {
+    "independent_serial": {
+      "median_seconds": 0.6606737499823794,
+      "min_seconds": 0.6235609159921296,
+      "max_seconds": 0.6686067500268109,
+      "runs": [
+        {
+          "wall_seconds": 0.6235609159921296,
+          "model_requests": 4,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.6613833340234123,
+          "model_requests": 4,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.6686067500268109,
+          "model_requests": 4,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.6606737499823794,
+          "model_requests": 4,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.6397760420222767,
+          "model_requests": 4,
+          "tool_results": 3
+        }
+      ]
+    },
+    "independent_batch": {
+      "median_seconds": 0.28893829201115295,
+      "min_seconds": 0.28126791602699086,
+      "max_seconds": 0.29978491604560986,
+      "runs": [
+        {
+          "wall_seconds": 0.2941613330040127,
+          "model_requests": 2,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.28126791602699086,
+          "model_requests": 2,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.29978491604560986,
+          "model_requests": 2,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.28710504103219137,
+          "model_requests": 2,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.28893829201115295,
+          "model_requests": 2,
+          "tool_results": 3
+        }
+      ]
+    },
+    "dependent_serial": {
+      "median_seconds": 0.6677366670337506,
+      "min_seconds": 0.6421274580061436,
+      "max_seconds": 0.683533624978736,
+      "runs": [
+        {
+          "wall_seconds": 0.6739485420403071,
+          "model_requests": 4,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.6677366670337506,
+          "model_requests": 4,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.6663030000054277,
+          "model_requests": 4,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.6421274580061436,
+          "model_requests": 4,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.683533624978736,
+          "model_requests": 4,
+          "tool_results": 3
+        }
+      ]
+    },
+    "dependent_batch": {
+      "median_seconds": 0.5473612500354648,
+      "min_seconds": 0.5283970839809626,
+      "max_seconds": 0.5619312499766238,
+      "runs": [
+        {
+          "wall_seconds": 0.5552620419766754,
+          "model_requests": 2,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.5473612500354648,
+          "model_requests": 2,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.5283970839809626,
+          "model_requests": 2,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.5459722080267966,
+          "model_requests": 2,
+          "tool_results": 3
+        },
+        {
+          "wall_seconds": 0.5619312499766238,
+          "model_requests": 2,
+          "tool_results": 3
+        }
+      ]
+    }
+  }
+}

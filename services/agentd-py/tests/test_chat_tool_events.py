@@ -82,7 +82,7 @@ def test_trace_to_tool_events_call_without_result() -> None:
     assert event["tool"] == "search_code"
     assert event["source"] == "planning"
     assert "output" not in event and "isError" not in event
-    assert event["done"] is True
+    assert event["done"] is False
 
 
 # ── engine writer ────────────────────────────────────────────────────────────

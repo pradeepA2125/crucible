@@ -47,6 +47,9 @@ export const PROVIDER_KEY_ENV: Record<string, string> = {
 const SETTING_ENV_MAP: Record<string, string> = {
   "crucible.policy.shell": "CRUCIBLE_SHELL_POLICY",
   "crucible.policy.scope": "CRUCIBLE_SCOPE_POLICY",
+  "crucible.performance.toolBatching": "CRUCIBLE_TOOL_BATCHING_ENABLED",
+  "crucible.performance.adaptiveReads": "CRUCIBLE_ADAPTIVE_READS_ENABLED",
+  "crucible.performance.compactContext": "CRUCIBLE_COMPACT_CONTEXT_ENABLED",
   "crucible.webSearch.enabled": "CRUCIBLE_WEB_SEARCH_ENABLED",
   "crucible.webFetch.enabled": "CRUCIBLE_WEB_FETCH_ENABLED",
   "crucible.memory.enabled": "CRUCIBLE_MEMORY_ENABLED",

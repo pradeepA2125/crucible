@@ -61,23 +61,40 @@ async def search_code(
     cmd += ["-g", "!**/.crucible/state"]
     cmd += [pattern, str(shadow_root)]
 
+    from agentd.tools.processes import bounded_communicate, kill_and_reap
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=PIPE, stderr=PIPE, env=child_env())
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-    except asyncio.TimeoutError:
-        return ToolOutput(output="Error: search timed out after 15s", is_error=True)
+        stdout, stderr = await asyncio.wait_for(bounded_communicate(proc), timeout=15)
+    except asyncio.CancelledError:
+        if proc is not None:
+            await kill_and_reap(proc)
+        raise
+    except TimeoutError:
+        if proc is not None:
+            await kill_and_reap(proc)
+        return ToolOutput(
+            output="Error: search timed out after 15s", is_error=True, status="timed_out"
+        )
     except FileNotFoundError:
         return ToolOutput(
             output=f"Error: ripgrep not found at '{ripgrep_cmd}'. Install ripgrep or set CRUCIBLE_RIPGREP_CMD.",
             is_error=True,
         )
     except Exception as exc:
+        if proc is not None:
+            await kill_and_reap(proc)
         return ToolOutput(output=f"Error: search failed: {exc}", is_error=True)
 
     # Parse ripgrep --json output into readable text
+    capture_limited = len(stdout) >= 100_000
     lines = stdout.decode("utf-8", errors="replace").splitlines()
-    matches: list[str] = []
+    matches: list[str] = (
+        ["[Search capture bounded; refine the query for omitted matches.]"]
+        if capture_limited
+        else []
+    )
     current_file: str | None = None
     match_count = 0
 
@@ -135,8 +152,8 @@ async def search_code(
                 last_line_num = stripped.split("|")[0].split(":")[0].strip()
                 break
         hint = (
-            f" The result is cut off. Do NOT increase context_lines — it will not help. "
-            f"Instead call read_file with start_line/end_line around the line numbers shown above"
+            " The result is cut off. Do NOT increase context_lines — it will not help. "
+            "Instead call read_file with start_line/end_line around the line numbers shown above"
             + (f" (last visible line: {last_line_num})" if last_line_num else "")
             + " to read the section you need."
         )

@@ -201,6 +201,36 @@ _VARIANT_SPECS: dict[str, dict[str, object]] = {
                "properties": {"summary": _STR, "status": _REPORT_STATUS}},
 }
 
+_CALL_SCHEDULING = {
+    "id": {"type": "string", "minLength": 1, "maxLength": 80},
+    "depends_on": {"type": "array", "items": _STR},
+    "after": {"type": "array", "items": _STR},
+    "execution": {"type": "string", "enum": ["auto", "parallel", "serial"]},
+}
+_CALL_ITEM = {"type": "object", "additionalProperties": False,
+              "properties": {"tool": _STR, "args": _OBJECT, **_CALL_SCHEDULING},
+              "required": ["id", "tool", "args"]}
+_VARIANT_SPECS["tool_calls"] = {
+    "required": ["calls"],
+    "properties": {"calls": {"type": "array", "minItems": 1, "maxItems": 8,
+                             "items": _CALL_ITEM}},
+}
+
+_BATCH_GUIDANCE = """
+
+TOOL BATCHES
+Use tool_calls with calls:[{id,tool,args,depends_on:[],after:[],execution:"auto"}] to
+request multiple permitted tools in one response, including commands and web tools.
+Give every call a unique ID. Batch independent work; execution:"parallel" requests
+concurrent independent commands when environments/outputs do not conflict. The scheduler
+may serialize conflicts. depends_on lists calls that must succeed first (install → build
+→ test); after lists calls that must finish regardless of success, e.g. inspect test logs.
+Use known arguments only. If a result discovers a path/value or loads new skill
+instructions affecting later work, read it before choosing your next batch.
+Never mix a tool batch with answer, edit, submit, progress, or another controller action.
+Single tool_call remains valid. Each member keeps its own permissions and approval.
+"""
+
 
 def _tight_variant_branch(variant: str) -> dict[str, object]:
     spec = _VARIANT_SPECS[variant]
@@ -234,12 +264,18 @@ def controller_response_schema(
     for providers where neither tight nor anyof is available.
     """
     types = list(allowed_types) if allowed_types is not None else list(_PHASE_TYPES[phase])
+    from agentd.tools.batching import batching_enabled
+    batching = batching_enabled()
+    if batching and "tool_call" in types and "tool_calls" not in types:
+        types.insert(types.index("tool_call") + 1, "tool_calls")
     # `team_member=True` → the report status enum gains awaiting_peer (spec v2 §7.3).
     report_status = _TEAM_REPORT_STATUS if team_member else _REPORT_STATUS
     if tight or anyof:
         branches = [_tight_variant_branch(v) for v in types]
         for variant, branch in zip(types, branches, strict=True):
             props = branch["properties"]
+            if batching and variant == "tool_call" and isinstance(props, dict):
+                props.update(copy.deepcopy(_CALL_SCHEDULING))
             if variant == "report" and isinstance(props, dict):
                 props["status"] = dict(report_status)  # each branch owns a fresh dict
                 if team_member:
@@ -247,6 +283,9 @@ def controller_response_schema(
         return {"oneOf" if tight else "anyOf": branches}
     schema = copy.deepcopy(CONTROLLER_RESPONSE_SCHEMA)
     schema["properties"]["type"]["enum"] = types  # type: ignore[index]
+    if batching:
+        schema["properties"].update(copy.deepcopy(_CALL_SCHEDULING))
+        schema["properties"].update(copy.deepcopy(_VARIANT_SPECS["tool_calls"]["properties"]))
     if "report" in types:
         # Only a sub-agent's schema can carry report fields: the main agent never has the
         # report type, so its schema (and the schema-in-prompt bytes) stay unchanged.
@@ -919,6 +958,7 @@ def format_controller_system_prompt(
     skills_catalog: list | None = None,
     render_ctx: RenderContext | None = None,
     persona: str | None = None,
+    component_sizes: dict[str, int] | None = None,
 ) -> str:
     """Assemble the controller system prompt. The propose_mode mode-vocabulary block is
     swapped by the task-subsystem flag (default resolved from env) — see the spec. The
@@ -935,61 +975,94 @@ def format_controller_system_prompt(
     ctx = render_ctx or RenderContext.main()
     modes = render_prompt(
         _PROPOSE_MODE_MODES_ENABLED if task_subsystem_enabled else _PROPOSE_MODE_MODES_DISABLED, ctx)
+    from agentd.tools.read_policy import adaptive_reads_enabled, compact_context_enabled
+    catalog = (json.dumps(tool_definitions, sort_keys=True, separators=(",", ":"))
+               if compact_context_enabled() else json.dumps(tool_definitions, indent=2, sort_keys=True))
     base = (
         render_prompt(CONTROLLER_SYSTEM_PROMPT, ctx)
         .replace("{propose_mode_modes}", modes)
-        .replace("{tools_json}", json.dumps(tool_definitions, indent=2, sort_keys=True))
+        .replace("{tools_json}", catalog)
     )
+    if adaptive_reads_enabled():
+        base = base.replace(
+            "line, THEN read_file the located region (use start_line/end_line on files >150 lines). Do not",
+            "line when the location is unknown; read known paths directly. Read a complete relevant "
+            "function/file when it fits; use targeted ranges for oversized files. Do not")
+    sizes = component_sizes if component_sizes is not None else {}
+    sizes.update(core_rules=len(base) - len(catalog), tool_catalog=len(catalog))
+    measured = len(base)
+
+    def record(name: str) -> None:
+        nonlocal measured
+        sizes[name] = len(base) - measured
+        measured = len(base)
+
     if not ctx.is_main:
         # Child append order (spec §4.2): role block → persona → then today's order.
         label = ctx.agent_label or ctx.agent_id
         base += render_prompt(_AGENT_ROLE_BLOCK, ctx).replace("{label}", label)
+        record("child_role")
         # Appended raw: the frame marker contains '<<', which tagged templates reject.
         base += "\n- " + FRAMING_SENTENCE
+        record("child_framing")
         if persona and persona.strip():
             base += _PERSONA_BLOCK_TEMPLATE.replace("{persona}", persona.strip())
+        record("persona")
         if ctx.has_team:
             base += (render_prompt(_TEAM_BLOCK, ctx)
                      .replace("{team_framing}", TEAM_FRAMING)
                      .replace("{team_brief}", ctx.team_brief))
+    record("team_guidance")
     from agentd.prompting.web_research import web_research_guidance
 
     base += web_research_guidance(
         {str(d.get("name", "")) for d in tool_definitions if isinstance(d, dict)}, ctx)
+    record("web_guidance")
     # Appended (not a placeholder) — process-fixed flag, so the prompt stays cache-stable.
     base = base + (render_prompt(_MEMORY_BLOCK, ctx) if memory_enabled else "")
+    record("memory_guidance")
     # .replace (not .format): AGENTS.md text may contain literal { } that
     # str.format would misparse as fields.
     if project_instructions and project_instructions.strip():
         base += render_prompt(_INSTRUCTIONS_BLOCK_TEMPLATE, ctx).replace(
             "{instructions}", project_instructions.strip()
         )
+    record("project_instructions")
     if skills_catalog:
         from agentd.skills.catalog import render_skills_catalog
 
         rendered = render_skills_catalog(skills_catalog)
         if rendered:
             base += render_prompt(_SKILLS_BLOCK_HEADER, ctx) + rendered
+    record("skills_catalog")
     # MCP teaching block: keyed off the merged tool definitions themselves (the
     # mcp__ namespace), so no separate loader/flag parameter is needed and the
     # block stays in lockstep with what tools_json actually contains.
     if any(str((d or {}).get("name", "")).startswith("mcp__")
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_MCP_BLOCK, ctx)
+    record("mcp_guidance")
     # exec-session teaching block: keyed off the merged tool definitions (same
     # pattern as the MCP block) so no separate flag parameter is needed.
     if any(str((d or {}).get("name", "")) == "start_session"
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_SESSIONS_BLOCK, ctx)
+    record("sessions_guidance")
     # dispatch teaching block: keyed off the merged tool definitions, like the two above.
     if any(str((d or {}).get("name", "")) == "dispatch_agents"
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_DISPATCH_BLOCK, ctx)
         if ctx.is_main:
             base += FRAMING_SENTENCE + "\n"
+    record("dispatch_guidance")
     if ctx.is_main and any(str((d or {}).get("name", "")) == "create_team"
                            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_TEAMS_MAIN_BLOCK, ctx)
+    record("teams_main_guidance")
+    from agentd.tools.batching import batching_enabled
+    if batching_enabled():
+        base += _BATCH_GUIDANCE
+    record("batch_guidance")
     return base
 
 

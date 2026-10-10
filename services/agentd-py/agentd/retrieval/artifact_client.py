@@ -852,7 +852,8 @@ class RetrievalArtifactClient:
             display_name = "." if str(rel_root) == "." else rel_root.name
 
             valid_dirs = [d for d in dirs if not self._is_ignored_relative_path(rel_root / d)]
-            valid_files = [f for f in files if self._is_supported_source_path(Path(f))]
+            dirs[:] = sorted(d for d in dirs if not self._is_ignored_relative_path(rel_root / d))
+            valid_files = sorted(f for f in files if self._is_supported_source_path(Path(f)))
             if valid_dirs or valid_files:
                 summary = f"{indent}{display_name}/ ({len(valid_dirs)} dirs, {len(valid_files)} source files)"
                 repository_structure.append(summary)

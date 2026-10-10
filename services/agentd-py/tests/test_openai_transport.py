@@ -801,3 +801,45 @@ async def test_each_prompt_stream_of_an_owner_gets_its_own_session_id() -> None:
     loop1, loop2, other = (c["extra_headers"]["session_id"] for c in fake.calls)
     assert loop1 == loop2          # a growing history keeps its stream's id
     assert other != loop1          # another prompt under the same owner does not share it
+
+
+@pytest.mark.asyncio
+async def test_native_batch_collects_all_calls_in_provider_order(monkeypatch):
+    from agentd.chat.controller_prompts import controller_response_schema
+    monkeypatch.setenv('CRUCIBLE_TOOL_BATCHING_ENABLED', '1')
+    first = _call_done('tool_call', {'thought': 'both', 'id': 'a', 'tool': 'read_file',
+                                   'args': '{"path":"a.py"}', 'depends_on': [],
+                                   'after': [], 'execution': 'auto'}, call_id='provider-a')
+    second = _call_done('tool_call', {'thought': 'both', 'id': 'b', 'tool': 'run_command',
+                                    'args': '{"command":"pytest","args":[]}',
+                                    'depends_on': ['a'], 'after': [], 'execution': 'serial'},
+                        call_id='provider-b')
+    first.output_index, second.output_index = 0, 1
+    fake = FakeResponses([
+        SimpleNamespace(type='response.function_call_arguments.delta', item_id='a', delta='{"id"'),
+        SimpleNamespace(type='response.function_call_arguments.delta', item_id='b', delta='{"id"'),
+        second, first, _completed()])
+    result = await _transport(fake, plan_route=True).generate_json(
+        model='m', schema_name='controller_step_response',
+        schema=controller_response_schema(phase='ACTIVE', anyof=True),
+        system_instructions='sys', user_payload={'goal': 'test'})
+    assert result['type'] == 'tool_calls'
+    assert [n['id'] for n in result['calls']] == ['a', 'b']
+    assert [n['provider_call_id'] for n in result['calls']] == ['provider-a', 'provider-b']
+    assert result['calls'][1]['depends_on'] == ['a']
+    assert fake.calls[0]['parallel_tool_calls'] is True
+
+
+@pytest.mark.asyncio
+async def test_native_batch_rejects_mixed_terminal_actions(monkeypatch):
+    from agentd.chat.controller_prompts import controller_response_schema
+    monkeypatch.setenv('CRUCIBLE_TOOL_BATCHING_ENABLED', '1')
+    fake = FakeResponses([
+        _call_done('tool_call', {'thought': 't', 'id': 'a', 'tool': 'read_file',
+                                'args': '{"path":"a.py"}'}),
+        _call_done('answer', {'thought': 't', 'answer': 'done'}, call_id='c2'), _completed()])
+    with pytest.raises(RuntimeError, match='mixed'):
+        await _transport(fake, plan_route=True).generate_json(
+            model='m', schema_name='controller_step_response',
+            schema=controller_response_schema(phase='ACTIVE', anyof=True),
+            system_instructions='sys', user_payload={})

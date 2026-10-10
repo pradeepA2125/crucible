@@ -137,12 +137,17 @@ class ScriptedReasoningEngine:
         on_progress: object = None,
         on_salvage: object = None,
         on_usage: object = None,
+        on_context_input: object = None,
         unconstrained: bool = False,
         allowed_types: object = None,
         render_ctx: object = None,
         persona: object = None,
     ) -> dict[str, object]:
         _ = (plan_context, history, tool_definitions, phase, on_thinking, on_retry)
+        if on_context_input is not None:
+            unavailable = getattr(on_context_input, "unavailable", None)
+            if callable(unavailable):
+                unavailable()
         label = getattr(render_ctx, "agent_label", "") if render_ctx is not None else ""
         if label and label in self._agent_scripts:
             script = self._agent_scripts[label]

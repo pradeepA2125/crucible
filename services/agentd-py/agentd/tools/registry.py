@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.tools.approvals import denial_text
+from agentd.tools.read_policy import adaptive_reads_enabled
 
 
 class ToolDefinition(BaseModel):
@@ -25,6 +26,9 @@ class ToolOutput:
     # Files a tool promoted on the agent's behalf (spec §6.4 — a sub-agent dispatch). The
     # loop treats a non-empty list like its own accepted edit; never parsed from `output`.
     workspace_changes: list[str] = field(default_factory=list)
+    status: str | None = None
+    exit_code: int | None = None
+    delivered_read: object | None = None
 
 
 # Tagged (spec §4.6.3). Main renders today's text byte-for-byte; a child is told it runs in
@@ -134,6 +138,11 @@ class ToolRegistry:
             ToolDefinition(
                 name="read_file",
                 description=(
+                    "Read a complete relevant file/function when it fits the current budget; "
+                    "otherwise use start_line/end_line for the needed region. Delivery reports "
+                    "actual visible ranges and limits. Hard ceilings: 2,000 lines, 100,000 "
+                    "characters and 2 MB input; effective budgets may be smaller."
+                    if adaptive_reads_enabled() else
                     "Read up to 500 lines of a file. Use start_line+end_line to target "
                     "the section you need. When you know a line number from search_code, "
                     "read a precise range around it. When uncertain of a section's length, "
@@ -355,32 +364,19 @@ class ToolRegistry:
             )
 
         if name == "read_file":
+            from agentd.tools.batching import output_budget
             from agentd.tools.files import read_file
-            _MAX_READ_LINES = 500
+            from agentd.tools.read_policy import adaptive_reads_enabled
             start = args.get("start_line")
             end = args.get("end_line")
-            result = await read_file(
+            return await read_file(
                 path=str(args.get("path", "")),
-                start_line=int(start) if start is not None else None,  # type: ignore[call-overload]
-                end_line=int(end) if end is not None else None,  # type: ignore[call-overload]
+                start_line=int(start) if start is not None else None,
+                end_line=int(end) if end is not None else None,
                 shadow_root=self._read_root_for(str(args.get("path", ""))),
+                max_lines=2000 if adaptive_reads_enabled() else 500,
+                max_chars=output_budget.get(),
             )
-            if result.is_error:
-                return result
-            lines = result.output.splitlines()
-            if len(lines) > _MAX_READ_LINES:
-                truncated = "\n".join(lines[:_MAX_READ_LINES])
-                total = len(lines)
-                return ToolOutput(
-                    output=(
-                        truncated
-                        + f"\n\n[TRUNCATED: showing {_MAX_READ_LINES} of {total} lines. "
-                        "Use search_code to locate the symbol (line number shown as '123: def foo'), "
-                        "then call read_file with start_line/end_line around that line.]"
-                    ),
-                    is_error=False,
-                )
-            return result
 
         if name == "list_directory":
             from agentd.tools.files import list_directory
@@ -390,40 +386,8 @@ class ToolRegistry:
             )
 
         if name == "run_command":
-            from agentd.tools.shell import run_command
-            raw_args = args.get("args", [])
-            cmd_args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
-            command = str(args.get("command", ""))
-            cwd = str(args.get("cwd", "")) or ""  # relative to shadow_root; "" = shadow_root
-            binary_name = Path(command).name  # basename used by binary-rule matching
-            if self._command_guard is not None:
-                # Sub-agent guards (the VCS guard, spec §4.6.6) see the exact line
-                # run_command would execute and refuse BEFORE any approval card.
-                from agentd.tools.shell import _build_shell_command_line, _split_command
-                line = _build_shell_command_line(
-                    *_split_command(command, cmd_args, self._real_workspace_path))
-                refusal = self._command_guard(line)
-                if refusal is not None:
-                    return ToolOutput(output=refusal, is_error=True)
-            if self._command_approval_callback is not None:
-                outcome = await self._command_approval_callback(command, cmd_args, cwd)
-                if not outcome.approved:
-                    cmdline = f"{command} {' '.join(cmd_args)}".strip()
-                    return ToolOutput(
-                        output=denial_text(
-                            outcome, subject=f"command `{cmdline}`",
-                            user_text=(f"Command rejected by user: {cmdline}"
-                                       ". Try a different approach (e.g. a static check).")),
-                        is_error=True,
-                    )
-            return await run_command(
-                command=command,
-                args=cmd_args,
-                shadow_root=self._shadow_root,
-                real_workspace_path=self._real_workspace_path,
-                cwd=cwd or None,
-                binary_name_override=binary_name,
-            )
+            prepared = await self.prepare_command(args)
+            return prepared if isinstance(prepared, ToolOutput) else await prepared()
 
         if name == "find_binary":
             from agentd.tools.env import find_binary
@@ -469,6 +433,50 @@ class ToolRegistry:
             return self._execute_query_graph(args)
 
         return ToolOutput(output=f"Error: unknown tool '{name}'", is_error=True)
+
+    async def prepare_command(self, args: dict[str, object]):
+        """Validate/gate before taking scheduler resources; run the approved arguments only."""
+        from agentd.tools.shell import run_command
+        raw_args = args.get("args", [])
+        cmd_args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
+        command = str(args.get("command", ""))
+        cwd = str(args.get("cwd", "")) or ""  # relative to shadow_root; "" = shadow_root
+        binary_name = Path(command).name  # basename used by binary-rule matching
+        if self._command_guard is not None:
+            # Sub-agent guards (the VCS guard, spec §4.6.6) see the exact line
+            # run_command would execute and refuse BEFORE any approval card.
+            from agentd.tools.shell import _build_shell_command_line, _split_command
+            line = _build_shell_command_line(
+                *_split_command(command, cmd_args, self._real_workspace_path))
+            refusal = self._command_guard(line)
+            if refusal is not None:
+                return ToolOutput(output=refusal, is_error=True)
+        if self._command_approval_callback is not None:
+            outcome = await self._command_approval_callback(command, cmd_args, cwd)
+            if not outcome.approved:
+                cmdline = f"{command} {' '.join(cmd_args)}".strip()
+                return ToolOutput(
+                    output=denial_text(
+                        outcome, subject=f"command `{cmdline}`",
+                        user_text=(f"Command rejected by user: {cmdline}"
+                                   ". Try a different approach (e.g. a static check).")),
+                    is_error=True, status="denied",
+                )
+        async def run():
+            # Approval/resource waits can outlive changes in a child's write guard.
+            if self._command_guard is not None:
+                refusal = self._command_guard(line)
+                if refusal is not None:
+                    return ToolOutput(output=refusal, is_error=True)
+            return await run_command(
+                command=command,
+                args=cmd_args,
+                shadow_root=self._shadow_root,
+                real_workspace_path=self._real_workspace_path,
+                cwd=cwd or None,
+                binary_name_override=binary_name,
+            )
+        return run
 
     def _execute_query_graph(self, args: dict[str, object]) -> ToolOutput:
         # Lazy import: graph_walker has its own cost, and the execution-loop

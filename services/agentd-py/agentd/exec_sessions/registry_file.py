@@ -1,6 +1,7 @@
 """Crash-reap registry (the agentd.lock pattern): pids on disk so a restarted
 backend can kill sessions a crashed predecessor leaked. Best-effort throughout —
 registry IO must never break a turn or startup."""
+
 from __future__ import annotations
 
 import json
@@ -23,17 +24,20 @@ class SessionRegistryFile:
         self._path = Path(path)
 
     def record(self, sessions: Iterable[Any]) -> None:
-        entries = [{
-            "session_id": s.session_id,
-            "pid": s.proc.pid,
-            "pgid": s.proc.pgid,
-            "thread_id": s.thread_id,
-            "command": s.command_line,
-            # Recorded separately: command_line joins with spaces, which is
-            # ambiguous when the executable path itself contains one.
-            "executable": s.executable,
-            "started_at": s.started_at,
-        } for s in sessions]
+        entries = [
+            {
+                "session_id": s.session_id,
+                "pid": s.proc.pid,
+                "pgid": s.proc.pgid,
+                "thread_id": s.thread_id,
+                "command": s.command_line,
+                # Recorded separately: command_line joins with spaces, which is
+                # ambiguous when the executable path itself contains one.
+                "executable": s.executable,
+                "started_at": s.started_at,
+            }
+            for s in sessions
+        ]
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
@@ -73,16 +77,34 @@ class SessionRegistryFile:
         try:
             live_cmd = subprocess.run(
                 ["ps", "-o", "command=", "-p", str(pid)],
-                capture_output=True, text=True, timeout=5, env=child_env()).stdout.strip()
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=child_env(),
+            ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             return 0
         # Basename-prefix match, both directions: a venv `python3.13` symlink
         # resolves to macOS's `.../MacOS/Python`, so neither full paths nor
         # exact basenames ever agree ("python3.13" vs "python").
         rec_base = Path(executable).name.lower()
-        live_base = Path(live_cmd.split(" ", 1)[0]).name.lower()
-        matched = bool(rec_base) and bool(live_base) and (
-            rec_base.startswith(live_base) or live_base.startswith(rec_base))
+        # ps can emit an unquoted executable path containing spaces. Match the
+        # resolved recorded path first; splitting that path loses its basename.
+        resolved = os.path.realpath(executable)
+        live_executable = next(
+            (
+                candidate
+                for candidate in (executable, resolved)
+                if live_cmd == candidate or live_cmd.startswith(candidate + " ")
+            ),
+            live_cmd.split(" ", 1)[0],
+        )
+        live_base = Path(live_executable).name.lower()
+        matched = (
+            bool(rec_base)
+            and bool(live_base)
+            and (rec_base.startswith(live_base) or live_base.startswith(rec_base))
+        )
         if not matched:
             return 0  # gone, or pid reused by something else — leave it alone
         try:

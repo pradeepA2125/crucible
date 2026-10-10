@@ -11,8 +11,7 @@ from typing import Literal
 
 from agentd.domain.models import AgentToolTrace
 
-# Matches CRUCIBLE_TOOL_RESULT_MAX_CHARS' default — enough output to read what
-# happened without bloating the chat DB (full output lives in artifacts).
+# UI preview only; model history/evidence uses a separate result budget.
 TOOL_EVENT_MAX_OUTPUT_CHARS = 4000
 
 ToolEventSource = Literal["explore", "execution", "planning"]
@@ -32,10 +31,12 @@ def trace_to_tool_events(
             "tool": call.tool_name,
             "args": call.arguments,
             "source": source,
-            "done": True,
+            "done": call.call_id in results_by_call,
         }
         if call.thought:
             event["thought"] = call.thought
+        if call.status:
+            event["status"] = call.status
         result = results_by_call.get(call.call_id)
         if result is not None:
             output = result.output

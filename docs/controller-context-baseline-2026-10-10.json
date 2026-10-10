@@ -1,0 +1,88 @@
+{
+  "total_logical_chars": 185974,
+  "components": [
+    {
+      "component": "payload.retrieval_seed",
+      "chars": 101195,
+      "percent": 54.41
+    },
+    {
+      "component": "system.tool_catalog",
+      "chars": 44883,
+      "percent": 24.13
+    },
+    {
+      "component": "system.other_system_blocks_unattributed",
+      "chars": 32561,
+      "percent": 17.51
+    },
+    {
+      "component": "payload.instruction",
+      "chars": 2843,
+      "percent": 1.53
+    },
+    {
+      "component": "response_schema",
+      "chars": 2296,
+      "percent": 1.23
+    },
+    {
+      "component": "payload.recalled_memories",
+      "chars": 1757,
+      "percent": 0.94
+    },
+    {
+      "component": "payload.conversation_history",
+      "chars": 192,
+      "percent": 0.1
+    },
+    {
+      "component": "payload.goal",
+      "chars": 148,
+      "percent": 0.08
+    },
+    {
+      "component": "payload.workspace_path",
+      "chars": 57,
+      "percent": 0.03
+    },
+    {
+      "component": "payload.budget_status",
+      "chars": 34,
+      "percent": 0.02
+    },
+    {
+      "component": "payload.framing",
+      "chars": 8,
+      "percent": 0.0
+    }
+  ],
+  "retrieval_parts": {
+    "repository_structure": 84985,
+    "file_outlines": 7642,
+    "file_contents": 18,
+    "planner_evidence": 7257,
+    "diagnostics_excerpt": 24,
+    "snapshot_stats": 82,
+    "graph_neighbor_files": 1162,
+    "framing": 8
+  },
+  "candidates": [
+    {
+      "change": "Compact catalog, retaining every tool/schema",
+      "saved_chars": 13318,
+      "percent": 7.16
+    },
+    {
+      "change": "Tree candidate: 300 entries / 16k serialized characters",
+      "saved_chars": 69174,
+      "percent": 37.2
+    },
+    {
+      "change": "Combined catalog and tree (disjoint components)",
+      "saved_chars": 82492,
+      "percent": 44.36
+    }
+  ],
+  "note": "Logical character attribution, not physical provider tokens or latency. Nested retrieval parts overlap payload.retrieval_seed. Old artifacts cannot separate individual system blocks. Removal candidates do not authorize dropping instructions or tools. Validate quality and cache behavior live."
+}

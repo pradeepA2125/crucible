@@ -50,6 +50,11 @@ def _safe(observer: ContextInputObserver | None, method: str, *args: Any) -> Non
 
 
 def begin_context(observer: ContextInputObserver | None, body: dict[str, Any]) -> None:
+    from agentd.performance import capturing, context_measurement
+
+    if capturing():
+        from agentd.context_metrics import physical_context
+        context_measurement(physical_context(body))
     if observer is None:
         return
     try:
@@ -62,6 +67,13 @@ def begin_context(observer: ContextInputObserver | None, body: dict[str, Any]) -
 
 
 def report_context(observer: ContextInputObserver | None, usage: Any, field: str) -> None:
+    from agentd.performance import capturing, context_measurement
+
+    if capturing():
+        raw = usage.get(field) if isinstance(usage, dict) else getattr(usage, field, None)
+        value = valid_input_tokens(raw)
+        if value is not None:
+            context_measurement({"layer": "reported", "input_tokens": value})
     if observer is None:
         return
     try:

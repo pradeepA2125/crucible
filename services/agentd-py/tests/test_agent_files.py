@@ -58,12 +58,12 @@ def test_yaml_list_fields_and_disallowed(tmp_path: Path) -> None:
     assert (d.skills, d.max_turns) == (("tdd", "debugging"), 12)
 
 
-def test_web_tools_have_no_mapping(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_web_tools_map_to_native_tools(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
         d = parse_agent_file(_write(
             tmp_path, "---\nname: w\ndescription: d\ntools: Read, WebFetch, WebSearch\n---\n"))
-    assert d is not None and d.tools == frozenset({"read_file"})
-    assert "WebFetch" in caplog.text and "WebSearch" in caplog.text
+    assert d is not None and d.tools == frozenset({"read_file", "web_fetch", "web_search"})
+    assert not caplog.text
 
 
 @pytest.mark.parametrize("raw,expected", [

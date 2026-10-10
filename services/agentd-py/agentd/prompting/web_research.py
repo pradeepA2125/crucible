@@ -72,6 +72,13 @@ Send only the minimum necessary query/URL; do not send secrets, confidential cod
 information. Respect approval denials and disabled tools; do not retry rejected calls or
 bypass restrictions with shell commands, MCP tools, another agent or a different URL.
 """
+    from agentd.tools.read_policy import adaptive_reads_enabled
+    if adaptive_reads_enabled():
+        text += (
+            "\nOnce fresh authoritative evidence covers the requested claims, answer. "
+            "Fetch additional sources for missing details, conflicts, or required corroboration; "
+            "do not keep searching or rereading sufficient evidence.\n"
+        )
     if ctx.has_team:
         text += """
 Share researched findings with source URLs and verification limits on the shared board.

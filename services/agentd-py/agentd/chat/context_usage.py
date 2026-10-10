@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-from time import monotonic
 from collections.abc import Callable
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Literal
 from uuid import uuid4
 
@@ -129,6 +129,11 @@ class ContextUsageTracker:
             self._capacity_tasks[identity] = loop.create_task(resolve())
         finally:
             self._refreshing = False
+
+    def capacity(self) -> tuple[int | None, str, str]:
+        """Cached runtime capacity/provenance only; no UI occupancy or chat-path network await."""
+        self.refresh_runtime()
+        return self._window, self._source, self._model
 
     def snapshot(self, thread: str) -> ContextUsage:
         self.refresh_runtime()

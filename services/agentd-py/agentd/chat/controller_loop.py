@@ -856,6 +856,8 @@ class ControllerLoop:
         self._iteration = 0
         self._force_final = False
         self._max_iters = 0
+        self._max_tool_calls = 0
+        self._executed_tool_calls = 0
 
     def mark_pills_boundary(self) -> None:
         """A durable message just landed in the transcript mid-turn — close the current
@@ -963,11 +965,182 @@ class ControllerLoop:
         if self._agent is not None:
             if self._iteration >= self._max_iters or self._force_final:
                 return ["report"]
-            return list(self._agent.allowed_types)
+            types = list(self._agent.allowed_types)
+            from agentd.tools.batching import batching_enabled
+            if batching_enabled() and "tool_call" in types:
+                types.insert(types.index("tool_call") + 1, "tool_calls")
+            if batching_enabled() and self._executed_tool_calls >= self._max_tool_calls:
+                types = [t for t in types if t not in {"tool_call", "tool_calls"}]
+            return types
         types = list(self._sm.allowed_types())
+        from agentd.tools.batching import batching_enabled
+        if batching_enabled() and "tool_call" in types:
+            types.insert(types.index("tool_call") + 1, "tool_calls")
         if self._sm.phase == "ACTIVE" and self._task_subsystem_enabled:
             types.append("propose_mode")
+        if batching_enabled() and self._executed_tool_calls >= self._max_tool_calls:
+            types = [t for t in types if t not in {"tool_call", "tool_calls"}]
         return types
+
+    def _tool_key(self, tool, args):
+        key = dedup_key(tool, args)
+        if tool == "read_file":
+            from pathlib import Path
+
+            from agentd.tools.arg_aliases import normalize_tool_args
+            path = str(normalize_tool_args(tool, args).get("path", ""))
+            try:
+                root = self._registry.read_root_for(path)
+                stat = (Path(root) / path).resolve().stat()
+                key += f":{root}:{stat.st_mtime_ns}:{stat.st_size}:{stat.st_ino}"
+            except (OSError, AttributeError):
+                pass
+        return key
+
+    async def _execute_batch(self, resp, calls, *, history, seen, iteration,
+                             plan_context, on_pills_update, retrieval_delta_cb, history_update_cb):
+        from uuid import uuid4
+
+        from agentd.tools.batching import Outcome, resources_for, run_batch, workspace_pool
+        from agentd.tools.registry import ToolOutput
+
+        batch_id = "b" + uuid4().hex
+        persisted = {**resp, "batch_id": batch_id}
+        history.append(assistant_turn(persisted))
+        indices = {}
+        slots = {}
+        for call in calls:
+            identity = f"{batch_id}_{call.id}"
+            indices[call.id] = len(self._calls) - self._pill_segment_start
+            self._calls.append(
+                ToolCall(
+                    call_id=identity,
+                    tool_name=call.tool,
+                    arguments=call.args,
+                    thought=str(resp.get("thought", "")) or None,
+                    status="pending",
+                )
+            )
+            slot = {"role": "tool_result", "tool": call.tool, "call_id": identity,
+                    "batch_id": batch_id, "id": call.id, "status": "pending",
+                    "is_error": True, "content": "Not completed: pending."}
+            if call.provider_call_id:
+                slot["provider_call_id"] = call.provider_call_id
+            history.append(slot)
+            slots[call.id] = slot
+            self._broadcaster.broadcast(self._channel_id, {
+                "type": "tool_call", "payload": {"tool": call.tool, "args": call.args,
+                "thought": str(resp.get("thought", "")), "call_index": indices[call.id]}})
+        persist_lock = asyncio.Lock()
+        changes = []
+        execution_recorded = set()
+
+        async def update(outcome: Outcome):
+            async with persist_lock:
+                identity = f"{batch_id}_{outcome.call.id}"
+                recorded = next(c for c in self._calls if c.call_id == identity)
+                recorded.status = outcome.state
+                if outcome.state == "running" and identity not in execution_recorded:
+                    execution_recorded.add(identity)
+                    self._executed_tool_calls += 1
+                    plan_context["tool_calls_executed"] = self._executed_tool_calls
+                if outcome.output is not None:
+                    out = outcome.output
+                    slots[outcome.call.id].update(content=out.output, is_error=out.is_error,
+                                                  status=outcome.state)
+                    if out.delivered_read is not None:
+                        from dataclasses import asdict
+                        slots[outcome.call.id]["delivered_read"] = asdict(out.delivered_read)
+                    result = ToolResult(call_id=identity, tool_name=outcome.call.tool,
+                        output=out.output, is_error=out.is_error, status=outcome.state)
+                    previous = next(
+                        (i for i, r in enumerate(self._results) if r.call_id == identity), None
+                    )
+                    if previous is None:
+                        self._results.append(result)
+                    else:
+                        self._results[previous] = result
+                    self._broadcaster.broadcast(self._channel_id, {"type": "tool_result",
+                        "payload": {"call_index": indices[outcome.call.id], "output": out.output,
+                                    "is_error": out.is_error, "status": outcome.state}})
+                    if not out.is_error:
+                        self._note_delegation(outcome.call.tool, outcome.call.args, out.output)
+                        if plan_context.get("notice_turn"):
+                            self._note_notice_action(outcome.call.tool, outcome.call.args)
+                        changes.extend(out.workspace_changes)
+                    if outcome.call.tool == "write_todos" and not out.is_error:
+                        plan_context.pop("pending_reconcile_files", None)
+                        plan_context.pop("reconcile_item", None)
+                    self._thinking.append(f"{outcome.call.tool} — {outcome.state}")
+                if history_update_cb:
+                    history_update_cb(history)
+                if on_pills_update:
+                    try:
+                        pills = trace_to_tool_events(AgentToolTrace(step_id="chat",
+                            calls=self._calls[self._pill_segment_start:],
+                            results=self._results[self._pill_segment_start:]), "execution")
+                        await on_pills_update(
+                            pills, list(self._thinking[self._thinking_segment_start :])
+                        )
+                    except Exception:
+                        logger.debug("[controller] batch pill persist failed", exc_info=True)
+
+        async def prepare(call):
+            self._registry.validate_call(call.tool, call.args)
+            correction = (_decide_state_change_correction(
+                {"type": "tool_call", "tool": call.tool}, self._sm.phase)
+                or _permission_correction({"tool": call.tool}, "tool_call", self._render_ctx))
+            if correction:
+                return ToolOutput(correction, True)
+            key = self._tool_key(call.tool, call.args)
+            if key in seen:
+                return ToolOutput(f"DUPLICATE BLOCKED (iter {seen[key]}); reuse visible evidence "
+                                  "or request the missing portion.", True)
+            repeat = self._notice_repeat(call.tool, call.args, plan_context)
+            if repeat:
+                return ToolOutput(repeat, True)
+            seen[key] = iteration + 1
+            prepared = await self._registry.prepare(call.tool, call.args)
+            if isinstance(prepared, ToolOutput):
+                return prepared
+
+            async def checked_run():
+                self._registry.validate_call(call.tool, call.args)
+                correction = (_decide_state_change_correction(
+                    {"type": "tool_call", "tool": call.tool}, self._sm.phase)
+                    or _permission_correction(
+                        {"tool": call.tool}, "tool_call", self._render_ctx))
+                if correction:
+                    return ToolOutput(correction, True)
+                return await prepared()
+
+            return checked_run
+
+        try:
+            await run_batch(
+                calls,
+                prepare=prepare,
+                resources=lambda c: resources_for(
+                    c, self._registry.shadow_root, self._registry.real_root
+                ),
+                pool=workspace_pool(self._registry.real_root),
+                update=update,
+                budget=int(
+                    plan_context.get(
+                        "tool_result_budget", plan_context.get("batch_result_budget", 64_000)
+                    )
+                ),
+            )
+        finally:
+            if changes:
+                seen.clear()
+                self._edit_applied = True
+        if changes and retrieval_delta_cb:
+            delta = await retrieval_delta_cb(list(dict.fromkeys(changes)))
+            if delta:
+                history.append(
+                    {"role": "tool_result", "tool": "retrieval_refresh", "content": delta}
+                )
 
     def force_final(self) -> None:
         """Make the next iteration the final one (spec v2 §8.3 deadline, §3.11 budget): the
@@ -1087,6 +1260,7 @@ class ControllerLoop:
         retrieval_delta_cb: RetrievalDeltaCb | None = None,
         on_pills_update: PillsUpdateCb | None = None,
         iteration_cb: Callable[[list[dict[str, object]]], None] | None = None,
+        history_update_cb: Callable[[list[dict[str, object]]], None] | None = None,
         inbox_drain: Callable[[], list[InboxItem]] | None = None,
         report_guard: Callable[[], str | None] | None = None,
         terminal_guard: Callable[[], str | None] | None = None,
@@ -1110,6 +1284,10 @@ class ControllerLoop:
         consecutive_malformed = 0
         plan_context = {**plan_context, "max_iters": max_iters}
         self._max_iters = max_iters
+        raw_budget = plan_context.get("max_tool_calls", max_iters)
+        self._max_tool_calls = (
+            raw_budget if type(raw_budget) is int and raw_budget > 0 else max_iters
+        )
         if self._agent is not None:
             # The Plan 1A AGENT payload branch reads this for its read-only hints.
             plan_context["agent_readonly"] = self._agent.permission == "plan"
@@ -1120,6 +1298,7 @@ class ControllerLoop:
         # Tool trace + thinking accumulated across the turn → persisted as durable
         # pills + thinking entries (reload). Live SSE copies die on reload.
         self._calls = []
+        self._executed_tool_calls = 0
         self._results = []
         self._thinking = []
         self._pill_segment_start = 0
@@ -1144,6 +1323,7 @@ class ControllerLoop:
                 retrieval_delta_cb=retrieval_delta_cb,
                 on_pills_update=on_pills_update,
                 iteration_cb=iteration_cb,
+                history_update_cb=history_update_cb,
                 inbox_drain=inbox_drain,
                 report_guard=report_guard,
                 terminal_guard=terminal_guard,
@@ -1198,6 +1378,7 @@ class ControllerLoop:
         retrieval_delta_cb: RetrievalDeltaCb | None,
         on_pills_update: PillsUpdateCb | None = None,
         iteration_cb: Callable[[list[dict[str, object]]], None] | None = None,
+        history_update_cb: Callable[[list[dict[str, object]]], None] | None = None,
         inbox_drain: Callable[[], list[InboxItem]] | None = None,
         report_guard: Callable[[], str | None] | None = None,
         terminal_guard: Callable[[], str | None] | None = None,
@@ -1376,6 +1557,7 @@ class ControllerLoop:
                 **({"consolidate": False} if self._agent is not None else {}))
             history[:] = _prep.history
             if _prep.compacted:
+                seen.clear()  # evidence was removed; allow the exact necessary reread
                 # The pinned message_count no longer refers to this history.
                 self._observed_prompt = None
                 if self._context_invalidate is not None:
@@ -1553,6 +1735,13 @@ class ControllerLoop:
                 # retry would silently rewind the turn's counter.
                 _fold_call_tokens_into_turn()
 
+            from agentd.tools.batching import batching_enabled
+            if batching_enabled() and resp.get("type") == "tool_call":
+                fields = {k: v for k, v in resp.items() if k in {
+                    "tool", "args", "id", "depends_on", "after", "execution", "provider_call_id"}}
+                fields.setdefault("id", f"single_{iteration}")
+                resp = {**{k: v for k, v in resp.items() if k not in fields},
+                        "type": "tool_calls", "calls": [fields]}
             atype = str(resp.get("type", ""))
             logger.info("[controller] iter=%d phase=%s action=%s", iteration, self._sm.phase, atype)
             # Drain any salvage notice BEFORE dispatching: the model must see that its
@@ -1586,6 +1775,24 @@ class ControllerLoop:
                     resp, atype, seen_notes, self._render_ctx,
                     notice_turn=bool(plan_context.get("notice_turn")))
             )
+            batch_calls = None
+            if atype == "tool_calls" and correction is None:
+                from agentd.tools.batching import validate_calls
+                try:
+                    if any(value not in (None, "", [], {}) for key, value in resp.items()
+                           if key not in {"type", "thought", "calls"}):
+                        raise ValueError("tool_calls cannot be mixed with another action")
+                    def batch_guard(node):
+                        self._registry.validate_call(node["tool"], node["args"])
+                        return (_reserved_tool_name_correction(node, "tool_call", self._render_ctx)
+                            or _decide_state_change_correction(node, self._sm.phase)
+                            or _permission_correction(node, "tool_call", self._render_ctx)
+                            or _empty_action_correction(node, "tool_call"))
+                    remaining = self._max_tool_calls - self._executed_tool_calls
+                    batch_calls = validate_calls(resp.get("calls"), self._registry.definitions(),
+                                                 remaining=remaining, guard=batch_guard)
+                except (ValueError, TypeError) as exc:
+                    correction = f"Invalid tool batch; no members executed: {exc}"
             if correction is not None:
                 if atype == "propose_mode":
                     logger.warning(
@@ -1636,8 +1843,37 @@ class ControllerLoop:
                     {**resp, "note": _normalize_progress_note(resp)}
                     if atype == "progress" else resp
                 )
-                history.append(assistant_turn(persisted))
-                history.append({"role": "tool_result", "tool": "", "content": correction})
+                if atype == "tool_calls":
+                    nodes = resp.get("calls", [])
+                    nodes = nodes if isinstance(nodes, list) else []
+                    if nodes and all(isinstance(n, dict) and isinstance(n.get("args"), dict)
+                                     and isinstance(n.get("tool"), str) for n in nodes):
+                        from uuid import uuid4
+                        invalid_id = "invalid_" + uuid4().hex
+                        history.append(assistant_turn({**persisted, "batch_id": invalid_id}))
+                        for n in nodes:
+                            history.append(
+                                {
+                                    "role": "tool_result",
+                                    "tool": n["tool"],
+                                    "batch_id": invalid_id,
+                                    "call_id": f"{invalid_id}_{n.get('id', '')}",
+                                    **(
+                                        {"provider_call_id": n["provider_call_id"]}
+                                        if n.get("provider_call_id")
+                                        else {}
+                                    ),
+                                    "status": "blocked",
+                                    "is_error": True,
+                                    "content": correction,
+                                }
+                            )
+                    else:
+                        history.append({"role": "assistant", "content": "{}"})
+                        history.append({"role": "tool_result", "tool": "", "content": correction})
+                else:
+                    history.append(assistant_turn(persisted))
+                    history.append({"role": "tool_result", "tool": "", "content": correction})
                 continue
             # Captured BEFORE the reset so the progress branch can restore it — a note
             # is not evidence of progress, so it must not zero a malformed streak.
@@ -1725,6 +1961,15 @@ class ControllerLoop:
                     ),
                 })
                 continue
+            if atype == "tool_calls":
+                if iteration >= max_iters:
+                    return ControllerOutcome(
+                        kind="answer", text="(step budget exhausted)", history=history
+                    )
+                await self._execute_batch(resp, batch_calls, history=history, seen=seen,
+                    iteration=iteration, plan_context=plan_context, on_pills_update=on_pills_update,
+                    retrieval_delta_cb=retrieval_delta_cb, history_update_cb=history_update_cb)
+                continue
             if atype == "tool_call":
                 if iteration >= max_iters:
                     return ControllerOutcome(
@@ -1732,7 +1977,7 @@ class ControllerLoop:
                 tool = str(resp.get("tool", ""))
                 raw_args = resp.get("args")
                 args: dict[str, object] = raw_args if isinstance(raw_args, dict) else {}
-                key = dedup_key(tool, args)
+                key = self._tool_key(tool, args)
                 if key in seen:
                     history.append({"role": "assistant", "content": "{}"})
                     history.append({
@@ -1765,8 +2010,16 @@ class ControllerLoop:
                     "type": "tool_call",
                     "payload": {"tool": tool, "thought": str(resp.get("thought", "")),
                                 "args": args, "call_index": call_index}})
-                with span(f"tool.{tool}"):
-                    out = await self._registry.execute(tool, args)
+                from agentd.tools.batching import output_budget
+                from agentd.tools.read_policy import adaptive_reads_enabled
+                token = output_budget.set(int(plan_context.get("tool_result_budget", 16_000))) \
+                    if adaptive_reads_enabled() else None
+                try:
+                    with span(f"tool.{tool}"):
+                        out = await self._registry.execute(tool, args)
+                finally:
+                    if token is not None:
+                        output_budget.reset(token)
                 # The model reconciled the ledger — clear the post-edit checkpoint marker so
                 # the next turn's instruction stops naming the (now-answered) edit/item (Q1).
                 if tool == "write_todos":
@@ -1816,7 +2069,11 @@ class ControllerLoop:
                     except Exception:
                         logger.debug("[controller] inflight pill persist failed", exc_info=True)
                 history.append(assistant_turn(resp))
-                history.append({"role": "tool_result", "tool": tool, "content": out.output})
+                result_entry = {"role": "tool_result", "tool": tool, "content": out.output}
+                if out.delivered_read is not None:
+                    from dataclasses import asdict
+                    result_entry["delivered_read"] = asdict(out.delivered_read)
+                history.append(result_entry)
                 if out.workspace_changes:
                     # Another agent promoted files on this agent's behalf (a dispatch,
                     # spec §6.4): the same bookkeeping as this loop's own accepted edit —

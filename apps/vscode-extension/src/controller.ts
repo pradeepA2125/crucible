@@ -1885,9 +1885,11 @@ export class CrucibleController {
   }
 
   private forwardToolResult(source: "explore" | "execution" | "planning", payload: Record<string, unknown>): void {
-    const id = this.openToolEvent[source];
+    const id = typeof payload["call_index"] === "number"
+      ? payload["call_index"] as number
+      : this.openToolEvent[source];
     if (id === undefined) return; // result without a call (replay edge) — drop
-    delete this.openToolEvent[source];
+    if (this.openToolEvent[source] === id) delete this.openToolEvent[source];
     this.ui.appendToolResult(id, (payload["output"] as string) ?? "", payload["is_error"] === true);
   }
 

@@ -89,6 +89,7 @@ class ToolCall(BaseModel):
     # The model's free-text reasoning for this call — surfaced in the persisted
     # chat tool pill; the live SSE event already carries it.
     thought: str | None = None
+    status: str | None = None
 
 
 class ToolResult(BaseModel):
@@ -96,6 +97,7 @@ class ToolResult(BaseModel):
     tool_name: str
     output: str
     is_error: bool = False
+    status: str | None = None
 
 
 class AgentToolTrace(BaseModel):

@@ -1,14 +1,20 @@
 # Controller latency implementation plan
 
-**Goal:** Reduce model round trips and unnecessary context while preserving correctness, approvals, edit safety, and support for smaller models. Implement priorities **1 → 2 → 3**, measuring each independently before combining them. This document is a plan; implementation has not started. The agent-team review is complete. The user subsequently expanded Priority 1 to general schema-level tool calls and dependency-aware execution; this supersedes the initial read-only facade recommendation. See [team review](../../controller-latency-team-review-2026-10-10.md).
+**Goal:** Reduce model round trips and unnecessary context while preserving correctness, approvals, edit safety, and support for smaller models. Implement priorities **1 → 2 → 3**, measuring each independently before combining them. Implementation is in progress on `codex/controller-latency`; the first rollout is opt-in. The agent-team review is complete. The user subsequently expanded Priority 1 to general schema-level tool calls and dependency-aware execution; this supersedes the initial read-only facade recommendation. See [team review](../../controller-latency-team-review-2026-10-10.md).
 
 **Baseline:** [Measured local smoke](../../controller-performance-smoke-2026-10-10.md) and [profiler usage](../../controller-performance.md). The Node.js question took 69.812s, six model requests, one search, three fetches, and one skill read. Provider requests plus retry backoff accounted for 89.1%; prompt/payload construction took approximately 33ms. Later requests had 91–95% cached input. This is one diagnostic run, not a controlled comparison with Codex.
+
+## Implementation checkpoint (2026-10-10)
+
+General tool graphs, native streaming/replay, workspace leases, approval preparation, durable per-call routing, process cancellation, adaptive bounded reads, content-free context attribution, and compact tree/catalog policies are implemented. Three independent managed settings default off. See [implementation measurements](../../controller-latency-implementation-2026-10-10.md).
+
+Controlled five-run fixtures establish command overlap and dependency ordering. They use real subprocesses with simulated model/network delays, so they do not establish live-provider latency or cache gains. Full live main/child/team comparisons, context-model coverage, richer read-overlap telemetry, and promotion of defaults remain rollout work. Optional lazy retrieval/catalog discovery and static-rule deletion remain deferred until measurements justify them.
 
 ## User observations to preserve
 
 The user reports that early harness development imposed small read limits and truncation to support smaller models, and prompts specifically encouraged reading small parts. This can force adjacent or overlapping reads and add a model round trip for each fragment. The optimization must address **both execution limits and model instructions**, rather than only changing a numeric cap or enabling parallelism.
 
-Current repository evidence confirms these restrictions are still present:
+Repository evidence at planning time confirmed these restrictions (the implementation below changes them):
 
 - `agentd/tools/files.py`: up to 2,000 selected lines, followed by a 100,000-character cap.
 - `agentd/tools/registry.py`: applies a second 500-output-line cap after the file reader; its tool description advertises 500 lines. Its truncation count describes the already bounded output, not necessarily the actual file length.
@@ -18,7 +24,7 @@ Current repository evidence confirms these restrictions are still present:
 - The legacy tool loop independently slices model-facing results using `CRUCIBLE_TOOL_RESULT_MAX_CHARS` (default 100,000). The controller currently appends `out.output` to model history directly.
 - `agentd/chat/tool_events.py`: separately truncates persisted UI previews to 4,000 characters. That preview is not the controller's model-facing history. Its comment about matching the model result default is stale; changing preview size alone will not reduce model rereads.
 
-These are verified current behaviors. The historical reason for introducing them is the user's account; the additional latency caused by fragmented reads still needs a coding-task baseline.
+These were verified baseline behaviors. The historical reason for introducing them is the user's account; the additional latency caused by fragmented reads still needs a coding-task baseline.
 
 All `agentd/` and Python test paths below are relative to `services/agentd-py/`; extension/UI paths are relative to `apps/vscode-extension/`.
 
@@ -38,10 +44,10 @@ All `agentd/` and Python test paths below are relative to `services/agentd-py/`;
 **Files:** `agentd/performance.py`, `scripts/profile-controller.py`, `agentd/chat/controller.py`, `agentd/reasoning/engine.py`, focused performance tests; new benchmark documentation/runner under `scripts/` as needed.
 
 - [x] Review the plan with batching/replay, file-read/small-model, and context/measurement reviewers; reconcile their cross-review findings.
-- [ ] Add numeric per-request context accounting: system prompt, tool catalog/schema, retrieval seed, active skills, history/results, and dynamic instructions. Label estimates versus provider-reported token counts. Record counts/sizes only, not content. Measure the final physical request after native session preparation separately from the logical engine payload: appended dynamic tails can accumulate even when the logical payload contains only the current tail.
-- [ ] Extend timing to retrieval and controller setup before `ControllerLoop.run`; the current 69.812s capture excludes those steps. Keep controller-only and end-to-end backend measurements distinct.
+- [x] Add numeric per-request context accounting: system prompt, tool catalog/schema, retrieval seed, active skills, history/results, and dynamic instructions. Label estimates versus provider-reported token counts. Record counts/sizes only, not content. Measure the final physical request after native session preparation separately from the logical engine payload: appended dynamic tails can accumulate even when the logical payload contains only the current tail.
+- [x] Extend timing to retrieval and controller setup before `ControllerLoop.run`; the current 69.812s capture excludes those steps. Keep controller-only and end-to-end backend measurements distinct.
 - [ ] Record model requests, retries, tool calls, file paths/ranges through opaque stable identifiers, delivered lines/characters, truncations, overlap/repeated-read counts, and concurrency high-water marks. Keep source text and private paths out of performance records; normalize profiler function paths to repository-relative or library identifiers.
-- [ ] Introduce the immutable delivered-read metadata and deterministic per-call/aggregate budget seam needed by Priority 1. Keep existing caps initially; changing the read limits and instructions remains Priority 2. Separate disk-revision freshness from evidence actually delivered to the model.
+- [x] Introduce the immutable delivered-read metadata and deterministic per-call/aggregate budget seam needed by Priority 1. Keep existing caps initially; changing the read limits and instructions remains Priority 2. Separate disk-revision freshness from evidence actually delivered to the model.
 - [ ] Establish fixed fixtures/scenarios: the Node.js question; a code explanation involving several independent files; two independent search subprocesses to prove real overlap; a change involving a long function beyond line 500; a small-context-model version of the coding task.
 - [ ] Use deterministic fake transports/tools for scheduling assertions, and repeated live runs for latency. Keep model, effort, provider, workspace snapshot, task, and approval policy fixed; record cache state and retries separately. Aim for at least five live runs per comparison when feasible, reporting median and range rather than claiming reliable p95 from a tiny sample.
 - [ ] Establish answer/change quality checks before optimization: required evidence, citations, correct code change, relevant checks passing, and no omitted required reads. Use isolated benchmark workspaces for edit scenarios.
@@ -67,18 +73,18 @@ All `agentd/` and Python test paths below are relative to `services/agentd-py/`;
 - [ ] Implement a deterministic DAG ready queue over the existing permission-filtered registry. Known-argument chains such as install → build → test execute without intermediate model turns; failed/denied predecessors block success-dependent descendants while unrelated siblings continue.
 - [ ] Run independent commands, searches, and network operations concurrently within existing approvals, origin/provider limits, deadlines, and shared execution limits. Do not make a read-tool allowlist the release boundary. Async signatures alone do not make synchronous file readers overlap.
 - [ ] Add harness-owned scheduling/resource metadata. Serialize shared Git/environment/output/port/index/state resources; apply leases to singleton calls and participating children too. Resolve both shadow execution paths and real workspace environments. Model hints cannot remove known conflicts or grant permissions. Unknown tools remain valid batch members with conservative serial scheduling.
-- [ ] Default unclassified commands to serial in `auto`; support explicit independent `parallel` commands subject to known conflict/exclusive-operation checks. Different CWDs do not prove isolation. Resource exclusion does not imply success dependencies; those require graph edges.
+- [x] Default unclassified commands to serial in `auto`; support explicit independent `parallel` commands subject to known conflict/exclusive-operation checks. Different CWDs do not prove isolation. Resource exclusion does not imply success dependencies; those require graph edges.
 - [ ] Resolve individual approvals before worker/lease acquisition, without blocking approved independent siblings. Track pending approval counts and active members so one completed child approval does not falsely clear another pending gate. Recheck mutable guards immediately before execution. Preserve existing approval policy.
-- [ ] Teach main/child/team models to batch independent calls, declare known execution dependencies, and wait for results when arguments or newly discovered instructions determine subsequent work. Reading a new skill then issuing speculative commands in the same batch does not establish that its guidance was followed. No result interpolation/expression language in version one.
+- [x] Teach main/child/team models to batch independent calls, declare known execution dependencies, and wait for results when arguments or newly discovered instructions determine subsequent work. Reading a new skill then issuing speculative commands in the same batch does not establish that its guidance was followed. No result interpolation/expression language in version one.
 
 ### Task 1.3: per-call results, cancellation, UI, and evidence
 
-- [ ] Reserve stable call indices and persist the entire issued group before dispatch. Emit individual call/result states and join by identity, not completion order or mutable history length. Fix main extension result routing, which currently ignores `call_index` in favor of `openToolEvent[source]`.
+- [x] Reserve stable call indices and persist the entire issued group before dispatch. Emit individual call/result states and join by identity, not completion order or mutable history length. Fix main extension result routing, which currently ignores `call_index` in favor of `openToolEvent[source]`.
 - [ ] Persist each completed result promptly; keep explicit pending/approval/running/success/error/denied/timeout/blocked/cancelled/interrupted states. Fix calls without outputs currently marked done. Return a complete status/result for every emitted provider call in original order.
-- [ ] On stop, cancel approval waits and queued members, kill/reap command process groups and search subprocesses, preserve completed evidence and partial history, then propagate `CancelledError`. Shell timeout cleanup exists, but explicit cancellation cleanup is missing. Do not start diagnostic `after` members after cancellation.
-- [ ] On reload, retain completed evidence and mark abandoned members interrupted without rerunning commands/mutations. Close provider history slots truthfully for continuation. Cover main/child durable `partial_history` paths.
+- [x] On stop, cancel approval waits and queued members, kill/reap command process groups and search subprocesses, preserve completed evidence and partial history, then propagate `CancelledError`. Shell timeout cleanup exists, but explicit cancellation cleanup is missing. Do not start diagnostic `after` members after cancellation.
+- [x] On reload, retain completed evidence and mark abandoned members interrupted without rerunning commands/mutations. Close provider history slots truthfully for continuation. Cover main/child durable `partial_history` paths.
 - [ ] Bound output capture as well as model delivery; concurrent subprocess pipes must not multiply unbounded memory use. Keep status/omission markers and immutable delivered-range metadata inside deterministic aggregate budgets.
-- [ ] Update planner evidence extraction and existing compaction to join grouped calls/results by ID; cancelled, blocked, and unperformed members are not read evidence. Keep UI preview limits distinct from model history.
+- [x] Update planner evidence extraction and existing compaction to join grouped calls/results by ID; cancelled, blocked, and unperformed members are not read evidence. Keep UI preview limits distinct from model history.
 
 **Meaningful checks:** contract/schema/native-stream/history/session tests; scheduler/registry/permission tests; command/search process cleanup; controller durable-history/planner/stop tests; main and child event routing/typechecks; prompt goldens. Use barriers, not fragile timing thresholds. Cover independent commands overlapping, dependent command success/failure and diagnostics, conflicting resources, approval waits/denials, graph validation, mixed actions, budgets, interleaved streaming, out-of-order results, cancellation with process grandchildren, restart without replay, capability fallback, and legacy single calls.
 
@@ -90,9 +96,9 @@ All `agentd/` and Python test paths below are relative to `services/agentd-py/`;
 
 ### Task 2.1: one bounded read policy, rather than stacked caps
 
-- [ ] Introduce a shared read/result budget policy passed to the actual reader and model-history injection. Remove the registry's second 500-line slice. Do not substitute an unconditional unlimited read.
+- [x] Introduce a shared read/result budget policy passed to the actual reader and model-history injection. Remove the registry's second 500-line slice. Do not substitute an unconditional unlimited read.
 - [ ] Use `ProviderRuntime.context_capacity` with its configured/catalog/unknown provenance, reserved generation headroom, and conservative estimates of the current final physical request. The latest MAIN context-usage UI snapshot is not the occupancy of a pending batch or child request. Begin with deterministic budgets; make them adaptive only after physical accounting is reliable. Use a conservative fallback when capacity is unknown; retain a hard character/byte ceiling for pathological files.
-- [ ] For initial rollout, permit whole files that fit the effective budget and explicit ranges larger than 500 lines when they fit. Keep the existing 2,000-line/100,000-character values as initial hard ceilings until benchmark evidence justifies increasing them. Apply smaller effective budgets to smaller contexts.
+- [x] For initial rollout, permit whole files that fit the effective budget and explicit ranges larger than 500 lines when they fit. Keep the existing 2,000-line/100,000-character values as initial hard ceilings until benchmark evidence justifies increasing them. Apply smaller effective budgets to smaller contexts.
 - [ ] Bound input file reading separately: the current reader loads the entire file before applying output limits. Add an input byte ceiling or bounded streaming strategy; output caps alone do not bound memory.
 - [ ] Enforce budgets while delivering complete numbered lines. Report actual file line count, requested range, delivered range, omitted range, and truncation reason. Avoid a misleading total calculated after an earlier cap or silent mid-line cuts.
 - [ ] Preserve path traversal protections, shadow/live-root behavior, read observation, and edit safety. Do not count content omitted by truncation as evidence the model received. Fix empty/out-of-range reads currently triggering a successful path-only observation; do not equate file revision freshness with visible line coverage.
@@ -112,7 +118,7 @@ All `agentd/` and Python test paths below are relative to `services/agentd-py/`;
 - [ ] Replace blanket duplicate corrections with precise guidance about already-visible versus missing content. Do not return "already read" when the source is stale or no longer visible to the model. Never infer an unread region was seen from a path-only watermark.
 - [ ] Avoid automatically rereading overlapping ranges when one broader read can supply the complete relevant section. Filesystem caching alone is not success: the target is fewer model/tool cycles.
 - [ ] Audit routine `using-superpowers`/general workflow activation. Prefer the existing persisted activation and forced-seeding mechanisms. The parent replaces its active skill while children accumulate theirs; generic preloading must not evict a specialized workflow or create duplicate bodies. Reuse an already activated skill without an extra tool cycle when appropriate. Keep specialized and user-requested skill requirements intact; do not remove skill semantics merely to improve a benchmark.
-- [ ] Add a research stopping instruction: answer once fresh authoritative evidence satisfies the requested claims; fetch additional sources when needed for gaps or conflicts. Preserve uncertainty-driven search and source grounding. Do not hardcode the benchmark answer or globally skip fetching.
+- [x] Add a research stopping instruction: answer once fresh authoritative evidence satisfies the requested claims; fetch additional sources when needed for gaps or conflicts. Preserve uncertainty-driven search and source grounding. Do not hardcode the benchmark answer or globally skip fetching.
 
 **Meaningful checks:** file/registry/tool prompt tests plus new budget/truncation/range tests; read-before-edit and duplicate-after-edit tests; legacy loop/verification tests; prompt goldens for main/child/team; skills and web research prompt tests. Cover a requested 900-line range, a relevant function beyond line 500, very long individual lines, oversized input files, empty/out-of-range reads, small-context fallback, aggregate batch budgets, edits invalidating prior evidence, and missing/compacted evidence.
 
@@ -122,12 +128,18 @@ All `agentd/` and Python test paths below are relative to `services/agentd-py/`;
 
 **Primary files:** `agentd/reasoning/engine.py`, `agentd/chat/controller_prompts.py`, `agentd/chat/controller.py`, `agentd/providers/openai_native.py`, skill catalog/config, MCP tool-source catalog, and existing context/retrieval/history seams discovered during the accounting task.
 
-### Task 3.0: compact known bulk before complex context redesign
+### Task 3.0: measure marginal savings, then compact meaningful bulk
 
-- [ ] Add deterministic entry and serialized-character caps to the repository structure tree, which currently has only a depth limit. Emit explicit omitted-directory/entry markers and retain directory tools for expansion.
-- [ ] Exclude generated caches/worktrees/artifacts through the existing ignore policy or explicit workspace configuration. Do not globally exclude legitimate source/test directories merely because the benchmark had generated fixtures under `workspaces/`.
-- [ ] Apply the new compact seed policy to new threads. Preserve existing pinned retrieval seeds byte-for-byte until the established compaction/refresh flow explicitly replaces their evidence.
-- [ ] Serialize the embedded tool catalog compactly while preserving every available tool/schema. Measure this cheap change before introducing lazy tool discovery or changing native tool exposure.
+User direction: break down each prompt/context block and measure its contribution before changing it. Report absolute characters/estimated tokens, percentage of the final physical request, and marginal room recovered by each candidate. Distinguish meaningful savings from negligible ones; preserve necessary instructions and validate quality/cache reuse. The [retained baseline attribution](../../controller-context-baseline-2026-10-10.md) identifies initial candidates, but does not establish latency gains.
+
+- [ ] Capture runtime sizes for core rules, embedded tool catalog, project instructions, skills catalog/bodies, child/persona/team guidance, MCP/session/dispatch/memory/web guidance, retrieval subfields, history/results, dynamic instructions, and native schemas. Keep counts content-free and nested contributions non-additive.
+- [ ] Compare candidates individually, then combined, with final physical request estimates, actual provider usage/cache counts, and matched quality checks. Do not delete low-volume rules simply because they are easy to shorten.
+
+
+- [x] Add deterministic entry and serialized-character caps to the repository structure tree, which currently has only a depth limit. Emit explicit omitted-directory/entry markers and retain directory tools for expansion.
+- [x] Exclude generated caches/worktrees/artifacts through the existing ignore policy or explicit workspace configuration. Do not globally exclude legitimate source/test directories merely because the benchmark had generated fixtures under `workspaces/`.
+- [x] Apply the new compact seed policy to new threads. Preserve existing pinned retrieval seeds byte-for-byte until the established compaction/refresh flow explicitly replaces their evidence.
+- [x] Serialize the embedded tool catalog compactly while preserving every available tool/schema. Measure this cheap change before introducing lazy tool discovery or changing native tool exposure.
 - [ ] Re-measure context size, requests, quality, and cache behavior before moving to the more invasive tasks below. Their need must be established by remaining measurable bulk.
 
 **Evidence:** The earlier identical-question Node smoke (13:32:59, not the later 69.812s profiled turn) contained 103,442 serialized characters of retrieval seed, including a 1,773-entry / 86,734-character tree. Its 48-tool catalog occupied 44,883 pretty-printed characters versus 32,947 compact characters. See the team review for the exact artifact and limits of this attribution.
@@ -153,7 +165,7 @@ All `agentd/` and Python test paths below are relative to `services/agentd-py/`;
 - [ ] Remove duplicate wrappers and superseded evidence where safe; preserve distinct call IDs and matching tool outputs. Avoid aggressive summarization that erases source details needed for an edit or citation.
 - [ ] Reuse the existing controller-loop compaction and recovery mechanism. Validate its evidence/revision metadata integration before changing history; do not introduce a second retention subsystem. Keep original evidence recoverable and teach the model how to obtain missing regions without range-shifting loops.
 - [ ] Keep static content before dynamic content and preserve append-only history/session inputs. Compare cached-token ratios and first-content latency before/after; current 91–95% cache reuse should not be accidentally lost.
-- [ ] Fix stale comments/docs about preview/model limits so future changes operate on the correct layer.
+- [x] Fix stale comments/docs about preview/model limits so future changes operate on the correct layer.
 
 **Meaningful checks:** context-accounting tests, main/child/team prompt goldens, skill/MCP visibility tests, provider session/native history fixtures, durable history/stop/rewind tests, retrieval-seed persistence, deferred retrieval across turns/restart, and small-context recovery scenarios. Confirm code-specific questions still retrieve/read actual evidence and explicitly invoked tools/skills remain discoverable.
 

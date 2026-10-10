@@ -694,12 +694,16 @@ class ToolLoop:
                                 feedback = (
                                     f"Patch FAILED: {error_msg}\n"
                                     "The search text does not exist in the file.\n"
-                                    + _anchor_failure_hint(error_msg) + "\n"
+                                    + _anchor_failure_hint(error_msg)
+                                    + "\n"
                                     "DO NOT re-emit immediately. You MUST search and read first:\n"
                                     f"{line_hint}"
                                     "  1. Use search_code to locate error symbols or the exact code block you want to change (which shows line numbers).\n"
-                                    "  2. Call read_file with start_line and end_line parameters to read a window (e.g. 100-200 lines) around the target location.\n"
-                                    "  3. DO NOT call read_file without start_line/end_line on large files (it is capped at 500 lines).\n"
+                                    "  2. Read the complete relevant "
+                                    "function/file if it fits; use a targeted "
+                                    "range when oversized.\n"
+                                    "  3. Follow delivery metadata to request only "
+                                    "missing regions if output is limited.\n"
                                     "  4. Keep reading recursively around that target location until you have complete and correct context.\n"
                                     "  5. Re-emit using ONLY text returned by read_file as your search field.\n"
                                     "\nread_file tool schema:\n" + _rf_json + "\n"
@@ -711,7 +715,8 @@ class ToolLoop:
                                     "DO NOT re-emit immediately. You MUST search and read first:\n"
                                     f"{line_hint}"
                                     "  1. Use search_code to locate the error symbols or targeted lines.\n"
-                                    "  2. Call read_file with start_line and end_line parameters (e.g. window of 100-200 lines) around those locations.\n"
+                                    "  2. Read the complete relevant functions "
+                                    "when they fit; use targeted ranges when oversized.\n"
                                     "  3. Keep reading recursively around the target section until you have enough surrounding context.\n"
                                     "  4. Re-emit using ONLY text returned by read_file as your search field.\n"
                                     "\nread_file tool schema:\n" + _rf_json + "\n"
@@ -898,18 +903,24 @@ class ToolLoop:
                 )
                 # prong 1: don't echo the rejected duplicate call (attractor prevention)
                 history.append({"role": "assistant", "content": "{}"})
-                history.append({
-                    "role": "tool_result", "tool": tool_name,
-                    "content": (
-                        f"You already ran {tool_name} with these exact arguments this round — "
-                        "its result is already in the conversation history above. "
-                        "Do NOT repeat the identical call. If the earlier result was truncated "
-                        "from history, read a DIFFERENT line range (shift start_line/end_line) "
-                        "or search a different pattern. If you already have the context you need, "
-                        "emit your patch now. Repeating the same call returns the same result and "
-                        "makes no progress."
-                    ),
-                })
+                history.append(
+                    {
+                        "role": "tool_result",
+                        "tool": tool_name,
+                        "content": (
+                            f"You already ran {tool_name} with these exact arguments this round — "
+                            "its result is already in the conversation history above. "
+                            "Do NOT repeat the identical call. If the earlier result was truncated "
+                            "from history, request the exact missing region and "
+                            "state that the evidence "
+                            "is missing; do not shift ranges merely to bypass "
+                            "this guard. If you already have the context you need, "
+                            "emit your patch now. Repeating the same call "
+                            "returns the same result and "
+                            "makes no progress."
+                        ),
+                    }
+                )
                 continue
             _seen_tool_calls[_call_key] = iteration + 1
 
@@ -1000,7 +1011,12 @@ class ToolLoop:
                             all_touched_files.append(_path)
                 _pending_install_for_scope = None
 
-            tool_output = await self._registry.execute(tool_name, args)
+            from agentd.tools.batching import output_budget
+            token = output_budget.set(_MAX_OUTPUT_INJECT_CHARS)
+            try:
+                tool_output = await self._registry.execute(tool_name, args)
+            finally:
+                output_budget.reset(token)
             usage.tool_calls_used += 1
 
             # READ_CALLED fires only when the model reads while in PATCH_FAILED_MUST_READ.
