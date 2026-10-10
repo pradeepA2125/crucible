@@ -135,7 +135,7 @@ export interface SettingsDeps {
   storeExtraCredentials(backend: string, extraCredentials: Record<string, string>): Promise<void>;
   keyEnvVar(backend: string): string | undefined;
   readEnvFlags(): Record<string, string>;
-  updateSetting(key: string, value: string): Promise<void>;
+  updateSetting(key: string, value: string | boolean): Promise<void>;
   readInstructions(): { content: string; exists: boolean };
   writeInstructions(content: string): void;
   restartBackend(): Promise<void>;
@@ -347,7 +347,8 @@ export function createSettingsHandler(
           return;
         }
         case "settings/setEnvFlag": {
-          await deps.updateSetting(msg.key, msg.value);
+          const value = msg.key === "crucible.webSearch.enabled" ? msg.value === "true" : msg.value;
+          await deps.updateSetting(msg.key, value);
           restartRequired = true;
           await postState();
           return;

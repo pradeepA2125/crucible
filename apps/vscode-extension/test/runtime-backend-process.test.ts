@@ -519,3 +519,17 @@ describe("stop", () => {
     expect(killed).toEqual(["SIGTERM", "SIGKILL"]);
   });
 });
+
+describe("native web search managed defaults", () => {
+  it("overrides inherited opt-in and accepts explicit settings", () => {
+    const built = buildBackendEnv("/ws", SETTINGS, "/rt", "darwin-arm64");
+    expect(built.CRUCIBLE_WEB_SEARCH_ENABLED).toBe("0");
+    expect(finalSpawnEnv({ CRUCIBLE_WEB_SEARCH_ENABLED: "1" }, built)
+      .CRUCIBLE_WEB_SEARCH_ENABLED).toBe("0");
+    for (const value of ["true", "false"]) {
+      expect(buildBackendEnv("/ws", { ...SETTINGS,
+        extraEnv: { CRUCIBLE_WEB_SEARCH_ENABLED: value } }, "/rt", "darwin-arm64")
+        .CRUCIBLE_WEB_SEARCH_ENABLED).toBe(value);
+    }
+  });
+});

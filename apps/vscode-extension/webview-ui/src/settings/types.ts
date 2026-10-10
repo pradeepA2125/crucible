@@ -213,6 +213,7 @@ export const PROVIDERS: ProviderInfo[] = [
 
 // Env-flag settings the panel round-trips (spec §6.2 Policies + Memory sections).
 export const ENV_FLAG_OPTIONS: { key: string; label: string; options: string[] }[] = [
+  { key: "crucible.webSearch.enabled", label: "Native web search", options: ["false", "true"] },
   { key: "crucible.policy.shell", label: "Shell command policy", options: ["ask", "allow_all"] },
   { key: "crucible.policy.scope", label: "Scope-extension policy", options: ["ask", "strict", "auto"] },
   { key: "crucible.memory.enabled", label: "Memory harness", options: ["false", "true"] },

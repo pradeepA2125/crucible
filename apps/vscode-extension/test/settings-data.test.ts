@@ -430,3 +430,27 @@ describe("agents messages", () => {
       .toEqual([{ type: "settings/models", models: ["gpt-5", "m2"] }]);
   });
 });
+
+describe("native web search persisted setting", () => {
+  it("round-trips booleans and clears the restart banner after restart", async () => {
+    const saved: Record<string, string | boolean> = {};
+    const posted: SettingsOutMsg[] = [];
+    const restart = vi.fn(async () => {});
+    const d = deps({
+      updateSetting: async (key, value) => { saved[key] = value; },
+      readEnvFlags: () => Object.fromEntries(Object.entries(saved).map(([k, v]) => [k, String(v)])),
+      restartBackend: restart,
+    });
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    for (const value of ["true", "false"]) {
+      await handle({ type: "settings/setEnvFlag", key: "crucible.webSearch.enabled", value });
+      expect(saved["crucible.webSearch.enabled"]).toBe(value === "true");
+      const state = stateMsg(posted.at(-1)!).state;
+      expect(state.envFlags["crucible.webSearch.enabled"]).toBe(value);
+      expect(state.restartRequired).toBe(true);
+      await handle({ type: "settings/restartBackend" });
+      expect(stateMsg(posted.at(-1)!).state.restartRequired).toBe(false);
+    }
+    expect(restart).toHaveBeenCalledTimes(2);
+  });
+});
