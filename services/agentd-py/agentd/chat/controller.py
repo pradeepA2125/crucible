@@ -66,6 +66,7 @@ from agentd.domain.models import (
 )
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
+from agentd.performance import span
 from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
 from agentd.providers.plan_access import (
@@ -604,6 +605,15 @@ class ChatController:
                 ExaSearchClient(),
                 partial(self._mcp_approval_cb, thread_id, f"chat:{thread_id}", native_web=True),
                 enabled=is_web_search_enabled))
+        from agentd.web.config import is_web_fetch_enabled
+        from agentd.web.fetch import WebFetchClient
+        from agentd.web.fetch_source import WebFetchToolSource
+
+        if is_web_fetch_enabled() and thread_id:
+            sources.append(WebFetchToolSource(
+                WebFetchClient(),
+                partial(self._mcp_approval_cb, thread_id, f"chat:{thread_id}", native_fetch=True),
+                enabled=is_web_fetch_enabled))
         if todo_ledger is not None:
             sources.append(TodoToolSource(todo_ledger, on_mutate=todo_persist_cb))
         # run_id = thread_id tags explicit remembers so a rewind can retire them.
@@ -1520,7 +1530,8 @@ class ChatController:
         denied_by: DeniedBy = "user"
         timeout = self._command_decision_timeout_sec
         try:
-            decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
+            with span("approval.wait"):
+                decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
         except TimeoutError:
             decision = CommandDecision(approve=False)
             denied_by = "timeout"
@@ -1564,17 +1575,30 @@ class ChatController:
         server: str, tool: str, args: dict[str, object], *,
         child: AgentHandle | None = None,
         native_web: bool = False,
+        native_fetch: bool = False,
     ) -> ApprovalOutcome:
         """Gate an MCP tool call (mirror of _command_approval_cb on the same
         thread-gate machinery). A remembered (server, tool) rule auto-approves;
         otherwise raise a durable kind="mcp_tool" gate and await /mcp-decision."""
         from agentd.mcp.config import mcp_decision_timeout_sec
         from agentd.mcp.rules import McpRuleStore
-        from agentd.web.config import NATIVE_SERVER, NATIVE_TOOL, WebSearchRuleStore
+        from agentd.web.config import (
+            FETCH_SERVER,
+            FETCH_TOOL,
+            NATIVE_SERVER,
+            NATIVE_TOOL,
+            WebFetchRuleStore,
+            WebSearchRuleStore,
+        )
 
+        if native_web and native_fetch:
+            return ApprovalOutcome.deny("policy")
+        if native_fetch and (server, tool) != (FETCH_SERVER, FETCH_TOOL):
+            return ApprovalOutcome.deny("policy")
         if native_web and (server, tool) != (NATIVE_SERVER, NATIVE_TOOL):
             return ApprovalOutcome.deny("policy")
-        rules = (WebSearchRuleStore(self._workspace_path) if native_web
+        rules = (WebFetchRuleStore(self._workspace_path) if native_fetch
+                 else WebSearchRuleStore(self._workspace_path) if native_web
                  else McpRuleStore(self._workspace_path))
         if rules.matches(server, tool):
             return ApprovalOutcome.allow()
@@ -1582,6 +1606,8 @@ class ChatController:
         payload: dict[str, object] = {"server": server, "tool": tool, "args": args}
         if native_web:
             payload["native_web"] = True
+        elif native_fetch:
+            payload["native_fetch"] = True
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
             "mcp_tool", payload,
             agent=self._gate_agent(child)))
@@ -1599,7 +1625,8 @@ class ChatController:
         denied_by: DeniedBy = "user"
         timeout = mcp_decision_timeout_sec()
         try:
-            decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
+            with span("approval.wait"):
+                decision = await (asyncio.wait_for(fut, timeout) if timeout > 0 else fut)
         except TimeoutError:
             decision = McpToolDecision(approve=False)
             denied_by = "timeout"
@@ -1610,7 +1637,7 @@ class ChatController:
 
         if decision.approve and decision.remember:
             rules.add(server, tool)
-        subject = "Web search" if native_web else "MCP tool"
+        subject = "Web fetch" if native_fetch else "Web search" if native_web else "MCP tool"
         self._gate_breadcrumb(
             thread_id, channel_id,
             f"✓ {subject} approved: {server}.{tool}" if decision.approve
@@ -1882,6 +1909,21 @@ class ChatController:
         return await self._mcp_approval_cb(
             child.thread_id, f"chat:{child.thread_id}", server, tool, args,
             child=child, native_web=True)
+
+    async def _child_fetch_approval_cb(
+        self, child: AgentHandle, server: str, tool: str, args: dict[str, object],
+    ) -> ApprovalOutcome:
+        from agentd.web.config import FETCH_SERVER, FETCH_TOOL, WebFetchRuleStore
+
+        if (server, tool) != (FETCH_SERVER, FETCH_TOOL) or child.context.permission == "plan":
+            return ApprovalOutcome.deny("policy")
+        if WebFetchRuleStore(self._workspace_path).matches(server, tool):
+            return ApprovalOutcome.allow()
+        if child.context.no_ask:
+            return ApprovalOutcome.deny("policy")
+        return await self._mcp_approval_cb(
+            child.thread_id, f"chat:{child.thread_id}", server, tool, args,
+            child=child, native_fetch=True)
 
     async def _child_edit_decision_cb(
         self, child: AgentHandle, diff: list[DiffEntry],
@@ -3381,6 +3423,14 @@ class ChatController:
                 built.append(WebSearchToolSource(
                     ExaSearchClient(), partial(self._child_web_approval_cb, handle),
                     enabled=is_web_search_enabled))
+            from agentd.web.config import is_web_fetch_enabled
+            from agentd.web.fetch import WebFetchClient
+            from agentd.web.fetch_source import WebFetchToolSource
+
+            if is_web_fetch_enabled():
+                built.append(WebFetchToolSource(
+                    WebFetchClient(), partial(self._child_fetch_approval_cb, handle),
+                    enabled=is_web_fetch_enabled))
             if may_dispatch:
                 built.append(self._dispatch_source(thread_id, turn_id, handle))
             if membership is not None and self._teams is not None:

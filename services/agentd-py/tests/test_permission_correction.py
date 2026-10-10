@@ -47,8 +47,9 @@ async def test_the_correction_is_in_the_chain(tmp_path: Path) -> None:
     assert any("You are read-only for this task: `run_command`" in c for c in contents)
 
 
-def test_native_search_permission_correction():
-    call = {"type": "tool_call", "tool": "web_search", "args": {"query": "docs"}}
+@pytest.mark.parametrize("tool", ["web_search", "web_fetch"])
+def test_native_search_permission_correction(tool):
+    call = {"type": "tool_call", "tool": tool, "args": {}}
     assert _permission_correction(call, "tool_call", READONLY) is not None
     assert _permission_correction(call, "tool_call", DEFAULT) is None
     assert _permission_correction(call, "tool_call", RenderContext.main()) is None
@@ -56,7 +57,8 @@ def test_native_search_permission_correction():
 
 
 @pytest.mark.asyncio
-async def test_native_search_corrected_before_dispatch(tmp_path):
+@pytest.mark.parametrize("tool", ["web_search", "web_fetch"])
+async def test_native_search_corrected_before_dispatch(tmp_path, tool):
     from agentd.tools.registry import ToolDefinition
 
     class Spy:
@@ -64,10 +66,10 @@ async def test_native_search_corrected_before_dispatch(tmp_path):
         calls = 0
 
         def definitions(self):
-            return [ToolDefinition(name="web_search", description="d", parameters={})]
+            return [ToolDefinition(name=tool, description="d", parameters={})]
 
         def owns(self, name):
-            return name == "web_search"
+            return name == tool
 
         async def execute(self, name, args):
             self.calls += 1
@@ -75,7 +77,7 @@ async def test_native_search_corrected_before_dispatch(tmp_path):
 
     spy = Spy()
     steps = [
-        {"type": "tool_call", "thought": "t", "tool": "web_search", "args": {"query": "docs"}},
+        {"type": "tool_call", "thought": "t", "tool": tool, "args": {}},
         {"type": "submit_changes", "thought": "d", "summary": "ok"},
     ]
     loop = ControllerLoop(
@@ -84,5 +86,5 @@ async def test_native_search_corrected_before_dispatch(tmp_path):
         phase_sm=ControllerPhaseSM(), render_ctx=READONLY)
     out = await loop.run({"goal": "g", "workspace_path": str(tmp_path)}, max_iters=4)
     assert spy.calls == 0
-    assert any("You are read-only for this task: `web_search`" in str(m.get("content", ""))
+    assert any(f"You are read-only for this task: `{tool}`" in str(m.get("content", ""))
                for m in out.history or [])

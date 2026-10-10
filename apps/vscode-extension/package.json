@@ -174,9 +174,15 @@
           "description": "Scope-extension policy for out-of-plan file writes. 'ask' pauses for approval; 'strict' auto-rejects; 'auto' silently approves and audit-logs.",
           "scope": "machine"
         },
+        "crucible.webFetch.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "description": "Enable native web fetch for public URLs. Downloads require approval and send the URL to the destination website. Requires a backend restart."
+        },
         "crucible.webSearch.enabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "machine",
           "description": "Enable prototype native web search through Exa. Queries are sent externally and may be used for model training. Requires a backend restart."
         },

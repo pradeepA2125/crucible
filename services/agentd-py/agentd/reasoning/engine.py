@@ -13,6 +13,7 @@ from agentd.domain.models import (
     PlanStep,
     TaskRecord,
 )
+from agentd.performance import profile_async
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.reasoning.contracts import ReasoningEngine
 from agentd.reasoning.prompt_builder import (
@@ -295,6 +296,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         )
         return result if isinstance(result, dict) else {}
 
+    @profile_async("model.step")
     async def create_controller_step(
         self,
         plan_context: dict[str, object],

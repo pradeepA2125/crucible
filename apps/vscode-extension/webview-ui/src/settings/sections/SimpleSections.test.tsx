@@ -48,16 +48,31 @@ describe("RuntimeSection", () => {
 });
 
 describe("Native web search setting", () => {
-  it("defaults false, displays persisted true, and posts both choices", () => {
+  it("defaults true, shows persisted false, and posts both choices", () => {
     const send = vi.fn();
     const { rerender } = render(<PoliciesSection state={state} busy={false} send={send} />);
     const select = screen.getByLabelText("Native web search") as HTMLSelectElement;
-    expect(select.value).toBe("false");
-    fireEvent.change(select, { target: { value: "true" } });
-    expect(send).toHaveBeenLastCalledWith({ type: "settings/setEnvFlag", key: "crucible.webSearch.enabled", value: "true" });
-    rerender(<PoliciesSection state={{ ...state, envFlags: { "crucible.webSearch.enabled": "true" } }} busy={false} send={send} />);
     expect(select.value).toBe("true");
     fireEvent.change(select, { target: { value: "false" } });
     expect(send).toHaveBeenLastCalledWith({ type: "settings/setEnvFlag", key: "crucible.webSearch.enabled", value: "false" });
+    rerender(<PoliciesSection state={{ ...state, envFlags: { "crucible.webSearch.enabled": "false" } }} busy={false} send={send} />);
+    expect(select.value).toBe("false");
+    fireEvent.change(select, { target: { value: "true" } });
+    expect(send).toHaveBeenLastCalledWith({ type: "settings/setEnvFlag", key: "crucible.webSearch.enabled", value: "true" });
+  });
+});
+
+describe("Native web fetch setting", () => {
+  it("defaults true, shows persisted false, and posts both choices", () => {
+    const send = vi.fn();
+    const { rerender } = render(<PoliciesSection state={state} busy={false} send={send} />);
+    const select = screen.getByLabelText("Native web fetch") as HTMLSelectElement;
+    expect(select.value).toBe("true");
+    fireEvent.change(select, { target: { value: "false" } });
+    expect(send).toHaveBeenLastCalledWith({ type: "settings/setEnvFlag", key: "crucible.webFetch.enabled", value: "false" });
+    rerender(<PoliciesSection state={{ ...state, envFlags: { "crucible.webFetch.enabled": "false" } }} busy={false} send={send} />);
+    expect(select.value).toBe("false");
+    fireEvent.change(select, { target: { value: "true" } });
+    expect(send).toHaveBeenLastCalledWith({ type: "settings/setEnvFlag", key: "crucible.webFetch.enabled", value: "true" });
   });
 });

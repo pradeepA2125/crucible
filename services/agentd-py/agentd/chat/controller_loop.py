@@ -23,6 +23,7 @@ from agentd.domain.models import AgentToolTrace, PatchFailureCode, ToolCall, Too
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
+from agentd.performance import profile_controller_run, span
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.providers.availability import ProviderUnavailable, is_provider_unavailable
 from agentd.providers.plan_access import find_access_stop
@@ -115,13 +116,13 @@ def _permission_correction(
     resp: dict[str, object], atype: str, ctx: RenderContext,
 ) -> str | None:
     """Defense in depth for a read-only (effective `plan`) sub-agent (spec §5.6): its tool
-    list already omits run_command, web_search and every mcp__ tool, so reaching this
+    list already omits run_command, web_search, web_fetch and every mcp__ tool, so reaching this
     means the model named a tool it was never offered. Routed through the normal
     correction chain."""
     if ctx.is_main or ctx.permission != "plan" or atype != "tool_call":
         return None
     tool = str(resp.get("tool", ""))
-    if tool in {"run_command", "web_search"} or tool.startswith("mcp__"):
+    if tool in {"run_command", "web_search", "web_fetch"} or tool.startswith("mcp__"):
         return (f"You are read-only for this task: `{tool}` isn't available to you. "
                 "Investigate with the read tools and put your findings in `report`.")
     return None
@@ -1071,6 +1072,7 @@ class ControllerLoop:
         return {"teams": list(self._delegated_teams), "agents": list(self._delegated_agents),
                 "agents_collected": self._agents_collected}
 
+    @profile_controller_run
     async def run(
         self,
         plan_context: dict[str, object],
@@ -1763,7 +1765,8 @@ class ControllerLoop:
                     "type": "tool_call",
                     "payload": {"tool": tool, "thought": str(resp.get("thought", "")),
                                 "args": args, "call_index": call_index}})
-                out = await self._registry.execute(tool, args)
+                with span(f"tool.{tool}"):
+                    out = await self._registry.execute(tool, args)
                 # The model reconciled the ledger — clear the post-edit checkpoint marker so
                 # the next turn's instruction stops naming the (now-answered) edit/item (Q1).
                 if tool == "write_todos":

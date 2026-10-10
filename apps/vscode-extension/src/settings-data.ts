@@ -347,7 +347,8 @@ export function createSettingsHandler(
           return;
         }
         case "settings/setEnvFlag": {
-          const value = msg.key === "crucible.webSearch.enabled" ? msg.value === "true" : msg.value;
+          const booleanFlag = msg.key === "crucible.webSearch.enabled" || msg.key === "crucible.webFetch.enabled";
+          const value = booleanFlag ? msg.value === "true" : msg.value;
           await deps.updateSetting(msg.key, value);
           restartRequired = true;
           await postState();

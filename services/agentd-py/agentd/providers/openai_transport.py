@@ -24,6 +24,7 @@ from typing import Any, Protocol
 import openai
 from openai import AsyncOpenAI
 
+from agentd.performance import mark, profile_async, span
 from agentd.providers.context_observation import (
     ContextInputObserver,
     begin_context,
@@ -309,6 +310,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
             body["reasoning"] = reasoning
         return body
 
+    @profile_async("provider.auth")
     async def _responses(self) -> Any:
         if self._fixed_responses is not None:
             return self._fixed_responses
@@ -359,6 +361,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
                 attempt += 1
                 await self._backoff(attempt, exc, on_retry)
 
+    @profile_async("provider.retry_wait")
     async def _backoff(
         self, attempt: int, exc: Exception,
         on_retry: Callable[[int, int, str, str], None] | None,
@@ -396,6 +399,7 @@ class OpenAIJsonTransport(ModelJsonTransport):
         finally:
             finish_context(on_context_input)
 
+    @profile_async("provider.stream")
     async def _stream_once_observed(
         self,
         responses: Any,
@@ -414,8 +418,9 @@ class OpenAIJsonTransport(ModelJsonTransport):
         ticker.start()
         try:
             extra = {"extra_headers": headers} if headers else {}
-            stream = await asyncio.wait_for(responses.create(**body, **extra),
-                                            timeout=self._timeout_sec)
+            with span("provider.response_headers"):
+                stream = await asyncio.wait_for(responses.create(**body, **extra),
+                                                timeout=self._timeout_sec)
         except TimeoutError as exc:
             msg = f"OpenAI responses.create timed out after {self._timeout_sec}s"
             raise TransientTransportError(msg) from exc
@@ -427,9 +432,15 @@ class OpenAIJsonTransport(ModelJsonTransport):
         call: tuple[str, str] | None = None
         completed: Any = None
         summary_parts = 0
+        first_content = True
         try:
             async for event in _within_deadline(stream, self._stream_timeout_sec):
                 kind = getattr(event, "type", "")
+                if first_content and (kind in _THINKING_EVENTS or kind in {
+                    "response.output_text.delta", "response.function_call_arguments.delta"
+                }):
+                    mark("provider.first_content")
+                    first_content = False
                 if kind == "response.output_text.delta":
                     texts.setdefault(getattr(event, "item_id", None), []).append(event.delta)
                     ticker.output(event.delta)

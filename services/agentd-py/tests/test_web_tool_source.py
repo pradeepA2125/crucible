@@ -139,10 +139,10 @@ async def test_operational_error_and_cancellation():
 
 
 @pytest.mark.parametrize("value,expected", [
-    (None, False), ("0", False), ("1", True), (" true ", True),
+    (None, True), ("0", False), ("1", True), (" true ", True),
     ("yes", True), ("on", True), ("false", False),
 ])
-def test_flag_defaults_off(monkeypatch, value, expected):
+def test_flag_defaults_on(monkeypatch, value, expected):
     monkeypatch.delenv("CRUCIBLE_WEB_SEARCH_ENABLED", raising=False)
     if value is not None:
         monkeypatch.setenv("CRUCIBLE_WEB_SEARCH_ENABLED", value)

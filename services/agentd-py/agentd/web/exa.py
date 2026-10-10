@@ -5,6 +5,8 @@ import json
 
 import httpx
 
+from agentd.performance import profile_async
+
 ENDPOINT = "https://mcp.exa.ai/mcp"
 MAX_BYTES = 1024 * 1024
 DEADLINE = 25
@@ -66,6 +68,7 @@ class ExaSearchClient:
     def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport
 
+    @profile_async("web.search_network")
     async def search(self, query: str, max_results: int) -> str:
         payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
             "name": "web_search_exa", "arguments": {

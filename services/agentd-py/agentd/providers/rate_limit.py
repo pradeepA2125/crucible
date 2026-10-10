@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import Any
 
+from agentd.performance import profile_async, span
 from agentd.providers.usage import METER, USAGE_OWNER
 
 CALL_PRIORITY: ContextVar[str] = ContextVar("crucible_call_priority", default="main")
@@ -85,14 +86,17 @@ class RateLimitedTransport:
     def __setattr__(self, name: str, value: Any) -> None:
         setattr(self._inner, name, value)
 
+    @profile_async("provider.rate_limit_wait")
     async def _admit(self) -> None:
         waited = await self._limiter.acquire(CALL_PRIORITY.get())
         METER.record(USAGE_OWNER.get(), requests=1, wait_ms=int(waited * 1000))
 
     async def generate_json(self, **kwargs: Any) -> Any:
         await self._admit()
-        return await self._inner.generate_json(**kwargs)
+        with span("provider.request"):
+            return await self._inner.generate_json(**kwargs)
 
     async def generate_text(self, **kwargs: Any) -> Any:
         await self._admit()
-        return await self._inner.generate_text(**kwargs)
+        with span("provider.request"):
+            return await self._inner.generate_text(**kwargs)

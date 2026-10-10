@@ -200,9 +200,23 @@ def test_web_search_effective_catalog_keeps_disabled_definitions_known(env, monk
         monkeypatch.setenv("CRUCIBLE_WEB_SEARCH_ENABLED", flag)
     client, *_ = env
     tools = client.get("/v1/agents").json()["available_tools"]
-    assert ("web_search" in tools) is (flag == "1")
+    assert ("web_search" in tools) is (flag != "0")
     assert "mcp__github__*" in tools
     resp = client.put("/v1/agents/searcher", json=_body(tools=["web_search"]))
     assert resp.status_code == 200
     assert resp.json()["agent"]["tools"] == ["web_search"]
+    assert not resp.json()["agent"]["warnings"]
+
+
+@pytest.mark.parametrize("flag,expected", [(None, True), ("0", False), ("1", True)])
+def test_fetch_catalog_and_saved_definition(env, monkeypatch, flag, expected):
+    monkeypatch.delenv("CRUCIBLE_WEB_FETCH_ENABLED", raising=False)
+    if flag is not None:
+        monkeypatch.setenv("CRUCIBLE_WEB_FETCH_ENABLED", flag)
+    client, *_ = env
+    tools = client.get("/v1/agents").json()["available_tools"]
+    assert ("web_fetch" in tools) is expected
+    resp = client.put("/v1/agents/fetcher", json=_body(tools=["web_fetch"]))
+    assert resp.status_code == 200
+    assert resp.json()["agent"]["tools"] == ["web_fetch"]
     assert not resp.json()["agent"]["warnings"]

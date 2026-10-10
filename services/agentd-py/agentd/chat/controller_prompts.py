@@ -12,6 +12,7 @@ import copy
 import json
 from collections.abc import Sequence
 
+from agentd.performance import profile_sync
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.subagents.framing import FRAMING_SENTENCE
 
@@ -908,6 +909,7 @@ Example — you want the members to propose:
 <</main>>""")
 
 
+@profile_sync("context.system_prompt")
 def format_controller_system_prompt(
     tool_definitions: list[dict[str, object]],
     *,
@@ -950,6 +952,10 @@ def format_controller_system_prompt(
             base += (render_prompt(_TEAM_BLOCK, ctx)
                      .replace("{team_framing}", TEAM_FRAMING)
                      .replace("{team_brief}", ctx.team_brief))
+    from agentd.prompting.web_research import web_research_guidance
+
+    base += web_research_guidance(
+        {str(d.get("name", "")) for d in tool_definitions if isinstance(d, dict)}, ctx)
     # Appended (not a placeholder) — process-fixed flag, so the prompt stays cache-stable.
     base = base + (render_prompt(_MEMORY_BLOCK, ctx) if memory_enabled else "")
     # .replace (not .format): AGENTS.md text may contain literal { } that
@@ -1049,6 +1055,7 @@ def _live_work_clause(live: dict[str, object], delegated: object) -> str:
     return " ".join(parts)
 
 
+@profile_sync("context.payload")
 def build_controller_step_payload(
     plan_context: dict[str, object],
     history: list[dict[str, object]],

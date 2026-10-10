@@ -13,6 +13,7 @@ const ENV_FLAG_KEYS = [
   "crucible.policy.shell",
   "crucible.policy.scope",
   "crucible.webSearch.enabled",
+  "crucible.webFetch.enabled",
   "crucible.memory.enabled",
   "crucible.memory.reranker",
 ];

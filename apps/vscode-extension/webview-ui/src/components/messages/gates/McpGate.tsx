@@ -19,6 +19,7 @@ export function McpGate({ gateId, taskId, payload }: Props) {
   const server = String(payload.server ?? "");
   const tool = String(payload.tool ?? "");
   const nativeWeb = payload.native_web === true;
+  const nativeFetch = payload.native_fetch === true;
   const args = (payload.args ?? {}) as Record<string, unknown>;
   const [resolved, setResolved] = useState<string | null>(null);
 
@@ -31,8 +32,10 @@ export function McpGate({ gateId, taskId, payload }: Props) {
   return (
     <CardShell
       icon="term"
-      title={nativeWeb ? "Search the web with Exa" : `Call MCP tool: ${server}.${tool}`}
-      subtitle={nativeWeb
+      title={nativeFetch ? "Fetch web page" : nativeWeb ? "Search the web with Exa" : `Call MCP tool: ${server}.${tool}`}
+      subtitle={nativeFetch
+        ? "The website receives this URL and your network address. Review the URL before approving."
+        : nativeWeb
         ? "Your query is sent to Exa, which may use it for model training. Review it before approving."
         : "External MCP server — review the arguments before approving"}
       borderColor="var(--accent-brd)"

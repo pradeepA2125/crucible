@@ -43,15 +43,14 @@ CC_TOOLS: dict[str, str] = {
     "LS": "list_directory", "Bash": "run_command", "Edit": "edit", "Write": "edit",
     "MultiEdit": "edit", "NotebookEdit": "edit", "Agent": "dispatch_agents",
     "Task": "dispatch_agents", "TodoWrite": "write_todos", "Skill": "read_skill",
-    "WebSearch": "web_search",
+    "WebSearch": "web_search", "WebFetch": "web_fetch",
 }
-_UNMAPPED_CC_TOOLS = frozenset({"WebFetch"})
 # Every Crucible-native tool name a definition may list (spec §10.1 "known" names). MCP
 # tools are matched by the mcp__ prefix: their exact names exist only at runtime.
 NATIVE_TOOL_NAMES = frozenset({
     "read_file", "search_code", "list_directory", "run_command", "search_semantic",
     "query_graph", "write_todos", "read_skill", "remember", "recall", "edit",
-    "find_binary", "init_workspace", "read_env_profile", "setup_env", "web_search",
+    "find_binary", "init_workspace", "read_env_profile", "setup_env", "web_search", "web_fetch",
     "start_session", "write_stdin", "kill_session", "list_sessions",
     "dispatch_agents", "wait_agents", "message_agent", "stop_agent",
 })
@@ -102,10 +101,6 @@ def map_tool_names(
     `mcp__<server>` and `mcp__<server>__*` both become the wildcard `mcp__<server>__*`."""
     mapped: set[str] = set()
     for name in names:
-        if name in _UNMAPPED_CC_TOOLS:
-            _warn(warnings, path, f"tool {name!r} has no Crucible equivalent — ignored "
-                                  "(list the MCP tool names instead)")
-            continue
         if name.startswith("mcp__") and name.count("__") == 1:
             name += "__*"
         crucible = CC_TOOLS.get(name, name)

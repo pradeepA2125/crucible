@@ -49,7 +49,7 @@ def test_parse_records_warnings(tmp_path: Path) -> None:
     assert d is not None
     assert d.max_turns == 200
     text = " | ".join(d.warnings)
-    assert "WebFetch" in text and "frobnicate" in text and "sonnet" in text
+    assert "WebFetch" not in text and "frobnicate" in text and "sonnet" in text
     assert "yolo" in text and "clamped to 200" in text
     assert list(d.warnings) == warnings
 
@@ -134,8 +134,8 @@ def test_builtins_have_no_path_and_user_files_are_user_claude(tmp_path: Path) ->
     assert _entry(report, "mine", "user_claude").definition.trust == "trusted"
 
 
-def test_imported_web_search_alias_is_known_but_fetch_remains_unmapped(tmp_path):
+def test_imported_web_aliases_are_known(tmp_path):
     path = _put(tmp_path, "searcher", _md("searcher", "tools: WebSearch, WebFetch\n"))
     d = parse_agent_file(path)
-    assert d is not None and d.tools == frozenset({"web_search"})
-    assert len(d.warnings) == 1 and "WebFetch" in d.warnings[0]
+    assert d is not None and d.tools == frozenset({"web_search", "web_fetch"})
+    assert not d.warnings

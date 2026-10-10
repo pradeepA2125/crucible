@@ -431,7 +431,7 @@ describe("agents messages", () => {
   });
 });
 
-describe("native web search persisted setting", () => {
+describe.each(["crucible.webSearch.enabled", "crucible.webFetch.enabled"])("%s persisted setting", (key) => {
   it("round-trips booleans and clears the restart banner after restart", async () => {
     const saved: Record<string, string | boolean> = {};
     const posted: SettingsOutMsg[] = [];
@@ -443,10 +443,10 @@ describe("native web search persisted setting", () => {
     });
     const handle = createSettingsHandler(d, (m) => posted.push(m));
     for (const value of ["true", "false"]) {
-      await handle({ type: "settings/setEnvFlag", key: "crucible.webSearch.enabled", value });
-      expect(saved["crucible.webSearch.enabled"]).toBe(value === "true");
+      await handle({ type: "settings/setEnvFlag", key, value });
+      expect(saved[key]).toBe(value === "true");
       const state = stateMsg(posted.at(-1)!).state;
-      expect(state.envFlags["crucible.webSearch.enabled"]).toBe(value);
+      expect(state.envFlags[key]).toBe(value);
       expect(state.restartRequired).toBe(true);
       await handle({ type: "settings/restartBackend" });
       expect(stateMsg(posted.at(-1)!).state.restartRequired).toBe(false);
