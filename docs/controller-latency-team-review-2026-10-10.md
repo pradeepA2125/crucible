@@ -4,7 +4,13 @@ Date: 10 October 2026. Branch: `codex/controller-latency`. The native web and pr
 
 Three reviewers covered batching/provider/replay safety, file reads/small models/edit evidence, and context/caching/measurement. They exchanged findings and agreed on a smaller first rollout. The [revised plan](superpowers/plans/2026-10-10-controller-latency.md) preserves the user's order: **1 batching → 2 redundant reads/steps → 3 context reduction**.
 
-## Adopted decisions
+## Subsequent user direction
+
+The user superseded the initial narrow batching recommendation: use schema-level multiple tool calls for commands, network tools, reads, and other permitted operations, with explicit dependencies. The [current plan](superpowers/plans/2026-10-10-controller-latency.md) and [general batching design](superpowers/specs/2026-10-10-controller-tool-batching-design.md) implement that scope. Native provider/history migration and per-call UI routing are now required Priority 1 work. The table and sequence below record the original review, not the current batching scope.
+
+Follow-up batching review confirmed the separate logical/provider IDs, whole-graph validation, success-gated dependencies, and next-model-turn requirement for data-dependent arguments. It also identified missing shell cancellation cleanup and child approval status that must account for multiple pending gates. New skill guidance is an instruction dependency: reading it in the same batch does not prove speculative later commands follow it.
+
+## Original review decisions
 
 | Perspective | Finding | Plan decision |
 |---|---|---|
@@ -61,4 +67,4 @@ These are character counts, not a token breakdown. Compact serialization saves n
 
 The web smoke alone cannot demonstrate the cost of fragmented code reads. Include multiple independent files, two independent search subprocesses, a relevant function beyond line 500, and a small-context configuration. Do not add threads merely to make a synthetic file-read overlap test pass, or hardcode benchmark behavior to obtain a three-call answer.
 
-No speedup or Codex parity is promised before these matched measurements. Full native multicall, per-member live pills, network batching, retry-policy changes, and model/effort changes remain subsequent decisions.
+No speedup or Codex parity is promised before these matched measurements. The original review deferred native multicall, per-member live pills, and network batching; the subsequent user direction above brings them into Priority 1. Retry-policy and model/effort changes remain separate decisions.
