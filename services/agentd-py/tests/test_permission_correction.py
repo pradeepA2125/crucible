@@ -45,3 +45,44 @@ async def test_the_correction_is_in_the_chain(tmp_path: Path) -> None:
     out = await loop.run({"goal": "g", "workspace_path": str(tmp_path)}, max_iters=4)
     contents = [str(m.get("content", "")) for m in out.history or []]
     assert any("You are read-only for this task: `run_command`" in c for c in contents)
+
+
+def test_native_search_permission_correction():
+    call = {"type": "tool_call", "tool": "web_search", "args": {"query": "docs"}}
+    assert _permission_correction(call, "tool_call", READONLY) is not None
+    assert _permission_correction(call, "tool_call", DEFAULT) is None
+    assert _permission_correction(call, "tool_call", RenderContext.main()) is None
+    assert _permission_correction(call, "progress", READONLY) is None
+
+
+@pytest.mark.asyncio
+async def test_native_search_corrected_before_dispatch(tmp_path):
+    from agentd.tools.registry import ToolDefinition
+
+    class Spy:
+        name = "web"
+        calls = 0
+
+        def definitions(self):
+            return [ToolDefinition(name="web_search", description="d", parameters={})]
+
+        def owns(self, name):
+            return name == "web_search"
+
+        async def execute(self, name, args):
+            self.calls += 1
+            pytest.fail("read-only search must never dispatch, ask or use network")
+
+    spy = Spy()
+    steps = [
+        {"type": "tool_call", "thought": "t", "tool": "web_search", "args": {"query": "docs"}},
+        {"type": "submit_changes", "thought": "d", "summary": "ok"},
+    ]
+    loop = ControllerLoop(
+        ScriptedReasoningEngine(None, [], controller_step_responses=steps),
+        AggregatingToolRegistry([spy]), EventBroadcaster(), channel_id="c1",
+        phase_sm=ControllerPhaseSM(), render_ctx=READONLY)
+    out = await loop.run({"goal": "g", "workspace_path": str(tmp_path)}, max_iters=4)
+    assert spy.calls == 0
+    assert any("You are read-only for this task: `web_search`" in str(m.get("content", ""))
+               for m in out.history or [])

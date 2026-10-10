@@ -191,3 +191,18 @@ def test_disabled(env) -> None:
     enabled["on"] = False
     assert client.get("/v1/agents").json() == {"agents": [], "skipped": [], "available_tools": []}
     assert client.put("/v1/agents/helper", json=_body()).status_code == 409
+
+
+@pytest.mark.parametrize("flag", [None, "0", "1"])
+def test_web_search_effective_catalog_keeps_disabled_definitions_known(env, monkeypatch, flag):
+    monkeypatch.delenv("CRUCIBLE_WEB_SEARCH_ENABLED", raising=False)
+    if flag is not None:
+        monkeypatch.setenv("CRUCIBLE_WEB_SEARCH_ENABLED", flag)
+    client, *_ = env
+    tools = client.get("/v1/agents").json()["available_tools"]
+    assert ("web_search" in tools) is (flag == "1")
+    assert "mcp__github__*" in tools
+    resp = client.put("/v1/agents/searcher", json=_body(tools=["web_search"]))
+    assert resp.status_code == 200
+    assert resp.json()["agent"]["tools"] == ["web_search"]
+    assert not resp.json()["agent"]["warnings"]

@@ -595,6 +595,15 @@ class ChatController:
             command_approval_callback=command_approval_callback,
             read_observer=read_observer,
         )]
+        from agentd.web.config import is_web_search_enabled
+        from agentd.web.exa import ExaSearchClient
+        from agentd.web.tool_source import WebSearchToolSource
+
+        if is_web_search_enabled() and thread_id:
+            sources.append(WebSearchToolSource(
+                ExaSearchClient(),
+                partial(self._mcp_approval_cb, thread_id, f"chat:{thread_id}", native_web=True),
+                enabled=is_web_search_enabled))
         if todo_ledger is not None:
             sources.append(TodoToolSource(todo_ledger, on_mutate=todo_persist_cb))
         # run_id = thread_id tags explicit remembers so a rewind can retire them.
@@ -1554,24 +1563,33 @@ class ChatController:
         self, thread_id: str, channel_id: str,
         server: str, tool: str, args: dict[str, object], *,
         child: AgentHandle | None = None,
+        native_web: bool = False,
     ) -> ApprovalOutcome:
         """Gate an MCP tool call (mirror of _command_approval_cb on the same
         thread-gate machinery). A remembered (server, tool) rule auto-approves;
         otherwise raise a durable kind="mcp_tool" gate and await /mcp-decision."""
         from agentd.mcp.config import mcp_decision_timeout_sec
         from agentd.mcp.rules import McpRuleStore
+        from agentd.web.config import NATIVE_SERVER, NATIVE_TOOL, WebSearchRuleStore
 
-        if McpRuleStore(self._workspace_path).matches(server, tool):
+        if native_web and (server, tool) != (NATIVE_SERVER, NATIVE_TOOL):
+            return ApprovalOutcome.deny("policy")
+        rules = (WebSearchRuleStore(self._workspace_path) if native_web
+                 else McpRuleStore(self._workspace_path))
+        if rules.matches(server, tool):
             return ApprovalOutcome.allow()
 
+        payload: dict[str, object] = {"server": server, "tool": tool, "args": args}
+        if native_web:
+            payload["native_web"] = True
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
-            "mcp_tool", {"server": server, "tool": tool, "args": args},
+            "mcp_tool", payload,
             agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[McpToolDecision] = loop.create_future()
         self._pending_mcp[gate.gate_id] = fut
         # Instant-render poke — the card still renders FROM /live (durable on reload).
-        poke: dict[str, object] = {"server": server, "tool": tool, "args": args}
+        poke = dict(payload)
         if child is not None:
             poke["agent"] = {"id": child.agent_id, "label": child.context.label,
                              "name": child.context.name}
@@ -1591,11 +1609,12 @@ class ChatController:
             self._set_child_status(child, "running")
 
         if decision.approve and decision.remember:
-            McpRuleStore(self._workspace_path).add(server, tool)
+            rules.add(server, tool)
+        subject = "Web search" if native_web else "MCP tool"
         self._gate_breadcrumb(
             thread_id, channel_id,
-            f"✓ MCP tool approved: {server}.{tool}" if decision.approve
-            else f"✗ MCP tool rejected: {server}.{tool}", child)
+            f"✓ {subject} approved: {server}.{tool}" if decision.approve
+            else f"✗ {subject} rejected: {server}.{tool}", child)
         if decision.approve:
             return ApprovalOutcome.allow()
         return ApprovalOutcome.deny(denied_by)
@@ -1846,6 +1865,23 @@ class ChatController:
             return ApprovalOutcome.deny("policy")
         return await self._mcp_approval_cb(
             child.thread_id, f"chat:{child.thread_id}", server, tool, args, child=child)
+
+    async def _child_web_approval_cb(
+        self, child: AgentHandle, server: str, tool: str, args: dict[str, object],
+    ) -> ApprovalOutcome:
+        from agentd.web.config import NATIVE_SERVER, NATIVE_TOOL, WebSearchRuleStore
+
+        if (server, tool) != (NATIVE_SERVER, NATIVE_TOOL):
+            return ApprovalOutcome.deny("policy")
+        if child.context.permission == "plan":
+            return ApprovalOutcome.deny("policy")
+        if WebSearchRuleStore(self._workspace_path).matches(server, tool):
+            return ApprovalOutcome.allow()
+        if child.context.no_ask:
+            return ApprovalOutcome.deny("policy")
+        return await self._mcp_approval_cb(
+            child.thread_id, f"chat:{child.thread_id}", server, tool, args,
+            child=child, native_web=True)
 
     async def _child_edit_decision_cb(
         self, child: AgentHandle, diff: list[DiffEntry],
@@ -3337,6 +3373,14 @@ class ChatController:
                 built.append(McpToolSource(
                     self._mcp_manager, partial(self._child_mcp_approval_cb, handle),
                     render_ctx=render_ctx))
+            from agentd.web.config import is_web_search_enabled
+            from agentd.web.exa import ExaSearchClient
+            from agentd.web.tool_source import WebSearchToolSource
+
+            if is_web_search_enabled():
+                built.append(WebSearchToolSource(
+                    ExaSearchClient(), partial(self._child_web_approval_cb, handle),
+                    enabled=is_web_search_enabled))
             if may_dispatch:
                 built.append(self._dispatch_source(thread_id, turn_id, handle))
             if membership is not None and self._teams is not None:

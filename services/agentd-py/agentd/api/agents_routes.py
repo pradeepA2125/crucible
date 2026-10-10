@@ -116,7 +116,12 @@ def build_agents_router(
         if not enabled():
             return {"agents": [], "skipped": [], "available_tools": []}
         report = loader.report()
-        tools = sorted(NATIVE_TOOL_NAMES - CHILD_EXCLUDED_TOOLS)
+        from agentd.web.config import NATIVE_TOOL, is_web_search_enabled
+
+        native_tools = NATIVE_TOOL_NAMES - CHILD_EXCLUDED_TOOLS
+        if not is_web_search_enabled():
+            native_tools = native_tools - {NATIVE_TOOL}
+        tools = sorted(native_tools)
         tools += [f"mcp__{name}__*" for name in sorted(set(mcp_server_names()))]
         return {
             "agents": [agent_json(e) for e in report.entries],

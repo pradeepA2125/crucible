@@ -132,3 +132,10 @@ def test_builtins_have_no_path_and_user_files_are_user_claude(tmp_path: Path) ->
     report = loader.report()
     assert _entry(report, "general-purpose", "builtin").path is None
     assert _entry(report, "mine", "user_claude").definition.trust == "trusted"
+
+
+def test_imported_web_search_alias_is_known_but_fetch_remains_unmapped(tmp_path):
+    path = _put(tmp_path, "searcher", _md("searcher", "tools: WebSearch, WebFetch\n"))
+    d = parse_agent_file(path)
+    assert d is not None and d.tools == frozenset({"web_search"})
+    assert len(d.warnings) == 1 and "WebFetch" in d.warnings[0]

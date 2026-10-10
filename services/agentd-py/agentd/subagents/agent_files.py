@@ -43,14 +43,15 @@ CC_TOOLS: dict[str, str] = {
     "LS": "list_directory", "Bash": "run_command", "Edit": "edit", "Write": "edit",
     "MultiEdit": "edit", "NotebookEdit": "edit", "Agent": "dispatch_agents",
     "Task": "dispatch_agents", "TodoWrite": "write_todos", "Skill": "read_skill",
+    "WebSearch": "web_search",
 }
-_UNMAPPED_CC_TOOLS = frozenset({"WebFetch", "WebSearch"})
+_UNMAPPED_CC_TOOLS = frozenset({"WebFetch"})
 # Every Crucible-native tool name a definition may list (spec §10.1 "known" names). MCP
 # tools are matched by the mcp__ prefix: their exact names exist only at runtime.
 NATIVE_TOOL_NAMES = frozenset({
     "read_file", "search_code", "list_directory", "run_command", "search_semantic",
     "query_graph", "write_todos", "read_skill", "remember", "recall", "edit",
-    "find_binary", "init_workspace", "read_env_profile", "setup_env",
+    "find_binary", "init_workspace", "read_env_profile", "setup_env", "web_search",
     "start_session", "write_stdin", "kill_session", "list_sessions",
     "dispatch_agents", "wait_agents", "message_agent", "stop_agent",
 })

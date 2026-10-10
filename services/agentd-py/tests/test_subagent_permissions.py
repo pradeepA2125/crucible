@@ -120,3 +120,18 @@ def test_dispatch_brings_its_whole_group() -> None:
     names = child_tool_names(available, definition_tools=None, permission="default",
                              may_dispatch=False)
     assert not (DISPATCH_GROUP & names)
+
+
+@pytest.mark.parametrize("permission,tools,disallowed,expected", [
+    ("default", None, frozenset(), True),
+    ("plan", None, frozenset(), False),
+    ("plan", frozenset({"web_search"}), frozenset(), False),
+    ("default", frozenset({"web_search"}), frozenset(), True),
+    ("default", frozenset({"read_file"}), frozenset(), False),
+    ("default", None, frozenset({"web_search"}), False),
+])
+def test_native_search_child_filter(permission, tools, disallowed, expected):
+    names = child_tool_names([*_AVAILABLE, "web_search"], definition_tools=tools,
+                             permission=permission, may_dispatch=False,
+                             definition_disallowed=disallowed)
+    assert ("web_search" in names) is expected

@@ -12,7 +12,7 @@ DISPATCH_GROUP = frozenset({"dispatch_agents", "wait_agents", "message_agent", "
 # `remember` writes durable memory — children get recall only (spec §5.2, §5.3).
 CHILD_EXCLUDED_TOOLS = frozenset({
     "start_session", "write_stdin", "kill_session", "list_sessions", "remember"})
-_READ_ONLY_EXCLUDED = frozenset({"run_command"})
+_READ_ONLY_EXCLUDED = frozenset({"run_command", "web_search"})
 
 
 def effective_permission(own: Permission, dispatcher: Permission | None) -> Permission:

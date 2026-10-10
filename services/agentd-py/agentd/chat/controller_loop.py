@@ -115,12 +115,13 @@ def _permission_correction(
     resp: dict[str, object], atype: str, ctx: RenderContext,
 ) -> str | None:
     """Defense in depth for a read-only (effective `plan`) sub-agent (spec §5.6): its tool
-    list already omits run_command and every mcp__ tool, so reaching this means the model
-    named a tool it was never offered. Routed through the normal correction chain."""
+    list already omits run_command, web_search and every mcp__ tool, so reaching this
+    means the model named a tool it was never offered. Routed through the normal
+    correction chain."""
     if ctx.is_main or ctx.permission != "plan" or atype != "tool_call":
         return None
     tool = str(resp.get("tool", ""))
-    if tool == "run_command" or tool.startswith("mcp__"):
+    if tool in {"run_command", "web_search"} or tool.startswith("mcp__"):
         return (f"You are read-only for this task: `{tool}` isn't available to you. "
                 "Investigate with the read tools and put your findings in `report`.")
     return None
