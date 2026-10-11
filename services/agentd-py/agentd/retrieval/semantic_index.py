@@ -103,11 +103,10 @@ class SemanticIndex:
     ) -> IndexStats:
         """Incrementally build or update the index from a snapshot.
 
-        1. Build chunks from snapshot boundaries + workspace file reads.
-        2. Compare per-file mtimes with the stored index state.
-        3. Delete stale chunks for changed files.
-        4. Embed and insert new chunks for changed files.
-        5. Skip files with unchanged mtimes entirely.
+        1. Compare each source file's mtime with the stored index state (stat only).
+        2. Skip files with unchanged mtimes entirely — they are never read.
+        3. Chunk the changed files from snapshot boundaries + their contents.
+        4. Delete their stale chunks, then embed and insert the new ones.
         """
         start = time.time()
         workspace = Path(workspace_path).resolve()
@@ -115,49 +114,65 @@ class SemanticIndex:
         index_path = self._resolve_index_path(workspace)
         table = self._get_or_create_table(index_path)
 
-        all_chunks = self._chunker.build(workspace, snapshot_payload)
-        if not all_chunks:
+        # Compare mtimes BEFORE chunking: chunking reads every file, which costs seconds on
+        # a large repo even when nothing changed.
+        current_mtimes: dict[str, float] = {}
+        for rel_path in self._chunker.source_paths(workspace, snapshot_payload):
+            try:
+                stat = (workspace / rel_path).stat()
+            except OSError:
+                continue
+            current_mtimes[rel_path] = stat.st_mtime
+        if not current_mtimes:
             return IndexStats(total_chunks=0, updated_files=0, skipped_files=0, build_time_ms=0)
 
-        # Determine which files need re-embedding
         existing_mtimes = self._get_existing_mtimes(table)
-        files_to_update: set[str] = set()
-        all_file_paths: set[str] = set()
-        for chunk in all_chunks:
-            if chunk.path in all_file_paths:
-                continue
-            all_file_paths.add(chunk.path)
-            stored = existing_mtimes.get(chunk.path)
-            if stored is None or abs(stored - chunk.file_mtime) > 0.001:
-                files_to_update.add(chunk.path)
+        files_to_update = {
+            path for path, mtime in current_mtimes.items()
+            if path not in existing_mtimes or abs(existing_mtimes[path] - mtime) > 0.001
+        }
+        skipped = len(current_mtimes) - len(files_to_update)
 
-        skipped = len(all_file_paths) - len(files_to_update)
-
-        if not files_to_update:
-            elapsed = int((time.time() - start) * 1000)
-            return IndexStats(
-                total_chunks=len(all_chunks),
-                updated_files=0,
-                skipped_files=skipped,
-                build_time_ms=elapsed,
-            )
-
-        self._delete_chunks_for_files(table, files_to_update)
-
-        new_chunks = [c for c in all_chunks if c.path in files_to_update]
-        self._embed_and_insert(table, new_chunks)
+        if files_to_update:
+            new_chunks = self._chunker.build(
+                workspace, snapshot_payload, only_paths=files_to_update)
+            self._delete_chunks_for_files(table, files_to_update)
+            self._embed_and_insert(table, new_chunks)
 
         elapsed = int((time.time() - start) * 1000)
-        logger.info(
-            "Semantic index updated: %d files re-embedded, %d skipped, %dms",
-            len(files_to_update), skipped, elapsed,
-        )
+        if files_to_update:
+            logger.info(
+                "Semantic index updated: %d files re-embedded, %d skipped, %dms",
+                len(files_to_update), skipped, elapsed,
+            )
         return IndexStats(
-            total_chunks=len(all_chunks),
+            total_chunks=self._count_rows(table),
             updated_files=len(files_to_update),
             skipped_files=skipped,
             build_time_ms=elapsed,
         )
+
+    def open_existing(self, workspace_path: str | Path) -> bool:
+        """Open an already-built index for queries without building or loading the model.
+        False when there is no index yet."""
+        if self._table is not None:
+            return True
+        try:
+            import lancedb  # type: ignore[import-untyped]
+            index_path = self._resolve_index_path(Path(workspace_path).resolve())
+            if not index_path.exists():
+                return False
+            self._table = lancedb.connect(str(index_path)).open_table(_TABLE_NAME)
+            return True
+        except Exception:  # noqa: BLE001 — no table yet, or unreadable: a build creates it
+            return False
+
+    @staticmethod
+    def _count_rows(table: Any) -> int:
+        try:
+            return int(table.count_rows())
+        except Exception:  # noqa: BLE001 — stats only
+            return 0
 
     def query(
         self,

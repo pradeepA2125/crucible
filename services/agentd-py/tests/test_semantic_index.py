@@ -193,3 +193,39 @@ def test_kind_filter(tmp_path: Path) -> None:
 
     results = idx.query("foo method", top_k=10, kind_filter=["Class"])
     assert all(r.chunk.kind == "Class" for r in results)
+
+
+def test_only_changed_files_are_read_and_chunked(tmp_path: Path) -> None:
+    """Unchanged files are skipped by mtime before chunking: chunking reads every file,
+    which cost ~3.6 s per update on a large repo even when nothing had changed."""
+    workspace = tmp_path / "ws"
+    _write_file(workspace, "a.py", "def alpha() -> None:\n    pass\n")
+    _write_file(workspace, "b.py", "def beta() -> None:\n    pass\n")
+    snapshot = _snapshot([
+        _node("function:file:a.py:alpha", "a.py", "alpha", "Function", 1),
+        _node("function:file:b.py:beta", "b.py", "beta", "Function", 1),
+    ])
+    idx = SemanticIndex(index_path=tmp_path / "idx")
+    idx.build_or_update(workspace, snapshot)
+
+    chunked: list[set[str] | None] = []
+    original = idx._chunker.build
+
+    def spy(ws: object, payload: dict[str, object], *, only_paths: set[str] | None = None):
+        chunked.append(only_paths)
+        return original(ws, payload, only_paths=only_paths)  # type: ignore[arg-type]
+
+    idx._chunker.build = spy  # type: ignore[method-assign]
+
+    unchanged = idx.build_or_update(workspace, snapshot)
+    assert chunked == []  # nothing changed: no file read at all
+    assert (unchanged.updated_files, unchanged.skipped_files) == (0, 2)
+    assert unchanged.total_chunks == 2
+
+    import time
+    time.sleep(0.01)
+    _write_file(workspace, "b.py", "def beta() -> None:\n    \"\"\"Changed.\"\"\"\n")
+    changed = idx.build_or_update(workspace, snapshot)
+    assert chunked == [{"b.py"}]
+    assert (changed.updated_files, changed.skipped_files, changed.total_chunks) == (1, 1, 2)
+    assert {r.chunk.path for r in idx.query("beta changed", top_k=5)} == {"a.py", "b.py"}

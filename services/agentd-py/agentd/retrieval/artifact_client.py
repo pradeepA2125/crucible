@@ -146,9 +146,11 @@ class RetrievalArtifactClient:
         self._last_indexed_snapshot_ms: int = 0  # snapshot generation ms at last index build
         self._building: bool = False
         # Serializes re-embeds: the watch loop can fire several /v1/index/build calls in quick
-        # succession (multiple FS events per edit). Coalesce them — skip if a build is already
-        # running; the in-flight build reads the snapshot fresh, and any newer change re-triggers.
+        # succession (multiple FS events per edit). A request that arrives during a build sets
+        # _rebuild_requested and the running build goes once more, so the snapshot written
+        # mid-build is still indexed (it used to be dropped until the next edit).
         self._build_lock = threading.Lock()
+        self._rebuild_requested = False
 
     @classmethod
     def from_env(
@@ -173,18 +175,29 @@ class RetrievalArtifactClient:
         """Synchronously build/update the semantic index from the current snapshot.
 
         Returns the IndexStats from build_or_update, or None if semantic retrieval
-        is disabled or the snapshot doesn't exist. Updating _last_indexed_snapshot_ms
-        here means load_context() will skip a redundant rebuild on the first task.
+        is disabled, the snapshot doesn't exist, or another build is running (that
+        build then runs once more for this request).
         """
         if self._semantic_index is None:
             return None
+        stats: object | None = None
+        while True:
+            self._rebuild_requested = True
+            if not self._build_lock.acquire(blocking=False):
+                return None  # the running build sees the request after it finishes
+            try:
+                self._rebuild_requested = False
+                self._building = True
+                stats = self._build_semantic_index_once(workspace_path)
+            finally:
+                self._building = False
+                self._build_lock.release()
+            if not self._rebuild_requested:
+                return stats
+
+    def _build_semantic_index_once(self, workspace_path: str) -> object | None:
         snapshot_path = self._resolve_snapshot_path(workspace_path)
-        if not self._build_lock.acquire(blocking=False):
-            # A build is already running — coalesce. Skipping is safe: the in-flight build
-            # reads the snapshot fresh, and any change after it re-triggers a build.
-            return None
         try:
-            self._building = True
             if not snapshot_path.exists():
                 # The graph panel's Build-index CTA fires with no snapshot on disk —
                 # run the auto-index command first so there is something to embed.
@@ -201,9 +214,15 @@ class RetrievalArtifactClient:
             import logging
             logging.getLogger(__name__).warning("trigger_index_build failed: %s", exc)
             return None
-        finally:
-            self._building = False
-            self._build_lock.release()
+
+    def _request_background_build(self, workspace_path: str) -> None:
+        """Keep index builds off the chat path: run one on a daemon thread, or, when one is
+        already running, ask it to go once more."""
+        if self._build_lock.locked():
+            self._rebuild_requested = True
+            return
+        threading.Thread(target=self.trigger_index_build, args=(workspace_path,),
+                         name="semantic-index-build", daemon=True).start()
 
     def index_status(self) -> dict[str, object]:
         return {
@@ -264,22 +283,16 @@ class RetrievalArtifactClient:
                 )
             )
 
-        # Trigger semantic index rebuild when the snapshot has been regenerated.
-        # Delta logic inside build_or_update() ensures only changed files are re-embedded.
+        # Never build the semantic index here: this is the chat/task path, and a build reads
+        # and chunks the workspace (seconds on a large repo). Query whatever index exists and
+        # request a background build when the snapshot is newer than what was indexed.
         if self._semantic_index is not None:
+            index = self._semantic_index
+            if not index.is_ready():  # type: ignore[attr-defined]
+                index.open_existing(workspace_path)  # type: ignore[attr-defined]
             snapshot_ms = int(payload.get("generated_at_ms", 0) or 0)
-            if snapshot_ms > self._last_indexed_snapshot_ms:
-                try:
-                    self._semantic_index.build_or_update(workspace_path, payload)  # type: ignore[union-attr]
-                    self._last_indexed_snapshot_ms = snapshot_ms
-                except Exception as exc:
-                    diagnostics.append(
-                        Diagnostic(
-                            source="retrieval",
-                            message=f"Semantic index build failed; using graph-only retrieval ({exc})",
-                            level="warning",
-                        )
-                    )
+            if snapshot_ms > self._last_indexed_snapshot_ms or not index.is_ready():  # type: ignore[attr-defined]
+                self._request_background_build(workspace_path)
 
         context = self._build_context(payload, goal, age_sec, workspace_path)
 

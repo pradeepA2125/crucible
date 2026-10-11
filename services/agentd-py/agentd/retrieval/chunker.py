@@ -89,15 +89,50 @@ class CodeChunker:
     def __init__(self, max_chunk_lines: int = 120) -> None:
         self._max_chunk_lines = max_chunk_lines
 
+    def source_paths(
+        self,
+        workspace_path: str | Path,
+        snapshot_payload: dict[str, object],
+    ) -> list[str]:
+        """Workspace-relative paths of the files that can produce chunks (they have a
+        symbol node), without reading them."""
+        workspace = Path(workspace_path).resolve()
+        graph = snapshot_payload.get("graph", {})
+        nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
+        if not isinstance(nodes, list):
+            return []
+        return [
+            rel for rel, file_nodes in self._group_by_path(nodes, workspace).items()
+            if any(str(n.get("kind", "")) in self._SYMBOL_KINDS for n in file_nodes)
+        ]
+
+    def _group_by_path(
+        self, nodes: list[object], workspace: Path,
+    ) -> dict[str, list[dict[str, object]]]:
+        """Non-File nodes grouped by workspace-relative file path."""
+        by_path: dict[str, list[dict[str, object]]] = {}
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            if str(node.get("kind", "")) == "File":
+                continue
+            raw_path = str(node.get("path", ""))
+            rel = _make_relative(raw_path, workspace) if raw_path else None
+            if rel:
+                by_path.setdefault(rel, []).append(node)
+        return by_path
+
     def build(
         self,
         workspace_path: str | Path,
         snapshot_payload: dict[str, object],
+        *,
+        only_paths: set[str] | None = None,
     ) -> list[CodeChunk]:
         """Build chunks from a snapshot payload and workspace files.
 
         Uses snapshot nodes as chunk boundaries (AST-quality, no re-parsing).
-        Reads actual code from workspace files.
+        Reads actual code from workspace files — only `only_paths` when given.
         """
         workspace = Path(workspace_path).resolve()
         graph = snapshot_payload.get("graph", {})
@@ -135,16 +170,9 @@ class CodeChunker:
                     called_by_to.setdefault(to_id, []).append(from_name)
 
         # Group nodes by workspace-relative file path (skip File-kind nodes)
-        by_path: dict[str, list[dict[str, object]]] = {}
-        for node in nodes:
-            if not isinstance(node, dict):
-                continue
-            if str(node.get("kind", "")) == "File":
-                continue
-            raw_path = str(node.get("path", ""))
-            rel = _make_relative(raw_path, workspace) if raw_path else None
-            if rel:
-                by_path.setdefault(rel, []).append(node)
+        by_path = self._group_by_path(nodes, workspace)
+        if only_paths is not None:
+            by_path = {rel: ns for rel, ns in by_path.items() if rel in only_paths}
 
         chunks: list[CodeChunk] = []
         now_ms = int(time.time() * 1000)

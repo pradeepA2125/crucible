@@ -393,3 +393,83 @@ async def test_status_api_building_true_then_false(tmp_path: Path):
         status_resp = await http.get("/v1/index/status")
         assert status_resp.json()["building"] is False
         assert status_resp.json()["last_indexed_snapshot_ms"] == 1000
+
+
+# ── The chat path never builds the semantic index ─────────────────────────────
+
+
+def test_load_context_requests_a_background_build_instead_of_building(tmp_path: Path):
+    """A stale index is rebuilt off the chat path: load_context returns while the build
+    is still running, on another thread."""
+    snapshot_path = _make_snapshot(tmp_path, generated_at_ms=5000)
+    may_finish = threading.Event()
+    build_threads: list[threading.Thread] = []
+
+    def slow_build(*_: object) -> None:
+        build_threads.append(threading.current_thread())
+        may_finish.wait(timeout=5)
+
+    fake_index = MagicMock()
+    fake_index.is_ready.return_value = True
+    fake_index.query.return_value = []
+    fake_index.build_or_update.side_effect = slow_build
+    client = RetrievalArtifactClient(snapshot_path_template=str(snapshot_path),
+                                     semantic_index=fake_index)
+
+    client.load_context(str(tmp_path), "hello")  # would block until may_finish if inline
+
+    may_finish.set()
+    for _ in range(100):
+        if client._last_indexed_snapshot_ms == 5000:
+            break
+        threading.Event().wait(0.02)
+    assert build_threads and build_threads[0] is not threading.main_thread()
+    assert client._last_indexed_snapshot_ms == 5000
+
+
+def test_load_context_opens_an_existing_index_without_building(tmp_path: Path):
+    snapshot_path = _make_snapshot(tmp_path, generated_at_ms=0)  # nothing newer to index
+    fake_index = MagicMock()
+    fake_index.is_ready.return_value = False
+
+    def open_existing(_workspace: str) -> bool:
+        fake_index.is_ready.return_value = True
+        return True
+
+    fake_index.open_existing.side_effect = open_existing
+    fake_index.query.return_value = []
+    client = RetrievalArtifactClient(snapshot_path_template=str(snapshot_path),
+                                     semantic_index=fake_index)
+
+    client.load_context(str(tmp_path), "hello")
+
+    fake_index.open_existing.assert_called_once_with(str(tmp_path))
+    fake_index.build_or_update.assert_not_called()
+
+
+def test_a_build_requested_during_a_build_runs_once_more(tmp_path: Path):
+    """The watcher can rewrite the snapshot while a build runs; that request must not be
+    dropped, or the chat path is the next thing to notice the stale index."""
+    snapshot_path = _make_snapshot(tmp_path)
+    started = threading.Event()
+    may_finish = threading.Event()
+    calls: list[int] = []
+
+    def slow_build(*_: object) -> None:
+        calls.append(1)
+        started.set()
+        may_finish.wait(timeout=5)
+
+    fake_index = MagicMock()
+    fake_index.build_or_update.side_effect = slow_build
+    client = RetrievalArtifactClient(snapshot_path_template=str(snapshot_path),
+                                     semantic_index=fake_index)
+
+    first = threading.Thread(target=client.trigger_index_build, args=(str(tmp_path),))
+    first.start()
+    started.wait(timeout=5)
+    assert client.trigger_index_build(str(tmp_path)) is None  # returns at once
+    may_finish.set()
+    first.join(timeout=5)
+
+    assert len(calls) == 2
