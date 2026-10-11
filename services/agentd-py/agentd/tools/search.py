@@ -14,6 +14,16 @@ _MAX_MATCHES = 50
 _MAX_OUTPUT_CHARS = 8000
 
 
+def _line_count(path: Path) -> int | None:
+    """Lines in a matched file, so the model can request the whole file or the right range
+    in one read instead of guessing a range and asking again."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return data.count(b"\n") + (0 if not data or data.endswith(b"\n") else 1)
+
+
 async def search_code(
     *,
     pattern: str,
@@ -118,7 +128,9 @@ async def search_code(
                     current_file = str(Path(current_file).relative_to(shadow_root))
                 except ValueError:
                     pass
-            matches.append(f"\n--- {current_file} ---")
+            line_count = _line_count(shadow_root / current_file) if current_file else None
+            suffix = f" ({line_count} lines)" if line_count is not None else ""
+            matches.append(f"\n--- {current_file}{suffix} ---")
 
         elif msg_type == "match":
             match_count += 1
@@ -135,6 +147,21 @@ async def search_code(
             text = lines_obj.get("text", "") if isinstance(lines_obj, dict) else ""
             line_num = data.get("line_number", "?")
             matches.append(f"  {line_num}| {text.rstrip()}")
+
+    # Exit 2 with no match is a failed search, not an empty one. Reporting it as "No
+    # matches" cost a model round each time; an invalid regex is retried as literal text.
+    if proc is not None and proc.returncode == 2 and match_count == 0:
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        if not fixed_strings and "regex parse error" in stderr_text:
+            literal = await search_code(
+                pattern=pattern, path_filter=path_filter, context_lines=context_lines,
+                fixed_strings=True, shadow_root=shadow_root, ripgrep_cmd=ripgrep_cmd)
+            if literal.is_error:
+                return literal
+            note = (f"Note: {pattern!r} is not a valid regex, so it was searched as "
+                    "literal text (fixed_strings).")
+            return ToolOutput(output=f"{note}\n{literal.output}")
+        return ToolOutput(output=f"Error: search failed: {stderr_text[:500]}", is_error=True)
 
     if not matches or match_count == 0:
         stderr_text = stderr.decode("utf-8", errors="replace").strip()
