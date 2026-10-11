@@ -1,0 +1,343 @@
+{
+  "model": "gpt-5.6-sol",
+  "reasoning": "medium",
+  "toolBatching": true,
+  "adaptiveReads": true,
+  "reloaded_for_each_configuration": true,
+  "trials": [
+    {
+      "compactContext": true,
+      "artifacts": ".crucible/state/artifacts/chat/chat-6a1281a96b04/ab298a4cf3ea4991bd6e086e8841c498",
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is a saved user preference relevant to the greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "user preferred greeting name salutation"
+              },
+              "id": "greeting-preference",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_ouPEkVhSWvn076wxHaTUC8pB"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check the workspace root so I\u2019m oriented if the greeting leads into project work",
+          "calls": [
+            {
+              "tool": "list_directory",
+              "args": {
+                "path": "."
+              },
+              "id": "orient-workspace",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_Q4sW7M49lnMtboz6GlfYsLSv"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether the project has a remembered preferred form of address before replying.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "preferred name or form of address for greetings"
+              },
+              "id": "check-greeting-preference",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_yEY0gTmASg3vMjC29QfkICbz"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is any pending conversational context worth resuming",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "pending user request after greeting hello"
+              },
+              "id": "pending-context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_gEMrhhO64VUrxbGv7l1hydtW"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is relevant prior conversational context before greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "current conversation context and preferred greeting"
+              },
+              "id": "greeting-context-final",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_CIq6I8wH3EQyO5L36OxAmnwi"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is a preferred form of address before greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "preferred user name or form of address"
+              },
+              "id": "preferred-address",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_aizuJIvKyyrMGD5BUjDHyY25"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether there is a preferred form of address before greeting the user.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "preferred form of address or greeting"
+              },
+              "id": "greeting-address-check",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_zkSVTuKDmFI31Gm349wo2IJ2"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether there is a saved preference for how to address the user before replying.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "user preferred name greeting salutation"
+              },
+              "id": "greeting-memory",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_ng3cVxmi3CwddCxhjyd8LI5P"
+            }
+          ]
+        }
+      ],
+      "answered": false
+    },
+    {
+      "compactContext": false,
+      "artifacts": ".crucible/state/artifacts/chat/chat-2256e42ed891/72a47a36b196448e81d6418463d6713e",
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is a saved conversational preference relevant to greeting the user",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "user greeting or preferred conversational style"
+              },
+              "id": "greeting-preference",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_lX7Gze5MI7MoBHm65DqSYNl6"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether there is active background work before greeting the user.",
+          "calls": [
+            {
+              "tool": "list_sessions",
+              "args": {
+                "include_all": true
+              },
+              "id": "check-active-sessions",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_ocVSqxDzFmo7vqT8KruTLJSz"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether the greeting should acknowledge any pending thread context.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "pending user-requested follow-up after greeting"
+              },
+              "id": "pending-context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_GxwiisE3bQ7jCKEKNV5dU6Xe"
+            }
+          ]
+        },
+        {
+          "type": "answer",
+          "thought": "greeting needs no repository change",
+          "answer": "Hello! How can I help you today?",
+          "provider_call_id": "call_1VFHAk7vtfG81zCmoSgb9VOa"
+        }
+      ],
+      "answered": true
+    },
+    {
+      "compactContext": false,
+      "artifacts": ".crucible/state/artifacts/chat/chat-80f6f64386ba/8112c13833574a10a21a89a26951e97e",
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is any relevant conversational context before replying",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "user greeting preferences"
+              },
+              "id": "greeting-context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_5uGD0EViOxq7AhBweQ91791S"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is active conversational context worth acknowledging",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "current conversation context and pending user work"
+              },
+              "id": "hello-context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_Kv50E3yx4pLRQP9KwaMuPyGG"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether any background work needs acknowledging before greeting the user.",
+          "calls": [
+            {
+              "tool": "list_sessions",
+              "args": {},
+              "id": "active-sessions",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_nrxZWy7v3ue2qeJJk8w7IeNE"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether a prior preference affects how I should greet the user",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "preferred greeting or conversational style"
+              },
+              "id": "greeting-style",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_5VXCzpTFXEmN8GWXBtp0TV1V"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether a prior conversation preference should shape the greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "conversation tone preference"
+              },
+              "id": "tone-check",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_xxRNgZoWwu16VCamza26I68w"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether there is any active background work worth mentioning in the greeting.",
+          "calls": [
+            {
+              "tool": "list_sessions",
+              "args": {},
+              "id": "final-greeting-context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_UfEEwtVQEujagOBqBR01zAiA"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is a pending thread worth mentioning in the greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "most recent unfinished project task awaiting user direction"
+              },
+              "id": "pending-thread-check",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_jMIJNORrtuIQeprdjISjv12L"
+            }
+          ]
+        }
+      ],
+      "answered": false
+    }
+  ],
+  "limitations": [
+    "Manual bounded stopping; not proof of infinite looping.",
+    "Live memory changes between trials.",
+    "No exact end-to-end timings collected."
+  ]
+}

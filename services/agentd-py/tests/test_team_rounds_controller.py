@@ -9,8 +9,17 @@ from tests.test_team_controller import REPORT, _make, _request, _settle
 
 AGREE = {"type": "report", "thought": "checked", "summary": "P1 holds", "status": "completed",
          "stances": [{"proposal_id": "P1", "stance": "agree", "note": "checked the plan"}]}
-POST_TO_BOB = {"type": "tool_call", "thought": "tell bob", "tool": "team_post",
-               "args": {"text": "@bob the login route needs a test"}}
+POST_TO_BOB = {
+    "type": "tool_calls",
+    "thought": "tell bob",
+    "calls": [
+        {
+            "id": "call1",
+            "tool": "team_post",
+            "args": {"text": "@bob the login route needs a test"},
+        }
+    ],
+}
 
 
 def _no_notice_turns(ctrl, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -112,8 +121,17 @@ async def test_deadline_forces_a_report(tmp_path, monkeypatch) -> None:
 
     def looking() -> dict[str, object]:   # a fresh path each time: no duplicate-call guard
         calls["n"] += 1
-        return {"type": "tool_call", "thought": "keep looking", "tool": "read_file",
-                "args": {"path": f"notes-{calls['n']}.txt"}}
+        return {
+            "type": "tool_calls",
+            "thought": "keep looking",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "read_file",
+                    "args": {"path": f"notes-{calls['n']}.txt"},
+                }
+            ],
+        }
     ctrl, store, tid, engine = _make(tmp_path, monkeypatch, {"alice": [AGREE], "bob": [AGREE]})
     _no_notice_turns(ctrl, monkeypatch)
     original = engine.create_controller_step

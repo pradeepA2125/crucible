@@ -11,7 +11,11 @@ from agentd.subagents.context import AgentContext
 from agentd.tools.sources import AggregatingToolRegistry
 
 REPORT = {"type": "report", "thought": "t", "summary": "s", "status": "completed"}
-TOOL = {"type": "tool_call", "thought": "look", "tool": "list_directory", "args": {}}
+TOOL = {
+    "type": "tool_calls",
+    "thought": "look",
+    "calls": [{"id": "call1", "tool": "list_directory", "args": {}}],
+}
 
 
 class _Engine:
@@ -28,7 +32,7 @@ class _Engine:
 def _loop(engine: _Engine) -> ControllerLoop:
     ctx = AgentContext(agent_id="agent-r", name="general-purpose", label="alice", depth=1,
                        parent_agent_id=None, permission="default",
-                       allowed_types=("tool_call", "progress", "report"), persona="",
+                       allowed_types=("tool_calls", "progress", "report"), persona="",
                        max_iters=10)
     return ControllerLoop(engine, AggregatingToolRegistry([]), EventBroadcaster(),
                           channel_id="c", phase_sm=ControllerPhaseSM(start="AGENT"), agent=ctx)

@@ -11,7 +11,7 @@ def _branch_types(schema: dict) -> list[str]:
 
 
 def test_agent_phase_types() -> None:
-    assert _PHASE_TYPES["AGENT"] == ["tool_call", "edit", "progress", "report"]
+    assert _PHASE_TYPES["AGENT"] == ["tool_calls", "edit", "progress", "report"]
     assert ControllerPhaseSM(start="AGENT").allowed_types() == _PHASE_TYPES["AGENT"]
 
 
@@ -23,7 +23,7 @@ def test_invalid_start_still_raises() -> None:
 @pytest.mark.parametrize("mode", ["tight", "anyof"])
 def test_agent_tight_schema_requires_a_report_summary(mode: str) -> None:
     schema = controller_response_schema(phase="AGENT", **{mode: True})
-    assert _branch_types(schema) == ["tool_call", "edit", "progress", "report"]
+    assert _branch_types(schema) == ["tool_calls", "edit", "progress", "report"]
     key = "oneOf" if mode == "tight" else "anyOf"
     report = next(b for b in schema[key] if b["properties"]["type"]["const"] == "report")
     assert report["required"] == ["type", "thought", "summary"]
@@ -32,11 +32,11 @@ def test_agent_tight_schema_requires_a_report_summary(mode: str) -> None:
 
 def test_flat_agent_schema_trims_the_enum() -> None:
     schema = controller_response_schema(phase="AGENT")
-    assert schema["properties"]["type"]["enum"] == ["tool_call", "edit", "progress", "report"]
+    assert schema["properties"]["type"]["enum"] == ["tool_calls", "edit", "progress", "report"]
 
 
 def test_allowed_types_override_the_phase_table() -> None:
-    types = ["tool_call", "answer", "clarify", "edit", "submit_changes", "progress", "propose_mode"]
+    types = ["tool_calls", "answer", "clarify", "edit", "submit_changes", "progress", "propose_mode"]
     flat = controller_response_schema(phase="ACTIVE", allowed_types=types)
     assert flat["properties"]["type"]["enum"] == types
     tight = controller_response_schema(phase="ACTIVE", allowed_types=types, tight=True)

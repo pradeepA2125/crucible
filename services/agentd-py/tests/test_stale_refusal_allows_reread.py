@@ -14,6 +14,7 @@ from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
 from agentd.patch.engine import PatchEngine
 from agentd.subagents.write_log import MAIN_AGENT_ID, WorkspaceWriteLog, WriteGuard
+from agentd.tools.registry import ToolOutput
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
@@ -25,8 +26,8 @@ def _edit(search: str, replace: str) -> dict[str, object]:
 
 
 def _read(path: str) -> dict[str, object]:
-    return {"type": "tool_call", "thought": "read", "tool": "read_file",
-            "args": {"path": path}}
+    return {"type": "tool_calls", "thought": "read",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": path}}]}
 
 
 def _setup(tmp_path: Path) -> tuple[Path, WorkspaceWriteLog, TurnEditSession,
@@ -61,17 +62,25 @@ async def test_a_refusal_at_apply_lets_the_same_read_run_again(tmp_path: Path) -
     loop = ControllerLoop(
         engine, registry, EventBroadcaster(), channel_id="c1", phase_sm=ControllerPhaseSM(),
         edit_session_factory=lambda: session)
-    original = registry.execute
+    # Batched calls run through prepare()'s closure, not registry.execute.
+    original = registry.prepare
 
-    async def execute(tool, args):  # type: ignore[no-untyped-def]
-        out = await original(tool, args)
-        if tool == "read_file" and not (real / "f.py").read_text().startswith("x = 1\ny"):
-            # A sibling promotes f.py right after this agent's first read.
-            (real / "f.py").write_text("x = 1\ny = 9\n")
-            log.note_promote("a1", "builder", "general-purpose", ["f.py"])
-        return out
+    async def prepare(tool, args):  # type: ignore[no-untyped-def]
+        run = await original(tool, args)
+        if isinstance(run, ToolOutput):
+            return run
 
-    registry.execute = execute  # type: ignore[method-assign]
+        async def run_then_promote():  # type: ignore[no-untyped-def]
+            out = await run()
+            if tool == "read_file" and not (real / "f.py").read_text().startswith("x = 1\ny"):
+                # A sibling promotes f.py right after this agent's first read.
+                (real / "f.py").write_text("x = 1\ny = 9\n")
+                log.note_promote("a1", "builder", "general-purpose", ["f.py"])
+            return out
+
+        return run_then_promote
+
+    registry.prepare = prepare  # type: ignore[method-assign]
     out = await loop.run({"goal": "g", "workspace_path": str(real)}, max_iters=10,
                          turn_control=ChatTurnControl(auto_accept_edits=True))
     contents = _contents(out.history)
@@ -121,4 +130,5 @@ async def test_other_repeated_reads_stay_blocked(tmp_path: Path) -> None:
         edit_session_factory=lambda: session)
     out = await loop.run({"goal": "g", "workspace_path": str(real)}, max_iters=10,
                          turn_control=ChatTurnControl(auto_accept_edits=True))
-    assert any(c.startswith("DUPLICATE BLOCKED") for c in _contents(out.history))
+    blocked = [c for c in _contents(out.history) if c.startswith("DUPLICATE BLOCKED")]
+    assert blocked and "earlier reads do not already cover" in blocked[0]

@@ -56,7 +56,11 @@ class _Delegation:
 
 
 def _call(tool: str, **args: object) -> dict[str, object]:
-    return {"type": "tool_call", "thought": "t", "tool": tool, "args": args}
+    return {
+        "type": "tool_calls",
+        "thought": "t",
+        "calls": [{"id": "call1", "tool": tool, "args": args}],
+    }
 
 
 async def _contexts(*steps: dict[str, object]) -> list[dict]:
@@ -133,9 +137,9 @@ def test_after_reports_are_collected_the_hint_says_check_them() -> None:
     assert "reports of builder are in" in text
 
 
-def test_without_delegation_the_entry_hint_is_unchanged() -> None:
+def test_first_action_without_delegation_gets_entry_hint() -> None:
     payload = build_controller_step_payload(
-        {"goal": "g", "workspace_path": "/w", "active_entry": True},
+        {"goal": "g", "workspace_path": "/w", "active_entry": True, "iteration": 0},
         history=HISTORY, tool_definitions=[], phase="ACTIVE")
     assert "FIRST action" in str(payload["instruction"])
 
@@ -209,7 +213,8 @@ def test_live_work_leads_every_main_hint() -> None:
         assert "only if the user's latest message asks" in text
         assert "wait_agents is for agents you dispatched" in text
         situation = [i for i in (text.find(k) for k in (
-            "FIRST action", "Notices woke", "reflect on your last edit")) if i >= 0]
+            "FIRST action", "No edit or todo list has started yet", "Notices woke",
+            "reflect on your last edit")) if i >= 0]
         assert situation and text.index("snake-game") < min(situation)   # live work leads
 
 

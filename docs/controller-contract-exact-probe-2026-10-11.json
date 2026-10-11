@@ -1,0 +1,90 @@
+{
+  "method": "Identical captured fresh hello context; independent transport per request; native current-step tail and session header; no tools executed. Explicit editor registration.",
+  "artifact": ".crucible/state/artifacts/chat/chat-36d3070c0cbe/78269f45653644729a74ca2b84dc2dd7/controller-turn-00.json",
+  "exact_capture": true,
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "rows": [
+    {
+      "variant": "current_off",
+      "repetition": 0,
+      "response": {
+        "type": "answer",
+        "thought": "Responding to the greeting.",
+        "answer": "Hello! How can I help?"
+      },
+      "function": "answer",
+      "seconds": 4.719
+    },
+    {
+      "variant": "response_envelope",
+      "repetition": 0,
+      "response": {
+        "type": "answer",
+        "thought": "The user is greeting; no repository work is needed.",
+        "answer": "Hello! How can I help you today?"
+      },
+      "function": "controller_step_response",
+      "seconds": 3.268
+    },
+    {
+      "variant": "explicit_descriptions",
+      "repetition": 0,
+      "response": {
+        "type": "answer",
+        "thought": "Responding to the greeting without repository work.",
+        "answer": "Hello! How can I help?"
+      },
+      "function": "answer",
+      "seconds": 5.702
+    },
+    {
+      "variant": "current_off",
+      "repetition": 1,
+      "response": {
+        "type": "tool_calls",
+        "thought": "The user is greeting; I will perform a harmless workspace check before responding.",
+        "calls": [
+          {
+            "tool": "list_directory",
+            "args": {
+              "path": "."
+            },
+            "id": "call1",
+            "execution": "auto"
+          }
+        ]
+      },
+      "function": "tool_calls",
+      "seconds": 6.464
+    },
+    {
+      "variant": "response_envelope",
+      "repetition": 1,
+      "response": {
+        "type": "answer",
+        "thought": "This is a simple greeting and needs no repository work.",
+        "answer": "Hello! How can I help you today?"
+      },
+      "function": "controller_step_response",
+      "seconds": 3.525
+    },
+    {
+      "variant": "explicit_descriptions",
+      "repetition": 1,
+      "response": {
+        "type": "answer",
+        "thought": "Responding to the greeting without repository work.",
+        "answer": "Hello! How can I help?"
+      },
+      "function": "answer",
+      "seconds": 6.286
+    }
+  ],
+  "account": "Yahoo account selected in live Crucible settings",
+  "limitations": [
+    "Two step-one outputs per variant; tools were not executed.",
+    "Exact captured live system/schema/payload, production current-step label and session header.",
+    "The original descriptions chose one answer and one unnecessary tool; two successful alternatives are preliminary evidence, not statistical proof."
+  ]
+}

@@ -5,7 +5,7 @@ from collections.abc import Iterable
 
 from agentd.prompting.tagged import Permission
 
-AGENT_BASE_TYPES: tuple[str, ...] = ("tool_call", "edit", "progress", "report")
+AGENT_BASE_TYPES: tuple[str, ...] = ("tool_calls", "edit", "progress", "report")
 DISPATCH_TOOL = "dispatch_agents"
 DISPATCH_GROUP = frozenset({"dispatch_agents", "wait_agents", "message_agent", "stop_agent"})
 # PTY sessions are thread-scoped (one child could kill a sibling's process), and

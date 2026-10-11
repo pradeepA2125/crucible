@@ -1,6 +1,7 @@
 """read_file tool implementation (path-traversal safe)."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from pathlib import Path
 
@@ -20,6 +21,41 @@ async def read_file(
     shadow_root: Path,
     max_lines: int = _MAX_LINES,
     max_chars: int = _MAX_OUTPUT_CHARS,
+) -> ToolOutput:
+    worker = asyncio.create_task(asyncio.to_thread(
+        _read_file_sync,
+        path=path,
+        start_line=start_line,
+        end_line=end_line,
+        shadow_root=shadow_root,
+        max_lines=max_lines,
+        max_chars=max_chars,
+    ))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        # A running thread cannot be cancelled. Keep the caller's workspace lease
+        # until the read finishes, so an edit cannot race with a cancelled read.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not worker.cancelled():
+            worker.exception()
+        raise
+
+
+def _read_file_sync(
+    *,
+    path: str,
+    start_line: int | None,
+    end_line: int | None,
+    shadow_root: Path,
+    max_lines: int,
+    max_chars: int,
 ) -> ToolOutput:
     if not path:
         return ToolOutput(output="Error: path is required", is_error=True)

@@ -69,15 +69,23 @@ def _loop(tmp_path: Path, steps: list[dict[str, object]], agent: AgentContext | 
 
 
 REPORT = {"type": "report", "thought": "t", "summary": "Changed api/a.py. Tests pass."}
-LIST = {"type": "tool_call", "thought": "t", "tool": "list_directory", "args": {"path": "."}}
-SEARCH = {"type": "tool_call", "thought": "t", "tool": "search_code", "args": {"pattern": "x"}}
+LIST = {
+    "type": "tool_calls",
+    "thought": "t",
+    "calls": [{"id": "call1", "tool": "list_directory", "args": {"path": "."}}],
+}
+SEARCH = {
+    "type": "tool_calls",
+    "thought": "t",
+    "calls": [{"id": "call1", "tool": "search_code", "args": {"pattern": "x"}}],
+}
 
 
 @pytest.mark.asyncio
 async def test_agent_types_persona_and_readonly_flag(tmp_path: Path) -> None:
     loop, engine = _loop(tmp_path, [REPORT], _agent())
     await loop.run({"goal": "g", "workspace_path": str(tmp_path)}, max_iters=5)
-    assert engine.calls[0] == {"allowed_types": ["tool_call", "edit", "progress", "report"],
+    assert engine.calls[0] == {"allowed_types": ["tool_calls", "edit", "progress", "report"],
                                "persona": "Be terse.", "readonly": False, "iteration": 0}
 
 
@@ -85,7 +93,7 @@ async def test_agent_types_persona_and_readonly_flag(tmp_path: Path) -> None:
 async def test_a_read_only_agent_has_no_edit(tmp_path: Path) -> None:
     loop, engine = _loop(tmp_path, [REPORT], _agent("plan"))
     await loop.run({"goal": "g", "workspace_path": str(tmp_path)}, max_iters=5)
-    assert engine.calls[0]["allowed_types"] == ["tool_call", "progress", "report"]
+    assert engine.calls[0]["allowed_types"] == ["tool_calls", "progress", "report"]
     assert engine.calls[0]["readonly"] is True
 
 
@@ -94,8 +102,8 @@ async def test_the_final_iteration_narrows_to_report(tmp_path: Path) -> None:
     loop, engine = _loop(tmp_path, [LIST, SEARCH, REPORT], _agent())
     await loop.run({"goal": "g", "workspace_path": str(tmp_path)}, max_iters=2)
     assert [c["allowed_types"] for c in engine.calls] == [
-        ["tool_call", "edit", "progress", "report"],
-        ["tool_call", "edit", "progress", "report"],
+        ["tool_calls", "edit", "progress", "report"],
+        ["tool_calls", "edit", "progress", "report"],
         ["report"]]
 
 

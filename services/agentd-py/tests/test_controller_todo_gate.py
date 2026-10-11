@@ -29,8 +29,11 @@ def _edit_sm() -> ControllerPhaseSM:
 
 
 def _wt(items):
-    return {"type": "tool_call", "thought": "todos", "tool": "write_todos",
-            "args": {"items": items}}
+    return {
+        "type": "tool_calls",
+        "thought": "todos",
+        "calls": [{"id": "call1", "tool": "write_todos", "args": {"items": items}}],
+    }
 
 
 def _loop(ledger, reasoning):

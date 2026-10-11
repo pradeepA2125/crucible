@@ -11,24 +11,24 @@ from agentd.tools.sources import AggregatingToolRegistry
 
 MAIN = RenderContext.main()
 CHILD = RenderContext(audience="child", permission="default",
-                      base_types=frozenset({"tool_call", "edit", "progress", "report"}),
+                      base_types=frozenset({"tool_calls", "edit", "progress", "report"}),
                       agent_id="a1", agent_label="impl")
 READONLY = RenderContext(audience="child", permission="plan",
-                         base_types=frozenset({"tool_call", "progress", "report"}),
+                         base_types=frozenset({"tool_calls", "progress", "report"}),
                          agent_id="a2", agent_label="survey")
 _BANNED = ("submit_changes", "propose_mode", "Plan Mode", "'answer'")
 
 
 def test_malformed_correction_main_is_unchanged_and_child_names_allowed_types() -> None:
-    assert malformed_correction(MAIN, ["tool_call", "answer"]) == MALFORMED_CORRECTION
-    out = malformed_correction(CHILD, ["tool_call", "edit", "progress", "report"])
-    assert out.endswith("Allowed types right now: tool_call, edit, progress, report.")
+    assert malformed_correction(MAIN, ["tool_calls", "answer"]) == MALFORMED_CORRECTION
+    out = malformed_correction(CHILD, ["tool_calls", "edit", "progress", "report"])
+    assert out.endswith("Allowed types right now: tool_calls, edit, progress, report.")
 
 
 @pytest.mark.parametrize("ctx", [CHILD, READONLY])
 def test_child_corrections_never_name_parent_terminals(ctx: RenderContext) -> None:
     texts = [
-        cl._reserved_tool_name_correction({"tool": "edit"}, "tool_call", ctx) or "",
+        cl._reserved_tool_name_correction({"tool": "edit"}, "tool_calls", ctx) or "",
         cl._progress_repeat_correction({"note": "x"}, "progress", True, ctx) or "",
         cl._progress_dedup_correction({"note": "x"}, "progress", {"x"}, ctx) or "",
         cl._empty_edit_redirect(ctx),
@@ -39,7 +39,7 @@ def test_child_corrections_never_name_parent_terminals(ctx: RenderContext) -> No
 
 def test_readonly_corrections_never_offer_edit() -> None:
     repeat = cl._progress_repeat_correction({"note": "x"}, "progress", True, READONLY) or ""
-    reserved = cl._reserved_tool_name_correction({"tool": "edit"}, "tool_call", READONLY) or ""
+    reserved = cl._reserved_tool_name_correction({"tool": "edit"}, "tool_calls", READONLY) or ""
     assert "'edit'" not in repeat
     assert "You are read-only" in reserved
 

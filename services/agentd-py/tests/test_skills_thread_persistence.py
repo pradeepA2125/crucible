@@ -73,8 +73,8 @@ async def test_active_skill_survives_clarify_resume_without_reread(tmp_path: Pat
 
     eng = _SkillsPayloadRecordingEngine([
         # turn 1 iter 0: activate the skill
-        {"type": "tool_call", "thought": "t", "tool": "read_skill",
-         "args": {"name": "brainstorming"}},
+        {"type": "tool_calls", "thought": "t",
+         "calls": [{"id": "call1", "tool": "read_skill", "args": {"name": "brainstorming"}}]},
         # turn 1 iter 1: ask a clarifying question (ends the turn on a clarify gate)
         {"type": "clarify", "thought": "t", "question": "what scope?"},
         # turn 2 (resolve_clarify resume): answers directly — no read_skill needed
@@ -118,8 +118,8 @@ async def test_active_skill_replaced_not_accumulated_across_turns(tmp_path: Path
     chan = f"chat:{th.thread_id}"
 
     eng = _SkillsPayloadRecordingEngine([
-        {"type": "tool_call", "thought": "t", "tool": "read_skill",
-         "args": {"name": "brainstorming"}},
+        {"type": "tool_calls", "thought": "t",
+         "calls": [{"id": "call1", "tool": "read_skill", "args": {"name": "brainstorming"}}]},
         {"type": "answer", "thought": "t", "answer": "spec written"},
     ])
     ctrl = ChatController(
@@ -134,8 +134,8 @@ async def test_active_skill_replaced_not_accumulated_across_turns(tmp_path: Path
 
     # A second turn reads a DIFFERENT skill — it must replace, not accumulate.
     eng2 = _SkillsPayloadRecordingEngine([
-        {"type": "tool_call", "thought": "t", "tool": "read_skill",
-         "args": {"name": "writing-plans"}},
+        {"type": "tool_calls", "thought": "t",
+         "calls": [{"id": "call1", "tool": "read_skill", "args": {"name": "writing-plans"}}]},
         {"type": "answer", "thought": "t", "answer": "plan written"},
     ])
     ctrl._reasoning = eng2  # swap the scripted engine for the next turn

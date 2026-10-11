@@ -58,8 +58,11 @@ async def test_qa_turn_persists_tool_events_for_reload(tmp_path: Path):
         workspace_path=str(tmp_path),
         reasoning_engine=ScriptedReasoningEngine(
             None, [], controller_step_responses=[
-                {"type": "tool_call", "thought": "look", "tool": "read_file",
-                 "args": {"path": "f.py"}},
+                {
+                    "type": "tool_calls",
+                    "thought": "look",
+                    "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+                },
                 {"type": "answer", "thought": "done", "answer": "x is 1"}]),
         thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
         retrieval_client=None)

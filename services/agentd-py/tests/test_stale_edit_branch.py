@@ -40,8 +40,8 @@ async def test_an_accepted_edit_that_went_stale_at_the_gate_is_refused(tmp_path:
         read_observer=log.read_observer(real, MAIN_AGENT_ID))])
     steps = [
         _edit("x = 1", "x = 2"),
-        {"type": "tool_call", "thought": "reread", "tool": "read_file",
-         "args": {"path": "f.py"}},
+        {"type": "tool_calls", "thought": "reread",
+         "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}]},
         _edit("y = 9", "y = 10"),
         {"type": "submit_changes", "thought": "d", "summary": "ok"},
     ]

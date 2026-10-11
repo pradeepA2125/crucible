@@ -71,8 +71,8 @@ async def test_the_parent_is_refused_until_it_rereads(tmp_path: Path,
     tid = store.create_thread(str(ws), title="t").thread_id
     steps = [
         _edit(),
-        {"type": "tool_call", "thought": "reread", "tool": "read_file",
-         "args": {"path": "f.py"}},
+        {"type": "tool_calls", "thought": "reread",
+         "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}]},
         _edit(),
         {"type": "submit_changes", "thought": "d", "summary": "ok"},
     ]

@@ -13,7 +13,7 @@ def test_status_sets() -> None:
 
 
 def test_flat_schema_offers_status_only_with_report() -> None:
-    child = controller_response_schema(phase="AGENT", allowed_types=["tool_call", "report"])
+    child = controller_response_schema(phase="AGENT", allowed_types=["tool_calls", "report"])
     main = controller_response_schema(phase="ACTIVE")
     assert child["properties"]["status"] == {"type": "string", "enum": ["completed", "partial"]}
     assert "status" not in main["properties"]

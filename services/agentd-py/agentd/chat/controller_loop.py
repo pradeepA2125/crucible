@@ -23,7 +23,7 @@ from agentd.domain.models import AgentToolTrace, PatchFailureCode, ToolCall, Too
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
-from agentd.performance import profile_controller_run, span
+from agentd.performance import profile_controller_run
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.providers.availability import ProviderUnavailable, is_provider_unavailable
 from agentd.providers.plan_access import find_access_stop
@@ -32,6 +32,7 @@ from agentd.reasoning.react_common import (
     accepts_kwarg,
     assistant_turn,
     dedup_key,
+    duplicate_refusal,
     malformed_correction,
 )
 from agentd.skills.config import skills_body_max_chars
@@ -119,19 +120,22 @@ def _permission_correction(
     list already omits run_command, web_search, web_fetch and every mcp__ tool, so reaching this
     means the model named a tool it was never offered. Routed through the normal
     correction chain."""
-    if ctx.is_main or ctx.permission != "plan" or atype != "tool_call":
+    if ctx.is_main or ctx.permission != "plan" or atype != "tool_calls":
         return None
-    tool = str(resp.get("tool", ""))
-    if tool in {"run_command", "web_search", "web_fetch"} or tool.startswith("mcp__"):
-        return (f"You are read-only for this task: `{tool}` isn't available to you. "
-                "Investigate with the read tools and put your findings in `report`.")
+    members = resp.get("calls", [resp])
+    for member in members if isinstance(members, list) else []:
+        if not isinstance(member, dict):
+            continue
+        tool = str(member.get("tool", ""))
+        if tool in {"run_command", "web_search", "web_fetch"} or tool.startswith("mcp__"):
+            return (f"You are read-only for this task: `{tool}` isn't available to you. "
+                    "Investigate with the read tools and put your findings in `report`.")
     return None
 
 
 def _decide_state_change_correction(resp: dict[str, object], phase: str) -> str | None:
-    """Reject a state-changing tool_call in PLAN; None otherwise (inert for other
-    phases and non-tool_call actions)."""
-    if phase != "PLAN" or str(resp.get("type", "")) != "tool_call":
+    """Reject a state-changing tool_calls member in PLAN; None otherwise."""
+    if phase != "PLAN" or str(resp.get("type", "")) != "tool_calls":
         return None
     if str(resp.get("tool", "")) in _STATE_CHANGING_TOOLS:
         return STATE_CHANGING_DECIDE_CORRECTION
@@ -199,19 +203,6 @@ def _empty_action_correction(resp: dict[str, object], atype: str) -> str | None:
             "Your 'note' was empty. Re-emit type='progress' with a short non-empty 'note' "
             "describing what you are doing, or take a real action instead."
         )
-    if atype == "tool_call":
-        if _blank("tool"):
-            return (
-                "Your tool_call had no 'tool'. Re-emit type='tool_call' with a tool name from "
-                "AVAILABLE TOOLS and an 'args' object."
-            )
-        args = resp.get("args")
-        if not isinstance(args, dict):
-            return (
-                f"Your tool_call for '{resp.get('tool')}' had no 'args' object. Re-emit with "
-                'args as a JSON object (use {} if the tool takes no arguments, or '
-                '{"path": ...} for read_file, {"pattern": ...} for search_code).'
-            )
     if atype == "report" and _blank("summary"):
         return (
             "Your 'report' summary was empty. The COMPLETE report goes in 'summary' — it is the "
@@ -241,7 +232,7 @@ _RESERVED_TOOL_NAME_TEMPLATE = tagged("reserved_tool_name", (
     "'{tool}' is not a callable tool — there is no such tool in AVAILABLE TOOLS. "
     "'{tool}' is a top-level response TYPE, emitted as its own object — "
     '{"type":"{tool}", ...} (see the "{tool}" variant above for its required '
-    'fields) — NEVER as {"type":"tool_call","tool":"{tool}",...}.'
+    'fields) — NEVER as a tool_calls member with tool="{tool}".'
     "<<main>> If you are "
     "trying to make a change: type='edit' is already directly available — emit it "
     "now (Plan Mode is the only phase where you'd emit propose_mode first).<</main>>"
@@ -255,8 +246,8 @@ _RESERVED_TOOL_NAME_TEMPLATE = tagged("reserved_tool_name", (
 def _reserved_tool_name_correction(
     resp: dict[str, object], atype: str, ctx: RenderContext = _MAIN,
 ) -> str | None:
-    """Reject a tool_call whose 'tool' is actually a top-level response type name."""
-    if atype != "tool_call":
+    """Reject a tool_calls member whose tool names a top-level response type."""
+    if atype != "tool_calls":
         return None
     tool = str(resp.get("tool", ""))
     reserved = (_RESERVED_ACTION_TOOL_NAMES if ctx.is_main
@@ -268,12 +259,12 @@ def _reserved_tool_name_correction(
 
 
 _TOOL_AS_TYPE_TEMPLATE = tagged("tool_as_type", (
-    "'{tool}' is a tool, not an action type. Call it with a tool_call: "
-    '{"type":"tool_call","thought":"…","tool":"{tool}","args":{…}}'))
+    "'{tool}' is a tool, not an action type. Call it with a one-member tool_calls array: "
+    '{"type":"tool_calls","thought":"…","calls":[{"id":"call1","tool":"{tool}","args":{…}}]}'))
 
 
 _ACTION_TYPES = frozenset({"answer", "clarify", "propose_mode", "edit", "submit_changes",
-                           "tool_call", "progress", "report"})
+                           "tool_calls", "progress", "report"})
 
 
 def _unavailable_type_correction(
@@ -525,7 +516,7 @@ def _answer_intent_divergence_correction(
         "'answer' ENDS the turn — nothing you described will actually run, and the user will "
         f"have to prompt you again just to get you to do what you already said. If '{mentioned}' "
         "(or whatever the real next action is) is genuinely next, TAKE it now: emit "
-        "type='tool_call' with that tool (or type='edit'/'submit_changes' if that's the real "
+        "type='tool_calls' with that tool (or type='edit'/'submit_changes' if that's the real "
         "next action) instead of narrating it in 'answer'. If you only want to TELL the user "
         "what you are about to do without ending the turn, emit type='progress' with a 'note', "
         "then take the action."
@@ -551,12 +542,12 @@ def _normalize_progress_note(resp: dict[str, object]) -> str:
 _PROGRESS_REPEAT_TEMPLATE = tagged("progress_repeat", (
     "You already posted a progress note and took no action after it. A progress note "
     "does NOT count as doing the work. Take the actual next action now — emit "
-    "type='tool_call'<<type:edit>> / 'edit'<</type:edit>><<main>> / 'submit_changes' (or 'answer' "
+    "type='tool_calls'<<type:edit>> / 'edit'<</type:edit>><<main>> / 'submit_changes' (or 'answer' "
     "if you are truly done)<</main>><<child>> (or 'report' if you are done)<</child>>."
 ))
 _PROGRESS_DEDUP_TEMPLATE = tagged("progress_dedup", (
     "You already posted that exact progress note this turn. Do not repeat it — "
-    "take the next real action instead (tool_call<<type:edit>> / edit<</type:edit>>"
+    "take the next real action instead (tool_calls<<type:edit>> / edit<</type:edit>>"
     "<<main>> / submit_changes / answer<</main>><<child>> / report<</child>>)."
 ))
 
@@ -613,7 +604,8 @@ def _progress_dedup_correction(
 _EMPTY_EDIT_REDIRECT_TEMPLATE = tagged("empty_edit_redirect", (
     "That 'edit' had no patch_ops, so NOTHING was applied. If you meant to "
     "create or update the TODO LIST, that is a TOOL CALL — emit "
-    '{"type":"tool_call","tool":"write_todos","args":{"items":[…]}}, NOT '
+    '{"type":"tool_calls","thought":"track work","calls":['
+    '{"id":"todos","tool":"write_todos","args":{"items":[…]}}]}, NOT '
     "type='edit'. To change a file, emit type='edit' with a NON-EMPTY "
     "patch_ops (each op: file + its op fields). To finish, emit "
     "type='<<main>>submit_changes<</main>><<child>>report<</child>>'."
@@ -966,20 +958,14 @@ class ControllerLoop:
             if self._iteration >= self._max_iters or self._force_final:
                 return ["report"]
             types = list(self._agent.allowed_types)
-            from agentd.tools.batching import batching_enabled
-            if batching_enabled() and "tool_call" in types:
-                types.insert(types.index("tool_call") + 1, "tool_calls")
-            if batching_enabled() and self._executed_tool_calls >= self._max_tool_calls:
-                types = [t for t in types if t not in {"tool_call", "tool_calls"}]
+            if self._executed_tool_calls >= self._max_tool_calls:
+                types = [t for t in types if t != "tool_calls"]
             return types
         types = list(self._sm.allowed_types())
-        from agentd.tools.batching import batching_enabled
-        if batching_enabled() and "tool_call" in types:
-            types.insert(types.index("tool_call") + 1, "tool_calls")
         if self._sm.phase == "ACTIVE" and self._task_subsystem_enabled:
             types.append("propose_mode")
-        if batching_enabled() and self._executed_tool_calls >= self._max_tool_calls:
-            types = [t for t in types if t not in {"tool_call", "tool_calls"}]
+        if self._executed_tool_calls >= self._max_tool_calls:
+            types = [t for t in types if t != "tool_calls"]
         return types
 
     def _tool_key(self, tool, args):
@@ -1088,14 +1074,13 @@ class ControllerLoop:
         async def prepare(call):
             self._registry.validate_call(call.tool, call.args)
             correction = (_decide_state_change_correction(
-                {"type": "tool_call", "tool": call.tool}, self._sm.phase)
-                or _permission_correction({"tool": call.tool}, "tool_call", self._render_ctx))
+                {"type": "tool_calls", "tool": call.tool}, self._sm.phase)
+                or _permission_correction({"tool": call.tool}, "tool_calls", self._render_ctx))
             if correction:
                 return ToolOutput(correction, True)
             key = self._tool_key(call.tool, call.args)
             if key in seen:
-                return ToolOutput(f"DUPLICATE BLOCKED (iter {seen[key]}); reuse visible evidence "
-                                  "or request the missing portion.", True)
+                return ToolOutput(duplicate_refusal(call.tool, seen[key]), True)
             repeat = self._notice_repeat(call.tool, call.args, plan_context)
             if repeat:
                 return ToolOutput(repeat, True)
@@ -1107,9 +1092,9 @@ class ControllerLoop:
             async def checked_run():
                 self._registry.validate_call(call.tool, call.args)
                 correction = (_decide_state_change_correction(
-                    {"type": "tool_call", "tool": call.tool}, self._sm.phase)
+                    {"type": "tool_calls", "tool": call.tool}, self._sm.phase)
                     or _permission_correction(
-                        {"tool": call.tool}, "tool_call", self._render_ctx))
+                        {"tool": call.tool}, "tool_calls", self._render_ctx))
                 if correction:
                     return ToolOutput(correction, True)
                 return await prepared()
@@ -1613,13 +1598,14 @@ class ControllerLoop:
             plan_context["active_skills"] = [
                 {"name": n, "body": b} for n, b in self._active_skills.items()
             ]
-            # active_entry (C1b): first action in ACTIVE, nothing started yet (no list,
-            # no edit applied). The payload builder swaps the clean entry hint
-            # (write_todos-as-tool_call) for the mid-turn reconcile hint once this clears —
+            # active_entry (C1b): pre-edit state in ACTIVE (no list, no edit applied).
+            # The payload builder uses iteration for first-action vs continuation wording
+            # and swaps the pre-edit hint (write_todos-as-tool_calls) for the mid-turn
+            # reconcile hint once this clears —
             # which it does the moment a list exists OR an edit lands. NO iteration clause
             # — this is deliberate: it must persist through an empty-edit fumble (the model
             # emits an edit with empty patch_ops, nothing lands) so the NEXT iteration still
-            # sees "nothing started yet" rather than falling through to the mid-turn
+            # sees pre-edit guidance rather than falling through to the mid-turn
             # "reflect on your last edit's result" text written for a LANDED edit. This is a
             # previously-fixed thrash bug — do not add an iteration gate here.
             if plan_context.get("notice_turn") and self._notice_actions:
@@ -1735,13 +1721,6 @@ class ControllerLoop:
                 # retry would silently rewind the turn's counter.
                 _fold_call_tokens_into_turn()
 
-            from agentd.tools.batching import batching_enabled
-            if batching_enabled() and resp.get("type") == "tool_call":
-                fields = {k: v for k, v in resp.items() if k in {
-                    "tool", "args", "id", "depends_on", "after", "execution", "provider_call_id"}}
-                fields.setdefault("id", f"single_{iteration}")
-                resp = {**{k: v for k, v in resp.items() if k not in fields},
-                        "type": "tool_calls", "calls": [fields]}
             atype = str(resp.get("type", ""))
             logger.info("[controller] iter=%d phase=%s action=%s", iteration, self._sm.phase, atype)
             # Drain any salvage notice BEFORE dispatching: the model must see that its
@@ -1760,7 +1739,8 @@ class ControllerLoop:
                      atype, self._allowed_action_types(), self._render_ctx)
                  or malformed_correction(self._render_ctx, self._allowed_action_types()))
                 if atype not in self._allowed_action_types()
-                else _propose_mode_correction(resp, self._allowed_modes_for_current_phase()) if atype == "propose_mode"
+                else _propose_mode_correction(resp, self._allowed_modes_for_current_phase())
+                if atype == "propose_mode"
                 else _reserved_tool_name_correction(resp, atype, self._render_ctx)
                 or _decide_state_change_correction(resp, self._sm.phase)
                 or _permission_correction(resp, atype, self._render_ctx)
@@ -1777,20 +1757,22 @@ class ControllerLoop:
             )
             batch_calls = None
             if atype == "tool_calls" and correction is None:
-                from agentd.tools.batching import validate_calls
+                from agentd.tools.batching import batching_enabled, validate_calls
                 try:
                     if any(value not in (None, "", [], {}) for key, value in resp.items()
-                           if key not in {"type", "thought", "calls"}):
+                           if key not in {"type", "thought", "calls", "provider_call_id"}):
                         raise ValueError("tool_calls cannot be mixed with another action")
                     def batch_guard(node):
                         self._registry.validate_call(node["tool"], node["args"])
-                        return (_reserved_tool_name_correction(node, "tool_call", self._render_ctx)
-                            or _decide_state_change_correction(node, self._sm.phase)
-                            or _permission_correction(node, "tool_call", self._render_ctx)
-                            or _empty_action_correction(node, "tool_call"))
+                        return (_reserved_tool_name_correction(node, "tool_calls", self._render_ctx)
+                            or _decide_state_change_correction(
+                                {**node, "type": "tool_calls"}, self._sm.phase)
+                            or _permission_correction(node, "tool_calls", self._render_ctx))
                     remaining = self._max_tool_calls - self._executed_tool_calls
                     batch_calls = validate_calls(resp.get("calls"), self._registry.definitions(),
-                                                 remaining=remaining, guard=batch_guard)
+                                                 remaining=min(
+                                                     remaining, 8 if batching_enabled() else 1),
+                                                 guard=batch_guard)
                 except (ValueError, TypeError) as exc:
                     correction = f"Invalid tool batch; no members executed: {exc}"
             if correction is not None:
@@ -1970,124 +1952,6 @@ class ControllerLoop:
                     iteration=iteration, plan_context=plan_context, on_pills_update=on_pills_update,
                     retrieval_delta_cb=retrieval_delta_cb, history_update_cb=history_update_cb)
                 continue
-            if atype == "tool_call":
-                if iteration >= max_iters:
-                    return ControllerOutcome(
-                        kind="answer", text="(step budget exhausted)", history=history)
-                tool = str(resp.get("tool", ""))
-                raw_args = resp.get("args")
-                args: dict[str, object] = raw_args if isinstance(raw_args, dict) else {}
-                key = self._tool_key(tool, args)
-                if key in seen:
-                    history.append({"role": "assistant", "content": "{}"})
-                    history.append({
-                        "role": "tool_result", "tool": tool,
-                        "content": f"DUPLICATE BLOCKED (iter {seen[key]}); do differently.",
-                    })
-                    continue
-                seen[key] = iteration + 1
-                repeat = self._notice_repeat(tool, args, plan_context)
-                if repeat is not None:
-                    history.append(assistant_turn(resp))
-                    history.append({"role": "tool_result", "tool": tool, "content": repeat})
-                    continue
-                # Observability: log every tool call/result (ToolLoop does the same).
-                # Without this, controller turns are invisible in logs — you can't tell
-                # whether a turn explored or emitted straight from seed_history.
-                logger.info("[controller] tool_call phase=%s iter=%d tool=%s args=%s",
-                            self._sm.phase, iteration, tool, str(args)[:200])
-                # Live tool pill: tool_call before execute, tool_result after. The
-                # frontend pairs these by source ("execution") into a pill with thought.
-                # call_index = the position this call will occupy WITHIN THE CURRENT PILLS
-                # SEGMENT (it's appended below), which equals the persisted pill id
-                # (trace_to_tool_events enumerates the segment-sliced list below, not the
-                # whole-turn one — see self._pill_segment_start). The FE uses it as the
-                # pill id so a switch-back resume dedups replayed pills against the loaded
-                # in-flight message; relative-to-segment keeps it valid across a `progress`
-                # note, which starts a fresh in-flight message (finding 1).
-                call_index = len(self._calls) - self._pill_segment_start
-                self._broadcaster.broadcast(self._channel_id, {
-                    "type": "tool_call",
-                    "payload": {"tool": tool, "thought": str(resp.get("thought", "")),
-                                "args": args, "call_index": call_index}})
-                from agentd.tools.batching import output_budget
-                from agentd.tools.read_policy import adaptive_reads_enabled
-                token = output_budget.set(int(plan_context.get("tool_result_budget", 16_000))) \
-                    if adaptive_reads_enabled() else None
-                try:
-                    with span(f"tool.{tool}"):
-                        out = await self._registry.execute(tool, args)
-                finally:
-                    if token is not None:
-                        output_budget.reset(token)
-                # The model reconciled the ledger — clear the post-edit checkpoint marker so
-                # the next turn's instruction stops naming the (now-answered) edit/item (Q1).
-                if tool == "write_todos":
-                    plan_context.pop("pending_reconcile_files", None)
-                    plan_context.pop("reconcile_item", None)
-                if not out.is_error:
-                    self._note_delegation(tool, args, out.output)
-                    if plan_context.get("notice_turn"):
-                        self._note_notice_action(tool, args)
-                logger.info("[controller] tool_result tool=%s is_error=%s chars=%d",
-                            tool, out.is_error, len(out.output or ""))
-                self._broadcaster.broadcast(self._channel_id, {
-                    "type": "tool_result",
-                    "payload": {"output": out.output, "is_error": out.is_error,
-                                "call_index": call_index}})
-                # Record into the turn trace → persisted as durable pills (reload).
-                call_id = f"c{iteration}"
-                self._calls.append(ToolCall(
-                    call_id=call_id, tool_name=tool, arguments=args,
-                    thought=str(resp.get("thought", "")) or None))
-                self._results.append(ToolResult(
-                    call_id=call_id, tool_name=tool, output=out.output, is_error=out.is_error))
-                # Durable thinking entry (compact label, not the raw token stream).
-                thought = str(resp.get("thought", ""))
-                path = str(args.get("path", "")) if isinstance(args, dict) else ""
-                label = f" {path.split('/')[-1]}" if path else ""
-                self._thinking.append(
-                    f"{tool}{label} — {thought[:200]}" if thought else f"{tool}{label}")
-                # Durably persist the partial pills now (finding 5): a thread switch /
-                # reopen before turn end reconstructs them from the transcript instead of
-                # the lossy replay buffer. Best-effort — a persist failure never breaks
-                # the turn.
-                if on_pills_update is not None:
-                    try:
-                        # Sliced to the CURRENT segment (since the last `progress` note, or
-                        # turn start if none yet) — see self._pill_segment_start. A no-note
-                        # turn has segment_start==0 for its whole life, so this is a no-op
-                        # slice ([0:] == the full list) and byte-identical to pre-fix.
-                        pills = trace_to_tool_events(
-                            AgentToolTrace(
-                                step_id="chat",
-                                calls=self._calls[self._pill_segment_start:],
-                                results=self._results[self._pill_segment_start:]),
-                            "execution")
-                        await on_pills_update(
-                            pills, list(self._thinking[self._thinking_segment_start:]))
-                    except Exception:
-                        logger.debug("[controller] inflight pill persist failed", exc_info=True)
-                history.append(assistant_turn(resp))
-                result_entry = {"role": "tool_result", "tool": tool, "content": out.output}
-                if out.delivered_read is not None:
-                    from dataclasses import asdict
-                    result_entry["delivered_read"] = asdict(out.delivered_read)
-                history.append(result_entry)
-                if out.workspace_changes:
-                    # Another agent promoted files on this agent's behalf (a dispatch,
-                    # spec §6.4): the same bookkeeping as this loop's own accepted edit —
-                    # repeats are no longer duplicates, the turn has edited, and the tail
-                    # gets a compact refresh note (never a seed rewrite).
-                    seen.clear()
-                    self._edit_applied = True
-                    if retrieval_delta_cb is not None:
-                        delta = await retrieval_delta_cb(list(out.workspace_changes))
-                        if delta:
-                            history.append({
-                                "role": "tool_result", "tool": "retrieval_refresh",
-                                "content": delta})
-                continue
             if atype == "clarify":
                 history.append(assistant_turn(resp))
                 raw_opts = resp.get("options")
@@ -2109,7 +1973,8 @@ class ControllerLoop:
                 # a plain turn that never edits never pays for a session/shadow at all.
                 if self._edit is None:
                     if self._edit_session_factory is None:
-                        raise RuntimeError("edit requires an orchestrator (no edit_session_factory)")
+                        raise RuntimeError(
+                            "edit requires an orchestrator (no edit_session_factory)")
                     self._edit = self._edit_session_factory()
                 raw_ops = resp.get("patch_ops")
                 ops: list[dict[str, object]] = raw_ops if isinstance(raw_ops, list) else []
@@ -2121,10 +1986,11 @@ class ControllerLoop:
                     # todo list ("I'll use write_todos first") but it picked type='edit' (the only
                     # "do something" action it associates with EDIT) and shipped no ops. The old
                     # apply([]) error ("emit at least one op or submit_changes") pushed it to retry
-                    # the SAME empty edit — observed thrashing 4+ turns. Redirect to the RIGHT action
+                    # The same empty edit thrashed for 4+ turns; redirect to the right action.
                     # type with exact syntax. A redirect, NOT a malformed action (don't touch
                     # consecutive_malformed) — only max_iters bounds it.
-                    logger.info("[controller] empty edit (ops=0) — redirecting (write_todos/edit/submit)")
+                    logger.info(
+                        "[controller] empty edit (ops=0) — redirecting (write_todos/edit/submit)")
                     history.append(assistant_turn(
                         {k: v for k, v in resp.items() if k != "patch_ops"}))
                     history.append({
@@ -2272,7 +2138,7 @@ class ControllerLoop:
                     # NOT a hard gate — an edit may only PARTIALLY complete an item, so forcing
                     # a write_todos would pressure a false 'done'. The model answers the
                     # checkpoint by marking done OR continuing the same item; the marker clears
-                    # the moment write_todos runs (see the tool_call branch). Soft enforcement:
+                    # the moment write_todos runs (see the tool_calls branch). Soft enforcement:
                     # if this still slips on a weak model, the next escalation is a gate that
                     # forces a write_todos call but accepts 'in_progress' as a valid answer.
                     if self._ledger.pending():

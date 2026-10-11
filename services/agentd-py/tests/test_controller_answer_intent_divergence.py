@@ -100,8 +100,17 @@ async def test_loop_rejects_the_divergent_answer_and_recovers(tmp_path: Path) ->
             ),
             "answer": "Let me start by initializing the Go module (Task 1).",
         },
-        {"type": "tool_call", "thought": "ok, actually doing it", "tool": "write_todos",
-         "args": {"items": [{"title": "init module", "status": "pending"}]}},
+        {
+            "type": "tool_calls",
+            "thought": "ok, actually doing it",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "write_todos",
+                    "args": {"items": [{"title": "init module", "status": "pending"}]},
+                }
+            ],
+        },
         {"type": "answer", "thought": "done", "answer": "Initialized the module."},
     ]
     out = await _loop(tmp_path, steps).run(

@@ -13,7 +13,7 @@ DONE = {"type": "submit_changes", "thought": "d", "summary": "done"}
 
 
 def _tool(tool: str, **args: object) -> dict[str, object]:
-    return {"type": "tool_call", "thought": "t", "tool": tool, "args": args}
+    return {"type": "tool_calls", "thought": "t", "calls": [{"id": "call1", "tool": tool, "args": args}]}
 
 
 def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, main, kids):  # type: ignore[no-untyped-def]
@@ -38,6 +38,22 @@ async def test_dispatch_then_wait(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         _tool("dispatch_agents", agents=[{"agent": "explore", "label": "scout", "prompt": "look"}]),
         _tool("wait_agents"),
         DONE], {"scout": [{"type": "report", "thought": "t", "summary": "found it"}]})
+    # Hold the scout until the main agent has chosen wait_agents, so the wait
+    # (not an iteration-top notice) is what collects the report.
+    main_chose_wait = asyncio.Event()
+    scripted_step = ScriptedReasoningEngine.create_controller_step
+
+    async def gated_step(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        render_ctx = kwargs.get("render_ctx")
+        if getattr(render_ctx, "agent_label", None) == "scout":
+            await main_chose_wait.wait()
+        resp = await scripted_step(self, *args, **kwargs)
+        calls = resp.get("calls")
+        if isinstance(calls, list) and any(c.get("tool") == "wait_agents" for c in calls):
+            main_chose_wait.set()
+        return resp
+
+    monkeypatch.setattr(ScriptedReasoningEngine, "create_controller_step", gated_step)
     await ctrl.handle_message(tid, "go", channel_id=f"chat:{tid}")
     [queued] = _tool_results(store, tid, "dispatch_agents")
     assert queued[0]["status"] == "queued"

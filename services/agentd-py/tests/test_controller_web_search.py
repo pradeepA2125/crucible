@@ -206,8 +206,11 @@ async def test_actual_child_activation_registration_and_filtering(
         handle.definition, tools=frozenset({"web_search"}),
         disallowed_tools=frozenset({"web_search"}) if disallowed else frozenset())
     ctrl._reasoning = ScriptedReasoningEngine(None, [], controller_step_responses=[
-        {"type": "tool_call", "thought": "search", "tool": "web_search",
-         "args": {"query": "docs"}},
+        {
+            "type": "tool_calls",
+            "thought": "search",
+            "calls": [{"id": "call1", "tool": "web_search", "args": {"query": "docs"}}],
+        },
         {"type": "report", "thought": "done", "summary": "Finished.", "status": "completed"},
     ])
     seen = []
@@ -244,12 +247,23 @@ async def test_openai_and_anthropic_share_definition_and_tool_source(env, tmp_pa
     registry = ctrl._build_registry(thread_id=tid)
     definition = next(d for d in registry.definitions() if d.name == "web_search")
     steps = [
-        {"type": "tool_call", "thought": "search", "tool": "web_search",
-         "args": {"query": "public docs", "max_results": 5}},
+        {
+            "type": "tool_calls",
+            "thought": "search",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "web_search",
+                    "args": {"query": "public docs", "max_results": 5},
+                }
+            ],
+        },
         {"type": "answer", "thought": "done", "answer": "See https://example.com"},
     ]
     openai_replies = [{"action": {
         **s, **({"args": json.dumps(s["args"])} if "args" in s else {}),
+                **({"calls": [{**c, "args": json.dumps(c["args"])} for c in s["calls"]]}
+                   if "calls" in s else {}),
     }} for s in steps]
     openai = FakeResponses(*[[_delta(json.dumps(s)), _completed()] for s in openai_replies])
     anthropic = FakeMessagesClient([

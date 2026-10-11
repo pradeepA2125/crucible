@@ -9,7 +9,7 @@ DISPATCH = {"name": "dispatch_agents", "description": "d",
             "parameters": {"type": "object"}}
 CHILD = RenderContext(audience="child", permission="default",
                       tools=frozenset({"dispatch_agents", "read_file"}),
-                      base_types=frozenset({"tool_call", "edit", "progress", "report"}),
+                      base_types=frozenset({"tool_calls", "edit", "progress", "report"}),
                       agent_id="agent-1", agent_label="lead")
 
 
@@ -42,6 +42,6 @@ def _entry_hint(dispatch_available: bool) -> str:
 
 def test_the_entry_hint_clause_is_conditional() -> None:
     clause = ("Or, for independent parts touching disjoint files, dispatch them in parallel "
-              "with dispatch_agents (a tool_call — see SUB-AGENTS).")
+              "with dispatch_agents (a tool_calls — see SUB-AGENTS).")
     assert clause in _entry_hint(True)
     assert clause not in _entry_hint(False)

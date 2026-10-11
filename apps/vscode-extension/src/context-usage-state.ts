@@ -22,16 +22,27 @@ export class ContextUsageState {
       if (!process || this.retired.has(process)) return "ignored";
       if (process !== this.process) {
         if (this.process) this.retired.add(this.process);
-        this.process = process; this.usage = null;
+        this.process = process; this.usage = null; this.stale = false;
       }
-      this.stale = false;
     }
-    if (!usage) return source === "live" ? "accepted" : "ignored";
-    if (usage.thread_id !== this.thread || this.retired.has(usage.process_id)) return "ignored";
-    if (usage.process_id !== this.process) return source === "sse" ? "hydrate" : "ignored";
+    // A healthy /live envelope proves connectivity, not telemetry freshness.
+    // Keep the last measurement visibly stale until matching valid data arrives.
+    if (!usage) {
+      if (source === "live") this.stale = this.usage !== null;
+      return source === "live" ? "accepted" : "ignored";
+    }
+    if (usage.thread_id !== this.thread || this.retired.has(usage.process_id)) {
+      if (source === "live") this.stale = this.usage !== null;
+      return "ignored";
+    }
+    if (usage.process_id !== this.process) {
+      if (source === "live") this.stale = this.usage !== null;
+      return source === "sse" ? "hydrate" : "ignored";
+    }
     const previous = this.usage;
     if (previous && (usage.generation < previous.generation || usage.revision < previous.revision)) return "ignored";
     if (!previous || usage.revision > previous.revision || usage.generation > previous.generation) this.usage = usage;
+    if (source === "live") this.stale = false;
     return "accepted";
   }
   fail(epoch: number, url: string): void { if (this.current(epoch, url)) this.stale = true; }

@@ -50,8 +50,11 @@ class _SucceedsThenSustainedRateLimit:
     async def create_controller_step(self, *, phase, **kwargs):
         self.calls += 1
         if self.calls == 1:
-            return {"type": "tool_call", "thought": "explore", "tool": "read_file",
-                    "args": {"path": "f.py"}}
+            return {
+                "type": "tool_calls",
+                "thought": "explore",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+            }
         if self.calls == 2:
             return {
                 "type": "propose_mode", "thought": "propose",
@@ -59,11 +62,23 @@ class _SucceedsThenSustainedRateLimit:
                 "options": [{"mode": "implement", "label": "Edit inline now", "description": "d"}],
             }
         if self.calls == 3:
-            return {"type": "tool_call", "thought": "check status", "tool": "run_command",
-                    "args": {"command": "echo", "args": ["hi"]}}
+            return {
+                "type": "tool_calls",
+                "thought": "check status",
+                "calls": [
+                    {
+                        "id": "call1",
+                        "tool": "run_command",
+                        "args": {"command": "echo", "args": ["hi"]},
+                    }
+                ],
+            }
         if self.calls == 4:
-            return {"type": "tool_call", "thought": "explore again", "tool": "read_file",
-                    "args": {"path": "f.py"}}
+            return {
+                "type": "tool_calls",
+                "thought": "explore again",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+            }
         raise RuntimeError("Ollama returned 429: session usage limit reached")
 
 

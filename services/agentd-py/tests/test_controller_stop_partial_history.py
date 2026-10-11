@@ -46,8 +46,11 @@ async def test_controller_loop_exposes_partial_history_on_cancel(tmp_path: Path)
     reg = AggregatingToolRegistry(
         [BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
     eng = _CancelMidTurn([
-        {"type": "tool_call", "thought": "l", "tool": "read_file",
-         "args": {"path": "f.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "l",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+        },
     ], cancel_at=1)
     loop = ControllerLoop(
         eng, reg, EventBroadcaster(), channel_id="c", phase_sm=ControllerPhaseSM())
@@ -67,8 +70,11 @@ async def test_stopped_turn_persists_partial_history(tmp_path: Path):
     ctrl = ChatController(
         workspace_path=str(tmp_path),
         reasoning_engine=_CancelMidTurn([
-            {"type": "tool_call", "thought": "look", "tool": "read_file",
-             "args": {"path": "f.py"}},
+            {
+                "type": "tool_calls",
+                "thought": "look",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+            },
         ], cancel_at=1),
         thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
         retrieval_client=None)

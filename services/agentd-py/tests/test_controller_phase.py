@@ -17,7 +17,7 @@ def test_explicit_active_start():
     assert "submit_changes" in sm.allowed_types()
     assert "answer" in sm.allowed_types()
     assert "clarify" in sm.allowed_types()
-    assert "tool_call" in sm.allowed_types()
+    assert "tool_calls" in sm.allowed_types()
 
 
 def test_explicit_plan_start():
@@ -26,7 +26,7 @@ def test_explicit_plan_start():
     assert "propose_mode" in sm.allowed_types()
     assert "answer" in sm.allowed_types()
     assert "clarify" in sm.allowed_types()
-    assert "tool_call" in sm.allowed_types()
+    assert "tool_calls" in sm.allowed_types()
     assert "edit" not in sm.allowed_types()
     assert "submit_changes" not in sm.allowed_types()
 

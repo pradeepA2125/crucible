@@ -13,7 +13,7 @@ from agentd.subagents.runtime import AgentHandle, AgentSupervisor, active_second
 def _handle(agent_id: str = "agent-x") -> AgentHandle:
     ctx = AgentContext(agent_id=agent_id, name="general-purpose", label="alice", depth=1,
                        parent_agent_id=None, permission="default",
-                       allowed_types=("tool_call", "edit", "progress", "report"), persona="",
+                       allowed_types=("tool_calls", "edit", "progress", "report"), persona="",
                        max_iters=10)
     return AgentHandle(context=ctx, definition=BUILTIN_AGENTS["general-purpose"], prompt="p",
                        thread_id="t", turn_id="u")

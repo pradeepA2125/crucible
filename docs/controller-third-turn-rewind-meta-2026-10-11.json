@@ -1,0 +1,40 @@
+{
+  "thread_id": "chat-679ae719062e",
+  "anchor": "ed3626c3361c46c09d7aef060f00bf47",
+  "preview": {
+    "messages": 5,
+    "files": 0,
+    "commands_run": 0,
+    "blocked_by_task": null,
+    "blocked_by_agents": [],
+    "sessions": []
+  },
+  "outcome": {
+    "restored_files": [],
+    "deleted_files": [],
+    "oversize_files": [],
+    "failed": [],
+    "removed_messages": 5,
+    "prefill_text": "does all tools have descriptions in spec?",
+    "target_created_at": "2026-10-10T22:06:52.932083Z",
+    "target_seq": 2,
+    "retired_memories": 0,
+    "removed_agents": 0
+  },
+  "retained_message_count": 4,
+  "retained_user_prompt_count": 2,
+  "replay_validation": {
+    "original_artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/c1dd0600310145c1b91c9c1569f7a0de/controller-turn-00.json",
+    "replay_artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/344c4245a29f4e01ac5b273f2fa11fea/controller-turn-00.json",
+    "matches": {
+      "original_goal": true,
+      "system_instructions": true,
+      "schema": true,
+      "conversation_history": true,
+      "retrieval_seed": true,
+      "instruction": true
+    },
+    "conversation_history_sha256": "1f0fb4576b77aa1d81adc73471cee1f397cfb3c97126c57d38596e5edb8b5553",
+    "retrieval_seed_sha256": "0ba188a989ac012ddbdc343de9ce9e2886edaf7de21cf0c8a3a97c0b318a6947"
+  }
+}

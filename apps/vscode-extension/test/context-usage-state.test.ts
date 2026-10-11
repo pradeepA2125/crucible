@@ -31,6 +31,40 @@ describe("ContextUsageState", () => {
     s.accept(usage(), e, "url", "live", "p1");
     expect(s.stale).toBe(false); expect(s.usage?.observed_at).toBe(usage().observed_at);
   });
+  test.each([
+    ["missing", null],
+    ["malformed", { ...usage(), input_tokens: true }],
+    ["foreign thread", { ...usage(), thread_id: "b" }],
+    ["foreign process", usage(2, 1, "p2")],
+  ])("%s live telemetry retains the last measurement as stale until valid recovery", (_label, raw) => {
+    const s = new ContextUsageState(); const e = s.navigate("a", "url");
+    const previous = { ...usage(), input_tokens: 18000 };
+    s.accept(previous, e, "url", "live", "p1");
+    s.accept(raw, e, "url", "live", "p1");
+    expect(s.usage).toEqual(previous);
+    expect(s.stale).toBe(true);
+    s.fail(e, "url");
+    s.accept(raw, e, "url", "live", "p1");
+    expect(s.stale).toBe(true);
+    s.accept(previous, e, "url", "live", "p1");
+    expect(s.stale).toBe(false);
+    expect(s.usage).toEqual(previous);
+  });
+  test("an older live observation cannot clear a stale marker", () => {
+    const s = new ContextUsageState(); const e = s.navigate("a", "url");
+    s.accept(usage(5, 3), e, "url", "live", "p1");
+    s.fail(e, "url");
+    expect(s.accept(usage(4, 3), e, "url", "live", "p1")).toBe("ignored");
+    expect(s.stale).toBe(true);
+    expect(s.usage?.revision).toBe(5);
+  });
+  test("a new process with missing telemetry drops the old measurement", () => {
+    const s = new ContextUsageState(); const e = s.navigate("a", "url");
+    s.accept(usage(), e, "url", "live", "p1"); s.fail(e, "url");
+    s.accept(null, e, "url", "live", "p2");
+    expect(s.usage).toBeNull(); expect(s.stale).toBe(false);
+    expect(s.accept(usage(1, 1, "p2"), e, "url", "sse")).toBe("accepted");
+  });
   test("A-B-A and backend changes retire callbacks even for the same thread", () => {
     const s = new ContextUsageState(); const old = s.navigate("a", "url");
     s.navigate("b", "url"); const current = s.navigate("a", "url");

@@ -66,7 +66,7 @@ from agentd.domain.models import (
 )
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
-from agentd.performance import profile_workspace_turn, span
+from agentd.performance import mark, profile_async, profile_sync, profile_workspace_turn, span
 from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
 from agentd.providers.plan_access import (
@@ -706,6 +706,7 @@ class ChatController:
         self._store.set_controller_seed(thread_id, seed)
         return seed
 
+    @profile_sync("context.retrieval_seed")
     def _compute_retrieval_seed(self, goal: str) -> dict[str, object] | None:
         if self._retrieval is None:
             return None
@@ -721,6 +722,8 @@ class ChatController:
             logger.debug("[controller] retrieval seed failed", exc_info=True)
             return None
 
+    @profile_workspace_turn
+    @profile_async("controller.handle_message")
     async def handle_message(
         self, thread_id: str, message: str, channel_id: str, step_review: bool | None = None,
         forced_skills: list[str] | None = None,
@@ -775,6 +778,7 @@ class ChatController:
             if coordinator.thread_id == thread_id:
                 coordinator.user_spoke()
 
+    @profile_async("controller.user_turn")
     async def _run_user_turn(
         self, thread: ChatThread, thread_id: str, anchor_message_id: str | None,
         turn_message: str, channel_id: str, *, step_review: bool | None,
@@ -865,6 +869,7 @@ class ChatController:
             forced_skills=list(forced) if isinstance(forced, list) else None)
 
     @profile_workspace_turn
+    @profile_async("controller.setup_and_loop")
     async def _run_loop(
         self, thread_id: str, channel_id: str, goal: str, *,
         seed_history: list[dict[str, object]] | None, step_review: bool | None,
@@ -1184,6 +1189,7 @@ class ChatController:
             "workspace — use read_file/search_code for current contents and query_graph "
             "for updated neighbors. (The retrieval seed is from session start.)")
 
+    @profile_async("controller.persist_and_publish")
     async def _finish(
         self, thread_id: str, channel_id: str, outcome: ControllerOutcome,
         step_review: bool | None, turn_id: str | None = None,
@@ -1194,6 +1200,7 @@ class ChatController:
             self._write_turn_message(thread_id, turn_id, outcome.text, outcome)
             self._broadcaster.broadcast(
                 channel_id, {"type": "chat_response", "payload": {"chunk": outcome.text}})
+            mark("controller.response_published")
             self._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
         elif outcome.kind == "clarify":
             await self._present_clarify_choice(thread_id, channel_id, outcome)

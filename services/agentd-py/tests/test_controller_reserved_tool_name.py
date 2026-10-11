@@ -37,9 +37,8 @@ async def test_tool_call_edit_is_rejected_not_dispatched(tmp_path: Path):
     # valid as a top-level {"type":"edit",...} object.
     sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     steps = [
-        {"type": "tool_call", "thought": "write the plan",
-         "tool": "edit", "args": {"patch_ops": [
-             {"op": "create_file", "file": "plan.md", "content": "x", "reason": "r"}]}},
+        {'type': 'tool_calls', 'thought': "write the plan", 'calls': [{'id': 'call1', 'tool': "edit", 'args': {"patch_ops": [
+             {"op": "create_file", "file": "plan.md", "content": "x", "reason": "r"}]}}]},
         {"type": "submit_changes", "thought": "done", "summary": "recovered"},
     ]
     out = await _loop(tmp_path, steps, sm).run(
@@ -54,8 +53,11 @@ async def test_tool_call_propose_mode_is_rejected_in_plan(tmp_path: Path):
     # PLAN phase — propose_mode IS a legal top-level type here, which makes the
     # tool_call-shaped imposter especially deceptive; it must still be rejected.
     steps = [
-        {"type": "tool_call", "thought": "propose a change",
-         "tool": "propose_mode", "args": {}},
+        {
+            "type": "tool_calls",
+            "thought": "propose a change",
+            "calls": [{"id": "call1", "tool": "propose_mode", "args": {}}],
+        },
         {"type": "answer", "thought": "ok", "answer": "done"},
     ]
     out = await _loop(tmp_path, steps, ControllerPhaseSM(start="PLAN")).run(
@@ -75,8 +77,11 @@ async def test_repeated_tool_call_progress_exhausts_instead_of_looping_forever(
     # test_repeated_tool_call_edit_exhausts_instead_of_looping_forever exactly, swapping
     # 'edit' for 'progress' — this is the actual regression-sensitive shape: without the
     # fix, dispatch-not-rejected never raises here at all (it just spins to max_iters).
-    bad = {"type": "tool_call", "thought": "retry", "tool": "progress",
-           "args": {"note": "working on it"}}
+    bad = {
+        "type": "tool_calls",
+        "thought": "retry",
+        "calls": [{"id": "call1", "tool": "progress", "args": {"note": "working on it"}}],
+    }
     sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     with pytest.raises(ControllerLoopExhausted):
         await _loop(tmp_path, [bad, bad, bad, bad], sm).run(
@@ -87,9 +92,8 @@ async def test_repeated_tool_call_progress_exhausts_instead_of_looping_forever(
 async def test_repeated_tool_call_edit_exhausts_instead_of_looping_forever(tmp_path: Path):
     # Before the fix this never counted as malformed and could grind for max_iters (500,
     # each attempt a full regeneration) instead of failing fast and visibly.
-    bad = {"type": "tool_call", "thought": "retry", "tool": "edit",
-           "args": {"patch_ops": [{"op": "create_file", "file": "p.md",
-                                    "content": "x", "reason": "r"}]}}
+    bad = {'type': 'tool_calls', 'thought': "retry", 'calls': [{'id': 'call1', 'tool': "edit", 'args': {"patch_ops": [{"op": "create_file", "file": "p.md",
+                                    "content": "x", "reason": "r"}]}}]}
     sm = ControllerPhaseSM()  # ACTIVE is the default phase (Task 1)
     with pytest.raises(ControllerLoopExhausted):
         await _loop(tmp_path, [bad, bad, bad, bad], sm).run(

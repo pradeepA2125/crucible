@@ -167,8 +167,17 @@ async def test_run_command_in_edit_loop_raises_command_gate(tmp_path: Path):
     cid = f"chat:{th.thread_id}"
     reg = ctrl._build_registry(partial(ctrl._command_approval_cb, th.thread_id, cid))
     steps = [
-        {"type": "tool_call", "thought": "run", "tool": "run_command",
-         "args": {"command": "touch", "args": ["s.txt"]}},
+        {
+            "type": "tool_calls",
+            "thought": "run",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "run_command",
+                    "args": {"command": "touch", "args": ["s.txt"]},
+                }
+            ],
+        },
         {"type": "submit_changes", "thought": "done", "summary": "ran"},
     ]
     loop = ControllerLoop(

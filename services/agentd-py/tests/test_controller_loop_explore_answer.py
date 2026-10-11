@@ -13,7 +13,11 @@ from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 async def test_loop_explores_then_answers(tmp_path: Path):
     (tmp_path / "f.py").write_text("def foo():\n    return 1\n")
     eng = ScriptedReasoningEngine(None, [], controller_step_responses=[
-        {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "look",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+        },
         {"type": "answer", "thought": "done", "answer": "foo returns 1"},
     ])
     reg = AggregatingToolRegistry(

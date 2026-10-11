@@ -14,7 +14,7 @@ def child_context(label: str = "kid") -> AgentContext:
     return AgentContext(
         agent_id="agent-kid", name="general-purpose", label=label, depth=1,
         parent_agent_id=None, permission="default",
-        allowed_types=("tool_call", "edit", "progress", "report"), persona="", max_iters=8)
+        allowed_types=("tool_calls", "edit", "progress", "report"), persona="", max_iters=8)
 
 
 async def run_child_loop(

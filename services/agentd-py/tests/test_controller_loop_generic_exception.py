@@ -147,8 +147,11 @@ async def test_generic_exception_does_not_propagate(tmp_path: Path):
     ctrl = ChatController(
         workspace_path=str(tmp_path),
         reasoning_engine=_RaisesMidTurn(
-            [{"type": "tool_call", "thought": "look", "tool": "read_file",
-              "args": {"path": "f.py"}}],
+            [{
+                "type": "tool_calls",
+                "thought": "look",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+            }],
             raise_at=1,
             exc=RuntimeError("Ollama response contained no text content"),
         ),
@@ -177,8 +180,11 @@ async def test_generic_exception_persists_partial_history(tmp_path: Path):
     ctrl = ChatController(
         workspace_path=str(tmp_path),
         reasoning_engine=_RaisesMidTurn(
-            [{"type": "tool_call", "thought": "look", "tool": "read_file",
-              "args": {"path": "f.py"}}],
+            [{
+                "type": "tool_calls",
+                "thought": "look",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+            }],
             raise_at=1,
             exc=RuntimeError("boom"),
         ),

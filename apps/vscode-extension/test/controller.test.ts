@@ -2345,6 +2345,17 @@ describe("CrucibleController — context capacity", () => {
     expect(rendered.at(-1)).toMatchObject({ usage: { input_tokens: 200, observed_at: context().observed_at }, stale: false });
     controller.dispose();
   });
+  test("successful live polls without telemetry render stale context and valid recovery clears it", async () => {
+    const { controller, state, rendered } = setup();
+    await controller.pollThreadLiveState();
+    state.liveResponse = { ...state.liveResponse!, contextUsage: null };
+    await controller.pollThreadLiveState();
+    expect(rendered.at(-1)).toMatchObject({ usage: { input_tokens: 100 }, stale: true });
+    state.liveResponse = { ...state.liveResponse!, contextUsage: context() as any };
+    await controller.pollThreadLiveState();
+    expect(rendered.at(-1)).toMatchObject({ usage: { input_tokens: 100 }, stale: false });
+    controller.dispose();
+  });
   test("SSE context goes through validation/order and never reads output token progress", async () => {
     const { controller, rendered } = setup({ sendChatMessage: asStream(async function* () {
       yield { type: "context_usage", payload: context(3) } as any;

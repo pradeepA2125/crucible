@@ -25,8 +25,11 @@ def _drain(queue) -> list[dict]:
 async def test_loop_broadcasts_thinking_and_tool_pills(tmp_path: Path):
     (tmp_path / "f.py").write_text("def foo():\n    return 1\n")
     eng = ScriptedReasoningEngine(None, [], controller_step_responses=[
-        {"type": "tool_call", "thought": "look at f", "tool": "read_file",
-         "args": {"path": "f.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "look at f",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+        },
         {"type": "answer", "thought": "done", "answer": "foo returns 1"},
     ])
     reg = AggregatingToolRegistry(

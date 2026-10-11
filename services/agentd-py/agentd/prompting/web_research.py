@@ -31,8 +31,9 @@ constraints and any required skill-loading order.
         text += """
 Use web_search to discover sources and resolve these uncertainties. Keep queries focused
 on the task and include version/date constraints when relevant.
-  {"type":"tool_call","thought":"verify current library behavior","tool":"web_search",
-   "args":{"query":"official documentation <library> <version> <feature>"}}
+  {"type":"tool_calls","thought":"verify current library behavior","calls":[
+    {"id":"search","tool":"web_search",
+     "args":{"query":"official documentation <library> <version> <feature>"}}]}
 """
     if fetch:
         text += """
@@ -49,7 +50,7 @@ Source discovery is unavailable: fetch known or supplied URLs; do not invent URL
 that you searched the web.
 """
         text += """
-  {"type":"tool_call","thought":"read the source before relying on it","tool":"web_fetch","args":{"url":"https://example.com/docs","format":"markdown"}}
+  {"type":"tool_calls","thought":"read the source before relying on it","calls":[{"id":"call2","tool":"web_fetch","args":{"url":"https://example.com/docs","format":"markdown"}}]}
 Fetch does not execute JavaScript or read images/PDFs. Truncated output and inaccessible
 pages are verification gaps; do not claim to have read material that was not returned.
 """
@@ -72,13 +73,6 @@ Send only the minimum necessary query/URL; do not send secrets, confidential cod
 information. Respect approval denials and disabled tools; do not retry rejected calls or
 bypass restrictions with shell commands, MCP tools, another agent or a different URL.
 """
-    from agentd.tools.read_policy import adaptive_reads_enabled
-    if adaptive_reads_enabled():
-        text += (
-            "\nOnce fresh authoritative evidence covers the requested claims, answer. "
-            "Fetch additional sources for missing details, conflicts, or required corroboration; "
-            "do not keep searching or rereading sufficient evidence.\n"
-        )
     if ctx.has_team:
         text += """
 Share researched findings with source URLs and verification limits on the shared board.

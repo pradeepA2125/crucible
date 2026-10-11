@@ -26,9 +26,15 @@ _REMEMBER_DEF = ToolDefinition(
 _RECALL_DEF = ToolDefinition(
     name="recall",
     description=(
-        "Look up relevant memories from earlier sessions on this project (facts, decisions, "
-        "how-tos). Query with symbols/paths/topics. Pass verbatim=true to also see the original "
-        "source text of the top hit."
+        "Look up a specific missing fact, decision, or how-to from an earlier project session "
+        "when it is needed for the current task. The harness already supplies recalled_memories "
+        "before each model step when available; use those and the visible conversation first. "
+        "This searches stored memories, not the current conversation or your hidden reasoning. "
+        "Questions about your actions in this conversation should use the visible history. "
+        "Query with the missing topic, symbol, or path. If results are empty or unrelated, "
+        "continue with available evidence and state any remaining uncertainty; do not keep "
+        "rephrasing the same lookup. Pass verbatim=true only when the original source text of "
+        "the top hit is needed."
     ),
     parameters={
         "type": "object",

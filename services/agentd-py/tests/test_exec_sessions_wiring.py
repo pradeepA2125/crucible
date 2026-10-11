@@ -27,8 +27,8 @@ def test_session_tools_allowed_in_plan_phase():
     conversational). Only run_command is in _STATE_CHANGING_TOOLS — this is
     the regression guard against someone adding session tools to it."""
     for tool in ("start_session", "write_stdin", "kill_session", "list_sessions"):
-        resp = {"type": "tool_call", "tool": tool, "args": {}}
+        resp = {"type": "tool_calls", "tool": tool}
         assert _decide_state_change_correction(resp, "PLAN") is None
     # sanity: run_command IS still barred in PLAN
-    resp = {"type": "tool_call", "tool": "run_command", "args": {}}
+    resp = {"type": "tool_calls", "tool": "run_command"}
     assert _decide_state_change_correction(resp, "PLAN") is not None

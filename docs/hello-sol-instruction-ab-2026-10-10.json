@@ -1,0 +1,67 @@
+{
+  "method": "Replay identical captured step-01 context and model/effort; no tool execution; two trials per variant",
+  "rows": [
+    {
+      "variant": "captured_instruction",
+      "repetition": 0,
+      "seconds": 7.146661582984962,
+      "result": {
+        "type": "tool_calls",
+        "thought": "Check whether there is a preferred form of address before replying.",
+        "calls": [
+          {
+            "tool": "recall",
+            "args": {
+              "query": "preferred name or form of address for greetings"
+            },
+            "id": "greeting-address",
+            "depends_on": [],
+            "after": [],
+            "execution": "auto",
+            "provider_call_id": "call_xTSofYwsEelvJMwc4c6roayH"
+          }
+        ]
+      },
+      "provider_reply": [
+        {
+          "text": "",
+          "function_names": [
+            "tool_call"
+          ]
+        }
+      ],
+      "reasoning_summary": "**Calling recall tool**"
+    },
+    {
+      "variant": "continuation_instruction",
+      "repetition": 0,
+      "seconds": 7.344205625005998,
+      "result": {
+        "type": "tool_calls",
+        "thought": "check whether there is an active task worth acknowledging in the greeting",
+        "calls": [
+          {
+            "tool": "recall",
+            "args": {
+              "query": "current active task"
+            },
+            "id": "active-task-greeting",
+            "depends_on": [],
+            "after": [],
+            "execution": "auto",
+            "provider_call_id": "call_LV0Nl8S6sIJ72o23JkDSib0P"
+          }
+        ]
+      },
+      "provider_reply": [
+        {
+          "text": "",
+          "function_names": [
+            "tool_call"
+          ]
+        }
+      ],
+      "reasoning_summary": ""
+    }
+  ]
+}

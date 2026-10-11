@@ -44,12 +44,12 @@ def test_builtins() -> None:
 def test_render_context_for_an_agent() -> None:
     agent = AgentContext(
         agent_id="agent-abc", name="explore", label="auth survey", depth=1,
-        parent_agent_id=None, permission="plan", allowed_types=("tool_call", "progress", "report"),
+        parent_agent_id=None, permission="plan", allowed_types=("tool_calls", "progress", "report"),
         persona="p", max_iters=20)
     ctx = RenderContext.for_agent(agent, tools=frozenset({"read_file"}), shell_policy="ask")
     assert not ctx.is_main
     assert (ctx.permission, ctx.shell_policy, ctx.agent_id, ctx.agent_label) == (
         "plan", "ask", "agent-abc", "auth survey")
     assert ctx.tools == frozenset({"read_file"})
-    assert ctx.base_types == frozenset({"tool_call", "progress", "report"})
+    assert ctx.base_types == frozenset({"tool_calls", "progress", "report"})
     hash(ctx)  # stays usable as a render-cache key

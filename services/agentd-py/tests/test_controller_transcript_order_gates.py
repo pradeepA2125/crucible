@@ -80,10 +80,18 @@ async def test_pills_after_an_edit_diff_card_land_after_it(tmp_path: Path) -> No
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     responses = [
-        {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f1.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "look",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f1.py"}}],
+        },
         {"type": "edit", "thought": "write", "patch_ops": [
             {"op": "create_file", "file": "new.py", "content": "y = 2\n", "reason": "r"}]},
-        {"type": "tool_call", "thought": "verify", "tool": "read_file", "args": {"path": "f2.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "verify",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f2.py"}}],
+        },
         {"type": "answer", "thought": "done", "answer": "did it"},
     ]
     await _ctrl(tmp_path, store, responses, orchestrator=_FakeOrch(tmp_path)).handle_message(
@@ -120,9 +128,22 @@ async def test_closing_message_lands_after_a_command_approval_breadcrumb(
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     responses = [
-        {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f1.py"}},
-        {"type": "tool_call", "thought": "run it", "tool": "run_command",
-         "args": {"command": "touch", "args": ["s.txt"]}},
+        {
+            "type": "tool_calls",
+            "thought": "look",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f1.py"}}],
+        },
+        {
+            "type": "tool_calls",
+            "thought": "run it",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "run_command",
+                    "args": {"command": "touch", "args": ["s.txt"]},
+                }
+            ],
+        },
         {"type": "answer", "thought": "done", "answer": "ran the command"},
     ]
     ctrl = _ctrl(tmp_path, store, responses)
@@ -157,24 +178,34 @@ async def test_pills_after_a_breadcrumb_start_a_fresh_message(tmp_path: Path) ->
     """Two gated commands back to back: each command's pill gets its OWN message, and the
     second is NOT folded back into the first (the pile-up).
 
-    Placement note — a gated command's pill lands AFTER its own approval breadcrumb here,
-    where in test_closing_message_lands_after_a_command_approval_breadcrumb it lands
-    before. Both are correct and follow from one rule: the boundary seals whatever pills
-    are ALREADY persisted, and pills are only persisted once a call has a result. A
-    command that is the first call of its segment has nothing persisted yet when its gate
-    raises, so its pill opens the next segment (reading approval → command → output); a
-    command later in a segment is folded in with the pills it was sealed alongside live.
-    The alternative — persisting a result-less pill at request time so the pre-crumb
-    message always contains the pending call — would put `done: true` pills with no output
-    in the transcript and break the webview's "persisted pills are always done" dedup
-    invariant (useAppState.ts appendToolResult), for a one-slot cosmetic gain."""
+    Array execution persists waiting/running pills before the approval gate. Each
+    breadcrumb seals that segment, so the next command opens a fresh pill message.
+    The closing answer must still follow both approval breadcrumbs."""
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     responses = [
-        {"type": "tool_call", "thought": "one", "tool": "run_command",
-         "args": {"command": "touch", "args": ["one.txt"]}},
-        {"type": "tool_call", "thought": "two", "tool": "run_command",
-         "args": {"command": "touch", "args": ["two.txt"]}},
+        {
+            "type": "tool_calls",
+            "thought": "one",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "run_command",
+                    "args": {"command": "touch", "args": ["one.txt"]},
+                }
+            ],
+        },
+        {
+            "type": "tool_calls",
+            "thought": "two",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "run_command",
+                    "args": {"command": "touch", "args": ["two.txt"]},
+                }
+            ],
+        },
         {"type": "answer", "thought": "done", "answer": "both ran"},
     ]
     ctrl = _ctrl(tmp_path, store, responses)
@@ -199,6 +230,7 @@ async def test_pills_after_a_breadcrumb_start_a_fresh_message(tmp_path: Path) ->
     assert len(pill_idxs) == 2, [_pill_tools(msgs[i]) for i in pill_idxs]
     assert [_pill_tools(msgs[i]) for i in pill_idxs] == [["run_command"], ["run_command"]]
     answer_idx = _index_of(msgs, lambda m: m.content == "both ran")
-    assert crumbs[0] < pill_idxs[0] < crumbs[1] < pill_idxs[1] < answer_idx, (
+    # Array execution durably records waiting/running members before approval breadcrumbs.
+    assert pill_idxs[0] < crumbs[0] < pill_idxs[1] < crumbs[1] < answer_idx, (
         f"order was {[(m.content, _pill_tools(m)) for m in msgs]}")
     assert (tmp_path / "one.txt").exists() and (tmp_path / "two.txt").exists()

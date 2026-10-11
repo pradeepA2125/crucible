@@ -11,7 +11,7 @@ def prompt(audience, tools, *, permission="default", context_tools=None):
         audience="main" if audience == "main" else "child",
         permission=permission,
         tools=frozenset(tools if context_tools is None else context_tools),
-        base_types=frozenset({"tool_call", "progress", "report"}),
+        base_types=frozenset({"tool_calls", "progress", "report"}),
         agent_id="researcher" if audience != "main" else "",
         team_brief="Goal: investigate dependency support" if audience == "team" else "",
     )

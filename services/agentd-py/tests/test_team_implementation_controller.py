@@ -17,7 +17,11 @@ AGREE = {"type": "report", "thought": "ok", "summary": "P1 holds", "status": "co
 DONE = {"type": "report", "thought": "done", "summary": "part done", "status": "completed"}
 WAITING = {"type": "report", "thought": "w", "summary": "waiting", "status": "awaiting_peer"}
 PARTIAL = {"type": "report", "thought": "f", "summary": "out of budget", "status": "partial"}
-LOOK = {"type": "tool_call", "thought": "look", "tool": "list_directory", "args": {}}
+LOOK = {
+    "type": "tool_calls",
+    "thought": "look",
+    "calls": [{"id": "call1", "tool": "list_directory", "args": {}}],
+}
 PARTS = [{"member": "alice", "part": "api", "files": ["a.py"]},
          {"member": "bob", "part": "tests", "files": ["b.py"]}]
 

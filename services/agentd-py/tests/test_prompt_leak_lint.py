@@ -70,8 +70,8 @@ def test_main_only_wording_is_inside_a_never_child_region(name: str) -> None:
     assert not offenders, "untagged main-only wording:\n" + "\n".join(offenders)
 
 
-_EDIT = frozenset({"tool_call", "edit", "progress", "report"})
-_READ = frozenset({"tool_call", "progress", "report"})
+_EDIT = frozenset({"tool_calls", "edit", "progress", "report"})
+_READ = frozenset({"tool_calls", "progress", "report"})
 _ALL_TOOLS = frozenset({"run_command", "write_todos", "recall", "read_skill", "read_file"})
 CHILDREN = {
     "default": RenderContext(audience="child", permission="default", tools=_ALL_TOOLS,
@@ -131,7 +131,7 @@ def test_team_text_never_reaches_a_non_team_child(permission: str) -> None:
     from agentd.subagents.context import AgentContext
     agent = AgentContext(agent_id="a", name="general-purpose", label="x", depth=1,
                          parent_agent_id=None, permission=permission,
-                         allowed_types=("tool_call", "progress", "report"), persona="",
+                         allowed_types=("tool_calls", "progress", "report"), persona="",
                          max_iters=10)
     ctx = RenderContext.for_agent(agent, tools=frozenset({"read_file"}), shell_policy="ask")
     for name, template in TEMPLATES.items():

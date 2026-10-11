@@ -192,7 +192,11 @@ async def test_progress_dedup_is_corrected(tmp_path: Path) -> None:
         tmp_path,
         [
             {"type": "progress", "thought": "t", "note": "same"},
-            {"type": "tool_call", "thought": "t", "tool": "read_file", "args": {"path": "a"}},
+            {
+                "type": "tool_calls",
+                "thought": "t",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "a"}}],
+            },
             {"type": "progress", "thought": "t", "note": "same"},  # exact repeat → rejected
             {"type": "answer", "thought": "t", "answer": "Done."},
         ],
@@ -212,7 +216,11 @@ async def test_progress_after_a_real_action_is_allowed(tmp_path: Path) -> None:
         tmp_path,
         [
             {"type": "progress", "thought": "t", "note": "starting"},
-            {"type": "tool_call", "thought": "t", "tool": "read_file", "args": {"path": "a"}},
+            {
+                "type": "tool_calls",
+                "thought": "t",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "a"}}],
+            },
             {"type": "progress", "thought": "t", "note": "now the second half"},
             {"type": "answer", "thought": "t", "answer": "Done."},
         ],
@@ -399,9 +407,17 @@ async def test_call_index_resets_per_pills_segment_after_a_note(tmp_path: Path) 
     loop = build_loop(
         tmp_path,
         [
-            {"type": "tool_call", "thought": "t", "tool": "read_file", "args": {"path": "f1.py"}},
+            {
+                "type": "tool_calls",
+                "thought": "t",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f1.py"}}],
+            },
             {"type": "progress", "thought": "t", "note": "segment boundary"},
-            {"type": "tool_call", "thought": "t", "tool": "read_file", "args": {"path": "f2.py"}},
+            {
+                "type": "tool_calls",
+                "thought": "t",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f2.py"}}],
+            },
             {"type": "answer", "thought": "t", "answer": "Done."},
         ],
     )

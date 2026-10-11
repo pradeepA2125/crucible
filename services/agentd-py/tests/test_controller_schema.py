@@ -1,3 +1,5 @@
+import pytest
+
 from agentd.chat.controller_prompts import (
     CONTROLLER_RESPONSE_SCHEMA,
     CONTROLLER_SYSTEM_PROMPT,
@@ -64,7 +66,7 @@ def test_schema_is_flat_not_oneof():
     assert "oneOf" not in CONTROLLER_RESPONSE_SCHEMA and "anyOf" not in CONTROLLER_RESPONSE_SCHEMA
     enum = CONTROLLER_RESPONSE_SCHEMA["properties"]["type"]["enum"]
     assert set(enum) == {
-        "tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress",
+        "tool_calls", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress",
         "report",
     }
     # plan_sketch present for propose_mode
@@ -73,15 +75,38 @@ def test_schema_is_flat_not_oneof():
 
 def test_phase_gating_trims_type_enum():
     plan = controller_response_schema(phase="PLAN")["properties"]["type"]["enum"]
-    assert set(plan) == {"tool_call", "answer", "clarify", "propose_mode", "progress"}
+    assert set(plan) == {"tool_calls", "answer", "clarify", "propose_mode", "progress"}
     active = controller_response_schema(phase="ACTIVE")["properties"]["type"]["enum"]
     # clarify is allowed in ACTIVE (ask when blocked mid-edit); propose_mode is not.
     assert set(active) == {
-        "tool_call", "answer", "edit", "clarify", "submit_changes", "progress",
+        "tool_calls", "answer", "edit", "clarify", "submit_changes", "progress",
     }
     # deep-copy: mutating the returned schema must not affect the module-level one
     plan.append("__probe__")
     assert "__probe__" not in CONTROLLER_RESPONSE_SCHEMA["properties"]["type"]["enum"]
+
+
+@pytest.mark.parametrize("phase", ["PLAN", "ACTIVE", "AGENT"])
+@pytest.mark.parametrize("mode", ["flat", "tight", "anyof"])
+def test_action_guidance_reaches_each_provider_schema_and_respects_phase(phase, mode):
+    flat = controller_response_schema(phase=phase)
+    allowed = flat["properties"]["type"]["enum"]
+    schema = controller_response_schema(phase=phase, **({mode: True} if mode != "flat" else {}))
+    guidance = dict(line.split(": ", 1)
+                    for line in flat["properties"]["type"]["description"].splitlines())
+    assert set(guidance) == set(allowed)
+    assert all(description.strip() for description in guidance.values())
+    if mode != "flat":
+        branches = schema["oneOf" if mode == "tight" else "anyOf"]
+        assert {b["properties"]["type"]["const"]: b["description"]
+                for b in branches} == guidance
+
+
+def test_action_guidance_respects_per_iteration_narrowing():
+    schema = controller_response_schema(phase="ACTIVE", allowed_types=["answer"])
+    guidance = schema["properties"]["type"]["description"]
+    assert guidance.startswith("answer: Finish the user turn")
+    assert "tool_calls:" not in guidance and "edit:" not in guidance
 
 
 def test_thread_live_state_turn_active_defaults_false():

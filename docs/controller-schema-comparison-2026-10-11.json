@@ -1,0 +1,207 @@
+{
+  "main_commit": "9508f4518db8fda47223e1a61d69add900693cf2",
+  "current_commit": "95c1d827111a864751f51b088be017076a89cfee",
+  "schemas": [
+    {
+      "variant": "main",
+      "function_names": [
+        "tool_call",
+        "answer",
+        "clarify",
+        "edit",
+        "submit_changes",
+        "progress"
+      ],
+      "tool_choice": "required",
+      "tool_action_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "thought",
+          "tool",
+          "args"
+        ],
+        "properties": {
+          "thought": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "args": {
+            "type": "string",
+            "description": "a JSON object, encoded as a string"
+          }
+        }
+      }
+    },
+    {
+      "variant": "current_off",
+      "function_names": [
+        "tool_calls",
+        "answer",
+        "clarify",
+        "edit",
+        "submit_changes",
+        "progress"
+      ],
+      "tool_choice": "required",
+      "tool_action_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "thought",
+          "calls"
+        ],
+        "properties": {
+          "thought": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tool": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "string",
+                  "description": "a JSON object, encoded as a string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "depends_on": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "after": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "execution": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "auto",
+                    "parallel",
+                    "serial",
+                    null
+                  ]
+                }
+              },
+              "required": [
+                "tool",
+                "args",
+                "id",
+                "depends_on",
+                "after",
+                "execution"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "variant": "current_on",
+      "function_names": [
+        "tool_calls",
+        "answer",
+        "clarify",
+        "edit",
+        "submit_changes",
+        "progress"
+      ],
+      "tool_choice": "required",
+      "tool_action_parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "thought",
+          "calls"
+        ],
+        "properties": {
+          "thought": {
+            "type": "string"
+          },
+          "calls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tool": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "string",
+                  "description": "a JSON object, encoded as a string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "depends_on": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "after": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "execution": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "auto",
+                    "parallel",
+                    "serial",
+                    null
+                  ]
+                }
+              },
+              "required": [
+                "tool",
+                "args",
+                "id",
+                "depends_on",
+                "after",
+                "execution"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

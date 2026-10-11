@@ -1,0 +1,194 @@
+{
+  "date": "2026-10-11",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "selected_plan": "Yahoo account selected by user",
+  "settings": {
+    "toolBatching": true,
+    "adaptiveReads": false,
+    "compactContext": false
+  },
+  "method": "Enabled batching in VS Code settings, restarted backend, verified maxItems=8 in installed-editor artifacts. Two authorized live tests, each bounded at eight model actions.",
+  "runs": [
+    {
+      "label": "hello",
+      "artifact_directory": ".crucible/state/artifacts/chat/chat-1c208b265699/2fb0d9bcfc1949f5807e45429bf016ce",
+      "goal": "hello",
+      "schema_max_calls": 8,
+      "actions": [
+        {
+          "type": "answer",
+          "thought": "Responding to the greeting directly; no repository inspection is needed.",
+          "answer": "Hello! How can I help?"
+        }
+      ],
+      "workspace_tools": [],
+      "all_tool_results_successful": true,
+      "outcome": "answer",
+      "usage_from_editor_ui": {
+        "requests": 1,
+        "input_tokens": 49410,
+        "cached_input_tokens": 0,
+        "output_tokens": 84
+      }
+    },
+    {
+      "label": "independent_file_reads",
+      "artifact_directory": ".crucible/state/artifacts/chat/chat-1c208b265699/c0c69cd33a574c51b40134fc22fa3820",
+      "goal": "Read services/agentd-py/agentd/chat/batch_history.py and lines 1-45 of services/agentd-py/agentd/tools/batching.py. These reads are independent; issue both read_file calls in one tool_calls batch. Then briefly explain interrupted_history and batching_enabled. Do not modify files.",
+      "schema_max_calls": 8,
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "Read the two requested independent file regions before explaining their behavior.",
+          "calls": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/chat/batch_history.py"
+              },
+              "id": "read_batch_history",
+              "depends_on": [],
+              "after": [],
+              "execution": "parallel"
+            },
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/tools/batching.py",
+                "start_line": 1,
+                "end_line": 45
+              },
+              "id": "read_batching",
+              "depends_on": [],
+              "after": [],
+              "execution": "parallel"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "The requested reads are already available from the preceding independent batch; I will re-read the exact definition line for a final grounded check before explaining it.",
+          "calls": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/tools/batching.py",
+                "start_line": 29,
+                "end_line": 30
+              },
+              "id": "verify_batching_enabled",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "The requested source was read; inspect the two symbols' workspace relationships before summarizing their roles.",
+          "calls": [
+            {
+              "tool": "query_graph",
+              "args": {
+                "node": "services/agentd-py/agentd/chat/batch_history.py:interrupted_history",
+                "depth": 1,
+                "edge_kinds": [
+                  "References",
+                  "Calls"
+                ],
+                "limit": 10
+              },
+              "id": "graph_history",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Confirm the batching_enabled symbol context before summarizing the two requested reads.",
+          "calls": [
+            {
+              "tool": "query_graph",
+              "args": {
+                "node": "services/agentd-py/agentd/tools/batching.py:batching_enabled",
+                "depth": 1,
+                "edge_kinds": [
+                  "References",
+                  "Calls"
+                ],
+                "limit": 10
+              },
+              "id": "graph_batching",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "The requested source reads are complete; use the existing symbol graph to confirm the relevant callers before summarizing.",
+          "calls": [
+            {
+              "tool": "query_graph",
+              "args": {
+                "node": "services/agentd-py/agentd/chat/batch_history.py:interrupted_history",
+                "depth": 1,
+                "edge_kinds": [
+                  "Calls"
+                ],
+                "limit": 10
+              },
+              "id": "confirm_history_callers",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "answer",
+          "thought": "Both requested files and the relevant function definitions have been read; no modification is needed.",
+          "answer": "- `interrupted_history` in `services/agentd-py/agentd/chat/batch_history.py:6` returns a copied history. For entries that are tool results belonging to a batch and currently `pending`, `waiting_approval`, or `running`, it marks them as interrupted, sets `is_error=True`, and replaces their content with a non-replay notice. All other entries are copied unchanged.\n- `batching_enabled` in `services/agentd-py/agentd/tools/batching.py:29` enables tool batching only when `CRUCIBLE_TOOL_BATCHING_ENABLED` is set, case-insensitively, to `1`, `true`, or `yes`; otherwise it returns `False`."
+        }
+      ],
+      "workspace_tools": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "query_graph",
+        "query_graph",
+        "query_graph"
+      ],
+      "all_tool_results_successful": true,
+      "outcome": "answer",
+      "usage_from_editor_ui": {
+        "requests": 6,
+        "input_tokens": 326681,
+        "cached_input_tokens": 314112,
+        "output_tokens": 1319
+      },
+      "first_batch_results_received_on_next_request": [
+        {
+          "tool": "read_file",
+          "id": "read_batch_history",
+          "status": "success",
+          "is_error": false
+        },
+        {
+          "tool": "read_file",
+          "id": "read_batching",
+          "status": "success",
+          "is_error": false
+        }
+      ]
+    }
+  ],
+  "conclusion": "Batch execution and result delivery succeeded; hello answered directly. The file task completed after six model actions, with four unnecessary checks after the initial two-read batch. Description repair does not fully eliminate over-checking.",
+  "limitations": [
+    "One greeting and one explicitly requested independent-read batch; dependency scheduling, commands, edits, and other models were not tested."
+  ]
+}

@@ -7,10 +7,28 @@ import pytest
 
 from tests.test_team_controller import REPORT, _make, _request, _settle
 
-POST_TO_BOB = {"type": "tool_call", "thought": "tell bob", "tool": "team_post",
-               "args": {"text": "@bob the login route needs a test"}}
-DM_TO_BOB = {"type": "tool_call", "thought": "ask bob", "tool": "team_message",
-             "args": {"member": "bob", "text": "which file?"}}
+POST_TO_BOB = {
+    "type": "tool_calls",
+    "thought": "tell bob",
+    "calls": [
+        {
+            "id": "call1",
+            "tool": "team_post",
+            "args": {"text": "@bob the login route needs a test"},
+        }
+    ],
+}
+DM_TO_BOB = {
+    "type": "tool_calls",
+    "thought": "ask bob",
+    "calls": [
+        {
+            "id": "call1",
+            "tool": "team_message",
+            "args": {"member": "bob", "text": "which file?"},
+        }
+    ],
+}
 
 
 def _kinds(store, team_id: str, label: str | None = None) -> list[str]:

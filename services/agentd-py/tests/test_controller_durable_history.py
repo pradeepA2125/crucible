@@ -20,8 +20,11 @@ def _qa_controller(store: ChatThreadStore, tmp_path: Path) -> ChatController:
         workspace_path=str(tmp_path),
         reasoning_engine=ScriptedReasoningEngine(
             None, [], controller_step_responses=[
-                {"type": "tool_call", "thought": "look", "tool": "read_file",
-                 "args": {"path": "f.py"}},
+                {
+                    "type": "tool_calls",
+                    "thought": "look",
+                    "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+                },
                 {"type": "answer", "thought": "done", "answer": "x is 1"}]),
         thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
         retrieval_client=None)
@@ -138,8 +141,11 @@ async def test_cacheable_head_byte_identical_across_restart(tmp_path: Path):
     # Controller A: turn 1 (tool_call + answer) builds history + pins the seed.
     engine_a = _RecordingEngine(
         None, [], controller_step_responses=[
-            {"type": "tool_call", "thought": "look", "tool": "read_file",
-             "args": {"path": "f.py"}},
+            {
+                "type": "tool_calls",
+                "thought": "look",
+                "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+            },
             {"type": "answer", "thought": "done", "answer": "x is 1"},
             {"type": "answer", "thought": "t", "answer": "still 1"}])
     ctrl_a = ChatController(
@@ -281,8 +287,11 @@ async def test_create_task_explore_context_derived_from_history_uncapped(tmp_pat
         workspace_path=str(tmp_path),
         reasoning_engine=ScriptedReasoningEngine(
             None, [], controller_step_responses=[
-                {"type": "tool_call", "thought": "look", "tool": "read_file",
-                 "args": {"path": "big.py"}},
+                {
+                    "type": "tool_calls",
+                    "thought": "look",
+                    "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "big.py"}}],
+                },
                 {"type": "propose_mode", "thought": "t", "plan_sketch": "do the thing",
                  "recommended": "create_task",
                  "options": [

@@ -255,10 +255,15 @@ async def test_actual_child_activation_registration_and_filtering(
         [],
         controller_step_responses=[
             {
-                "type": "tool_call",
+                "type": "tool_calls",
                 "thought": "fetch",
-                "tool": "web_fetch",
-                "args": {"url": "https://example.com/docs"},
+                "calls": [
+                    {
+                        "id": "call1",
+                        "tool": "web_fetch",
+                        "args": {"url": "https://example.com/docs"},
+                    }
+                ],
             },
             {"type": "report", "thought": "done", "summary": "Finished.", "status": "completed"},
         ],
@@ -298,10 +303,19 @@ async def test_openai_and_anthropic_share_definition_and_tool_source(env, tmp_pa
     definition = next(d for d in registry.definitions() if d.name == "web_fetch")
     steps = [
         {
-            "type": "tool_call",
+            "type": "tool_calls",
             "thought": "fetch",
-            "tool": "web_fetch",
-            "args": {"url": "https://example.com/docs", "format": "markdown", "timeout": 30},
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "web_fetch",
+                    "args": {
+                        "url": "https://example.com/docs",
+                        "format": "markdown",
+                        "timeout": 30,
+                    },
+                }
+            ],
         },
         {"type": "answer", "thought": "done", "answer": "See https://example.com"},
     ]
@@ -310,6 +324,8 @@ async def test_openai_and_anthropic_share_definition_and_tool_source(env, tmp_pa
             "action": {
                 **s,
                 **({"args": json.dumps(s["args"])} if "args" in s else {}),
+                **({"calls": [{**c, "args": json.dumps(c["args"])} for c in s["calls"]]}
+                   if "calls" in s else {}),
             }
         }
         for s in steps

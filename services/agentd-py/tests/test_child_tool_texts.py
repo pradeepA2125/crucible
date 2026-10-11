@@ -13,7 +13,7 @@ from agentd.tools.sources import BuiltinToolSource
 
 def _ctx(permission: str, shell: str = "ask") -> RenderContext:
     return RenderContext(audience="child", permission=permission, shell_policy=shell,
-                         base_types=frozenset({"tool_call", "edit", "progress", "report"}),
+                         base_types=frozenset({"tool_calls", "edit", "progress", "report"}),
                          agent_id="a", agent_label="a")
 
 

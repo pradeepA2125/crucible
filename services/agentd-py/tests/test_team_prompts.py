@@ -26,7 +26,7 @@ def _ctx(team_brief: str = "") -> RenderContext:
     agent = AgentContext(
         agent_id="agent-1", name="general-purpose", label="alice", depth=1,
         parent_agent_id=None, permission="default",
-        allowed_types=("tool_call", "edit", "progress", "report"), persona="", max_iters=10)
+        allowed_types=("tool_calls", "edit", "progress", "report"), persona="", max_iters=10)
     return RenderContext.for_agent(
         agent, tools=frozenset({"read_file", "team_post", "team_agree"}),
         shell_policy="ask", team_brief=team_brief)
@@ -97,7 +97,7 @@ def test_status_tail_rides_the_payload_tail() -> None:
 def test_tool_name_as_type_gets_the_wrapper() -> None:
     text = _tool_name_as_type_correction("team_agree", {"team_agree", "read_file"})
     assert text is not None
-    assert '"type":"tool_call"' in text and '"tool":"team_agree"' in text
+    assert '"type":"tool_calls"' in text and '"tool":"team_agree"' in text
     assert _tool_name_as_type_correction("team_agree", {"read_file"}) is None
     assert _tool_name_as_type_correction("read_file", {"read_file"}) is None  # not a team tool
 
@@ -125,9 +125,9 @@ def test_brief_names_goal_and_roster(tmp_path: Path) -> None:
 def test_member_report_schema_allows_awaiting_peer(variant: dict[str, bool]) -> None:
     from agentd.chat.controller_prompts import controller_response_schema
     lone = json.dumps(controller_response_schema(
-        phase="AGENT", allowed_types=["tool_call", "report"], **variant))
+        phase="AGENT", allowed_types=["tool_calls", "report"], **variant))
     member = json.dumps(controller_response_schema(
-        phase="AGENT", allowed_types=["tool_call", "report"], team_member=True, **variant))
+        phase="AGENT", allowed_types=["tool_calls", "report"], team_member=True, **variant))
     assert "awaiting_peer" not in lone
     assert "awaiting_peer" in member
 
@@ -230,7 +230,7 @@ def test_members_learn_a_proposal_is_a_plan_not_finished_code() -> None:
     from agentd.prompting.tagged import render_prompt
     agent = AgentContext(agent_id="a", name="general-purpose", label="alice", depth=1,
                          parent_agent_id=None, permission="default",
-                         allowed_types=("tool_call", "report"), persona="", max_iters=5)
+                         allowed_types=("tool_calls", "report"), persona="", max_iters=5)
     ctx = RenderContext.for_agent(agent, tools=frozenset({"team_post"}), shell_policy="ask",
                                   team_brief="Team 'x'.")
     text = " ".join(render_prompt(_TEAM_BLOCK, ctx).split())

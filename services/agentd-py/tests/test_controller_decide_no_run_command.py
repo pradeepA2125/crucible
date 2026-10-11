@@ -31,8 +31,17 @@ async def test_run_command_in_plan_is_rejected_not_executed(tmp_path: Path):
     # PLAN phase. The model tries to create a file via run_command (the Finding 6 bypass).
     # It must be rejected (no side effect on disk) and corrected, then recover.
     steps = [
-        {"type": "tool_call", "thought": "write the file",
-         "tool": "run_command", "args": {"command": "touch", "args": ["sentinel.txt"]}},
+        {
+            "type": "tool_calls",
+            "thought": "write the file",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "run_command",
+                    "args": {"command": "touch", "args": ["sentinel.txt"]},
+                }
+            ],
+        },
         {"type": "answer", "thought": "ok", "answer": "done"},
     ]
     out = await _loop(tmp_path, steps, ControllerPhaseSM(start="PLAN")).run(
@@ -46,8 +55,17 @@ async def test_run_command_in_active_is_dispatched(tmp_path: Path):
     # ACTIVE phase (the default): run_command is allowed (it executes).
     sm = ControllerPhaseSM(start="ACTIVE")
     steps = [
-        {"type": "tool_call", "thought": "run it",
-         "tool": "run_command", "args": {"command": "touch", "args": ["sentinel.txt"]}},
+        {
+            "type": "tool_calls",
+            "thought": "run it",
+            "calls": [
+                {
+                    "id": "call1",
+                    "tool": "run_command",
+                    "args": {"command": "touch", "args": ["sentinel.txt"]},
+                }
+            ],
+        },
         {"type": "submit_changes", "thought": "done", "summary": "ran"},
     ]
     out = await _loop(tmp_path, steps, sm).run(

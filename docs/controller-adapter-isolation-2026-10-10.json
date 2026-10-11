@@ -1,0 +1,282 @@
+{
+  "method": "Actual VS Code, temporary backend variants, fresh hello, gpt-5.6-sol Medium. No automatic finite-step instruction; manual stop below ten steps.",
+  "trials": [
+    {
+      "variant": "main_wording_only",
+      "artifact": ".crucible/state/artifacts/chat/chat-3aff102d0436/25896aa896c1464b872d50c4faa0f51b",
+      "completed_actions": 8,
+      "outcome": "stopped_without_answer",
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "briefly inspect the workspace root so I can orient any follow-up help",
+          "calls": [
+            {
+              "tool": "list_directory",
+              "args": {
+                "path": "."
+              },
+              "execution": "auto",
+              "provider_call_id": "call_DJOzWMSyzihnRTwC756RtKXw"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check the workspace is available before greeting",
+          "calls": [
+            {
+              "tool": "list_directory",
+              "args": {
+                "path": "."
+              },
+              "id": "workspace-check",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_QEtVlD2I6gcRnhrTuIprTYUx"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is relevant prior thread context before greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "current conversation greeting context"
+              },
+              "id": "greeting-context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_RRr0B1gIL9AUpclecRiriw2s"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is an active workspace task behind the greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "active unfinished user request requiring action"
+              },
+              "id": "active-task-check",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_EPMhECklS3Y2LXr2SYB65ChW"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether any background work is active before greeting",
+          "calls": [
+            {
+              "tool": "list_sessions",
+              "args": {},
+              "id": "session-check",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_0ciyb8BDWVQFXVnC7Rdl1hsD"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether the user has a stored communication preference before replying.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "user communication style and greeting preference"
+              },
+              "id": "tone-preference",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_qbNupshXuzsb3iHCD1BPdrHi"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether there is relevant project context to acknowledge in the greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "most recent project context worth offering to resume after a greeting"
+              },
+              "id": "recent-context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_1pepzx0zcAljQyUiHOi7Ik5e"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether any background work is active before replying to the greeting.",
+          "calls": [
+            {
+              "tool": "list_sessions",
+              "args": {},
+              "id": "final-greeting-session-check",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_HsGccOYJeojmo6kjdHHKmgAd"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "plain_history_only",
+      "artifact": ".crucible/state/artifacts/chat/chat-bbd8d9f8ce42/de01e236165945ab8ba72f388bb3dd10",
+      "completed_actions": 8,
+      "outcome": "stopped_without_answer",
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "briefly orient to the workspace while acknowledging the greeting",
+          "calls": [
+            {
+              "tool": "list_directory",
+              "args": {
+                "path": "."
+              },
+              "id": "greeting-orient",
+              "execution": "auto",
+              "provider_call_id": "call_l0q84Zt0NTQAhogJAQyJEIkS"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check whether any prior conversational preference should shape the greeting",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "user communication preferences and preferred greeting style"
+              },
+              "id": "recall-greeting-preference",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_IOqAk7eI9gj7Kng5jvq4jNm5"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check for any still-running background work before greeting the user.",
+          "calls": [
+            {
+              "tool": "list_sessions",
+              "args": {},
+              "id": "check-active-sessions",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_JC1iRGgZckjvatDpKrV9bC59"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether there is any relevant conversational context before replying to the greeting.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "current conversation greeting context"
+              },
+              "id": "greeting-context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_vkUElD3Y5L8iL8F6XHtMnF27"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "check workspace guidance so I\u2019m ready to help",
+          "calls": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "CLAUDE.md"
+              },
+              "id": "read-workspace-guidance",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_8N4DNqVpQdshRhoe33wrxiE3"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether there is relevant prior work to offer resuming after the greeting.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "most recent unfinished user-approved work to resume"
+              },
+              "id": "recall-unfinished-work",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_OeDVUFgGdw2BSxfUe39qH1WR"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Check whether any background agents are active before responding to the greeting.",
+          "calls": [
+            {
+              "tool": "list_sessions",
+              "args": {},
+              "id": "final-greeting-session-check",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_sGAXOQ2CqPYVRbOWEmMQjQuC"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "The request is only a greeting; check for any durable communication preference before replying.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "preferred greeting and conversational tone"
+              },
+              "id": "greeting-style-recall",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto",
+              "provider_call_id": "call_gB3gnAHz4X9zDumkRKDbNJqq"
+            }
+          ]
+        }
+      ],
+      "physical_request_verified": "diagnostic-native-request.json: current native instruction, no batch wrappers; provider IDs preserved"
+    }
+  ],
+  "limitations": "One hello trial per variant, manual stop; not causal proof or full main history equivalence. Scheduling fields and native schemas stay current. Wording trial includes malformed missing-ID call before successful tools. Repository-task variants and repeated confirmation runs remain outstanding."
+}

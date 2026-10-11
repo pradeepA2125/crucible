@@ -59,7 +59,11 @@ async def test_note_after_tool_calls_lands_after_the_pills_message(tmp_path: Pat
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     responses = [
-        {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "look",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+        },
         {"type": "progress", "thought": "t", "note": "Read the file. Now answering."},
         {"type": "answer", "thought": "done", "answer": "x is 1"},
     ]
@@ -121,11 +125,23 @@ async def test_n_notes_interleaved_with_tool_calls_segment_pills_without_duplica
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     responses = [
-        {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f1.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "look",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f1.py"}}],
+        },
         {"type": "progress", "thought": "t", "note": "note one"},
-        {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f2.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "look",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f2.py"}}],
+        },
         {"type": "progress", "thought": "t", "note": "note two"},
-        {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f3.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "look",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f3.py"}}],
+        },
         {"type": "answer", "thought": "done", "answer": "a=1, b=2, c=3"},
     ]
     await _ctrl(tmp_path, store, responses).handle_message(
@@ -163,7 +179,11 @@ async def test_zero_notes_turn_is_unaffected_single_finalized_pills_message(
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     responses = [
-        {"type": "tool_call", "thought": "look", "tool": "read_file", "args": {"path": "f.py"}},
+        {
+            "type": "tool_calls",
+            "thought": "look",
+            "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+        },
         {"type": "answer", "thought": "done", "answer": "x is 1"},
     ]
     await _ctrl(tmp_path, store, responses).handle_message(

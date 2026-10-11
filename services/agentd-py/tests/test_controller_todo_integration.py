@@ -23,9 +23,8 @@ async def test_write_todos_persists_on_nonterminal_turn(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
     ctrl = _ctrl(tmp_path, store, [
-        {"type": "tool_call", "thought": "plan", "tool": "write_todos",
-         "args": {"items": [{"title": "Enemies", "status": "pending"},
-                            {"title": "Jump", "status": "pending"}]}},
+        {'type': 'tool_calls', 'thought': "plan", 'calls': [{'id': 'call1', 'tool': "write_todos", 'args': {"items": [{"title": "Enemies", "status": "pending"},
+                            {"title": "Jump", "status": "pending"}]}}]},
         {"type": "propose_mode", "thought": "big", "plan_sketch": "1. Enemies 2. Jump",
          "recommended": "implement", "reason": "multi-part",
          "options": [{"mode": "implement", "label": "Edit inline now", "description": "do it"}]},

@@ -50,13 +50,30 @@ def _controller(ws: Path, tmp_path: Path, store: ChatThreadStore, engine) -> Cha
 
 
 def _dispatch(label: str, prompt: str) -> dict[str, object]:
-    return {"type": "tool_call", "thought": "go", "tool": "dispatch_agents",
-            "args": {"agents": [{"agent": "general-purpose", "label": label, "prompt": prompt}]}}
+    return {
+        "type": "tool_calls",
+        "thought": "go",
+        "calls": [
+            {
+                "id": "call1",
+                "tool": "dispatch_agents",
+                "args": {
+                    "agents": [
+                        {"agent": "general-purpose", "label": label, "prompt": prompt}
+                    ]
+                },
+            }
+        ],
+    }
 
 
 DONE = {"type": "submit_changes", "thought": "d", "summary": "done"}
 # Dispatch returns at once (spec §4.1); the main agent collects reports with wait_agents.
-WAIT = {"type": "tool_call", "thought": "collect", "tool": "wait_agents", "args": {}}
+WAIT = {
+    "type": "tool_calls",
+    "thought": "collect",
+    "calls": [{"id": "call1", "tool": "wait_agents", "args": {}}],
+}
 
 
 def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kid_script):  # type: ignore[no-untyped-def]

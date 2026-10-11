@@ -5,9 +5,9 @@ The models on this route (Codex-tuned) work in a loop of their own: messages car
 `function_call` items, after which the model stops and waits for results. Asking for
 one action as schema-constrained *text* forces every message — preambles included — to
 be an action, so one response held several made-up steps (measured live, 2026-10-07).
-The conservative schema requests one function call. Opt-in batching enables multiple
-ordered calls with explicit identities and dependency metadata. Earlier steps arrive
-as the model's own calls and matched outputs, so it recognises completed work.
+Every response requests one function call. The controller exposes tool_calls as
+one function containing one or more members with identities and dependency metadata.
+Earlier steps arrive as the model's own calls and matched outputs, so it recognises completed work.
 
 The conversion is lossless: `from_native_input` rebuilds the engine's payload, and the
 tests check the round trip for every history shape the loops write.
@@ -40,11 +40,12 @@ _RESULT_LABEL = re.compile(r"\A\[from ([^\]\n]*)\]\n")
 _ORPHAN_LABEL = re.compile(r"\A\[tool_result from ([^\]\n]*)\]\n")
 _LOOP_LABEL = "controller"  # how the empty label (the loop itself) reads to the model
 _NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
-
 UNION_INSTRUCTIONS = (
     "\n\n# How you act\n"
     f"Take exactly one action per turn by calling one function from the `{NAMESPACE}` "
-    "namespace; its arguments are that action's fields. Your earlier actions appear as "
+    "namespace. The JSON examples describe controller actions: emit this action through "
+    "its corresponding native function (named by type); pass all fields except type as "
+    "arguments. Do not emit the examples as text. Your earlier actions appear as "
     "your own function calls and their results as the function outputs."
 )
 
@@ -64,7 +65,6 @@ class NativeActions:
     union: bool
     # Union: one codec per action type. Flat: a single codec under the function name.
     codecs: dict[str, StrictSchemaCodec] = field(default_factory=dict)
-    multicall: bool = False
 
     def decode_call(self, name: str, arguments: str) -> dict[str, object]:
         codec = self.codecs.get(name)
@@ -86,8 +86,8 @@ class NativeActions:
             if not isinstance(name, str):
                 return None
             codec = self.codecs.get(name)
-            if codec is None and name == "tool_call":
-                codec = _historical_tool_codec()
+            if codec is None and name in {"tool_call", "tool_calls"}:
+                codec = _historical_tool_codec(name)
             if codec is None:
                 return None
             fields = {k: v for k, v in action.items() if k not in {"type", "provider_call_id"}}
@@ -97,9 +97,13 @@ class NativeActions:
 
 
 @lru_cache(maxsize=1)
-def _historical_tool_codec():
+def _historical_tool_codec(name="tool_call"):
     # A terminal-only schema still has to replay earlier tool groups faithfully.
-    from agentd.chat.controller_prompts import _CALL_SCHEDULING
+    from agentd.chat.controller_prompts import _CALL_SCHEDULING, _VARIANT_SPECS
+    if name == "tool_calls":
+        return encode_strict_schema({"type": "object", "properties": {
+            "thought": {"type": "string"}, **copy.deepcopy(_VARIANT_SPECS[name]["properties"])},
+            "required": ["thought", "calls"]})
     return encode_strict_schema({"type": "object", "properties": {
         "tool": {"type": "string"}, "args": {"type": "object"},
         "thought": {"type": "string"}, **copy.deepcopy(_CALL_SCHEDULING)},
@@ -111,17 +115,15 @@ def native_actions(schema: Mapping[str, Any], schema_name: str) -> NativeActions
     if branches is not None:
         functions: list[dict[str, Any]] = []
         codecs: dict[str, StrictSchemaCodec] = {}
-        multicall = any(name == "tool_calls" for name, _ in branches)
+        has_batch = any(name == "tool_calls" for name, _ in branches)
         for name, branch in branches:
-            if multicall and name == "tool_calls":
-                continue
             params = copy.deepcopy(branch)
+            description = params.pop("description", None)
             params["properties"] = {k: v for k, v in params["properties"].items()
                                     if k != "type"}
             params["required"] = [r for r in params.get("required", []) if r != "type"]
             codec = encode_strict_schema(params)
             codecs[name] = codec
-            description = branch.get("description")
             functions.append({
                 "type": "function", "name": name, "strict": True,
                 "description": description if isinstance(description, str)
@@ -134,13 +136,11 @@ def native_actions(schema: Mapping[str, Any], schema_name: str) -> NativeActions
                     "description": namespace_description if isinstance(
                         namespace_description, str) else "Your available actions",
                     "tools": functions}],
-            tool_choice="required", instructions=(
-                "\n\n# How you act\nCall several crucible.tool_call functions for a tool batch, "
-                "or one exclusive controller action. Each tool call has a unique id; "
-                "depends_on requires successful predecessors, after requires completion. "
-                "Never mix terminal/edit/progress actions with other calls."
-                if multicall else UNION_INSTRUCTIONS), union=True,
-            codecs=codecs, multicall=multicall)
+            tool_choice="required", instructions=UNION_INSTRUCTIONS + (
+                " For a tool batch, call crucible.tool_calls once with thought and a calls array. "
+                if has_batch else ""), union=True,
+            codecs=codecs)
+
     name = _NAME_RE.sub("_", schema_name)[:64] or "respond"
     codec = encode_strict_schema(dict(schema))
     return NativeActions(
@@ -202,16 +202,23 @@ def _history_items(history: list[Any], actions: NativeActions) -> list[dict[str,
     items: list[dict[str, Any]] = []
     pending: dict[str, str] = {}
     calls = 0
+    batch_results: list[dict[str, Any]] | None = None
 
     def close_pending() -> None:
+        nonlocal batch_results
         for call_id in pending:
             items.append({"type": "function_call_output", "call_id": call_id,
-                          "output": NO_RESULT})
+                          "output": "[batch results]\n" + json.dumps(batch_results)
+                          if batch_results is not None else NO_RESULT})
+        batch_results = None
         pending.clear()
 
     for entry in history:
         role = entry.get("role") if isinstance(entry, dict) else None
         content = str(entry.get("content", "")) if isinstance(entry, dict) else str(entry)
+        if role == "tool_result" and batch_results is not None:
+            batch_results.append(entry)
+            continue
         if role == "tool_result":
             label = str(entry.get("tool") or "")
             identity = entry.get("provider_call_id") or entry.get("call_id")
@@ -240,31 +247,23 @@ def _history_items(history: list[Any], actions: NativeActions) -> list[dict[str,
         if role == "assistant":
             action = _parse_action(content)
             if action is not None and action.get("type") == "tool_calls":
-                nodes = action.get("calls", [])
-                if not isinstance(nodes, list):
-                    nodes = []
-                metadata = {
-                    "action": {k: v for k, v in action.items() if k != "calls"},
-                    "members": [
-                        {k: v for k, v in node.items() if k not in {"tool", "args"}}
-                        for node in nodes
-                    ],
-                    "entry": {k: v for k, v in entry.items() if k not in {"role", "content"}},
-                }
-                items.append({"role": "user", "content": "[tool batch]\n" + json.dumps(metadata)})
-                for node in nodes:
-                    encoded = actions.encode_action({"type": "tool_call", **node})
-                    if encoded is None:
-                        raise RuntimeError("native history cannot encode a tool batch")
-                    calls += 1
-                    call_id = str(node.get("provider_call_id") or
-                                  f"{action.get('batch_id', 'batch')}_{node.get('id', calls)}")
-                    item = {"type": "function_call", "call_id": call_id,
-                            "name": encoded[0], "arguments": encoded[1]}
-                    if actions.union:
-                        item["namespace"] = NAMESPACE
-                    items.append(item)
-                    pending[call_id] = str(node.get("tool") or "")
+                # Keep the original entry for lossless replay, but expose only action fields
+                # as native arguments; persisted batch/member metadata is not a parameter.
+                items.append({"role": "user", "content": "[batch envelope]\n" + json.dumps(entry)})
+                clean = {"type": "tool_calls", "thought": action.get("thought", ""),
+                         "calls": [{k: v for k, v in node.items()
+                                    if k not in {"provider_call_id", "thought", "type"}}
+                                   for node in action.get("calls", [])]}
+                encoded = actions.encode_action(clean)
+                if encoded is None:
+                    raise RuntimeError("native history cannot encode a tool batch")
+                calls += 1
+                call_id = str(action.get("provider_call_id") or f"call_{calls}")
+                items.append({"type": "function_call", "call_id": call_id,
+                              "name": encoded[0], "arguments": encoded[1],
+                              **({"namespace": NAMESPACE} if actions.union else {})})
+                pending[call_id] = "tool_calls"
+                batch_results = []
                 continue
             encoded = actions.encode_action(action) if action is not None else None
             if encoded is None:
@@ -327,17 +326,21 @@ def from_native_input(
     batch_meta = None
     action_meta = None
     batch_members = []
+    envelope_entry = None
     for item in body:
         kind = item.get("type")
         if kind == "function_call":
-            if item["name"] == "tool_call" and item["name"] not in actions.codecs:
-                action = {"type": "tool_call", **_historical_tool_codec().decode(
+            if item["name"] in {"tool_call", "tool_calls"} and item["name"] not in actions.codecs:
+                action = {"type": item["name"], **_historical_tool_codec(item["name"]).decode(
                     json.loads(item["arguments"]))}
             else:
                 action = actions.decode_call(item["name"], item["arguments"])
             if not actions.union:
                 action = dict(action)
-            if batch_meta is not None:
+            if envelope_entry is not None:
+                history.append(envelope_entry)
+                envelope_entry = None
+            elif batch_meta is not None:
                 member = batch_meta["members"][len(batch_members)]
                 batch_members.append({**member, "tool": action["tool"], "args": action["args"]})
                 if len(batch_members) == len(batch_meta["members"]):
@@ -355,6 +358,9 @@ def from_native_input(
             implied[item["call_id"]] = _implied_tool(action)
         elif kind == "function_call_output":
             output = str(item["output"])
+            if output.startswith("[batch results]\n"):
+                history.extend(json.loads(output[len("[batch results]\n"):]))
+                continue
             if output.startswith("[batch result]\n"):
                 history.append(json.loads(output[len("[batch result]\n"):]))
                 continue
@@ -370,6 +376,9 @@ def from_native_input(
                                 "content": output})
         elif item.get("role") == "user":
             content = str(item["content"])
+            if content.startswith("[batch envelope]\n"):
+                envelope_entry = json.loads(content[len("[batch envelope]\n"):])
+                continue
             if content.startswith("[action metadata]\n"):
                 action_meta = json.loads(content[len("[action metadata]\n"):])
                 continue

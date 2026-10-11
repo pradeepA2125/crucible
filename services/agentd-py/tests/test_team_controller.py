@@ -178,8 +178,17 @@ async def test_post_kickoff_round_one_is_only_the_mentions(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_a_mention_reaches_its_member_next_round(tmp_path, monkeypatch) -> None:
-    post_to_bob = {"type": "tool_call", "thought": "tell bob", "tool": "team_post",
-                   "args": {"text": "@bob the login route needs a test"}}
+    post_to_bob = {
+        "type": "tool_calls",
+        "thought": "tell bob",
+        "calls": [
+            {
+                "id": "call1",
+                "tool": "team_post",
+                "args": {"text": "@bob the login route needs a test"},
+            }
+        ],
+    }
     ctrl, store, tid, engine = _make(tmp_path, monkeypatch,
                                      {"alice": [post_to_bob, REPORT], "bob": [REPORT]})
     monkeypatch.setattr(ctrl, "_rearm_notices", lambda _thread_id: None)

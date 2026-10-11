@@ -69,7 +69,8 @@ class ReasoningEngine(Protocol):
     ) -> dict[str, object]:
         """One turn of the planning ReAct loop.
 
-        Returns a dict with at minimum {"type": "tool_call"|"emit_plan"|"emit_revision", "thought": str}.
+        Returns a dict with at minimum "type" (tool_call, emit_plan, or emit_revision)
+        and "thought" (str).
         For tool_call: also "tool" (name) and "args" (dict).
         For emit_plan: also "plan_markdown", "files_examined", "confidence".
         For emit_revision: also "revised_steps", "reverted_step_ids", "revision_summary".
@@ -92,8 +93,8 @@ class ReasoningEngine(Protocol):
         """One turn of the agentic chat-controller ReAct loop.
 
         Returns a dict with at minimum {"type": ..., "thought": str} where type is one of
-        tool_call | answer | clarify | propose_mode | edit | submit_changes (gated by `phase`:
-        DECIDE allows the first four, EDIT allows tool_call/edit/submit_changes).
+        tool_calls | answer | clarify | propose_mode | edit | submit_changes (gated by `phase`:
+        PLAN allows exploration and discussion; ACTIVE allows tool_calls/edit/submit_changes).
 
         on_retry reports transport-level or corrective-retry attempts as structured
         data (attempt, max_attempts, reason, message) — distinct from on_thinking,

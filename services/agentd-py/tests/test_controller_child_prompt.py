@@ -5,7 +5,7 @@ from agentd.chat.controller_prompts import format_controller_system_prompt
 from agentd.prompting.tagged import RenderContext
 from agentd.skills.models import SkillManifest
 
-EDIT_TYPES = frozenset({"tool_call", "edit", "progress", "report"})
+EDIT_TYPES = frozenset({"tool_calls", "edit", "progress", "report"})
 CHILD = RenderContext(
     audience="child", permission="default",
     tools=frozenset({"read_file", "search_code", "run_command", "write_todos", "recall",
@@ -13,7 +13,7 @@ CHILD = RenderContext(
     base_types=EDIT_TYPES, agent_id="agent-1", agent_label="limiter impl")
 READONLY = RenderContext(
     audience="child", permission="plan", tools=frozenset({"read_file", "search_code"}),
-    base_types=frozenset({"tool_call", "progress", "report"}), agent_id="agent-2",
+    base_types=frozenset({"tool_calls", "progress", "report"}), agent_id="agent-2",
     agent_label="survey")
 DONT_ASK = RenderContext(
     audience="child", permission="dontAsk", tools=frozenset({"run_command"}),

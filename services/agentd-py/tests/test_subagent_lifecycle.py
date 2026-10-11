@@ -38,16 +38,22 @@ def _controller(ws: Path, tmp_path: Path, store: ChatThreadStore,
         orchestrator=orchestrator, broadcaster=EventBroadcaster(), retrieval_client=None)
 
 
-DISPATCH = {"type": "tool_call", "thought": "fan out", "tool": "dispatch_agents",
-            "args": {"agents": [
+DISPATCH = {'type': 'tool_calls', 'thought': "fan out", 'calls': [{'id': 'call1', 'tool': "dispatch_agents", 'args': {"agents": [
                 {"agent": "general-purpose", "label": "waiter", "prompt": "Run ls"},
-                {"agent": "general-purpose", "label": "quick", "prompt": "Report now"}]}}
-WAIT = [{"type": "tool_call", "thought": "t", "tool": "run_command",
-         "args": {"command": "ls"}},
+                {"agent": "general-purpose", "label": "quick", "prompt": "Report now"}]}}]}
+WAIT = [{
+    "type": "tool_calls",
+    "thought": "t",
+    "calls": [{"id": "call1", "tool": "run_command", "args": {"command": "ls"}}],
+},
         {"type": "report", "thought": "t", "summary": "Listed."}]
 QUICK = [{"type": "report", "thought": "t", "summary": "Quick done."}]
 DONE = {"type": "submit_changes", "thought": "d", "summary": "ok"}
-COLLECT = {"type": "tool_call", "thought": "collect", "tool": "wait_agents", "args": {}}
+COLLECT = {
+    "type": "tool_calls",
+    "thought": "collect",
+    "calls": [{"id": "call1", "tool": "wait_agents", "args": {}}],
+}
 
 
 def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -92,7 +98,9 @@ async def test_live_roster_then_stopping_one_agent(tmp_path: Path,
     history = thread.controller_conversation_history or []
     result = next(m for m in history if m.get("tool") == "wait_agents")
     statuses = {e["label"]: e["status"] for e in json.loads(str(result["content"]))}
-    assert statuses == {"waiter": "stopped", "quick": "completed"}
+    assert statuses["waiter"] == "stopped"
+    assert statuses["quick"] in {"completed", "already delivered — see the earlier message"}
+    assert any("Quick done." in str(m.get("content", "")) for m in history)
     stopped = store.get_agent(gate.agent.id)
     assert stopped is not None and stopped.stop_reason == "user"
     # Agents that reported since the user's last message stay listed (spec §6).

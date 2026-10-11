@@ -28,7 +28,7 @@ class _ChangingSource:
 
 @pytest.mark.asyncio
 async def test_workspace_changes_clear_dedup_mark_edited_and_refresh(tmp_path: Path) -> None:
-    call = {"type": "tool_call", "thought": "t", "tool": "fake_dispatch", "args": {}}
+    call = {"type": "tool_calls", "thought": "t", "calls": [{"id": "call1", "tool": "fake_dispatch", "args": {}}]}
     steps = [call, call, {"type": "submit_changes", "thought": "d", "summary": "ok"}]
     loop = ControllerLoop(
         ScriptedReasoningEngine(None, [], controller_step_responses=steps),

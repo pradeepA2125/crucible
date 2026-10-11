@@ -29,9 +29,9 @@ def test_read_only_ness_propagates_nothing_else_does(own, dispatcher, expected) 
 
 
 def test_type_sets() -> None:
-    assert AGENT_BASE_TYPES == ("tool_call", "edit", "progress", "report")
+    assert AGENT_BASE_TYPES == ("tool_calls", "edit", "progress", "report")
     assert child_allowed_types("default") == AGENT_BASE_TYPES
-    assert child_allowed_types("plan") == ("tool_call", "progress", "report")
+    assert child_allowed_types("plan") == ("tool_calls", "progress", "report")
 
 
 def test_a_default_child_gets_everything_but_sessions_and_remember() -> None:
@@ -105,7 +105,7 @@ def test_definition_allows_edit(tools, disallowed, expected) -> None:
 
 
 def test_no_edit_type_when_the_definition_cannot_edit() -> None:
-    assert child_allowed_types("default", can_edit=False) == ("tool_call", "progress", "report")
+    assert child_allowed_types("default", can_edit=False) == ("tool_calls", "progress", "report")
     assert child_allowed_types("default") == AGENT_BASE_TYPES   # unchanged default
 
 

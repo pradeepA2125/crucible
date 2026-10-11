@@ -88,7 +88,7 @@ def validate_calls(
         if not isinstance(execution, str) or execution not in {"auto", "parallel", "serial"}:
             raise ValueError(f"call {identity}: invalid execution mode")
         if guard:
-            correction = guard({"type": "tool_call", "tool": tool, "args": args})
+            correction = guard({"tool": tool, "args": args})
             if correction:
                 raise ValueError(f"call {identity}: {correction}")
         provider_id = node.get("provider_call_id")

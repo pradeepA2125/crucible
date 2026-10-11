@@ -454,8 +454,11 @@ async def test_token_progress_accumulates_across_the_whole_turn(tmp_path: Path):
                 if on_progress is not None:
                     on_progress(10, 0)
                     on_progress(30, 20)      # call 1 ends at 30 reasoning / 20 output
-                return {"type": "tool_call", "thought": "t", "tool": "list_directory",
-                        "args": {"path": "."}}
+                return {
+                    "type": "tool_calls",
+                    "thought": "t",
+                    "calls": [{"id": "call1", "tool": "list_directory", "args": {"path": "."}}],
+                }
             if on_progress is not None:
                 on_progress(5, 0)            # call 2 restarts its own counters at 5/0
                 on_progress(7, 40)

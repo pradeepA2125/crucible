@@ -31,7 +31,7 @@ ShellPolicy = Literal["ask", "allow_all"]
 _PERMISSIONS = frozenset({"default", "acceptEdits", "dontAsk", "plan"})
 _SHELL_POLICIES = frozenset({"ask", "allow_all"})
 _VARIANTS = frozenset({
-    "tool_call", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress",
+    "tool_calls", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress",
     "report",
 })
 _CHILD_SUBTAGS = frozenset({"edit", "readonly"})

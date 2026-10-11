@@ -1,0 +1,219 @@
+{
+  "date": "2026-10-11",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "selected_plan": "User-selected Yahoo plan",
+  "settings": {
+    "toolBatching": true,
+    "adaptiveReads": true,
+    "compactContext": false
+  },
+  "method": "Enabled adaptive reads in VS Code settings and restarted the backend. Ran a fresh greeting and a read-only follow-up, with an eight-action stop bound. Both finished normally and were verified in the UI.",
+  "native_request_monitoring": {
+    "hello": {
+      "request_model": "gpt-5.6-luna",
+      "all_function_descriptions": {
+        "tool_calls": "Execute workspace tools only when their results are needed to fulfill the user request. A greeting needs no tools. Choose each tool by name from the available tool catalog and supply arguments matching its parameter schema.",
+        "answer": "Finish the user turn with your final response. Use directly for greetings and conversational requests that need no repository tools.",
+        "clarify": "Ask the user a question when missing information blocks progress and cannot be resolved by inspecting the workspace. Pause the turn for their reply.",
+        "edit": "Apply a non-empty batch of file changes, then continue the turn. Read the target region before changing existing code; use patch_ops for the changes.",
+        "submit_changes": "Finish the edit turn after all requested changes and required verification are complete. Summarize the changes; resolve outstanding todos first.",
+        "progress": "Show a short status note while work continues in the same turn. This action does not finish the turn or deliver the final result."
+      },
+      "native_tool_calls_catalog_guidance": true,
+      "adaptive_known_path_guidance": true,
+      "adaptive_read_catalog": true,
+      "native_parameter_description_duplicate": false
+    },
+    "file_test": {
+      "observed_at": 1791662426.169177,
+      "model": "gpt-5.6-luna",
+      "tool_calls_description": "Execute workspace tools only when their results are needed to fulfill the user request. A greeting needs no tools. Choose each tool by name from the available tool catalog and supply arguments matching its parameter schema.",
+      "matches_catalog_sentence": true,
+      "adaptive_read_guidance": true,
+      "adaptive_catalog_limit": true,
+      "file_test_in_request": true
+    },
+    "final_request_function_descriptions": {
+      "tool_calls": "Execute workspace tools only when their results are needed to fulfill the user request. A greeting needs no tools. Choose each tool by name from the available tool catalog and supply arguments matching its parameter schema.",
+      "answer": "Finish the user turn with your final response. Use directly for greetings and conversational requests that need no repository tools.",
+      "clarify": "Ask the user a question when missing information blocks progress and cannot be resolved by inspecting the workspace. Pause the turn for their reply.",
+      "edit": "Apply a non-empty batch of file changes, then continue the turn. Read the target region before changing existing code; use patch_ops for the changes.",
+      "submit_changes": "Finish the edit turn after all requested changes and required verification are complete. Summarize the changes; resolve outstanding todos first.",
+      "progress": "Show a short status note while work continues in the same turn. This action does not finish the turn or deliver the final result."
+    },
+    "final_request_matches_schema_descriptions": true,
+    "description_is_function_metadata_not_returned_call_arguments": true
+  },
+  "runs": [
+    {
+      "label": "hello",
+      "artifact_directory": ".crucible/state/artifacts/chat/chat-e4e29d7b1d1a/62818e0384dd41b8a0c5628222f76678",
+      "goal": "hello",
+      "actions": [
+        {
+          "type": "answer",
+          "thought": "Responding to the greeting.",
+          "answer": "Hello! How can I help?"
+        }
+      ],
+      "outcome": "answer",
+      "workspace_tools": [],
+      "usage_from_editor_ui": {
+        "requests": 1,
+        "input_tokens": 49499,
+        "cached_input_tokens": 0,
+        "output_tokens": 78
+      }
+    },
+    {
+      "label": "adaptive_batched_read",
+      "artifact_directory": ".crucible/state/artifacts/chat/chat-e4e29d7b1d1a/a80a41f537b94d9c8cda2e5b310bea23",
+      "goal": "Read lines 1-700 of services/agentd-py/agentd/chat/controller_prompts.py and all of services/agentd-py/agentd/chat/batch_history.py. These reads are independent; issue both read_file calls in one tool_calls batch. The 700-line range is intentional to test adaptive read delivery beyond the old 500-line ceiling. Then briefly explain where the tool_calls action description is defined and what interrupted_history does. Do not modify files.",
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "Read both requested files independently in one batch, including the intentional 1-700 range.",
+          "calls": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/chat/controller_prompts.py",
+                "start_line": 1,
+                "end_line": 700
+              },
+              "id": "read_controller_prompts",
+              "depends_on": [],
+              "after": [],
+              "execution": "parallel"
+            },
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/chat/batch_history.py"
+              },
+              "id": "read_batch_history",
+              "depends_on": [],
+              "after": [],
+              "execution": "parallel"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "The requested files are already read; I\u2019m making a minimal non-duplicate read of the tool_calls schema definition to ground the explanation precisely.",
+          "calls": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/chat/controller_prompts.py",
+                "start_line": 241,
+                "end_line": 250
+              },
+              "id": "verify_tool_calls_definition",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Confirm the surrounding schema wiring for the already-read tool_calls definition before summarizing.",
+          "calls": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/chat/controller_prompts.py",
+                "start_line": 232,
+                "end_line": 240
+              },
+              "id": "read_variant_context",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Confirm the requested range reaches its final delivered lines before summarizing the already-read files.",
+          "calls": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/chat/controller_prompts.py",
+                "start_line": 698,
+                "end_line": 700
+              },
+              "id": "confirm_range_end",
+              "depends_on": [],
+              "after": [],
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "answer",
+          "thought": "The requested files and the relevant tool_calls definition have been read.",
+          "answer": "The `tool_calls` action description is defined in `services/agentd-py/agentd/chat/controller_prompts.py` in `_VARIANT_SPECS[\"tool_calls\"]` (lines 241\u2013250). Its description says to execute workspace tools only when needed, skip tools for a greeting, select a tool from the available catalog, and provide schema-matching arguments. The same description is incorporated into the generated controller response schema and prompt.\n\n`interrupted_history` in `services/agentd-py/agentd/chat/batch_history.py` (lines 6\u201319) returns a copied history list. For entries that are tool results belonging to a batch and are still `pending`, `waiting_approval`, or `running`, it marks them `status=\"interrupted\"`, sets `is_error=True`, and replaces the content with a message that the prior execution was not completed and was not replayed. All other entries are shallow-copied unchanged. The requested controller prompt range was delivered in full through line 700."
+        }
+      ],
+      "outcome": "answer",
+      "workspace_tools": [
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file"
+      ],
+      "usage_from_editor_ui": {
+        "requests": 5,
+        "input_tokens": 325247,
+        "cached_input_tokens": 300160,
+        "output_tokens": 1224
+      },
+      "first_batch_delivered_reads": [
+        {
+          "tool": "read_file",
+          "id": "read_controller_prompts",
+          "status": "success",
+          "delivered_read": {
+            "path": "services/agentd-py/agentd/chat/controller_prompts.py",
+            "root": "/Users/pradeepkumar/projects/AI editor",
+            "revision": "d19f3ac9cd1e214809c2928c90f57749fe3f4b4d56f9a5da1f549a8abd546155",
+            "requested_start": 1,
+            "requested_end": 700,
+            "delivered_start": 1,
+            "delivered_end": 700,
+            "total_lines": 1501,
+            "truncated_by": null
+          }
+        },
+        {
+          "tool": "read_file",
+          "id": "read_batch_history",
+          "status": "success",
+          "delivered_read": {
+            "path": "services/agentd-py/agentd/chat/batch_history.py",
+            "root": "/Users/pradeepkumar/projects/AI editor",
+            "revision": "27ec29331a3dc84ddbfdaf4cdd8552293d6f5f0043156a4574471c2f93575eeb",
+            "requested_start": 1,
+            "requested_end": null,
+            "delivered_start": 1,
+            "delivered_end": 19,
+            "total_lines": 19,
+            "truncated_by": null
+          }
+        }
+      ]
+    }
+  ],
+  "conclusion": "The full schema-owned descriptions reached outbound native function definitions. The first batch delivered all 700 requested lines and all 19 lines of batch_history.py. The model still performed three unnecessary smaller reads before answering.",
+  "limitations": [
+    "Two live requests on one model/account; action descriptions and adaptive setting changed together, so behavior cannot be causally attributed to either alone.",
+    "The read test requested batching and a 700-line range explicitly; autonomous read sizing was not tested.",
+    "This is not a latency benchmark or proof that repetitive tool selection is fixed.",
+    "The file explanation also claimed the action description was in the prompt; monitoring verified its schema/function placement, while the prompt carries separate action guidance and the workspace tool catalog."
+  ]
+}

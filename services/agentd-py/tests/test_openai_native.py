@@ -72,9 +72,14 @@ def test_a_union_becomes_one_function_per_action_in_a_namespace() -> None:
     [namespace] = actions.tools
     assert namespace["type"] == "namespace" and namespace["name"] == NAMESPACE
     names = {f["name"] for f in namespace["tools"]}
-    assert {"tool_call", "answer", "edit", "submit_changes"} <= names
+    assert {"tool_calls", "answer", "edit", "submit_changes"} <= names
+    assert "tool_call" not in names
     for fn in namespace["tools"]:
         assert fn["strict"] is True and "type" not in fn["parameters"]["properties"]
+        branch = next(b for b in UNION["anyOf"]
+                      if b["properties"]["type"]["const"] == fn["name"])
+        assert fn["description"] == branch["description"]
+        assert "description" not in fn["parameters"]
 
 
 def test_a_flat_schema_becomes_one_forced_function() -> None:
@@ -84,11 +89,34 @@ def test_a_flat_schema_becomes_one_forced_function() -> None:
     assert actions.tool_choice == {"type": "function", "name": "task_narrative_"}
 
 
+def test_required_native_call_does_not_describe_workspace_tools_as_mandatory() -> None:
+    actions = native_actions(UNION, "controller_step_response")
+    functions = {fn["name"]: fn for fn in actions.tools[0]["tools"]}
+    assert "Finish the user turn" in functions["answer"]["description"]
+    assert "Use directly" in functions["answer"]["description"]
+    assert "only when their results are needed" in functions["tool_calls"]["description"]
+    assert actions.tool_choice == "required"
+
+
+def test_native_action_descriptions_preserve_schema_specific_guidance() -> None:
+    schema = controller_response_schema(phase="ACTIVE", anyof=True)
+    for branch in schema["anyOf"]:
+        if branch["properties"]["type"]["const"] == "answer":
+            branch["description"] = "Answer this task with the requested format."
+    actions = native_actions(schema, "controller_step_response")
+    answer = next(fn for fn in actions.tools[0]["tools"] if fn["name"] == "answer")
+    assert answer["description"] == "Answer this task with the requested format."
+
+
 def test_calls_decode_to_the_engines_action_dict() -> None:
     actions = native_actions(UNION, "controller_step_response")
-    assert actions.decode_call("tool_call", json.dumps(
-        {"thought": "t", "tool": "read_file", "args": '{"path": "a.py"}'})) == {
-        "type": "tool_call", "thought": "t", "tool": "read_file", "args": {"path": "a.py"}}
+    assert actions.decode_call("tool_calls", json.dumps(
+        {"thought": "t", "calls": [{"id": "read", "tool": "read_file",
+                                   "args": '{"path": "a.py"}'}]})) == {
+        "type": "tool_calls", "thought": "t", "calls": [
+            {"id": "read", "tool": "read_file", "args": {"path": "a.py"}}]}
+    with pytest.raises(RuntimeError, match="unknown function"):
+        actions.decode_call("tool_call", '{}')
     flat = native_actions(FLAT, "n")
     assert flat.decode_call("n", '{"headline": "h", "points": ["p"]}') == {
         "headline": "h", "points": ["p"]}
@@ -176,3 +204,30 @@ def test_real_controller_payloads_round_trip(path: Path) -> None:
     calls = [i for i in items if i.get("type") == "function_call"]
     outputs = {i["call_id"] for i in items if i.get("type") == "function_call_output"}
     assert calls and {c["call_id"] for c in calls} == outputs
+
+
+def test_batch_envelope_replays_all_member_results_and_following_action(monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_TOOL_BATCHING_ENABLED", "1")
+    actions = native_actions(controller_response_schema(phase="ACTIVE", anyof=True), "controller")
+    batch = {"type": "tool_calls", "thought": "build then inspect", "batch_id": "saved",
+             "provider_call_id": "provider-envelope", "calls": [
+                 {"id": "build", "tool": "run_command", "args": {"command": "npm run build"}},
+                 {"id": "log", "tool": "read_file", "args": {"path": "build.log"},
+                  "after": ["build"]}]}
+    results = [dict(role="tool_result", tool="run_command", batch_id="saved", id="build",
+                    call_id="saved_build", status="error", is_error=True, content="failed"),
+               dict(role="tool_result", tool="read_file", batch_id="saved", id="log",
+                    call_id="saved_log", status="success", is_error=False, content="details")]
+    history = [_action(**batch), *results,
+               _action(type="answer", thought="done", answer="build failed")]
+    payload = {"workspace_path": "/ws", "conversation_history": history, "goal": "build"}
+    items = to_native_input(payload, actions)
+    calls = [i for i in items if i.get("type") == "function_call"]
+    assert [i["name"] for i in calls] == ["tool_calls", "answer"]
+    assert calls[0]["call_id"] == "provider-envelope"
+    decoded = actions.decode_call("tool_calls", calls[0]["arguments"])
+    assert decoded["calls"][1]["after"] == ["build"]
+    output = next(i for i in items if i.get("type") == "function_call_output")
+    assert output["call_id"] == "provider-envelope"
+    assert json.loads(output["output"].split("\n", 1)[1]) == results
+    assert from_native_input(items, actions, head_keys=1) == payload

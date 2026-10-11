@@ -69,7 +69,7 @@ async def test_definition_fields_shape_the_child(
     # tools ∩ (available − disallowed): Bash is gone, read_skill/write_todos weren't listed.
     assert {d.name for d in handle.loop._registry.definitions()} == {"read_file", "search_code"}
     # No Edit/Write in `tools` → no edit action (spec §5.3).
-    assert handle.context.allowed_types == ("tool_call", "progress", "report")
+    assert handle.context.allowed_types == ("tool_calls", "progress", "report")
     assert set(handle.loop._active_skills) == {"tdd"}
     assert "Write the test first." in handle.loop._active_skills["tdd"]
     assert "unknown skill 'nope'" in caplog.text

@@ -23,7 +23,7 @@ def _live() -> dict[str, str]:
         disband=_never, adopt=lambda *a: {}), first_turn_team_ids=set()).definitions()]
     agent = AgentContext(agent_id="agent-1", name="general-purpose", label="alice", depth=1,
                          parent_agent_id=None, permission="default",
-                         allowed_types=("tool_call", "edit", "progress", "report"),
+                         allowed_types=("tool_calls", "edit", "progress", "report"),
                          persona="", max_iters=10)
     member = RenderContext.for_agent(agent, tools=frozenset({"read_file", "team_post"}),
                                      shell_policy="ask", team_brief=BRIEF)

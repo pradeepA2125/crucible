@@ -1,0 +1,4994 @@
+{
+  "boundary": "HTTP POST through SSE chat_done; webview rendering excluded",
+  "started_utc": "2026-10-10T22:11:56Z",
+  "timeout_per_turn_seconds": 0,
+  "max_actions_per_turn": 0,
+  "turns": [
+    {
+      "number": 1,
+      "prompt": "Continue the interrupted question: does all tools have descriptions in spec? Reuse the results already in this chat and finish the answer. Do not modify files.",
+      "events": [
+        {
+          "type": "chat_agent_thinking",
+          "seconds": 0.027092625
+        },
+        {
+          "type": "context_usage",
+          "seconds": 0.368986708,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 0.369031041
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 5.115090458
+        },
+        {
+          "type": "token_progress",
+          "seconds": 5.115145333
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 6.588180125
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 6.588280458
+        },
+        {
+          "type": "token_progress",
+          "seconds": 6.588373
+        },
+        {
+          "type": "context_usage",
+          "seconds": 7.842992166,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 7.843083833
+        },
+        {
+          "type": "context_usage",
+          "seconds": 7.843200208,
+          "status": "last_request"
+        },
+        {
+          "type": "tool_call",
+          "seconds": 7.843276208,
+          "tool": "read_file",
+          "call_index": 0
+        },
+        {
+          "type": "tool_result",
+          "seconds": 7.855949458,
+          "status": "success",
+          "call_index": 0,
+          "is_error": false
+        },
+        {
+          "type": "context_usage",
+          "seconds": 7.89415575,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 7.894173458
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 12.571027833
+        },
+        {
+          "type": "token_progress",
+          "seconds": 12.571049333
+        },
+        {
+          "type": "context_usage",
+          "seconds": 13.877342625,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 13.877369083
+        },
+        {
+          "type": "context_usage",
+          "seconds": 13.877408791,
+          "status": "last_request"
+        },
+        {
+          "type": "tool_call",
+          "seconds": 13.877419125,
+          "tool": "read_file",
+          "call_index": 1
+        },
+        {
+          "type": "tool_result",
+          "seconds": 13.890222708,
+          "status": "success",
+          "call_index": 1,
+          "is_error": false
+        },
+        {
+          "type": "context_usage",
+          "seconds": 13.92695875,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 13.926988
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 19.27807225
+        },
+        {
+          "type": "token_progress",
+          "seconds": 19.278145875
+        },
+        {
+          "type": "context_usage",
+          "seconds": 20.692577333,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 20.692674208
+        },
+        {
+          "type": "context_usage",
+          "seconds": 20.692694291,
+          "status": "last_request"
+        },
+        {
+          "type": "tool_call",
+          "seconds": 20.6927735,
+          "tool": "search_code",
+          "call_index": 2
+        },
+        {
+          "type": "tool_result",
+          "seconds": 20.737160333,
+          "status": "success",
+          "call_index": 2,
+          "is_error": false
+        },
+        {
+          "type": "context_usage",
+          "seconds": 20.772823291,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 20.772838791
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 27.370740875
+        },
+        {
+          "type": "token_progress",
+          "seconds": 27.37077625
+        },
+        {
+          "type": "context_usage",
+          "seconds": 27.877866416,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 27.877976208
+        },
+        {
+          "type": "context_usage",
+          "seconds": 27.8780135,
+          "status": "last_request"
+        },
+        {
+          "type": "tool_call",
+          "seconds": 27.878034333,
+          "tool": "search_code",
+          "call_index": 3
+        },
+        {
+          "type": "tool_result",
+          "seconds": 27.917967416,
+          "status": "success",
+          "call_index": 3,
+          "is_error": false
+        },
+        {
+          "type": "context_usage",
+          "seconds": 27.95677175,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 27.956809375
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 32.380525291
+        },
+        {
+          "type": "token_progress",
+          "seconds": 32.380665166
+        },
+        {
+          "type": "context_usage",
+          "seconds": 33.485505791,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 33.4855545
+        },
+        {
+          "type": "context_usage",
+          "seconds": 33.485573666,
+          "status": "last_request"
+        },
+        {
+          "type": "tool_call",
+          "seconds": 33.4855935,
+          "tool": "read_file",
+          "call_index": 4
+        },
+        {
+          "type": "tool_result",
+          "seconds": 33.502090708,
+          "status": "success",
+          "call_index": 4,
+          "is_error": false
+        },
+        {
+          "type": "context_usage",
+          "seconds": 33.561391375,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 33.561419333
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 38.41466975
+        },
+        {
+          "type": "token_progress",
+          "seconds": 38.414697666
+        },
+        {
+          "type": "context_usage",
+          "seconds": 39.86071975,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 39.860800541
+        },
+        {
+          "type": "context_usage",
+          "seconds": 39.860859916,
+          "status": "last_request"
+        },
+        {
+          "type": "tool_call",
+          "seconds": 39.860907,
+          "tool": "read_file",
+          "call_index": 5
+        },
+        {
+          "type": "tool_result",
+          "seconds": 39.86803625,
+          "status": "success",
+          "call_index": 5,
+          "is_error": false
+        },
+        {
+          "type": "context_usage",
+          "seconds": 39.901555916,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 39.9015715
+        },
+        {
+          "type": "tool_thinking_chunk",
+          "seconds": 44.793405708
+        },
+        {
+          "type": "token_progress",
+          "seconds": 44.793479166
+        },
+        {
+          "type": "context_usage",
+          "seconds": 50.730612666,
+          "status": "in_flight"
+        },
+        {
+          "type": "token_progress",
+          "seconds": 50.730788041
+        },
+        {
+          "type": "context_usage",
+          "seconds": 50.730983625,
+          "status": "last_request"
+        },
+        {
+          "type": "chat_response",
+          "seconds": 50.731227
+        },
+        {
+          "type": "chat_done",
+          "seconds": 50.731400166
+        }
+      ],
+      "response": "No\u2014not every tool is individually described in the design spec.\n\n- The runtime does require every `ToolDefinition` to have a non-empty `description` field (`tools/registry.py:16\u201320`), and the tool sources shown all provide one: built-ins such as `search_code`, `read_file`, `run_command`, and `query_graph`; PTY tools; sub-agent tools; team tools; memory/skill tools; web search/fetch; and planning tools.\n- MCP tools are different: `mcp/client.py:187\u2013192` uses the server-supplied description, falling back to `\"<name> (MCP server '<server>')\"` if absent.\n- The spec\u2019s \u00a74.6.3 is selective, not a complete catalog. It explicitly details `write_todos`, `run_command`, and `dispatch_agents`, lists the \u201cclean for children\u201d tools (`search_code`, `read_file`, `list_directory`, `read_env_profile`, `search_semantic`, `query_graph`, `recall`, `read_skill`), and says `remember` and PTY tools are excluded; MCP descriptions are server-supplied third-party text (`docs/superpowers/specs/2026-09-29-subagents-design.md:311\u2013325`).\n\nSo the accurate answer is: **all exposed runtime tool definitions have descriptions, but the spec does not document every tool\u2019s description; it documents the relevant policy and selected descriptions, with MCP descriptions delegated to the server.**",
+      "capture_start_ns": 472204120475750,
+      "http_headers_seconds": 0.027075833,
+      "first_response_seconds": 50.731227,
+      "done_seconds": 50.731400166,
+      "backend_records": [
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "03b8f29266e84788809dec6d9d9c21f7",
+          "parent": "8cd40cd65d494bd6b0b670b197b44ed7",
+          "name": "context.retrieval_seed",
+          "start_ns": 472204146039166,
+          "end_ns": 472204146128750,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.retrieval_seed",
+          "rows": [
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.038833000000000006,
+              "inclusive_ms": 0.038833000000000006
+            },
+            {
+              "function": "agentd/chat/controller.py:687:_retrieval_seed",
+              "calls": 1,
+              "self_ms": 0.0007080000000000001,
+              "inclusive_ms": 0.0007080000000000001
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "279e2128fe4b403aafccaf5c64d8da51",
+          "parent": "a8bd08e431434f3c841cc57de0e77f62",
+          "name": "context.system_prompt",
+          "start_ns": 472204388730875,
+          "end_ns": 472204391936166,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.system_prompt",
+          "rows": [
+            {
+              "function": "encoder.py:334:_iterencode_dict",
+              "calls": 13592,
+              "self_ms": 1.401582,
+              "inclusive_ms": 1.923
+            },
+            {
+              "function": "encoder.py:278:_iterencode_list",
+              "calls": 4578,
+              "self_ms": 0.43103400000000003,
+              "inclusive_ms": 2.2876250000000002
+            },
+            {
+              "function": "encoder.py:414:_iterencode",
+              "calls": 4126,
+              "self_ms": 0.29585900000000004,
+              "inclusive_ms": 2.58361
+            },
+            {
+              "function": "encoder.py:183:encode",
+              "calls": 1,
+              "self_ms": 0.19959800000000003,
+              "inclusive_ms": 2.8192920000000004
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 3490,
+              "self_ms": 0.171349,
+              "inclusive_ms": 0.171349
+            },
+            {
+              "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+              "calls": 1341,
+              "self_ms": 0.12436599999999999,
+              "inclusive_ms": 0.12436599999999999
+            },
+            {
+              "function": "~:0:<built-in method builtins.sorted>",
+              "calls": 318,
+              "self_ms": 0.09013,
+              "inclusive_ms": 0.09013
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+              "calls": 1,
+              "self_ms": 0.07825800000000001,
+              "inclusive_ms": 3.062916
+            },
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.064208,
+              "inclusive_ms": 0.064208
+            },
+            {
+              "function": "~:0:<built-in method builtins.id>",
+              "calls": 389,
+              "self_ms": 0.057806,
+              "inclusive_ms": 0.057806
+            },
+            {
+              "function": "~:0:<method 'join' of 'str' objects>",
+              "calls": 1,
+              "self_ms": 0.031792,
+              "inclusive_ms": 0.031792
+            },
+            {
+              "function": "~:0:<method 'replace' of 'str' objects>",
+              "calls": 2,
+              "self_ms": 0.025417000000000002,
+              "inclusive_ms": 0.025417000000000002
+            },
+            {
+              "function": "__init__.py:183:dumps",
+              "calls": 1,
+              "self_ms": 0.019833,
+              "inclusive_ms": 2.8395
+            },
+            {
+              "function": "~:0:<method 'items' of 'dict' objects>",
+              "calls": 318,
+              "self_ms": 0.018968000000000002,
+              "inclusive_ms": 0.018968000000000002
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 179,
+              "self_ms": 0.011614000000000001,
+              "inclusive_ms": 0.011614000000000001
+            },
+            {
+              "function": "agentd/memory/config.py:26:from_env",
+              "calls": 1,
+              "self_ms": 0.009165000000000001,
+              "inclusive_ms": 0.029291
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 4,
+              "self_ms": 0.008543,
+              "inclusive_ms": 0.052625000000000005
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+              "calls": 44,
+              "self_ms": 0.008463,
+              "inclusive_ms": 0.013005
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+              "calls": 40,
+              "self_ms": 0.00834,
+              "inclusive_ms": 0.012081
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+              "calls": 36,
+              "self_ms": 0.0074540000000000006,
+              "inclusive_ms": 0.010789000000000002
+            },
+            {
+              "function": "<frozen os>:709:__getitem__",
+              "calls": 18,
+              "self_ms": 0.007249,
+              "inclusive_ms": 0.017833
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+              "calls": 15,
+              "self_ms": 0.005880000000000001,
+              "inclusive_ms": 0.009000000000000001
+            },
+            {
+              "function": "<frozen os>:791:encode",
+              "calls": 18,
+              "self_ms": 0.005710000000000001,
+              "inclusive_ms": 0.008708
+            },
+            {
+              "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+              "calls": 1,
+              "self_ms": 0.004666,
+              "inclusive_ms": 0.005208
+            },
+            {
+              "function": "<frozen _collections_abc>:804:get",
+              "calls": 18,
+              "self_ms": 0.00425,
+              "inclusive_ms": 0.022083000000000002
+            },
+            {
+              "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+              "calls": 1,
+              "self_ms": 0.003917,
+              "inclusive_ms": 0.003917
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+              "calls": 1,
+              "self_ms": 0.0034590000000000003,
+              "inclusive_ms": 0.03275
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1076:record",
+              "calls": 10,
+              "self_ms": 0.0032520000000000005,
+              "inclusive_ms": 0.004666
+            },
+            {
+              "function": "encoder.py:205:iterencode",
+              "calls": 1,
+              "self_ms": 0.0029170000000000003,
+              "inclusive_ms": 0.0040420000000000005
+            },
+            {
+              "function": "<string>:2:__hash__",
+              "calls": 7,
+              "self_ms": 0.0027530000000000002,
+              "inclusive_ms": 0.003626
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 18,
+              "self_ms": 0.00204,
+              "inclusive_ms": 0.00204
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 24,
+              "self_ms": 0.00179,
+              "inclusive_ms": 0.00179
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'str' objects>",
+              "calls": 14,
+              "self_ms": 0.001628,
+              "inclusive_ms": 0.001628
+            },
+            {
+              "function": "main.py:270:__init__",
+              "calls": 1,
+              "self_ms": 0.001417,
+              "inclusive_ms": 0.005334
+            },
+            {
+              "function": "<frozen os>:795:decode",
+              "calls": 4,
+              "self_ms": 0.0013750000000000001,
+              "inclusive_ms": 0.001876
+            },
+            {
+              "function": "agentd/tools/batching.py:29:batching_enabled",
+              "calls": 2,
+              "self_ms": 0.001374,
+              "inclusive_ms": 0.004958000000000001
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+              "calls": 1,
+              "self_ms": 0.001333,
+              "inclusive_ms": 0.006292
+            },
+            {
+              "function": "encoder.py:260:_make_iterencode",
+              "calls": 1,
+              "self_ms": 0.0010420000000000002,
+              "inclusive_ms": 0.0011250000000000001
+            },
+            {
+              "function": "~:0:<method 'update' of 'dict' objects>",
+              "calls": 1,
+              "self_ms": 0.0010420000000000002,
+              "inclusive_ms": 0.0010420000000000002
+            },
+            {
+              "function": "~:0:<built-in method builtins.hash>",
+              "calls": 7,
+              "self_ms": 0.0008730000000000001,
+              "inclusive_ms": 0.0008730000000000001
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "23748280807d48798795793d5bbda324",
+          "parent": "a8bd08e431434f3c841cc57de0e77f62",
+          "name": "context.payload",
+          "start_ns": 472204395397833,
+          "end_ns": 472204395597166,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.payload",
+          "rows": [
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.063292,
+              "inclusive_ms": 0.063292
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+              "calls": 1,
+              "self_ms": 0.055668,
+              "inclusive_ms": 0.061125000000000006
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 23,
+              "self_ms": 0.002582,
+              "inclusive_ms": 0.002582
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+              "calls": 8,
+              "self_ms": 0.001335,
+              "inclusive_ms": 0.001876
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 1,
+              "self_ms": 0.000999,
+              "inclusive_ms": 0.002625
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 7,
+              "self_ms": 0.000541,
+              "inclusive_ms": 0.000541
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "a8bd08e431434f3c841cc57de0e77f62",
+          "layer": "logical",
+          "system_chars": 78990,
+          "system_parts": {
+            "core_rules": 14994,
+            "tool_catalog": 45374,
+            "team_guidance": 0,
+            "web_guidance": 2665,
+            "memory_guidance": 1097,
+            "project_instructions": 0,
+            "skills_catalog": 0,
+            "mcp_guidance": 686,
+            "sessions_guidance": 1157,
+            "dispatch_guidance": 3919,
+            "teams_main_guidance": 3435,
+            "batch_guidance": 5663
+          },
+          "payload_parts": {
+            "workspace_path": 57,
+            "retrieval_seed": 107019,
+            "conversation_history": 142820,
+            "recalled_memories": 1705,
+            "goal": 168,
+            "instruction": 1271,
+            "budget_status": 34,
+            "framing": 8
+          },
+          "retrieval_parts": {
+            "repository_structure": 85678,
+            "file_outlines": 8156,
+            "file_contents": 18,
+            "planner_evidence": 11834,
+            "diagnostics_excerpt": 24,
+            "snapshot_stats": 82,
+            "graph_neighbor_files": 1202,
+            "framing": 8
+          },
+          "schema_chars": 3696,
+          "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "78952c1bca94497db7b9dfed4fec6cc3",
+          "parent": "a8bd08e431434f3c841cc57de0e77f62",
+          "name": "provider.rate_limit_wait",
+          "start_ns": 472204397342000,
+          "end_ns": 472204397349875,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "2014add8fb2147f29e3e8fd9c6fc0d48",
+          "parent": "2006eaa9ce7d46fb886e0c645077a47c",
+          "name": "provider.auth",
+          "start_ns": 472204401018041,
+          "end_ns": 472204473355833,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "2006eaa9ce7d46fb886e0c645077a47c",
+          "layer": "physical",
+          "parts": {
+            "instructions": 85250,
+            "input": 326478,
+            "tools": 4136,
+            "tool_choice": 24,
+            "framing": 5
+          },
+          "total_chars": 415893,
+          "estimated_tokens": 103974,
+          "estimate_method": "serialized_chars/4"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "a0085b40b5e24e84a8e8d5fca1e46d39",
+          "parent": "9ed9b09e7e04493cb780d12c48149b4c",
+          "name": "provider.response_headers",
+          "start_ns": 472204479004583,
+          "end_ns": 472206439754166,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "mark",
+          "parent": "9ed9b09e7e04493cb780d12c48149b4c",
+          "name": "provider.first_content",
+          "at_ns": 472209234313125
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "9ed9b09e7e04493cb780d12c48149b4c",
+          "layer": "reported",
+          "input_tokens": 104844
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "9ed9b09e7e04493cb780d12c48149b4c",
+          "layer": "provider_usage",
+          "input_tokens": 104844,
+          "output_tokens": 282,
+          "cached_input_tokens": 103040,
+          "reasoning_tokens": 187
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "9ed9b09e7e04493cb780d12c48149b4c",
+          "parent": "2006eaa9ce7d46fb886e0c645077a47c",
+          "name": "provider.stream",
+          "start_ns": 472204478479208,
+          "end_ns": 472211950760791,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "2006eaa9ce7d46fb886e0c645077a47c",
+          "parent": "a8bd08e431434f3c841cc57de0e77f62",
+          "name": "provider.request",
+          "start_ns": 472204397398375,
+          "end_ns": 472211952235458,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "a8bd08e431434f3c841cc57de0e77f62",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "model.step",
+          "start_ns": 472204388690333,
+          "end_ns": 472211960437666,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "f44f1fa8ee3c4e6295f47199ef0e38c2",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "tool.read_file",
+          "start_ns": 472211970970000,
+          "end_ns": 472211972116625,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "layer": "tool_batch",
+          "issued": 1,
+          "executed": 1,
+          "high_water": 4,
+          "result_budget_chars": 100000
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "c0c9d24ac1424863abf781f12ee38102",
+          "parent": "0ee0b58c0efc4a9ba92ddf1e5defba5c",
+          "name": "context.system_prompt",
+          "start_ns": 472211976752791,
+          "end_ns": 472211982505833,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.system_prompt",
+          "rows": [
+            {
+              "function": "encoder.py:334:_iterencode_dict",
+              "calls": 13592,
+              "self_ms": 2.6168620000000002,
+              "inclusive_ms": 3.4920780000000002
+            },
+            {
+              "function": "encoder.py:278:_iterencode_list",
+              "calls": 4578,
+              "self_ms": 0.7971020000000001,
+              "inclusive_ms": 4.172539
+            },
+            {
+              "function": "encoder.py:414:_iterencode",
+              "calls": 4126,
+              "self_ms": 0.5593950000000001,
+              "inclusive_ms": 4.732225000000001
+            },
+            {
+              "function": "encoder.py:183:encode",
+              "calls": 1,
+              "self_ms": 0.320942,
+              "inclusive_ms": 5.11525
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 3490,
+              "self_ms": 0.30129900000000004,
+              "inclusive_ms": 0.30129900000000004
+            },
+            {
+              "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+              "calls": 1341,
+              "self_ms": 0.21863700000000003,
+              "inclusive_ms": 0.21863700000000003
+            },
+            {
+              "function": "~:0:<built-in method builtins.sorted>",
+              "calls": 318,
+              "self_ms": 0.11284100000000001,
+              "inclusive_ms": 0.11284100000000001
+            },
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.10654200000000001,
+              "inclusive_ms": 0.10654200000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.id>",
+              "calls": 389,
+              "self_ms": 0.10440200000000001,
+              "inclusive_ms": 0.10440200000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+              "calls": 1,
+              "self_ms": 0.098497,
+              "inclusive_ms": 5.5135000000000005
+            },
+            {
+              "function": "~:0:<method 'join' of 'str' objects>",
+              "calls": 1,
+              "self_ms": 0.05554200000000001,
+              "inclusive_ms": 0.05554200000000001
+            },
+            {
+              "function": "~:0:<method 'replace' of 'str' objects>",
+              "calls": 2,
+              "self_ms": 0.039251,
+              "inclusive_ms": 0.039251
+            },
+            {
+              "function": "~:0:<method 'items' of 'dict' objects>",
+              "calls": 318,
+              "self_ms": 0.034557000000000004,
+              "inclusive_ms": 0.034557000000000004
+            },
+            {
+              "function": "__init__.py:183:dumps",
+              "calls": 1,
+              "self_ms": 0.033333,
+              "inclusive_ms": 5.149167
+            },
+            {
+              "function": "main.py:270:__init__",
+              "calls": 1,
+              "self_ms": 0.031083,
+              "inclusive_ms": 0.038833000000000006
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 179,
+              "self_ms": 0.019052,
+              "inclusive_ms": 0.019052
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+              "calls": 44,
+              "self_ms": 0.015170000000000001,
+              "inclusive_ms": 0.022250000000000002
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+              "calls": 36,
+              "self_ms": 0.014665000000000001,
+              "inclusive_ms": 0.021081
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+              "calls": 40,
+              "self_ms": 0.014573000000000001,
+              "inclusive_ms": 0.020248
+            },
+            {
+              "function": "agentd/memory/config.py:26:from_env",
+              "calls": 1,
+              "self_ms": 0.014001,
+              "inclusive_ms": 0.080709
+            },
+            {
+              "function": "<frozen os>:709:__getitem__",
+              "calls": 18,
+              "self_ms": 0.013500000000000002,
+              "inclusive_ms": 0.032375
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 4,
+              "self_ms": 0.012590000000000002,
+              "inclusive_ms": 0.089417
+            },
+            {
+              "function": "<frozen os>:791:encode",
+              "calls": 18,
+              "self_ms": 0.010043,
+              "inclusive_ms": 0.015542000000000002
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+              "calls": 15,
+              "self_ms": 0.009290000000000001,
+              "inclusive_ms": 0.014414000000000001
+            },
+            {
+              "function": "<frozen _collections_abc>:804:get",
+              "calls": 18,
+              "self_ms": 0.008334,
+              "inclusive_ms": 0.040709
+            },
+            {
+              "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+              "calls": 1,
+              "self_ms": 0.00775,
+              "inclusive_ms": 0.00775
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1076:record",
+              "calls": 10,
+              "self_ms": 0.005456,
+              "inclusive_ms": 0.007418000000000001
+            },
+            {
+              "function": "<string>:2:__hash__",
+              "calls": 7,
+              "self_ms": 0.004666,
+              "inclusive_ms": 0.006123000000000001
+            },
+            {
+              "function": "encoder.py:205:iterencode",
+              "calls": 1,
+              "self_ms": 0.004333,
+              "inclusive_ms": 0.006041
+            },
+            {
+              "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+              "calls": 1,
+              "self_ms": 0.004084,
+              "inclusive_ms": 0.004792
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+              "calls": 1,
+              "self_ms": 0.003458,
+              "inclusive_ms": 0.084167
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 18,
+              "self_ms": 0.0033740000000000003,
+              "inclusive_ms": 0.0033740000000000003
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+              "calls": 1,
+              "self_ms": 0.002749,
+              "inclusive_ms": 0.011333000000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 24,
+              "self_ms": 0.002671,
+              "inclusive_ms": 0.002671
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'str' objects>",
+              "calls": 14,
+              "self_ms": 0.0025,
+              "inclusive_ms": 0.0025
+            },
+            {
+              "function": "<frozen os>:795:decode",
+              "calls": 4,
+              "self_ms": 0.0023320000000000003,
+              "inclusive_ms": 0.003333
+            },
+            {
+              "function": "agentd/tools/batching.py:29:batching_enabled",
+              "calls": 2,
+              "self_ms": 0.001916,
+              "inclusive_ms": 0.007625000000000001
+            },
+            {
+              "function": "encoder.py:224:floatstr",
+              "calls": 2,
+              "self_ms": 0.001584,
+              "inclusive_ms": 0.001584
+            },
+            {
+              "function": "encoder.py:260:_make_iterencode",
+              "calls": 1,
+              "self_ms": 0.0015830000000000002,
+              "inclusive_ms": 0.001708
+            },
+            {
+              "function": "~:0:<built-in method builtins.hash>",
+              "calls": 7,
+              "self_ms": 0.0014570000000000002,
+              "inclusive_ms": 0.0014570000000000002
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "21a82fe059424a6fac2a714cd9bd934f",
+          "parent": "0ee0b58c0efc4a9ba92ddf1e5defba5c",
+          "name": "context.payload",
+          "start_ns": 472211987913750,
+          "end_ns": 472211988150875,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.payload",
+          "rows": [
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.08825000000000001,
+              "inclusive_ms": 0.08825000000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+              "calls": 1,
+              "self_ms": 0.013001000000000002,
+              "inclusive_ms": 0.019792
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 23,
+              "self_ms": 0.003331,
+              "inclusive_ms": 0.003331
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+              "calls": 8,
+              "self_ms": 0.0017490000000000001,
+              "inclusive_ms": 0.0023320000000000003
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 1,
+              "self_ms": 0.001001,
+              "inclusive_ms": 0.0029170000000000003
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 7,
+              "self_ms": 0.0007100000000000001,
+              "inclusive_ms": 0.0007100000000000001
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "0ee0b58c0efc4a9ba92ddf1e5defba5c",
+          "layer": "logical",
+          "system_chars": 78990,
+          "system_parts": {
+            "core_rules": 14994,
+            "tool_catalog": 45374,
+            "team_guidance": 0,
+            "web_guidance": 2665,
+            "memory_guidance": 1097,
+            "project_instructions": 0,
+            "skills_catalog": 0,
+            "mcp_guidance": 686,
+            "sessions_guidance": 1157,
+            "dispatch_guidance": 3919,
+            "teams_main_guidance": 3435,
+            "batch_guidance": 5663
+          },
+          "payload_parts": {
+            "workspace_path": 57,
+            "retrieval_seed": 107019,
+            "conversation_history": 147751,
+            "recalled_memories": 1705,
+            "goal": 168,
+            "instruction": 1596,
+            "budget_status": 34,
+            "framing": 8
+          },
+          "retrieval_parts": {
+            "repository_structure": 85678,
+            "file_outlines": 8156,
+            "file_contents": 18,
+            "planner_evidence": 11834,
+            "diagnostics_excerpt": 24,
+            "snapshot_stats": 82,
+            "graph_neighbor_files": 1202,
+            "framing": 8
+          },
+          "schema_chars": 3696,
+          "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "61d1b321b4dc45a2ba085780cee91199",
+          "parent": "0ee0b58c0efc4a9ba92ddf1e5defba5c",
+          "name": "provider.rate_limit_wait",
+          "start_ns": 472211990757666,
+          "end_ns": 472211990766000,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "c228790048ed47449afa0c7a4519805d",
+          "parent": "178c531cd1bd48d49bcfcbb7e8b817d8",
+          "name": "provider.auth",
+          "start_ns": 472211995667166,
+          "end_ns": 472211995903791,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "178c531cd1bd48d49bcfcbb7e8b817d8",
+          "layer": "physical",
+          "parts": {
+            "instructions": 85250,
+            "input": 336242,
+            "tools": 4136,
+            "tool_choice": 24,
+            "framing": 5
+          },
+          "total_chars": 425657,
+          "estimated_tokens": 106415,
+          "estimate_method": "serialized_chars/4"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "ee109ff16ee84851a29b6a567b232d82",
+          "parent": "e5c4845e7dc941a1a9066b3cdd8b4865",
+          "name": "provider.response_headers",
+          "start_ns": 472212003134875,
+          "end_ns": 472214084482083,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "mark",
+          "parent": "e5c4845e7dc941a1a9066b3cdd8b4865",
+          "name": "provider.first_content",
+          "at_ns": 472216690409166
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "e5c4845e7dc941a1a9066b3cdd8b4865",
+          "layer": "reported",
+          "input_tokens": 107130
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "e5c4845e7dc941a1a9066b3cdd8b4865",
+          "layer": "provider_usage",
+          "input_tokens": 107130,
+          "output_tokens": 211,
+          "cached_input_tokens": 104064,
+          "reasoning_tokens": 117
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "e5c4845e7dc941a1a9066b3cdd8b4865",
+          "parent": "178c531cd1bd48d49bcfcbb7e8b817d8",
+          "name": "provider.stream",
+          "start_ns": 472212002458500,
+          "end_ns": 472217992189958,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "178c531cd1bd48d49bcfcbb7e8b817d8",
+          "parent": "0ee0b58c0efc4a9ba92ddf1e5defba5c",
+          "name": "provider.request",
+          "start_ns": 472211990832333,
+          "end_ns": 472217992534666,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "0ee0b58c0efc4a9ba92ddf1e5defba5c",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "model.step",
+          "start_ns": 472211976705416,
+          "end_ns": 472217996204958,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "7183d2778d7a47ca9a5baa08727e66bb",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "tool.read_file",
+          "start_ns": 472218002798041,
+          "end_ns": 472218006155000,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "layer": "tool_batch",
+          "issued": 1,
+          "executed": 1,
+          "high_water": 4,
+          "result_budget_chars": 100000
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "4600850bde684feebd73d107e369bf1d",
+          "parent": "3584dffb98bd4fdbb7c55b166756f73f",
+          "name": "context.system_prompt",
+          "start_ns": 472218011307583,
+          "end_ns": 472218015680250,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.system_prompt",
+          "rows": [
+            {
+              "function": "encoder.py:334:_iterencode_dict",
+              "calls": 13592,
+              "self_ms": 1.787841,
+              "inclusive_ms": 2.506655
+            },
+            {
+              "function": "encoder.py:278:_iterencode_list",
+              "calls": 4578,
+              "self_ms": 0.544863,
+              "inclusive_ms": 2.9654810000000005
+            },
+            {
+              "function": "encoder.py:414:_iterencode",
+              "calls": 4126,
+              "self_ms": 0.377512,
+              "inclusive_ms": 3.3432020000000002
+            },
+            {
+              "function": "encoder.py:183:encode",
+              "calls": 1,
+              "self_ms": 0.25159,
+              "inclusive_ms": 3.6581250000000005
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 3490,
+              "self_ms": 0.210904,
+              "inclusive_ms": 0.210904
+            },
+            {
+              "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+              "calls": 1341,
+              "self_ms": 0.186781,
+              "inclusive_ms": 0.186781
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+              "calls": 1,
+              "self_ms": 0.16304700000000003,
+              "inclusive_ms": 4.108833
+            },
+            {
+              "function": "~:0:<built-in method builtins.sorted>",
+              "calls": 318,
+              "self_ms": 0.13811800000000002,
+              "inclusive_ms": 0.13811800000000002
+            },
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.13475,
+              "inclusive_ms": 0.13475
+            },
+            {
+              "function": "~:0:<built-in method builtins.id>",
+              "calls": 389,
+              "self_ms": 0.07716200000000001,
+              "inclusive_ms": 0.07716200000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+              "calls": 44,
+              "self_ms": 0.060915000000000004,
+              "inclusive_ms": 0.06662799999999999
+            },
+            {
+              "function": "~:0:<method 'join' of 'str' objects>",
+              "calls": 1,
+              "self_ms": 0.056666,
+              "inclusive_ms": 0.056666
+            },
+            {
+              "function": "~:0:<method 'replace' of 'str' objects>",
+              "calls": 2,
+              "self_ms": 0.031875,
+              "inclusive_ms": 0.031875
+            },
+            {
+              "function": "__init__.py:183:dumps",
+              "calls": 1,
+              "self_ms": 0.026834,
+              "inclusive_ms": 3.685292
+            },
+            {
+              "function": "~:0:<method 'items' of 'dict' objects>",
+              "calls": 318,
+              "self_ms": 0.025350000000000004,
+              "inclusive_ms": 0.025350000000000004
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 179,
+              "self_ms": 0.016556,
+              "inclusive_ms": 0.016556
+            },
+            {
+              "function": "agentd/memory/config.py:26:from_env",
+              "calls": 1,
+              "self_ms": 0.014206000000000002,
+              "inclusive_ms": 0.045000000000000005
+            },
+            {
+              "function": "<frozen os>:709:__getitem__",
+              "calls": 18,
+              "self_ms": 0.012081,
+              "inclusive_ms": 0.031623
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 4,
+              "self_ms": 0.011828000000000002,
+              "inclusive_ms": 0.11504100000000002
+            },
+            {
+              "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+              "calls": 1,
+              "self_ms": 0.011042,
+              "inclusive_ms": 0.011042
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+              "calls": 36,
+              "self_ms": 0.009826,
+              "inclusive_ms": 0.013875
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+              "calls": 40,
+              "self_ms": 0.008834,
+              "inclusive_ms": 0.01271
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+              "calls": 15,
+              "self_ms": 0.008790000000000001,
+              "inclusive_ms": 0.012750000000000001
+            },
+            {
+              "function": "<frozen os>:791:encode",
+              "calls": 18,
+              "self_ms": 0.008458,
+              "inclusive_ms": 0.016125000000000004
+            },
+            {
+              "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+              "calls": 1,
+              "self_ms": 0.006332000000000001,
+              "inclusive_ms": 0.006875
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 18,
+              "self_ms": 0.006208000000000001,
+              "inclusive_ms": 0.006208000000000001
+            },
+            {
+              "function": "<string>:2:__hash__",
+              "calls": 7,
+              "self_ms": 0.0057480000000000005,
+              "inclusive_ms": 0.007415000000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1076:record",
+              "calls": 10,
+              "self_ms": 0.0055000000000000005,
+              "inclusive_ms": 0.0069180000000000005
+            },
+            {
+              "function": "<frozen _collections_abc>:804:get",
+              "calls": 18,
+              "self_ms": 0.004877,
+              "inclusive_ms": 0.0365
+            },
+            {
+              "function": "encoder.py:205:iterencode",
+              "calls": 1,
+              "self_ms": 0.004667,
+              "inclusive_ms": 0.0063750000000000005
+            },
+            {
+              "function": "encoder.py:224:floatstr",
+              "calls": 2,
+              "self_ms": 0.004333,
+              "inclusive_ms": 0.004333
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+              "calls": 1,
+              "self_ms": 0.004292000000000001,
+              "inclusive_ms": 0.049292
+            },
+            {
+              "function": "agentd/tools/batching.py:29:batching_enabled",
+              "calls": 2,
+              "self_ms": 0.002876,
+              "inclusive_ms": 0.014583
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 24,
+              "self_ms": 0.002376,
+              "inclusive_ms": 0.002376
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+              "calls": 1,
+              "self_ms": 0.002376,
+              "inclusive_ms": 0.010709
+            },
+            {
+              "function": "~:0:<method 'update' of 'dict' objects>",
+              "calls": 1,
+              "self_ms": 0.0022500000000000003,
+              "inclusive_ms": 0.0022500000000000003
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'str' objects>",
+              "calls": 14,
+              "self_ms": 0.002167,
+              "inclusive_ms": 0.002167
+            },
+            {
+              "function": "main.py:270:__init__",
+              "calls": 1,
+              "self_ms": 0.002042,
+              "inclusive_ms": 0.013084
+            },
+            {
+              "function": "<frozen os>:795:decode",
+              "calls": 4,
+              "self_ms": 0.0017100000000000001,
+              "inclusive_ms": 0.003417
+            },
+            {
+              "function": "~:0:<method 'decode' of 'bytes' objects>",
+              "calls": 4,
+              "self_ms": 0.0017070000000000002,
+              "inclusive_ms": 0.0017070000000000002
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "ee7da547536a4de6828c01aeb6e03ec3",
+          "parent": "3584dffb98bd4fdbb7c55b166756f73f",
+          "name": "context.payload",
+          "start_ns": 472218021231458,
+          "end_ns": 472218021483625,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.payload",
+          "rows": [
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.077292,
+              "inclusive_ms": 0.077292
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+              "calls": 1,
+              "self_ms": 0.04687,
+              "inclusive_ms": 0.066417
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 23,
+              "self_ms": 0.009378000000000001,
+              "inclusive_ms": 0.009378000000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+              "calls": 8,
+              "self_ms": 0.008086,
+              "inclusive_ms": 0.011543000000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 7,
+              "self_ms": 0.0012100000000000001,
+              "inclusive_ms": 0.0012100000000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 1,
+              "self_ms": 0.0008730000000000001,
+              "inclusive_ms": 0.011166
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "3584dffb98bd4fdbb7c55b166756f73f",
+          "layer": "logical",
+          "system_chars": 78990,
+          "system_parts": {
+            "core_rules": 14994,
+            "tool_catalog": 45374,
+            "team_guidance": 0,
+            "web_guidance": 2665,
+            "memory_guidance": 1097,
+            "project_instructions": 0,
+            "skills_catalog": 0,
+            "mcp_guidance": 686,
+            "sessions_guidance": 1157,
+            "dispatch_guidance": 3919,
+            "teams_main_guidance": 3435,
+            "batch_guidance": 5663
+          },
+          "payload_parts": {
+            "workspace_path": 57,
+            "retrieval_seed": 107019,
+            "conversation_history": 154133,
+            "recalled_memories": 1705,
+            "goal": 168,
+            "instruction": 1596,
+            "budget_status": 34,
+            "framing": 8
+          },
+          "retrieval_parts": {
+            "repository_structure": 85678,
+            "file_outlines": 8156,
+            "file_contents": 18,
+            "planner_evidence": 11834,
+            "diagnostics_excerpt": 24,
+            "snapshot_stats": 82,
+            "graph_neighbor_files": 1202,
+            "framing": 8
+          },
+          "schema_chars": 3696,
+          "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "bc9a71420a1b451f8dd3e8bb9c04cd24",
+          "parent": "3584dffb98bd4fdbb7c55b166756f73f",
+          "name": "provider.rate_limit_wait",
+          "start_ns": 472218023877000,
+          "end_ns": 472218023888916,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "f81ef108ea4e4a7bb704c3b9c3666463",
+          "parent": "c580577400ed45c2b0ae92bcb6060a50",
+          "name": "provider.auth",
+          "start_ns": 472218028608666,
+          "end_ns": 472218028944958,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "c580577400ed45c2b0ae92bcb6060a50",
+          "layer": "physical",
+          "parts": {
+            "instructions": 85250,
+            "input": 347564,
+            "tools": 4136,
+            "tool_choice": 24,
+            "framing": 5
+          },
+          "total_chars": 436979,
+          "estimated_tokens": 109245,
+          "estimate_method": "serialized_chars/4"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "f223fde421514356affa9b6514ea9513",
+          "parent": "171f7d1029864be09201b25423fcc5f6",
+          "name": "provider.response_headers",
+          "start_ns": 472218035587458,
+          "end_ns": 472220273765333,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "mark",
+          "parent": "171f7d1029864be09201b25423fcc5f6",
+          "name": "provider.first_content",
+          "at_ns": 472223395824041
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "171f7d1029864be09201b25423fcc5f6",
+          "layer": "reported",
+          "input_tokens": 109764
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "171f7d1029864be09201b25423fcc5f6",
+          "layer": "provider_usage",
+          "input_tokens": 109764,
+          "output_tokens": 220,
+          "cached_input_tokens": 106112,
+          "reasoning_tokens": 113
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "171f7d1029864be09201b25423fcc5f6",
+          "parent": "c580577400ed45c2b0ae92bcb6060a50",
+          "name": "provider.stream",
+          "start_ns": 472218034978416,
+          "end_ns": 472224800630500,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "c580577400ed45c2b0ae92bcb6060a50",
+          "parent": "3584dffb98bd4fdbb7c55b166756f73f",
+          "name": "provider.request",
+          "start_ns": 472218023955791,
+          "end_ns": 472224802202125,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "3584dffb98bd4fdbb7c55b166756f73f",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "model.step",
+          "start_ns": 472218011252916,
+          "end_ns": 472224811080916,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "88fac9d02dcb49a7898e47ed87582a5d",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "tool.search_code",
+          "start_ns": 472224817882291,
+          "end_ns": 472224854715541,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "layer": "tool_batch",
+          "issued": 1,
+          "executed": 1,
+          "high_water": 4,
+          "result_budget_chars": 100000
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "e12d47e0fd0d42a5920657541a4e4d6c",
+          "parent": "f2a64c57b4e9443aa47d531c849c36a8",
+          "name": "context.system_prompt",
+          "start_ns": 472224858157291,
+          "end_ns": 472224864537958,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.system_prompt",
+          "rows": [
+            {
+              "function": "encoder.py:334:_iterencode_dict",
+              "calls": 13592,
+              "self_ms": 2.740198,
+              "inclusive_ms": 3.813902
+            },
+            {
+              "function": "encoder.py:278:_iterencode_list",
+              "calls": 4578,
+              "self_ms": 0.8412560000000001,
+              "inclusive_ms": 4.517709
+            },
+            {
+              "function": "encoder.py:414:_iterencode",
+              "calls": 4126,
+              "self_ms": 0.5515720000000001,
+              "inclusive_ms": 5.069532000000001
+            },
+            {
+              "function": "encoder.py:183:encode",
+              "calls": 1,
+              "self_ms": 0.34371900000000005,
+              "inclusive_ms": 5.537584000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 3490,
+              "self_ms": 0.332757,
+              "inclusive_ms": 0.332757
+            },
+            {
+              "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+              "calls": 1341,
+              "self_ms": 0.25395300000000004,
+              "inclusive_ms": 0.25395300000000004
+            },
+            {
+              "function": "~:0:<built-in method builtins.id>",
+              "calls": 389,
+              "self_ms": 0.17666900000000002,
+              "inclusive_ms": 0.17666900000000002
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+              "calls": 1,
+              "self_ms": 0.167751,
+              "inclusive_ms": 6.151041
+            },
+            {
+              "function": "~:0:<built-in method builtins.sorted>",
+              "calls": 318,
+              "self_ms": 0.153916,
+              "inclusive_ms": 0.153916
+            },
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.125541,
+              "inclusive_ms": 0.125541
+            },
+            {
+              "function": "~:0:<method 'join' of 'str' objects>",
+              "calls": 1,
+              "self_ms": 0.119375,
+              "inclusive_ms": 0.119375
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 4,
+              "self_ms": 0.078323,
+              "inclusive_ms": 0.19404100000000002
+            },
+            {
+              "function": "~:0:<method 'replace' of 'str' objects>",
+              "calls": 2,
+              "self_ms": 0.053375000000000006,
+              "inclusive_ms": 0.053375000000000006
+            },
+            {
+              "function": "__init__.py:183:dumps",
+              "calls": 1,
+              "self_ms": 0.049,
+              "inclusive_ms": 5.587
+            },
+            {
+              "function": "~:0:<method 'items' of 'dict' objects>",
+              "calls": 318,
+              "self_ms": 0.037668,
+              "inclusive_ms": 0.037668
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 179,
+              "self_ms": 0.037208,
+              "inclusive_ms": 0.037208
+            },
+            {
+              "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+              "calls": 1,
+              "self_ms": 0.025002000000000003,
+              "inclusive_ms": 0.026834
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+              "calls": 36,
+              "self_ms": 0.024503000000000004,
+              "inclusive_ms": 0.033128000000000005
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+              "calls": 44,
+              "self_ms": 0.022757000000000003,
+              "inclusive_ms": 0.03359
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+              "calls": 40,
+              "self_ms": 0.019417,
+              "inclusive_ms": 0.028669000000000004
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+              "calls": 15,
+              "self_ms": 0.015372000000000002,
+              "inclusive_ms": 0.023664
+            },
+            {
+              "function": "<frozen os>:709:__getitem__",
+              "calls": 18,
+              "self_ms": 0.013914000000000001,
+              "inclusive_ms": 0.031538000000000004
+            },
+            {
+              "function": "agentd/memory/config.py:26:from_env",
+              "calls": 1,
+              "self_ms": 0.009836000000000001,
+              "inclusive_ms": 0.033708
+            },
+            {
+              "function": "<string>:2:__hash__",
+              "calls": 7,
+              "self_ms": 0.009042000000000001,
+              "inclusive_ms": 0.011751000000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1076:record",
+              "calls": 10,
+              "self_ms": 0.008211,
+              "inclusive_ms": 0.011250000000000001
+            },
+            {
+              "function": "<frozen os>:791:encode",
+              "calls": 18,
+              "self_ms": 0.007626,
+              "inclusive_ms": 0.013082000000000002
+            },
+            {
+              "function": "<frozen _collections_abc>:804:get",
+              "calls": 18,
+              "self_ms": 0.006130000000000001,
+              "inclusive_ms": 0.037668
+            },
+            {
+              "function": "agentd/tools/batching.py:29:batching_enabled",
+              "calls": 2,
+              "self_ms": 0.0057480000000000005,
+              "inclusive_ms": 0.023416
+            },
+            {
+              "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+              "calls": 1,
+              "self_ms": 0.005625000000000001,
+              "inclusive_ms": 0.005625000000000001
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'str' objects>",
+              "calls": 14,
+              "self_ms": 0.004292000000000001,
+              "inclusive_ms": 0.004292000000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 24,
+              "self_ms": 0.003956,
+              "inclusive_ms": 0.003956
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 18,
+              "self_ms": 0.003832,
+              "inclusive_ms": 0.003832
+            },
+            {
+              "function": "encoder.py:205:iterencode",
+              "calls": 1,
+              "self_ms": 0.0032500000000000003,
+              "inclusive_ms": 0.004667
+            },
+            {
+              "function": "~:0:<method 'update' of 'dict' objects>",
+              "calls": 1,
+              "self_ms": 0.002792,
+              "inclusive_ms": 0.002792
+            },
+            {
+              "function": "~:0:<built-in method builtins.hash>",
+              "calls": 7,
+              "self_ms": 0.002709,
+              "inclusive_ms": 0.002709
+            },
+            {
+              "function": "<frozen os>:795:decode",
+              "calls": 4,
+              "self_ms": 0.002458,
+              "inclusive_ms": 0.004542
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+              "calls": 1,
+              "self_ms": 0.002334,
+              "inclusive_ms": 0.036042000000000005
+            },
+            {
+              "function": "agentd/prompting/tagged.py:81:is_main",
+              "calls": 7,
+              "self_ms": 0.0021240000000000005,
+              "inclusive_ms": 0.0021240000000000005
+            },
+            {
+              "function": "~:0:<method 'decode' of 'bytes' objects>",
+              "calls": 4,
+              "self_ms": 0.0020840000000000003,
+              "inclusive_ms": 0.0020840000000000003
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+              "calls": 1,
+              "self_ms": 0.0017920000000000002,
+              "inclusive_ms": 0.0073750000000000005
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "d2ab4c6a64c64ce8a9634b21d400a540",
+          "parent": "f2a64c57b4e9443aa47d531c849c36a8",
+          "name": "context.payload",
+          "start_ns": 472224869838500,
+          "end_ns": 472224870034291,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.payload",
+          "rows": [
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.07166600000000001,
+              "inclusive_ms": 0.07166600000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+              "calls": 1,
+              "self_ms": 0.01613,
+              "inclusive_ms": 0.025375
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 23,
+              "self_ms": 0.005374,
+              "inclusive_ms": 0.005374
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+              "calls": 8,
+              "self_ms": 0.002288,
+              "inclusive_ms": 0.0037480000000000005
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 7,
+              "self_ms": 0.000831,
+              "inclusive_ms": 0.000831
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 1,
+              "self_ms": 0.0007520000000000001,
+              "inclusive_ms": 0.004125
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "f2a64c57b4e9443aa47d531c849c36a8",
+          "layer": "logical",
+          "system_chars": 78990,
+          "system_parts": {
+            "core_rules": 14994,
+            "tool_catalog": 45374,
+            "team_guidance": 0,
+            "web_guidance": 2665,
+            "memory_guidance": 1097,
+            "project_instructions": 0,
+            "skills_catalog": 0,
+            "mcp_guidance": 686,
+            "sessions_guidance": 1157,
+            "dispatch_guidance": 3919,
+            "teams_main_guidance": 3435,
+            "batch_guidance": 5663
+          },
+          "payload_parts": {
+            "workspace_path": 57,
+            "retrieval_seed": 107019,
+            "conversation_history": 154857,
+            "recalled_memories": 1705,
+            "goal": 168,
+            "instruction": 1596,
+            "budget_status": 34,
+            "framing": 8
+          },
+          "retrieval_parts": {
+            "repository_structure": 85678,
+            "file_outlines": 8156,
+            "file_contents": 18,
+            "planner_evidence": 11834,
+            "diagnostics_excerpt": 24,
+            "snapshot_stats": 82,
+            "graph_neighbor_files": 1202,
+            "framing": 8
+          },
+          "schema_chars": 3696,
+          "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "4b8ad35c2e5f42cb89d5c77490dafe89",
+          "parent": "f2a64c57b4e9443aa47d531c849c36a8",
+          "name": "provider.rate_limit_wait",
+          "start_ns": 472224872140666,
+          "end_ns": 472224872149791,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "30cb8b86385548f99c65a4775ab1b241",
+          "parent": "9d345c07049f473d8c3e472efb9b0a94",
+          "name": "provider.auth",
+          "start_ns": 472224876009791,
+          "end_ns": 472224876209083,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "9d345c07049f473d8c3e472efb9b0a94",
+          "layer": "physical",
+          "parts": {
+            "instructions": 85250,
+            "input": 352758,
+            "tools": 4136,
+            "tool_choice": 24,
+            "framing": 5
+          },
+          "total_chars": 442173,
+          "estimated_tokens": 110544,
+          "estimate_method": "serialized_chars/4"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "dddaec7acc564c40bd36825a1a5acd05",
+          "parent": "ce4aef80b2f54ad08ca39035b0b7890c",
+          "name": "provider.response_headers",
+          "start_ns": 472224882215666,
+          "end_ns": 472228100171333,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "mark",
+          "parent": "ce4aef80b2f54ad08ca39035b0b7890c",
+          "name": "provider.first_content",
+          "at_ns": 472231489089208
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "ce4aef80b2f54ad08ca39035b0b7890c",
+          "layer": "reported",
+          "input_tokens": 110954
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "ce4aef80b2f54ad08ca39035b0b7890c",
+          "layer": "provider_usage",
+          "input_tokens": 110954,
+          "output_tokens": 196,
+          "cached_input_tokens": 109184,
+          "reasoning_tokens": 101
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "ce4aef80b2f54ad08ca39035b0b7890c",
+          "parent": "9d345c07049f473d8c3e472efb9b0a94",
+          "name": "provider.stream",
+          "start_ns": 472224881634500,
+          "end_ns": 472231984499333,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "9d345c07049f473d8c3e472efb9b0a94",
+          "parent": "f2a64c57b4e9443aa47d531c849c36a8",
+          "name": "provider.request",
+          "start_ns": 472224872211208,
+          "end_ns": 472231986645083,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "f2a64c57b4e9443aa47d531c849c36a8",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "model.step",
+          "start_ns": 472224858118625,
+          "end_ns": 472231995967750,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "4ab99abf49314d6c8a50d5aeb9dd5273",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "tool.search_code",
+          "start_ns": 472232007386750,
+          "end_ns": 472232034329083,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "layer": "tool_batch",
+          "issued": 1,
+          "executed": 1,
+          "high_water": 4,
+          "result_budget_chars": 100000
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "eb8d5cf124ba4d9e8ede511d25ba5d41",
+          "parent": "1226ff4495f84180943fe2a673be3870",
+          "name": "context.system_prompt",
+          "start_ns": 472232038931208,
+          "end_ns": 472232044093833,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.system_prompt",
+          "rows": [
+            {
+              "function": "encoder.py:334:_iterencode_dict",
+              "calls": 13592,
+              "self_ms": 2.343333,
+              "inclusive_ms": 3.160439
+            },
+            {
+              "function": "encoder.py:278:_iterencode_list",
+              "calls": 4578,
+              "self_ms": 0.685392,
+              "inclusive_ms": 3.7408620000000004
+            },
+            {
+              "function": "encoder.py:414:_iterencode",
+              "calls": 4126,
+              "self_ms": 0.475682,
+              "inclusive_ms": 4.216836
+            },
+            {
+              "function": "encoder.py:183:encode",
+              "calls": 1,
+              "self_ms": 0.30024700000000004,
+              "inclusive_ms": 4.573875000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 3490,
+              "self_ms": 0.269177,
+              "inclusive_ms": 0.269177
+            },
+            {
+              "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+              "calls": 1341,
+              "self_ms": 0.20346100000000003,
+              "inclusive_ms": 0.20346100000000003
+            },
+            {
+              "function": "~:0:<built-in method builtins.sorted>",
+              "calls": 318,
+              "self_ms": 0.119241,
+              "inclusive_ms": 0.119241
+            },
+            {
+              "function": "~:0:<built-in method builtins.id>",
+              "calls": 389,
+              "self_ms": 0.10080900000000001,
+              "inclusive_ms": 0.10080900000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+              "calls": 1,
+              "self_ms": 0.099832,
+              "inclusive_ms": 4.928292
+            },
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.099459,
+              "inclusive_ms": 0.099459
+            },
+            {
+              "function": "~:0:<method 'join' of 'str' objects>",
+              "calls": 1,
+              "self_ms": 0.051000000000000004,
+              "inclusive_ms": 0.051000000000000004
+            },
+            {
+              "function": "~:0:<method 'replace' of 'str' objects>",
+              "calls": 2,
+              "self_ms": 0.035084000000000004,
+              "inclusive_ms": 0.035084000000000004
+            },
+            {
+              "function": "__init__.py:183:dumps",
+              "calls": 1,
+              "self_ms": 0.032041,
+              "inclusive_ms": 4.606416
+            },
+            {
+              "function": "~:0:<method 'items' of 'dict' objects>",
+              "calls": 318,
+              "self_ms": 0.030325,
+              "inclusive_ms": 0.030325
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 179,
+              "self_ms": 0.016794000000000003,
+              "inclusive_ms": 0.016794000000000003
+            },
+            {
+              "function": "agentd/memory/config.py:26:from_env",
+              "calls": 1,
+              "self_ms": 0.014833,
+              "inclusive_ms": 0.04825
+            },
+            {
+              "function": "<frozen os>:709:__getitem__",
+              "calls": 18,
+              "self_ms": 0.012958,
+              "inclusive_ms": 0.031874
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+              "calls": 44,
+              "self_ms": 0.012824000000000002,
+              "inclusive_ms": 0.019119
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 4,
+              "self_ms": 0.011968000000000001,
+              "inclusive_ms": 0.07675000000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+              "calls": 36,
+              "self_ms": 0.011411000000000001,
+              "inclusive_ms": 0.01633
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+              "calls": 40,
+              "self_ms": 0.011042,
+              "inclusive_ms": 0.015915000000000002
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+              "calls": 15,
+              "self_ms": 0.009918,
+              "inclusive_ms": 0.015125000000000001
+            },
+            {
+              "function": "<frozen os>:791:encode",
+              "calls": 18,
+              "self_ms": 0.009463000000000001,
+              "inclusive_ms": 0.015290999999999999
+            },
+            {
+              "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+              "calls": 1,
+              "self_ms": 0.007209000000000001,
+              "inclusive_ms": 0.007209000000000001
+            },
+            {
+              "function": "<frozen _collections_abc>:804:get",
+              "calls": 18,
+              "self_ms": 0.0069180000000000005,
+              "inclusive_ms": 0.03879200000000001
+            },
+            {
+              "function": "<string>:2:__hash__",
+              "calls": 7,
+              "self_ms": 0.005208,
+              "inclusive_ms": 0.006999
+            },
+            {
+              "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+              "calls": 1,
+              "self_ms": 0.005208,
+              "inclusive_ms": 0.0060420000000000005
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1076:record",
+              "calls": 10,
+              "self_ms": 0.004667,
+              "inclusive_ms": 0.0065840000000000004
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+              "calls": 1,
+              "self_ms": 0.0045000000000000005,
+              "inclusive_ms": 0.05275
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 18,
+              "self_ms": 0.004123,
+              "inclusive_ms": 0.004123
+            },
+            {
+              "function": "encoder.py:205:iterencode",
+              "calls": 1,
+              "self_ms": 0.003917,
+              "inclusive_ms": 0.005334
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+              "calls": 1,
+              "self_ms": 0.0027930000000000003,
+              "inclusive_ms": 0.011542
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'str' objects>",
+              "calls": 14,
+              "self_ms": 0.002791,
+              "inclusive_ms": 0.002791
+            },
+            {
+              "function": "main.py:270:__init__",
+              "calls": 1,
+              "self_ms": 0.0025410000000000003,
+              "inclusive_ms": 0.00975
+            },
+            {
+              "function": "agentd/tools/batching.py:29:batching_enabled",
+              "calls": 2,
+              "self_ms": 0.002499,
+              "inclusive_ms": 0.010583
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 24,
+              "self_ms": 0.0024570000000000004,
+              "inclusive_ms": 0.0024570000000000004
+            },
+            {
+              "function": "<frozen os>:795:decode",
+              "calls": 4,
+              "self_ms": 0.002125,
+              "inclusive_ms": 0.003625
+            },
+            {
+              "function": "~:0:<built-in method builtins.hash>",
+              "calls": 7,
+              "self_ms": 0.001791,
+              "inclusive_ms": 0.001791
+            },
+            {
+              "function": "encoder.py:224:floatstr",
+              "calls": 2,
+              "self_ms": 0.0017490000000000001,
+              "inclusive_ms": 0.0017490000000000001
+            },
+            {
+              "function": "~:0:<method 'update' of 'dict' objects>",
+              "calls": 1,
+              "self_ms": 0.001667,
+              "inclusive_ms": 0.001667
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "e5e8e3a5865a46a8926e74c554279d44",
+          "parent": "1226ff4495f84180943fe2a673be3870",
+          "name": "context.payload",
+          "start_ns": 472232049532458,
+          "end_ns": 472232049744375,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.payload",
+          "rows": [
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.08625000000000001,
+              "inclusive_ms": 0.08625000000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+              "calls": 1,
+              "self_ms": 0.015788000000000003,
+              "inclusive_ms": 0.022875
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 23,
+              "self_ms": 0.003791,
+              "inclusive_ms": 0.003791
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+              "calls": 8,
+              "self_ms": 0.001793,
+              "inclusive_ms": 0.0027500000000000003
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 1,
+              "self_ms": 0.0007930000000000001,
+              "inclusive_ms": 0.003209
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 7,
+              "self_ms": 0.0007100000000000001,
+              "inclusive_ms": 0.0007100000000000001
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "1226ff4495f84180943fe2a673be3870",
+          "layer": "logical",
+          "system_chars": 78990,
+          "system_parts": {
+            "core_rules": 14994,
+            "tool_catalog": 45374,
+            "team_guidance": 0,
+            "web_guidance": 2665,
+            "memory_guidance": 1097,
+            "project_instructions": 0,
+            "skills_catalog": 0,
+            "mcp_guidance": 686,
+            "sessions_guidance": 1157,
+            "dispatch_guidance": 3919,
+            "teams_main_guidance": 3435,
+            "batch_guidance": 5663
+          },
+          "payload_parts": {
+            "workspace_path": 57,
+            "retrieval_seed": 107019,
+            "conversation_history": 163947,
+            "recalled_memories": 1705,
+            "goal": 168,
+            "instruction": 1596,
+            "budget_status": 34,
+            "framing": 8
+          },
+          "retrieval_parts": {
+            "repository_structure": 85678,
+            "file_outlines": 8156,
+            "file_contents": 18,
+            "planner_evidence": 11834,
+            "diagnostics_excerpt": 24,
+            "snapshot_stats": 82,
+            "graph_neighbor_files": 1202,
+            "framing": 8
+          },
+          "schema_chars": 3696,
+          "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "2e8016ab45ea450b87247703f5983c9b",
+          "parent": "1226ff4495f84180943fe2a673be3870",
+          "name": "provider.rate_limit_wait",
+          "start_ns": 472232052262916,
+          "end_ns": 472232052272541,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "05bd4017c3604a01aa053dd659f87386",
+          "parent": "dac3c7825c0a4ad89e2aabeb3db29c20",
+          "name": "provider.auth",
+          "start_ns": 472232057151333,
+          "end_ns": 472232057388458,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "dac3c7825c0a4ad89e2aabeb3db29c20",
+          "layer": "physical",
+          "parts": {
+            "instructions": 85250,
+            "input": 366698,
+            "tools": 4136,
+            "tool_choice": 24,
+            "framing": 5
+          },
+          "total_chars": 456113,
+          "estimated_tokens": 114029,
+          "estimate_method": "serialized_chars/4"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "baaaa16cd0804f97bc55a185eb9996f3",
+          "parent": "2883f56216bc48739b8615ec2a35815d",
+          "name": "provider.response_headers",
+          "start_ns": 472232064775541,
+          "end_ns": 472233912355291,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "mark",
+          "parent": "2883f56216bc48739b8615ec2a35815d",
+          "name": "provider.first_content",
+          "at_ns": 472236499121583
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "2883f56216bc48739b8615ec2a35815d",
+          "layer": "reported",
+          "input_tokens": 114672
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "2883f56216bc48739b8615ec2a35815d",
+          "layer": "provider_usage",
+          "input_tokens": 114672,
+          "output_tokens": 183,
+          "cached_input_tokens": 110208,
+          "reasoning_tokens": 83
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "2883f56216bc48739b8615ec2a35815d",
+          "parent": "dac3c7825c0a4ad89e2aabeb3db29c20",
+          "name": "provider.stream",
+          "start_ns": 472232064025666,
+          "end_ns": 472237599591333,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "dac3c7825c0a4ad89e2aabeb3db29c20",
+          "parent": "1226ff4495f84180943fe2a673be3870",
+          "name": "provider.request",
+          "start_ns": 472232052336416,
+          "end_ns": 472237600167875,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "1226ff4495f84180943fe2a673be3870",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "model.step",
+          "start_ns": 472232038877500,
+          "end_ns": 472237604357916,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "de7fe5c696044c8d855f609a4bed814f",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "tool.read_file",
+          "start_ns": 472237614627000,
+          "end_ns": 472237616912083,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "layer": "tool_batch",
+          "issued": 1,
+          "executed": 1,
+          "high_water": 4,
+          "result_budget_chars": 100000
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "06ba02420e214640a90b9628e6f7e89f",
+          "parent": "9d246b36e431474abae3f52f6d84d5b3",
+          "name": "context.system_prompt",
+          "start_ns": 472237623682916,
+          "end_ns": 472237627747125,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.system_prompt",
+          "rows": [
+            {
+              "function": "encoder.py:334:_iterencode_dict",
+              "calls": 13592,
+              "self_ms": 1.721775,
+              "inclusive_ms": 2.363931
+            },
+            {
+              "function": "encoder.py:278:_iterencode_list",
+              "calls": 4578,
+              "self_ms": 0.533775,
+              "inclusive_ms": 2.8140080000000003
+            },
+            {
+              "function": "encoder.py:414:_iterencode",
+              "calls": 4126,
+              "self_ms": 0.35983200000000004,
+              "inclusive_ms": 3.174046
+            },
+            {
+              "function": "encoder.py:183:encode",
+              "calls": 1,
+              "self_ms": 0.235703,
+              "inclusive_ms": 3.467041
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 3490,
+              "self_ms": 0.199218,
+              "inclusive_ms": 0.199218
+            },
+            {
+              "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+              "calls": 1341,
+              "self_ms": 0.163443,
+              "inclusive_ms": 0.163443
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+              "calls": 1,
+              "self_ms": 0.125204,
+              "inclusive_ms": 3.824625
+            },
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.10491700000000001,
+              "inclusive_ms": 0.10491700000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.sorted>",
+              "calls": 318,
+              "self_ms": 0.10462500000000001,
+              "inclusive_ms": 0.10462500000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.id>",
+              "calls": 389,
+              "self_ms": 0.074351,
+              "inclusive_ms": 0.074351
+            },
+            {
+              "function": "~:0:<method 'join' of 'str' objects>",
+              "calls": 1,
+              "self_ms": 0.051208000000000004,
+              "inclusive_ms": 0.051208000000000004
+            },
+            {
+              "function": "~:0:<method 'replace' of 'str' objects>",
+              "calls": 2,
+              "self_ms": 0.0345,
+              "inclusive_ms": 0.0345
+            },
+            {
+              "function": "__init__.py:183:dumps",
+              "calls": 1,
+              "self_ms": 0.026501000000000004,
+              "inclusive_ms": 3.493875
+            },
+            {
+              "function": "~:0:<method 'items' of 'dict' objects>",
+              "calls": 318,
+              "self_ms": 0.024868000000000005,
+              "inclusive_ms": 0.024868000000000005
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 179,
+              "self_ms": 0.015636,
+              "inclusive_ms": 0.015636
+            },
+            {
+              "function": "agentd/memory/config.py:26:from_env",
+              "calls": 1,
+              "self_ms": 0.013545000000000001,
+              "inclusive_ms": 0.04275
+            },
+            {
+              "function": "<frozen os>:709:__getitem__",
+              "calls": 18,
+              "self_ms": 0.012085,
+              "inclusive_ms": 0.028044
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 4,
+              "self_ms": 0.010337,
+              "inclusive_ms": 0.064085
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+              "calls": 44,
+              "self_ms": 0.010204000000000001,
+              "inclusive_ms": 0.014790000000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+              "calls": 40,
+              "self_ms": 0.010198,
+              "inclusive_ms": 0.015041
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+              "calls": 36,
+              "self_ms": 0.009872,
+              "inclusive_ms": 0.013792
+            },
+            {
+              "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+              "calls": 1,
+              "self_ms": 0.008833,
+              "inclusive_ms": 0.008833
+            },
+            {
+              "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+              "calls": 1,
+              "self_ms": 0.008458,
+              "inclusive_ms": 0.009000000000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+              "calls": 15,
+              "self_ms": 0.007874,
+              "inclusive_ms": 0.012
+            },
+            {
+              "function": "<frozen os>:791:encode",
+              "calls": 18,
+              "self_ms": 0.006998000000000001,
+              "inclusive_ms": 0.012125
+            },
+            {
+              "function": "<string>:2:__hash__",
+              "calls": 7,
+              "self_ms": 0.004873000000000001,
+              "inclusive_ms": 0.006541000000000001
+            },
+            {
+              "function": "<frozen _collections_abc>:804:get",
+              "calls": 18,
+              "self_ms": 0.00487,
+              "inclusive_ms": 0.032914000000000006
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1076:record",
+              "calls": 10,
+              "self_ms": 0.004754,
+              "inclusive_ms": 0.005960000000000001
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+              "calls": 1,
+              "self_ms": 0.00425,
+              "inclusive_ms": 0.04700000000000001
+            },
+            {
+              "function": "encoder.py:205:iterencode",
+              "calls": 1,
+              "self_ms": 0.00425,
+              "inclusive_ms": 0.005875000000000001
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 18,
+              "self_ms": 0.003417,
+              "inclusive_ms": 0.003417
+            },
+            {
+              "function": "agentd/tools/batching.py:29:batching_enabled",
+              "calls": 2,
+              "self_ms": 0.003417,
+              "inclusive_ms": 0.012959
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+              "calls": 1,
+              "self_ms": 0.0030830000000000002,
+              "inclusive_ms": 0.009917
+            },
+            {
+              "function": "encoder.py:224:floatstr",
+              "calls": 2,
+              "self_ms": 0.0025,
+              "inclusive_ms": 0.0025
+            },
+            {
+              "function": "<frozen os>:795:decode",
+              "calls": 4,
+              "self_ms": 0.0022930000000000003,
+              "inclusive_ms": 0.003834
+            },
+            {
+              "function": "~:0:<method 'update' of 'dict' objects>",
+              "calls": 1,
+              "self_ms": 0.002292,
+              "inclusive_ms": 0.002292
+            },
+            {
+              "function": "main.py:270:__init__",
+              "calls": 1,
+              "self_ms": 0.002292,
+              "inclusive_ms": 0.011125000000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 24,
+              "self_ms": 0.001957,
+              "inclusive_ms": 0.001957
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'str' objects>",
+              "calls": 14,
+              "self_ms": 0.0018340000000000001,
+              "inclusive_ms": 0.0018340000000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.hash>",
+              "calls": 7,
+              "self_ms": 0.0016680000000000002,
+              "inclusive_ms": 0.0016680000000000002
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "75609e36d6744ffdb139e67dd5553ef9",
+          "parent": "9d246b36e431474abae3f52f6d84d5b3",
+          "name": "context.payload",
+          "start_ns": 472237634616708,
+          "end_ns": 472237634938250,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.payload",
+          "rows": [
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.10258300000000001,
+              "inclusive_ms": 0.10258300000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+              "calls": 1,
+              "self_ms": 0.039123000000000005,
+              "inclusive_ms": 0.059209000000000005
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 23,
+              "self_ms": 0.00921,
+              "inclusive_ms": 0.00921
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+              "calls": 8,
+              "self_ms": 0.006666,
+              "inclusive_ms": 0.009291
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 1,
+              "self_ms": 0.002334,
+              "inclusive_ms": 0.0095
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 7,
+              "self_ms": 0.001876,
+              "inclusive_ms": 0.001876
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "9d246b36e431474abae3f52f6d84d5b3",
+          "layer": "logical",
+          "system_chars": 78990,
+          "system_parts": {
+            "core_rules": 14994,
+            "tool_catalog": 45374,
+            "team_guidance": 0,
+            "web_guidance": 2665,
+            "memory_guidance": 1097,
+            "project_instructions": 0,
+            "skills_catalog": 0,
+            "mcp_guidance": 686,
+            "sessions_guidance": 1157,
+            "dispatch_guidance": 3919,
+            "teams_main_guidance": 3435,
+            "batch_guidance": 5663
+          },
+          "payload_parts": {
+            "workspace_path": 57,
+            "retrieval_seed": 107019,
+            "conversation_history": 166497,
+            "recalled_memories": 1705,
+            "goal": 168,
+            "instruction": 1596,
+            "budget_status": 34,
+            "framing": 8
+          },
+          "retrieval_parts": {
+            "repository_structure": 85678,
+            "file_outlines": 8156,
+            "file_contents": 18,
+            "planner_evidence": 11834,
+            "diagnostics_excerpt": 24,
+            "snapshot_stats": 82,
+            "graph_neighbor_files": 1202,
+            "framing": 8
+          },
+          "schema_chars": 3696,
+          "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "806e961b32a846eea87b5300db242139",
+          "parent": "9d246b36e431474abae3f52f6d84d5b3",
+          "name": "provider.rate_limit_wait",
+          "start_ns": 472237642733708,
+          "end_ns": 472237642757875,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "7f3f89871b534f9b85c5b2171d6deb2c",
+          "parent": "4a3cec9ad2d742af8744d6fbfbe662f9",
+          "name": "provider.auth",
+          "start_ns": 472237653155583,
+          "end_ns": 472237653581625,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "4a3cec9ad2d742af8744d6fbfbe662f9",
+          "layer": "physical",
+          "parts": {
+            "instructions": 85250,
+            "input": 373752,
+            "tools": 4136,
+            "tool_choice": 24,
+            "framing": 5
+          },
+          "total_chars": 463167,
+          "estimated_tokens": 115792,
+          "estimate_method": "serialized_chars/4"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "8756b06d37bc4e0e9a54d5db75aceff8",
+          "parent": "0991a4580de14c33a569ef36b779af1e",
+          "name": "provider.response_headers",
+          "start_ns": 472237665844208,
+          "end_ns": 472239742135791,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "mark",
+          "parent": "0991a4580de14c33a569ef36b779af1e",
+          "name": "provider.first_content",
+          "at_ns": 472242530044458
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "0991a4580de14c33a569ef36b779af1e",
+          "layer": "reported",
+          "input_tokens": 116396
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "0991a4580de14c33a569ef36b779af1e",
+          "layer": "provider_usage",
+          "input_tokens": 116396,
+          "output_tokens": 208,
+          "cached_input_tokens": 114304,
+          "reasoning_tokens": 111
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "0991a4580de14c33a569ef36b779af1e",
+          "parent": "4a3cec9ad2d742af8744d6fbfbe662f9",
+          "name": "provider.stream",
+          "start_ns": 472237665160375,
+          "end_ns": 472243976381416,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "4a3cec9ad2d742af8744d6fbfbe662f9",
+          "parent": "9d246b36e431474abae3f52f6d84d5b3",
+          "name": "provider.request",
+          "start_ns": 472237642982458,
+          "end_ns": 472243976676250,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "9d246b36e431474abae3f52f6d84d5b3",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "model.step",
+          "start_ns": 472237623625958,
+          "end_ns": 472243979966500,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "7372c9053c3841388d8dde586437f0f3",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "tool.read_file",
+          "start_ns": 472243984867583,
+          "end_ns": 472243985706666,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "layer": "tool_batch",
+          "issued": 1,
+          "executed": 1,
+          "high_water": 4,
+          "result_budget_chars": 100000
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "ac21f7feae254aa0a2f060c917905dfe",
+          "parent": "dd08140ab6b1437f9a0de78fc4a2afcc",
+          "name": "context.system_prompt",
+          "start_ns": 472243988873916,
+          "end_ns": 472243992520625,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.system_prompt",
+          "rows": [
+            {
+              "function": "encoder.py:334:_iterencode_dict",
+              "calls": 13592,
+              "self_ms": 1.639049,
+              "inclusive_ms": 2.213501
+            },
+            {
+              "function": "encoder.py:278:_iterencode_list",
+              "calls": 4578,
+              "self_ms": 0.49827400000000005,
+              "inclusive_ms": 2.6372960000000005
+            },
+            {
+              "function": "encoder.py:414:_iterencode",
+              "calls": 4126,
+              "self_ms": 0.350764,
+              "inclusive_ms": 2.9881860000000002
+            },
+            {
+              "function": "encoder.py:183:encode",
+              "calls": 1,
+              "self_ms": 0.203272,
+              "inclusive_ms": 3.231625
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 3490,
+              "self_ms": 0.19921,
+              "inclusive_ms": 0.19921
+            },
+            {
+              "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+              "calls": 1341,
+              "self_ms": 0.143597,
+              "inclusive_ms": 0.143597
+            },
+            {
+              "function": "~:0:<built-in method builtins.sorted>",
+              "calls": 318,
+              "self_ms": 0.07591300000000001,
+              "inclusive_ms": 0.07591300000000001
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+              "calls": 1,
+              "self_ms": 0.075491,
+              "inclusive_ms": 3.487083
+            },
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.070208,
+              "inclusive_ms": 0.070208
+            },
+            {
+              "function": "~:0:<built-in method builtins.id>",
+              "calls": 389,
+              "self_ms": 0.067692,
+              "inclusive_ms": 0.067692
+            },
+            {
+              "function": "~:0:<method 'join' of 'str' objects>",
+              "calls": 1,
+              "self_ms": 0.035875000000000004,
+              "inclusive_ms": 0.035875000000000004
+            },
+            {
+              "function": "~:0:<method 'replace' of 'str' objects>",
+              "calls": 2,
+              "self_ms": 0.026583000000000002,
+              "inclusive_ms": 0.026583000000000002
+            },
+            {
+              "function": "~:0:<method 'items' of 'dict' objects>",
+              "calls": 318,
+              "self_ms": 0.021643000000000003,
+              "inclusive_ms": 0.021643000000000003
+            },
+            {
+              "function": "__init__.py:183:dumps",
+              "calls": 1,
+              "self_ms": 0.021626000000000003,
+              "inclusive_ms": 3.2535420000000004
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 179,
+              "self_ms": 0.012707000000000001,
+              "inclusive_ms": 0.012707000000000001
+            },
+            {
+              "function": "agentd/memory/config.py:26:from_env",
+              "calls": 1,
+              "self_ms": 0.010084000000000001,
+              "inclusive_ms": 0.034125
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+              "calls": 44,
+              "self_ms": 0.009293000000000001,
+              "inclusive_ms": 0.013877
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 4,
+              "self_ms": 0.008831,
+              "inclusive_ms": 0.056625
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+              "calls": 40,
+              "self_ms": 0.008434,
+              "inclusive_ms": 0.012918
+            },
+            {
+              "function": "<frozen os>:709:__getitem__",
+              "calls": 18,
+              "self_ms": 0.008376000000000001,
+              "inclusive_ms": 0.020668000000000002
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+              "calls": 36,
+              "self_ms": 0.007914000000000001,
+              "inclusive_ms": 0.011584
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+              "calls": 15,
+              "self_ms": 0.007038,
+              "inclusive_ms": 0.010208000000000002
+            },
+            {
+              "function": "<frozen os>:791:encode",
+              "calls": 18,
+              "self_ms": 0.0062510000000000005,
+              "inclusive_ms": 0.009625
+            },
+            {
+              "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+              "calls": 1,
+              "self_ms": 0.00525,
+              "inclusive_ms": 0.00525
+            },
+            {
+              "function": "<frozen _collections_abc>:804:get",
+              "calls": 18,
+              "self_ms": 0.004791,
+              "inclusive_ms": 0.025459000000000002
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+              "calls": 1,
+              "self_ms": 0.00475,
+              "inclusive_ms": 0.038875
+            },
+            {
+              "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+              "calls": 1,
+              "self_ms": 0.0035830000000000002,
+              "inclusive_ms": 0.004125
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1076:record",
+              "calls": 10,
+              "self_ms": 0.0035440000000000003,
+              "inclusive_ms": 0.0049180000000000005
+            },
+            {
+              "function": "<string>:2:__hash__",
+              "calls": 7,
+              "self_ms": 0.0033750000000000004,
+              "inclusive_ms": 0.004375
+            },
+            {
+              "function": "encoder.py:205:iterencode",
+              "calls": 1,
+              "self_ms": 0.002792,
+              "inclusive_ms": 0.004084
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 18,
+              "self_ms": 0.002166,
+              "inclusive_ms": 0.002166
+            },
+            {
+              "function": "<frozen os>:795:decode",
+              "calls": 4,
+              "self_ms": 0.0018750000000000001,
+              "inclusive_ms": 0.002667
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 24,
+              "self_ms": 0.0017500000000000003,
+              "inclusive_ms": 0.0017500000000000003
+            },
+            {
+              "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+              "calls": 1,
+              "self_ms": 0.001708,
+              "inclusive_ms": 0.007333000000000001
+            },
+            {
+              "function": "main.py:270:__init__",
+              "calls": 1,
+              "self_ms": 0.0016250000000000001,
+              "inclusive_ms": 0.006875
+            },
+            {
+              "function": "agentd/tools/batching.py:29:batching_enabled",
+              "calls": 2,
+              "self_ms": 0.0014160000000000002,
+              "inclusive_ms": 0.0053750000000000004
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'str' objects>",
+              "calls": 14,
+              "self_ms": 0.001376,
+              "inclusive_ms": 0.001376
+            },
+            {
+              "function": "encoder.py:260:_make_iterencode",
+              "calls": 1,
+              "self_ms": 0.00125,
+              "inclusive_ms": 0.0012920000000000002
+            },
+            {
+              "function": "encoder.py:224:floatstr",
+              "calls": 2,
+              "self_ms": 0.001208,
+              "inclusive_ms": 0.001208
+            },
+            {
+              "function": "~:0:<built-in method builtins.hash>",
+              "calls": 7,
+              "self_ms": 0.0010000000000000002,
+              "inclusive_ms": 0.0010000000000000002
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "bac452eb72bc4f2cb3e9f7fcda36b54b",
+          "parent": "dd08140ab6b1437f9a0de78fc4a2afcc",
+          "name": "context.payload",
+          "start_ns": 472243996210583,
+          "end_ns": 472243996368666,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "functions",
+          "name": "context.payload",
+          "rows": [
+            {
+              "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+              "calls": 1,
+              "self_ms": 0.06450000000000002,
+              "inclusive_ms": 0.06450000000000002
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+              "calls": 1,
+              "self_ms": 0.010583,
+              "inclusive_ms": 0.015708
+            },
+            {
+              "function": "~:0:<method 'get' of 'dict' objects>",
+              "calls": 23,
+              "self_ms": 0.002418,
+              "inclusive_ms": 0.002418
+            },
+            {
+              "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+              "calls": 8,
+              "self_ms": 0.0014160000000000002,
+              "inclusive_ms": 0.0019590000000000002
+            },
+            {
+              "function": "~:0:<built-in method builtins.any>",
+              "calls": 1,
+              "self_ms": 0.000792,
+              "inclusive_ms": 0.0024170000000000003
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 7,
+              "self_ms": 0.000499,
+              "inclusive_ms": 0.000499
+            }
+          ]
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "dd08140ab6b1437f9a0de78fc4a2afcc",
+          "layer": "logical",
+          "system_chars": 78990,
+          "system_parts": {
+            "core_rules": 14994,
+            "tool_catalog": 45374,
+            "team_guidance": 0,
+            "web_guidance": 2665,
+            "memory_guidance": 1097,
+            "project_instructions": 0,
+            "skills_catalog": 0,
+            "mcp_guidance": 686,
+            "sessions_guidance": 1157,
+            "dispatch_guidance": 3919,
+            "teams_main_guidance": 3435,
+            "batch_guidance": 5663
+          },
+          "payload_parts": {
+            "workspace_path": 57,
+            "retrieval_seed": 107019,
+            "conversation_history": 167903,
+            "recalled_memories": 1705,
+            "goal": 168,
+            "instruction": 1596,
+            "budget_status": 34,
+            "framing": 8
+          },
+          "retrieval_parts": {
+            "repository_structure": 85678,
+            "file_outlines": 8156,
+            "file_contents": 18,
+            "planner_evidence": 11834,
+            "diagnostics_excerpt": 24,
+            "snapshot_stats": 82,
+            "graph_neighbor_files": 1202,
+            "framing": 8
+          },
+          "schema_chars": 3696,
+          "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "5dd3e3c061f2406aa8fc71ed2ffe1d2d",
+          "parent": "dd08140ab6b1437f9a0de78fc4a2afcc",
+          "name": "provider.rate_limit_wait",
+          "start_ns": 472243998337458,
+          "end_ns": 472243998345791,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "8caaa7d3717c47c3b5bf2a5c4f9de6b6",
+          "parent": "af38e6b8c5704fa0883b482a73eb8354",
+          "name": "provider.auth",
+          "start_ns": 472244002512916,
+          "end_ns": 472244002702708,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "af38e6b8c5704fa0883b482a73eb8354",
+          "layer": "physical",
+          "parts": {
+            "instructions": 85250,
+            "input": 379613,
+            "tools": 4136,
+            "tool_choice": 24,
+            "framing": 5
+          },
+          "total_chars": 469028,
+          "estimated_tokens": 117257,
+          "estimate_method": "serialized_chars/4"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "a1d3f0ccf6e44f81a46d0c34fa16f3d0",
+          "parent": "dea1f9fa2bca4d87b9ec3a0528dcc9dd",
+          "name": "provider.response_headers",
+          "start_ns": 472244009152083,
+          "end_ns": 472246278359458,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "mark",
+          "parent": "dea1f9fa2bca4d87b9ec3a0528dcc9dd",
+          "name": "provider.first_content",
+          "at_ns": 472248913060541
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "dea1f9fa2bca4d87b9ec3a0528dcc9dd",
+          "layer": "reported",
+          "input_tokens": 117826
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "context",
+          "parent": "dea1f9fa2bca4d87b9ec3a0528dcc9dd",
+          "layer": "provider_usage",
+          "input_tokens": 117826,
+          "output_tokens": 460,
+          "cached_input_tokens": 115328,
+          "reasoning_tokens": 101
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "dea1f9fa2bca4d87b9ec3a0528dcc9dd",
+          "parent": "af38e6b8c5704fa0883b482a73eb8354",
+          "name": "provider.stream",
+          "start_ns": 472244008517541,
+          "end_ns": 472254841205625,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "af38e6b8c5704fa0883b482a73eb8354",
+          "parent": "dd08140ab6b1437f9a0de78fc4a2afcc",
+          "name": "provider.request",
+          "start_ns": 472243998393833,
+          "end_ns": 472254841492208,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "dd08140ab6b1437f9a0de78fc4a2afcc",
+          "parent": "793ca4c324b2400d8073e3d05639c1cb",
+          "name": "model.step",
+          "start_ns": 472243988835875,
+          "end_ns": 472254844664000,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "793ca4c324b2400d8073e3d05639c1cb",
+          "parent": "8cd40cd65d494bd6b0b670b197b44ed7",
+          "name": "controller.turn",
+          "start_ns": 472204146686458,
+          "end_ns": 472254844933291,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "8cd40cd65d494bd6b0b670b197b44ed7",
+          "parent": "7afbbdc9c2f74e2083c3d8ef9f18801f",
+          "name": "controller.setup_and_loop",
+          "start_ns": 472204144633833,
+          "end_ns": 472254847735291,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "mark",
+          "parent": "c13566ab5dd943929eb2104216303f86",
+          "name": "controller.response_published",
+          "at_ns": 472254849120916
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "c13566ab5dd943929eb2104216303f86",
+          "parent": "7afbbdc9c2f74e2083c3d8ef9f18801f",
+          "name": "controller.persist_and_publish",
+          "start_ns": 472254847855250,
+          "end_ns": 472254849193250,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "7afbbdc9c2f74e2083c3d8ef9f18801f",
+          "parent": "ef1101bbcdeb4f7faf158c1aa00be8c7",
+          "name": "controller.user_turn",
+          "start_ns": 472204138044708,
+          "end_ns": 472254849252458,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "ef1101bbcdeb4f7faf158c1aa00be8c7",
+          "parent": "970035a4d9f444df860591a5fb22d8ae",
+          "name": "controller.handle_message",
+          "start_ns": 472204131422958,
+          "end_ns": 472254849365416,
+          "status": "ok"
+        },
+        {
+          "trace": "816d82e45e0e42b1a316d519b337abda",
+          "kind": "span",
+          "id": "970035a4d9f444df860591a5fb22d8ae",
+          "parent": null,
+          "name": "controller.backend_turn",
+          "start_ns": 472204131395416,
+          "end_ns": 472254849411416,
+          "status": "ok"
+        }
+      ],
+      "backend": {
+        "context": [
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "a8bd08e431434f3c841cc57de0e77f62",
+            "layer": "logical",
+            "system_chars": 78990,
+            "system_parts": {
+              "core_rules": 14994,
+              "tool_catalog": 45374,
+              "team_guidance": 0,
+              "web_guidance": 2665,
+              "memory_guidance": 1097,
+              "project_instructions": 0,
+              "skills_catalog": 0,
+              "mcp_guidance": 686,
+              "sessions_guidance": 1157,
+              "dispatch_guidance": 3919,
+              "teams_main_guidance": 3435,
+              "batch_guidance": 5663
+            },
+            "payload_parts": {
+              "workspace_path": 57,
+              "retrieval_seed": 107019,
+              "conversation_history": 142820,
+              "recalled_memories": 1705,
+              "goal": 168,
+              "instruction": 1271,
+              "budget_status": 34,
+              "framing": 8
+            },
+            "retrieval_parts": {
+              "repository_structure": 85678,
+              "file_outlines": 8156,
+              "file_contents": 18,
+              "planner_evidence": 11834,
+              "diagnostics_excerpt": 24,
+              "snapshot_stats": 82,
+              "graph_neighbor_files": 1202,
+              "framing": 8
+            },
+            "schema_chars": 3696,
+            "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "2006eaa9ce7d46fb886e0c645077a47c",
+            "layer": "physical",
+            "parts": {
+              "instructions": 85250,
+              "input": 326478,
+              "tools": 4136,
+              "tool_choice": 24,
+              "framing": 5
+            },
+            "total_chars": 415893,
+            "estimated_tokens": 103974,
+            "estimate_method": "serialized_chars/4"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "9ed9b09e7e04493cb780d12c48149b4c",
+            "layer": "reported",
+            "input_tokens": 104844
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "9ed9b09e7e04493cb780d12c48149b4c",
+            "layer": "provider_usage",
+            "input_tokens": 104844,
+            "output_tokens": 282,
+            "cached_input_tokens": 103040,
+            "reasoning_tokens": 187
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "793ca4c324b2400d8073e3d05639c1cb",
+            "layer": "tool_batch",
+            "issued": 1,
+            "executed": 1,
+            "high_water": 4,
+            "result_budget_chars": 100000
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "0ee0b58c0efc4a9ba92ddf1e5defba5c",
+            "layer": "logical",
+            "system_chars": 78990,
+            "system_parts": {
+              "core_rules": 14994,
+              "tool_catalog": 45374,
+              "team_guidance": 0,
+              "web_guidance": 2665,
+              "memory_guidance": 1097,
+              "project_instructions": 0,
+              "skills_catalog": 0,
+              "mcp_guidance": 686,
+              "sessions_guidance": 1157,
+              "dispatch_guidance": 3919,
+              "teams_main_guidance": 3435,
+              "batch_guidance": 5663
+            },
+            "payload_parts": {
+              "workspace_path": 57,
+              "retrieval_seed": 107019,
+              "conversation_history": 147751,
+              "recalled_memories": 1705,
+              "goal": 168,
+              "instruction": 1596,
+              "budget_status": 34,
+              "framing": 8
+            },
+            "retrieval_parts": {
+              "repository_structure": 85678,
+              "file_outlines": 8156,
+              "file_contents": 18,
+              "planner_evidence": 11834,
+              "diagnostics_excerpt": 24,
+              "snapshot_stats": 82,
+              "graph_neighbor_files": 1202,
+              "framing": 8
+            },
+            "schema_chars": 3696,
+            "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "178c531cd1bd48d49bcfcbb7e8b817d8",
+            "layer": "physical",
+            "parts": {
+              "instructions": 85250,
+              "input": 336242,
+              "tools": 4136,
+              "tool_choice": 24,
+              "framing": 5
+            },
+            "total_chars": 425657,
+            "estimated_tokens": 106415,
+            "estimate_method": "serialized_chars/4"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "e5c4845e7dc941a1a9066b3cdd8b4865",
+            "layer": "reported",
+            "input_tokens": 107130
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "e5c4845e7dc941a1a9066b3cdd8b4865",
+            "layer": "provider_usage",
+            "input_tokens": 107130,
+            "output_tokens": 211,
+            "cached_input_tokens": 104064,
+            "reasoning_tokens": 117
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "793ca4c324b2400d8073e3d05639c1cb",
+            "layer": "tool_batch",
+            "issued": 1,
+            "executed": 1,
+            "high_water": 4,
+            "result_budget_chars": 100000
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "3584dffb98bd4fdbb7c55b166756f73f",
+            "layer": "logical",
+            "system_chars": 78990,
+            "system_parts": {
+              "core_rules": 14994,
+              "tool_catalog": 45374,
+              "team_guidance": 0,
+              "web_guidance": 2665,
+              "memory_guidance": 1097,
+              "project_instructions": 0,
+              "skills_catalog": 0,
+              "mcp_guidance": 686,
+              "sessions_guidance": 1157,
+              "dispatch_guidance": 3919,
+              "teams_main_guidance": 3435,
+              "batch_guidance": 5663
+            },
+            "payload_parts": {
+              "workspace_path": 57,
+              "retrieval_seed": 107019,
+              "conversation_history": 154133,
+              "recalled_memories": 1705,
+              "goal": 168,
+              "instruction": 1596,
+              "budget_status": 34,
+              "framing": 8
+            },
+            "retrieval_parts": {
+              "repository_structure": 85678,
+              "file_outlines": 8156,
+              "file_contents": 18,
+              "planner_evidence": 11834,
+              "diagnostics_excerpt": 24,
+              "snapshot_stats": 82,
+              "graph_neighbor_files": 1202,
+              "framing": 8
+            },
+            "schema_chars": 3696,
+            "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "c580577400ed45c2b0ae92bcb6060a50",
+            "layer": "physical",
+            "parts": {
+              "instructions": 85250,
+              "input": 347564,
+              "tools": 4136,
+              "tool_choice": 24,
+              "framing": 5
+            },
+            "total_chars": 436979,
+            "estimated_tokens": 109245,
+            "estimate_method": "serialized_chars/4"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "171f7d1029864be09201b25423fcc5f6",
+            "layer": "reported",
+            "input_tokens": 109764
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "171f7d1029864be09201b25423fcc5f6",
+            "layer": "provider_usage",
+            "input_tokens": 109764,
+            "output_tokens": 220,
+            "cached_input_tokens": 106112,
+            "reasoning_tokens": 113
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "793ca4c324b2400d8073e3d05639c1cb",
+            "layer": "tool_batch",
+            "issued": 1,
+            "executed": 1,
+            "high_water": 4,
+            "result_budget_chars": 100000
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "f2a64c57b4e9443aa47d531c849c36a8",
+            "layer": "logical",
+            "system_chars": 78990,
+            "system_parts": {
+              "core_rules": 14994,
+              "tool_catalog": 45374,
+              "team_guidance": 0,
+              "web_guidance": 2665,
+              "memory_guidance": 1097,
+              "project_instructions": 0,
+              "skills_catalog": 0,
+              "mcp_guidance": 686,
+              "sessions_guidance": 1157,
+              "dispatch_guidance": 3919,
+              "teams_main_guidance": 3435,
+              "batch_guidance": 5663
+            },
+            "payload_parts": {
+              "workspace_path": 57,
+              "retrieval_seed": 107019,
+              "conversation_history": 154857,
+              "recalled_memories": 1705,
+              "goal": 168,
+              "instruction": 1596,
+              "budget_status": 34,
+              "framing": 8
+            },
+            "retrieval_parts": {
+              "repository_structure": 85678,
+              "file_outlines": 8156,
+              "file_contents": 18,
+              "planner_evidence": 11834,
+              "diagnostics_excerpt": 24,
+              "snapshot_stats": 82,
+              "graph_neighbor_files": 1202,
+              "framing": 8
+            },
+            "schema_chars": 3696,
+            "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "9d345c07049f473d8c3e472efb9b0a94",
+            "layer": "physical",
+            "parts": {
+              "instructions": 85250,
+              "input": 352758,
+              "tools": 4136,
+              "tool_choice": 24,
+              "framing": 5
+            },
+            "total_chars": 442173,
+            "estimated_tokens": 110544,
+            "estimate_method": "serialized_chars/4"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "ce4aef80b2f54ad08ca39035b0b7890c",
+            "layer": "reported",
+            "input_tokens": 110954
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "ce4aef80b2f54ad08ca39035b0b7890c",
+            "layer": "provider_usage",
+            "input_tokens": 110954,
+            "output_tokens": 196,
+            "cached_input_tokens": 109184,
+            "reasoning_tokens": 101
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "793ca4c324b2400d8073e3d05639c1cb",
+            "layer": "tool_batch",
+            "issued": 1,
+            "executed": 1,
+            "high_water": 4,
+            "result_budget_chars": 100000
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "1226ff4495f84180943fe2a673be3870",
+            "layer": "logical",
+            "system_chars": 78990,
+            "system_parts": {
+              "core_rules": 14994,
+              "tool_catalog": 45374,
+              "team_guidance": 0,
+              "web_guidance": 2665,
+              "memory_guidance": 1097,
+              "project_instructions": 0,
+              "skills_catalog": 0,
+              "mcp_guidance": 686,
+              "sessions_guidance": 1157,
+              "dispatch_guidance": 3919,
+              "teams_main_guidance": 3435,
+              "batch_guidance": 5663
+            },
+            "payload_parts": {
+              "workspace_path": 57,
+              "retrieval_seed": 107019,
+              "conversation_history": 163947,
+              "recalled_memories": 1705,
+              "goal": 168,
+              "instruction": 1596,
+              "budget_status": 34,
+              "framing": 8
+            },
+            "retrieval_parts": {
+              "repository_structure": 85678,
+              "file_outlines": 8156,
+              "file_contents": 18,
+              "planner_evidence": 11834,
+              "diagnostics_excerpt": 24,
+              "snapshot_stats": 82,
+              "graph_neighbor_files": 1202,
+              "framing": 8
+            },
+            "schema_chars": 3696,
+            "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "dac3c7825c0a4ad89e2aabeb3db29c20",
+            "layer": "physical",
+            "parts": {
+              "instructions": 85250,
+              "input": 366698,
+              "tools": 4136,
+              "tool_choice": 24,
+              "framing": 5
+            },
+            "total_chars": 456113,
+            "estimated_tokens": 114029,
+            "estimate_method": "serialized_chars/4"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "2883f56216bc48739b8615ec2a35815d",
+            "layer": "reported",
+            "input_tokens": 114672
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "2883f56216bc48739b8615ec2a35815d",
+            "layer": "provider_usage",
+            "input_tokens": 114672,
+            "output_tokens": 183,
+            "cached_input_tokens": 110208,
+            "reasoning_tokens": 83
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "793ca4c324b2400d8073e3d05639c1cb",
+            "layer": "tool_batch",
+            "issued": 1,
+            "executed": 1,
+            "high_water": 4,
+            "result_budget_chars": 100000
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "9d246b36e431474abae3f52f6d84d5b3",
+            "layer": "logical",
+            "system_chars": 78990,
+            "system_parts": {
+              "core_rules": 14994,
+              "tool_catalog": 45374,
+              "team_guidance": 0,
+              "web_guidance": 2665,
+              "memory_guidance": 1097,
+              "project_instructions": 0,
+              "skills_catalog": 0,
+              "mcp_guidance": 686,
+              "sessions_guidance": 1157,
+              "dispatch_guidance": 3919,
+              "teams_main_guidance": 3435,
+              "batch_guidance": 5663
+            },
+            "payload_parts": {
+              "workspace_path": 57,
+              "retrieval_seed": 107019,
+              "conversation_history": 166497,
+              "recalled_memories": 1705,
+              "goal": 168,
+              "instruction": 1596,
+              "budget_status": 34,
+              "framing": 8
+            },
+            "retrieval_parts": {
+              "repository_structure": 85678,
+              "file_outlines": 8156,
+              "file_contents": 18,
+              "planner_evidence": 11834,
+              "diagnostics_excerpt": 24,
+              "snapshot_stats": 82,
+              "graph_neighbor_files": 1202,
+              "framing": 8
+            },
+            "schema_chars": 3696,
+            "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "4a3cec9ad2d742af8744d6fbfbe662f9",
+            "layer": "physical",
+            "parts": {
+              "instructions": 85250,
+              "input": 373752,
+              "tools": 4136,
+              "tool_choice": 24,
+              "framing": 5
+            },
+            "total_chars": 463167,
+            "estimated_tokens": 115792,
+            "estimate_method": "serialized_chars/4"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "0991a4580de14c33a569ef36b779af1e",
+            "layer": "reported",
+            "input_tokens": 116396
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "0991a4580de14c33a569ef36b779af1e",
+            "layer": "provider_usage",
+            "input_tokens": 116396,
+            "output_tokens": 208,
+            "cached_input_tokens": 114304,
+            "reasoning_tokens": 111
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "793ca4c324b2400d8073e3d05639c1cb",
+            "layer": "tool_batch",
+            "issued": 1,
+            "executed": 1,
+            "high_water": 4,
+            "result_budget_chars": 100000
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "dd08140ab6b1437f9a0de78fc4a2afcc",
+            "layer": "logical",
+            "system_chars": 78990,
+            "system_parts": {
+              "core_rules": 14994,
+              "tool_catalog": 45374,
+              "team_guidance": 0,
+              "web_guidance": 2665,
+              "memory_guidance": 1097,
+              "project_instructions": 0,
+              "skills_catalog": 0,
+              "mcp_guidance": 686,
+              "sessions_guidance": 1157,
+              "dispatch_guidance": 3919,
+              "teams_main_guidance": 3435,
+              "batch_guidance": 5663
+            },
+            "payload_parts": {
+              "workspace_path": 57,
+              "retrieval_seed": 107019,
+              "conversation_history": 167903,
+              "recalled_memories": 1705,
+              "goal": 168,
+              "instruction": 1596,
+              "budget_status": 34,
+              "framing": 8
+            },
+            "retrieval_parts": {
+              "repository_structure": 85678,
+              "file_outlines": 8156,
+              "file_contents": 18,
+              "planner_evidence": 11834,
+              "diagnostics_excerpt": 24,
+              "snapshot_stats": 82,
+              "graph_neighbor_files": 1202,
+              "framing": 8
+            },
+            "schema_chars": 3696,
+            "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "af38e6b8c5704fa0883b482a73eb8354",
+            "layer": "physical",
+            "parts": {
+              "instructions": 85250,
+              "input": 379613,
+              "tools": 4136,
+              "tool_choice": 24,
+              "framing": 5
+            },
+            "total_chars": 469028,
+            "estimated_tokens": 117257,
+            "estimate_method": "serialized_chars/4"
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "dea1f9fa2bca4d87b9ec3a0528dcc9dd",
+            "layer": "reported",
+            "input_tokens": 117826
+          },
+          {
+            "trace": "816d82e45e0e42b1a316d519b337abda",
+            "kind": "context",
+            "parent": "dea1f9fa2bca4d87b9ec3a0528dcc9dd",
+            "layer": "provider_usage",
+            "input_tokens": 117826,
+            "output_tokens": 460,
+            "cached_input_tokens": 115328,
+            "reasoning_tokens": 101
+          }
+        ],
+        "milestones": {
+          "provider.first_content": {
+            "calls": 7,
+            "mean_ms": 5088.086845142857,
+            "max_ms": 6607.454708
+          },
+          "controller.response_published": {
+            "calls": 1,
+            "mean_ms": 1.265666,
+            "max_ms": 1.265666
+          }
+        },
+        "blocks": [
+          {
+            "block": "provider.stream",
+            "calls": 7,
+            "inclusive_ms": 50010.00475,
+            "self_ms": 34318.695709,
+            "p50_ms": 6765.652084,
+            "p95_ms": 10832.688084,
+            "max_ms": 10832.688084
+          },
+          {
+            "block": "provider.response_headers",
+            "calls": 7,
+            "inclusive_ms": 15691.309041,
+            "self_ms": 15691.309041,
+            "p50_ms": 2081.347208,
+            "p95_ms": 3217.955667,
+            "max_ms": 3217.955667
+          },
+          {
+            "block": "controller.turn",
+            "calls": 1,
+            "inclusive_ms": 50698.246833,
+            "self_ms": 320.270417,
+            "p50_ms": 50698.246833,
+            "p95_ms": 50698.246833,
+            "max_ms": 50698.246833
+          },
+          {
+            "block": "model.step",
+            "calls": 7,
+            "inclusive_ms": 50306.573083,
+            "self_ms": 98.489289,
+            "p50_ms": 6799.828,
+            "p95_ms": 10855.828125,
+            "max_ms": 10855.828125
+          },
+          {
+            "block": "provider.request",
+            "calls": 7,
+            "inclusive_ms": 50173.843251,
+            "self_ms": 89.875541,
+            "p50_ms": 6778.246334,
+            "p95_ms": 10843.098375,
+            "max_ms": 10843.098375
+          },
+          {
+            "block": "provider.auth",
+            "calls": 7,
+            "inclusive_ms": 73.96296,
+            "self_ms": 73.96296,
+            "p50_ms": 0.237125,
+            "p95_ms": 72.337792,
+            "max_ms": 72.337792
+          },
+          {
+            "block": "tool.search_code",
+            "calls": 2,
+            "inclusive_ms": 63.775583,
+            "self_ms": 63.775583,
+            "p50_ms": 26.942333,
+            "p95_ms": 36.83325,
+            "max_ms": 36.83325
+          },
+          {
+            "block": "context.system_prompt",
+            "calls": 7,
+            "inclusive_ms": 32.58521,
+            "self_ms": 32.58521,
+            "p50_ms": 4.372667,
+            "p95_ms": 6.380667,
+            "max_ms": 6.380667
+          },
+          {
+            "block": "tool.read_file",
+            "calls": 4,
+            "inclusive_ms": 7.62775,
+            "self_ms": 7.62775,
+            "p50_ms": 1.146625,
+            "p95_ms": 3.356959,
+            "max_ms": 3.356959
+          },
+          {
+            "block": "controller.user_turn",
+            "calls": 1,
+            "inclusive_ms": 50711.20775,
+            "self_ms": 6.768292,
+            "p50_ms": 50711.20775,
+            "p95_ms": 50711.20775,
+            "max_ms": 50711.20775
+          },
+          {
+            "block": "controller.handle_message",
+            "calls": 1,
+            "inclusive_ms": 50717.942458,
+            "self_ms": 6.734708,
+            "p50_ms": 50717.942458,
+            "p95_ms": 50717.942458,
+            "max_ms": 50717.942458
+          },
+          {
+            "block": "controller.setup_and_loop",
+            "calls": 1,
+            "inclusive_ms": 50703.101458,
+            "self_ms": 4.765041,
+            "p50_ms": 50703.101458,
+            "p95_ms": 50703.101458,
+            "max_ms": 50703.101458
+          },
+          {
+            "block": "context.payload",
+            "calls": 7,
+            "inclusive_ms": 1.575958,
+            "self_ms": 1.575958,
+            "p50_ms": 0.211917,
+            "p95_ms": 0.321542,
+            "max_ms": 0.321542
+          },
+          {
+            "block": "controller.persist_and_publish",
+            "calls": 1,
+            "inclusive_ms": 1.338,
+            "self_ms": 1.338,
+            "p50_ms": 1.338,
+            "p95_ms": 1.338,
+            "max_ms": 1.338
+          },
+          {
+            "block": "context.retrieval_seed",
+            "calls": 1,
+            "inclusive_ms": 0.089584,
+            "self_ms": 0.089584,
+            "p50_ms": 0.089584,
+            "p95_ms": 0.089584,
+            "max_ms": 0.089584
+          },
+          {
+            "block": "provider.rate_limit_wait",
+            "calls": 7,
+            "inclusive_ms": 0.079375,
+            "self_ms": 0.079375,
+            "p50_ms": 0.009125,
+            "p95_ms": 0.024167,
+            "max_ms": 0.024167
+          },
+          {
+            "block": "controller.backend_turn",
+            "calls": 1,
+            "inclusive_ms": 50718.016,
+            "self_ms": 0.073542,
+            "p50_ms": 50718.016,
+            "p95_ms": 50718.016,
+            "max_ms": 50718.016
+          }
+        ],
+        "functions": [
+          {
+            "function": "encoder.py:334:_iterencode_dict",
+            "calls": 95144,
+            "self_ms": 14.25064,
+            "inclusive_ms": 19.473506
+          },
+          {
+            "function": "encoder.py:278:_iterencode_list",
+            "calls": 32046,
+            "self_ms": 4.331696,
+            "inclusive_ms": 23.135520000000003
+          },
+          {
+            "function": "encoder.py:414:_iterencode",
+            "calls": 28882,
+            "self_ms": 2.970616,
+            "inclusive_ms": 26.107637
+          },
+          {
+            "function": "encoder.py:183:encode",
+            "calls": 7,
+            "self_ms": 1.8550710000000001,
+            "inclusive_ms": 28.402792000000005
+          },
+          {
+            "function": "~:0:<built-in method builtins.isinstance>",
+            "calls": 24479,
+            "self_ms": 1.6902910000000002,
+            "inclusive_ms": 1.6902910000000002
+          },
+          {
+            "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+            "calls": 15,
+            "self_ms": 1.2982910000000003,
+            "inclusive_ms": 1.2982910000000003
+          },
+          {
+            "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+            "calls": 9387,
+            "self_ms": 1.2942380000000002,
+            "inclusive_ms": 1.2942380000000002
+          },
+          {
+            "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+            "calls": 7,
+            "self_ms": 0.80808,
+            "inclusive_ms": 31.07629
+          },
+          {
+            "function": "~:0:<built-in method builtins.sorted>",
+            "calls": 2226,
+            "self_ms": 0.794784,
+            "inclusive_ms": 0.794784
+          },
+          {
+            "function": "~:0:<built-in method builtins.id>",
+            "calls": 2723,
+            "self_ms": 0.658891,
+            "inclusive_ms": 0.658891
+          },
+          {
+            "function": "~:0:<method 'join' of 'str' objects>",
+            "calls": 7,
+            "self_ms": 0.401458,
+            "inclusive_ms": 0.401458
+          },
+          {
+            "function": "~:0:<method 'replace' of 'str' objects>",
+            "calls": 14,
+            "self_ms": 0.246085,
+            "inclusive_ms": 0.246085
+          },
+          {
+            "function": "__init__.py:183:dumps",
+            "calls": 7,
+            "self_ms": 0.209168,
+            "inclusive_ms": 28.614791999999998
+          },
+          {
+            "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+            "calls": 7,
+            "self_ms": 0.19716300000000003,
+            "inclusive_ms": 0.27050100000000005
+          },
+          {
+            "function": "~:0:<method 'items' of 'dict' objects>",
+            "calls": 2226,
+            "self_ms": 0.193379,
+            "inclusive_ms": 0.193379
+          },
+          {
+            "function": "~:0:<method 'get' of 'dict' objects>",
+            "calls": 1414,
+            "self_ms": 0.16565100000000002,
+            "inclusive_ms": 0.16565100000000002
+          },
+          {
+            "function": "~:0:<built-in method builtins.any>",
+            "calls": 35,
+            "self_ms": 0.14996400000000001,
+            "inclusive_ms": 0.684543
+          },
+          {
+            "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+            "calls": 308,
+            "self_ms": 0.139626,
+            "inclusive_ms": 0.183259
+          },
+          {
+            "function": "agentd/memory/config.py:26:from_env",
+            "calls": 7,
+            "self_ms": 0.08567,
+            "inclusive_ms": 0.31383300000000003
+          },
+          {
+            "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+            "calls": 252,
+            "self_ms": 0.08564500000000001,
+            "inclusive_ms": 0.12057899999999999
+          },
+          {
+            "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+            "calls": 280,
+            "self_ms": 0.080838,
+            "inclusive_ms": 0.11758199999999999
+          },
+          {
+            "function": "<frozen os>:709:__getitem__",
+            "calls": 126,
+            "self_ms": 0.08016300000000001,
+            "inclusive_ms": 0.19395500000000002
+          },
+          {
+            "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+            "calls": 105,
+            "self_ms": 0.064162,
+            "inclusive_ms": 0.097161
+          },
+          {
+            "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+            "calls": 7,
+            "self_ms": 0.05733300000000001,
+            "inclusive_ms": 0.062876
+          },
+          {
+            "function": "<frozen os>:791:encode",
+            "calls": 126,
+            "self_ms": 0.05454899999999999,
+            "inclusive_ms": 0.090498
+          },
+          {
+            "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+            "calls": 7,
+            "self_ms": 0.049626,
+            "inclusive_ms": 0.049626
+          },
+          {
+            "function": "main.py:270:__init__",
+            "calls": 6,
+            "self_ms": 0.04100000000000001,
+            "inclusive_ms": 0.08500100000000001
+          },
+          {
+            "function": "<frozen _collections_abc>:804:get",
+            "calls": 126,
+            "self_ms": 0.04017,
+            "inclusive_ms": 0.23412500000000003
+          },
+          {
+            "function": "<string>:2:__hash__",
+            "calls": 49,
+            "self_ms": 0.03566500000000001,
+            "inclusive_ms": 0.04683
+          },
+          {
+            "function": "agentd/chat/controller_prompts.py:1076:record",
+            "calls": 70,
+            "self_ms": 0.035384,
+            "inclusive_ms": 0.047714
+          },
+          {
+            "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+            "calls": 7,
+            "self_ms": 0.027043,
+            "inclusive_ms": 0.340876
+          },
+          {
+            "function": "encoder.py:205:iterencode",
+            "calls": 7,
+            "self_ms": 0.026126,
+            "inclusive_ms": 0.036418
+          },
+          {
+            "function": "~:0:<method 'encode' of 'str' objects>",
+            "calls": 126,
+            "self_ms": 0.025160000000000002,
+            "inclusive_ms": 0.025160000000000002
+          },
+          {
+            "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+            "calls": 56,
+            "self_ms": 0.023333,
+            "inclusive_ms": 0.033499
+          },
+          {
+            "function": "agentd/tools/batching.py:29:batching_enabled",
+            "calls": 14,
+            "self_ms": 0.019246,
+            "inclusive_ms": 0.07949900000000001
+          },
+          {
+            "function": "~:0:<built-in method builtins.len>",
+            "calls": 168,
+            "self_ms": 0.016957000000000003,
+            "inclusive_ms": 0.016957000000000003
+          },
+          {
+            "function": "~:0:<method 'startswith' of 'str' objects>",
+            "calls": 98,
+            "self_ms": 0.016588000000000002,
+            "inclusive_ms": 0.016588000000000002
+          },
+          {
+            "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+            "calls": 7,
+            "self_ms": 0.015834,
+            "inclusive_ms": 0.064501
+          },
+          {
+            "function": "<frozen os>:795:decode",
+            "calls": 28,
+            "self_ms": 0.014168,
+            "inclusive_ms": 0.023294
+          },
+          {
+            "function": "encoder.py:224:floatstr",
+            "calls": 10,
+            "self_ms": 0.011374000000000002,
+            "inclusive_ms": 0.011374000000000002
+          },
+          {
+            "function": "~:0:<method 'update' of 'dict' objects>",
+            "calls": 5,
+            "self_ms": 0.010043000000000002,
+            "inclusive_ms": 0.010043000000000002
+          },
+          {
+            "function": "~:0:<built-in method builtins.hash>",
+            "calls": 42,
+            "self_ms": 0.009498000000000001,
+            "inclusive_ms": 0.009498000000000001
+          },
+          {
+            "function": "encoder.py:260:_make_iterencode",
+            "calls": 3,
+            "self_ms": 0.003875000000000001,
+            "inclusive_ms": 0.004125
+          },
+          {
+            "function": "~:0:<method 'decode' of 'bytes' objects>",
+            "calls": 8,
+            "self_ms": 0.0037910000000000005,
+            "inclusive_ms": 0.0037910000000000005
+          },
+          {
+            "function": "agentd/prompting/tagged.py:81:is_main",
+            "calls": 7,
+            "self_ms": 0.0021240000000000005,
+            "inclusive_ms": 0.0021240000000000005
+          },
+          {
+            "function": "agentd/chat/controller.py:687:_retrieval_seed",
+            "calls": 1,
+            "self_ms": 0.0007080000000000001,
+            "inclusive_ms": 0.0007080000000000001
+          }
+        ],
+        "note": "Self time excludes direct child spans, but includes awaits. It is not CPU time. Concurrent span totals may overlap. First-content latency is a milestone, not an additional execution block. Function profiles cover synchronous prompt construction only; timings include profiler overhead."
+      },
+      "actions": [
+        {
+          "artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/34e9d21929fa4627a21f775f004ab8a0/controller-turn-00.json",
+          "type": "tool_calls",
+          "calls": [
+            {
+              "id": "verify-exec-tool-descriptions",
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/exec_sessions/tool_source.py",
+                "start_line": 41,
+                "end_line": 105
+              }
+            }
+          ]
+        },
+        {
+          "artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/34e9d21929fa4627a21f775f004ab8a0/controller-turn-01.json",
+          "type": "tool_calls",
+          "calls": [
+            {
+              "id": "read-planning-catalog",
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/planning/registry.py",
+                "start_line": 30,
+                "end_line": 115
+              }
+            }
+          ]
+        },
+        {
+          "artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/34e9d21929fa4627a21f775f004ab8a0/controller-turn-02.json",
+          "type": "tool_calls",
+          "calls": [
+            {
+              "id": "check-empty-descriptions",
+              "tool": "search_code",
+              "args": {
+                "pattern": "description=\"\"",
+                "path_filter": "services/agentd-py/agentd/**/*.py",
+                "fixed_strings": true,
+                "context_lines": 1
+              }
+            }
+          ]
+        },
+        {
+          "artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/34e9d21929fa4627a21f775f004ab8a0/controller-turn-03.json",
+          "type": "tool_calls",
+          "calls": [
+            {
+              "id": "find-spec-tool-descriptions",
+              "tool": "search_code",
+              "args": {
+                "pattern": "description",
+                "path_filter": "docs/superpowers/specs/**/*.md",
+                "context_lines": 2
+              }
+            }
+          ]
+        },
+        {
+          "artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/34e9d21929fa4627a21f775f004ab8a0/controller-turn-04.json",
+          "type": "tool_calls",
+          "calls": [
+            {
+              "id": "read-tool-spec-section",
+              "tool": "read_file",
+              "args": {
+                "path": "docs/superpowers/specs/2026-09-29-subagents-design.md",
+                "start_line": 311,
+                "end_line": 325
+              }
+            }
+          ]
+        },
+        {
+          "artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/34e9d21929fa4627a21f775f004ab8a0/controller-turn-05.json",
+          "type": "tool_calls",
+          "calls": [
+            {
+              "id": "read-adjacent-tool-spec",
+              "tool": "read_file",
+              "args": {
+                "path": "docs/superpowers/specs/2026-09-29-subagents-design.md",
+                "start_line": 326,
+                "end_line": 330
+              }
+            }
+          ]
+        },
+        {
+          "artifact": "/Users/pradeepkumar/projects/AI editor/.crucible/state/artifacts/chat/chat-679ae719062e/34e9d21929fa4627a21f775f004ab8a0/controller-turn-06.json",
+          "type": "answer",
+          "calls": []
+        }
+      ],
+      "timing_summary": {
+        "outcome": "answered",
+        "provider_seconds": 50.173843251,
+        "model_requests": 7,
+        "tool_calls": 6,
+        "tool_execution_union_ms": 71.403333
+      },
+      "tool_timeline": [
+        {
+          "call_index": 0,
+          "id": "verify-exec-tool-descriptions",
+          "tool": "read_file",
+          "args": {
+            "path": "services/agentd-py/agentd/exec_sessions/tool_source.py",
+            "start_line": 41,
+            "end_line": 105
+          },
+          "issued_seconds": 7.843276208,
+          "result_seconds": 7.855949458,
+          "next_call_or_answer_gap_seconds": 6.021469666999999,
+          "next_event": "tool_call",
+          "harness_start_seconds": 7.85049425,
+          "harness_end_seconds": 7.851640875,
+          "duration_ms": 1.146625
+        },
+        {
+          "call_index": 1,
+          "id": "read-planning-catalog",
+          "tool": "read_file",
+          "args": {
+            "path": "services/agentd-py/agentd/planning/registry.py",
+            "start_line": 30,
+            "end_line": 115
+          },
+          "issued_seconds": 13.877419125,
+          "result_seconds": 13.890222708,
+          "next_call_or_answer_gap_seconds": 6.802550792000002,
+          "next_event": "tool_call",
+          "harness_start_seconds": 13.882322291,
+          "harness_end_seconds": 13.88567925,
+          "duration_ms": 3.356959
+        },
+        {
+          "call_index": 2,
+          "id": "check-empty-descriptions",
+          "tool": "search_code",
+          "args": {
+            "pattern": "description=\"\"",
+            "path_filter": "services/agentd-py/agentd/**/*.py",
+            "fixed_strings": true,
+            "context_lines": 1
+          },
+          "issued_seconds": 20.6927735,
+          "result_seconds": 20.737160333,
+          "next_call_or_answer_gap_seconds": 7.140874,
+          "next_event": "tool_call",
+          "harness_start_seconds": 20.697406541,
+          "harness_end_seconds": 20.734239791,
+          "duration_ms": 36.83325
+        },
+        {
+          "call_index": 3,
+          "id": "find-spec-tool-descriptions",
+          "tool": "search_code",
+          "args": {
+            "pattern": "description",
+            "path_filter": "docs/superpowers/specs/**/*.md",
+            "context_lines": 2
+          },
+          "issued_seconds": 27.878034333,
+          "result_seconds": 27.917967416,
+          "next_call_or_answer_gap_seconds": 5.5676260840000005,
+          "next_event": "tool_call",
+          "harness_start_seconds": 27.886911,
+          "harness_end_seconds": 27.913853333,
+          "duration_ms": 26.942333
+        },
+        {
+          "call_index": 4,
+          "id": "read-tool-spec-section",
+          "tool": "read_file",
+          "args": {
+            "path": "docs/superpowers/specs/2026-09-29-subagents-design.md",
+            "start_line": 311,
+            "end_line": 325
+          },
+          "issued_seconds": 33.4855935,
+          "result_seconds": 33.502090708,
+          "next_call_or_answer_gap_seconds": 6.358816292,
+          "next_event": "tool_call",
+          "harness_start_seconds": 33.49415125,
+          "harness_end_seconds": 33.496436333,
+          "duration_ms": 2.285083
+        },
+        {
+          "call_index": 5,
+          "id": "read-adjacent-tool-spec",
+          "tool": "read_file",
+          "args": {
+            "path": "docs/superpowers/specs/2026-09-29-subagents-design.md",
+            "start_line": 326,
+            "end_line": 330
+          },
+          "issued_seconds": 39.860907,
+          "result_seconds": 39.86803625,
+          "next_call_or_answer_gap_seconds": 10.863190749999994,
+          "next_event": "chat_response",
+          "harness_start_seconds": 39.864391833,
+          "harness_end_seconds": 39.865230916,
+          "duration_ms": 0.839083
+        }
+      ]
+    }
+  ],
+  "configuration": "Current backend settings unchanged",
+  "profiling_note": "Wall spans and synchronous cProfile; includes profiler overhead",
+  "thread_id": "chat-679ae719062e",
+  "model_configuration": {
+    "backend": "chatgpt",
+    "model": "gpt-5.6-luna",
+    "uses_chatgpt_plan": true,
+    "context_window": 272000,
+    "reasoning_effort": "medium"
+  },
+  "continuation_of": {
+    "file": "docs/controller-three-turn-profile-2026-10-11.json",
+    "turn": 3,
+    "same_chat": true
+  }
+}

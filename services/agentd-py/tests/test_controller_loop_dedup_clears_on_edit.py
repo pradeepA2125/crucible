@@ -40,8 +40,11 @@ async def test_repeated_tool_call_after_edit_is_not_blocked_as_duplicate(tmp_pat
         patch_engine=PatchEngine())
     reg = AggregatingToolRegistry(
         [BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
-    same_call = {"type": "tool_call", "thought": "list it",
-                 "tool": "list_directory", "args": {"path": "."}}
+    same_call = {
+        "type": "tool_calls",
+        "thought": "list it",
+        "calls": [{"id": "call1", "tool": "list_directory", "args": {"path": "."}}],
+    }
     steps = [
         same_call,
         {"type": "edit", "thought": "fix it", "patch_ops": [
@@ -77,8 +80,11 @@ async def test_identical_tool_call_within_same_state_is_still_blocked(tmp_path: 
     sm = ControllerPhaseSM(start="ACTIVE")
     reg = AggregatingToolRegistry(
         [BuiltinToolSource(shadow_root=real, real_workspace_path=real)])
-    same_call = {"type": "tool_call", "thought": "list it",
-                 "tool": "list_directory", "args": {"path": "."}}
+    same_call = {
+        "type": "tool_calls",
+        "thought": "list it",
+        "calls": [{"id": "call1", "tool": "list_directory", "args": {"path": "."}}],
+    }
     steps = [same_call, same_call, {"type": "submit_changes", "thought": "d", "summary": "d"}]
     loop = ControllerLoop(
         ScriptedReasoningEngine(None, [], controller_step_responses=steps),

@@ -56,7 +56,11 @@ async def test_empty_answer_is_rejected_and_retried(tmp_path: Path):
 async def test_empty_tool_call_is_rejected_and_retried(tmp_path: Path):
     # A tool_call with no 'tool' (or empty args) is useless — reject + retry, don't execute "".
     steps = [
-        {"type": "tool_call", "thought": "explore", "tool": "", "args": {}},
+        {
+            "type": "tool_calls",
+            "thought": "explore",
+            "calls": [{"id": "call1", "tool": "", "args": {}}],
+        },
         {"type": "answer", "thought": "ok", "answer": "done"},
     ]
     out = await _loop(tmp_path, steps).run(

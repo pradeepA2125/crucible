@@ -1,0 +1,209 @@
+{
+  "date": "2026-10-11",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "selected_plan": "Yahoo account selected by user",
+  "method": "Authorized installed-editor tests. Backend restarted after changing only default native action descriptions. Eight-action stop bound was not reached.",
+  "native_descriptions_loaded": {
+    "tool_calls": "Execute workspace tools only when their results are needed to fulfill the user request. A greeting needs no tools.",
+    "answer": "Finish the user turn with your final response. Use directly for greetings and conversational requests that need no repository tools."
+  },
+  "runs": [
+    {
+      "label": "before_descriptions_hello",
+      "artifact_directory": ".crucible/state/artifacts/chat/chat-36d3070c0cbe/78269f45653644729a74ca2b84dc2dd7",
+      "goal": "hello",
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "A greeting needs no repository work, but I will perform a harmless workspace capability check before replying.",
+          "calls": [
+            {
+              "tool": "read_env_profile",
+              "args": {},
+              "id": "env-profile",
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "The user is greeting; I\u2019ll make a lightweight workspace check while responding conversationally.",
+          "calls": [
+            {
+              "tool": "list_directory",
+              "args": {
+                "path": "."
+              },
+              "id": "hello-check",
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "A greeting needs no repository change; checking durable context is the least intrusive available tool before replying.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "workspace context",
+                "verbatim": false
+              },
+              "id": "greeting-context",
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Acknowledge the greeting while checking whether there is any relevant prior conversation context.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "greeting or current user request",
+                "verbatim": false
+              },
+              "id": "greeting-followup",
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "A greeting needs no repository change; I\u2019ll check whether there is any relevant prior context before replying.",
+          "calls": [
+            {
+              "tool": "recall",
+              "args": {
+                "query": "hello greeting",
+                "verbatim": false
+              },
+              "id": "hello-context",
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "answer",
+          "thought": "Responding to the greeting without changing the workspace.",
+          "answer": "Hello! How can I help you today?"
+        }
+      ],
+      "outcome": "answer",
+      "workspace_tools": [
+        "read_env_profile",
+        "list_directory",
+        "recall",
+        "recall",
+        "recall"
+      ],
+      "all_tools_successful": true,
+      "usage_from_editor_ui": {
+        "requests": 6,
+        "input_tokens": 311446,
+        "cached_input_tokens": 252032,
+        "output_tokens": 1085
+      }
+    },
+    {
+      "label": "after_descriptions_hello",
+      "artifact_directory": ".crucible/state/artifacts/chat/chat-f3c2dff2ec98/33dc157b1be94396bc45825596fd123c",
+      "goal": "hello",
+      "actions": [
+        {
+          "type": "answer",
+          "thought": "Responding to the greeting without repository work.",
+          "answer": "Hello! How can I help?"
+        }
+      ],
+      "outcome": "answer",
+      "workspace_tools": [],
+      "all_tools_successful": true,
+      "usage_from_editor_ui": {
+        "requests": 1,
+        "input_tokens": 49277,
+        "cached_input_tokens": 0,
+        "output_tokens": 91
+      }
+    },
+    {
+      "label": "after_descriptions_file_explanation",
+      "artifact_directory": ".crucible/state/artifacts/chat/chat-f3c2dff2ec98/66c47dca8f854427b2848900d20e8cdb",
+      "goal": "Read services/agentd-py/agentd/chat/batch_history.py and briefly explain what interrupted_history does.",
+      "actions": [
+        {
+          "type": "tool_calls",
+          "thought": "Locate the requested function before reading its implementation.",
+          "calls": [
+            {
+              "tool": "search_code",
+              "args": {
+                "pattern": "interrupted_history",
+                "path_filter": "services/agentd-py/agentd/chat/batch_history.py",
+                "context_lines": 5
+              },
+              "id": "search-interrupted-history",
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "Read the complete function before explaining its behavior.",
+          "calls": [
+            {
+              "tool": "read_file",
+              "args": {
+                "path": "services/agentd-py/agentd/chat/batch_history.py"
+              },
+              "id": "read-batch-history",
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "tool_calls",
+          "thought": "The function body is already read; make one targeted lookup to confirm its interruption markers before summarizing.",
+          "calls": [
+            {
+              "tool": "search_code",
+              "args": {
+                "pattern": "status=\"interrupted\"",
+                "path_filter": "services/agentd-py/agentd/chat/batch_history.py",
+                "context_lines": 3
+              },
+              "id": "confirm-interruption-marker",
+              "execution": "auto"
+            }
+          ]
+        },
+        {
+          "type": "answer",
+          "thought": "The function behavior is fully established by the file read.",
+          "answer": "`interrupted_history` returns a new history list without replaying anything. For each entry, if it is a `tool_result` with a `batch_id` whose status is `pending`, `waiting_approval`, or `running`, it copies the entry and marks it as `status=\"interrupted\"`, `is_error=True`, with content explaining that the prior execution was not completed or replayed. All other entries are copied unchanged. See `services/agentd-py/agentd/chat/batch_history.py:6-19`."
+        }
+      ],
+      "outcome": "answer",
+      "workspace_tools": [
+        "search_code",
+        "read_file",
+        "search_code"
+      ],
+      "all_tools_successful": true,
+      "usage_from_editor_ui": {
+        "requests": 4,
+        "input_tokens": 207683,
+        "cached_input_tokens": 201216,
+        "output_tokens": 598
+      }
+    }
+  ],
+  "limitations": [
+    "One before/after live greeting pair; stochastic model outputs and independently collected context mean this is not proof of a universal fix.",
+    "The file-explanation follow-up completed, but its third tool was a redundant confirmation search.",
+    "Sol/Terra and every performance-setting combination were not retested.",
+    "The first migration commit responsible for the behavioral change was not isolated."
+  ]
+}

@@ -11,29 +11,45 @@ from agentd.prompting.tagged import RenderContext
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
 READONLY = RenderContext(audience="child", permission="plan", tools=frozenset({"read_file"}),
-                         base_types=frozenset({"tool_call", "progress", "report"}),
+                         base_types=frozenset({"tool_calls", "progress", "report"}),
                          agent_id="agent-1", agent_label="survey")
 DEFAULT = RenderContext(audience="child", permission="default", tools=frozenset({"run_command"}),
-                        base_types=frozenset({"tool_call", "edit", "progress", "report"}))
+                        base_types=frozenset({"tool_calls", "edit", "progress", "report"}))
 
 
 def test_only_read_only_children_are_corrected() -> None:
-    call = {"type": "tool_call", "tool": "run_command", "args": {"command": "ls"}}
-    mcp = {"type": "tool_call", "tool": "mcp__gh__create_issue", "args": {}}
-    assert _permission_correction(call, "tool_call", READONLY) == (
+    call = {
+        "type": "tool_calls",
+        "thought": "use the tool",
+        "calls": [{"id": "call1", "tool": "run_command", "args": {"command": "ls"}}],
+    }
+    mcp = {
+        "type": "tool_calls",
+        "thought": "use the tool",
+        "calls": [{"id": "call1", "tool": "mcp__gh__create_issue", "args": {}}],
+    }
+    assert _permission_correction(call, "tool_calls", READONLY) == (
         "You are read-only for this task: `run_command` isn't available to you. Investigate "
         "with the read tools and put your findings in `report`.")
-    assert _permission_correction(mcp, "tool_call", READONLY) is not None
-    assert _permission_correction(call, "tool_call", DEFAULT) is None
-    assert _permission_correction(call, "tool_call", RenderContext.main()) is None
-    read = {"type": "tool_call", "tool": "read_file", "args": {"path": "f.py"}}
-    assert _permission_correction(read, "tool_call", READONLY) is None
+    assert _permission_correction(mcp, "tool_calls", READONLY) is not None
+    assert _permission_correction(call, "tool_calls", DEFAULT) is None
+    assert _permission_correction(call, "tool_calls", RenderContext.main()) is None
+    read = {
+        "type": "tool_calls",
+        "thought": "use the tool",
+        "calls": [{"id": "call1", "tool": "read_file", "args": {"path": "f.py"}}],
+    }
+    assert _permission_correction(read, "tool_calls", READONLY) is None
 
 
 @pytest.mark.asyncio
 async def test_the_correction_is_in_the_chain(tmp_path: Path) -> None:
     steps = [
-        {"type": "tool_call", "thought": "t", "tool": "run_command", "args": {"command": "ls"}},
+        {
+            "type": "tool_calls",
+            "thought": "t",
+            "calls": [{"id": "call1", "tool": "run_command", "args": {"command": "ls"}}],
+        },
         {"type": "submit_changes", "thought": "d", "summary": "ok"},
     ]
     loop = ControllerLoop(
@@ -49,10 +65,14 @@ async def test_the_correction_is_in_the_chain(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("tool", ["web_search", "web_fetch"])
 def test_native_search_permission_correction(tool):
-    call = {"type": "tool_call", "tool": tool, "args": {}}
-    assert _permission_correction(call, "tool_call", READONLY) is not None
-    assert _permission_correction(call, "tool_call", DEFAULT) is None
-    assert _permission_correction(call, "tool_call", RenderContext.main()) is None
+    call = {
+        "type": "tool_calls",
+        "thought": "use the tool",
+        "calls": [{"id": "call1", "tool": tool, "args": {}}],
+    }
+    assert _permission_correction(call, "tool_calls", READONLY) is not None
+    assert _permission_correction(call, "tool_calls", DEFAULT) is None
+    assert _permission_correction(call, "tool_calls", RenderContext.main()) is None
     assert _permission_correction(call, "progress", READONLY) is None
 
 
@@ -77,7 +97,11 @@ async def test_native_search_corrected_before_dispatch(tmp_path, tool):
 
     spy = Spy()
     steps = [
-        {"type": "tool_call", "thought": "t", "tool": tool, "args": {}},
+        {
+            "type": "tool_calls",
+            "thought": "t",
+            "calls": [{"id": "call1", "tool": tool, "args": {}}],
+        },
         {"type": "submit_changes", "thought": "d", "summary": "ok"},
     ]
     loop = ControllerLoop(

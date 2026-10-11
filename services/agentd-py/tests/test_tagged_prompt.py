@@ -11,11 +11,11 @@ from agentd.prompting.tagged import (
 MAIN = RenderContext.main()
 CHILD = RenderContext(
     audience="child", permission="default", tools=frozenset({"write_todos"}),
-    base_types=frozenset({"tool_call", "edit", "progress", "report"}),
+    base_types=frozenset({"tool_calls", "edit", "progress", "report"}),
     agent_id="a1", agent_label="impl")
 READONLY = RenderContext(
     audience="child", permission="plan",
-    base_types=frozenset({"tool_call", "progress", "report"}),
+    base_types=frozenset({"tool_calls", "progress", "report"}),
     agent_id="a2", agent_label="survey")
 
 

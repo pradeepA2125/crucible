@@ -1,0 +1,80 @@
+{
+  "method": "Identical captured fresh hello context, all performance flags off; independent transport per request; no tools executed. Explicit editor registration.",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "rows": [
+    {
+      "variant": "current_off",
+      "repetition": 0,
+      "response": {
+        "type": "answer",
+        "thought": "Acknowledge the greeting directly.",
+        "answer": "Hello! How can I help you today?"
+      },
+      "function": "answer",
+      "seconds": 6.064
+    },
+    {
+      "variant": "response_envelope",
+      "repetition": 0,
+      "response": {
+        "type": "answer",
+        "thought": "The user is greeting and no repository action is needed.",
+        "answer": "Hello! How can I help you today?"
+      },
+      "function": "controller_step_response",
+      "seconds": 6.238
+    },
+    {
+      "variant": "explicit_descriptions",
+      "repetition": 0,
+      "response": {
+        "type": "answer",
+        "thought": "Responding to the greeting without repository work.",
+        "answer": "Hello! How can I help?"
+      },
+      "function": "answer",
+      "seconds": 5.074
+    },
+    {
+      "variant": "current_off",
+      "repetition": 1,
+      "response": {
+        "type": "answer",
+        "thought": "greeting needs no repository work",
+        "answer": "Hello! How can I help?"
+      },
+      "function": "answer",
+      "seconds": 4.648
+    },
+    {
+      "variant": "response_envelope",
+      "repetition": 1,
+      "response": {
+        "type": "answer",
+        "thought": "The user is greeting and no repository work is needed.",
+        "answer": "Hello! How can I help?"
+      },
+      "function": "controller_step_response",
+      "seconds": 3.608
+    },
+    {
+      "variant": "explicit_descriptions",
+      "repetition": 1,
+      "response": {
+        "type": "answer",
+        "thought": "Responding to the greeting without repository work.",
+        "answer": "Hello! How can I help?"
+      },
+      "function": "answer",
+      "seconds": 3.525
+    }
+  ],
+  "account": "Yahoo account selected in the live Crucible settings",
+  "limitations": [
+    "Two step-one probes per variant; no returned tools executed.",
+    "Frozen previous fresh hello context; not a current live editor context.",
+    "Current unchanged contract answered in both Yahoo trials, so this sample does not distinguish a repair.",
+    "GPT-5.6-Luna differs from the GPT-5.6-Sol/Terra used in prior failing captures."
+  ]
+}

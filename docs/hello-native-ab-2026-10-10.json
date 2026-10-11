@@ -1,0 +1,108 @@
+{
+  "method": "Replay identical captured step-01 context and model/effort; no tool execution; two trials per variant",
+  "rows": [
+    {
+      "variant": "batch_current",
+      "repetition": 0,
+      "seconds": 10.675968541007023,
+      "result": {
+        "type": "tool_calls",
+        "thought": "Check the workspace environment before offering assistance.",
+        "calls": [
+          {
+            "tool": "read_env_profile",
+            "args": {},
+            "id": "greeting-environment-check",
+            "execution": "serial",
+            "provider_call_id": "call_uUXyaLwP4ZOlGYq47MtoUDcn"
+          }
+        ]
+      }
+    },
+    {
+      "variant": "single_action",
+      "repetition": 0,
+      "seconds": 7.31955358304549,
+      "result": {
+        "type": "tool_call",
+        "thought": "Acknowledge the greeting after a lightweight workspace check has established the project context.",
+        "tool": "recall",
+        "args": {
+          "query": "project overview",
+          "verbatim": false
+        },
+        "execution": "serial"
+      }
+    },
+    {
+      "variant": "batch_explicit_terminal",
+      "repetition": 0,
+      "seconds": 9.215164166991599,
+      "result": {
+        "type": "tool_calls",
+        "thought": "Check whether there is an active workspace session before greeting.",
+        "calls": [
+          {
+            "tool": "list_sessions",
+            "args": {},
+            "execution": "auto",
+            "provider_call_id": "call_LAUIDMbUj1wLrMMuCOET5NM0"
+          }
+        ]
+      }
+    },
+    {
+      "variant": "batch_current",
+      "repetition": 1,
+      "seconds": 6.442060999979731,
+      "result": {
+        "type": "tool_calls",
+        "thought": "Acknowledge the workspace context before replying to the greeting.",
+        "calls": [
+          {
+            "tool": "list_directory",
+            "args": {
+              "path": "."
+            },
+            "id": "greeting-context",
+            "depends_on": [],
+            "after": [],
+            "execution": "serial",
+            "provider_call_id": "call_5sB7d8RMZF7Spekklz5CeyTp"
+          }
+        ]
+      }
+    },
+    {
+      "variant": "single_action",
+      "repetition": 1,
+      "seconds": 7.614721207995899,
+      "result": {
+        "type": "tool_call",
+        "thought": "Check whether prior workspace context contains a relevant greeting preference before responding.",
+        "tool": "recall",
+        "args": {
+          "query": "user greeting preference hello"
+        },
+        "execution": "serial"
+      }
+    },
+    {
+      "variant": "batch_explicit_terminal",
+      "repetition": 1,
+      "seconds": 8.859456291014794,
+      "result": {
+        "type": "tool_calls",
+        "thought": "Satisfy the required workspace-aware tool call before responding to the greeting.",
+        "calls": [
+          {
+            "tool": "read_env_profile",
+            "args": {},
+            "execution": "serial",
+            "provider_call_id": "call_HwrRn4cV66LWEdrJVGU1XPy0"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "method": "Replay identical captured step-01 context and model/effort; no tool execution; two trials per variant",
+  "rows": [
+    {
+      "variant": "native_auto",
+      "repetition": 0,
+      "seconds": 4.228840583004057,
+      "error_type": "RuntimeError",
+      "message": "the model replied without calling a function: '{\"type\":\"answer\",\"thought\":\"The user is greeting; no repository work is needed.\",\"answer\":\"Hello! How can I help?\"}'"
+    },
+    {
+      "variant": "action_envelope",
+      "repetition": 0,
+      "seconds": 7.721994458988775,
+      "result": {
+        "action": {
+          "type": "answer",
+          "thought": "The user offered a greeting and needs no repository action.",
+          "answer": "Hello! How can I help with the project?"
+        }
+      }
+    },
+    {
+      "variant": "namespace_free",
+      "repetition": 0,
+      "seconds": 9.262267332989722,
+      "result": {
+        "type": "tool_calls",
+        "thought": "Acknowledge the greeting while satisfying the required tool call.",
+        "calls": [
+          {
+            "tool": "recall",
+            "args": {
+              "query": "current workspace context",
+              "verbatim": false
+            },
+            "id": "greeting-context",
+            "execution": "serial",
+            "provider_call_id": "call_LK3rugJBYUdta1Mh3hoVxXy2"
+          }
+        ]
+      }
+    },
+    {
+      "variant": "clean_greeting",
+      "repetition": 0,
+      "seconds": 3.4530297910096124,
+      "result": {
+        "type": "answer",
+        "thought": "Responding to the user's greeting directly, as required.",
+        "answer": "Hello! How can I help?",
+        "provider_call_id": "call_2NtTEt9X7wkKnaQ1Y9qqBGx6"
+      }
+    }
+  ]
+}

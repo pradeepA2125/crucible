@@ -1,0 +1,69 @@
+{
+  "method": "Replay identical captured step-01 context and model/effort; no tool execution; two trials per variant",
+  "rows": [
+    {
+      "variant": "pretty_catalog",
+      "repetition": 0,
+      "seconds": 6.228854709013831,
+      "result": {
+        "type": "tool_calls",
+        "thought": "Check the project environment before offering assistance.",
+        "calls": [
+          {
+            "tool": "read_env_profile",
+            "args": {},
+            "id": "greeting-env-profile",
+            "execution": "serial",
+            "provider_call_id": "call_1TZbrqCStvcIsb1JUviqF8Cf"
+          }
+        ]
+      }
+    },
+    {
+      "variant": "batch_fully_off",
+      "repetition": 0,
+      "seconds": 6.457448791014031,
+      "result": {
+        "type": "tool_call",
+        "thought": "Check for any prior greeting-related context before responding.",
+        "tool": "recall",
+        "args": {
+          "query": "user greeting conversation context",
+          "verbatim": false
+        }
+      }
+    },
+    {
+      "variant": "pretty_catalog",
+      "repetition": 1,
+      "seconds": 6.343640584032983,
+      "result": {
+        "type": "tool_calls",
+        "thought": "Check the project environment before offering help in the workspace.",
+        "calls": [
+          {
+            "tool": "read_env_profile",
+            "args": {},
+            "id": "greeting-env-profile",
+            "execution": "serial",
+            "provider_call_id": "call_MS19kZ7TQiHHQsUqsgDFn1kE"
+          }
+        ]
+      }
+    },
+    {
+      "variant": "batch_fully_off",
+      "repetition": 1,
+      "seconds": 5.921064666996244,
+      "result": {
+        "type": "tool_call",
+        "thought": "Acknowledge the user after checking for any relevant workspace context.",
+        "tool": "recall",
+        "args": {
+          "query": "greeting hello",
+          "verbatim": false
+        }
+      }
+    }
+  ]
+}

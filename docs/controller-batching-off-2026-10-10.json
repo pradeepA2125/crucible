@@ -1,0 +1,319 @@
+{
+  "configuration": {
+    "toolBatching": false,
+    "adaptiveReads": true,
+    "compactContext": true,
+    "model": "gpt-5.6-sol",
+    "reasoning": "medium",
+    "reload": true,
+    "backend_port": 60279
+  },
+  "trials": [
+    {
+      "artifacts": ".crucible/state/artifacts/chat/chat-2e2f45375a17/c648b1507e20425d9861442fbd511ba1",
+      "goal": "hello",
+      "actions": [
+        {
+          "file": "controller-turn-00.json",
+          "saved_at": 1791647207.1889977,
+          "action": {
+            "type": "tool_call",
+            "thought": "check whether there is a saved conversational preference relevant to greeting the user",
+            "tool": "recall",
+            "args": {
+              "query": "user greeting or conversational preferences"
+            }
+          }
+        },
+        {
+          "file": "controller-turn-01.json",
+          "saved_at": 1791647211.784587,
+          "action": {
+            "type": "answer",
+            "thought": "The user is greeting; no repository work is needed.",
+            "answer": "Hello! How can I help you today?"
+          }
+        }
+      ],
+      "answered": true
+    },
+    {
+      "artifacts": ".crucible/state/artifacts/chat/chat-fa29319a32d2/044c603f9d4448e2a1b65adba96a0bf3",
+      "goal": "hello",
+      "actions": [
+        {
+          "file": "controller-turn-00.json",
+          "saved_at": 1791647296.0889282,
+          "action": {
+            "type": "tool_call",
+            "thought": "check whether prior context affects this greeting",
+            "tool": "recall",
+            "args": {
+              "query": "current conversation context and pending user request"
+            }
+          }
+        },
+        {
+          "file": "controller-turn-01.json",
+          "saved_at": 1791647301.645677,
+          "action": {
+            "type": "tool_call",
+            "thought": "Check whether the project has a preferred interaction context before replying.",
+            "tool": "recall",
+            "args": {
+              "query": "user communication preferences greeting"
+            }
+          }
+        },
+        {
+          "file": "controller-turn-02.json",
+          "saved_at": 1791647308.327659,
+          "action": {
+            "type": "tool_call",
+            "thought": "check whether there is any pending conversational context behind the greeting",
+            "tool": "recall",
+            "args": {
+              "query": "pending user request associated with hello greeting"
+            }
+          }
+        },
+        {
+          "file": "controller-turn-03.json",
+          "saved_at": 1791647312.461383,
+          "action": {
+            "type": "answer",
+            "thought": "The user is greeting; no repository work is needed.",
+            "answer": "Hello! How can I help you today?"
+          }
+        }
+      ],
+      "answered": true
+    },
+    {
+      "artifacts": ".crucible/state/artifacts/chat/chat-e05c414cacb1/6a798f7e772543d2b35413269ff5bf1a",
+      "goal": "hello",
+      "actions": [
+        {
+          "file": "controller-turn-00.json",
+          "saved_at": 1791647359.417379,
+          "action": {
+            "type": "tool_call",
+            "thought": "briefly confirm the workspace is available before responding",
+            "tool": "list_directory",
+            "args": {
+              "path": "."
+            }
+          }
+        },
+        {
+          "file": "controller-turn-01.json",
+          "saved_at": 1791647364.023741,
+          "action": {
+            "type": "tool_call",
+            "thought": "check whether any prior conversation context affects the greeting",
+            "tool": "recall",
+            "args": {
+              "query": "current conversation greeting hello"
+            }
+          }
+        },
+        {
+          "file": "controller-turn-02.json",
+          "saved_at": 1791647372.716292,
+          "action": {
+            "type": "tool_call",
+            "thought": "check whether there is a relevant communication preference to honor",
+            "tool": "recall",
+            "args": {
+              "query": "user communication preferences greeting response style"
+            }
+          }
+        },
+        {
+          "file": "controller-turn-03.json",
+          "saved_at": 1791647379.2568684,
+          "action": {
+            "type": "tool_call",
+            "thought": "check whether any prior background work needs attention before greeting the user",
+            "tool": "list_sessions",
+            "args": {}
+          }
+        },
+        {
+          "file": "controller-turn-04.json",
+          "saved_at": 1791647384.2638216,
+          "action": {
+            "type": "answer",
+            "thought": "The user is simply greeting me; no repository work is needed.",
+            "answer": "Hello! How can I help you today?"
+          }
+        }
+      ],
+      "answered": true
+    },
+    {
+      "artifacts": ".crucible/state/artifacts/chat/chat-797e95304e70/7140792e3a994aac9a688380cf6c24ca",
+      "goal": "what is this repo doing answer fast.",
+      "actions": [
+        {
+          "file": "controller-turn-00.json",
+          "saved_at": 1791647429.3057306,
+          "action": {
+            "type": "tool_call",
+            "thought": "quickly inspect the repository overview",
+            "tool": "list_directory",
+            "args": {
+              "path": "."
+            }
+          }
+        },
+        {
+          "file": "controller-turn-01.json",
+          "saved_at": 1791647434.2435985,
+          "action": {
+            "type": "tool_call",
+            "thought": "read the project overview for an accurate quick summary",
+            "tool": "read_file",
+            "args": {
+              "path": "README.md",
+              "start_line": 1,
+              "end_line": 180
+            }
+          }
+        },
+        {
+          "file": "controller-turn-02.json",
+          "saved_at": 1791647443.685346,
+          "action": {
+            "type": "tool_call",
+            "thought": "confirm the repository\u2019s component layout before summarizing",
+            "tool": "read_file",
+            "args": {
+              "path": "README.md",
+              "start_line": 258,
+              "end_line": 330
+            }
+          }
+        },
+        {
+          "file": "controller-turn-03.json",
+          "saved_at": 1791647449.2401125,
+          "action": {
+            "type": "tool_call",
+            "thought": "verify the concise product description from the repository itself",
+            "tool": "search_code",
+            "args": {
+              "pattern": "Every edit is born|shadow workspace|symbol graph",
+              "path_filter": "README.md",
+              "context_lines": 1
+            }
+          }
+        },
+        {
+          "file": "controller-turn-04.json",
+          "saved_at": 1791647455.4140372,
+          "action": {
+            "type": "tool_call",
+            "thought": "confirm the backend\u2019s role before summarizing",
+            "tool": "read_file",
+            "args": {
+              "path": "services/agentd-py/README.md",
+              "start_line": 1,
+              "end_line": 80
+            }
+          }
+        },
+        {
+          "file": "controller-turn-05.json",
+          "saved_at": 1791647462.6239996,
+          "action": {
+            "type": "tool_call",
+            "thought": "Confirm the repo\u2019s core code-intelligence role before summarizing.",
+            "tool": "read_file",
+            "args": {
+              "path": "README.md",
+              "start_line": 190,
+              "end_line": 230
+            }
+          }
+        },
+        {
+          "file": "controller-turn-06.json",
+          "saved_at": 1791647468.490428,
+          "action": {
+            "type": "tool_call",
+            "thought": "confirm the repo\u2019s main product description before summarizing",
+            "tool": "search_code",
+            "args": {
+              "pattern": "AI code editor that explores your repo",
+              "path_filter": "README.md",
+              "fixed_strings": true,
+              "context_lines": 2
+            }
+          }
+        },
+        {
+          "file": "controller-turn-07.json",
+          "saved_at": 1791647476.1150854,
+          "action": {
+            "type": "tool_call",
+            "thought": "confirm the top-level package roles before summarizing",
+            "tool": "read_file",
+            "args": {
+              "path": "package.json",
+              "start_line": 1,
+              "end_line": 120
+            }
+          }
+        },
+        {
+          "file": "controller-turn-08.json",
+          "saved_at": 1791647483.5034983,
+          "action": {
+            "type": "tool_call",
+            "thought": "confirm the editor-facing package before summarizing",
+            "tool": "list_directory",
+            "args": {
+              "path": "apps/vscode-extension"
+            }
+          }
+        },
+        {
+          "file": "controller-turn-09.json",
+          "saved_at": 1791647489.8302715,
+          "action": {
+            "type": "tool_call",
+            "thought": "confirm the final core capability before summarizing",
+            "tool": "search_code",
+            "args": {
+              "pattern": "durable cross-session memory|Memory",
+              "path_filter": "README.md",
+              "context_lines": 2
+            }
+          }
+        },
+        {
+          "file": "controller-turn-10.json",
+          "saved_at": 1791647495.4736693,
+          "action": {
+            "type": "tool_call",
+            "thought": "read the remaining core feature summary before answering",
+            "tool": "read_file",
+            "args": {
+              "path": "README.md",
+              "start_line": 237,
+              "end_line": 266
+            }
+          }
+        }
+      ],
+      "answered": false
+    }
+  ],
+  "limitations": [
+    "Single off configuration; no new matched batching-on replication yet.",
+    "Repository test manually stopped; UI observation took 29 seconds and cutoff reached 11 tool steps.",
+    "Artifact save times are not end-to-end latency measurements.",
+    "Initial unverified setting attempt stopped before model actions and excluded."
+  ]
+}

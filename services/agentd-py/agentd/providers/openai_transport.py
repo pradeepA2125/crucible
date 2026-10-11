@@ -261,10 +261,9 @@ class OpenAIJsonTransport(ModelJsonTransport):
         body = self._body(model, instructions, user_payload)
         items = to_native_input(user_payload, actions)
         body["tools"] = actions.tools
-        # Capability-gated multiple call per response, and with "required" exactly one: the
-        # model then stops and waits for its result (function-calling guide).
+        # One native action per response; tool_calls carries the entire scheduler batch.
         body["tool_choice"] = actions.tool_choice
-        body["parallel_tool_calls"] = actions.multicall
+        body["parallel_tool_calls"] = False
         has_history = isinstance(user_payload.get(HISTORY_KEY), list)
         # Without history the one message changes every call: the stream is its instructions.
         session = (session_id_for(USAGE_OWNER.get(), instructions,
@@ -283,19 +282,13 @@ class OpenAIJsonTransport(ModelJsonTransport):
         if key is not None:
             self._sessions.commit(key, items, body["input"])
         assert reply.call is not None  # _stream_once raises when the model didn't call
-        if not actions.multicall:
-            if len(reply.calls) > 1:
-                raise RuntimeError("multiple function calls on a single-action provider path")
-            return actions.decode_call(*reply.call)
-        decoded = [dict(actions.decode_call(name, arguments), provider_call_id=identity)
-                   for name, arguments, identity in reply.calls]
-        if len(decoded) == 1 and decoded[0].get("type") != "tool_call":
-            return decoded[0]
-        if not decoded or any(node.get("type") != "tool_call" for node in decoded):
-            raise RuntimeError("tool calls cannot be mixed with exclusive controller actions")
-        return {"type": "tool_calls", "thought": decoded[0].get("thought", ""),
-                "calls": [{k: v for k, v in node.items() if k not in {"type", "thought"}}
-                          for node in decoded]}
+        if len(reply.calls) > 1:
+            raise RuntimeError("multiple function calls on a single-action provider path; "
+                               "mixed actions are invalid")
+        result = actions.decode_call(*reply.call)
+        if result.get("type") == "tool_calls" and reply.calls:
+            result["provider_call_id"] = reply.calls[0][2]
+        return result
 
     # ------------------------------------------------------------ request
 

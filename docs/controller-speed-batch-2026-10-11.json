@@ -1,0 +1,2579 @@
+{
+  "thread_id": "chat-9f39752b7bff",
+  "prompt": "Read lines 1-700 of services/agentd-py/agentd/chat/controller_prompts.py and all of services/agentd-py/agentd/chat/batch_history.py. These reads are independent; issue both read_file calls in one tool_calls batch. The 700-line range is intentional to test adaptive read delivery beyond the old 500-line ceiling. Then briefly explain where the tool_calls action description is defined and what interrupted_history does. Do not modify files.",
+  "started_utc": "2026-10-10T21:57:49Z",
+  "events": [],
+  "response": "",
+  "boundary": "HTTP POST start through SSE chat_done; webview rendering excluded",
+  "model_configuration": "Backend configuration unchanged; see physical context rows",
+  "backend": {
+    "context": [
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "8c453e2f86104a48aa33a5b741e543b1",
+        "layer": "logical",
+        "system_chars": 78990,
+        "system_parts": {
+          "core_rules": 14994,
+          "tool_catalog": 45374,
+          "team_guidance": 0,
+          "web_guidance": 2665,
+          "memory_guidance": 1097,
+          "project_instructions": 0,
+          "skills_catalog": 0,
+          "mcp_guidance": 686,
+          "sessions_guidance": 1157,
+          "dispatch_guidance": 3919,
+          "teams_main_guidance": 3435,
+          "batch_guidance": 5663
+        },
+        "payload_parts": {
+          "workspace_path": 57,
+          "retrieval_seed": 109495,
+          "conversation_history": 492,
+          "recalled_memories": 1703,
+          "goal": 448,
+          "instruction": 1271,
+          "budget_status": 34,
+          "framing": 8
+        },
+        "retrieval_parts": {
+          "repository_structure": 85678,
+          "file_outlines": 9272,
+          "file_contents": 18,
+          "planner_evidence": 13214,
+          "diagnostics_excerpt": 24,
+          "snapshot_stats": 82,
+          "graph_neighbor_files": 1182,
+          "framing": 8
+        },
+        "schema_chars": 3696,
+        "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "d43be7cad6b54b2eb417ba7be5c44fad",
+        "layer": "physical",
+        "parts": {
+          "instructions": 85250,
+          "input": 121257,
+          "tools": 4136,
+          "tool_choice": 24,
+          "framing": 5
+        },
+        "total_chars": 210672,
+        "estimated_tokens": 52668,
+        "estimate_method": "serialized_chars/4"
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "21027507cec04b36a0b0c9d7c3c299f2",
+        "layer": "reported",
+        "input_tokens": 54117
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "21027507cec04b36a0b0c9d7c3c299f2",
+        "layer": "provider_usage",
+        "input_tokens": 54117,
+        "output_tokens": 180,
+        "cached_input_tokens": 0,
+        "reasoning_tokens": 26
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+        "layer": "tool_batch",
+        "issued": 2,
+        "executed": 2,
+        "high_water": 2,
+        "result_budget_chars": 100000
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "66f26d5b990349bdab2cacf9ae695493",
+        "layer": "logical",
+        "system_chars": 78990,
+        "system_parts": {
+          "core_rules": 14994,
+          "tool_catalog": 45374,
+          "team_guidance": 0,
+          "web_guidance": 2665,
+          "memory_guidance": 1097,
+          "project_instructions": 0,
+          "skills_catalog": 0,
+          "mcp_guidance": 686,
+          "sessions_guidance": 1157,
+          "dispatch_guidance": 3919,
+          "teams_main_guidance": 3435,
+          "batch_guidance": 5663
+        },
+        "payload_parts": {
+          "workspace_path": 57,
+          "retrieval_seed": 109495,
+          "conversation_history": 54241,
+          "recalled_memories": 1703,
+          "goal": 448,
+          "instruction": 1596,
+          "budget_status": 34,
+          "framing": 8
+        },
+        "retrieval_parts": {
+          "repository_structure": 85678,
+          "file_outlines": 9272,
+          "file_contents": 18,
+          "planner_evidence": 13214,
+          "diagnostics_excerpt": 24,
+          "snapshot_stats": 82,
+          "graph_neighbor_files": 1182,
+          "framing": 8
+        },
+        "schema_chars": 3696,
+        "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "4a01286454544f31b68af7b758d2e0c5",
+        "layer": "physical",
+        "parts": {
+          "instructions": 85250,
+          "input": 185104,
+          "tools": 4136,
+          "tool_choice": 24,
+          "framing": 5
+        },
+        "total_chars": 274519,
+        "estimated_tokens": 68630,
+        "estimate_method": "serialized_chars/4"
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "642e2e97f7b649a4955982268c99d865",
+        "layer": "reported",
+        "input_tokens": 70469
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "642e2e97f7b649a4955982268c99d865",
+        "layer": "provider_usage",
+        "input_tokens": 70469,
+        "output_tokens": 277,
+        "cached_input_tokens": 52864,
+        "reasoning_tokens": 178
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+        "layer": "tool_batch",
+        "issued": 1,
+        "executed": 1,
+        "high_water": 2,
+        "result_budget_chars": 100000
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "24e18eec70ea400dbe8143abcefb453d",
+        "layer": "logical",
+        "system_chars": 78990,
+        "system_parts": {
+          "core_rules": 14994,
+          "tool_catalog": 45374,
+          "team_guidance": 0,
+          "web_guidance": 2665,
+          "memory_guidance": 1097,
+          "project_instructions": 0,
+          "skills_catalog": 0,
+          "mcp_guidance": 686,
+          "sessions_guidance": 1157,
+          "dispatch_guidance": 3919,
+          "teams_main_guidance": 3435,
+          "batch_guidance": 5663
+        },
+        "payload_parts": {
+          "workspace_path": 57,
+          "retrieval_seed": 109495,
+          "conversation_history": 55816,
+          "recalled_memories": 1703,
+          "goal": 448,
+          "instruction": 1596,
+          "budget_status": 34,
+          "framing": 8
+        },
+        "retrieval_parts": {
+          "repository_structure": 85678,
+          "file_outlines": 9272,
+          "file_contents": 18,
+          "planner_evidence": 13214,
+          "diagnostics_excerpt": 24,
+          "snapshot_stats": 82,
+          "graph_neighbor_files": 1182,
+          "framing": 8
+        },
+        "schema_chars": 3696,
+        "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+      },
+      {
+        "trace": "9c010e656f074704ae2bdf4a230a8e62",
+        "kind": "context",
+        "parent": "f69a961be5c7462ab0e3e98db3ba5057",
+        "layer": "physical",
+        "parts": {
+          "instructions": 85250,
+          "input": 191477,
+          "tools": 4136,
+          "tool_choice": 24,
+          "framing": 5
+        },
+        "total_chars": 280892,
+        "estimated_tokens": 70223,
+        "estimate_method": "serialized_chars/4"
+      }
+    ],
+    "milestones": {
+      "provider.first_content": {
+        "calls": 3,
+        "mean_ms": 6963.3245136666665,
+        "max_ms": 9585.086792
+      }
+    },
+    "blocks": [
+      {
+        "block": "context.retrieval_seed",
+        "calls": 1,
+        "inclusive_ms": 48789.507,
+        "self_ms": 48789.507,
+        "p50_ms": 48789.507,
+        "p95_ms": 48789.507,
+        "max_ms": 48789.507
+      },
+      {
+        "block": "provider.stream",
+        "calls": 3,
+        "inclusive_ms": 26165.033084000002,
+        "self_ms": 17389.643166,
+        "p50_ms": 8300.3695,
+        "p95_ms": 9608.260834,
+        "max_ms": 9608.260834
+      },
+      {
+        "block": "provider.response_headers",
+        "calls": 3,
+        "inclusive_ms": 8775.389918,
+        "self_ms": 8775.389918,
+        "p50_ms": 2787.093125,
+        "p95_ms": 3669.502709,
+        "max_ms": 3669.502709
+      },
+      {
+        "block": "controller.turn",
+        "calls": 1,
+        "inclusive_ms": 27243.231542,
+        "self_ms": 648.124209,
+        "p50_ms": 27243.231542,
+        "p95_ms": 27243.231542,
+        "max_ms": 27243.231542
+      },
+      {
+        "block": "provider.auth",
+        "calls": 3,
+        "inclusive_ms": 359.222917,
+        "self_ms": 359.222917,
+        "p50_ms": 0.237166,
+        "p95_ms": 358.806417,
+        "max_ms": 358.806417
+      },
+      {
+        "block": "controller.setup_and_loop",
+        "calls": 1,
+        "inclusive_ms": 76093.435292,
+        "self_ms": 60.69675,
+        "p50_ms": 76093.435292,
+        "p95_ms": 76093.435292,
+        "max_ms": 76093.435292
+      },
+      {
+        "block": "model.step",
+        "calls": 3,
+        "inclusive_ms": 26589.052625,
+        "self_ms": 27.011374,
+        "p50_ms": 8323.485958,
+        "p95_ms": 9986.347625,
+        "max_ms": 9986.347625
+      },
+      {
+        "block": "provider.request",
+        "calls": 3,
+        "inclusive_ms": 26548.352667,
+        "self_ms": 24.096666,
+        "p50_ms": 8310.128584,
+        "p95_ms": 9973.830875,
+        "max_ms": 9973.830875
+      },
+      {
+        "block": "context.system_prompt",
+        "calls": 3,
+        "inclusive_ms": 13.053875000000001,
+        "self_ms": 13.053875000000001,
+        "p50_ms": 3.928542,
+        "p95_ms": 5.346916,
+        "max_ms": 5.346916
+      },
+      {
+        "block": "tool.read_file",
+        "calls": 3,
+        "inclusive_ms": 7.343708,
+        "self_ms": 7.343708,
+        "p50_ms": 2.757416,
+        "p95_ms": 3.352542,
+        "max_ms": 3.352542
+      },
+      {
+        "block": "controller.handle_message",
+        "calls": 1,
+        "inclusive_ms": 76095.156125,
+        "self_ms": 0.998625,
+        "p50_ms": 76095.156125,
+        "p95_ms": 76095.156125,
+        "max_ms": 76095.156125
+      },
+      {
+        "block": "controller.user_turn",
+        "calls": 1,
+        "inclusive_ms": 76094.1575,
+        "self_ms": 0.722208,
+        "p50_ms": 76094.1575,
+        "p95_ms": 76094.1575,
+        "max_ms": 76094.1575
+      },
+      {
+        "block": "context.payload",
+        "calls": 3,
+        "inclusive_ms": 0.609333,
+        "self_ms": 0.609333,
+        "p50_ms": 0.21325,
+        "p95_ms": 0.231917,
+        "max_ms": 0.231917
+      },
+      {
+        "block": "controller.backend_turn",
+        "calls": 1,
+        "inclusive_ms": 76095.317917,
+        "self_ms": 0.161792,
+        "p50_ms": 76095.317917,
+        "p95_ms": 76095.317917,
+        "max_ms": 76095.317917
+      },
+      {
+        "block": "provider.rate_limit_wait",
+        "calls": 3,
+        "inclusive_ms": 0.025376000000000003,
+        "self_ms": 0.025376000000000003,
+        "p50_ms": 0.008584,
+        "p95_ms": 0.008958,
+        "max_ms": 0.008958
+      }
+    ],
+    "functions": [
+      {
+        "function": "agentd/retrieval/artifact_client.py:500:_dir_seg_score",
+        "calls": 17050446,
+        "self_ms": 6574.072704000001,
+        "inclusive_ms": 11631.165252
+      },
+      {
+        "function": "~:0:<method 'startswith' of 'str' objects>",
+        "calls": 60326374,
+        "self_ms": 4920.560643000002,
+        "inclusive_ms": 4920.560643000002
+      },
+      {
+        "function": "pathlib.py:358:__init__",
+        "calls": 3880915,
+        "self_ms": 2137.872037,
+        "inclusive_ms": 3492.310411
+      },
+      {
+        "function": "agentd/retrieval/artifact_client.py:510:<genexpr>",
+        "calls": 20686655,
+        "self_ms": 2134.811676,
+        "inclusive_ms": 13765.991097
+      },
+      {
+        "function": "~:0:<built-in method posix.lstat>",
+        "calls": 1116514,
+        "self_ms": 1663.475183,
+        "inclusive_ms": 1663.475183
+      },
+      {
+        "function": "~:0:<built-in method builtins.max>",
+        "calls": 3636286,
+        "self_ms": 1630.523304,
+        "inclusive_ms": 15396.509944000001
+      },
+      {
+        "function": "pathlib.py:277:__getitem__",
+        "calls": 3056680,
+        "self_ms": 1455.1238930000002,
+        "inclusive_ms": 9422.84319
+      },
+      {
+        "function": "pathlib.py:380:with_segments",
+        "calls": 3754616,
+        "self_ms": 1349.119568,
+        "inclusive_ms": 6672.30061
+      },
+      {
+        "function": "pathlib.py:484:_str_normcase",
+        "calls": 3818144,
+        "self_ms": 1267.7688360000002,
+        "inclusive_ms": 2751.2924090000006
+      },
+      {
+        "function": "pathlib.py:387:_parse_path",
+        "calls": 936941,
+        "self_ms": 1245.8962450000001,
+        "inclusive_ms": 2415.2538910000003
+      },
+      {
+        "function": "~:0:<built-in method builtins.isinstance>",
+        "calls": 20627882,
+        "self_ms": 1242.0744530000002,
+        "inclusive_ms": 1242.272515
+      },
+      {
+        "function": "~:0:<built-in method builtins.len>",
+        "calls": 14119589,
+        "self_ms": 1201.4833220000003,
+        "inclusive_ms": 1803.3744830000003
+      },
+      {
+        "function": "pathlib.py:1157:__init__",
+        "calls": 3880915,
+        "self_ms": 1059.5082610000002,
+        "inclusive_ms": 4551.818672
+      },
+      {
+        "function": "~:0:<method 'lstrip' of 'str' objects>",
+        "calls": 17219572,
+        "self_ms": 980.942441,
+        "inclusive_ms": 980.942441
+      },
+      {
+        "function": "agentd/retrieval/artifact_client.py:515:<genexpr>",
+        "calls": 10732946,
+        "self_ms": 978.6414710000001,
+        "inclusive_ms": 1550.593914
+      },
+      {
+        "function": "<frozen posixpath>:71:join",
+        "calls": 1239193,
+        "self_ms": 939.0878170000001,
+        "inclusive_ms": 1601.2861100000002
+      },
+      {
+        "function": "pathlib.py:420:_from_parsed_parts",
+        "calls": 2773892,
+        "self_ms": 884.6161330000001,
+        "inclusive_ms": 6122.539508
+      },
+      {
+        "function": "agentd/retrieval/artifact_client.py:403:_build_context",
+        "calls": 1,
+        "self_ms": 847.1012010000001,
+        "inclusive_ms": 48400.045709000005
+      },
+      {
+        "function": "~:0:<built-in method builtins.any>",
+        "calls": 3771491,
+        "self_ms": 844.0710990000001,
+        "inclusive_ms": 2526.791382000001
+      },
+      {
+        "function": "<frozen posixpath>:432:_joinrealpath",
+        "calls": 121303,
+        "self_ms": 782.311731,
+        "inclusive_ms": 3998.1770670000005
+      },
+      {
+        "function": "agentd/retrieval/artifact_client.py:509:<genexpr>",
+        "calls": 3720772,
+        "self_ms": 760.861938,
+        "inclusive_ms": 16157.62243
+      },
+      {
+        "function": "pathlib.py:663:relative_to",
+        "calls": 286902,
+        "self_ms": 724.2866600000001,
+        "inclusive_ms": 18474.222228000002
+      },
+      {
+        "function": "pathlib.py:429:_format_parsed_parts",
+        "calls": 3407793,
+        "self_ms": 691.0976430000001,
+        "inclusive_ms": 1162.5641610000002
+      },
+      {
+        "function": "pathlib.py:437:__str__",
+        "calls": 2459360,
+        "self_ms": 664.520584,
+        "inclusive_ms": 2819.996105
+      },
+      {
+        "function": "pathlib.py:274:__len__",
+        "calls": 6113360,
+        "self_ms": 635.7449070000001,
+        "inclusive_ms": 927.420517
+      },
+      {
+        "function": "<frozen _collections_abc>:1022:__iter__",
+        "calls": 3343581,
+        "self_ms": 615.012956,
+        "inclusive_ms": 10037.856146000002
+      },
+      {
+        "function": "pathlib.py:1164:__new__",
+        "calls": 3880915,
+        "self_ms": 573.7424840000001,
+        "inclusive_ms": 938.3630850000001
+      },
+      {
+        "function": "pathlib.py:519:__eq__",
+        "calls": 1909072,
+        "self_ms": 565.583162,
+        "inclusive_ms": 3437.444722
+      },
+      {
+        "function": "agentd/retrieval/artifact_client.py:513:<genexpr>",
+        "calls": 122280,
+        "self_ms": 543.754964,
+        "inclusive_ms": 2844.8403260000005
+      },
+      {
+        "function": "~:0:<built-in method sys.intern>",
+        "calls": 5230389,
+        "self_ms": 527.333333,
+        "inclusive_ms": 527.333333
+      },
+      {
+        "function": "pathlib.py:551:drive",
+        "calls": 1393284,
+        "self_ms": 499.23536700000005,
+        "inclusive_ms": 3839.2391760000005
+      },
+      {
+        "function": "<frozen _collections_abc>:1032:__contains__",
+        "calls": 286901,
+        "self_ms": 493.554432,
+        "inclusive_ms": 7854.825778
+      },
+      {
+        "function": "~:0:<built-in method posix.fspath>",
+        "calls": 7409445,
+        "self_ms": 453.69757400000003,
+        "inclusive_ms": 656.3293570000001
+      },
+      {
+        "function": "pathlib.py:407:_load_parts",
+        "calls": 936941,
+        "self_ms": 442.971418,
+        "inclusive_ms": 3351.085952
+      },
+      {
+        "function": "~:0:<method 'join' of 'str' objects>",
+        "calls": 3407813,
+        "self_ms": 440.219292,
+        "inclusive_ms": 440.219292
+      },
+      {
+        "function": "~:0:<method 'get' of 'dict' objects>",
+        "calls": 4167794,
+        "self_ms": 423.36466,
+        "inclusive_ms": 423.36466
+      },
+      {
+        "function": "~:0:<method 'append' of 'list' objects>",
+        "calls": 4798654,
+        "self_ms": 415.81455100000005,
+        "inclusive_ms": 415.81455100000005
+      },
+      {
+        "function": "~:0:<built-in method __new__ of type object at 0x1046aa058>",
+        "calls": 3881116,
+        "self_ms": 364.641609,
+        "inclusive_ms": 364.641609
+      },
+      {
+        "function": "<frozen posixpath>:138:splitroot",
+        "calls": 936940,
+        "self_ms": 336.99647400000003,
+        "inclusive_ms": 450.840175
+      },
+      {
+        "function": "decoder.py:344:raw_decode",
+        "calls": 3,
+        "self_ms": 258.551999,
+        "inclusive_ms": 258.551999
+      },
+      {
+        "function": "encoder.py:334:_iterencode_dict",
+        "calls": 40776,
+        "self_ms": 5.838888,
+        "inclusive_ms": 7.890049000000001
+      },
+      {
+        "function": "encoder.py:278:_iterencode_list",
+        "calls": 13734,
+        "self_ms": 1.780686,
+        "inclusive_ms": 9.401761
+      },
+      {
+        "function": "encoder.py:414:_iterencode",
+        "calls": 12378,
+        "self_ms": 1.2356030000000002,
+        "inclusive_ms": 10.638114000000002
+      },
+      {
+        "function": "encoder.py:183:encode",
+        "calls": 3,
+        "self_ms": 0.737426,
+        "inclusive_ms": 11.536875000000002
+      },
+      {
+        "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+        "calls": 6,
+        "self_ms": 0.5252920000000001,
+        "inclusive_ms": 0.5252920000000001
+      },
+      {
+        "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+        "calls": 4023,
+        "self_ms": 0.509282,
+        "inclusive_ms": 0.509282
+      },
+      {
+        "function": "~:0:<built-in method builtins.sorted>",
+        "calls": 954,
+        "self_ms": 0.28985500000000003,
+        "inclusive_ms": 0.28985500000000003
+      },
+      {
+        "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+        "calls": 3,
+        "self_ms": 0.27327500000000005,
+        "inclusive_ms": 12.478666
+      },
+      {
+        "function": "~:0:<built-in method builtins.id>",
+        "calls": 1167,
+        "self_ms": 0.23641800000000002,
+        "inclusive_ms": 0.23641800000000002
+      },
+      {
+        "function": "~:0:<method 'replace' of 'str' objects>",
+        "calls": 6,
+        "self_ms": 0.09445800000000001,
+        "inclusive_ms": 0.09445800000000001
+      },
+      {
+        "function": "__init__.py:183:dumps",
+        "calls": 3,
+        "self_ms": 0.085165,
+        "inclusive_ms": 11.623499000000002
+      },
+      {
+        "function": "~:0:<method 'items' of 'dict' objects>",
+        "calls": 954,
+        "self_ms": 0.077875,
+        "inclusive_ms": 0.077875
+      },
+      {
+        "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+        "calls": 3,
+        "self_ms": 0.03654400000000001,
+        "inclusive_ms": 0.056500999999999996
+      },
+      {
+        "function": "agentd/memory/config.py:26:from_env",
+        "calls": 3,
+        "self_ms": 0.035249,
+        "inclusive_ms": 0.122334
+      },
+      {
+        "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+        "calls": 132,
+        "self_ms": 0.03483,
+        "inclusive_ms": 0.050782
+      },
+      {
+        "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+        "calls": 120,
+        "self_ms": 0.034825,
+        "inclusive_ms": 0.050911
+      },
+      {
+        "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+        "calls": 108,
+        "self_ms": 0.032958,
+        "inclusive_ms": 0.04707800000000001
+      },
+      {
+        "function": "<frozen os>:709:__getitem__",
+        "calls": 54,
+        "self_ms": 0.030123000000000004,
+        "inclusive_ms": 0.072914
+      },
+      {
+        "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+        "calls": 45,
+        "self_ms": 0.024796,
+        "inclusive_ms": 0.037753999999999996
+      },
+      {
+        "function": "<frozen os>:791:encode",
+        "calls": 54,
+        "self_ms": 0.022742000000000002,
+        "inclusive_ms": 0.03479
+      },
+      {
+        "function": "<frozen _collections_abc>:804:get",
+        "calls": 54,
+        "self_ms": 0.016251,
+        "inclusive_ms": 0.08916500000000001
+      },
+      {
+        "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+        "calls": 3,
+        "self_ms": 0.015125000000000003,
+        "inclusive_ms": 0.015125000000000003
+      },
+      {
+        "function": "main.py:270:__init__",
+        "calls": 3,
+        "self_ms": 0.014876,
+        "inclusive_ms": 0.030001
+      },
+      {
+        "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+        "calls": 3,
+        "self_ms": 0.014082,
+        "inclusive_ms": 0.016084
+      },
+      {
+        "function": "agentd/chat/controller_prompts.py:1076:record",
+        "calls": 30,
+        "self_ms": 0.012632,
+        "inclusive_ms": 0.017713
+      },
+      {
+        "function": "<string>:2:__hash__",
+        "calls": 21,
+        "self_ms": 0.011918,
+        "inclusive_ms": 0.01575
+      },
+      {
+        "function": "encoder.py:205:iterencode",
+        "calls": 3,
+        "self_ms": 0.010708,
+        "inclusive_ms": 0.014834
+      },
+      {
+        "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+        "calls": 3,
+        "self_ms": 0.010666,
+        "inclusive_ms": 0.133
+      },
+      {
+        "function": "~:0:<method 'encode' of 'str' objects>",
+        "calls": 54,
+        "self_ms": 0.007876999999999999,
+        "inclusive_ms": 0.007876999999999999
+      },
+      {
+        "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+        "calls": 3,
+        "self_ms": 0.006500000000000001,
+        "inclusive_ms": 0.027500000000000004
+      },
+      {
+        "function": "<frozen os>:795:decode",
+        "calls": 12,
+        "self_ms": 0.005335,
+        "inclusive_ms": 0.008001000000000001
+      },
+      {
+        "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+        "calls": 24,
+        "self_ms": 0.004914,
+        "inclusive_ms": 0.0076230000000000004
+      },
+      {
+        "function": "encoder.py:224:floatstr",
+        "calls": 6,
+        "self_ms": 0.004666,
+        "inclusive_ms": 0.004666
+      },
+      {
+        "function": "agentd/tools/batching.py:29:batching_enabled",
+        "calls": 6,
+        "self_ms": 0.004418,
+        "inclusive_ms": 0.020459
+      },
+      {
+        "function": "~:0:<built-in method builtins.hash>",
+        "calls": 14,
+        "self_ms": 0.0029170000000000003,
+        "inclusive_ms": 0.0029170000000000003
+      },
+      {
+        "function": "encoder.py:260:_make_iterencode",
+        "calls": 2,
+        "self_ms": 0.0025830000000000002,
+        "inclusive_ms": 0.0027090000000000005
+      },
+      {
+        "function": "~:0:<method 'lower' of 'str' objects>",
+        "calls": 7,
+        "self_ms": 0.001333,
+        "inclusive_ms": 0.001333
+      },
+      {
+        "function": "~:0:<method 'update' of 'dict' objects>",
+        "calls": 1,
+        "self_ms": 0.0012920000000000002,
+        "inclusive_ms": 0.0012920000000000002
+      }
+    ],
+    "note": "Self time excludes direct child spans, but includes awaits. It is not CPU time. Concurrent span totals may overlap. First-content latency is a milestone, not an additional execution block. Function profiles cover synchronous prompt construction only; timings include profiler overhead."
+  },
+  "capture_start_ns": 471357982499416,
+  "backend_records": [
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "53c19083642240798b1a7b34b13f0eb1",
+      "parent": "448e1d075f5b4b938d24962b6273eb78",
+      "name": "context.retrieval_seed",
+      "start_ns": 471357986301708,
+      "end_ns": 471406775808708,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "functions",
+      "name": "context.retrieval_seed",
+      "rows": [
+        {
+          "function": "agentd/retrieval/artifact_client.py:500:_dir_seg_score",
+          "calls": 17050446,
+          "self_ms": 6574.072704000001,
+          "inclusive_ms": 11631.165252
+        },
+        {
+          "function": "~:0:<method 'startswith' of 'str' objects>",
+          "calls": 60326332,
+          "self_ms": 4920.554018000001,
+          "inclusive_ms": 4920.554018000001
+        },
+        {
+          "function": "pathlib.py:358:__init__",
+          "calls": 3880915,
+          "self_ms": 2137.872037,
+          "inclusive_ms": 3492.310411
+        },
+        {
+          "function": "agentd/retrieval/artifact_client.py:510:<genexpr>",
+          "calls": 20686655,
+          "self_ms": 2134.811676,
+          "inclusive_ms": 13765.991097
+        },
+        {
+          "function": "~:0:<built-in method posix.lstat>",
+          "calls": 1116514,
+          "self_ms": 1663.475183,
+          "inclusive_ms": 1663.475183
+        },
+        {
+          "function": "~:0:<built-in method builtins.max>",
+          "calls": 3636286,
+          "self_ms": 1630.523304,
+          "inclusive_ms": 15396.509944000001
+        },
+        {
+          "function": "pathlib.py:277:__getitem__",
+          "calls": 3056680,
+          "self_ms": 1455.1238930000002,
+          "inclusive_ms": 9422.84319
+        },
+        {
+          "function": "pathlib.py:380:with_segments",
+          "calls": 3754616,
+          "self_ms": 1349.119568,
+          "inclusive_ms": 6672.30061
+        },
+        {
+          "function": "pathlib.py:484:_str_normcase",
+          "calls": 3818144,
+          "self_ms": 1267.7688360000002,
+          "inclusive_ms": 2751.2924090000006
+        },
+        {
+          "function": "pathlib.py:387:_parse_path",
+          "calls": 936941,
+          "self_ms": 1245.8962450000001,
+          "inclusive_ms": 2415.2538910000003
+        },
+        {
+          "function": "~:0:<built-in method builtins.isinstance>",
+          "calls": 20617391,
+          "self_ms": 1241.374115,
+          "inclusive_ms": 1241.572177
+        },
+        {
+          "function": "~:0:<built-in method builtins.len>",
+          "calls": 14119517,
+          "self_ms": 1201.4763670000002,
+          "inclusive_ms": 1803.3675280000002
+        },
+        {
+          "function": "pathlib.py:1157:__init__",
+          "calls": 3880915,
+          "self_ms": 1059.5082610000002,
+          "inclusive_ms": 4551.818672
+        },
+        {
+          "function": "~:0:<method 'lstrip' of 'str' objects>",
+          "calls": 17219572,
+          "self_ms": 980.942441,
+          "inclusive_ms": 980.942441
+        },
+        {
+          "function": "agentd/retrieval/artifact_client.py:515:<genexpr>",
+          "calls": 10732946,
+          "self_ms": 978.6414710000001,
+          "inclusive_ms": 1550.593914
+        },
+        {
+          "function": "<frozen posixpath>:71:join",
+          "calls": 1239193,
+          "self_ms": 939.0878170000001,
+          "inclusive_ms": 1601.2861100000002
+        },
+        {
+          "function": "pathlib.py:420:_from_parsed_parts",
+          "calls": 2773892,
+          "self_ms": 884.6161330000001,
+          "inclusive_ms": 6122.539508
+        },
+        {
+          "function": "agentd/retrieval/artifact_client.py:403:_build_context",
+          "calls": 1,
+          "self_ms": 847.1012010000001,
+          "inclusive_ms": 48400.045709000005
+        },
+        {
+          "function": "~:0:<built-in method builtins.any>",
+          "calls": 3771476,
+          "self_ms": 844.0345410000001,
+          "inclusive_ms": 2526.5652170000003
+        },
+        {
+          "function": "<frozen posixpath>:432:_joinrealpath",
+          "calls": 121303,
+          "self_ms": 782.311731,
+          "inclusive_ms": 3998.1770670000005
+        },
+        {
+          "function": "agentd/retrieval/artifact_client.py:509:<genexpr>",
+          "calls": 3720772,
+          "self_ms": 760.861938,
+          "inclusive_ms": 16157.62243
+        },
+        {
+          "function": "pathlib.py:663:relative_to",
+          "calls": 286902,
+          "self_ms": 724.2866600000001,
+          "inclusive_ms": 18474.222228000002
+        },
+        {
+          "function": "pathlib.py:429:_format_parsed_parts",
+          "calls": 3407793,
+          "self_ms": 691.0976430000001,
+          "inclusive_ms": 1162.5641610000002
+        },
+        {
+          "function": "pathlib.py:437:__str__",
+          "calls": 2459360,
+          "self_ms": 664.520584,
+          "inclusive_ms": 2819.996105
+        },
+        {
+          "function": "pathlib.py:274:__len__",
+          "calls": 6113360,
+          "self_ms": 635.7449070000001,
+          "inclusive_ms": 927.420517
+        },
+        {
+          "function": "<frozen _collections_abc>:1022:__iter__",
+          "calls": 3343581,
+          "self_ms": 615.012956,
+          "inclusive_ms": 10037.856146000002
+        },
+        {
+          "function": "pathlib.py:1164:__new__",
+          "calls": 3880915,
+          "self_ms": 573.7424840000001,
+          "inclusive_ms": 938.3630850000001
+        },
+        {
+          "function": "pathlib.py:519:__eq__",
+          "calls": 1909072,
+          "self_ms": 565.583162,
+          "inclusive_ms": 3437.444722
+        },
+        {
+          "function": "agentd/retrieval/artifact_client.py:513:<genexpr>",
+          "calls": 122280,
+          "self_ms": 543.754964,
+          "inclusive_ms": 2844.8403260000005
+        },
+        {
+          "function": "~:0:<built-in method sys.intern>",
+          "calls": 5230389,
+          "self_ms": 527.333333,
+          "inclusive_ms": 527.333333
+        },
+        {
+          "function": "pathlib.py:551:drive",
+          "calls": 1393284,
+          "self_ms": 499.23536700000005,
+          "inclusive_ms": 3839.2391760000005
+        },
+        {
+          "function": "<frozen _collections_abc>:1032:__contains__",
+          "calls": 286901,
+          "self_ms": 493.554432,
+          "inclusive_ms": 7854.825778
+        },
+        {
+          "function": "~:0:<built-in method posix.fspath>",
+          "calls": 7409445,
+          "self_ms": 453.69757400000003,
+          "inclusive_ms": 656.3293570000001
+        },
+        {
+          "function": "pathlib.py:407:_load_parts",
+          "calls": 936941,
+          "self_ms": 442.971418,
+          "inclusive_ms": 3351.085952
+        },
+        {
+          "function": "~:0:<method 'join' of 'str' objects>",
+          "calls": 3407810,
+          "self_ms": 440.07354200000003,
+          "inclusive_ms": 440.07354200000003
+        },
+        {
+          "function": "~:0:<method 'get' of 'dict' objects>",
+          "calls": 4167188,
+          "self_ms": 423.30627200000004,
+          "inclusive_ms": 423.30627200000004
+        },
+        {
+          "function": "~:0:<method 'append' of 'list' objects>",
+          "calls": 4798654,
+          "self_ms": 415.81455100000005,
+          "inclusive_ms": 415.81455100000005
+        },
+        {
+          "function": "~:0:<built-in method __new__ of type object at 0x1046aa058>",
+          "calls": 3881116,
+          "self_ms": 364.641609,
+          "inclusive_ms": 364.641609
+        },
+        {
+          "function": "<frozen posixpath>:138:splitroot",
+          "calls": 936940,
+          "self_ms": 336.99647400000003,
+          "inclusive_ms": 450.840175
+        },
+        {
+          "function": "decoder.py:344:raw_decode",
+          "calls": 3,
+          "self_ms": 258.551999,
+          "inclusive_ms": 258.551999
+        }
+      ]
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "2934757e4a8a45e1b11c5cbcd8df6fcc",
+      "parent": "8c453e2f86104a48aa33a5b741e543b1",
+      "name": "context.system_prompt",
+      "start_ns": 471407467408291,
+      "end_ns": 471407471336833,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "functions",
+      "name": "context.system_prompt",
+      "rows": [
+        {
+          "function": "encoder.py:334:_iterencode_dict",
+          "calls": 13592,
+          "self_ms": 1.7361330000000001,
+          "inclusive_ms": 2.3629420000000003
+        },
+        {
+          "function": "encoder.py:278:_iterencode_list",
+          "calls": 4578,
+          "self_ms": 0.527973,
+          "inclusive_ms": 2.8119850000000004
+        },
+        {
+          "function": "encoder.py:414:_iterencode",
+          "calls": 4126,
+          "self_ms": 0.37050700000000003,
+          "inclusive_ms": 3.1827010000000002
+        },
+        {
+          "function": "encoder.py:183:encode",
+          "calls": 1,
+          "self_ms": 0.22204700000000002,
+          "inclusive_ms": 3.4621250000000003
+        },
+        {
+          "function": "~:0:<built-in method builtins.isinstance>",
+          "calls": 3490,
+          "self_ms": 0.210213,
+          "inclusive_ms": 0.210213
+        },
+        {
+          "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+          "calls": 1341,
+          "self_ms": 0.15732200000000002,
+          "inclusive_ms": 0.15732200000000002
+        },
+        {
+          "function": "~:0:<built-in method builtins.sorted>",
+          "calls": 318,
+          "self_ms": 0.09469,
+          "inclusive_ms": 0.09469
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+          "calls": 1,
+          "self_ms": 0.087575,
+          "inclusive_ms": 3.762083
+        },
+        {
+          "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_ms": 0.07925,
+          "inclusive_ms": 0.07925
+        },
+        {
+          "function": "~:0:<built-in method builtins.id>",
+          "calls": 389,
+          "self_ms": 0.07124,
+          "inclusive_ms": 0.07124
+        },
+        {
+          "function": "~:0:<method 'join' of 'str' objects>",
+          "calls": 1,
+          "self_ms": 0.051667000000000005,
+          "inclusive_ms": 0.051667000000000005
+        },
+        {
+          "function": "__init__.py:183:dumps",
+          "calls": 1,
+          "self_ms": 0.030416000000000002,
+          "inclusive_ms": 3.4931660000000004
+        },
+        {
+          "function": "~:0:<method 'replace' of 'str' objects>",
+          "calls": 2,
+          "self_ms": 0.026958000000000003,
+          "inclusive_ms": 0.026958000000000003
+        },
+        {
+          "function": "~:0:<method 'items' of 'dict' objects>",
+          "calls": 318,
+          "self_ms": 0.022549,
+          "inclusive_ms": 0.022549
+        },
+        {
+          "function": "~:0:<method 'get' of 'dict' objects>",
+          "calls": 179,
+          "self_ms": 0.0148,
+          "inclusive_ms": 0.0148
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+          "calls": 40,
+          "self_ms": 0.010912,
+          "inclusive_ms": 0.015665
+        },
+        {
+          "function": "main.py:270:__init__",
+          "calls": 1,
+          "self_ms": 0.010875,
+          "inclusive_ms": 0.015708
+        },
+        {
+          "function": "agentd/memory/config.py:26:from_env",
+          "calls": 1,
+          "self_ms": 0.010792000000000001,
+          "inclusive_ms": 0.043000000000000003
+        },
+        {
+          "function": "~:0:<built-in method builtins.any>",
+          "calls": 4,
+          "self_ms": 0.010543,
+          "inclusive_ms": 0.063958
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+          "calls": 36,
+          "self_ms": 0.010251000000000001,
+          "inclusive_ms": 0.014707000000000001
+        },
+        {
+          "function": "<frozen os>:709:__getitem__",
+          "calls": 18,
+          "self_ms": 0.009459,
+          "inclusive_ms": 0.022167
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+          "calls": 44,
+          "self_ms": 0.009044,
+          "inclusive_ms": 0.013542
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+          "calls": 15,
+          "self_ms": 0.007245,
+          "inclusive_ms": 0.010668
+        },
+        {
+          "function": "<frozen os>:791:encode",
+          "calls": 18,
+          "self_ms": 0.006534000000000001,
+          "inclusive_ms": 0.010124
+        },
+        {
+          "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+          "calls": 1,
+          "self_ms": 0.005041,
+          "inclusive_ms": 0.005625000000000001
+        },
+        {
+          "function": "<frozen _collections_abc>:804:get",
+          "calls": 18,
+          "self_ms": 0.004873000000000001,
+          "inclusive_ms": 0.02704
+        },
+        {
+          "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+          "calls": 1,
+          "self_ms": 0.0048330000000000005,
+          "inclusive_ms": 0.0048330000000000005
+        },
+        {
+          "function": "encoder.py:205:iterencode",
+          "calls": 1,
+          "self_ms": 0.004125,
+          "inclusive_ms": 0.005542
+        },
+        {
+          "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+          "calls": 1,
+          "self_ms": 0.003958,
+          "inclusive_ms": 0.046958
+        },
+        {
+          "function": "<string>:2:__hash__",
+          "calls": 7,
+          "self_ms": 0.0038759999999999997,
+          "inclusive_ms": 0.004791
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1076:record",
+          "calls": 10,
+          "self_ms": 0.003503,
+          "inclusive_ms": 0.00496
+        },
+        {
+          "function": "~:0:<method 'encode' of 'str' objects>",
+          "calls": 18,
+          "self_ms": 0.002543,
+          "inclusive_ms": 0.002543
+        },
+        {
+          "function": "~:0:<method 'startswith' of 'str' objects>",
+          "calls": 14,
+          "self_ms": 0.001876,
+          "inclusive_ms": 0.001876
+        },
+        {
+          "function": "~:0:<built-in method builtins.len>",
+          "calls": 24,
+          "self_ms": 0.0018740000000000002,
+          "inclusive_ms": 0.0018740000000000002
+        },
+        {
+          "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+          "calls": 1,
+          "self_ms": 0.0017500000000000003,
+          "inclusive_ms": 0.00775
+        },
+        {
+          "function": "<frozen os>:795:decode",
+          "calls": 4,
+          "self_ms": 0.001709,
+          "inclusive_ms": 0.0025840000000000004
+        },
+        {
+          "function": "agentd/tools/batching.py:29:batching_enabled",
+          "calls": 2,
+          "self_ms": 0.001585,
+          "inclusive_ms": 0.007543
+        },
+        {
+          "function": "encoder.py:260:_make_iterencode",
+          "calls": 1,
+          "self_ms": 0.001333,
+          "inclusive_ms": 0.001417
+        },
+        {
+          "function": "~:0:<method 'update' of 'dict' objects>",
+          "calls": 1,
+          "self_ms": 0.0012920000000000002,
+          "inclusive_ms": 0.0012920000000000002
+        },
+        {
+          "function": "encoder.py:224:floatstr",
+          "calls": 2,
+          "self_ms": 0.00125,
+          "inclusive_ms": 0.00125
+        }
+      ]
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "b326b1983ca347f99d49b37d2264abf3",
+      "parent": "8c453e2f86104a48aa33a5b741e543b1",
+      "name": "context.payload",
+      "start_ns": 471407475155125,
+      "end_ns": 471407475319291,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "functions",
+      "name": "context.payload",
+      "rows": [
+        {
+          "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_ms": 0.06466700000000002,
+          "inclusive_ms": 0.06466700000000002
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+          "calls": 1,
+          "self_ms": 0.011165000000000001,
+          "inclusive_ms": 0.017334
+        },
+        {
+          "function": "~:0:<method 'get' of 'dict' objects>",
+          "calls": 23,
+          "self_ms": 0.003416,
+          "inclusive_ms": 0.003416
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+          "calls": 8,
+          "self_ms": 0.0012900000000000001,
+          "inclusive_ms": 0.002373
+        },
+        {
+          "function": "~:0:<built-in method builtins.any>",
+          "calls": 1,
+          "self_ms": 0.000794,
+          "inclusive_ms": 0.002875
+        },
+        {
+          "function": "~:0:<built-in method builtins.isinstance>",
+          "calls": 7,
+          "self_ms": 0.0006690000000000001,
+          "inclusive_ms": 0.0006690000000000001
+        }
+      ]
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "8c453e2f86104a48aa33a5b741e543b1",
+      "layer": "logical",
+      "system_chars": 78990,
+      "system_parts": {
+        "core_rules": 14994,
+        "tool_catalog": 45374,
+        "team_guidance": 0,
+        "web_guidance": 2665,
+        "memory_guidance": 1097,
+        "project_instructions": 0,
+        "skills_catalog": 0,
+        "mcp_guidance": 686,
+        "sessions_guidance": 1157,
+        "dispatch_guidance": 3919,
+        "teams_main_guidance": 3435,
+        "batch_guidance": 5663
+      },
+      "payload_parts": {
+        "workspace_path": 57,
+        "retrieval_seed": 109495,
+        "conversation_history": 492,
+        "recalled_memories": 1703,
+        "goal": 448,
+        "instruction": 1271,
+        "budget_status": 34,
+        "framing": 8
+      },
+      "retrieval_parts": {
+        "repository_structure": 85678,
+        "file_outlines": 9272,
+        "file_contents": 18,
+        "planner_evidence": 13214,
+        "diagnostics_excerpt": 24,
+        "snapshot_stats": 82,
+        "graph_neighbor_files": 1182,
+        "framing": 8
+      },
+      "schema_chars": 3696,
+      "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "7898c963c236428b8bae8f5e8cd1e6cc",
+      "parent": "8c453e2f86104a48aa33a5b741e543b1",
+      "name": "provider.rate_limit_wait",
+      "start_ns": 471407476761291,
+      "end_ns": 471407476769875,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "1a42e8a9b334480abc13a830703f0dc5",
+      "parent": "d43be7cad6b54b2eb417ba7be5c44fad",
+      "name": "provider.auth",
+      "start_ns": 471407479814458,
+      "end_ns": 471407838620875,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "d43be7cad6b54b2eb417ba7be5c44fad",
+      "layer": "physical",
+      "parts": {
+        "instructions": 85250,
+        "input": 121257,
+        "tools": 4136,
+        "tool_choice": 24,
+        "framing": 5
+      },
+      "total_chars": 210672,
+      "estimated_tokens": 52668,
+      "estimate_method": "serialized_chars/4"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "0e56386c998946ba91b584d6afc14921",
+      "parent": "21027507cec04b36a0b0c9d7c3c299f2",
+      "name": "provider.response_headers",
+      "start_ns": 471407842031166,
+      "end_ns": 471410629124291,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "mark",
+      "parent": "21027507cec04b36a0b0c9d7c3c299f2",
+      "name": "provider.first_content",
+      "at_ns": 471417426914333
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "21027507cec04b36a0b0c9d7c3c299f2",
+      "layer": "reported",
+      "input_tokens": 54117
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "21027507cec04b36a0b0c9d7c3c299f2",
+      "layer": "provider_usage",
+      "input_tokens": 54117,
+      "output_tokens": 180,
+      "cached_input_tokens": 0,
+      "reasoning_tokens": 26
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "21027507cec04b36a0b0c9d7c3c299f2",
+      "parent": "d43be7cad6b54b2eb417ba7be5c44fad",
+      "name": "provider.stream",
+      "start_ns": 471407841827541,
+      "end_ns": 471417450088375,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "d43be7cad6b54b2eb417ba7be5c44fad",
+      "parent": "8c453e2f86104a48aa33a5b741e543b1",
+      "name": "provider.request",
+      "start_ns": 471407476822000,
+      "end_ns": 471417450652875,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "8c453e2f86104a48aa33a5b741e543b1",
+      "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "name": "model.step",
+      "start_ns": 471407467363833,
+      "end_ns": 471417453711458,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "55957ab66c154f67b65c354e5534e28c",
+      "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "name": "tool.read_file",
+      "start_ns": 471417456697083,
+      "end_ns": 471417460049625,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "b875e4fd790f4d0c93afecffad53c8c9",
+      "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "name": "tool.read_file",
+      "start_ns": 471417458760625,
+      "end_ns": 471417461518041,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "layer": "tool_batch",
+      "issued": 2,
+      "executed": 2,
+      "high_water": 2,
+      "result_budget_chars": 100000
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "8d982e54d94c4d348d6899cf6ffd7e7c",
+      "parent": "66f26d5b990349bdab2cacf9ae695493",
+      "name": "context.system_prompt",
+      "start_ns": 471417463591958,
+      "end_ns": 471417467370375,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "functions",
+      "name": "context.system_prompt",
+      "rows": [
+        {
+          "function": "encoder.py:334:_iterencode_dict",
+          "calls": 13592,
+          "self_ms": 1.699982,
+          "inclusive_ms": 2.286813
+        },
+        {
+          "function": "encoder.py:278:_iterencode_list",
+          "calls": 4578,
+          "self_ms": 0.5136310000000001,
+          "inclusive_ms": 2.723843
+        },
+        {
+          "function": "encoder.py:414:_iterencode",
+          "calls": 4126,
+          "self_ms": 0.354293,
+          "inclusive_ms": 3.0783850000000004
+        },
+        {
+          "function": "encoder.py:183:encode",
+          "calls": 1,
+          "self_ms": 0.214489,
+          "inclusive_ms": 3.337291
+        },
+        {
+          "function": "~:0:<built-in method builtins.isinstance>",
+          "calls": 3490,
+          "self_ms": 0.20502900000000002,
+          "inclusive_ms": 0.20502900000000002
+        },
+        {
+          "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+          "calls": 1341,
+          "self_ms": 0.144131,
+          "inclusive_ms": 0.144131
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+          "calls": 1,
+          "self_ms": 0.08049,
+          "inclusive_ms": 3.611
+        },
+        {
+          "function": "~:0:<built-in method builtins.sorted>",
+          "calls": 318,
+          "self_ms": 0.07916100000000001,
+          "inclusive_ms": 0.07916100000000001
+        },
+        {
+          "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_ms": 0.076708,
+          "inclusive_ms": 0.076708
+        },
+        {
+          "function": "~:0:<built-in method builtins.id>",
+          "calls": 389,
+          "self_ms": 0.06826,
+          "inclusive_ms": 0.06826
+        },
+        {
+          "function": "~:0:<method 'join' of 'str' objects>",
+          "calls": 1,
+          "self_ms": 0.040083,
+          "inclusive_ms": 0.040083
+        },
+        {
+          "function": "~:0:<method 'replace' of 'str' objects>",
+          "calls": 2,
+          "self_ms": 0.028125000000000004,
+          "inclusive_ms": 0.028125000000000004
+        },
+        {
+          "function": "~:0:<method 'items' of 'dict' objects>",
+          "calls": 318,
+          "self_ms": 0.023014,
+          "inclusive_ms": 0.023014
+        },
+        {
+          "function": "__init__.py:183:dumps",
+          "calls": 1,
+          "self_ms": 0.022625000000000003,
+          "inclusive_ms": 3.36025
+        },
+        {
+          "function": "~:0:<method 'get' of 'dict' objects>",
+          "calls": 179,
+          "self_ms": 0.014122000000000001,
+          "inclusive_ms": 0.014122000000000001
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+          "calls": 44,
+          "self_ms": 0.010671,
+          "inclusive_ms": 0.015828000000000002
+        },
+        {
+          "function": "agentd/memory/config.py:26:from_env",
+          "calls": 1,
+          "self_ms": 0.010582000000000001,
+          "inclusive_ms": 0.034709000000000004
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+          "calls": 40,
+          "self_ms": 0.010291,
+          "inclusive_ms": 0.015287000000000002
+        },
+        {
+          "function": "~:0:<built-in method builtins.any>",
+          "calls": 4,
+          "self_ms": 0.009883,
+          "inclusive_ms": 0.064041
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+          "calls": 36,
+          "self_ms": 0.008834,
+          "inclusive_ms": 0.012791
+        },
+        {
+          "function": "<frozen os>:709:__getitem__",
+          "calls": 18,
+          "self_ms": 0.008542000000000001,
+          "inclusive_ms": 0.021708
+        },
+        {
+          "function": "<frozen os>:791:encode",
+          "calls": 18,
+          "self_ms": 0.007335,
+          "inclusive_ms": 0.010875
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+          "calls": 15,
+          "self_ms": 0.007047,
+          "inclusive_ms": 0.011251
+        },
+        {
+          "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+          "calls": 1,
+          "self_ms": 0.005,
+          "inclusive_ms": 0.005
+        },
+        {
+          "function": "<frozen _collections_abc>:804:get",
+          "calls": 18,
+          "self_ms": 0.004877,
+          "inclusive_ms": 0.026585
+        },
+        {
+          "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+          "calls": 1,
+          "self_ms": 0.004208,
+          "inclusive_ms": 0.004584
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1076:record",
+          "calls": 10,
+          "self_ms": 0.0038369999999999997,
+          "inclusive_ms": 0.005211
+        },
+        {
+          "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+          "calls": 1,
+          "self_ms": 0.0037490000000000006,
+          "inclusive_ms": 0.038458000000000006
+        },
+        {
+          "function": "<string>:2:__hash__",
+          "calls": 7,
+          "self_ms": 0.0033760000000000005,
+          "inclusive_ms": 0.004542
+        },
+        {
+          "function": "encoder.py:205:iterencode",
+          "calls": 1,
+          "self_ms": 0.002792,
+          "inclusive_ms": 0.004084
+        },
+        {
+          "function": "~:0:<method 'encode' of 'str' objects>",
+          "calls": 18,
+          "self_ms": 0.002126,
+          "inclusive_ms": 0.002126
+        },
+        {
+          "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+          "calls": 1,
+          "self_ms": 0.0020840000000000003,
+          "inclusive_ms": 0.008542000000000001
+        },
+        {
+          "function": "~:0:<method 'startswith' of 'str' objects>",
+          "calls": 14,
+          "self_ms": 0.00204,
+          "inclusive_ms": 0.00204
+        },
+        {
+          "function": "~:0:<built-in method builtins.len>",
+          "calls": 24,
+          "self_ms": 0.0019150000000000003,
+          "inclusive_ms": 0.0019150000000000003
+        },
+        {
+          "function": "main.py:270:__init__",
+          "calls": 1,
+          "self_ms": 0.0018340000000000001,
+          "inclusive_ms": 0.006834
+        },
+        {
+          "function": "<frozen os>:795:decode",
+          "calls": 4,
+          "self_ms": 0.0015830000000000002,
+          "inclusive_ms": 0.002291
+        },
+        {
+          "function": "encoder.py:224:floatstr",
+          "calls": 2,
+          "self_ms": 0.001458,
+          "inclusive_ms": 0.001458
+        },
+        {
+          "function": "encoder.py:260:_make_iterencode",
+          "calls": 1,
+          "self_ms": 0.00125,
+          "inclusive_ms": 0.0012920000000000002
+        },
+        {
+          "function": "~:0:<built-in method builtins.hash>",
+          "calls": 7,
+          "self_ms": 0.0011660000000000002,
+          "inclusive_ms": 0.0011660000000000002
+        },
+        {
+          "function": "agentd/tools/batching.py:29:batching_enabled",
+          "calls": 2,
+          "self_ms": 0.0011240000000000002,
+          "inclusive_ms": 0.0053750000000000004
+        }
+      ]
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "e5e0562876e345aeba0801c9d472128c",
+      "parent": "66f26d5b990349bdab2cacf9ae695493",
+      "name": "context.payload",
+      "start_ns": 471417471308041,
+      "end_ns": 471417471539958,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "functions",
+      "name": "context.payload",
+      "rows": [
+        {
+          "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_ms": 0.097,
+          "inclusive_ms": 0.097
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+          "calls": 1,
+          "self_ms": 0.013503000000000001,
+          "inclusive_ms": 0.021042
+        },
+        {
+          "function": "~:0:<method 'get' of 'dict' objects>",
+          "calls": 23,
+          "self_ms": 0.00396,
+          "inclusive_ms": 0.00396
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+          "calls": 8,
+          "self_ms": 0.0018740000000000002,
+          "inclusive_ms": 0.002792
+        },
+        {
+          "function": "~:0:<built-in method builtins.any>",
+          "calls": 1,
+          "self_ms": 0.000999,
+          "inclusive_ms": 0.003416
+        },
+        {
+          "function": "~:0:<built-in method builtins.isinstance>",
+          "calls": 7,
+          "self_ms": 0.000706,
+          "inclusive_ms": 0.000706
+        }
+      ]
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "66f26d5b990349bdab2cacf9ae695493",
+      "layer": "logical",
+      "system_chars": 78990,
+      "system_parts": {
+        "core_rules": 14994,
+        "tool_catalog": 45374,
+        "team_guidance": 0,
+        "web_guidance": 2665,
+        "memory_guidance": 1097,
+        "project_instructions": 0,
+        "skills_catalog": 0,
+        "mcp_guidance": 686,
+        "sessions_guidance": 1157,
+        "dispatch_guidance": 3919,
+        "teams_main_guidance": 3435,
+        "batch_guidance": 5663
+      },
+      "payload_parts": {
+        "workspace_path": 57,
+        "retrieval_seed": 109495,
+        "conversation_history": 54241,
+        "recalled_memories": 1703,
+        "goal": 448,
+        "instruction": 1596,
+        "budget_status": 34,
+        "framing": 8
+      },
+      "retrieval_parts": {
+        "repository_structure": 85678,
+        "file_outlines": 9272,
+        "file_contents": 18,
+        "planner_evidence": 13214,
+        "diagnostics_excerpt": 24,
+        "snapshot_stats": 82,
+        "graph_neighbor_files": 1182,
+        "framing": 8
+      },
+      "schema_chars": 3696,
+      "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "16a3c61ff48a46e5a41233e5aab6cac1",
+      "parent": "66f26d5b990349bdab2cacf9ae695493",
+      "name": "provider.rate_limit_wait",
+      "start_ns": 471417473720000,
+      "end_ns": 471417473728958,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "f78f8d5b73d94251bb20dddfef971f91",
+      "parent": "4a01286454544f31b68af7b758d2e0c5",
+      "name": "provider.auth",
+      "start_ns": 471417476811375,
+      "end_ns": 471417477048541,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "4a01286454544f31b68af7b758d2e0c5",
+      "layer": "physical",
+      "parts": {
+        "instructions": 85250,
+        "input": 185104,
+        "tools": 4136,
+        "tool_choice": 24,
+        "framing": 5
+      },
+      "total_chars": 274519,
+      "estimated_tokens": 68630,
+      "estimate_method": "serialized_chars/4"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "bde0ee4a36e5482880fa5769b2387ae1",
+      "parent": "642e2e97f7b649a4955982268c99d865",
+      "name": "provider.response_headers",
+      "start_ns": 471417481519666,
+      "end_ns": 471419800313750,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "mark",
+      "parent": "642e2e97f7b649a4955982268c99d865",
+      "name": "provider.first_content",
+      "at_ns": 471423134928416
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "642e2e97f7b649a4955982268c99d865",
+      "layer": "reported",
+      "input_tokens": 70469
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "642e2e97f7b649a4955982268c99d865",
+      "layer": "provider_usage",
+      "input_tokens": 70469,
+      "output_tokens": 277,
+      "cached_input_tokens": 52864,
+      "reasoning_tokens": 178
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "642e2e97f7b649a4955982268c99d865",
+      "parent": "4a01286454544f31b68af7b758d2e0c5",
+      "name": "provider.stream",
+      "start_ns": 471417481195625,
+      "end_ns": 471425737598375,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "4a01286454544f31b68af7b758d2e0c5",
+      "parent": "66f26d5b990349bdab2cacf9ae695493",
+      "name": "provider.request",
+      "start_ns": 471417473789583,
+      "end_ns": 471425738182791,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "66f26d5b990349bdab2cacf9ae695493",
+      "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "name": "model.step",
+      "start_ns": 471417463549041,
+      "end_ns": 471425742768083,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "95bb61d9d0324c12a51ae373363c6b55",
+      "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "name": "tool.read_file",
+      "start_ns": 471425747497541,
+      "end_ns": 471425748731291,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "layer": "tool_batch",
+      "issued": 1,
+      "executed": 1,
+      "high_water": 2,
+      "result_budget_chars": 100000
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "b0b1d067e3f241dbbecfa288794c6e2c",
+      "parent": "24e18eec70ea400dbe8143abcefb453d",
+      "name": "context.system_prompt",
+      "start_ns": 471425751717375,
+      "end_ns": 471425757064291,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "functions",
+      "name": "context.system_prompt",
+      "rows": [
+        {
+          "function": "encoder.py:334:_iterencode_dict",
+          "calls": 13592,
+          "self_ms": 2.402773,
+          "inclusive_ms": 3.2402940000000005
+        },
+        {
+          "function": "encoder.py:278:_iterencode_list",
+          "calls": 4578,
+          "self_ms": 0.739082,
+          "inclusive_ms": 3.865933
+        },
+        {
+          "function": "encoder.py:414:_iterencode",
+          "calls": 4126,
+          "self_ms": 0.510803,
+          "inclusive_ms": 4.377028000000001
+        },
+        {
+          "function": "encoder.py:183:encode",
+          "calls": 1,
+          "self_ms": 0.30089,
+          "inclusive_ms": 4.737459
+        },
+        {
+          "function": "~:0:<built-in method builtins.isinstance>",
+          "calls": 3490,
+          "self_ms": 0.283013,
+          "inclusive_ms": 0.283013
+        },
+        {
+          "function": "~:0:<built-in method _json.encode_basestring_ascii>",
+          "calls": 1341,
+          "self_ms": 0.207829,
+          "inclusive_ms": 0.207829
+        },
+        {
+          "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_ms": 0.11850000000000001,
+          "inclusive_ms": 0.11850000000000001
+        },
+        {
+          "function": "~:0:<built-in method builtins.sorted>",
+          "calls": 318,
+          "self_ms": 0.11600400000000001,
+          "inclusive_ms": 0.11600400000000001
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1033:format_controller_system_prompt",
+          "calls": 1,
+          "self_ms": 0.10521,
+          "inclusive_ms": 5.105583
+        },
+        {
+          "function": "~:0:<built-in method builtins.id>",
+          "calls": 389,
+          "self_ms": 0.096918,
+          "inclusive_ms": 0.096918
+        },
+        {
+          "function": "~:0:<method 'join' of 'str' objects>",
+          "calls": 1,
+          "self_ms": 0.054000000000000006,
+          "inclusive_ms": 0.054000000000000006
+        },
+        {
+          "function": "~:0:<method 'replace' of 'str' objects>",
+          "calls": 2,
+          "self_ms": 0.039375,
+          "inclusive_ms": 0.039375
+        },
+        {
+          "function": "~:0:<method 'items' of 'dict' objects>",
+          "calls": 318,
+          "self_ms": 0.03231200000000001,
+          "inclusive_ms": 0.03231200000000001
+        },
+        {
+          "function": "__init__.py:183:dumps",
+          "calls": 1,
+          "self_ms": 0.032124,
+          "inclusive_ms": 4.7700830000000005
+        },
+        {
+          "function": "~:0:<method 'get' of 'dict' objects>",
+          "calls": 179,
+          "self_ms": 0.019133,
+          "inclusive_ms": 0.019133
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1139:<genexpr>",
+          "calls": 44,
+          "self_ms": 0.015115,
+          "inclusive_ms": 0.021412
+        },
+        {
+          "function": "agentd/memory/config.py:26:from_env",
+          "calls": 1,
+          "self_ms": 0.013875,
+          "inclusive_ms": 0.044625
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1128:<genexpr>",
+          "calls": 36,
+          "self_ms": 0.013873000000000002,
+          "inclusive_ms": 0.019580000000000004
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1133:<genexpr>",
+          "calls": 40,
+          "self_ms": 0.013622,
+          "inclusive_ms": 0.019959
+        },
+        {
+          "function": "~:0:<built-in method builtins.any>",
+          "calls": 4,
+          "self_ms": 0.013505,
+          "inclusive_ms": 0.08887500000000001
+        },
+        {
+          "function": "<frozen os>:709:__getitem__",
+          "calls": 18,
+          "self_ms": 0.012122,
+          "inclusive_ms": 0.029039000000000002
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1122:<genexpr>",
+          "calls": 15,
+          "self_ms": 0.010504000000000001,
+          "inclusive_ms": 0.015835
+        },
+        {
+          "function": "<frozen os>:791:encode",
+          "calls": 18,
+          "self_ms": 0.008873,
+          "inclusive_ms": 0.013791000000000001
+        },
+        {
+          "function": "<frozen _collections_abc>:804:get",
+          "calls": 18,
+          "self_ms": 0.006501,
+          "inclusive_ms": 0.03554
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1076:record",
+          "calls": 10,
+          "self_ms": 0.005292000000000001,
+          "inclusive_ms": 0.007542000000000001
+        },
+        {
+          "function": "~:0:<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>",
+          "calls": 1,
+          "self_ms": 0.005292000000000001,
+          "inclusive_ms": 0.005292000000000001
+        },
+        {
+          "function": "agentd/prompting/web_research.py:6:web_research_guidance",
+          "calls": 1,
+          "self_ms": 0.0048330000000000005,
+          "inclusive_ms": 0.005875000000000001
+        },
+        {
+          "function": "<string>:2:__hash__",
+          "calls": 7,
+          "self_ms": 0.004666,
+          "inclusive_ms": 0.006417000000000001
+        },
+        {
+          "function": "encoder.py:205:iterencode",
+          "calls": 1,
+          "self_ms": 0.003791,
+          "inclusive_ms": 0.005208
+        },
+        {
+          "function": "~:0:<method 'encode' of 'str' objects>",
+          "calls": 18,
+          "self_ms": 0.003208,
+          "inclusive_ms": 0.003208
+        },
+        {
+          "function": "~:0:<built-in method builtins.len>",
+          "calls": 24,
+          "self_ms": 0.0031660000000000004,
+          "inclusive_ms": 0.0031660000000000004
+        },
+        {
+          "function": "agentd/chat/controller_factory.py:31:is_memory_enabled",
+          "calls": 1,
+          "self_ms": 0.0029590000000000003,
+          "inclusive_ms": 0.047584
+        },
+        {
+          "function": "~:0:<method 'startswith' of 'str' objects>",
+          "calls": 14,
+          "self_ms": 0.002709,
+          "inclusive_ms": 0.002709
+        },
+        {
+          "function": "agentd/chat/controller_factory.py:24:is_task_subsystem_enabled",
+          "calls": 1,
+          "self_ms": 0.002666,
+          "inclusive_ms": 0.011208000000000001
+        },
+        {
+          "function": "main.py:270:__init__",
+          "calls": 1,
+          "self_ms": 0.002167,
+          "inclusive_ms": 0.007459
+        },
+        {
+          "function": "<frozen os>:795:decode",
+          "calls": 4,
+          "self_ms": 0.002043,
+          "inclusive_ms": 0.0031260000000000003
+        },
+        {
+          "function": "encoder.py:224:floatstr",
+          "calls": 2,
+          "self_ms": 0.001958,
+          "inclusive_ms": 0.001958
+        },
+        {
+          "function": "~:0:<built-in method builtins.hash>",
+          "calls": 7,
+          "self_ms": 0.001751,
+          "inclusive_ms": 0.001751
+        },
+        {
+          "function": "agentd/tools/batching.py:29:batching_enabled",
+          "calls": 2,
+          "self_ms": 0.001709,
+          "inclusive_ms": 0.007541
+        },
+        {
+          "function": "~:0:<method 'lower' of 'str' objects>",
+          "calls": 7,
+          "self_ms": 0.001333,
+          "inclusive_ms": 0.001333
+        }
+      ]
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "66751e1107a7419ba7802a8b1be72b80",
+      "parent": "24e18eec70ea400dbe8143abcefb453d",
+      "name": "context.payload",
+      "start_ns": 471425762374500,
+      "end_ns": 471425762587750,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "functions",
+      "name": "context.payload",
+      "rows": [
+        {
+          "function": "~:0:<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_ms": 0.08916700000000001,
+          "inclusive_ms": 0.08916700000000001
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1211:build_controller_step_payload",
+          "calls": 1,
+          "self_ms": 0.011876000000000001,
+          "inclusive_ms": 0.018125
+        },
+        {
+          "function": "~:0:<method 'get' of 'dict' objects>",
+          "calls": 23,
+          "self_ms": 0.0029570000000000004,
+          "inclusive_ms": 0.0029570000000000004
+        },
+        {
+          "function": "agentd/chat/controller_prompts.py:1276:<genexpr>",
+          "calls": 8,
+          "self_ms": 0.0017500000000000003,
+          "inclusive_ms": 0.002458
+        },
+        {
+          "function": "~:0:<built-in method builtins.any>",
+          "calls": 1,
+          "self_ms": 0.0008340000000000001,
+          "inclusive_ms": 0.003
+        },
+        {
+          "function": "~:0:<built-in method builtins.isinstance>",
+          "calls": 7,
+          "self_ms": 0.0007080000000000001,
+          "inclusive_ms": 0.0007080000000000001
+        }
+      ]
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "24e18eec70ea400dbe8143abcefb453d",
+      "layer": "logical",
+      "system_chars": 78990,
+      "system_parts": {
+        "core_rules": 14994,
+        "tool_catalog": 45374,
+        "team_guidance": 0,
+        "web_guidance": 2665,
+        "memory_guidance": 1097,
+        "project_instructions": 0,
+        "skills_catalog": 0,
+        "mcp_guidance": 686,
+        "sessions_guidance": 1157,
+        "dispatch_guidance": 3919,
+        "teams_main_guidance": 3435,
+        "batch_guidance": 5663
+      },
+      "payload_parts": {
+        "workspace_path": 57,
+        "retrieval_seed": 109495,
+        "conversation_history": 55816,
+        "recalled_memories": 1703,
+        "goal": 448,
+        "instruction": 1596,
+        "budget_status": 34,
+        "framing": 8
+      },
+      "retrieval_parts": {
+        "repository_structure": 85678,
+        "file_outlines": 9272,
+        "file_contents": 18,
+        "planner_evidence": 13214,
+        "diagnostics_excerpt": 24,
+        "snapshot_stats": 82,
+        "graph_neighbor_files": 1182,
+        "framing": 8
+      },
+      "schema_chars": 3696,
+      "estimate_note": "characters; tokens/4 is a heuristic; nested parts are not additive"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "1263f1bac9da412d8db140b3f6d79d0a",
+      "parent": "24e18eec70ea400dbe8143abcefb453d",
+      "name": "provider.rate_limit_wait",
+      "start_ns": 471425764657541,
+      "end_ns": 471425764665375,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "cb344022d2cc475cb36f856cb8cddc40",
+      "parent": "f69a961be5c7462ab0e3e98db3ba5057",
+      "name": "provider.auth",
+      "start_ns": 471425768279541,
+      "end_ns": 471425768458875,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "context",
+      "parent": "f69a961be5c7462ab0e3e98db3ba5057",
+      "layer": "physical",
+      "parts": {
+        "instructions": 85250,
+        "input": 191477,
+        "tools": 4136,
+        "tool_choice": 24,
+        "framing": 5
+      },
+      "total_chars": 280892,
+      "estimated_tokens": 70223,
+      "estimate_method": "serialized_chars/4"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "5976ce492e904a4ea3fac5f3689dea58",
+      "parent": "98c3c70a2d004bc09211062f361e1b39",
+      "name": "provider.response_headers",
+      "start_ns": 471425773238416,
+      "end_ns": 471429442741125,
+      "status": "ok"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "mark",
+      "parent": "98c3c70a2d004bc09211062f361e1b39",
+      "name": "provider.first_content",
+      "at_ns": 471431424011041
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "98c3c70a2d004bc09211062f361e1b39",
+      "parent": "f69a961be5c7462ab0e3e98db3ba5057",
+      "name": "provider.stream",
+      "start_ns": 471425772857083,
+      "end_ns": 471434073226583,
+      "status": "error_or_cancelled"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "f69a961be5c7462ab0e3e98db3ba5057",
+      "parent": "24e18eec70ea400dbe8143abcefb453d",
+      "name": "provider.request",
+      "start_ns": 471425764723166,
+      "end_ns": 471434074851750,
+      "status": "error_or_cancelled"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "24e18eec70ea400dbe8143abcefb453d",
+      "parent": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "name": "model.step",
+      "start_ns": 471425751670208,
+      "end_ns": 471434075156166,
+      "status": "error_or_cancelled"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "c56c432d38fc4eb99fa9c891322cd0ed",
+      "parent": "448e1d075f5b4b938d24962b6273eb78",
+      "name": "controller.turn",
+      "start_ns": 471406832153541,
+      "end_ns": 471434075385083,
+      "status": "error_or_cancelled"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "448e1d075f5b4b938d24962b6273eb78",
+      "parent": "d6dc4ab708294b9fbfbd0593589473d4",
+      "name": "controller.setup_and_loop",
+      "start_ns": 471357985166583,
+      "end_ns": 471434078601875,
+      "status": "error_or_cancelled"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "d6dc4ab708294b9fbfbd0593589473d4",
+      "parent": "cda45af4f88c4b57863ed272e4f2d370",
+      "name": "controller.user_turn",
+      "start_ns": 471357984708125,
+      "end_ns": 471434078865625,
+      "status": "error_or_cancelled"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "cda45af4f88c4b57863ed272e4f2d370",
+      "parent": "37e1beebb9b0489b9cb36b9977ee7c78",
+      "name": "controller.handle_message",
+      "start_ns": 471357983883125,
+      "end_ns": 471434079039250,
+      "status": "error_or_cancelled"
+    },
+    {
+      "trace": "9c010e656f074704ae2bdf4a230a8e62",
+      "kind": "span",
+      "id": "37e1beebb9b0489b9cb36b9977ee7c78",
+      "parent": null,
+      "name": "controller.backend_turn",
+      "start_ns": 471357983878333,
+      "end_ns": 471434079196250,
+      "status": "error_or_cancelled"
+    }
+  ],
+  "client_error": "Socket timed out after 30 seconds before HTTP response headers; live chat stopped explicitly through backend stop endpoint.",
+  "explicit_stop_requested": true,
+  "backend_root_status": "error_or_cancelled",
+  "live_read_batch": {
+    "issued": 2,
+    "executed": 2,
+    "tool_span_overlap_ms": 1.289,
+    "union_wall_ms": 4.820958,
+    "individual_ms": [
+      3.352542,
+      2.757416
+    ],
+    "redundant_followup_read": {
+      "start_line": 241,
+      "end_line": 250
+    },
+    "scope": "Overlapping tool execution intervals, not physical disk access timings."
+  }
+}

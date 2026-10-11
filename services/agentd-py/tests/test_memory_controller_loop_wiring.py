@@ -139,8 +139,11 @@ async def test_loop_feeds_the_measured_prompt_into_the_next_compaction(tmp_path:
             if self.calls == 1:
                 if on_usage is not None:
                     on_usage(7777, 20)
-                return {"type": "tool_call", "thought": "t", "tool": "list_directory",
-                        "args": {"path": "."}}
+                return {
+                    "type": "tool_calls",
+                    "thought": "t",
+                    "calls": [{"id": "call1", "tool": "list_directory", "args": {"path": "."}}],
+                }
             return {"type": "answer", "thought": "t", "answer": "done"}
 
     loop = ControllerLoop(_ReportingEngine(), reg, EventBroadcaster(), channel_id="c",

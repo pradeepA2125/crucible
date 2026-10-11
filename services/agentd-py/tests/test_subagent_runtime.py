@@ -16,7 +16,7 @@ from agentd.subagents.runtime import (
 def _handle(agent_id: str, parent: str | None = None, depth: int = 1) -> AgentHandle:
     ctx = AgentContext(agent_id=agent_id, name="general-purpose", label=agent_id, depth=depth,
                        parent_agent_id=parent, permission="default",
-                       allowed_types=("tool_call", "edit", "progress", "report"),
+                       allowed_types=("tool_calls", "edit", "progress", "report"),
                        persona="", max_iters=10)
     return AgentHandle(context=ctx, definition=BUILTIN_AGENTS["general-purpose"],
                        prompt="p", thread_id="t1", turn_id="turn-1")

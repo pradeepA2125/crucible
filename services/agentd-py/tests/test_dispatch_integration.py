@@ -46,14 +46,17 @@ def _creates(file: str, text: str) -> list[dict[str, object]]:
 
 
 def _dispatch(*agents: tuple[str, str, str]) -> dict[str, object]:
-    return {"type": "tool_call", "thought": "fan out", "tool": "dispatch_agents",
-            "args": {"agents": [{"agent": a, "label": label, "prompt": prompt}
-                                for a, label, prompt in agents]}}
+    return {'type': 'tool_calls', 'thought': "fan out", 'calls': [{'id': 'call1', 'tool': "dispatch_agents", 'args': {"agents": [{"agent": a, "label": label, "prompt": prompt}
+                                for a, label, prompt in agents]}}]}
 
 
 DONE = {"type": "submit_changes", "thought": "d", "summary": "All parts done."}
 # Dispatch returns at once (spec §4.1); reports are collected with wait_agents.
-WAIT = {"type": "tool_call", "thought": "collect", "tool": "wait_agents", "args": {}}
+WAIT = {
+    "type": "tool_calls",
+    "thought": "collect",
+    "calls": [{"id": "call1", "tool": "wait_agents", "args": {}}],
+}
 
 
 @pytest.mark.asyncio
@@ -94,9 +97,14 @@ async def test_two_children_edit_disjoint_files(tmp_path: Path,
     history = thread.controller_conversation_history or []
     result = next(m for m in history if m.get("tool") == "wait_agents")
     entries = json.loads(str(result["content"]))
-    assert [(e["label"], e["status"], e["report"]) for e in entries] == [
-        ("impl-a", "completed", frame("impl-a (general-purpose)", "report", "Created a.py.")),
-        ("impl-b", "completed", frame("impl-b (general-purpose)", "report", "Created b.py."))]
+    assert [e["label"] for e in entries] == ["impl-a", "impl-b"]
+    for entry, file in zip(entries, ("a.py", "b.py")):
+        assert entry["status"] in {"completed", "already delivered — see the earlier message"}
+        report = frame(f"{entry['label']} (general-purpose)", "report", f"Created {file}.")
+        if entry["status"] == "completed":
+            assert entry["report"] == report
+        else:
+            assert any(f"Created {file}." in str(m.get("content", "")) for m in history)
     types = [thread_events.get_nowait()["type"] for _ in range(thread_events.qsize())]
     assert types.count("agent_started") == 2 and types.count("agent_finished") == 2
 

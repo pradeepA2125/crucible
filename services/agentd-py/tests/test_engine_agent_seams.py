@@ -9,7 +9,7 @@ from agentd.reasoning.engine import DefaultReasoningEngine
 from agentd.tools.sources import AggregatingToolRegistry
 
 CHILD = RenderContext(audience="child", permission="default",
-                      base_types=frozenset({"tool_call", "edit", "progress", "report"}),
+                      base_types=frozenset({"tool_calls", "edit", "progress", "report"}),
                       agent_id="a1", agent_label="impl")
 
 
@@ -42,7 +42,7 @@ async def test_main_active_with_task_subsystem_now_offers_propose_mode() -> None
     # Latent bug (spec §4.1): _allowed_action_types appended propose_mode but the schema never did.
     transport = _CapturingTransport()
     engine = DefaultReasoningEngine(model="m", transport=transport)
-    types = ["tool_call", "answer", "clarify", "edit", "submit_changes", "progress", "propose_mode"]
+    types = ["tool_calls", "answer", "clarify", "edit", "submit_changes", "progress", "propose_mode"]
     await engine.create_controller_step(
         plan_context={"goal": "g", "workspace_path": "/w"}, history=[], tool_definitions=[],
         phase="ACTIVE", allowed_types=types)
@@ -92,5 +92,5 @@ async def test_loop_passes_new_kwargs_only_to_engines_that_declare_them() -> Non
         out = await loop.run({"goal": "g", "workspace_path": "/w"}, max_iters=3)
         assert out.kind == "answer"
     assert seen["allowed_types"] == [
-        "tool_call", "answer", "clarify", "edit", "submit_changes", "progress"]
+        "tool_calls", "answer", "clarify", "edit", "submit_changes", "progress"]
     assert seen["render_ctx"] == RenderContext.main()

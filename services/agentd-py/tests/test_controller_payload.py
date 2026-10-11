@@ -181,7 +181,7 @@ def test_edit_entry_hint_leads_with_write_todos_tool_syntax():
         {"goal": "g", "workspace_path": "/w", "active_entry": True},
         history=seeded, tool_definitions=[], phase="ACTIVE")
     instr = str(payload["instruction"])
-    assert "tool_call" in instr                       # exact action type for write_todos
+    assert "tool_calls" in instr                       # exact action type for write_todos
     assert "write_todos" in instr
     assert "empty" in instr.lower()                   # warns against empty patch_ops
     assert "reflect on your last edit" not in instr   # NOT the mid-turn reconcile hint
@@ -201,9 +201,9 @@ def test_system_prompt_teaches_write_todos_is_a_tool_call():
     so a weak model routes it correctly instead of shipping an empty edit."""
     from agentd.chat.controller_prompts import CONTROLLER_SYSTEM_PROMPT
     p = CONTROLLER_SYSTEM_PROMPT
-    assert "tool_call" in p and "write_todos" in p
+    assert "tool_calls" in p and "write_todos" in p
     # The policy block specifically ties write_todos to the tool_call action form.
-    assert "type='tool_call'" in p
+    assert "type='tool_calls'" in p
 
 
 def test_no_checkpoint_without_active_list():
