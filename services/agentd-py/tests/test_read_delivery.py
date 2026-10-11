@@ -16,7 +16,7 @@ async def test_900_line_read_has_no_second_cap_and_complete_metadata(tmp_path, m
     result = await ToolRegistry(tmp_path, tmp_path).execute(
         "read_file", {"path": "file.py", "start_line": 51, "end_line": 950}
     )
-    assert len(result.output.splitlines()) == 900
+    assert len([ln for ln in result.output.splitlines() if not ln.startswith("[")]) == 900
     meta = result.delivered_read
     assert (meta.delivered_start, meta.delivered_end, meta.total_lines) == (51, 950, 1000)
     assert meta.truncated_by is None
@@ -78,3 +78,21 @@ def test_budget_uses_this_physical_request_and_model_specific_capacity():
     observer.begin("different-child", {})
     assert context["context_capacity"] is None
     assert context["tool_result_budget"] == 16000
+
+
+@pytest.mark.asyncio
+async def test_a_read_that_stops_before_the_end_says_how_long_the_file_is(tmp_path):
+    """Live: the model read registry.py 1-320 and learned it had 532 lines only by asking
+    again. A complete requested range used to carry no footer at all."""
+    (tmp_path / "file.py").write_text("\n".join(f"line {i}" for i in range(532)))
+    result = await read_file(path="file.py", start_line=1, end_line=320, shadow_root=tmp_path)
+    footer = result.output.splitlines()[-1]
+    assert footer.startswith("[Read delivery: file has 532 lines; delivered 1–320.")
+    assert "specific range" in footer and "earlier reads do not already cover" in footer
+
+
+@pytest.mark.asyncio
+async def test_a_read_to_the_end_of_the_file_has_no_footer(tmp_path):
+    (tmp_path / "file.py").write_text("\n".join(f"line {i}" for i in range(50)))
+    result = await read_file(path="file.py", start_line=10, end_line=None, shadow_root=tmp_path)
+    assert not result.output.splitlines()[-1].startswith("[")
