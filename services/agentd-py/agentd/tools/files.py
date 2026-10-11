@@ -88,11 +88,6 @@ async def read_file(
         output += (f"\n[Read delivery: file has {count} lines; requested {start}–"
                    f"{end_line if end_line is not None else 'end'}; delivered {visible}; "
                    f"limit: {reason or 'empty/out-of-range'}. Request only the missing region.]" )
-    elif total is not None and delivered_end is not None and delivered_end < total:
-        # The requested range was delivered in full but the file goes on: say how long it is,
-        # or the model learns that only by asking again (live: registry.py read as 1-320, 320-532).
-        output += (f"\n[Read delivery: file has {total} lines; delivered {start}–{delivered_end}. "
-                   "Read more only as a specific range your earlier reads do not already cover.]")
     return ToolOutput(output=output, delivered_read=metadata)
 
 
