@@ -313,7 +313,12 @@ class TeamCoordinator:
         team = self._team()
         data: dict[str, object] = dict(action.data)
         if action.kind == "deadlock":
-            data["proposals"] = self._evaluation.get("proposals", [])
+            # Quoted so adopt_proposal is never a choice between bare ids.
+            raw_proposals = self._evaluation.get("proposals", [])
+            data["proposals"] = [
+                {**p, "preview": self._svc.proposal_preview(self._team_id, str(p.get("id", "")))}
+                if isinstance(p, dict) else p
+                for p in (raw_proposals if isinstance(raw_proposals, list) else [])]
         elif action.kind == "done":
             # Written just before End flips the row: the body names the phase it ends in.
             team = team.model_copy(update={"phase": "DONE"})
@@ -323,7 +328,8 @@ class TeamCoordinator:
             data.update(adopted=team.adopted_proposal_id, closing=team.closing_proposal_id,
                         cycle=team.review_cycles, abstained=self._review.get("abstained", []),
                         unresolved=(self._review.get("objections", [])
-                                    if data.get("reason") != "reviewed" else []))
+                                    if data.get("reason") != "reviewed" else []),
+                        members=self._svc.member_summaries(self._team_id))
         elif action.kind == "stuck":
             data["waits"] = {label: sorted(on) for label, on in self._waits.items()}
         elif action.kind == "paused":

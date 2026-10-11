@@ -30,6 +30,25 @@ def notice_body(notice: NoticeRecord) -> str:
     return "\n".join(lines)
 
 
+def notice_turn_input(notices: list[NoticeRecord]) -> str:
+    """The instruction that follows the notices in a notice turn. Only agent reports mean
+    something finished; a team milestone may be a pause, a block or an adoption."""
+    agents = any(n.source_kind == "agent" for n in notices)
+    teams = any(n.source_kind == "team" for n in notices)
+    if teams and not agents:
+        return ("No new message from the user. Team milestones arrived while you were away: "
+                "tell the user what changed, and act when a milestone or the user's earlier "
+                "request needs it.")
+    if teams:
+        return ("No new message from the user. These agents finished and team milestones "
+                "arrived while you were away: tell the user what the agents found or changed "
+                "and what changed for the teams, and act when a milestone or the user's "
+                "earlier request needs it.")
+    return ("No new message from the user. These agents finished while you were away: tell "
+            "the user what they found or changed, and act on it if the user's earlier request "
+            "needs that.")
+
+
 def estimate_tokens(text: str) -> int:
     # The same rough rule the memory compactor's budget uses: about four characters a token.
     return len(text) // 4 + 1

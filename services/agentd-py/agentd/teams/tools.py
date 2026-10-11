@@ -17,7 +17,8 @@ MEMBER_TOOL_NAMES = frozenset({
     "team_post", "team_message", "team_propose", "team_agree", "team_object", "team_withdraw",
     "team_read"})
 MAIN_TOOL_NAMES = frozenset({
-    "create_team", "post_board", "team_status", "adopt_proposal", "resume_team", "disband_team"})
+    "create_team", "post_board", "team_status", "team_report", "adopt_proposal", "resume_team",
+    "disband_team"})
 BACKGROUND_NOTE = ("The team runs in the background and the user can watch its board. "
                    "If your todo list holds the work you just handed over, mark those items "
                    "'blocked' with the note 'delegated to team <name>' in one write_todos "
@@ -196,6 +197,10 @@ def _resume_unavailable(_team_id: str, _extra: int | None) -> dict[str, object]:
     raise TeamInputError("resume_team is not available here")
 
 
+def _report_unavailable(team_id: str) -> dict[str, object]:
+    raise TeamInputError("team_report is not available here")
+
+
 @dataclass(frozen=True)
 class MainTeamOps:
     create: Callable[[CreateTeamRequest], Awaitable[dict[str, object]]]
@@ -205,6 +210,7 @@ class MainTeamOps:
     disband: Callable[[str], Awaitable[dict[str, object]]]
     adopt: Callable[[str, str], dict[str, object]]
     resume: Callable[[str, int | None], dict[str, object]] = _resume_unavailable
+    report: Callable[[str], dict[str, object]] = _report_unavailable
 
 
 class MainTeamToolSource:
@@ -252,6 +258,11 @@ class MainTeamToolSource:
                 "A team's phase, round, members and their status, open proposals with each "
                 "member's stance, and usage against its budget."),
                 parameters={"type": _OBJ, "properties": team, "required": ["team"]}),
+            ToolDefinition(name="team_report", description=(
+                "What a team produced: the adopted and closing proposals in full, each "
+                "member's final report, and objections to either proposal. Milestones carry "
+                "only summaries; this gives the texts."),
+                parameters={"type": _OBJ, "properties": team, "required": ["team"]}),
             ToolDefinition(name="adopt_proposal", description=(
                 "Adopt one of a DEADLOCKED team's open proposals, as if every member agreed."),
                 parameters={"type": _OBJ, "properties": {**team, "proposal_id": _STR},
@@ -291,6 +302,8 @@ class MainTeamToolSource:
                     reach = "Members read it with their next input"
                 return _ok({**posted, "note": f"Posted. {reach}. The team reports at its next "
                                               "milestone."})
+            if tool == "team_report":
+                return _ok(self._ops.report(team_id))
             status = self._ops.status(team_id)
             if tool == "team_status":
                 if team_id in self._created:

@@ -632,6 +632,69 @@ class TeamService:
                          "review.")
         return "\n".join(lines)
 
+    def _final_reports(self, team_id: str) -> dict[str, tuple[str, str]]:
+        """Each member's latest wrapped_up activity: (status, report)."""
+        latest: dict[str, tuple[str, str]] = {}
+        for event in self._store.activity(team_id):
+            if event.kind == "wrapped_up":
+                latest[event.label] = (str(event.payload.get("status", "")),
+                                       str(event.payload.get("report", "")))
+        return latest
+
+    def member_summaries(self, team_id: str, limit: int = 240) -> list[dict[str, str]]:
+        """One capped line per member from its final report, for the done milestone."""
+        reports = self._final_reports(team_id)
+        out = []
+        for member in self._store.members(team_id):
+            status, report = reports.get(member.label, ("", ""))
+            first = next((line.strip() for line in report.splitlines() if line.strip()), "")
+            out.append({"label": member.label, "status": status,
+                        "summary": first if len(first) <= limit else first[:limit] + "…"})
+        return out
+
+    def proposal_preview(self, team_id: str, proposal_id: str, limit: int = 200) -> str:
+        post = self._proposal_post(team_id, proposal_id)
+        if post is None:
+            return ""
+        text = " ".join(post.text.split())
+        return text if len(text) <= limit else text[:limit] + "…"
+
+    def _proposal_post(self, team_id: str, proposal_id: str | None) -> TeamPost | None:
+        if not proposal_id or not proposal_id.lstrip("Pp").isdigit():
+            return None
+        post = self._store.get_post(team_id, int(proposal_id.lstrip("Pp")))
+        return post if post is not None and post.kind == "proposal" else None
+
+    def report(self, team_id: str, report_limit: int = 8000) -> dict[str, object]:
+        """What the team produced, for the main agent's team_report: the adopted and closing
+        proposals, each member's final report, and objections to either proposal. Milestones
+        stay compact (spec v2 §8.8); this is the on-demand full view."""
+        team = self._store.get_team(team_id)
+        if team is None:
+            raise TeamInputError(f"no team {team_id!r}")
+
+        def proposal(proposal_id: str | None) -> dict[str, str] | None:
+            post = self._proposal_post(team_id, proposal_id)
+            return ({"id": post.proposal_id, "author": post.author, "text": post.text}
+                    if post is not None else None)
+
+        reports = self._final_reports(team_id)
+        members = []
+        for member in self._store.members(team_id):
+            status, text = reports.get(member.label, ("", ""))
+            if len(text) > report_limit:
+                text = (text[:report_limit] + "\n… (truncated; the full report is in the "
+                        "team window)")
+            members.append({"label": member.label, "status": status, "report": text})
+        targets = {pid for pid in (team.adopted_proposal_id, team.closing_proposal_id) if pid}
+        objections = [{"seq": p.seq, "author": p.author, "on": p.ref_id, "text": p.text}
+                      for p in self._store.posts(team_id)
+                      if p.kind == "object" and p.ref_id in targets]
+        return {"team": team.name, "goal": team.goal, "phase": team.phase,
+                "end_reason": team.end_reason, "adopted": proposal(team.adopted_proposal_id),
+                "closing": proposal(team.closing_proposal_id), "members": members,
+                "objections": objections}
+
     def summary(self, team_id: str) -> dict[str, object]:
         team = self._store.get_team(team_id)
         if team is None:

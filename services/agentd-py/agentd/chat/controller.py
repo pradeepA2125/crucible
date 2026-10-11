@@ -106,6 +106,7 @@ from agentd.subagents.notices import (
     notice_author,
     notice_body,
     notice_fold_max_tokens,
+    notice_turn_input,
 )
 from agentd.subagents.permissions import (
     child_allowed_types,
@@ -362,9 +363,6 @@ class TurnDispatches:
     redirected: bool = False
 
 
-_NOTICE_TURN_INPUT = ("No new message from the user. These agents finished while you were "
-                      "away: tell the user what they found or changed, and act on it if "
-                      "the user's earlier request needs that.")
 _WAKE_CAP_TEXT = "🔔 Agents keep finishing — I'll tell you about them at your next message."
 
 def _with_mentioned_files(message: str, mentioned_files: list[dict[str, str]] | None) -> str:
@@ -2676,11 +2674,13 @@ class ChatController:
                 memory_anchor_md=self._memory_harness.anchor_markdown(thread_id))
         self._notice_markers[thread_id] = marker_id or ""   # Task 2B.5's checkpoint_anchor
         review = self._step_review_by_thread.get(thread_id)
+        # Worded by what arrived: a team milestone is not an agent that "finished".
+        turn_input = notice_turn_input(self._store.unclaimed_notices(thread_id))
         seed_history = [*(self._seed_for(thread_id) or []), {
             "role": "user",
-            "content": self._fold_notices(thread_id, turn_id, _NOTICE_TURN_INPUT)}]
+            "content": self._fold_notices(thread_id, turn_id, turn_input)}]
         outcome = await self._run_loop(
-            thread_id, channel_id, _NOTICE_TURN_INPUT, seed_history=seed_history,
+            thread_id, channel_id, turn_input, seed_history=seed_history,
             step_review=review, phase="PLAN" if self._plan_mode else "ACTIVE",
             turn_id=turn_id, notice_turn=True)
         await self._finish(thread_id, channel_id, outcome, step_review=review, turn_id=turn_id)
@@ -2763,7 +2763,8 @@ class ChatController:
             post=post, status=teams.summary,
             disband=partial(self.disband_team, thread_id),
             adopt=partial(self._adopt_proposal, thread_id),
-            resume=partial(self._resume_team, thread_id)),
+            resume=partial(self._resume_team, thread_id),
+            report=teams.report),
             first_turn_team_ids=set())
 
     def _adopt_proposal(self, thread_id: str, team_id: str, proposal_id: str) -> dict[str, object]:

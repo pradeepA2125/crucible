@@ -1,5 +1,8 @@
 """Milestone text (spec v2 §8.8): a headline plus ids, counts and pointers — never full
-proposal texts, evidence or reports, which stay on the board."""
+proposal texts, evidence or reports, which stay on the board. Two exceptions carry a capped
+excerpt because the main agent must act on them: `done` gives each member's one-line report
+summary (what the team produced, to tell the user) and `deadlock` quotes each open proposal
+(adopt_proposal adopts one). team_report returns the full texts."""
 from __future__ import annotations
 
 from agentd.teams.models import TeamRecord
@@ -84,6 +87,13 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
             details += [f"- #{u.get('seq')} {u.get('label')}: {str(u.get('reason', ''))[:160]}"
                         for u in unresolved]
         details.append("Files changed: " + (", ".join(files) if files else "none"))
+        raw_members = data.get("members")
+        members = ([m for m in raw_members if isinstance(m, dict)]
+                   if isinstance(raw_members, list) else [])
+        if members:
+            details.append("Member reports:")
+            details += [f"- {m.get('label')} ({m.get('status') or 'no status'}): "
+                        f"{m.get('summary') or '(no report)'}" for m in members]
         details.append("Tell the user what the team built"
                        + (" and what is still open." if unresolved else "."))
         details.append("For a follow-up request, post_board to this team: it reopens with its "
@@ -98,6 +108,8 @@ def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tupl
             stances = list((p.get("stances") or {}).values())
             details.append(f"{p['id']}: {stances.count('agree')} agree, "
                            f"{stances.count('object')} object, {stances.count('none')} no stance")
+            if p.get("preview"):
+                details.append(f"  {p['id']}: \"{p['preview']}\"")
             if stances and "object" not in stances:
                 # Live 2026-10-08: the main agent asked the team to "adopt the strongest
                 # proposal" with post_board three times instead of adopting it.
