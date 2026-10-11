@@ -1319,9 +1319,10 @@ def build_controller_step_payload(
             hint = (
                 "Notices woke you — the agent reports or team milestones above; the user sent "
                 "no new message. The notice already holds the team's state (phase, "
-                "assignments, reports): do not call team_status for it. Act only when the "
-                "notice asks for an action — restart a blocked member or a stuck team with "
-                "post_board, ask the user about a paused team or a plan awaiting approval; "
+                "assignments, reports): do not call team_status or team_report for it. Act "
+                "only when the notice asks for an action — restart a blocked member or a "
+                "stuck team with post_board, ask the user about a paused team or a plan "
+                "awaiting approval; "
                 "work a team or agent finished (and a team reviewed) is not yours to redo or "
                 "re-check. If your todo list holds items they finished, mark them 'done' "
                 "citing the report in one write_todos. Then tell the user, briefly, what "
