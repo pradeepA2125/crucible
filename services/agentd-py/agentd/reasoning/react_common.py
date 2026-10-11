@@ -34,6 +34,22 @@ def dedup_key(tool: str, args: dict[str, object]) -> str:
     return f"{tool}:{json.dumps(a, sort_keys=True, default=str)}"
 
 
+def duplicate_refusal(tool: str, first_iteration: int) -> str:
+    """The tool result for a call blocked by the duplicate guard, with the next step for the
+    tools models most often repeat."""
+    blocked = f"DUPLICATE BLOCKED (iter {first_iteration})"
+    if tool == "search_code":
+        return (f"{blocked}: this search already ran and its result is above. context_lines "
+                "does not make it a new search. For more lines around a match, call read_file "
+                "with a specific start_line/end_line around the line numbers shown, and only "
+                "for lines your earlier reads do not already cover.")
+    if tool == "read_file":
+        return (f"{blocked}: the file is unchanged since that read and its content is above. "
+                "Read again only a specific start_line/end_line range your earlier reads do "
+                "not already cover.")
+    return f"{blocked}; reuse visible evidence or request the missing portion."
+
+
 # Tagged (spec §4.7): the main render is byte-identical to the historical constant; the
 # allowed-type suffix is child-only so the main correction text never changes (§4.7.4).
 _MALFORMED_TEMPLATE = tagged("malformed", (
