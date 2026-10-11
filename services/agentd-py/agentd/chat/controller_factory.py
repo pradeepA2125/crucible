@@ -28,6 +28,13 @@ def is_task_subsystem_enabled() -> bool:
     return os.getenv(_TASK_SUBSYSTEM_ENV, "0").strip().lower() in _TRUTHY
 
 
+def tasks_reachable() -> bool:
+    """Whether anything can start a task: the legacy chat path always routes large changes
+    to tasks; the controller only with the task subsystem on. Task-only machinery (the task
+    loop's memory harness and its models) is built only when this holds."""
+    return not is_controller_enabled() or is_task_subsystem_enabled()
+
+
 def is_memory_enabled() -> bool:
     """Whether the memory harness (compaction + recall/remember) is active. Default ON;
     kill-switch via CRUCIBLE_MEMORY_ENABLED=0/false/no/off. Gates the controller's memory

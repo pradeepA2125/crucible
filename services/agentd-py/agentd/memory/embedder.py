@@ -5,7 +5,7 @@ import math
 from collections.abc import Callable
 from typing import Any
 
-from agentd.model_loading import MODEL_LOAD_LOCK, MODEL_LOCK
+from agentd.model_loading import MODEL_LOCK, shared_sentence_transformer
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +53,7 @@ class Embedder:
         if self._encoder is not None:
             return self._encoder(texts)
         if self._model is None:
-            with MODEL_LOAD_LOCK:  # shared with every model load — see model_loading
-                if self._model is None:  # re-check: another thread may have won the race
-                    from sentence_transformers import SentenceTransformer
-                    self._model = SentenceTransformer(self._model_name)
+            self._model = shared_sentence_transformer(self._model_name)
         with MODEL_LOCK:  # every model call too — see model_loading
             rows = self._model.encode(texts)
         return [list(map(float, row)) for row in rows]

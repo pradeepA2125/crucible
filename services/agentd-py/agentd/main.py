@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -205,6 +206,16 @@ retrieval_client = RetrievalArtifactClient.from_env(
     evidence_adapter=evidence_adapter,
     semantic_index=_semantic_index,
 )
+
+if _semantic_index is not None:
+    _warm_target = _semantic_index
+
+    async def _warm_semantic_model() -> None:
+        # Off the chat path: otherwise the first chat's retrieval seed loads the model.
+        await asyncio.to_thread(_warm_target.warmup)  # type: ignore[attr-defined]
+
+    app.router.add_event_handler(
+        "startup", in_background(_warm_semantic_model, "semantic-model-warmup"))
 def _scope_policy_env() -> ScopePolicy:
     raw = os.getenv("CRUCIBLE_SCOPE_POLICY", "strict").strip().lower()
     try:
@@ -237,7 +248,11 @@ def _scope_remember_env() -> ScopeRemember:
         return ScopeRemember.TASK
 
 
-from agentd.chat.controller_factory import select_chat_handler, warn_if_incoherent_flags
+from agentd.chat.controller_factory import (
+    select_chat_handler,
+    tasks_reachable,
+    warn_if_incoherent_flags,
+)
 from agentd.chat.storage import ChatThreadStore
 from agentd.memory.config import MemoryConfig
 from agentd.memory.harness import NO_OP_HARNESS, build_memory_harness
@@ -259,12 +274,13 @@ _chat_model = os.getenv(
 # Within-run compaction for task ToolLoop steps (no-op unless CRUCIBLE_MEMORY_ENABLED;
 # scripted backend has no transport). Disjoint run_id namespace (task_id) from the chat
 # controller's harness — both share the one memory DB file, which sqlite handles fine.
+# Not built when nothing can start a task: it would load and warm its own memory models.
 _task_memory_harness = (
     build_memory_harness(
         MemoryConfig.from_env(os.environ), transport, _chat_model,
         workspace_path=_chat_workspace_path,  # enables consolidation (workspace scope)
     )
-    if reasoning_backend != "scripted"
+    if reasoning_backend != "scripted" and tasks_reachable()
     else NO_OP_HARNESS
 )
 

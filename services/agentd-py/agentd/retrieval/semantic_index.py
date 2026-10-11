@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agentd.model_loading import MODEL_LOAD_LOCK, MODEL_LOCK
+from agentd.model_loading import MODEL_LOCK, shared_sentence_transformer
 from agentd.retrieval.chunker import CodeChunk, CodeChunker, ScoredChunk
 
 logger = logging.getLogger(__name__)
@@ -212,6 +212,15 @@ class SemanticIndex:
         """Return the top_k most relevant chunks from one specific file."""
         return self.query(query, top_k=top_k, path_filter=[path])
 
+    def warmup(self) -> None:
+        """Load the model and run one encode (device first-init) so the first chat's
+        retrieval seed does not. Best-effort: a missing model is reported on first use."""
+        try:
+            self._embed_single("warmup")
+        except Exception:  # noqa: BLE001 — warmup must never take the backend down
+            logger.warning("Semantic index model warmup failed for model=%s", self._model_name,
+                           exc_info=True)
+
     def is_ready(self) -> bool:
         """True once the LanceDB table is open and queryable."""
         return self._table is not None
@@ -226,10 +235,7 @@ class SemanticIndex:
     def _get_model(self) -> Any:
         if self._model is None:
             try:
-                from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
-                with MODEL_LOAD_LOCK:  # shared with every model load — see model_loading
-                    if self._model is None:  # re-check: another thread may have won
-                        self._model = SentenceTransformer(self._model_name)
+                self._model = shared_sentence_transformer(self._model_name)
                 # Update dim from actual model in case it differs from our table
                 get_dim = getattr(
                     self._model, "get_embedding_dimension",

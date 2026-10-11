@@ -11,6 +11,37 @@ do not help — the race is between DIFFERENT models — so every construction a
 takes this one lock. Re-entrant: a call may trigger its model's lazy load under the same lock.
 """
 import threading
+from typing import Any
 
 MODEL_LOCK = threading.RLock()
 MODEL_LOAD_LOCK = MODEL_LOCK  # the original name, kept for existing imports
+
+# One instance per (kind, model name) for the whole process. The memory harness is built
+# twice when tasks are reachable (task loop + chat controller) and the semantic index uses
+# the same bge-small; without this each kept and loaded its own copy, and the semantic
+# index's copy loaded lazily inside the first chat's retrieval seed.
+_SHARED: dict[tuple[str, str], Any] = {}
+
+
+def shared_sentence_transformer(model_name: str) -> Any:
+    with MODEL_LOAD_LOCK:
+        key = ("sentence_transformer", model_name)
+        if key not in _SHARED:
+            from sentence_transformers import SentenceTransformer
+            _SHARED[key] = SentenceTransformer(model_name)
+        return _SHARED[key]
+
+
+def shared_cross_encoder(model_name: str) -> Any:
+    with MODEL_LOAD_LOCK:
+        key = ("cross_encoder", model_name)
+        if key not in _SHARED:
+            from sentence_transformers import CrossEncoder
+            _SHARED[key] = CrossEncoder(model_name)
+        return _SHARED[key]
+
+
+def clear_shared_models() -> None:
+    """Tests swap in fake `sentence_transformers` modules; drop instances built from them."""
+    with MODEL_LOAD_LOCK:
+        _SHARED.clear()
