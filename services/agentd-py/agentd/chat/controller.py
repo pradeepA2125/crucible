@@ -684,7 +684,7 @@ class ChatController:
         self._histories[thread_id] = history
         return history
 
-    def _retrieval_seed(self, thread_id: str, goal: str) -> dict[str, object] | None:
+    async def _retrieval_seed(self, thread_id: str, goal: str) -> dict[str, object] | None:
         """Compute the thread's retrieval seed once, then reuse it byte-for-byte so
         the cached payload prefix stays stable across turns (spec §6) AND across a
         backend restart: the seed is pinned durably and replayed verbatim, mirroring
@@ -698,21 +698,28 @@ class ChatController:
         if thread is not None and thread.controller_retrieval_seed is not None:
             self._seeds[thread_id] = thread.controller_retrieval_seed
             return thread.controller_retrieval_seed
-        seed: dict[str, object] | None = None
-        if self._retrieval is not None:
-            try:
-                context, _ = self._retrieval.load_context(self._workspace_path, goal)
-                seed = context.as_prompt_payload()
-                from agentd.tools.read_policy import compact_context_enabled
-                if compact_context_enabled() and isinstance(seed.get("repository_structure"), list):
-                    from agentd.context_compaction import bounded_tree
-                    seed["repository_structure"] = bounded_tree(seed["repository_structure"])
-            except Exception:
-                logger.debug("[controller] retrieval seed failed", exc_info=True)
+        # Retrieval is seconds of CPU and filesystem work: off the event loop, so other
+        # chats, SSE streams and /live polls keep running. The store stays on the loop.
+        seed = await asyncio.to_thread(self._compute_retrieval_seed, goal)
         self._seeds[thread_id] = seed
         # Pin on first compute so a later restart replays these exact bytes.
         self._store.set_controller_seed(thread_id, seed)
         return seed
+
+    def _compute_retrieval_seed(self, goal: str) -> dict[str, object] | None:
+        if self._retrieval is None:
+            return None
+        try:
+            context, _ = self._retrieval.load_context(self._workspace_path, goal)
+            seed = context.as_prompt_payload()
+            from agentd.tools.read_policy import compact_context_enabled
+            if compact_context_enabled() and isinstance(seed.get("repository_structure"), list):
+                from agentd.context_compaction import bounded_tree
+                seed["repository_structure"] = bounded_tree(seed["repository_structure"])
+            return seed
+        except Exception:
+            logger.debug("[controller] retrieval seed failed", exc_info=True)
+            return None
 
     async def handle_message(
         self, thread_id: str, message: str, channel_id: str, step_review: bool | None = None,
@@ -1002,7 +1009,7 @@ class ChatController:
         plan_context["context_capacity"] = capacity
         plan_context["capacity_source"] = capacity_source
         plan_context["capacity_model"] = capacity_model
-        seed = self._retrieval_seed(thread_id, goal)
+        seed = await self._retrieval_seed(thread_id, goal)
         if seed:
             plan_context["retrieval_seed"] = seed
         # "Review each edit" on → hold each patch for a decision; off → instant promote.
