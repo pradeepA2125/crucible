@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import { memo, useMemo, type ReactNode } from "react";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { vscode } from "../vscodeApi";
 import { MARKDOWN_PLUGINS } from "../components/shared/MarkdownContent";
 import { useFileReferenceIndex } from "./FileReferenceContext";
@@ -28,10 +28,13 @@ const components: Components = {
   },
 };
 
-/** Shared message-only Markdown renderer with live, exact file-reference links. */
-export function MessageMarkdown({ content }: { content: string }) {
+/** Shared message-only Markdown renderer with live, exact file-reference links.
+ *  Memoized on content: re-parsing is the expensive part of a render, and the streaming
+ *  bubble re-renders on every reasoning delta while its answer text is unchanged. */
+export const MessageMarkdown = memo(function MessageMarkdown({ content }: { content: string }) {
   const index = useFileReferenceIndex();
-  return <ReactMarkdown remarkPlugins={[...MARKDOWN_PLUGINS, [remarkFileReferences, { index }]]} components={components}>
+  const plugins = useMemo(() => [...MARKDOWN_PLUGINS, [remarkFileReferences, { index }]] as Options["remarkPlugins"], [index]);
+  return <ReactMarkdown remarkPlugins={plugins} components={components}>
     {content}
   </ReactMarkdown>;
-}
+});

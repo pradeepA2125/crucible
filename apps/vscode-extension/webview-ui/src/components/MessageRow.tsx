@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { ChatMsg, DiffEntry, ToolEventView } from "../types";
 import { PlanCard } from "./messages/PlanCard";
 import { DiffCard } from "./messages/DiffCard";
@@ -111,7 +112,12 @@ function LegacyGateSummary({ msg }: { msg: ChatMsg }) {
  * CRITICAL: switch on msg.type FIRST, role second.
  * Dispatching on role first was a real bug (cards rendered as text forever).
  */
-export function MessageRow({ msg, planVersion, turnActive, onRewindRequest, queued = false }: Props) {
+// Memoized: the thread re-renders on every streamed delta (~29/s), and an unchanged
+// transcript row would otherwise re-render and re-parse its markdown each time; render
+// cost grew with thread length. Its props are stable references between deltas.
+export const MessageRow = memo(MessageRowImpl);
+
+function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued = false }: Props) {
   switch (msg.type) {
     case "plan_card":
       return (
