@@ -421,12 +421,25 @@ class RetrievalArtifactClient:
 
         raw_node_items = [node for node in nodes if isinstance(node, dict)]
         node_items: list[dict[str, object]] = []
-        for node in raw_node_items:
-            normalized_path = self._normalize_snapshot_path(
-                raw_path=node.get("path"),
+        # Nodes and diagnostics share files (~20 symbols per file), and
+        # normalization does filesystem resolves, so it runs once per distinct
+        # path, not once per node or diagnostic.
+        normalized_by_raw: dict[str, str | None] = {}
+
+        def normalize_path(raw_path: object) -> str | None:
+            if isinstance(raw_path, str) and raw_path in normalized_by_raw:
+                return normalized_by_raw[raw_path]
+            normalized = self._normalize_snapshot_path(
+                raw_path=raw_path,
                 workspace_root=workspace_root,
                 snapshot_workspace_root=snapshot_workspace_root,
             )
+            if isinstance(raw_path, str):
+                normalized_by_raw[raw_path] = normalized
+            return normalized
+
+        for node in raw_node_items:
+            normalized_path = normalize_path(node.get("path"))
             if normalized_path is None:
                 continue
             normalized_node = dict(node)
@@ -472,52 +485,20 @@ class RetrievalArtifactClient:
         _MAX_GRAPH_SCORE = 10.0  # normalisation ceiling
 
         scored_nodes: list[tuple[float, dict[str, object]]] = []
+        # The path part of the graph score depends only on the path and the goal,
+        # so it is computed once per distinct path (terms × segments per node was
+        # millions of comparisons on a large snapshot).
+        path_score_by_path: dict[str, float] = {}
         for node in node_items:
             node_name = str(node.get("name", "")).lower()
             node_path = str(node.get("path", "")).lower()
             canonical_path = str(node.get("path", ""))
-
-            # Graph score: symbol-name substring + path-aware matching.
-            #
-            # Directory segments use weighted segment scoring:
-            #   - Exact match or underscore/dot-separated prefix → 1.0 pt
-            #   - Hyphen-prefixed extension (e.g. "pydantic" in "pydantic-core") → 0.5 pt
-            # This means "pydantic" scores "pydantic/" at 1.0 and "pydantic-core/" at 0.5,
-            # giving the exact-name directory an edge over hyphenated siblings — without
-            # zeroing out legitimate hyphenated dirs like "agentd-py/" or "react-dom/".
-            #
-            # The filename segment uses stem-word prefix matching: the file extension
-            # is stripped, the stem is split on word characters, and each word is matched
-            # if it equals the term or starts with the term (handles plurals like
-            # "validators" matching term "validator", but NOT "validation" since
-            # "validation" does not start with "validator").
-            path_segs = node_path.split("/")
-            dir_segs = path_segs[:-1]
-            file_seg = path_segs[-1] if path_segs else ""
-            file_stem = re.sub(r'\.[^.]+$', '', file_seg).lstrip("_").lstrip("-")
-            file_words = re.findall(r'[a-z][a-z0-9]*', file_stem) if file_stem else []
-
-            def _dir_seg_score(seg: str, term: str) -> float:
-                s = seg.lstrip("_")
-                if s == term or s.startswith(term + "_") or s.startswith(term + "."):
-                    return 1.0
-                if s.startswith(term + "-"):
-                    return 0.5  # partial credit for hyphenated extensions (agentd-py, react-dom, etc.)
-                return 0.0
-
             graph_raw: float = sum(1.0 for term in terms if term in node_name)
-            graph_raw += sum(
-                max((_dir_seg_score(seg, term) for seg in dir_segs), default=0.0)
-                for term in terms
-            )
-            graph_raw += sum(
-                1.0 for term in terms
-                if any(w == term or w.startswith(term) for w in file_words)
-            )
-            graph_raw += self._evidence_adapter.path_relevance_score(
-                goal=goal,
-                normalized_path=node_path,
-            )
+            path_score = path_score_by_path.get(node_path)
+            if path_score is None:
+                path_score = self._path_graph_score(node_path, terms, goal)
+                path_score_by_path[node_path] = path_score
+            graph_raw += path_score
             sem_score = semantic_file_scores.get(canonical_path, 0.0)
 
             # Skip nodes with no signal from either source
@@ -637,6 +618,8 @@ class RetrievalArtifactClient:
                 continue
             seed_files.add(str(abs_sem))
         ws_resolved = workspace_root.resolve()
+        # Edges outnumber files ~60:1; resolve each neighbour path once.
+        rel_by_path: dict[str, str | None] = {}
         neighbor_file_hits: dict[str, int] = {}
         for edge in edge_items:
             src = edge.get("from")
@@ -668,11 +651,16 @@ class RetrievalArtifactClient:
                 continue
             if any(f"/{ig}/" in path_str for ig in self._IGNORED_CONTEXT_DIRS):
                 continue
-            try:
-                rel = Path(path_str).resolve().relative_to(ws_resolved)
-            except (ValueError, OSError):
+            if path_str in rel_by_path:
+                rel_str = rel_by_path[path_str]
+            else:
+                try:
+                    rel_str = str(Path(path_str).resolve().relative_to(ws_resolved))
+                except (ValueError, OSError):
+                    rel_str = None
+                rel_by_path[path_str] = rel_str
+            if rel_str is None:
                 continue
-            rel_str = str(rel)
             neighbor_file_hits[rel_str] = neighbor_file_hits.get(rel_str, 0) + 1
 
         # Sort by hit count (descending), then path (ascending) for deterministic
@@ -809,13 +797,10 @@ class RetrievalArtifactClient:
         relevant_files = set(top_files)
         diagnostics_excerpt: list[str] = []
         for item in diagnostic_items:
-            excerpt = self._format_diagnostic_excerpt(
-                item,
-                workspace_root=workspace_root,
-                snapshot_workspace_root=snapshot_workspace_root,
-            )
-            if excerpt is None:
+            diagnostic_file = normalize_path(item.get("file"))
+            if diagnostic_file is None:
                 continue
+            excerpt = f"{diagnostic_file}:{item.get('line', '?')}: {item.get('message', '')}"
             normalized_file = excerpt.split(":", 1)[0]
             if relevant_files and normalized_file not in relevant_files:
                 continue
@@ -884,6 +869,50 @@ class RetrievalArtifactClient:
             planner_evidence=planner_evidence,
             semantic_chunks=semantic_results,
         )
+
+    def _path_graph_score(self, node_path: str, terms: set[str], goal: str) -> float:
+        """Graph score contributed by a node's (lowercased) path.
+
+        Directory segments use weighted segment scoring:
+          - Exact match or underscore/dot-separated prefix → 1.0 pt
+          - Hyphen-prefixed extension (e.g. "pydantic" in "pydantic-core") → 0.5 pt
+        This means "pydantic" scores "pydantic/" at 1.0 and "pydantic-core/" at 0.5,
+        giving the exact-name directory an edge over hyphenated siblings — without
+        zeroing out legitimate hyphenated dirs like "agentd-py/" or "react-dom/".
+
+        The filename segment uses stem-word prefix matching: the file extension
+        is stripped, the stem is split on word characters, and each word is matched
+        if it equals the term or starts with the term (handles plurals like
+        "validators" matching term "validator", but NOT "validation" since
+        "validation" does not start with "validator").
+        """
+        path_segs = node_path.split("/")
+        dir_segs = path_segs[:-1]
+        file_seg = path_segs[-1] if path_segs else ""
+        file_stem = re.sub(r'\.[^.]+$', '', file_seg).lstrip("_").lstrip("-")
+        file_words = re.findall(r'[a-z][a-z0-9]*', file_stem) if file_stem else []
+
+        def _dir_seg_score(seg: str, term: str) -> float:
+            s = seg.lstrip("_")
+            if s == term or s.startswith(term + "_") or s.startswith(term + "."):
+                return 1.0
+            if s.startswith(term + "-"):
+                return 0.5  # partial credit for hyphenated extensions (agentd-py, react-dom, etc.)
+            return 0.0
+
+        score: float = sum(
+            max((_dir_seg_score(seg, term) for seg in dir_segs), default=0.0)
+            for term in terms
+        )
+        score += sum(
+            1.0 for term in terms
+            if any(w == term or w.startswith(term) for w in file_words)
+        )
+        score += self._evidence_adapter.path_relevance_score(
+            goal=goal,
+            normalized_path=node_path,
+        )
+        return score
 
     def _normalize_snapshot_path(
         self,
@@ -1142,22 +1171,3 @@ class RetrievalArtifactClient:
         start = max(1, line - 2)
         end = min(len(lines), line + 3)
         return "\n".join(lines[start - 1 : end])
-
-    def _format_diagnostic_excerpt(
-        self,
-        item: dict[str, object],
-        *,
-        workspace_root: Path,
-        snapshot_workspace_root: Path,
-    ) -> str | None:
-        normalized_file = self._normalize_snapshot_path(
-            raw_path=item.get("file"),
-            workspace_root=workspace_root,
-            snapshot_workspace_root=snapshot_workspace_root,
-        )
-        if normalized_file is None:
-            return None
-
-        line = item.get("line", "?")
-        message = item.get("message", "")
-        return f"{normalized_file}:{line}: {message}"

@@ -336,3 +336,27 @@ def test_graph_neighbor_files_includes_imports_reached_via_semantic_seed(
     assert "src/unrelated.py" not in context.graph_neighbor_files
     # Seed file itself must NOT be in its own neighbour list.
     assert "src/engine.py" not in context.graph_neighbor_files
+
+
+def test_build_context_normalizes_each_distinct_path_once(tmp_path: Path) -> None:
+    # Real snapshots carry ~20 symbol nodes per file (84k nodes over 4.3k paths);
+    # normalizing per node made a fresh chat's retrieval seed take seconds.
+    workspace = tmp_path / "repo"
+    (workspace / "src").mkdir(parents=True)
+    (workspace / "src/auth.py").write_text("def build_auth():\n    pass\n", encoding="utf-8")
+    payload = _snapshot_payload(int(time.time() * 1000))
+    payload["workspace_root"] = str(workspace)
+
+    client = RetrievalArtifactClient()
+    original = client._normalize_snapshot_path
+    seen: list[object] = []
+
+    def counting_normalize(**kwargs: object) -> str | None:
+        seen.append(kwargs["raw_path"])
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    client._normalize_snapshot_path = counting_normalize  # type: ignore[method-assign]
+    context = client._build_context(payload, "build auth", 0.0, str(workspace))
+
+    assert seen == ["src/auth.py"]
+    assert "src/auth.py" in context.related_files
