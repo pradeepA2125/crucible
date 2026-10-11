@@ -112,6 +112,17 @@ class RetrievalContext:
         }
 
 
+@dataclass
+class _SnapshotPathCache:
+    """Goal-independent results for one snapshot version. Only these small maps and the
+    structure lines are kept, never the parsed graph (~220 MB on a large repo)."""
+
+    key: tuple[int, str, str]
+    normalized_by_raw: dict[str, str | None] = field(default_factory=dict)
+    relative_by_path: dict[str, str | None] = field(default_factory=dict)
+    repository_structure: list[str] | None = None
+
+
 class RetrievalArtifactClient:
     _IGNORED_CONTEXT_DIRS = {
         ".git",
@@ -151,6 +162,7 @@ class RetrievalArtifactClient:
         # mid-build is still indexed (it used to be dropped until the next edit).
         self._build_lock = threading.Lock()
         self._rebuild_requested = False
+        self._path_cache: _SnapshotPathCache | None = None
 
     @classmethod
     def from_env(
@@ -209,11 +221,21 @@ class RetrievalArtifactClient:
             snapshot_ms = int(payload.get("generated_at_ms", 0) or 0)
             if snapshot_ms > self._last_indexed_snapshot_ms:
                 self._last_indexed_snapshot_ms = snapshot_ms
+            self._fill_path_cache(payload, workspace_path)
             return stats
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("trigger_index_build failed: %s", exc)
             return None
+
+    def _fill_path_cache(self, payload: dict[str, object], workspace_path: str) -> None:
+        """Run the goal-independent work for this snapshot now, on the build's background
+        thread, so the first chat after an edit finds it cached."""
+        try:
+            self._build_context(payload, "", None, workspace_path)
+        except Exception:  # noqa: BLE001 — best-effort: the chat path computes it otherwise
+            import logging
+            logging.getLogger(__name__).debug("retrieval path cache fill failed", exc_info=True)
 
     def _request_background_build(self, workspace_path: str) -> None:
         """Keep index builds off the chat path: run one on a daemon thread, or, when one is
@@ -426,6 +448,8 @@ class RetrievalArtifactClient:
         if isinstance(workspace_root_raw, str) and workspace_root_raw.strip():
             snapshot_workspace_root = Path(workspace_root_raw).expanduser().resolve()
 
+        path_cache = self._path_cache_for(payload, workspace_root, snapshot_workspace_root)
+
         graph = payload.get("graph", {})
         nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
         edges = graph.get("edges", []) if isinstance(graph, dict) else []
@@ -437,7 +461,7 @@ class RetrievalArtifactClient:
         # Nodes and diagnostics share files (~20 symbols per file), and
         # normalization does filesystem resolves, so it runs once per distinct
         # path, not once per node or diagnostic.
-        normalized_by_raw: dict[str, str | None] = {}
+        normalized_by_raw = path_cache.normalized_by_raw
 
         def normalize_path(raw_path: object) -> str | None:
             if isinstance(raw_path, str) and raw_path in normalized_by_raw:
@@ -632,7 +656,7 @@ class RetrievalArtifactClient:
             seed_files.add(str(abs_sem))
         ws_resolved = workspace_root.resolve()
         # Edges outnumber files ~60:1; resolve each neighbour path once.
-        rel_by_path: dict[str, str | None] = {}
+        rel_by_path = path_cache.relative_by_path
         neighbor_file_hits: dict[str, int] = {}
         for edge in edge_items:
             src = edge.get("from")
@@ -834,27 +858,31 @@ class RetrievalArtifactClient:
             len(diagnostic_items),
         )
 
-        repository_structure: list[str] = []
-        for root, dirs, files in os.walk(workspace_root):
-            rel_root = Path(root).relative_to(workspace_root)
-            if self._is_ignored_relative_path(rel_root):
-                dirs.clear()
-                continue
+        if path_cache.repository_structure is None:
+            repository_structure: list[str] = []
+            for root, dirs, files in os.walk(workspace_root):
+                rel_root = Path(root).relative_to(workspace_root)
+                if self._is_ignored_relative_path(rel_root):
+                    dirs.clear()
+                    continue
 
-            level = len(rel_root.parts)
-            if level > 5:
-                dirs.clear()
-                continue
+                level = len(rel_root.parts)
+                if level > 5:
+                    dirs.clear()
+                    continue
 
-            indent = "  " * level
-            display_name = "." if str(rel_root) == "." else rel_root.name
+                indent = "  " * level
+                display_name = "." if str(rel_root) == "." else rel_root.name
 
-            valid_dirs = [d for d in dirs if not self._is_ignored_relative_path(rel_root / d)]
-            dirs[:] = sorted(d for d in dirs if not self._is_ignored_relative_path(rel_root / d))
-            valid_files = sorted(f for f in files if self._is_supported_source_path(Path(f)))
-            if valid_dirs or valid_files:
-                summary = f"{indent}{display_name}/ ({len(valid_dirs)} dirs, {len(valid_files)} source files)"
-                repository_structure.append(summary)
+                valid_dirs = [d for d in dirs if not self._is_ignored_relative_path(rel_root / d)]
+                dirs[:] = sorted(
+                    d for d in dirs if not self._is_ignored_relative_path(rel_root / d))
+                valid_files = sorted(f for f in files if self._is_supported_source_path(Path(f)))
+                if valid_dirs or valid_files:
+                    summary = f"{indent}{display_name}/ ({len(valid_dirs)} dirs, {len(valid_files)} source files)"
+                    repository_structure.append(summary)
+            path_cache.repository_structure = repository_structure
+        repository_structure = list(path_cache.repository_structure)
 
         planner_evidence = self._build_planner_evidence(
             workspace_root=workspace_root,
@@ -882,6 +910,21 @@ class RetrievalArtifactClient:
             planner_evidence=planner_evidence,
             semantic_chunks=semantic_results,
         )
+
+    def _path_cache_for(
+        self, payload: dict[str, object], workspace_root: Path, snapshot_workspace_root: Path,
+    ) -> _SnapshotPathCache:
+        """The cache for this snapshot version, or a throwaway one when the snapshot has no
+        version (nothing to key on)."""
+        version = _coerce_int(payload.get("generated_at_ms"), 0)
+        key = (version, str(workspace_root), str(snapshot_workspace_root))
+        if version <= 0:
+            return _SnapshotPathCache(key=key)
+        cache = self._path_cache
+        if cache is None or cache.key != key:
+            cache = _SnapshotPathCache(key=key)
+            self._path_cache = cache
+        return cache
 
     def _path_graph_score(self, node_path: str, terms: set[str], goal: str) -> float:
         """Graph score contributed by a node's (lowercased) path.
