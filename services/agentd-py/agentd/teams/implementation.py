@@ -50,6 +50,9 @@ class ImplementationReport:
     def __call__(self, resp: dict[str, object], final: bool) -> ReportVerdict:
         team = self._store.get_team(self._team_id)
         if final or self._redirected or team is None or team.phase != "IMPLEMENTING":
+            # Unchecked, but the wait still counts: dropping it here left the member asleep
+            # when the one it named reported, and the team went stuck (live 2026-10-11).
+            self._record_unchecked_wait(resp)
             return ReportVerdict()
         member = self._store.member(self._team_id, self._label)
         if member is None:
@@ -72,6 +75,17 @@ class ImplementationReport:
                 self._redirected = True
                 return ReportVerdict(message=refusal)
         return ReportVerdict()
+
+    def _record_unchecked_wait(self, resp: dict[str, object]) -> None:
+        if str(resp.get("status") or "completed") != "awaiting_peer":
+            self.waiting_on = []
+            return
+        labels = {m.label for m in self._store.members(self._team_id)} - {self._label}
+        raw = resp.get("waiting_on")
+        named = [str(x).strip().lstrip("@").casefold()
+                 for x in (raw if isinstance(raw, list) else [])]
+        wait = [n for n in dict.fromkeys(named) if n in labels]
+        self.waiting_on = [*wait, *[w for w in self._waiting_on() if w not in wait]]
 
     def _named_wait(self, resp: dict[str, object], waiting: list[str]) -> str | None:
         """Accept a wait only when it names members of this team that still have work."""

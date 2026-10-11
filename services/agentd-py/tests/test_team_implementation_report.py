@@ -129,3 +129,33 @@ def test_chain_takes_the_first_refusal() -> None:
     assert chain_checks(yes, no)(COMPLETED, False).message == "no"
     assert chain_checks(no, yes)(COMPLETED, False).message == "no"
     assert calls == ["yes", "no", "no"]
+
+
+def test_a_named_wait_survives_the_spent_redirect() -> None:
+    """Live 2026-10-11: the reviewer's `completed` was redirected (its message to the lead was
+    unanswered); its next report named the lead in waiting_on, but the spent redirect skipped
+    the check, the name was dropped, the lead's report woke nobody, and the team went stuck."""
+    store = _store()
+    counters = ActivationCounters()
+    sent = store.append_post("team-1", author="alice", kind="post", text="?",
+                             recipient="bob", mentions=["bob"])
+    counters.messaged.append(("bob", sent.seq))
+    check = ImplementationReport(store, "team-1", "alice", counters, lambda: {"a.py"})
+    assert check(COMPLETED, False).message is not None            # the one redirect
+    assert check({**WAITING, "waiting_on": ["bob"]}, False) == ReportVerdict()
+    assert check.waiting_on == ["bob"]
+
+
+def test_a_wait_on_the_final_iteration_is_still_recorded() -> None:
+    store = _store()
+    check = ImplementationReport(store, "team-1", "alice", ActivationCounters(), lambda: set())
+    assert check({**WAITING, "waiting_on": ["@Bob", "alice", "nobody"]}, True) == ReportVerdict()
+    assert check.waiting_on == ["bob"]                # only real other members are kept
+
+
+def test_a_later_report_that_is_not_a_wait_clears_it() -> None:
+    store = _store()
+    check = ImplementationReport(store, "team-1", "alice", ActivationCounters(), lambda: set())
+    check({**WAITING, "waiting_on": ["bob"]}, True)
+    check(COMPLETED, True)
+    assert check.waiting_on == []
