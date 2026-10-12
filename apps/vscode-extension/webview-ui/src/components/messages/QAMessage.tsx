@@ -7,6 +7,8 @@ import { Icon } from "../Icon";
 interface Props {
   content: string;
   thinkingLog?: string[];
+  /** False continues the previous agent run: a same-width spacer keeps the column aligned. */
+  showAvatar?: boolean;
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  * Uses ReactMarkdown for content with prose-ish Tailwind styling via arbitrary selectors.
  * Copy button fades in on hover, briefly flips to "Copied ✓" on click.
  */
-export function QAMessage({ content, thinkingLog }: Props) {
+export function QAMessage({ content, thinkingLog, showAvatar = true }: Props) {
   const [copyLabel, setCopyLabel] = useState<"Copy" | "Copied ✓">("Copy");
 
   function handleCopy() {
@@ -29,7 +31,11 @@ export function QAMessage({ content, thinkingLog }: Props) {
 
   return (
     <div className="group relative flex gap-2.5 items-start">
-      <Avatar />
+      {showAvatar ? (
+        <Avatar />
+      ) : (
+        <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />
+      )}
 
       <div className="flex-1 min-w-0 flex flex-col gap-1.5">
         {thinkingLog && thinkingLog.length > 0 && (

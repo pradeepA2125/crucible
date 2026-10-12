@@ -244,6 +244,7 @@ function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued 
         return (
           <QAMessage
             content={msg.content}
+            showAvatar={showAvatar}
             thinkingLog={msg.metadata?.thinking_log as string[] | undefined}
           />
         );
