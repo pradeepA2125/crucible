@@ -681,6 +681,17 @@ describe("ActivityGroup", () => {
     expect(screen.getByTestId("activity-detail").textContent).toContain("new_line");
   });
 
+  it("shows a batch's shared thought once above its pills", () => {
+    const batch: ActivityStep[] = [{ type: "tools", events: [
+      { id: 1, tool: "read_file", args: { path: "a.py" }, thought: "Check both modules", source: "explore", done: true },
+      { id: 2, tool: "read_file", args: { path: "b.py" }, thought: "Check both modules", source: "explore", done: true },
+      { id: 3, tool: "run_command", args: { command: "pytest" }, thought: "Run the tests", source: "explore", done: true },
+    ] }];
+    render(<ActivityGroup steps={batch} />);
+    fireEvent.click(screen.getByRole("button", { name: /Read 2 files/ }));
+    expect(screen.getAllByTestId("activity-thought").map((el) => el.textContent)).toEqual(["Check both modules", "Run the tests"]);
+  });
+
   it("keeps a very long summary on one ellipsized line", () => {
     const long: ActivityStep[] = [{ type: "tools", events: [{ id: 1, tool: "mcp__" + "x".repeat(300), args: {}, source: "explore", done: true }] }];
     render(<ActivityGroup steps={long} />);
@@ -695,12 +706,38 @@ describe("ActivityGroup", () => {
 
 ```tsx
 import { useState } from "react";
+import type { ToolEventView } from "../../types";
 import type { ActivityStep } from "../../transcript/groupTranscript";
 import { summarizeActivity } from "../../transcript/summarizeActivity";
 import { DiffPanes } from "../shared/DiffPanes";
 import { ToolTrack } from "../shared/ToolTrack";
 
 const basename = (path: string) => path.split("/").pop() || path;
+
+// A tool batch emits every member with the same step thought, so a run of events sharing
+// one thought is one model step: show the thought once, above that step's pills.
+function splitByThought(events: ToolEventView[]): { thought?: string; events: ToolEventView[] }[] {
+  const runs: { thought?: string; events: ToolEventView[] }[] = [];
+  for (const event of events) {
+    const last = runs[runs.length - 1];
+    if (last && (!event.thought || event.thought === last.thought)) last.events.push(event);
+    else runs.push({ thought: event.thought, events: [event] });
+  }
+  return runs;
+}
+
+function ToolsStep({ events }: { events: ToolEventView[] }) {
+  return (
+    <>
+      {splitByThought(events).map((run, i) => (
+        <div key={i} className="grid min-w-0 gap-1">
+          {run.thought && <div data-testid="activity-thought" className="text-[11px] text-text-3">{run.thought}</div>}
+          <ToolTrack events={run.events} />
+        </div>
+      ))}
+    </>
+  );
+}
 
 function EditRow({ step }: { step: Extract<ActivityStep, { type: "edit" }> }) {
   const [open, setOpen] = useState(false);
@@ -740,7 +777,7 @@ export function ActivityGroup({ steps }: { steps: ActivityStep[] }) {
       {open && (
         <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 overflow-y-auto rounded-[8px] p-2"
           style={{ maxHeight: "320px", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>
-          {steps.map((step, i) => step.type === "tools" ? <ToolTrack key={i} events={step.events} />
+          {steps.map((step, i) => step.type === "tools" ? <ToolsStep key={i} events={step.events} />
             : step.type === "edit" ? <EditRow key={i} step={step} />
             : <div key={i} className="text-[11px] text-text-3">{step.text.replace(/^[✓✗]\s*/, "")}</div>)}
         </div>
@@ -966,12 +1003,22 @@ const bubble = (over: Partial<Parameters<typeof TransientActivity>[0]["bubble"]>
 });
 
 describe("TransientActivity", () => {
-  it("shows the newest unfinished tool", () => {
+  it("shows the running tool", () => {
     render(<TransientActivity startedAt={Date.now()} bubble={bubble({ toolEvents: [
       { id: 1, tool: "read_file", args: { path: "a.py" }, source: "explore", done: true },
       { id: 2, tool: "run_command", args: { command: "pytest" }, source: "explore", done: false },
     ] })} />);
     expect(screen.getByTestId("transient-activity").textContent).toContain("Running `pytest`");
+  });
+
+  it("names the oldest unfinished member of a parallel batch and counts the rest", () => {
+    render(<TransientActivity startedAt={Date.now()} bubble={bubble({ toolEvents: [
+      { id: 1, tool: "read_file", args: { path: "a.py" }, source: "explore", done: true },
+      { id: 2, tool: "read_file", args: { path: "b.py" }, source: "explore", done: false },
+      { id: 3, tool: "search_code", args: { pattern: "x" }, source: "explore", done: false },
+      { id: 4, tool: "run_command", args: { command: "pytest" }, source: "explore", done: false },
+    ] })} />);
+    expect(screen.getByTestId("transient-activity").textContent).toContain("Reading `b.py` +2 more");
   });
 
   it("falls back to the thinking text, then to Working…", () => {
@@ -1049,10 +1096,14 @@ export function TransientActivity({ bubble, startedAt }: { bubble: StreamingBubb
   const [now, setNow] = useState(Date.now());
   const [open, setOpen] = useState(false);
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
-  const running = [...bubble.toolEvents].reverse().find((e) => !e.done);
+  // A tool batch emits all its members as pending at once and they finish in any order:
+  // name the oldest unfinished one and count the rest.
+  const unfinished = bubble.toolEvents.filter((e) => !e.done);
   const thinking = bubble.activeThinkingChunk.trim().split("\n").pop()
     || bubble.thinkingEntries[bubble.thinkingEntries.length - 1] || "";
-  const text = running ? describeTool(running) : thinking || "Working…";
+  const text = unfinished.length
+    ? describeTool(unfinished[0]) + (unfinished.length > 1 ? ` +${unfinished.length - 1} more` : "")
+    : thinking || "Working…";
   return (
     <div data-testid="transient-activity" className="grid min-w-0 gap-1.5">
       <div className="flex min-w-0 items-center gap-2 text-[12px] text-text-2">
