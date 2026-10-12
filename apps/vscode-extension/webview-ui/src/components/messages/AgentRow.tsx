@@ -16,6 +16,8 @@ interface Props {
   streaming?: boolean;
   streamingThinkingEntries?: string[];
   streamingThinkingChunk?: string;
+  /** False continues the previous agent run: a same-width spacer keeps the column aligned. */
+  showAvatar?: boolean;
 }
 
 /**
@@ -23,8 +25,8 @@ interface Props {
  * Matches .turn / .crumb / .stream-line / .caret in the hi-fi mockup.
  *
  * breadcrumb: compact icon+text row, strips leading marker character.
- * progress: compact icon+text row for a non-terminal mid-turn status note —
- *   breadcrumb-adjacent but never strips a marker (a progress note has none).
+ * progress: a non-terminal mid-turn narration note, rendered as answer prose
+ *   (markdown, body size) so it reads as the agent talking between activity lines.
  * normal: plain text, optional streaming caret.
  * Copy button on hover (not while streaming).
  */
@@ -37,6 +39,7 @@ export function AgentRow({
   streaming,
   streamingThinkingEntries,
   streamingThinkingChunk,
+  showAvatar = true,
 }: Props) {
   const [copyLabel, setCopyLabel] = useState<"Copy" | "Copied ✓">("Copy");
 
@@ -57,7 +60,11 @@ export function AgentRow({
 
   return (
     <div className="group relative flex gap-2.5 items-start">
-      <Avatar />
+      {showAvatar ? (
+        <Avatar />
+      ) : (
+        <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />
+      )}
 
       <div className="flex-1 min-w-0 flex flex-col gap-2">
         {/* Thinking block */}
@@ -128,15 +135,9 @@ const MARKER_ICONS: Array<{ char: string; icon: "check" | "x" | "retry"; color: 
 // ── Progress line ──────────────────────────────────────────────────────────────
 
 function ProgressLine({ text }: { text: string }) {
-  // De-emphasized, breadcrumb-adjacent but distinct: muted italic, no marker
-  // stripping (a progress note is plain narration, never a "✓ done"-style
-  // marker string). `clock` reads as "in progress" without implying success/failure.
-  return (
-    <div className="flex items-center gap-2 text-[11px]">
-      <Icon name="clock" size={11} className="text-text-3" />
-      <span className="text-text-3 italic">{text}</span>
-    </div>
-  );
+  // Narration: the main thing to read between collapsed activity lines, so it
+  // renders as answer prose (body size, normal color, markdown), not muted status text.
+  return <MarkdownContent content={text} />;
 }
 
 function BreadcrumbLine({ text }: { text: string }) {

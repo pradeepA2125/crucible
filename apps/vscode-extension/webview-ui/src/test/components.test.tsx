@@ -179,7 +179,7 @@ describe("UserMessage", () => {
 // ── 5. MessageRow progress ────────────────────────────────────────────────────
 
 describe("MessageRow", () => {
-  it("renders a progress-tagged message as a muted progress line", () => {
+  it("renders a progress-tagged message as narration prose, not a muted line", () => {
     const { getByText } = render(
       <MessageRow
         msg={{
@@ -193,8 +193,9 @@ describe("MessageRow", () => {
     );
     const line = getByText("Implementing task 1.");
     expect(line).toBeTruthy();
-    // progress line is muted (text-text-3), distinct from a normal answer
-    expect(line.className).toContain("text-text-3");
+    // narration renders as body-size prose: not muted, not italic
+    expect(line.closest(".text-text-3")).toBeNull();
+    expect(line.closest(".italic")).toBeNull();
   });
 });
 

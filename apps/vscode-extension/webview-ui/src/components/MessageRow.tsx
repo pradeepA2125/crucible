@@ -21,6 +21,8 @@ interface Props {
   queued?: boolean;
   /** Records which message the confirm dialog is about. */
   onRewindRequest?: (messageId: string) => void;
+  /** False continues the previous agent run (same avatar, no repeat). */
+  showAvatar?: boolean;
 }
 
 // ── TaskCreatedRow ────────────────────────────────────────────────────────────
@@ -117,7 +119,7 @@ function LegacyGateSummary({ msg }: { msg: ChatMsg }) {
 // cost grew with thread length. Its props are stable references between deltas.
 export const MessageRow = memo(MessageRowImpl);
 
-function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued = false }: Props) {
+function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued = false, showAvatar = true }: Props) {
   switch (msg.type) {
     case "plan_card":
       return (
@@ -205,7 +207,7 @@ function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued 
       // be mistaken for one, even in the (currently impossible) case both
       // flags were set — progress wins by construction of this ordering.
       if (msg.metadata?.progress === true) {
-        return <AgentRow content={msg.content} progress />;
+        return <AgentRow content={msg.content} progress showAvatar={showAvatar} />;
       }
 
       if (msg.metadata?.breadcrumb === true) {
@@ -213,6 +215,7 @@ function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued 
           <AgentRow
             content={msg.content}
             breadcrumb
+            showAvatar={showAvatar}
             thinkingLog={msg.metadata?.thinking_log as string[] | undefined}
             toolEvents={
               (msg.metadata?.tool_events as ToolEventView[]) ?? []
@@ -230,6 +233,7 @@ function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued 
           return (
             <AgentRow
               content={msg.content}
+              showAvatar={showAvatar}
               thinkingLog={
                 msg.metadata?.thinking_log as string[] | undefined
               }
@@ -249,6 +253,7 @@ function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued 
       return (
         <AgentRow
           content={msg.content}
+          showAvatar={showAvatar}
           thinkingLog={msg.metadata?.thinking_log as string[] | undefined}
           toolEvents={
             (msg.metadata?.tool_events as ToolEventView[]) ?? []
