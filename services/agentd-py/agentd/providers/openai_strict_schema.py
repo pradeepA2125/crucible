@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -332,6 +333,15 @@ def _collapse_single_all_of(node: dict[str, Any]) -> dict[str, Any]:
     return node
 
 
+# One of JSON's escapes (\" \\ \/ \b \f \n \r \t \uXXXX) as a whole, or any other
+# backslash. Valid pairs are matched as units so "\\s" keeps both of its backslashes.
+_ESCAPE = re.compile(r'\\(["\\/bfnrt]|u[0-9a-fA-F]{4})|\\')
+
+
+def _double_invalid_escapes(value: str) -> str:
+    return _ESCAPE.sub(lambda m: m.group(0) if m.group(1) else "\\\\", value)
+
+
 def _parse_json_field(value: Any, kind: str, path: str) -> Any:
     if value is None:
         return None
@@ -340,8 +350,14 @@ def _parse_json_field(value: Any, kind: str, path: str) -> Any:
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as exc:
-        raise StrictSchemaDecodeError(
-            f"'{path}' must hold valid JSON ({exc.msg}): {value[:200]}") from exc
+        # Models escape a regex once ("Literal\[") where this JSON-in-a-string needs it
+        # twice. JSON has no such escape, so the only reading is the literal backslash.
+        repaired = _double_invalid_escapes(value) if exc.msg == "Invalid \\escape" else ""
+        try:
+            parsed = json.loads(repaired)
+        except json.JSONDecodeError:
+            raise StrictSchemaDecodeError(
+                f"'{path}' must hold valid JSON ({exc.msg}): {value[:200]}") from exc
     if kind == "object" and not isinstance(parsed, dict):
         raise StrictSchemaDecodeError(f"'{path}' must hold a JSON object")
     return parsed

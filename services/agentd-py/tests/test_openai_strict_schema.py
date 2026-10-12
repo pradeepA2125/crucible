@@ -54,6 +54,30 @@ def test_free_form_object_that_is_not_json_raises_a_correctable_error() -> None:
     assert issubclass(StrictSchemaDecodeError, RuntimeError)
 
 
+def test_a_regex_escaped_only_once_is_read_as_the_regex_it_means() -> None:
+    """Live (2026-10-12, 5 of ~120 calls): a search pattern written with one backslash,
+    'Literal\\[', where the JSON string needs two. JSON has no \\[ escape, so the whole
+    action was rejected; the only reading is the regex escape the model wrote."""
+    codec = encode_strict_schema(_obj({"args": {"type": "object"}}, ["args"]))
+    captured = r'{"pattern":"class .*Action|Literal\[|action_type","context_lines":3}'
+    assert codec.decode({"args": captured}) == {
+        "args": {"pattern": r"class .*Action|Literal\[|action_type", "context_lines": 3}}
+
+
+def test_valid_escapes_are_left_as_json_reads_them() -> None:
+    codec = encode_strict_schema(_obj({"args": {"type": "object"}}, ["args"]))
+    raw = r'{"a":"line\nnext","b":"say \"hi\"","c":"back\\slash","d":"é","e":"x\.y"}'
+    assert codec.decode({"args": raw}) == {"args": {
+        "a": "line\nnext", "b": 'say "hi"', "c": "back\\slash", "d": "é", "e": r"x\.y"}}
+
+
+def test_broken_quoting_still_raises_rather_than_being_guessed() -> None:
+    codec = encode_strict_schema(_obj({"args": {"type": "object"}}, ["args"]))
+    captured = r'{"pattern":"specs[\\\"x\\\"]|x \","path_filter":"a.py","context_lines":2}'
+    with pytest.raises(StrictSchemaDecodeError, match="args"):
+        codec.decode({"args": captured})
+
+
 def test_optional_fields_become_required_nullable_and_null_means_absent() -> None:
     schema = _obj({"a": {"type": "string"}, "b": {"type": "string"},
                    "c": {"type": "string", "enum": ["x", "y"]}}, ["a"])
