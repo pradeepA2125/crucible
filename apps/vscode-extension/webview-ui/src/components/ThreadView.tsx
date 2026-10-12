@@ -215,6 +215,11 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   } else {
     streamStartRef.current = null;
   }
+  const turnRunning = state.turnActive || !state.inputEnabled;
+  const liveBubble = state.streaming ?? { text: "", thinkingEntries: [], activeThinkingChunk: "", toolEvents: [] };
+  // Streaming answer text is the live signal once nothing is running.
+  const showTransient = !state.retryStatus && turnRunning
+    && !(liveBubble.text && !liveBubble.toolEvents.some((e) => !e.done));
   const streamStartedAt = streamStartRef.current ?? Date.now();
 
   // Auto-scroll on new messages / streaming updates.
@@ -466,13 +471,13 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
             )}
 
             {/* Streaming bubble (hidden while a retry is in flight — resumes once it clears) */}
-            {!state.retryStatus && state.streaming && (state.turnActive || !state.inputEnabled) && (
+            {showTransient && (
               <div className="flex min-w-0 items-start gap-2.5">
                 {liveFinishedEvents.length === 0 && (state.messages.length === 0 || state.messages[state.messages.length - 1].role === "user")
                   ? <Avatar />
                   : <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />}
                 <div className="min-w-0 flex-1">
-                  <TransientActivity bubble={state.streaming} startedAt={streamStartedAt} />
+                  <TransientActivity bubble={liveBubble} startedAt={streamStartedAt} fallback={state.thinkingStatus} />
                 </div>
               </div>
             )}

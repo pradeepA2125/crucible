@@ -46,4 +46,14 @@ describe("TranscriptItems", () => {
     expect(screen.getAllByTestId("activity-group")).toHaveLength(1);
     expect(container.textContent).toContain("Read 2 files");
   });
+
+  it("renders an answer with pills as one activity line plus the answer, without a pill track", () => {
+    const answer: ChatMsg = { role: "agent", content: "All done.", type: "text", timestamp: t, metadata: {
+      tool_events: [{ id: 1, tool: "read_file", args: { path: "a.py" }, source: "explore", done: true }] } };
+    const user: ChatMsg = { role: "user", content: "go", type: "text", timestamp: t, metadata: {} };
+    render(<TranscriptItems messages={[user, answer]} {...common} />);
+    expect(screen.getAllByTestId("activity-group")).toHaveLength(1);
+    expect(screen.getByText("All done.")).toBeInTheDocument();
+    expect(document.querySelector("[data-testid='tool-track']")).toBeNull();
+  });
 });

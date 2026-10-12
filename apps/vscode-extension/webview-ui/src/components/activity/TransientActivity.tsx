@@ -8,7 +8,7 @@ function elapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export function TransientActivity({ bubble, startedAt }: { bubble: StreamingBubble; startedAt: number }) {
+export function TransientActivity({ bubble, startedAt, fallback }: { bubble: StreamingBubble; startedAt: number; fallback?: string | null }) {
   const [now, setNow] = useState(Date.now());
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -23,7 +23,7 @@ export function TransientActivity({ bubble, startedAt }: { bubble: StreamingBubb
     || bubble.thinkingEntries[bubble.thinkingEntries.length - 1] || "";
   const text = unfinished.length
     ? describeTool(unfinished[0]) + (unfinished.length > 1 ? ` +${unfinished.length - 1} more` : "")
-    : thinking || "Working…";
+    : thinking || fallback || "Working…";
   return (
     <div data-testid="transient-activity" className="grid min-w-0 gap-1.5">
       <div className="flex min-w-0 items-center gap-2 text-[12px] text-text-2">

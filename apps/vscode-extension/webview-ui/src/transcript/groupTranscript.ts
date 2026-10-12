@@ -98,6 +98,19 @@ export function groupTranscript(messages: ChatMsg[]): TranscriptItem[] {
       turnSteps.push(step);
       return;
     }
+    // An answer finalizes its in-flight pills message: the pills are activity, the text is a boundary after them.
+    const events = toolEvents(msg);
+    if (msg.role === "agent" && msg.type === "text" && msg.content.trim() && events.length
+      && msg.metadata?.progress !== true && msg.metadata?.breadcrumb !== true) {
+      const step: ActivityStep = { type: "tools", events };
+      group ??= { key: msg.id ? `${msg.id}-activity` : `activity-${index}`, steps: [] };
+      group.steps.push(step);
+      turnSteps.push(step);
+      closeGroup();
+      const { tool_events: _te, thinking_log: _tl, ...rest } = msg.metadata ?? {};
+      items.push({ kind: "message", msg: { ...msg, metadata: rest }, index });
+      return;
+    }
     closeGroup();
     items.push({ kind: "message", msg, index });
   });

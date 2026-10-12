@@ -40,7 +40,11 @@ describe("groupTranscript", () => {
   it("keeps other breadcrumbs and messages with content plus pills as boundaries", () => {
     const qa: ChatMsg = { ...answer("here is the answer"), metadata: pills("read_file").metadata };
     const items = groupTranscript([user("go"), crumb("✓ Implement chosen"), qa]);
-    expect(items.map((i) => i.kind)).toEqual(["message", "message", "message"]);
+    expect(items.map((i) => i.kind)).toEqual(["message", "message", "activity", "message"]);
+    const last = items[3];
+    expect(last.kind === "message" && last.index).toBe(2);
+    expect(last.kind === "message" && last.msg.metadata?.tool_events).toBeUndefined();
+    expect(last.kind === "message" && last.msg.content).toBe("here is the answer");
   });
 
   it("sums a turn's applied edits per file and lists rejected files as not applied", () => {

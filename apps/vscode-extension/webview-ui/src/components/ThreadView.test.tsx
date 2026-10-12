@@ -161,6 +161,19 @@ describe("ThreadView — transient activity line", () => {
     expect(screen.getByTestId("transient-activity").textContent).toContain("Running `pytest`");
   });
 
+  it("shows it with the thinking status when a turn is active and no bubble exists", () => {
+    render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false, streaming: null, thinkingStatus: "Exploring…" }}
+      onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    expect(screen.getByTestId("transient-activity").textContent).toContain("Exploring…");
+  });
+
+  it("hides it while answer text streams and nothing is running", () => {
+    render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false,
+      streaming: { ...bubble, text: "partial", toolEvents: [] } }}
+      onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    expect(screen.queryByTestId("transient-activity")).toBeNull();
+  });
+
   it("hides it while a retry is in flight", () => {
     render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false, streaming: bubble,
       retryStatus: { attempt: 1, max_attempts: 4, reason: "network_error", message: "⏳ retrying…" } }}
