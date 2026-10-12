@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: npm install && npm run build && npm run test && npm run typecheck
+      # search_code shells out to ripgrep; without it its tests skip instead of running.
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
       - run: |
           cd services/agentd-py
           python -m venv .venv && . .venv/bin/activate
