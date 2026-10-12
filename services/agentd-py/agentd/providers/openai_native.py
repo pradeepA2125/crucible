@@ -136,7 +136,11 @@ def native_actions(schema: Mapping[str, Any], schema_name: str) -> NativeActions
                     "description": namespace_description if isinstance(
                         namespace_description, str) else "Your available actions",
                     "tools": functions}],
-            tool_choice="required", instructions=UNION_INSTRUCTIONS + (
+            # "auto", not "required": a required call reads to these models as "a tool is
+            # owed before yielding", and they re-read code they already had to pay it. Ending
+            # the turn is a function here (answer), so the model still calls one; a text-only
+            # reply is rejected by the transport and retried as malformed output.
+            tool_choice="auto", instructions=UNION_INSTRUCTIONS + (
                 " For a tool batch, call crucible.tool_calls once with thought and a calls array. "
                 if has_batch else ""), union=True,
             codecs=codecs)

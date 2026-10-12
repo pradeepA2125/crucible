@@ -68,7 +68,7 @@ PAYLOAD = {
 
 def test_a_union_becomes_one_function_per_action_in_a_namespace() -> None:
     actions = native_actions(UNION, "controller_step_response")
-    assert actions.tool_choice == "required"
+    assert actions.tool_choice == "auto"
     [namespace] = actions.tools
     assert namespace["type"] == "namespace" and namespace["name"] == NAMESPACE
     names = {f["name"] for f in namespace["tools"]}
@@ -89,13 +89,16 @@ def test_a_flat_schema_becomes_one_forced_function() -> None:
     assert actions.tool_choice == {"type": "function", "name": "task_narrative_"}
 
 
-def test_required_native_call_does_not_describe_workspace_tools_as_mandatory() -> None:
+def test_native_call_does_not_describe_workspace_tools_as_mandatory() -> None:
+    """Under tool_choice "required" Luna read code it already had "because a tool call is
+    required before yielding" (replay of a captured step, 2026-10-12: 10/16 answered vs
+    16/16 under "auto"). Neither the descriptions nor tool_choice may say a call is owed."""
     actions = native_actions(UNION, "controller_step_response")
     functions = {fn["name"]: fn for fn in actions.tools[0]["tools"]}
     assert "Finish the user turn" in functions["answer"]["description"]
     assert "Use directly" in functions["answer"]["description"]
     assert "only when their results are needed" in functions["tool_calls"]["description"]
-    assert actions.tool_choice == "required"
+    assert actions.tool_choice == "auto"
 
 
 def test_native_action_descriptions_preserve_schema_specific_guidance() -> None:

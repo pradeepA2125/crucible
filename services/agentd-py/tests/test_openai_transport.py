@@ -549,7 +549,7 @@ async def test_the_plan_route_asks_for_one_native_function_call() -> None:
                       "args": {"path": "a.py"}}
     call = fake.calls[0]
     assert "text" not in call
-    assert call["tool_choice"] == "required" and call["parallel_tool_calls"] is False
+    assert call["tool_choice"] == "auto" and call["parallel_tool_calls"] is False
     assert call["tools"][0]["type"] == "namespace"
     assert {f["name"] for f in call["tools"][0]["tools"]} == {"tool_call", "answer"}
     assert call["instructions"].startswith("sys") and "exactly one action" in call["instructions"]
