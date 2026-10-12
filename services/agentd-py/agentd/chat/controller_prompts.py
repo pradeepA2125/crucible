@@ -519,14 +519,17 @@ Variant — answer (respond in text): {type, answer}
 <</type:answer>>
 Variant — progress (post a short status note WITHOUT ending the turn): {type, note}
 <<main>>
-  Use when you want to tell the user what you are doing or about to do while you keep working
-  in the SAME turn — e.g. between finishing one file and starting the next in a multi-step change.
-  The 'note' is shown to the user immediately; the turn does NOT end and you run again right after.
+  Keep the user oriented. Every several steps — after a finding, when you change direction,
+  or before a long stretch of work — post a progress note: one or two sentences for the user,
+  saying what you found and what you will do next. Do not repeat your previous note, and do
+  not post one instead of real work. The 'note' is shown to the user immediately; the turn does
+  NOT end and you run again right after.
 <</main>>
 <<child>>
-  Use for a short status line while you keep working. It is shown to a human watching, but it
-  does NOT reach your dispatcher — only 'report' does, so put every finding in the report.
-  Posting a note does not end your task; you run again right after.
+  Keep whoever is watching oriented: every several steps — after a finding or a change of
+  direction — post a short progress note. It is shown to a human watching, but it does NOT
+  reach your dispatcher — only 'report' does, so put every finding in the report. Do not
+  repeat your previous note. Posting a note does not end your task; you run again right after.
 <</child>>
   {"type":"progress","thought":"plan saved; starting task 1","note":"Plan saved. Now implementing task 1 — creating the commit-log struct."}
 <<main>>
