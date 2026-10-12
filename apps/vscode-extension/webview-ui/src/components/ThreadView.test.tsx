@@ -150,6 +150,25 @@ describe("ThreadView retry-status bubble", () => {
   });
 });
 
+describe("ThreadView — transient activity line", () => {
+  const bubble = { text: "", thinkingEntries: [], activeThinkingChunk: "", toolEvents: [
+    { id: 1, tool: "run_command", args: { command: "pytest" }, source: "explore" as const, done: false },
+  ] };
+
+  it("shows the running tool while a turn is active and a bubble exists", () => {
+    render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false, streaming: bubble }}
+      onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    expect(screen.getByTestId("transient-activity").textContent).toContain("Running `pytest`");
+  });
+
+  it("hides it while a retry is in flight", () => {
+    render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false, streaming: bubble,
+      retryStatus: { attempt: 1, max_attempts: 4, reason: "network_error", message: "⏳ retrying…" } }}
+      onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    expect(screen.queryByTestId("transient-activity")).toBeNull();
+  });
+});
+
 describe("ThreadView — Stop all agents (spec §6)", () => {
   it("shows Stop all agents only while agents run", () => {
     const { rerender } = render(

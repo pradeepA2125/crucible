@@ -11,7 +11,12 @@ import { SettingsDrawer } from "./SettingsDrawer";
 import { ChatSettingsOverlay } from "./ChatSettingsOverlay";
 import { inputAvailability } from "../inputAvailability";
 import type { SectionId } from "../settings/sections/meta";
-import type { AppState, ChatMsg, RewindPreviewView } from "../types";
+import type { AppState, ChatMsg, RewindPreviewView, ToolEventView } from "../types";
+import { groupTranscript } from "../transcript/groupTranscript";
+import { ActivityGroup } from "./activity/ActivityGroup";
+import { TurnChanges } from "./activity/TurnChanges";
+import { TransientActivity } from "./activity/TransientActivity";
+import { Avatar } from "./shared/Avatar";
 import { RewindDialog } from "./RewindDialog";
 import { AgentsContext, type AgentsUi } from "./agents/AgentsContext";
 import { AgentWindow } from "./agents/AgentWindow";
@@ -27,6 +32,51 @@ const WAITING_STATUSES = new Set([
   "AWAITING_STEP_REVIEW",
   "AWAITING_VALIDATION_DECISION",
 ]);
+
+/**
+ * The transcript as grouped items. Live pills (the streaming bubble's finished tool events)
+ * join the grouping as a trailing pills-only message, so work shown live sits in the very
+ * group it is sealed into (same index, same key) and nothing jumps when the bubble seals.
+ */
+export function TranscriptItems({ messages, turnActive, queuedIds, planVersions, onRewindRequest, streamingToolEvents }: {
+  messages: ChatMsg[]; turnActive: boolean; queuedIds: string[];
+  planVersions: Map<number, number | undefined>; onRewindRequest: (id: string) => void;
+  streamingToolEvents?: ToolEventView[];
+}) {
+  const items = useMemo(() => {
+    const live = streamingToolEvents ?? [];
+    const all = live.length
+      ? [...messages, { role: "agent", type: "text", content: "", timestamp: "", metadata: { tool_events: live } } as ChatMsg]
+      : messages;
+    return groupTranscript(all);
+  }, [messages, streamingToolEvents]);
+  return (
+    <>
+      {items.map((item, i) => {
+        // An agent item right after another agent item continues the same row (one avatar).
+        const prev = items[i - 1];
+        const prevIsAgent = !!prev && (prev.kind !== "message" || prev.msg.role === "agent");
+        const isAgent = item.kind !== "message" || item.msg.role === "agent";
+        const showAvatar = isAgent && !prevIsAgent;
+        if (item.kind === "activity" || item.kind === "changes") {
+          return (
+            <div key={item.key} className="flex min-w-0 items-start gap-2.5">
+              {showAvatar ? <Avatar /> : <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />}
+              <div className="min-w-0 flex-1">
+                {item.kind === "activity" ? <ActivityGroup steps={item.steps} /> : <TurnChanges files={item.files} />}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <MessageRow key={item.msg.id ?? `m-${item.index}`} msg={item.msg} planVersion={planVersions.get(item.index)}
+            turnActive={turnActive} queued={item.msg.id != null && queuedIds.includes(item.msg.id)}
+            onRewindRequest={onRewindRequest} showAvatar={showAvatar} />
+        );
+      })}
+    </>
+  );
+}
 
 interface Props {
   state: AppState;
@@ -149,6 +199,23 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
       planVersionMap.set(idx, prev + 1);
     }
   });
+
+  // Finished live pills join the transcript grouping; unfinished ones belong to the transient line.
+  const liveFinishedEvents = useMemo(
+    () => (state.streaming?.toolEvents ?? []).filter((e) => e.done),
+    [state.streaming?.toolEvents],
+  );
+
+  // Elapsed time of the running turn. A streaming bubble re-forms after every seal (each
+  // breadcrumb/diff), so keying on the bubble would reset the clock mid-turn: anchor it to the
+  // turn start (turnActive false->true), falling back to the bubble start when no turn flag is set.
+  const streamStartRef = useRef<number | null>(null);
+  if (state.turnActive || state.streaming) {
+    if (streamStartRef.current === null) streamStartRef.current = Date.now();
+  } else {
+    streamStartRef.current = null;
+  }
+  const streamStartedAt = streamStartRef.current ?? Date.now();
 
   // Auto-scroll on new messages / streaming updates.
   // Guard: scrollIntoView is not available in jsdom (tests).
@@ -376,16 +443,9 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           <EmptyState onPick={setDraft} />
         ) : (
           <>
-            {state.messages.map((m: ChatMsg, i: number) => (
-              <MessageRow
-                key={i}
-                msg={m}
-                planVersion={planVersionMap.get(i)}
-                turnActive={state.turnActive}
-                queued={m.id != null && state.queuedIds.includes(m.id)}
-                onRewindRequest={setRewindMessageId}
-              />
-            ))}
+            <TranscriptItems messages={state.messages} turnActive={state.turnActive} queuedIds={state.queuedIds}
+              planVersions={planVersionMap} onRewindRequest={setRewindMessageId}
+              streamingToolEvents={liveFinishedEvents} />
 
             {/* Retry-status bubble — takes precedence over both the thinking
                 status line and the streaming bubble below while a retry is
@@ -405,31 +465,19 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
               </div>
             )}
 
-            {/* Thinking status line (when no streaming bubble yet, no retry in flight) */}
-            {!state.retryStatus && state.thinkingStatus && !state.streaming && (
-              <div className="flex items-center gap-2 text-[11px]"
-                style={{ color: "var(--color-text-3)" }}>
-                <span
-                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={{
-                    background: "var(--color-accent)",
-                    animation: "pulse 1.5s ease-in-out infinite",
-                  }}
-                  aria-hidden="true"
-                />
-                {state.thinkingStatus}
+            {/* Streaming bubble (hidden while a retry is in flight — resumes once it clears) */}
+            {!state.retryStatus && state.streaming && (state.turnActive || !state.inputEnabled) && (
+              <div className="flex min-w-0 items-start gap-2.5">
+                {liveFinishedEvents.length === 0 && (state.messages.length === 0 || state.messages[state.messages.length - 1].role === "user")
+                  ? <Avatar />
+                  : <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />}
+                <div className="min-w-0 flex-1">
+                  <TransientActivity bubble={state.streaming} startedAt={streamStartedAt} />
+                </div>
               </div>
             )}
-
-            {/* Streaming bubble (hidden while a retry is in flight — resumes once it clears) */}
-            {!state.retryStatus && state.streaming && (
-              <AgentRow
-                content={state.streaming.text}
-                streaming
-                streamingThinkingEntries={state.streaming.thinkingEntries}
-                streamingThinkingChunk={state.streaming.activeThinkingChunk}
-                toolEvents={state.streaming.toolEvents}
-              />
+            {!state.retryStatus && state.streaming?.text && (
+              <AgentRow content={state.streaming.text} streaming showAvatar={!(state.turnActive || !state.inputEnabled)} />
             )}
           </>
         )}
