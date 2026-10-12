@@ -21,6 +21,12 @@ describe("summarizeActivity", () => {
     expect(summarizeActivity([one, two])).toBe("Edited 2 files +5 −1");
   });
 
+  it("counts distinct files, so two edits to one file read as one file", () => {
+    const first: ActivityStep = { type: "edit", applied: true, entries: [{ path: "a.ts", additions: 3, deletions: 1 }] };
+    const second: ActivityStep = { type: "edit", applied: true, entries: [{ path: "a.ts", additions: 2, deletions: 0 }] };
+    expect(summarizeActivity([first, second])).toBe("Edited `a.ts` +5 −1");
+  });
+
   it("marks edits that were not applied and counts failures", () => {
     const rejected: ActivityStep = { type: "edit", applied: false, entries: [{ path: "a.ts", additions: 1, deletions: 0 }] };
     expect(summarizeActivity([tools(ev("run_command", {}, true)), rejected])).toBe("Ran a command, edited `a.ts` (not applied) · 1 failed");
@@ -43,5 +49,7 @@ describe("describeTool", () => {
     expect(describeTool(ev("web_search", { query: "ollama vision" }))).toBe("Searching the web for “ollama vision”");
     expect(describeTool(ev("dispatch_agents"))).toBe("Starting agents");
     expect(describeTool(ev("other_tool"))).toBe("Using other_tool");
+    expect(describeTool(ev("search_code"))).toBe("Searching code");
+    expect(describeTool(ev("search_semantic", { query: "" }))).toBe("Searching code");
   });
 });

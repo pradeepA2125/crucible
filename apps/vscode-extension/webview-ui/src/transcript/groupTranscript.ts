@@ -77,9 +77,9 @@ export function groupTranscript(messages: ChatMsg[]): TranscriptItem[] {
   };
   const closeTurn = () => {
     closeGroup();
-    if (turnSteps.some((s) => s.type === "edit")) {
-      items.push({ kind: "changes", key: `changes-${turnKey}`, files: turnChanges(turnSteps) });
-    }
+    const files = turnChanges(turnSteps);
+    // A diff card with no entries has nothing to list; an empty changes card would read "No changes applied".
+    if (files.length) items.push({ kind: "changes", key: `changes-${turnKey}`, files });
     turnSteps = [];
   };
 

@@ -27,17 +27,29 @@ const basename = (path: string): string => path.split("/").pop() || path;
 interface ToolBucket { phrase: Phrase; count: number; paths: Set<string> | null }
 interface EditRecord { path: string; additions: number; deletions: number; applied: boolean }
 
+// Counts distinct files, not edit entries: two edits to one path are one file.
+// A path counts as applied if any of its edits was applied; only applied edits add to +/−.
 function describeEdits(edits: EditRecord[]): string {
-  if (edits.length === 1) {
-    const [edit] = edits;
-    return edit.applied
-      ? `edited \`${basename(edit.path)}\` +${edit.additions} −${edit.deletions}`
-      : `edited \`${basename(edit.path)}\` (not applied)`;
+  const files = new Map<string, { additions: number; deletions: number; applied: boolean }>();
+  for (const edit of edits) {
+    const file = files.get(edit.path) ?? { additions: 0, deletions: 0, applied: false };
+    if (edit.applied) {
+      file.additions += edit.additions;
+      file.deletions += edit.deletions;
+      file.applied = true;
+    }
+    files.set(edit.path, file);
   }
-  const applied = edits.filter((edit) => edit.applied);
-  const additions = applied.reduce((sum, edit) => sum + edit.additions, 0);
-  const deletions = applied.reduce((sum, edit) => sum + edit.deletions, 0);
-  return `edited ${edits.length} files +${additions} −${deletions}`;
+  const entries = [...files.entries()];
+  if (entries.length === 1) {
+    const [[path, file]] = entries;
+    return file.applied
+      ? `edited \`${basename(path)}\` +${file.additions} −${file.deletions}`
+      : `edited \`${basename(path)}\` (not applied)`;
+  }
+  const additions = entries.reduce((sum, [, file]) => sum + file.additions, 0);
+  const deletions = entries.reduce((sum, [, file]) => sum + file.deletions, 0);
+  return `edited ${entries.length} files +${additions} −${deletions}`;
 }
 
 function describeBucket(bucket: ToolBucket): string {
@@ -96,8 +108,10 @@ export function describeTool(event: ToolEventView): string {
     case "list_directory":
       return `Listing \`${str(args.path) || "."}\``;
     case "search_code":
-    case "search_semantic":
-      return `Searching code for “${str(args.pattern) || str(args.query)}”`;
+    case "search_semantic": {
+      const query = str(args.pattern) || str(args.query);
+      return query ? `Searching code for “${query}”` : "Searching code";
+    }
     case "run_command":
     case "start_session": {
       const extra = Array.isArray(args.args) ? args.args.join(" ") : "";

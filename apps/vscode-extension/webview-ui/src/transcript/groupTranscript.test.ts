@@ -59,6 +59,12 @@ describe("groupTranscript", () => {
     expect(items.findIndex((i) => i.kind === "changes")).toBe(3);
   });
 
+  it("emits no changes item for a turn whose diff cards carry no entries", () => {
+    const empty: ChatMsg = { role: "agent", content: "", type: "diff_card", timestamp: t, metadata: { resolved: "applied", diff_entries: [] } };
+    const items = groupTranscript([user("go"), empty, answer("done")]);
+    expect(items.some((i) => i.kind === "changes")).toBe(false);
+  });
+
   it("ignores a pills-only message without tool events", () => {
     const empty: ChatMsg = { ...answer(""), metadata: { tool_events: [] } };
     expect(groupTranscript([user("go"), empty]).map((i) => i.kind)).toEqual(["message"]);
