@@ -54,6 +54,6 @@ describe("TranscriptItems", () => {
     render(<TranscriptItems messages={[user, answer]} {...common} />);
     expect(screen.getAllByTestId("activity-group")).toHaveLength(1);
     expect(screen.getByText("All done.")).toBeInTheDocument();
-    expect(document.querySelector("[data-testid='tool-track']")).toBeNull();
+    expect(document.querySelector("button[data-event-id]")).toBeNull();
   });
 });
