@@ -1471,7 +1471,8 @@ class ChatController:
         if decision == "stale":
             # Refused by the write guard (spec §7.4): always recorded, gated or not — the
             # user may have clicked Accept on an edit that nevertheless did not land.
-            self._write_breadcrumb(thread_id, channel_id, f"✗ Not applied: {reason}")
+            self._write_breadcrumb(
+                thread_id, channel_id, f"✗ Not applied: {reason}", edit_outcome=True)
             return
         files = ", ".join(d.path for d in diff) or "(no files)"
         if was_gated:
@@ -1481,7 +1482,7 @@ class ChatController:
                 text = f"✗ Edit rejected: {files}"
                 if reason:
                     text += f" — {reason}"  # surface the user's reason in the record
-            self._write_breadcrumb(thread_id, channel_id, text)
+            self._write_breadcrumb(thread_id, channel_id, text, edit_outcome=True)
 
     def set_review_pref(self, *, auto_accept: bool) -> ReviewPrefResult:
         """The one "Review each edit" value for every thread, turn and background agent
@@ -1978,17 +1979,25 @@ class ChatController:
         else:
             self._child_breadcrumb(child, text)
 
-    def _child_breadcrumb(self, child: AgentHandle, text: str) -> None:
+    def _child_breadcrumb(
+        self, child: AgentHandle, text: str, *, edit_outcome: bool = False,
+    ) -> None:
         """A sub-agent's decision record goes to ITS transcript and channel, never the
-        parent's (spec §5.5); the boundary is the child loop's, not the parent's."""
+        parent's (spec §5.5); the boundary is the child loop's, not the parent's.
+        `edit_outcome` marks an edit's accept/reject/not-applied record."""
         if isinstance(child.loop, ControllerLoop):
             child.loop.mark_pills_boundary()
+        metadata: dict[str, object] = {"breadcrumb": True}
+        payload: dict[str, object] = {"text": text, "task_id": ""}
+        if edit_outcome:
+            metadata["edit_outcome"] = True
+            payload["edit_outcome"] = True
         if child.broadcaster is not None:
             child.broadcaster.broadcast(agent_channel(child.thread_id, child.agent_id), {
-                "type": "chat_breadcrumb", "payload": {"text": text, "task_id": ""}})
+                "type": "chat_breadcrumb", "payload": payload})
         if child.transcript is not None:
             child.transcript.append(ChatMessage(
-                role="agent", content=text, metadata={"breadcrumb": True}))
+                role="agent", content=text, metadata=metadata))
 
     async def _child_command_approval_cb(
         self, child: AgentHandle, command: str, args: list[str], cwd: str,
@@ -3831,12 +3840,15 @@ class ChatController:
                 metadata={"diff_entries": diff_payload, "resolved": resolved}))
         files = ", ".join(d.path for d in diff) or "(no files)"
         if decision == "stale":
-            self._child_breadcrumb(child, f"✗ Not applied: {reason}")
+            self._child_breadcrumb(
+                child, f"✗ Not applied: {reason}", edit_outcome=True)
         elif was_gated and decision == "accept":
-            self._child_breadcrumb(child, f"✓ Edit accepted: {files}")
+            self._child_breadcrumb(
+                child, f"✓ Edit accepted: {files}", edit_outcome=True)
         elif was_gated:
             self._child_breadcrumb(
-                child, f"✗ Edit rejected: {files}" + (f" — {reason}" if reason else ""))
+                child, f"✗ Edit rejected: {files}" + (f" — {reason}" if reason else ""),
+                edit_outcome=True)
 
     async def _child_progress_note(self, child: AgentHandle, note: str) -> None:
         """Persist a child's progress note to ITS transcript (the loop already broadcast
@@ -3845,15 +3857,24 @@ class ChatController:
             child.transcript.append(ChatMessage(
                 role="agent", content=note, metadata={"progress": True}))
 
-    def _write_breadcrumb(self, thread_id: str, channel_id: str, text: str) -> None:
+    def _write_breadcrumb(
+        self, thread_id: str, channel_id: str, text: str, *, edit_outcome: bool = False,
+    ) -> None:
         """Persist a durable transcript breadcrumb AND broadcast it live (mirror
         engine.write_chat_breadcrumb). The live mode/edit gate is ephemeral; this is
-        the permanent record of the user's decision so history reads as a narrative."""
+        the permanent record of the user's decision so history reads as a narrative.
+        `edit_outcome` marks an edit's accept/reject/not-applied record, which the
+        transcript groups with that edit."""
         self._mark_pills_boundary(thread_id)
+        metadata: dict[str, object] = {"breadcrumb": True}
+        payload: dict[str, object] = {"text": text, "task_id": ""}
+        if edit_outcome:
+            metadata["edit_outcome"] = True
+            payload["edit_outcome"] = True
         self._store.append_message(thread_id, ChatMessage(
-            role="agent", content=text, type="text", metadata={"breadcrumb": True}))
+            role="agent", content=text, type="text", metadata=metadata))
         self._broadcaster.broadcast(channel_id, {
-            "type": "chat_breadcrumb", "payload": {"text": text, "task_id": ""}})
+            "type": "chat_breadcrumb", "payload": payload})
 
     async def _progress_note_cb(self, thread_id: str, note: str) -> None:
         """Persist a non-terminal `progress` note as a durable transcript message —

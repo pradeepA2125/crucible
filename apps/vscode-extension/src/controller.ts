@@ -1229,7 +1229,9 @@ export class CrucibleController {
             type: "text",
             taskId: (event.payload["task_id"] as string) ?? "",
             timestamp: this.now(),
-            metadata: { breadcrumb: true },
+            metadata: event.payload["edit_outcome"] === true
+              ? { breadcrumb: true, edit_outcome: true }
+              : { breadcrumb: true },
           });
         } else if (event.type === "chat_progress") {
           // Non-terminal mid-turn status note. Render live; the durable copy
@@ -1525,7 +1527,9 @@ export class CrucibleController {
             type: "text",
             taskId: event.payload.task_id,
             timestamp: this.now(),
-            metadata: { taskId: event.payload.task_id, breadcrumb: true },
+            metadata: event.payload.edit_outcome === true
+              ? { taskId: event.payload.task_id, breadcrumb: true, edit_outcome: true }
+              : { taskId: event.payload.task_id, breadcrumb: true },
           });
           // Capture deviation breadcrumbs for run context.
           // COUPLING: prefixes mirror backend breadcrumb constants in

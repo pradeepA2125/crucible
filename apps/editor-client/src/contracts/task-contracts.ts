@@ -202,7 +202,7 @@ export type StreamEvent =
   | { type: "env_profile_built"; payload: { ecosystems_count: number; bootstrap_needed: boolean } }
   | { type: "env_install_running"; payload: { scope_key: string; command: string } }
   | { type: "env_install_done"; payload: { scope_key: string; exit_ok: boolean; tail: string } }
-  | { type: "chat_breadcrumb"; payload: { text: string; task_id: string } }
+  | { type: "chat_breadcrumb"; payload: { text: string; task_id: string; edit_outcome?: boolean } }
   | { type: "chat_progress"; payload: { note: string } }
   | { type: "memory_compacted"; payload: { evicted: number; anchor_version: number } }
   | { type: "agent_started"; payload: { agent_id: string; parent_agent_id: string | null; depth: number; name: string; label: string } }
