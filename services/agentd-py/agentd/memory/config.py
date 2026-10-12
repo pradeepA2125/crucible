@@ -11,6 +11,7 @@ class MemoryConfig(BaseModel):
     enabled: bool
     db_path: str
     trigger_frac: float
+    reserve_tokens: int
     hot_token_frac: float
     hot_turns: int
     window_tokens: int
@@ -29,6 +30,7 @@ class MemoryConfig(BaseModel):
             enabled=env.get("CRUCIBLE_MEMORY_ENABLED", "true").lower() in _TRUTHY,
             db_path=env.get("CRUCIBLE_MEMORY_DB_PATH", ".crucible/state/memory.sqlite3"),
             trigger_frac=float(env.get("CRUCIBLE_MEMORY_COMPACT_TRIGGER_FRAC", "0.65")),
+            reserve_tokens=int(env.get("CRUCIBLE_MEMORY_COMPACT_RESERVE_TOKENS", "28000")),
             hot_token_frac=float(env.get("CRUCIBLE_MEMORY_HOT_TOKEN_FRAC", "0.4")),
             hot_turns=int(env.get("CRUCIBLE_MEMORY_HOT_TURNS", "10")),
             window_tokens=int(env.get("CRUCIBLE_MEMORY_WINDOW_TOKENS", "128000")),

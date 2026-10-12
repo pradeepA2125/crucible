@@ -133,7 +133,10 @@ async def test_ollama_transport_sends_expected_request_shape() -> None:
     assert body["stream"] is True
     assert body["format"] == {"type": "object"}
     assert body["options"]["temperature"] == 0
-    assert "num_ctx" in body["options"]
+    # The Ollama app's context-length setting applies, and an over-long prompt is
+    # refused instead of silently cut.
+    assert "num_ctx" not in body["options"]
+    assert body["truncate"] is False
     assert body["messages"][0] == {"role": "system", "content": "plan"}
     assert body["messages"][1]["role"] == "user"
     assert json.loads(body["messages"][1]["content"]) == {"task_id": "task-1", "goal": "x"}
@@ -144,7 +147,8 @@ async def test_ollama_transport_sends_expected_request_shape() -> None:
 async def test_ollama_transport_default_json_predict_is_half_of_num_ctx() -> None:
     """Default num_predict must leave headroom below num_ctx for the prompt itself —
     the pre-fix code set both to the same flat 32768, so the model's real output
-    budget was already num_ctx minus whatever the prompt consumed."""
+    budget was already num_ctx minus whatever the prompt consumed. With num_ctx left to
+    the Ollama app, the budget is still half of 32768."""
     client = _FakeAsyncClient([_ok_response(json.dumps({"ok": True}))])
     transport = OllamaJsonTransport(http_client=client)
 
@@ -157,9 +161,8 @@ async def test_ollama_transport_default_json_predict_is_half_of_num_ctx() -> Non
     )
 
     options = client.calls[0]["body"]["options"]
-    assert options["num_ctx"] == 32768
+    assert "num_ctx" not in options
     assert options["num_predict"] == 16384
-    assert options["num_predict"] < options["num_ctx"]
 
 
 @pytest.mark.asyncio

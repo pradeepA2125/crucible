@@ -31,6 +31,7 @@ from agentd.providers.context_observation import (
     finish_context,
     report_context,
 )
+from agentd.providers.context_overflow import detect_overflow
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.providers.openai_compatible_transport import (
     TransientTransportError,
@@ -564,6 +565,9 @@ class OpenAIJsonTransport(ModelJsonTransport):
                                       param=getattr(exc, "param", None) or body.get("param"))
         if stopped is not None:
             return stopped
+        overflow = detect_overflow(exc.status_code, f"{code}: {message}")
+        if overflow is not None:
+            return overflow
         if code in TRANSIENT_PLAN_CODES:
             return TransientTransportError(f"{code}: {message}")
         if exc.status_code == 401:
@@ -636,6 +640,9 @@ def _failed_error(error: Any) -> Exception:
     stopped = classify_plan_error(code, message, param=getattr(error, "param", None))
     if stopped is not None:
         return stopped
+    overflow = detect_overflow(None, f"{code}: {message}")
+    if overflow is not None:
+        return overflow
     if code in TRANSIENT_PLAN_CODES or code in ("server_error", "rate_limit_exceeded"):
         return TransientTransportError(f"{code}: {message}")
     return RuntimeError(f"OpenAI response failed ({code}): {message}")

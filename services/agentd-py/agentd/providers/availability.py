@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
+from agentd.providers.context_overflow import ContextWindowExceeded
 from agentd.providers.openai_compatible_transport import TransientTransportError
 from agentd.providers.plan_access import ProviderAccessStopped
 
@@ -25,6 +26,13 @@ def _chain(exc: BaseException) -> Iterator[BaseException]:
         current = current.__cause__ or current.__context__
 
 
+def find_context_overflow(exc: BaseException) -> ContextWindowExceeded | None:
+    for current in _chain(exc):
+        if isinstance(current, ContextWindowExceeded):
+            return current
+    return None
+
+
 def _is_connection_error(exc: BaseException) -> bool:
     try:
         import openai
@@ -37,6 +45,10 @@ def is_provider_unavailable(exc: BaseException) -> bool:
     # A plan usage limit is a 429 too, but waiting it out is the user's call (spec
     # 2026-10-06 §5.4): re-queueing would just keep hitting the same limit.
     if any(isinstance(current, ProviderAccessStopped) for current in _chain(exc)):
+        return False
+    # Gemini's quota overflow is raised from a 429: waiting it out can never make the
+    # request fit, compacting can.
+    if find_context_overflow(exc) is not None:
         return False
     for current in _chain(exc):
         status = getattr(current, "status_code", None)

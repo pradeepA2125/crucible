@@ -105,6 +105,14 @@ def _int_env(env: dict[str, str], name: str, default: int) -> int:
         return default
 
 
+def _optional_int_env(env: dict[str, str], name: str) -> int | None:
+    raw = env.get(name)
+    try:
+        return int(raw) if raw else None
+    except ValueError:
+        return None
+
+
 def _float_env(env: dict[str, str], name: str, default: float) -> float:
     raw = env.get(name)
     try:
@@ -233,7 +241,8 @@ def _build_raw_transport(
             keep_alive=env.get("CRUCIBLE_OLLAMA_KEEP_ALIVE"),
             timeout_sec=_float_env(env, "CRUCIBLE_OLLAMA_TIMEOUT_SEC", 600.0),
             max_retries=_int_env(env, "CRUCIBLE_OLLAMA_MAX_RETRIES", 4),
-            num_ctx=_int_env(env, "CRUCIBLE_OLLAMA_NUM_CTX", 32768),
+            # Unset: the Ollama app's own context-length setting applies.
+            num_ctx=_optional_int_env(env, "CRUCIBLE_OLLAMA_NUM_CTX"),
             json_predict_frac=_float_env(env, "CRUCIBLE_OLLAMA_JSON_PREDICT_FRAC", 0.5),
             think=_ollama_think_env(env, "CRUCIBLE_OLLAMA_THINK"),
             temperature=_float_env(env, "CRUCIBLE_OLLAMA_TEMPERATURE", 0.0),

@@ -11,6 +11,7 @@ try:
 except ImportError:
     AsyncGroqClient = None
 
+from agentd.providers.context_overflow import raise_if_overflow
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.providers.token_progress import ProgressTicker, approx_prompt_tokens
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
@@ -303,6 +304,7 @@ class GroqJsonTransport(ModelJsonTransport):
                 msg = f"Groq streaming timed out after {self._timeout_sec}s"
                 raise RuntimeError(msg) from exc
             except Exception as exc:
+                raise_if_overflow(exc)
                 if _is_retryable(exc):
                     last_exc = exc
                     continue
@@ -332,6 +334,7 @@ class GroqJsonTransport(ModelJsonTransport):
                 msg = f"Groq chat.completions timed out after {self._timeout_sec}s"
                 raise RuntimeError(msg) from exc
             except Exception as exc:
+                raise_if_overflow(exc)
                 if _is_retryable(exc):
                     last_exc = exc
                     continue

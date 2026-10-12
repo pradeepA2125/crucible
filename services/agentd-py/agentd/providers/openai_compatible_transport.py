@@ -16,6 +16,7 @@ from agentd.providers.context_observation import (
     finish_context,
     report_context,
 )
+from agentd.providers.context_overflow import ContextWindowExceeded, raise_if_overflow
 from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
 from agentd.providers.reasoning_effort import LADDER, EffortSupport, ReasoningEffort
 from agentd.runtime.artifacts import provider_debug_root
@@ -326,6 +327,10 @@ def proves_json_schema_unsupported(
     if finish_reason == "length":
         return False
     if isinstance(exc, NonProbativeError):
+        return False
+    # Too large for the window says nothing about response_format: compact and keep the
+    # mode (generate_json re-raises it before ever asking; the validate probe asks here).
+    if isinstance(exc, ContextWindowExceeded):
         return False
     # Rate limiting and every server-side/gateway fault (500/502/503/504 …), even
     # with retries already exhausted: a load/availability signal, never a statement
@@ -867,6 +872,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         finish_reason=finish_reason)
                     succeeded = True
                     return result
+                except ContextWindowExceeded:
+                    # Not evidence about schemas, and the json_object fallback would only
+                    # resend the same oversized request: the loop compacts and retries.
+                    raise
                 except Exception as e:
                     # Effort rejection is checked FIRST and short-circuits the schema
                     # verdict entirely. `proves_json_schema_unsupported` is a DENYLIST
@@ -1059,6 +1068,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 return self._parse_output_object(
                     output_text, schema_name, on_salvage,
                     finish_reason=fb_finish_reason)
+            except ContextWindowExceeded:
+                raise
             except TransientTransportError as e2:
                 # MUST precede `except RuntimeError` — TransientTransportError is a
                 # RuntimeError subclass, so the base handler would shadow it.
@@ -1208,8 +1219,10 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             return await asyncio.wait_for(
                 self._completions.create(**kwargs), timeout=self._timeout_sec,
             )
-        except BaseException:
+        except BaseException as exc:
             finish_context(observer)
+            if isinstance(exc, Exception):
+                raise_if_overflow(exc)
             raise
 
     async def _open_stream(
@@ -1238,7 +1251,9 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             probe = {**kwargs, "stream_options": _STREAM_USAGE_LADDER[self._stream_usage_mode]}
             try:
                 return await self._create_observed_stream(probe, on_context_input)
-            except TimeoutError:
+            except (TimeoutError, ContextWindowExceeded):
+                # An overflow is the prompt's size, not the usage parameter: stepping down
+                # the usage mode for it would lose usage reporting for the whole process.
                 raise
             except Exception as exc:
                 if _is_retryable(exc):
@@ -1506,6 +1521,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                     f"{self._label} chat.completions timed out after {self._timeout_sec}s"
                 ) from exc
             except Exception as exc:
+                raise_if_overflow(exc)
                 if _is_retryable(exc):
                     last_exc = exc
                     continue

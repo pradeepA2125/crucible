@@ -119,6 +119,7 @@ class MemoryHarness:
     async def prepare_turn(
         self, history: History, run_id: str, query: str = "",
         observed: ObservedPrompt | None = None, *, consolidate: bool = True,
+        force: bool = False,
     ) -> TurnPreparation:
         if not self._enabled:
             return TurnPreparation(history=history, recalled_memories=[], compacted=False)
@@ -126,7 +127,9 @@ class MemoryHarness:
         result = None
         if self._compactor is not None:
             try:
-                result = await self._compactor.maybe_compact(history, run_id, observed=observed)
+                # force only when set, so compactors without the keyword keep working.
+                result = await self._compactor.maybe_compact(
+                    history, run_id, observed=observed, **({"force": True} if force else {}))
             except Exception:  # best-effort: memory must never break a loop iteration
                 logger.warning("[memory] compaction failed for run=%s", run_id, exc_info=True)
         prep = TurnPreparation(
@@ -162,6 +165,12 @@ class MemoryHarness:
         """
         if self._compactor is not None:
             self._compactor.set_window_tokens(window_tokens)
+
+    def cap_window_tokens(self, limit: int) -> None:
+        """Lower the compaction window to the limit a provider stated when it refused a
+        request as too large (see Compactor.cap_window_tokens)."""
+        if self._compactor is not None:
+            self._compactor.cap_window_tokens(limit)
 
     async def _fill_recall(
         self, history: History, run_id: str, query: str = "",
@@ -337,6 +346,7 @@ def build_memory_harness(
         make_engine_summarizer(transport, model),
         window_tokens=config.window_tokens,
         trigger_frac=config.trigger_frac,
+        reserve_tokens=config.reserve_tokens,
         hot_token_frac=config.hot_token_frac,
         hot_turns=config.hot_turns,
     )

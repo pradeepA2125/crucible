@@ -134,11 +134,13 @@ class Compactor:
         trigger_frac: float = 0.65,
         hot_token_frac: float = 0.4,
         hot_turns: int = 10,
+        reserve_tokens: int = 28_000,
     ) -> None:
         self._store = store
         self._summarize = summarize
         self._window_tokens = window_tokens
         self._trigger_frac = trigger_frac
+        self._reserve_tokens = reserve_tokens
         self._hot_token_frac = hot_token_frac
         self._hot_turns = hot_turns
 
@@ -153,8 +155,29 @@ class Compactor:
         """
         self._window_tokens = window_tokens
 
+    def cap_window_tokens(self, limit: int) -> None:
+        """Lower the window to one the provider stated in an overflow error. Only ever
+        lower: the declared window may be the smaller, right one (an error naming the
+        model's maximum says nothing about what this deployment allows)."""
+        if limit > 0:
+            self._window_tokens = min(self._window_tokens, limit)
+
+    def trigger_tokens(self) -> int:
+        """Input size at which the next request is compacted first.
+
+        The count compared against it already holds everything that request sends (the
+        last call's measured input, that call's output and the new tool results), so the
+        only thing that can still land on top is the NEXT response: one reserve's worth,
+        measured at most ~1.5k tokens on 388 calls and more for a large single-file edit.
+        Small windows keep the trigger_frac floor, where window − reserve would compact
+        almost at once.
+        """
+        return max(int(self._window_tokens * self._trigger_frac),
+                   self._window_tokens - self._reserve_tokens)
+
     async def maybe_compact(
-        self, history: History, run_id: str, observed: ObservedPrompt | None = None
+        self, history: History, run_id: str, observed: ObservedPrompt | None = None,
+        *, force: bool = False,
     ) -> CompactionResult:
         # Pure token-trigger check (no count short-circuit: a short history of oversized
         # turns can be over budget and must still compact). Below threshold is the common
@@ -163,7 +186,9 @@ class Compactor:
         # `observed` is the provider's exact count for the last call when there is
         # one; input_tokens degrades to the old estimate when there is not, so the
         # eight transports that report no usage are unaffected.
-        if input_tokens(history, observed) < self._window_tokens * self._trigger_frac:
+        # force: the provider refused the last request as over its window, so the input
+        # must shrink whatever the count says.
+        if not force and input_tokens(history, observed) < self.trigger_tokens():
             return CompactionResult(compacted=False, history=history)
         now = datetime.now(UTC)
         ms = int(now.timestamp() * 1000)

@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from agentd.providers.context_overflow import detect_overflow
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
@@ -48,6 +49,10 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
 )
 
 _DEFAULT_HOST = "http://localhost:11434"
+
+# Sizes the JSON output budget when num_ctx is left to the Ollama app (its default
+# context-length setting): the budget stays what it was when 32768 was always sent.
+_JSON_PREDICT_BASE_CTX = 32768
 
 
 class _RetryableHttpStatus(Exception):
@@ -98,7 +103,7 @@ class OllamaJsonTransport(ModelJsonTransport):
         keep_alive: str | None = None,
         timeout_sec: float = 120.0,
         max_retries: int = 4,
-        num_ctx: int = 32768,
+        num_ctx: int | None = None,
         json_predict_frac: float = 0.5,
         think: bool | str | None = None,
         temperature: float = 0.0,
@@ -135,8 +140,14 @@ class OllamaJsonTransport(ModelJsonTransport):
         # of num_ctx, not an absolute token count, so raising num_ctx for a cloud model
         # with a bigger window (e.g. Nemotron) grows the output budget proportionally
         # instead of needing a second hardcoded constant kept in sync by hand.
-        self._num_ctx = max(1, num_ctx)
-        self._json_num_predict = max(1, int(self._num_ctx * json_predict_frac))
+        #
+        # None leaves the window to the server: the Ollama app's context-length setting
+        # (OLLAMA_CONTEXT_LENGTH), which a per-request num_ctx would override. A prompt
+        # that doesn't fit is refused rather than cut (truncate=false, _build_body), so
+        # the loop learns the real size from the error and compacts.
+        self._num_ctx = max(1, num_ctx) if num_ctx is not None else None
+        self._json_num_predict = max(
+            1, int((self._num_ctx or _JSON_PREDICT_BASE_CTX) * json_predict_frac))
         self._owns_client = http_client is None
         self._client = http_client or httpx.AsyncClient(timeout=timeout_sec)
 
@@ -238,6 +249,10 @@ class OllamaJsonTransport(ModelJsonTransport):
         json_format: dict[str, object] | None,
         num_predict: int = -1,
     ) -> dict[str, object]:
+        options: dict[str, object] = {"temperature": self._temperature,
+                                      "num_predict": num_predict}
+        if self._num_ctx is not None:
+            options["num_ctx"] = self._num_ctx
         body: dict[str, object] = {
             "model": model,
             "messages": [
@@ -252,9 +267,8 @@ class OllamaJsonTransport(ModelJsonTransport):
             # ollama_call: duration_ms logged live, 2026-07-13 campaign found a
             # single call taking 191s with zero UI feedback the whole time).
             "stream": True,
-            # num_ctx: context window (input + output tokens combined), configurable
-            # per-instance so a cloud model with a bigger window (e.g. Nemotron) can be
-            # given more room without a code change.
+            # num_ctx: context window (input + output tokens combined), sent only when
+            # CRUCIBLE_OLLAMA_NUM_CTX is set; otherwise the Ollama app's own setting.
             # num_predict: max output tokens (-1 = no limit). For structured-output
             # calls, thinking models like qwen3/Nemotron can consume thousands of
             # tokens on implicit reasoning before emitting the JSON response, so the
@@ -263,11 +277,13 @@ class OllamaJsonTransport(ModelJsonTransport):
             # sync by hand, and leaves headroom below num_ctx for the prompt itself.
             # Text generation calls cap at a small fixed budget to avoid runaway
             # responses.
-            "options": {
-                "temperature": self._temperature,
-                "num_ctx": self._num_ctx,
-                "num_predict": num_predict,
-            },
+            "options": options,
+            # Ollama otherwise drops the middle of an over-long prompt and answers HTTP
+            # 200 (measured: 5,379 tokens cut to 259, the opening instructions lost, only
+            # a server-log line to show for it). false makes it a 400
+            # exceed_context_size_error naming n_ctx. Versions that predate the field
+            # ignore it and truncate as before.
+            "truncate": False,
         }
         if json_format is not None:
             # Ollama 0.5+ accepts a full JSON Schema in `format`; older versions
@@ -363,6 +379,9 @@ class OllamaJsonTransport(ModelJsonTransport):
                 )
             if response.status_code >= 400:
                 text = (await response.aread()).decode("utf-8", errors="replace")
+                overflow = detect_overflow(response.status_code, text)
+                if overflow is not None:
+                    raise overflow
                 raise RuntimeError(f"Ollama returned {response.status_code}: {text[:500]}")
 
             return await self._stream_chat_lines(
@@ -395,6 +414,15 @@ class OllamaJsonTransport(ModelJsonTransport):
                 chunk = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            error = chunk.get("error") if isinstance(chunk, dict) else None
+            if error:
+                # An error after the 200 (the model failed mid-run). Read as no line at
+                # all, it surfaced as "no text content", hiding the server's reason.
+                text = error if isinstance(error, str) else json.dumps(error)
+                overflow = detect_overflow(None, text)
+                if overflow is not None:
+                    raise overflow
+                raise RuntimeError(f"Ollama stream error: {text[:500]}")
             message = chunk.get("message") if isinstance(chunk, dict) else None
             if isinstance(message, dict):
                 c = message.get("content")

@@ -25,7 +25,12 @@ from agentd.memory.models import ObservedPrompt
 from agentd.orchestrator.broadcaster import cap_event_output
 from agentd.performance import profile_controller_run
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
-from agentd.providers.availability import ProviderUnavailable, is_provider_unavailable
+from agentd.providers.availability import (
+    ContextWindowExceeded,
+    ProviderUnavailable,
+    find_context_overflow,
+    is_provider_unavailable,
+)
 from agentd.providers.plan_access import find_access_stop
 from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.reasoning.react_common import (
@@ -1381,6 +1386,10 @@ class ControllerLoop:
         # stray quote) costs one call of lost grammar rather than the whole session.
         retry_unconstrained = False
         unavailable_retries = 0
+        # A request refused as over the context window: compact before the next call, and
+        # allow that once per step so an ineffective compaction cannot loop.
+        force_compact = False
+        overflow_retried = False
 
         def _on_thinking(chunk: str) -> None:
             # Stream the model's reasoning live so the chat thinking pane updates
@@ -1539,7 +1548,9 @@ class ControllerLoop:
                 observed=self._observed_prompt,
                 # A child's run never schedules consolidation (spec §5.2); the parent's
                 # call is left exactly as it was.
-                **({"consolidate": False} if self._agent is not None else {}))
+                **({"consolidate": False} if self._agent is not None else {}),
+                **({"force": True} if force_compact else {}))
+            force_compact = False
             history[:] = _prep.history
             if _prep.compacted:
                 seen.clear()  # evidence was removed; allow the exact necessary reread
@@ -1662,6 +1673,7 @@ class ControllerLoop:
                 )
                 retry_unconstrained = False   # one call only, always
                 unavailable_retries = 0
+                overflow_retried = False
             except Exception as exc:
                 # A plan usage limit, an ineligible account or a dead sign-in: neither a
                 # retry nor a correction message can fix it, so the turn ends here.
@@ -1670,6 +1682,26 @@ class ControllerLoop:
                     raise
                 if stopped is not None:
                     raise stopped from exc
+                overflow = find_context_overflow(exc)
+                if overflow is not None:
+                    if overflow_retried:
+                        raise ContextWindowExceeded(
+                            "The request is larger than the model's context window even "
+                            f"after compacting the conversation: {overflow}") from exc
+                    # Not malformed, and nothing is appended: a correction message would only
+                    # make the next request larger. Compact first, then send it again.
+                    overflow_retried = True
+                    force_compact = True
+                    if overflow.limit is not None:
+                        # The provider named the real window (Ollama's n_ctx, vLLM/NIM,
+                        # OpenRouter, Anthropic, Gemini): later requests compact before
+                        # they reach it instead of overflowing first.
+                        self._memory_harness.cap_window_tokens(overflow.limit)
+                    logger.warning("[controller] context window exceeded, compacting and "
+                                   "retrying once: %s", exc)
+                    _on_retry(1, 1, "context_overflow",
+                              "⚠️ Context window full — compacting and retrying…")
+                    continue
                 if is_provider_unavailable(exc):
                     if unavailable_retries < len(PROVIDER_RETRY_BACKOFFS_SEC):
                         delay = PROVIDER_RETRY_BACKOFFS_SEC[unavailable_retries]

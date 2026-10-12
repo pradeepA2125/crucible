@@ -11,6 +11,7 @@ try:
 except ImportError:
     AsyncAnthropicClient = None
 
+from agentd.providers.context_overflow import ContextWindowExceeded, raise_if_overflow
 from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ class AnthropicJsonTransport(ModelJsonTransport):
     ) -> dict[str, object]:
         active_schema = schema
         for attempt in range(2):  # one narrowing retry for controller schemas
-            response = await self._messages.create(
+            response = await self._create(
                 model=model,
                 max_tokens=self._max_tokens,
                 temperature=0,
@@ -102,7 +103,7 @@ class AnthropicJsonTransport(ModelJsonTransport):
         user_payload: dict[str, object],
     ) -> str:
         """Generates raw text using Anthropic."""
-        response = await self._messages.create(
+        response = await self._create(
             model=model,
             max_tokens=self._max_tokens,
             temperature=0,
@@ -115,6 +116,22 @@ class AnthropicJsonTransport(ModelJsonTransport):
             ],
         )
         return self._extract_text(response)
+
+    async def _create(self, **kwargs: Any) -> Any:
+        try:
+            response = await self._messages.create(**kwargs)
+        except Exception as exc:
+            # Documented: input over the window is a 400 "prompt is too long: N tokens >
+            # M maximum" on every model.
+            raise_if_overflow(exc)
+            raise
+        if read_value(response, "stop_reason") == "model_context_window_exceeded":
+            # Documented for Claude 4.5+: input + max_tokens may exceed the window, and
+            # generation then stops at the window's edge with a cut-off reply.
+            raise ContextWindowExceeded(
+                "The reply was cut off at the model's context window "
+                "(stop_reason model_context_window_exceeded)")
+        return response
 
     def _build_system_prompt(
         self,

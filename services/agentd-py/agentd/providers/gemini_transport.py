@@ -13,6 +13,7 @@ except ImportError:
     google_genai = None
     google_genai_errors = None  # type: ignore[assignment]
 
+from agentd.providers.context_overflow import raise_if_overflow
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.providers.token_progress import (
     ProgressTicker,
@@ -284,6 +285,10 @@ class GeminiJsonTransport(ModelJsonTransport):
                 msg = f"Gemini streaming timed out after {self._timeout_sec}s (model={model})"
                 raise RuntimeError(msg) from exc
             except Exception as exc:
+                # Before the 429 retry: a request larger than the free tier's per-minute
+                # input quota 429s instantly every time, so only compacting can help.
+                raise_if_overflow(exc, request_tokens=approx_prompt_tokens(
+                    system_instructions, contents))
                 if _is_retryable(exc):
                     last_exc = exc
                     continue
@@ -313,6 +318,8 @@ class GeminiJsonTransport(ModelJsonTransport):
                 msg = f"Gemini generate_content timed out after {self._timeout_sec}s (model={model})"
                 raise RuntimeError(msg) from exc
             except Exception as exc:
+                raise_if_overflow(exc, request_tokens=approx_prompt_tokens(
+                    str(config.get("system_instruction") or ""), contents))
                 if _is_retryable(exc):
                     last_exc = exc
                     continue

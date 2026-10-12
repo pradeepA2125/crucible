@@ -53,8 +53,9 @@ def test_provider_key_env_covers_cloud_backends() -> None:
 
 
 def test_build_transport_ollama_default_num_ctx() -> None:
+    # Unset: the Ollama app's context-length setting applies (nothing is sent).
     transport = build_transport("ollama")
-    assert transport._num_ctx == 32768
+    assert transport._num_ctx is None
     assert transport._json_num_predict == 16384
 
 

@@ -12,6 +12,7 @@ except ImportError:
 
 import logging
 
+from agentd.providers.context_overflow import raise_if_overflow
 from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,9 @@ class HuggingFaceJsonTransport(ModelJsonTransport):
             try:
                 response = await asyncio.to_thread(self._client.text_generation, **generation_kwargs)
             except Exception as exc:
+                # Not verified live (no credits): the router passes on the serving
+                # backend's error, vLLM- or TGI-shaped, which the shared matcher covers.
+                raise_if_overflow(exc)
                 msg = f"Hugging Face request failed: {exc}"
                 raise RuntimeError(msg) from exc
 
@@ -129,6 +133,7 @@ class HuggingFaceJsonTransport(ModelJsonTransport):
         try:
             response = await asyncio.to_thread(self._client.text_generation, **generation_kwargs)
         except Exception as exc:
+            raise_if_overflow(exc)
             msg = f"Hugging Face request failed: {exc}"
             raise RuntimeError(msg) from exc
 
