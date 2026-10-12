@@ -31,7 +31,11 @@ fn write(root: &Path, rel: &str, text: &str) -> PathBuf {
 #[test]
 fn gitignored_dirs_globs_and_files_are_ignored() {
     let (_tmp, root) = workspace(&[]);
-    write(&root, ".gitignore", "gen/\ntmp-review-files-*/\nsrc/generated_*.py\n!src/generated_keep.py\n");
+    write(
+        &root,
+        ".gitignore",
+        "gen/\ntmp-review-files-*/\nsrc/generated_*.py\n!src/generated_keep.py\n",
+    );
     let mut rules = IgnoreRules::new(&root);
 
     assert!(rules.is_ignored(&root.join("gen"), true));
@@ -97,10 +101,18 @@ fn an_edited_gitignore_takes_effect_after_invalidation() {
 #[test]
 fn the_snapshot_leaves_out_gitignored_sources() {
     let (_tmp, root) = workspace(&["build", "project"]);
-    write(&root, ".gitignore", "aider-references/\nsrc/generated_*.py\n");
+    write(
+        &root,
+        ".gitignore",
+        "aider-references/\nsrc/generated_*.py\n",
+    );
     write(&root, "src/app.py", "def kept():\n    pass\n");
     write(&root, "src/generated_x.py", "def generated():\n    pass\n");
-    write(&root, "aider-references/coder.py", "def dropped():\n    pass\n");
+    write(
+        &root,
+        "aider-references/coder.py",
+        "def dropped():\n    pass\n",
+    );
     let snapshot_path = root.join(".crucible/index-snapshot.json");
 
     let status = Command::new(env!("CARGO_BIN_EXE_crucible-indexer"))
@@ -117,8 +129,22 @@ fn the_snapshot_leaves_out_gitignored_sources() {
     let snapshot: IndexSnapshot =
         serde_json::from_str(&std::fs::read_to_string(&snapshot_path).expect("read snapshot"))
             .expect("decode snapshot");
-    let names: Vec<String> = snapshot.graph.nodes.iter().map(|n| n.name.clone()).collect();
-    assert!(names.iter().any(|n| n == "kept"), "src/app.py should be indexed: {names:?}");
-    assert!(!names.iter().any(|n| n == "dropped"), "gitignored file was indexed: {names:?}");
-    assert!(!names.iter().any(|n| n == "generated"), "gitignored single file was indexed: {names:?}");
+    let names: Vec<String> = snapshot
+        .graph
+        .nodes
+        .iter()
+        .map(|n| n.name.clone())
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "kept"),
+        "src/app.py should be indexed: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "dropped"),
+        "gitignored file was indexed: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|n| n == "generated"),
+        "gitignored single file was indexed: {names:?}"
+    );
 }

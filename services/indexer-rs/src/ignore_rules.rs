@@ -47,12 +47,19 @@ impl IgnoreRules {
             }
         }
         let exclude_path = root.join(".git/info/exclude");
-        let exclude = exclude_path.is_file().then(|| {
-            let mut builder = GitignoreBuilder::new(root);
-            builder.add(&exclude_path);
-            builder.build().ok()
-        }).flatten();
-        Self { roots, per_dir: HashMap::new(), exclude }
+        let exclude = exclude_path
+            .is_file()
+            .then(|| {
+                let mut builder = GitignoreBuilder::new(root);
+                builder.add(&exclude_path);
+                builder.build().ok()
+            })
+            .flatten();
+        Self {
+            roots,
+            per_dir: HashMap::new(),
+            exclude,
+        }
     }
 
     /// Forget a directory's parsed `.gitignore` after the file changed.
@@ -92,9 +99,11 @@ impl IgnoreRules {
                 }
             }
         }
-        self.exclude
-            .as_ref()
-            .is_some_and(|exclude| exclude.matched_path_or_any_parents(&full, is_dir).is_ignore())
+        self.exclude.as_ref().is_some_and(|exclude| {
+            exclude
+                .matched_path_or_any_parents(&full, is_dir)
+                .is_ignore()
+        })
     }
 
     fn split(&self, path: &Path) -> Option<(PathBuf, PathBuf)> {
@@ -118,5 +127,7 @@ impl IgnoreRules {
 
 fn is_fallback_ignored(component: Component<'_>) -> bool {
     let name = component.as_os_str().to_string_lossy();
-    FALLBACK_IGNORED_DIRS.iter().any(|candidate| *candidate == name)
+    FALLBACK_IGNORED_DIRS
+        .iter()
+        .any(|candidate| *candidate == name)
 }
