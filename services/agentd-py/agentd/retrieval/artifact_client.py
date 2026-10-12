@@ -123,6 +123,31 @@ class _SnapshotPathCache:
     repository_structure: list[str] | None = None
 
 
+def _git_visible_files(workspace_root: Path) -> set[str] | None:
+    """Workspace-relative paths git does not ignore (tracked + untracked), or None when the
+    workspace is not a git repo or git fails — callers then fall back to the fixed list."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(workspace_root), "ls-files", "-z", "--cached", "--others",
+             "--exclude-standard"],
+            capture_output=True, timeout=10, check=False, env=child_env())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return {p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p}
+
+
+def _ancestor_dirs(files: set[str]) -> set[str]:
+    dirs: set[str] = set()
+    for rel in files:
+        parent = Path(rel).parent
+        while parent.as_posix() != "." and parent.as_posix() not in dirs:
+            dirs.add(parent.as_posix())
+            parent = parent.parent
+    return dirs
+
+
 class RetrievalArtifactClient:
     _IGNORED_CONTEXT_DIRS = {
         ".git",
@@ -860,6 +885,14 @@ class RetrievalArtifactClient:
 
         if path_cache.repository_structure is None:
             repository_structure: list[str] = []
+            visible = _git_visible_files(workspace_root)
+            visible_dirs = _ancestor_dirs(visible) if visible is not None else None
+
+            def kept_dir(rel: Path) -> bool:
+                if self._is_ignored_relative_path(rel):
+                    return False
+                return visible_dirs is None or rel.as_posix() in visible_dirs
+
             for root, dirs, files in os.walk(workspace_root):
                 rel_root = Path(root).relative_to(workspace_root)
                 if self._is_ignored_relative_path(rel_root):
@@ -874,10 +907,11 @@ class RetrievalArtifactClient:
                 indent = "  " * level
                 display_name = "." if str(rel_root) == "." else rel_root.name
 
-                valid_dirs = [d for d in dirs if not self._is_ignored_relative_path(rel_root / d)]
-                dirs[:] = sorted(
-                    d for d in dirs if not self._is_ignored_relative_path(rel_root / d))
-                valid_files = sorted(f for f in files if self._is_supported_source_path(Path(f)))
+                valid_dirs = [d for d in dirs if kept_dir(rel_root / d)]
+                dirs[:] = sorted(valid_dirs)
+                valid_files = sorted(
+                    f for f in files if self._is_supported_source_path(Path(f))
+                    and (visible is None or (rel_root / f).as_posix() in visible))
                 if valid_dirs or valid_files:
                     summary = f"{indent}{display_name}/ ({len(valid_dirs)} dirs, {len(valid_files)} source files)"
                     repository_structure.append(summary)
