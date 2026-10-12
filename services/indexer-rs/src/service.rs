@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::IndexerConfig;
 use crate::graph::{SymbolEdge, SymbolGraph, SymbolNode};
+use crate::ignore_rules::IgnoreRules;
 use crate::lsp::{LspAdapter, LspDiagnostic};
 use crate::parser::{LanguageParser, TreeSitterParser};
 
@@ -42,6 +43,7 @@ pub struct IndexerService {
     parser: Box<dyn LanguageParser>,
     lsp: LspAdapter,
     tracked_files: HashSet<PathBuf>,
+    ignore_rules: IgnoreRules,
     diagnostics_snapshot: Vec<LspDiagnostic>,
     index_warnings: Vec<LspDiagnostic>,
     last_watch_event: HashMap<PathBuf, Instant>,
@@ -61,9 +63,10 @@ impl IndexerService {
         Ok(Self {
             config,
             graph: SymbolGraph::default(),
-            parser: Box::new(TreeSitterParser::new(workspace_root)),
+            parser: Box::new(TreeSitterParser::new(workspace_root.clone())),
             lsp,
             tracked_files: HashSet::new(),
+            ignore_rules: IgnoreRules::new(&workspace_root),
             diagnostics_snapshot: Vec::new(),
             index_warnings: Vec::new(),
             last_watch_event: HashMap::new(),
@@ -221,7 +224,9 @@ impl IndexerService {
         // forever and flooding the backend with `/v1/index/build` POSTs.
         let mut processed_any = false;
         for path in event.paths {
-            if !is_supported_source_path(&path) || is_ignored_path(&path) {
+            // An edited .gitignore changes what is ignored from here on.
+            self.ignore_rules.invalidate(&path);
+            if !is_supported_source_path(&path) || self.ignore_rules.is_ignored(&path, false) {
                 continue;
             }
 
@@ -333,7 +338,7 @@ impl IndexerService {
     }
 
     fn index_path_inner(&mut self, path: &Path) -> Result<()> {
-        if is_ignored_path(path) {
+        if self.ignore_rules.is_ignored(path, path.is_dir()) {
             return Ok(());
         }
 
@@ -346,6 +351,9 @@ impl IndexerService {
             let child = entry.path();
             if child.is_dir() {
                 self.index_path_inner(&child)?;
+                continue;
+            }
+            if self.ignore_rules.is_ignored(&child, false) {
                 continue;
             }
             self.index_file(&child)?;
@@ -410,29 +418,6 @@ fn is_supported_source_path(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()),
         Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "py" | "rs" | "go" | "java")
     )
-}
-
-fn is_ignored_path(path: &Path) -> bool {
-    const IGNORED_DIRS: [&str; 14] = [
-        ".git",
-        "node_modules",
-        ".venv",
-        "target",
-        "dist",
-        "build",
-        "vendor",
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".agentd",
-        ".ai-editor",
-        ".crucible",
-        ".tmp",
-    ];
-    path.components().any(|component| {
-        let name = component.as_os_str().to_string_lossy();
-        IGNORED_DIRS.iter().any(|candidate| *candidate == name)
-    })
 }
 
 fn language_for_path(path: &Path) -> &'static str {
