@@ -1,13 +1,23 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
 import { buildReviewFileEntries } from "../src/review-files.js";
 
 describe("buildReviewFileEntries", () => {
+  let root = "";
+
+  // In the system temp dir and removed after each run: 243 copies left inside the
+  // extension folder ended up in every chat's repository tree.
+  afterEach(() => {
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+    root = "";
+  });
+
   test("maps modified files to real/shadow paths with existence flags", () => {
-    const root = fs.mkdtempSync(path.join(process.cwd(), "tmp-review-files-"));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "tmp-review-files-"));
     const workspace = path.join(root, "workspace");
     const shadow = path.join(root, "shadow");
 
