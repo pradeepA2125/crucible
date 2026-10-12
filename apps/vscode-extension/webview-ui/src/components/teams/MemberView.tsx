@@ -169,13 +169,15 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
             </div>
           ))}
           {(c.work.length > 0 || live.length > 0) && (
-            <div className="grid gap-1.5">
+            // minmax(0,1fr): a grid track otherwise sizes to its widest row, and a
+            // tool-pill strip never wraps, so it pushed the member view 4x wide.
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5">
               <span className="text-[10px] uppercase tracking-[.08em] text-text-3">Work</span>
               <button type="button" onClick={() => setShowWork(!showWork)}
                 className="justify-self-start rounded-md border border-dashed px-2.5 py-1 text-[11.5px] text-text-2" style={{ borderColor: "var(--color-border-strong)" }}>
                 Explored · {c.tools + live.length} tool{c.tools + live.length === 1 ? "" : "s"} {showWork ? "▾" : "▸"}
               </button>
-              {showWork && <div className="grid gap-1">{c.work.map((m, i) => <MessageRow key={i} msg={m} />)}
+              {showWork && <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">{c.work.map((m, i) => <MessageRow key={i} msg={m} />)}
                 {live.length > 0 && <AgentRow content="" toolEvents={live} />}</div>}
             </div>
           )}
