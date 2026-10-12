@@ -23,6 +23,7 @@ from agentd.exec_sessions.config import (
 )
 from agentd.exec_sessions.pty_process import new_pty_process_class
 from agentd.exec_sessions.registry_file import SessionRegistryFile
+from agentd.exec_sessions.terminal_text import plain_terminal_text, unfinished_tail_length
 from agentd.tools._paths import resolve_workspace_bin
 from agentd.tools.shell import _split_command
 
@@ -108,18 +109,21 @@ class RingBuffer:
             del self._buf[:overflow]
             self._start += overflow
 
-    def read_from(self, cursor: int) -> tuple[str, int]:
-        """(text past cursor, new cursor); prefixed with the drop marker when
-        bytes between cursor and the buffer start were evicted."""
+    def read_from(self, cursor: int, final: bool = False) -> tuple[str, int]:
+        """(plain text past cursor, new cursor); prefixed with the drop marker when
+        bytes between cursor and the buffer start were evicted. An escape sequence or
+        CR the next read may complete stays unread, unless this is the `final` read
+        of an exited process."""
         lo = max(cursor, self._start)
         chunk = bytes(self._buf[lo - self._start:])
-        text = chunk.decode("utf-8", errors="replace")
+        held = 0 if final else unfinished_tail_length(chunk)
+        text = plain_terminal_text(chunk[:len(chunk) - held].decode("utf-8", errors="replace"))
         if cursor < self._start:
             text = _DROP_MARKER.decode() + text
-        return text, self.end
+        return text, self.end - held
 
     def tail(self, max_chars: int) -> str:
-        text = bytes(self._buf).decode("utf-8", errors="replace")[-max_chars:]
+        text = plain_terminal_text(bytes(self._buf).decode("utf-8", errors="replace"))[-max_chars:]
         if self._start > 0:
             text = _DROP_MARKER.decode() + text
         return text
@@ -288,8 +292,8 @@ class SessionManager:
         return sess
 
     def _read(self, sess: _Session, exited_hint: bool) -> SessionRead:
-        text, sess.model_cursor = sess.buffer.read_from(sess.model_cursor)
         running = sess.proc.is_running() and not exited_hint
+        text, sess.model_cursor = sess.buffer.read_from(sess.model_cursor, final=not running)
         return SessionRead(
             session_id=sess.session_id,
             status="running" if running else "exited",
