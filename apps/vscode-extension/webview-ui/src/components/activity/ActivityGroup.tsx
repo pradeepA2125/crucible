@@ -1,0 +1,80 @@
+import { useState } from "react";
+import type { ToolEventView } from "../../types";
+import type { ActivityStep } from "../../transcript/groupTranscript";
+import { summarizeActivity } from "../../transcript/summarizeActivity";
+import { DiffPanes } from "../shared/DiffPanes";
+import { ToolTrack } from "../shared/ToolTrack";
+
+const basename = (path: string) => path.split("/").pop() || path;
+
+// A tool batch emits every member with the same step thought, so a run of events sharing
+// one thought is one model step: show the thought once, above that step's pills.
+function splitByThought(events: ToolEventView[]): { thought?: string; events: ToolEventView[] }[] {
+  const runs: { thought?: string; events: ToolEventView[] }[] = [];
+  for (const event of events) {
+    const last = runs[runs.length - 1];
+    if (last && (!event.thought || event.thought === last.thought)) last.events.push(event);
+    else runs.push({ thought: event.thought, events: [event] });
+  }
+  return runs;
+}
+
+function ToolsStep({ events }: { events: ToolEventView[] }) {
+  return (
+    <>
+      {splitByThought(events).map((run, i) => (
+        <div key={i} className="grid min-w-0 gap-1">
+          {run.thought && <div data-testid="activity-thought" className="text-[11px] text-text-3">{run.thought}</div>}
+          <ToolTrack events={run.events} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function EditRow({ step }: { step: Extract<ActivityStep, { type: "edit" }> }) {
+  const [open, setOpen] = useState(false);
+  const label = step.entries.length === 1
+    ? `Edited ${basename(step.entries[0].path)}`
+    : `Edited ${step.entries.length} files`;
+  const add = step.entries.reduce((s, e) => s + e.additions, 0);
+  const del = step.entries.reduce((s, e) => s + e.deletions, 0);
+  return (
+    <div className="grid min-w-0 gap-1">
+      <button type="button" onClick={() => setOpen(!open)}
+        className="flex min-w-0 items-center gap-2 text-left text-[11.5px] text-text-2 hover:text-text">
+        <span className="truncate">{label}</span>
+        {step.applied ? (
+          <span className="shrink-0">
+            <span style={{ color: "var(--color-green)" }}>+{add}</span>{" "}
+            <span style={{ color: "var(--color-red)" }}>−{del}</span>
+          </span>
+        ) : <span className="shrink-0 text-text-3">Not applied</span>}
+        <span className="shrink-0 text-text-3">{open ? "▾" : "›"}</span>
+      </button>
+      {open && <DiffPanes entries={step.entries} />}
+    </div>
+  );
+}
+
+export function ActivityGroup({ steps }: { steps: ActivityStep[] }) {
+  const [open, setOpen] = useState(false);
+  const summary = summarizeActivity(steps);
+  return (
+    <div data-testid="activity-group" className="grid min-w-0 gap-1.5">
+      <button type="button" aria-expanded={open} aria-label={summary} onClick={() => setOpen(!open)}
+        className="flex min-w-0 items-center gap-1.5 text-left text-[12px] text-text-3 hover:text-text-2">
+        <span data-testid="activity-summary" className="min-w-0 truncate">{summary}</span>
+        <span className="shrink-0">{open ? "▾" : "›"}</span>
+      </button>
+      {open && (
+        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 overflow-y-auto rounded-[8px] p-2"
+          style={{ maxHeight: "320px", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>
+          {steps.map((step, i) => step.type === "tools" ? <ToolsStep key={i} events={step.events} />
+            : step.type === "edit" ? <EditRow key={i} step={step} />
+            : <div key={i} className="text-[11px] text-text-3">{step.text.replace(/^[✓✗]\s*/, "")}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
