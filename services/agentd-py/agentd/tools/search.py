@@ -42,6 +42,11 @@ async def search_code(
             ),
             is_error=True,
         )
+    # ripgrep runs from the root (below); a missing cwd would otherwise surface as the
+    # FileNotFoundError that means "rg is not installed".
+    if not Path(shadow_root).is_dir():
+        return ToolOutput(output=f"Error: search root does not exist: {shadow_root}",
+                          is_error=True)
 
     rg = shutil.which(ripgrep_cmd) or ripgrep_cmd
     cmd = [rg, "--json", "-C", str(max(0, context_lines))]
@@ -57,10 +62,13 @@ async def search_code(
             glob = ""
         elif glob.startswith(root_str + "/"):
             glob = glob[len(root_str) + 1 :]
-        # Ripgrep glob matching fails for exact relative paths (e.g. "a/b/c.py")
-        # when an explicit absolute search root is passed — they must be anchored.
-        # Prepend "**/" when the filter looks like an exact path (has "/" but no glob chars).
-        if glob and "/" in glob and not any(c in glob for c in ("*", "?", "[", "{")):
+        # With an explicit absolute search root, ripgrep matches a glob containing "/"
+        # against absolute paths, so "a/b/c.py" and "pkg/**/*.py" both match nothing.
+        # Anchor every such relative filter with "**/" (live: "who calls X?" got no
+        # matches for "services/agentd-py/**/*.py").
+        if glob.startswith("./"):
+            glob = glob[2:]
+        if glob and "/" in glob and not glob.startswith(("**/", "/")):
             glob = "**/" + glob
         if glob:
             cmd += ["-g", glob]
@@ -74,8 +82,10 @@ async def search_code(
     from agentd.tools.processes import bounded_communicate, kill_and_reap
     proc = None
     try:
+        # ripgrep matches globs against paths relative to its cwd; the backend runs from
+        # services/agentd-py, where "services/agentd-py/**/*.py" matched nothing (live).
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=PIPE, stderr=PIPE, env=child_env())
+            *cmd, stdout=PIPE, stderr=PIPE, env=child_env(), cwd=str(shadow_root))
         stdout, stderr = await asyncio.wait_for(bounded_communicate(proc), timeout=15)
     except asyncio.CancelledError:
         if proc is not None:
