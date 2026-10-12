@@ -125,6 +125,26 @@ def test_delta_indexing_reindexes_modified_file(tmp_path: Path) -> None:
     assert second.updated_files == 1
 
 
+def test_a_deleted_file_leaves_the_index(tmp_path: Path) -> None:
+    """Live (2026-10-12): after workspaces/ was deleted, semantic search kept returning its
+    files and the chat seed carried outlines of files that no longer existed — the update
+    only re-embedded changed files and never removed chunks of missing ones."""
+    workspace = tmp_path / "ws"
+    _write_file(workspace, "keep.py", "def keep_me() -> None:\n    pass\n")
+    _write_file(workspace, "gone.py", "def remove_me() -> None:\n    pass\n")
+    keep = _node("function:file:keep.py:keep_me", "keep.py", "keep_me", "Function", 1)
+    gone = _node("function:file:gone.py:remove_me", "gone.py", "remove_me", "Function", 1)
+
+    idx = SemanticIndex(index_path=tmp_path / "idx")
+    first = idx.build_or_update(workspace, _snapshot([keep, gone]))
+    (workspace / "gone.py").unlink()
+    second = idx.build_or_update(workspace, _snapshot([keep]))
+
+    assert second.total_chunks < first.total_chunks
+    assert idx.chunks_for_file("gone.py", query="remove_me", top_k=5) == []
+    assert all(r.chunk.path == "keep.py" for r in idx.query("remove me", top_k=5))
+
+
 def test_chunks_for_file_filters_by_path(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     _write_file(workspace, "a.py", "def foo() -> None:\n    pass\n")

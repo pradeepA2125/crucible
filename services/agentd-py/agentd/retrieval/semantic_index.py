@@ -133,6 +133,13 @@ class SemanticIndex:
         }
         skipped = len(current_mtimes) - len(files_to_update)
 
+        # Files the snapshot no longer has (deleted, moved, newly ignored): without this their
+        # chunks stay forever, and searches return files that do not exist.
+        removed = set(existing_mtimes) - set(current_mtimes)
+        if removed:
+            self._delete_chunks_for_files(table, removed)
+            logger.info("Semantic index: removed chunks of %d missing files", len(removed))
+
         if files_to_update:
             new_chunks = self._chunker.build(
                 workspace, snapshot_payload, only_paths=files_to_update)
@@ -359,10 +366,12 @@ class SemanticIndex:
         if not paths:
             return
         try:
-            # LanceDB DELETE WHERE supports IN with string values
-            escaped = [p.replace("'", "\\'") for p in paths]
-            in_clause = ", ".join(f"'{p}'" for p in escaped)
-            table.delete(f"path IN ({in_clause})")
+            # LanceDB DELETE WHERE supports IN with string values. Batched: removing a deleted
+            # directory can mean thousands of paths, too many for one statement.
+            escaped = sorted(p.replace("'", "\\'") for p in paths)
+            for start in range(0, len(escaped), 500):
+                in_clause = ", ".join(f"'{p}'" for p in escaped[start:start + 500])
+                table.delete(f"path IN ({in_clause})")
         except Exception:
             logger.warning(
                 "Failed to delete stale chunks for %d files; they will accumulate",
