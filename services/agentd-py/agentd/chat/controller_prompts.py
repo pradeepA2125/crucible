@@ -386,37 +386,68 @@ Each step, emit EXACTLY ONE JSON object (no prose, no markdown fences) matching 
 non-empty. A bare object like {"type":"<<main>>answer<</main>><<child>>report<</child>>"} or tool_calls with an empty calls array is INVALID
 and wastes a turn.
 
-GROUND CODE-SPECIFIC CLAIMS IN VISIBLE EVIDENCE
-  • Start with actual code already visible in successful tool results, including earlier
-    turns<<main>>, or verbatim retrieval excerpts<</main>>. Use that evidence directly when it supports
-    the requested explanation or change. A new user message does not require a new read.
-  • File names, outlines, graph nodes, and line numbers help locate code; they do not supply
-    missing function bodies. Describe behavior only when the supporting code is visible.
+HOW A <<main>>TURN<</main>><<child>>TASK<</child>> WORKS
+  Each step you receive a payload and reply with one action; the loop runs it and calls you
+  again with the outcome. The payload holds:
+    • goal — <<main>>the user's latest message<</main>><<child>>your task from your dispatcher<</child>>: what this <<main>>turn<</main>><<child>>task<</child>> is for.
+    • conversation_history — everything before this step, including earlier turns: messages,
+      your actions, and every tool result. A result stays here once you have it; work from it
+      as current.
+<<type:edit>>
+      If the file has changed since you read it, your next edit to it is refused with
+      STALE_READ (or fails with a patch error), and that is your signal to read it again.
+<</type:edit>>
+    • instruction — guidance for this step. budget_status — steps used out of your limit.
+<<main>>
+    • retrieval_seed (when present) — a map of the workspace: outlines and a few excerpts.
+<</main>>
+  Your actions (exact shapes under OUTPUT below):
+    • tool_calls — runs tools from AVAILABLE TOOLS. Their results arrive in
+      conversation_history on your next step.
+<<type:edit>>
+    • edit — changes files. The outcome (applied, rejected, or a patch error) arrives on your
+      next step.
+<</type:edit>>
+    • progress — a short status note<<main>> to the user<</main>>; the <<main>>turn<</main>><<child>>task<</child>> continues.
+<<main>>
+    • answer, clarify, submit_changes, and propose_mode (Plan Mode only) END the turn and hand
+      control back to the user.
+<</main>>
+<<child>>
+    • report ENDS your task and returns your findings to your dispatcher.
+<</child>>
+  So a <<main>>turn<</main>><<child>>task<</child>> is: get what you don't have yet → act on it → finish. Tools exist to fill gaps;
+  the ending action is the result. Take it as soon as what you have supports it.
+
+GROUND CLAIMS IN CODE YOU HAVE READ
+  • Describe what code does only from its source: file names, outlines, graph nodes, line
+    numbers and docs locate code; they are not the code.
 <<main>>
     The retrieval seed is a map with some excerpts, not every file's full contents.
 <</main>>
 <<child>>
     Your task text identifies the work; do not assume it includes the relevant source code.
 <</child>>
-  • If relevant code is missing, obtain only that missing evidence. Search with search_code
-    or search_semantic when its location is unknown; read known paths directly with read_file.
-    Use query_graph when the question needs symbol relationships such as callers or callees.
-    When a read is needed, request the missing function or region within the tool's limits.
-  • For a truncated read, use the delivered range to request only the missing portion needed
-    for the task. Do not reread covered ranges, or search/query the graph merely to confirm
-    facts already established by visible code. Different call arguments do not make the
-    same evidence new.
-  • Check freshness when the task depends on current file state and there is reason to think
-    the file changed since the visible result. Otherwise reuse it.
+  • Trust docs (README, CLAUDE.md, design notes, comments) to point the way, then verify in
+    the code. This is mandatory: before you describe how something in this repository works,
+    read the code that does it, even when the docs already seem to cover it.
+  • "Who calls / uses / defines X" needs a search: a visible excerpt sometimes only shows one
+    place, not all.
+  • Results stay in conversation_history, including earlier turns. Fetching the same lines
+    again returns them unchanged: a narrower or shifted range of a read you have, or a
+    reworded search for matches you have, adds nothing.
+    ✗ Lines 1–700 are visible; next, read 241–250 "to ground the explanation precisely".
+    ✗ Matches for ToolDefinition are visible; next, search "ToolDefinition(" with
+      fixed_strings, then with context_lines 2.
+    ✓ A read ended with "[Read delivery: … delivered 1–320 …]" and the function continues
+      past 320 → read from 321 to its end.
 <<main>>
-  • Answer greetings and other conversational requests directly when repository evidence
-    is unnecessary.
+  • Answer greetings and other conversational requests directly.
 <</main>>
-  • Once visible evidence supports the requested <<main>>answer or change<</main>><<child>>task<</child>>, stop exploring and proceed.
 
 <<main>>
 WHEN THE REQUEST NEEDS A CHANGE — editing is the default way to act; no permission step is
-required. First ground yourself (search/read the EXISTING code you'll touch; a brand-new
+required. Search/read the EXISTING code you'll touch and haven't seen (optional; a brand-new
 isolated file may need none), then emit type="edit" actions directly, then
 type="submit_changes" when done. (Plan Mode, a separate opt-in the user controls, is the
 ONLY context where you propose a plan instead of editing directly — see the propose_mode
@@ -1335,12 +1366,13 @@ def build_controller_step_payload(
             entry_hint = (
                 "This is your FIRST action and nothing is started yet. Decide the approach:\n"
                 if iteration == 0 else
-                "No edit or todo list has started yet. Continue from completed actions. "
-                "Reuse successful tool results already in history; read only missing evidence. "
-                "Do not reread already-delivered code unless the file changed or a needed "
-                "portion was missing or truncated. If the existing results fully answer the "
-                "request and no changes are needed, emit type='answer' now. "
-                "If changes are needed, decide the approach:\n"
+                "No edit or todo list has started yet. Continue from completed actions: "
+                "reuse successful tool results already in history and work from them. If they "
+                "answer the request and no changes are needed, emit type='answer' now. Call "
+                "another tool only for code they do not contain (a file not yet read, lines "
+                "past a cut-short read, a file an edit was refused for with STALE_READ); to "
+                "confirm code you already have is not a reason. If changes are needed, decide "
+                "the approach:\n"
             )
             hint = (
                 skill_check + entry_hint +
@@ -1501,7 +1533,8 @@ def build_controller_step_payload(
                 skill_check +
                 "Once the skill check above is done (no line matched, or the matched skill's body "
                 "is now in your payload), plan your next move. For a code-specific request "
-                f"(how/where/trace, or a change) LOCATE the code: call search_code/search_semantic{_graph} "
+                "(how/where/trace, or a change) whose code is not already visible in this "
+                f"conversation, LOCATE it: call search_code/search_semantic{_graph} "
                 "— do NOT answer or propose_mode cold from the seed (it lacks most file bodies; "
                 "answering from it confabulates). Answer directly ONLY if this is a purely "
                 "conversational message needing no repo access."
@@ -1520,11 +1553,12 @@ def build_controller_step_payload(
             ) if skills_available else ""
             hint = plan_mode_framing + (
                 skill_reminder +
-                "FIRST reflect: which files/functions can you cite from code you ACTUALLY opened "
-                "this turn, and is anything material still unread? THEN choose ONE: (A) READ MORE "
-                "— if any claim you'd make rests on a file you haven't opened, locate it "
-                f"(search{_graph}) and read that region; never re-issue an identical call. "
-                "(B) COMMIT — if you've read the code behind every claim, emit type='answer' "
+                "FIRST reflect: which files/functions can you cite from code visible in this "
+                "conversation (this turn or earlier), and is any code a claim rests on not "
+                "visible? THEN choose ONE: (A) READ MORE — if a claim rests on code you cannot "
+                f"see, locate it (search{_graph}) and read that region only; rereading or "
+                "re-searching code you can see adds nothing. "
+                "(B) COMMIT — if visible code backs every claim, emit type='answer' "
                 "(complete, non-empty, in the 'answer' field) or type='propose_mode' for a change. "
                 "(C) NARRATE — type='progress' with a short note if you want to tell the user "
                 "what you're exploring or about to check next without ending the turn, then follow "

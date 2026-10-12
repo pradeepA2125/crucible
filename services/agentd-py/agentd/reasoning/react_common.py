@@ -39,14 +39,16 @@ def duplicate_refusal(tool: str, first_iteration: int) -> str:
     tools models most often repeat."""
     blocked = f"DUPLICATE BLOCKED (iter {first_iteration})"
     if tool == "search_code":
-        return (f"{blocked}: this search already ran and its result is above. context_lines "
-                "does not make it a new search. For more lines around a match, call read_file "
+        return (f"{blocked}: this search already ran and its result is above; work from it. "
+                "context_lines does not make it a new search, and a reworded pattern finds the "
+                "same code. For more lines around a match, call read_file "
                 "with a specific start_line/end_line around the line numbers shown, and only "
                 "for lines your earlier reads do not already cover.")
     if tool == "read_file":
-        return (f"{blocked}: the file is unchanged since that read and its content is above. "
-                "Read again only a specific start_line/end_line range your earlier reads do "
-                "not already cover.")
+        return (f"{blocked}: the file is unchanged since that read and its content is above; "
+                "work from it. A narrower or shifted range returns the same lines. Read again "
+                "only a specific start_line/end_line range your earlier reads do not already "
+                "cover.")
     return f"{blocked}; reuse visible evidence or request the missing portion."
 
 

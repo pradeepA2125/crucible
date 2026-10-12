@@ -10,7 +10,10 @@ def test_system_prompt_carries_tools_not_retrieval():
     sp = format_controller_system_prompt(
         [{"name": "read_file", "description": "d", "parameters": {}}])
     assert "read_file" in sp
-    assert "retrieval_seed" not in sp  # retrieval never in the system string
+    # Retrieval data never rides the system string; HOW A TURN WORKS only names the payload field.
+    mentions = [line.strip() for line in sp.splitlines() if "retrieval_seed" in line]
+    assert mentions == ["• retrieval_seed (when present) — a map of the workspace: outlines and "
+                        "a few excerpts."]
 
 
 def test_payload_key_order_is_cache_stable():

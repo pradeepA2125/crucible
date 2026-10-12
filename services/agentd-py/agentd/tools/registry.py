@@ -296,8 +296,9 @@ class ToolRegistry:
                     description=(
                         "Walk the symbol graph from a file or symbol. Returns workspace "
                         "files/symbols connected via Calls / Imports / References / Implements / "
-                        "Inherits — both outbound and inbound. After read_file shows you a "
-                        "function, use query_graph(node=\"path:Symbol\") to find what it calls "
+                        "Inherits — both outbound and inbound. When you need relationships no "
+                        "visible code shows, use query_graph(node=\"path:Symbol\") to find what "
+                        "a function calls "
                         "(outbound Calls), who calls it (inbound Calls), and — for Protocol/ABC "
                         "method calls — the concrete implementations via Implements edges. "
                         "depth=2 chains two hops: Calls -> declaration, Implements <- "

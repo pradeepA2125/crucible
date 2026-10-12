@@ -47,8 +47,9 @@ def test_successful_read_gets_evidence_reuse_hint_before_any_edit():
     instruction = payload["instruction"]
     assert payload["conversation_history"] == history
     assert "FIRST action" not in instruction
-    assert "Reuse successful tool results" in instruction
-    assert "read only missing evidence" in instruction
+    assert "reuse successful tool results" in instruction
+    assert "only for code they do not contain" in instruction
+    assert "to confirm code you already have is not a reason" in instruction
     assert "emit type='answer' now" in instruction
 
 
