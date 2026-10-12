@@ -105,10 +105,10 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
   useEffect(() => {
     function onHostMessage(event: MessageEvent) {
-      const m = event.data as { type?: string; preview?: RewindPreviewView; text?: string };
+      const m = event.data as { type?: string; preview?: RewindPreviewView; text?: string; threadId?: string };
       if (m?.type === "rewindPreviewResult" && m.preview) {
         setRewindPreview(m.preview);
-      } else if (m?.type === "composerPrefill") {
+      } else if (m?.type === "composerPrefill" && (!m.threadId || m.threadId === state.activeThreadId)) {
         // The rewind landed: clear the dialog and hand the message back for editing.
         setRewindPreview(null);
         setRewindMessageId(null);
@@ -117,7 +117,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     }
     window.addEventListener("message", onHostMessage);
     return () => window.removeEventListener("message", onHostMessage);
-  }, []);
+  }, [state.activeThreadId]);
 
   // UX Rule 3: navLocked while input is disabled (local SSE loop appending) OR while a
   // detached controller turn is in flight — turnActive is durable across a webview reload,
@@ -464,6 +464,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
       <div className="px-3 pb-3 pt-2 flex-shrink-0">
         <InputArea
+          threadId={state.activeThreadId}
           availability={availability}
           draft={draft}
           onDraftChange={setDraft}

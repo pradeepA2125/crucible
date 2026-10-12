@@ -35,7 +35,10 @@ export type ChatMessageHandler = (
   stepReview?: boolean,
   forcedSkills?: string[],
   mentionedPaths?: string[],
-  planMode?: boolean
+  planMode?: boolean,
+  imageAttachments?: { name: string; mediaType: string; dataUrl: string; bytes: number }[],
+  draftId?: string,
+  originalDraftText?: string
 ) => Promise<void>;
 export type PlanCardActionHandler = (
   taskId: string,
@@ -292,6 +295,11 @@ export class ChatPanel {
         const mentionedPaths = Array.isArray(m["mentionedPaths"])
           ? (m["mentionedPaths"] as string[])
           : undefined;
+        const imageAttachments = Array.isArray(m["imageAttachments"])
+          ? (m["imageAttachments"] as { name: string; mediaType: string; dataUrl: string; bytes: number }[])
+              .filter((a) => typeof a?.name === "string" && typeof a?.mediaType === "string"
+                && typeof a?.dataUrl === "string" && typeof a?.bytes === "number")
+          : undefined;
         // ModeGate's "Chat about this approach" feedback field posts sendMessage with
         // no planMode at all (it doesn't track the composer's toggle state) — falling
         // back to `undefined === true` -> false would silently drop a Plan-Mode turn
@@ -302,7 +310,7 @@ export class ChatPanel {
         const planMode = typeof m["planMode"] === "boolean"
           ? (m["planMode"] as boolean)
           : (this.onGetPlanMode ? this.onGetPlanMode() : false);
-        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills, mentionedPaths, planMode);
+        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills, mentionedPaths, planMode, imageAttachments, typeof m["draftId"] === "string" ? m["draftId"] : undefined, typeof m["originalDraftText"] === "string" ? m["originalDraftText"] : undefined);
       } else if (m["type"] === "implementPlan") {
         p = this.onPlanAction(m["taskId"] as string, "implement");
       } else if (m["type"] === "planFeedback") {
@@ -428,6 +436,7 @@ export class ChatPanel {
           const result = await this.onExpandPrompt(name, args);
           this.panel?.webview.postMessage({
             type: "promptExpanded",
+            requestId: m["requestId"],
             name,
             found: result.found,
             text: result.text,
@@ -521,8 +530,8 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "rewindPreviewResult", preview });
   }
 
-  prefillComposer(text: string): void {
-    this.panel?.webview.postMessage({ type: "composerPrefill", text });
+  prefillComposer(text: string, draft?: { threadId: string; imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] }): void {
+    this.panel?.webview.postMessage({ type: "composerPrefill", text, ...draft });
   }
 
   resolveInlineChangeCard(taskId: string, resolution: "applied" | "discarded"): void {
@@ -622,9 +631,8 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "markQueued", id });
   }
 
-  restoreDraft(text: string): void {
-    // The composer already takes text back this way after a rewind.
-    this.panel?.webview.postMessage({ type: "composerPrefill", text });
+  restoreDraft(text: string, recovery?: { draftId: string; mentionedPaths?: string[]; imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] }): void {
+    this.panel?.webview.postMessage(recovery ? { type: "draftRecovery", text, ...recovery } : { type: "composerPrefill", text });
   }
 
   renderAgents(agents: AgentSummary[]): void {

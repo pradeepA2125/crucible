@@ -841,6 +841,7 @@ class ControllerLoop:
         # (any exit path) so ChatController can carry it into the NEXT turn the same
         # way it already threads _histories.
         self._observed_prompt: ObservedPrompt | None = None
+        self._image_projection_revision: str | None = None
         # Which audience this loop's text is rendered for (spec §4.7). None = the main agent,
         # whose every string stays byte-identical (tests/test_prompt_goldens.py).
         self._render_ctx = render_ctx or RenderContext.main()
@@ -1039,6 +1040,8 @@ class ControllerLoop:
                     out = outcome.output
                     slots[outcome.call.id].update(content=out.output, is_error=out.is_error,
                                                   status=outcome.state)
+                    if getattr(out, "image_refs", None):
+                        slots[outcome.call.id]["image_refs"] = out.image_refs
                     if out.delivered_read is not None:
                         from dataclasses import asdict
                         slots[outcome.call.id]["delivered_read"] = asdict(out.delivered_read)
@@ -1474,7 +1477,9 @@ class ControllerLoop:
             # state and the caller reads it back after run() returns (see
             # partial_observed_prompt / self.__init__'s field comment).
             self._observed_prompt = ObservedPrompt(
-                tokens=prompt_tokens, message_count=len(history))
+                tokens=prompt_tokens, message_count=len(history),
+                projection_revision=projection.revision,
+                history_tokens=_history_tokens(projection.history))
 
         def _on_retry(attempt: int, max_attempts: int, reason: str, message: str) -> None:
             # Distinct channel from _on_thinking — a retry is not model reasoning
@@ -1525,7 +1530,11 @@ class ControllerLoop:
                         # The user's own words (spec §5.3), or a team member's board delta
                         # (v2 §7.6) whose header is system-written and whose bodies are
                         # already framed — never framed again.
-                        history.append({"role": "user", "content": item.text})
+                        entry = {"role": "user", "content": item.text}
+                        if getattr(item, "image_refs", None):
+                            entry["image_refs"] = item.image_refs
+                            entry["source_id"] = item.source_id
+                        history.append(entry)
                         continue
                     author = item.author or item.source_id or "agent"
                     history.append({"role": "user", "content": "New message:\n"
@@ -1543,9 +1552,48 @@ class ControllerLoop:
             run_id = str(plan_context.get("run_id", "chat"))
             # Pass the current user message (goal) so recall has a query even on turn 1, when
             # the message lives in plan_context, not yet in history.
+            from pathlib import Path
+
+            from agentd.image_context import project_image_context
+            from agentd.memory.compactor import _history_tokens, estimate_tokens, fixed_overhead
+
+            def project_images():
+                def resolve(ref):
+                    from agentd.images import ImageAssetStore
+                    root = Path(str(plan_context.get("workspace_path", ".")))
+                    return ImageAssetStore(root).resolve(ref)
+                window = getattr(self._memory_harness, "image_context_window", None)
+                preliminary = project_image_context(history, resolve)
+                unavailable = project_image_context(history, resolve, max_visual_tokens=0)
+                text_cost = max(
+                    sum(estimate_tokens(str(m.get("content", ""))) for m in view)
+                    for view in (preliminary.history, unavailable.history))
+                # Usage is unavailable on the first call. Never interpret zero measured
+                # overhead as permission to ignore a known context window. This floor
+                # conservatively reserves the controller's large system/schema block;
+                # tool definitions and dynamic plan context are counted additionally.
+                import json
+                fixed_estimate = (16000 + estimate_tokens(json.dumps(tool_defs, default=str))
+                                  + estimate_tokens(json.dumps(plan_context, default=str)))
+                overhead = max(fixed_estimate,
+                               fixed_overhead(preliminary.history, self._observed_prompt))
+                return project_image_context(
+                    history, resolve, context_window=window,
+                    reserved_output_tokens=28000,
+                    text_and_fixed_tokens=text_cost + overhead)
+
+            projection = project_images()
+            previous_revision = self._image_projection_revision
+            if previous_revision is None and self._observed_prompt is not None:
+                previous_revision = self._observed_prompt.projection_revision
+            if previous_revision is not None and previous_revision != projection.revision:
+                self._observed_prompt = None
+                if self._context_invalidate is not None:
+                    self._context_invalidate()
             _prep = await self._memory_harness.prepare_turn(
                 history, run_id, query=str(plan_context.get("goal", "")),
                 observed=self._observed_prompt,
+                **({"projected_history": projection.history} if projection.revision else {}),
                 # A child's run never schedules consolidation (spec §5.2); the parent's
                 # call is left exactly as it was.
                 **({"consolidate": False} if self._agent is not None else {}),
@@ -1646,6 +1694,8 @@ class ControllerLoop:
             # len(history), which carries the whole thread and so never resets per turn.
             plan_context["iteration"] = iteration
             try:
+                if _prep.compacted:
+                    projection = project_images()
                 step_fn = self._reasoning.create_controller_step
                 # New keywords only for engines that declare them — the same ask-the-callee
                 # rule as engine._accepts, so fixed-signature fakes keep working.
@@ -1662,8 +1712,11 @@ class ControllerLoop:
                     seam_kwargs["render_ctx"] = self._render_ctx
                 if self._agent is not None and accepts_kwarg(step_fn, "persona"):
                     seam_kwargs["persona"] = self._agent.persona
+                if accepts_kwarg(step_fn, "image_assets") and projection.image_assets:
+                    seam_kwargs["image_assets"] = projection.image_assets
+                self._image_projection_revision = projection.revision
                 resp = await step_fn(
-                    plan_context=plan_context, history=history,
+                    plan_context=plan_context, history=projection.history,
                     tool_definitions=tool_defs, phase=self._sm.phase,
                     on_thinking=_on_thinking, on_retry=_on_retry,
                     on_progress=_on_progress, on_salvage=_on_salvage,

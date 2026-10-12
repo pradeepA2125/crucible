@@ -31,16 +31,17 @@ describe("InputArea slash-command expansion", () => {
     const ta = screen.getByLabelText("Chat input");
     fireEvent.keyDown(ta, { key: "Enter" });
     const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
-    expect(calls).toContainEqual({ type: "expandPrompt", name: "review", args: "src/a.py" });
+    expect(calls).toContainEqual({ type: "expandPrompt", name: "review", args: "src/a.py", requestId: expect.any(String) });
     expect(calls.find((c) => c.type === "sendMessage")).toBeUndefined();
   });
 
   it("a promptExpanded message replaces the draft", () => {
     render(<Harness />);
+    fireEvent.keyDown(screen.getByLabelText("Chat input"), { key: "Enter" });
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
-          data: { type: "promptExpanded", name: "review", found: true, text: "Review src/a.py" },
+          data: { type: "promptExpanded", requestId: (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.find(c => c[0].type === "expandPrompt")![0].requestId, name: "review", found: true, text: "Review src/a.py" },
         })
       );
     });
@@ -57,7 +58,7 @@ describe("InputArea slash-command expansion", () => {
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
-          data: { type: "promptExpanded", name: "review", found: false, text: "" },
+          data: { type: "promptExpanded", requestId: (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.find(c => c[0].type === "expandPrompt")![0].requestId, name: "review", found: false, text: "" },
         })
       );
     });
@@ -65,6 +66,8 @@ describe("InputArea slash-command expansion", () => {
     expect(calls).toContainEqual({
       type: "sendMessage",
       text: "/review src/a.py",
+      originalDraftText: "/review src/a.py",
+      draftId: expect.any(String),
       stepReview: true,
       planMode: false,
     });
@@ -154,9 +157,10 @@ describe("InputArea @-file mentions", () => {
     fireEvent.keyDown(ta, { key: "Enter" });
     const calls = (vscode.postMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(calls).toContainEqual({
-      type: "sendMessage", text: "@src/foo.py look here", stepReview: true,
+      type: "sendMessage", text: "@src/foo.py look here", originalDraftText: "@src/foo.py look here", stepReview: true,
       planMode: false,
       mentionedPaths: ["src/foo.py"],
+      draftId: expect.any(String),
     });
   });
 

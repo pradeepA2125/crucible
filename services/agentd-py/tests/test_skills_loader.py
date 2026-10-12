@@ -1,6 +1,14 @@
 from pathlib import Path
 
+import pytest
+
 from agentd.skills.loader import SkillCatalogLoader
+
+
+@pytest.fixture(autouse=True)
+def _skills_enabled_in_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    # User-local settings must not decide which synthetic skills a test can see.
+    monkeypatch.delenv("CRUCIBLE_SKILLS_DISABLED", raising=False)
 
 
 def _write_skill(root: Path, name: str, description: str, body: str = "Do the thing.") -> None:
@@ -58,6 +66,27 @@ def test_mtime_cache_returns_same_objects_until_changed(tmp_path: Path) -> None:
     os.utime(tmp_path / ".crucible/skills", None)  # bump dir mtime
     second = loader.load_catalog()
     assert [m.name for m in second] == ["a", "b"]
+
+
+def test_disabled_names_filter_cached_catalog_without_rescan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_skill(tmp_path, "a", "A.")
+    _write_skill(tmp_path, "b", "B.")
+    loader = SkillCatalogLoader(tmp_path)
+    first = loader.load_catalog()
+
+    def unexpected_scan():
+        pytest.fail("disabled-name changes must not rescan the catalog")
+
+    monkeypatch.setattr(loader, "_scan", unexpected_scan)
+    monkeypatch.setenv("CRUCIBLE_SKILLS_DISABLED", " a, absent ")
+    filtered = loader.load_catalog()
+    assert [m.name for m in filtered] == ["b"]
+    assert filtered[0] is first[1]
+    assert [m.name for m in first] == ["a", "b"]
+    monkeypatch.delenv("CRUCIBLE_SKILLS_DISABLED")
+    assert loader.load_catalog() is first
 
 
 def test_bad_yaml_is_skipped(tmp_path: Path) -> None:

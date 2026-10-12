@@ -17,6 +17,11 @@ from agentd.workspace.shadow import ShadowWorkspaceManager
 from tests.gate_helpers import first_gate
 
 
+@pytest.fixture(autouse=True)
+def _skills_enabled_in_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CRUCIBLE_SKILLS_DISABLED", raising=False)
+
+
 class _NoopReasoning:
     async def create_plan(self, *a, **k): raise NotImplementedError
     async def create_patch(self, *a, **k): raise NotImplementedError
@@ -38,7 +43,9 @@ class _SkillsPayloadRecordingEngine(ScriptedReasoningEngine):
         self.active_skills_per_call: list[object] = []
 
     async def create_controller_step(
-        self, plan_context, history, tool_definitions, *, phase, on_thinking=None, on_retry=None, on_progress=None, on_salvage=None, on_usage=None, unconstrained=False):
+        self, plan_context, history, tool_definitions, *, phase, on_thinking=None,
+        on_retry=None, on_progress=None, on_salvage=None, on_usage=None, unconstrained=False,
+    ):
         self.active_skills_per_call.append(plan_context.get("active_skills"))
         return await super().create_controller_step(
             plan_context, history, tool_definitions, phase=phase, on_thinking=on_thinking)

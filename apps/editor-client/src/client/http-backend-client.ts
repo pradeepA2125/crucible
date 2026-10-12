@@ -702,13 +702,60 @@ export class HttpBackendClient implements BackendTaskClient {
       `/v1/chat/threads/${encodeURIComponent(threadId)}`
     ) as Record<string, unknown>;
     const messages = Array.isArray(raw["messages"]) ? raw["messages"] : [];
-    return ChatThreadSchema.parse({
+    const thread = ChatThreadSchema.parse({
       threadId: raw["thread_id"],
       workspacePath: raw["workspace_path"],
       title: raw["title"],
       messages: (messages as Record<string, unknown>[]).map((m) => HttpBackendClient.toChatMessage(m)),
       touchedFiles: Array.isArray(raw["touched_files"]) ? raw["touched_files"] : [],
     });
+    // Ephemeral display metadata only: never write preview bytes back to the backend.
+    for (const message of thread.messages) {
+      const refs = message.metadata["image_attachments"];
+      if (!Array.isArray(refs)) continue;
+      message.metadata["image_previews"] = await Promise.all(refs.slice(0, 8).map(async (ref: Record<string, unknown>) => {
+        const name = typeof ref?.["name"] === "string" ? ref["name"] : "Image";
+        try {
+          const dataUrl = await this.getChatImagePreview(threadId, String(ref?.["asset_id"] ?? ""));
+          return { name, asset_id: ref["asset_id"], dataUrl };
+        } catch {
+          return { name, asset_id: ref?.["asset_id"], unavailable: true };
+        }
+      }));
+    }
+    return thread;
+  }
+
+  async getChatImagePreview(threadId: string, assetId: string): Promise<string> {
+    if (!/^[a-f0-9]{64}$/.test(assetId)) throw new Error("Invalid image asset identity");
+    const response = await this.fetchFn(`${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/images/${assetId}`);
+    const limit = 8 * 1024 * 1024;
+    if (!response.ok || response.headers.get("content-type")?.split(";")[0] !== "image/png") {
+      throw new Error("Image preview unavailable");
+    }
+    if (Number(response.headers.get("content-length")) > limit) {
+      await response.body?.cancel();
+      throw new Error("Image preview exceeds 8 MiB");
+    }
+    if (!response.body) throw new Error("Empty image preview");
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) { await reader.cancel(); throw new Error("Image preview exceeds 8 MiB"); }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    if (!size) throw new Error("Empty image preview");
+    let binary = "";
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i += 8192) binary += String.fromCharCode(...chunk.subarray(i, i + 8192));
+    }
+    return `data:image/png;base64,${btoa(binary)}`;
   }
 
   static toChatMessage(m: Record<string, unknown>): Record<string, unknown> {
@@ -1269,6 +1316,16 @@ export class HttpBackendClient implements BackendTaskClient {
             : {}),
           ...(options?.mentionedFiles && options.mentionedFiles.length
             ? { mentioned_files: options.mentionedFiles }
+            : {}),
+          ...(options?.imageAttachments && options.imageAttachments.length
+            ? {
+                image_attachments: options.imageAttachments.map((image) => ({
+                  name: image.name,
+                  media_type: image.mediaType,
+                  data_url: image.dataUrl,
+                  bytes: image.bytes,
+                })),
+              }
             : {}),
           ...(options?.planMode !== undefined ? { plan_mode: options.planMode } : {}),
           // Lets the caller's optimistic echo share the persisted message's id, so a

@@ -409,9 +409,11 @@ class ChatController:
         mcp_manager: object | None = None,
         exec_session_manager: object | None = None,
         rewind_store: RewindStore | None = None,
+        vision_capable: bool = False,
     ) -> None:
         self._workspace_path = workspace_path
         self._reasoning = reasoning_engine
+        self._vision_capable = vision_capable
         self._store = thread_store
         self._orchestrator = orchestrator
         self._broadcaster = broadcaster
@@ -720,18 +722,42 @@ class ChatController:
             logger.debug("[controller] retrieval seed failed", exc_info=True)
             return None
 
+    def _image_refs(self, attachments: list[dict[str, object]] | None) -> list[dict[str, object]]:
+        if not attachments:
+            return []
+        if all(isinstance(ref, dict) and "asset_id" in ref and "data_url" not in ref
+               for ref in attachments):
+            from copy import deepcopy
+            return deepcopy(attachments)
+        from agentd.images import ImageAssetStore
+        return ImageAssetStore(Path(self._workspace_path)).import_uploads(attachments)
+
+    def _message_image_refs(
+        self, thread_id: str, message_id: str | None,
+    ) -> list[dict[str, object]]:
+        thread = self._store.get_thread(thread_id)
+        if thread is None:
+            return []
+        for message in thread.messages:
+            if message.id == message_id:
+                refs = message.metadata.get("image_attachments", [])
+                return self._image_refs(refs) if isinstance(refs, list) else []
+        return []
+
     @profile_workspace_turn
     @profile_async("controller.handle_message")
     async def handle_message(
         self, thread_id: str, message: str, channel_id: str, step_review: bool | None = None,
         forced_skills: list[str] | None = None,
         mentioned_files: list[dict[str, str]] | None = None,
+        image_attachments: list[dict[str, object]] | None = None,
         plan_mode: bool | None = None,
         message_id: str | None = None,
     ) -> None:
         thread = self._store.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"Thread {thread_id!r} not found")
+        image_attachments = self._image_refs(image_attachments)
         self._user_spoke(thread_id, plan_mode)
         if step_review is not None:
             # Sets the value for future edits; never resolves gates (spec §5.4) — a
@@ -753,11 +779,13 @@ class ChatController:
         # until the thread is reloaded. None (any other client) still gets a fresh uuid.
         anchor_message_id = self._store.append_message(thread_id, ChatMessage(
             role="user", content=message, id=message_id,
-            metadata={"mentioned_files": mentioned_paths} if mentioned_paths else {}))
+            metadata={**({"mentioned_files": mentioned_paths} if mentioned_paths else {}),
+                      **({"image_attachments": image_attachments} if image_attachments else {})}))
+        turn_message = _with_mentioned_files(message, mentioned_files)
         await self._run_user_turn(
-            thread, thread_id, anchor_message_id, _with_mentioned_files(message, mentioned_files),
+            thread, thread_id, anchor_message_id, turn_message,
             channel_id, step_review=step_review, plan_mode=plan_mode,
-            forced_skills=forced_skills)
+            forced_skills=forced_skills, image_attachments=image_attachments)
 
     def _user_spoke(self, thread_id: str, plan_mode: bool | None) -> None:
         """A user message takes any batch of wake notices and resets the wake loop
@@ -781,11 +809,32 @@ class ChatController:
         self, thread: ChatThread, thread_id: str, anchor_message_id: str | None,
         turn_message: str, channel_id: str, *, step_review: bool | None,
         plan_mode: bool | None, forced_skills: list[str] | None,
+        image_attachments: list[dict[str, object]] | None = None,
     ) -> None:
         """The turn a persisted user message starts (handle_message, handle_queued_message).
         `thread` is the pre-turn state a rewind to this message restores."""
         # One id for this turn's in-flight pills message AND its rewind checkpoint.
         turn_id = uuid4().hex
+        image_attachments = self._message_image_refs(thread_id, anchor_message_id)
+        image_supported = True
+        if image_attachments:
+            from agentd.providers.image_capabilities import resolve_image_capability
+            capability = await resolve_image_capability(
+                getattr(self._reasoning, "_transport", None),
+                getattr(self._reasoning, "_model", ""))
+            image_supported = capability.supported
+        if image_attachments and not image_supported:
+            fallback = (
+                "The selected model cannot process images; choose a vision-capable model "
+                "or remove the image."
+            )
+            self._store.append_message(thread_id, ChatMessage(
+                role="agent", content=fallback,
+            ))
+            self._broadcaster.broadcast(channel_id, {
+                "type": "chat_done", "payload": {"error": fallback},
+            })
+            return
         if self._rewind is not None and anchor_message_id is not None:
             self._rewind.open_checkpoint(
                 thread_id, anchor_message_id, turn_id, thread=thread,
@@ -801,7 +850,9 @@ class ChatController:
         # Always a list, even on a thread's first turn (spec §5.2): the fold needs a user
         # message in persisted history, and a first message was never in it before.
         seed_history = [*seed, {"role": "user",
-                                "content": self._fold_notices(thread_id, turn_id, turn_message)}]
+                                "content": self._fold_notices(thread_id, turn_id, turn_message),
+                                **({"image_refs": image_attachments,
+                                    "source_id": anchor_message_id} if image_attachments else {})}]
         # A plain message always starts fresh, in the phase the sticky Plan Mode toggle
         # selects (NEW-I6 — this MUST be the plan_mode computation, never a stray None).
         resume_phase = "PLAN" if plan_mode else "ACTIVE"
@@ -811,7 +862,8 @@ class ChatController:
             # A plain message is ALWAYS a fresh entry, never a resume (see resolve_clarify):
             # passing (resume_phase == "ACTIVE") would suppress the C1b entry hint on every
             # follow-up turn in a thread.
-            edit_is_resume=False, forced_skills=forced_skills)
+            edit_is_resume=False, forced_skills=forced_skills,
+            image_attachments=image_attachments)
         await self._finish(thread_id, channel_id, outcome, step_review, turn_id=turn_id)
 
     def accepts_queued(self, thread_id: str) -> bool:
@@ -822,14 +874,17 @@ class ChatController:
         self, thread_id: str, message: str, *, message_id: str | None,
         step_review: bool | None, plan_mode: bool | None,
         mentioned_files: list[dict[str, str]] | None, forced_skills: list[str] | None,
+        image_attachments: list[dict[str, object]] | None = None,
     ) -> str:
         """Spec §5.3: persisted now, no checkpoint yet; delivered at the notice turn's next
         iteration top, or answered by its own turn when the notice turn ends first."""
+        image_attachments = self._image_refs(image_attachments)
         turn_message = _with_mentioned_files(message, mentioned_files)
         paths = [f["path"] for f in mentioned_files or [] if f.get("path")]
         stored_id = self._store.append_message(thread_id, ChatMessage(
             role="user", content=message, id=message_id,
-            metadata={"mentioned_files": paths} if paths else {}))
+            metadata={**({"mentioned_files": paths} if paths else {}),
+                      **({"image_attachments": image_attachments} if image_attachments else {})}))
         assert stored_id is not None
         self._wake_turns.pop(thread_id, None)
         self._wakes_suppressed.discard(thread_id)
@@ -860,11 +915,13 @@ class ChatController:
         step_review = options.get("step_review")
         forced = options.get("forced_skills")
         await self._run_user_turn(
-            thread, thread_id, message_id, str(options.get("turn_message", "")),
+            thread, thread_id, message_id, str(options.get("turn_message",
+                next((m.content for m in thread.messages if m.id == message_id), ""))),
             f"chat:{thread_id}",
             step_review=step_review if isinstance(step_review, bool) else None,
             plan_mode=self._plan_mode,
-            forced_skills=list(forced) if isinstance(forced, list) else None)
+            forced_skills=list(forced) if isinstance(forced, list) else None,
+            image_attachments=self._message_image_refs(thread_id, message_id))
 
     @profile_workspace_turn
     @profile_async("controller.setup_and_loop")
@@ -874,7 +931,19 @@ class ChatController:
         phase: str | None = None, turn_id: str | None = None,
         edit_is_resume: bool = False, forced_skills: list[str] | None = None,
         notice_turn: bool = False,
+        image_attachments: list[dict[str, object]] | None = None,
     ) -> ControllerOutcome:
+        if any(entry.get("image_refs") for entry in seed_history or []):
+            from agentd.providers.image_capabilities import resolve_image_capability
+            capability = await resolve_image_capability(
+                getattr(self._reasoning, "_transport", None),
+                getattr(self._reasoning, "_model", ""))
+            if not capability.supported:
+                return ControllerOutcome(
+                    "answer", history=seed_history,
+                    text=("The selected model cannot process images in this conversation; "
+                          "choose a supported vision model or rewind before the image. "
+                          + capability.reason))
         # Three callers feed `phase` with different intents: handle_message (the
         # plan_mode-derived starting phase — Task 7), resolve_mode's "implement"
         # dispatch (always "ACTIVE"), resolve_clarify ("PLAN"/"ACTIVE"/None
@@ -2595,6 +2664,9 @@ class ChatController:
                 if marker:
                     self._store.set_message_metadata(
                         thread_id, item.source_id, {"checkpoint_anchor": marker})
+        from dataclasses import replace
+        taken = [replace(item, image_refs=self._message_image_refs(thread_id, item.source_id))
+                 if item.kind == "user" else item for item in taken]
         claims = [i.notice_id for i in taken if i.notice_id]
         if claims:
             self._store.claim_notices(

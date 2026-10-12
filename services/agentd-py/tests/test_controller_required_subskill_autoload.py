@@ -36,6 +36,11 @@ checkbox (`- [ ]`) syntax for tracking.
 """
 
 
+@pytest.fixture(autouse=True)
+def _skills_enabled_in_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CRUCIBLE_SKILLS_DISABLED", raising=False)
+
+
 def test_extract_required_subskills_pulls_both_names_in_order() -> None:
     names = _extract_required_subskills(
         [{"op": "create_file", "file": "docs/plans/x.md", "content": _PLAN_DOC, "reason": "r"}])
@@ -123,6 +128,23 @@ async def test_saving_a_plan_doc_auto_loads_its_required_subskill(tmp_path: Path
     # call happened) so it isn't left wondering why active_skills changed underneath it.
     joined = " ".join(str(m.get("content", "")) for m in out.history or [])
     assert "auto-loaded" in joined.lower() or "auto-loaded" in joined
+
+
+@pytest.mark.asyncio
+async def test_disabled_required_subskill_is_not_autoloaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_skill(tmp_path, "executing-plans", "Execute a plan", "# Executing Plans")
+    monkeypatch.setenv("CRUCIBLE_SKILLS_DISABLED", "executing-plans")
+    active_skills = {"prior": "prior body"}
+    loop = _loop(tmp_path, [], active_skills)
+    history: list[dict[str, object]] = []
+    await loop._maybe_force_required_subskill(
+        [{"op": "create_file", "file": "docs/plans/x.md", "content": _PLAN_DOC,
+          "reason": "save plan"}], history,
+    )
+    assert active_skills == {"prior": "prior body"}
+    assert history == []
 
 
 @pytest.mark.asyncio

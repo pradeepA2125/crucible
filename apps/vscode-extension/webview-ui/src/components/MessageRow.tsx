@@ -186,6 +186,7 @@ function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued 
           <UserMessage
             content={msg.content}
             mentionedFiles={msg.metadata?.mentioned_files as string[] | undefined}
+            images={(msg.metadata?.image_previews ?? msg.metadata?.image_attachments) as { name: string; dataUrl?: string }[] | undefined}
             queued={queued}
             onRewind={
               messageId && !turnActive && onRewindRequest

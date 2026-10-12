@@ -29,6 +29,7 @@ class ToolOutput:
     status: str | None = None
     exit_code: int | None = None
     delivered_read: object | None = None
+    image_refs: list[dict] = field(default_factory=list)
 
 
 # Tagged (spec §4.6.3). Main renders today's text byte-for-byte; a child is told it runs in
@@ -156,6 +157,23 @@ class ToolRegistry:
                         "end_line": {"type": "integer", "description": "Last line to read (1-indexed, inclusive)"},
                     },
                     "required": ["path"],
+                },
+            ),
+            ToolDefinition(
+                name="read_image",
+                description=(
+                    "Read an image file or durable image asset from this workspace. "
+                    "Returns metadata and a native image attachment, never binary text. "
+                    "Provide exactly one of path or asset_id. Static PNG, JPEG, GIF, "
+                    "WebP, BMP and TIFF are supported."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Relative image path within the workspace"},
+                        "asset_id": {"type": "string", "description": "Durable image asset ID in this workspace"},
+                    },
+                    "oneOf": [{"required": ["path"]}, {"required": ["asset_id"]}],
                 },
             ),
             ToolDefinition(
@@ -377,6 +395,15 @@ class ToolRegistry:
                 shadow_root=self._read_root_for(str(args.get("path", ""))),
                 max_lines=2000 if adaptive_reads_enabled() else 500,
                 max_chars=output_budget.get(),
+            )
+
+        if name == "read_image":
+            from agentd.tools.images import read_image
+            return await read_image(
+                path=str(args.get("path", "")),
+                asset_id=str(args.get("asset_id", "")),
+                root=self._read_root_for(str(args.get("path", ""))),
+                asset_root=self._real_workspace_path,
             )
 
         if name == "list_directory":

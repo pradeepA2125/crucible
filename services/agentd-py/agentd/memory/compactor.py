@@ -4,6 +4,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
+from agentd.image_context import history_visual_tokens, image_tombstone
 from agentd.memory.models import CompactionResult, CompactionSegment, History, ObservedPrompt
 from agentd.memory.store import MemoryStore
 
@@ -30,7 +31,8 @@ def estimate_tokens(text: str) -> int:
 
 
 def _history_tokens(history: History) -> int:
-    return sum(estimate_tokens(str(m.get("content", ""))) for m in history)
+    return (sum(estimate_tokens(str(m.get("content", ""))) for m in history)
+            + history_visual_tokens(history))
 
 
 def _is_usable(history: History, observed: ObservedPrompt | None) -> bool:
@@ -64,7 +66,10 @@ def fixed_overhead(history: History, observed: ObservedPrompt | None) -> int:
     if not _is_usable(history, observed):
         return 0
     assert observed is not None  # narrowed by _is_usable
-    return max(0, observed.tokens - _history_tokens(history[:observed.message_count]))
+    measured = observed.history_tokens
+    if measured is None:
+        measured = _history_tokens(history[:observed.message_count])
+    return max(0, observed.tokens - measured)
 
 
 def _render(messages: History) -> str:
@@ -99,14 +104,14 @@ def _select_hot(
     hot: History = []
     used = 0
     for m in reversed(history):
-        t = estimate_tokens(str(m.get("content", "")))
+        t = _history_tokens([m, *hot]) - _history_tokens(hot)
         if hot and (used + t > hot_budget_tokens or len(hot) >= hot_turns_cap):
             break
         hot.insert(0, m)
         used += t
     while len(hot) > 1 and not _is_turn_start(hot[0]):
         hot.pop(0)
-    used = sum(estimate_tokens(str(m.get("content", ""))) for m in hot)  # recompute after trim
+    used = _history_tokens(hot)  # recompute after trim
     evicted = history[: len(history) - len(hot)]
     return evicted, hot, used
 
@@ -177,8 +182,9 @@ class Compactor:
 
     async def maybe_compact(
         self, history: History, run_id: str, observed: ObservedPrompt | None = None,
-        *, force: bool = False,
+        *, force: bool = False, projected_history: History | None = None,
     ) -> CompactionResult:
+        accounting = projected_history if projected_history is not None else history
         # Pure token-trigger check (no count short-circuit: a short history of oversized
         # turns can be over budget and must still compact). Below threshold is the common
         # per-iteration case — return without touching the store (no hot-path DB read).
@@ -188,7 +194,7 @@ class Compactor:
         # eight transports that report no usage are unaffected.
         # force: the provider refused the last request as over its window, so the input
         # must shrink whatever the count says.
-        if not force and input_tokens(history, observed) < self.trigger_tokens():
+        if not force and input_tokens(accounting, observed) < self.trigger_tokens():
             return CompactionResult(compacted=False, history=history)
         now = datetime.now(UTC)
         ms = int(now.timestamp() * 1000)
@@ -212,8 +218,14 @@ class Compactor:
         # survives (final whole-branch review, finding 3).
         nominal_hot_budget = int(self._window_tokens * self._hot_token_frac)
         hot_budget = max(nominal_hot_budget // 4,
-                          nominal_hot_budget - fixed_overhead(history, observed))
-        evicted, hot, hot_used = _select_hot(history, hot_budget, self._hot_turns)
+                          nominal_hot_budget - fixed_overhead(accounting, observed))
+        evicted_view, hot_view, hot_used = _select_hot(accounting, hot_budget, self._hot_turns)
+        boundary = len(evicted_view)
+        evicted, hot = history[:boundary], history[boundary:]
+        retained_ids = {r.get("asset_id") for m in hot for r in m.get("image_refs", [])}
+        lost = {r.get("asset_id"): r for m in evicted for r in m.get("image_refs", [])
+                if r.get("asset_id") not in retained_ids}
+        tombstones = "\n".join(image_tombstone(r, "history compaction") for r in lost.values())
         base = self._store.next_seq(run_id)  # run-monotonic seq across compaction rounds
         degraded = False
         extra: list[CompactionSegment] = []
@@ -232,6 +244,8 @@ class Compactor:
             self._store.add_segments(segments + extra)  # persist BEFORE summarize -> lossless
         old = self._store.get_anchor(run_id)
         old_text = old.summary_md if old else ""
+        if tombstones:
+            old_text += "\n" + tombstones
         evicted_count = len(evicted) + len(extra)
         old_version = old.version if old else 0
         # Segment seq span just written, so the harness can consolidate exactly this slice.
@@ -260,6 +274,11 @@ class Compactor:
                 evicted_count=evicted_count, anchor_version=old_version,
                 evicted_seq_lo=seq_lo, evicted_seq_hi=seq_hi,
             )
+        notices = list(dict.fromkeys(
+            line for line in (old_text + "\n" + _render(evicted)).splitlines()
+            if line.startswith("[Image ") and "unavailable:" in line))
+        if notices:
+            new_anchor += "\n" + "\n".join(notices)
         summary = self._store.upsert_anchor(run_id, new_anchor)
         logger.info(
             "[memory] compacted run=%s anchor=v%d evicted=%d anchor_chars=%d%s",

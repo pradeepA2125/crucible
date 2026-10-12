@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 
+from tests.prompt_goldens import default_capture
+
 from agentd.chat.controller_prompts import format_controller_system_prompt
 from agentd.prompting.tagged import RenderContext
 from agentd.subagents.context import AgentContext
@@ -17,6 +19,7 @@ async def _never(*args, **kwargs):  # type: ignore[no-untyped-def]
     raise AssertionError("not called")
 
 
+@default_capture
 def _live() -> dict[str, str]:
     main_tools = [d.model_dump() for d in MainTeamToolSource(BUILTIN_AGENTS, MainTeamOps(
         create=_never, resolve=lambda r: r, post=lambda *a: {}, status=lambda t: {},

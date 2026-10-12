@@ -33,3 +33,16 @@ def test_physical_accounting_includes_native_schemas_and_accumulated_tails():
     assert sum(a["parts"].values()) == a["total_chars"]
     assert "tools" in a["parts"]
     assert "private-model" not in json.dumps(a)
+
+
+def test_physical_accounting_accepts_a_json_schema_type_list():
+    # OpenAI strict schemas make optional fields nullable: "type": ["string", "null"].
+    # A list is unhashable, so testing it against the image kinds crashed every
+    # plan-route request whose tools had a nullable field, before it was sent.
+    body = {"input": [{"role": "user", "content": "look"}],
+            "tools": [{"type": "function", "name": "read_image", "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": ["string", "null"]}}}}]}
+    measured = physical_context(body)
+    assert measured["total_chars"] > 0
+    assert "tools" in measured["parts"]

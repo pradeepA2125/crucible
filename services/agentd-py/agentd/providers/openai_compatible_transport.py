@@ -17,11 +17,30 @@ from agentd.providers.context_observation import (
     report_context,
 )
 from agentd.providers.context_overflow import ContextWindowExceeded, raise_if_overflow
-from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
+from agentd.providers.contracts import (
+    ModelJsonTransport,
+    narrow_schema_for_type,
+    normalize_image_attachments,
+    payload_without_image_attachments,
+)
+from agentd.providers.image_capabilities import require_image_capability
+from agentd.providers.image_parts import history_messages, redact_image_parts
 from agentd.providers.reasoning_effort import LADDER, EffortSupport, ReasoningEffort
 from agentd.runtime.artifacts import provider_debug_root
 
 logger = logging.getLogger(__name__)
+
+
+def _openai_user_content(
+    payload: dict[str, object], attachments: object, supports_vision: bool
+) -> object:
+    text = json.dumps(payload_without_image_attachments(payload))
+    images = normalize_image_attachments(attachments)
+    if not images or not supports_vision:
+        return text
+    parts: list[dict[str, object]] = [{"type": "text", "text": text}]
+    parts.extend({"type": "image_url", "image_url": {"url": url}} for url, _mime, _data in images)
+    return parts
 
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 503})
 
@@ -368,6 +387,10 @@ def _classify_retry_reason(exc: Exception) -> str:
 
 
 class OpenAICompatibleTransport(ModelJsonTransport):
+    # Generic endpoints vary by model; only explicit provider subclasses/configuration
+    # should opt in rather than sending image content to a text-only model.
+    supports_vision: bool = False
+
     """Generic OpenAI `/chat/completions` client against a configurable base URL.
 
     Vendor-neutral: subclasses add their own headers, extra_body, and reasoning
@@ -664,6 +687,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        image_attachments: object = None,
+        image_assets: object = None,
         on_thinking: Any = None,
         on_retry: Any = None,
         on_progress: Any = None,
@@ -672,36 +697,18 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         unconstrained: bool = False,
         on_context_input: ContextInputObserver | None = None,
     ) -> dict[str, object]:
-        # on_usage is per LOGICAL call, but one call can stream more than once: a
-        # strict attempt can complete, fail to parse, and fall back to json_object
-        # (a second stream) — and controller_step_response can additionally retry
-        # with a narrowed schema (up to two more). Each attempt measures a
-        # DIFFERENT prompt — the fallback injects the schema into the system
-        # prompt — so reporting every attempt would hand the compaction trigger a
-        # size for a call whose result we discarded. `attempts` is not a log to
-        # take the last entry of — it is cleared at each attempt boundary (here,
-        # before the narrowed retry; the strict/fallback boundary is handled the
-        # same way one level down in _generate_json_once) so a silent WINNING
-        # attempt is never masked by an earlier attempt that happened to report.
-        # Record under a local recorder and fire the caller's callback exactly
-        # once, below, for the attempt that actually produced the returned result
-        # — or not at all, if that attempt was silent.
+        await require_image_capability(self, model, image_assets, image_attachments)
         attempts: list[tuple[int, int]] = []
         recorder = (lambda p, c: attempts.append((p, c))) if on_usage is not None else None
         succeeded = False
         try:
             result = await self._generate_json_once(
-                model=model,
-                schema_name=schema_name,
-                schema=schema,
-                system_instructions=system_instructions,
-                user_payload=user_payload,
+                model=model, schema_name=schema_name, schema=schema,
+                system_instructions=system_instructions, user_payload=user_payload,
+                image_attachments=image_attachments, image_assets=image_assets,
                 on_thinking=on_thinking,
-                on_retry=on_retry,
-                on_progress=on_progress,
-                on_usage=recorder,
-                on_salvage=on_salvage,
-                unconstrained=unconstrained,
+                on_retry=on_retry, on_progress=on_progress, on_usage=recorder,
+                on_salvage=on_salvage, unconstrained=unconstrained,
                 on_context_input=on_context_input,
             )
             # Type-specific narrowing: the tight anyOf schema enforces each variant's
@@ -728,6 +735,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         schema=narrowed,
                         system_instructions=system_instructions,
                         user_payload=user_payload,
+                        image_attachments=image_attachments, image_assets=image_assets,
                         on_thinking=on_thinking,
                         on_retry=on_retry,
                         on_progress=on_progress,
@@ -799,6 +807,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        image_attachments: object = None,
+        image_assets: object = None,
         on_thinking: Any = None,
         on_retry: Any = None,
         on_progress: Any = None,
@@ -815,11 +825,12 @@ class OpenAICompatibleTransport(ModelJsonTransport):
 
         extra_body = self._build_extra_body(model, is_reasoning, for_json=True)
 
+        messages = history_messages(user_payload, image_assets, "chat", image_attachments)
         base_kwargs: dict[str, Any] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_instructions},
-                {"role": "user", "content": json.dumps(user_payload)},
+                *messages,
             ],
             # A JSON payload carrying a full file's content (create_file/
             # search_replace) plus schema/escaping overhead routinely exceeds a
@@ -930,6 +941,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 safe_schema_name=safe_schema_name,
                 system_instructions=system_instructions,
                 user_payload=user_payload,
+                image_attachments=image_attachments,
                 on_thinking=on_thinking,
                 on_retry=on_retry,
                 on_progress=on_progress,
@@ -970,7 +982,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
             out_dir = provider_debug_root(self._vendor)
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / f"debug-req-{name}.json").write_text(
-                json.dumps(create_kwargs, indent=2, default=str), encoding="utf-8"
+                json.dumps(redact_image_parts(create_kwargs), indent=2, default=str),
+                encoding="utf-8"
             )
         except Exception:
             pass
@@ -986,6 +999,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
         safe_schema_name: str,
         system_instructions: str,
         user_payload: dict[str, object],
+        image_attachments: object = None,
         on_thinking: Any = None,
         on_retry: Any = None,
         on_progress: Any = None,
@@ -1020,7 +1034,7 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                         f"{json.dumps(schema, indent=2)}"
                     ),
                 },
-                {"role": "user", "content": json.dumps(user_payload)},
+                *base_kwargs["messages"][1:],
             ],
         }
         # json_object is grammar-enforced, so on an endpoint whose grammar corrupts

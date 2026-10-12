@@ -229,7 +229,11 @@ async def test_actual_child_activation_registration_and_filtering(
 
 
 @pytest.mark.asyncio
-async def test_openai_and_anthropic_share_definition_and_tool_source(env, tmp_path, monkeypatch):
+@pytest.mark.parametrize("compact_context", [False, True])
+async def test_openai_and_anthropic_share_definition_and_tool_source(
+    env, tmp_path, monkeypatch, compact_context
+):
+    monkeypatch.setenv("CRUCIBLE_COMPACT_CONTEXT_ENABLED", "1" if compact_context else "0")
     import json
 
     from agentd.chat.controller_loop import ControllerLoop
@@ -281,8 +285,8 @@ async def test_openai_and_anthropic_share_definition_and_tool_source(env, tmp_pa
         assert any("Untrusted external search results from Exa" in str(m.get("content", ""))
                    for m in out.history or [])
     # Both real provider transports received the same native definition in the prompt.
-    expected = json.dumps(definition.model_dump(), indent=2, sort_keys=True)
     for prompt in (openai.calls[0]["instructions"], anthropic.calls[0]["system"]):
-        # Array indentation adds two spaces to each definition line.
-        assert expected.replace("\n", "\n  ") in prompt
+        catalog, _ = json.JSONDecoder().raw_decode(prompt.split("Available tools:\n", 1)[1])
+        received = [d for d in catalog if d["name"] == "web_search"]
+        assert received == [definition.model_dump()]
     assert client.calls == [("public docs", 5), ("public docs", 5)]

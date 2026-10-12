@@ -14,13 +14,19 @@ except ImportError:
     google_genai_errors = None  # type: ignore[assignment]
 
 from agentd.providers.context_overflow import raise_if_overflow
-from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.contracts import (
+    ModelJsonTransport,
+    normalize_image_attachments,
+    payload_without_image_attachments,
+)
+from agentd.providers.image_capabilities import require_image_capability
+from agentd.providers.image_parts import history_messages
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 from agentd.providers.token_progress import (
     ProgressTicker,
     approx_prompt_tokens,
     int_or_none,
 )
-from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,19 @@ _GEMINI_EFFORT_WIRE: dict[ReasoningEffort, str] = {
 }
 
 
+def _gemini_contents(user_payload: dict[str, object], attachments: object) -> object:
+    safe_payload = payload_without_image_attachments(user_payload)
+    images = normalize_image_attachments(attachments)
+    if not images:
+        return json.dumps(safe_payload)
+    parts: list[dict[str, object]] = [{"text": json.dumps(safe_payload)}]
+    parts.extend(
+        {"inline_data": {"mime_type": mime, "data": encoded}}
+        for _url, mime, encoded in images
+    )
+    return [{"role": "user", "parts": parts}]
+
+
 def _is_retryable(exc: Exception) -> bool:
     """Return True for transient Gemini errors (503 high demand, 429 rate limit)."""
     if google_genai_errors is not None:
@@ -53,6 +72,8 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 class GeminiJsonTransport(ModelJsonTransport):
+    supports_vision: bool = True
+
     # Live token counting: the stream loop below already separates thought parts
     # from output parts, so counts cost only the accumulation. Without this flag
     # the reasoning engine's capability gate never passes on_progress and the
@@ -111,6 +132,8 @@ class GeminiJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        image_attachments: object = None,
+        image_assets: object = None,
         on_thinking: object = None,
         on_retry: object = None,
         on_progress: object = None,
@@ -128,7 +151,9 @@ class GeminiJsonTransport(ModelJsonTransport):
                 thinking_config["include_thoughts"] = True
             config["thinking_config"] = thinking_config
 
-        contents = json.dumps(user_payload)
+        await require_image_capability(self, model, image_assets, image_attachments)
+        contents = (history_messages(user_payload, image_assets, "gemini", image_attachments)
+                    if image_assets else _gemini_contents(user_payload, image_attachments))
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
             if attempt > 0:
@@ -150,7 +175,9 @@ class GeminiJsonTransport(ModelJsonTransport):
                         system_instructions=system_instructions,
                     )
                 else:
-                    response = await self._call_with_retry(model=model, contents=contents, config=config)
+                    response = await self._call_with_retry(
+                        model=model, contents=contents, config=config
+                    )
                 self._log_usage(model, schema_name, system_instructions, contents, response)
                 output_text = self._extract_text(response)
                 return self._parse_output_object(output_text, schema_name)
@@ -296,7 +323,9 @@ class GeminiJsonTransport(ModelJsonTransport):
         assert last_exc is not None
         raise last_exc
 
-    async def _call_with_retry(self, *, model: str, contents: str, config: dict[str, object]) -> Any:
+    async def _call_with_retry(
+        self, *, model: str, contents: str, config: dict[str, object]
+    ) -> Any:
         """Call generate_content with timeout and exponential backoff for transient errors."""
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
@@ -315,7 +344,10 @@ class GeminiJsonTransport(ModelJsonTransport):
                     timeout=self._timeout_sec,
                 )
             except TimeoutError as exc:
-                msg = f"Gemini generate_content timed out after {self._timeout_sec}s (model={model})"
+                msg = (
+                    f"Gemini generate_content timed out after {self._timeout_sec}s "
+                    f"(model={model})"
+                )
                 raise RuntimeError(msg) from exc
             except Exception as exc:
                 raise_if_overflow(exc, request_tokens=approx_prompt_tokens(

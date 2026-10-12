@@ -32,7 +32,13 @@ from agentd.providers.context_observation import (
     report_context,
 )
 from agentd.providers.context_overflow import detect_overflow
-from agentd.providers.contracts import ModelJsonTransport
+from agentd.providers.contracts import (
+    ModelJsonTransport,
+    normalize_image_attachments,
+    payload_without_image_attachments,
+)
+from agentd.providers.image_capabilities import require_image_capability
+from agentd.providers.image_parts import history_messages, redact_image_parts
 from agentd.providers.openai_compatible_transport import (
     TransientTransportError,
     _classify_retry_reason,
@@ -115,7 +121,29 @@ class _Unauthorized(Exception):
         self.cause = cause
 
 
+def _add_native_images(
+    items: list[dict[str, Any]], attachments: object, supports_vision: bool,
+) -> None:
+    if not supports_vision or not items:
+        return
+    images = normalize_image_attachments(attachments)
+    if not images:
+        return
+    target = items[-1]
+    if target.get("role") != "user":
+        return
+    text = target.get("content")
+    if not isinstance(text, str):
+        return
+    target["content"] = [{"type": "input_text", "text": text}]
+    target["content"].extend(
+        {"type": "input_image", "image_url": url, "detail": "high"}
+        for url, _mime, _data in images
+    )
+
+
 class OpenAIJsonTransport(ModelJsonTransport):
+    supports_vision: bool = True
     supports_anyof_grammar: bool = True
     supports_token_progress: bool = True
     supports_context_input: bool = True
@@ -133,7 +161,9 @@ class OpenAIJsonTransport(ModelJsonTransport):
         retry_base_delay: float = 5.0,
         responses_client: Any | None = None,
         native_tools: bool | None = None,
+        plan_model_lookup: Callable[[str], Any] | None = None,
     ) -> None:
+        self._plan_model_lookup = plan_model_lookup
         self._plan_route = plan_route
         # Actions as native function calls with history as native items (see
         # openai_native.py). The plan route's Codex-tuned models need it; the API-key
@@ -198,20 +228,27 @@ class OpenAIJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        image_attachments: object = None,
+        image_assets: object = None,
         on_thinking: Callable[[str], None] | None = None,
         on_retry: Callable[[int, int, str, str], None] | None = None,
         on_progress: Callable[..., None] | None = None,
         on_usage: Callable[[int, int], None] | None = None,
         on_context_input: ContextInputObserver | None = None,
     ) -> dict[str, object]:
+        await require_image_capability(self, model, image_assets, image_attachments)
         if self._native_tools:
             return await self._generate_native(
                 model=model, schema_name=schema_name, schema=schema,
                 system_instructions=system_instructions, user_payload=user_payload,
+                image_attachments=image_attachments, image_assets=image_assets,
                 on_thinking=on_thinking, on_retry=on_retry, on_progress=on_progress,
                 on_usage=on_usage, on_context_input=on_context_input)
         codec = encode_strict_schema(schema)
-        body = self._body(model, system_instructions, user_payload)
+        body = self._body(model, system_instructions, user_payload, image_attachments)
+        if image_assets:
+            body["input"] = history_messages(
+                user_payload, image_assets, "responses", image_attachments)
         body["text"] = {"format": {
             "type": "json_schema",
             "name": _SCHEMA_NAME_RE.sub("_", schema_name)[:64],
@@ -251,6 +288,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        image_attachments: object = None,
+        image_assets: object = None,
         on_thinking: Callable[[str], None] | None,
         on_retry: Callable[[int, int, str, str], None] | None,
         on_progress: Callable[..., None] | None,
@@ -259,8 +298,9 @@ class OpenAIJsonTransport(ModelJsonTransport):
     ) -> dict[str, object]:
         actions = native_actions(schema, schema_name)
         instructions = system_instructions + actions.instructions
-        body = self._body(model, instructions, user_payload)
-        items = to_native_input(user_payload, actions)
+        body = self._body(model, instructions, user_payload, image_attachments)
+        items = to_native_input(user_payload, actions, image_assets)
+        _add_native_images(items, image_attachments, self.supports_vision)
         body["tools"] = actions.tools
         # One native action per response; tool_calls carries the entire scheduler batch.
         body["tool_choice"] = actions.tool_choice
@@ -280,13 +320,13 @@ class OpenAIJsonTransport(ModelJsonTransport):
         _dump_native_request(schema_name, body)
         reply = await self._run(body, on_thinking, on_retry, on_progress, on_usage,
                                 native=True, headers=headers, on_context_input=on_context_input)
-        if key is not None:
-            self._sessions.commit(key, items, body["input"])
         assert reply.call is not None  # _stream_once raises when the model didn't call
         if len(reply.calls) > 1:
             raise RuntimeError("multiple function calls on a single-action provider path; "
                                "mixed actions are invalid")
         result = actions.decode_call(*reply.call)
+        if key is not None:
+            self._sessions.commit(key, items, body["input"])
         if result.get("type") == "tool_calls" and reply.calls:
             result["provider_call_id"] = reply.calls[0][2]
         return result
@@ -294,12 +334,22 @@ class OpenAIJsonTransport(ModelJsonTransport):
     # ------------------------------------------------------------ request
 
     def _body(
-        self, model: str, system_instructions: str, user_payload: dict[str, object]
+        self, model: str, system_instructions: str, user_payload: dict[str, object],
+        image_attachments: object = None,
     ) -> dict[str, Any]:
+        text = json.dumps(payload_without_image_attachments(user_payload))
+        images = normalize_image_attachments(image_attachments)
+        content: object = text
+        if images and self.supports_vision:
+            content = [{"type": "input_text", "text": text}]
+            content.extend(
+                {"type": "input_image", "image_url": url, "detail": "high"}
+                for url, _mime, _data in images
+            )
         body: dict[str, Any] = {
             "model": model,
             "instructions": system_instructions,
-            "input": [{"role": "user", "content": json.dumps(user_payload)}],
+            "input": [{"role": "user", "content": content}],
             "stream": True,
             "store": False,
         }
@@ -325,7 +375,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         if token != self._client_token:
             # The SDK's own retries are off: one retry policy (ours) decides what a
             # failure means, including the plan errors that must never be retried.
-            client = AsyncOpenAI(api_key=token, max_retries=0, timeout=self._timeout_sec)
+            client = AsyncOpenAI(api_key=token, max_retries=0, timeout=self._timeout_sec,
+                                 base_url="https://api.openai.com/v1")
             self._client_token, self._client_responses = token, client.responses
         return self._client_responses
 
@@ -558,8 +609,14 @@ class OpenAIJsonTransport(ModelJsonTransport):
 
     def _status_error(self, exc: openai.APIStatusError) -> Exception:
         body = exc.body if isinstance(exc.body, dict) else {}
-        code = getattr(exc, "code", None) or body.get("code")
-        message = str(body.get("message") or body.get("detail") or exc.message)
+        nested = body.get("error")
+        error = nested if isinstance(nested, dict) else body
+        code = getattr(exc, "code", None) or error.get("code")
+        message = str(error.get("message") or body.get("detail") or exc.message)
+        if self._plan_route and exc.status_code == 400 and (
+            "image" in str(code).lower() or "image input" in message.lower()
+        ):
+            return PlanUnsupportedCapability(message, status=400, request_id=exc.request_id)
         stopped = classify_plan_error(code, message, status=exc.status_code,
                                       request_id=exc.request_id,
                                       param=getattr(exc, "param", None) or body.get("param"))
@@ -613,7 +670,7 @@ def _dump_native_request(schema_name: str, body: dict[str, Any]) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         name = _SCHEMA_NAME_RE.sub("_", schema_name)[:64]
         (directory / f"native-{name}.json").write_text(
-            json.dumps(body, indent=1, default=str), encoding="utf-8")
+            json.dumps(redact_image_parts(body), indent=1, default=str), encoding="utf-8")
     except Exception:  # noqa: BLE001 — debugging aid only, never fails a call
         logger.debug("could not write the native request dump", exc_info=True)
 

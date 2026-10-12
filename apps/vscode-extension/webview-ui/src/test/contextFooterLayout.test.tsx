@@ -46,7 +46,7 @@ describe.skipIf(!chrome)("context composer footer in a real browser", () => {
             const results = [...document.querySelectorAll('[data-panel]')].map(panel => {
               const footer = panel.querySelector('[data-testid="composer-footer"]');
               const bounds = footer.getBoundingClientRect();
-              const controls = [...footer.querySelectorAll('button, input')].map(el => {
+              const controls = [...footer.querySelectorAll('button, input:not([type="file"])')].map(el => {
                 const r = el.getBoundingClientRect();
                 return { name: el.getAttribute('aria-label') || el.textContent.trim(),
                   visible: r.width > 0 && r.height > 0 && r.left >= bounds.left - 1 && r.right <= bounds.right + 1,

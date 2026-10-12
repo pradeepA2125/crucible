@@ -10,6 +10,7 @@ from agentd.chat.controller import ChatController
 from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from agentd.runtime.artifacts import resolve_artifacts_base
 
 
 @pytest.mark.asyncio
@@ -22,7 +23,7 @@ async def test_plan_mode_true_starts_turn_in_plan(tmp_path: Path):
         workspace_path=str(tmp_path), reasoning_engine=reasoning, thread_store=store,
         orchestrator=None, broadcaster=EventBroadcaster())
     await ctrl.handle_message(thread.thread_id, "hello", "chan", plan_mode=True)
-    trace_path = tmp_path / ".crucible" / "state" / "artifacts" / "chat" / thread.thread_id
+    trace_path = resolve_artifacts_base(tmp_path) / "chat" / thread.thread_id
     # Simpler + more direct than reading the artifact: assert via the turn-trace file
     # written by _write_turn_trace, which records the phase the loop actually ran in.
     import json
@@ -43,7 +44,7 @@ async def test_plan_mode_false_or_omitted_starts_turn_in_active(tmp_path: Path):
         orchestrator=None, broadcaster=EventBroadcaster())
     await ctrl.handle_message(thread.thread_id, "hello", "chan")  # plan_mode omitted
     import json
-    trace_path = tmp_path / ".crucible" / "state" / "artifacts" / "chat" / thread.thread_id
+    trace_path = resolve_artifacts_base(tmp_path) / "chat" / thread.thread_id
     matches = list(trace_path.glob("*/turn-trace.json"))
     assert matches
     data = json.loads(matches[0].read_text())

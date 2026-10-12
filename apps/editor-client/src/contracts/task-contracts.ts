@@ -923,10 +923,18 @@ export interface BackendTaskClient {
   discardInlineChange(inlineTaskId: string): Promise<void>;
 }
 
+export interface ChatImageAttachment {
+  name: string;
+  mediaType: string;
+  dataUrl: string;
+  bytes: number;
+}
+
 export interface SendChatOptions {
   stepReview?: boolean;
   forcedSkills?: string[];
   mentionedFiles?: { path: string; content: string }[];
+  imageAttachments?: ChatImageAttachment[];
   planMode?: boolean;
   messageId?: string;
 }

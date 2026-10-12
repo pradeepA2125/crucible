@@ -79,6 +79,8 @@ class ObservedPrompt:
 
     tokens: int
     message_count: int
+    projection_revision: str = ""
+    history_tokens: int | None = None
 
 
 class Memory(BaseModel):

@@ -119,7 +119,7 @@ class MemoryHarness:
     async def prepare_turn(
         self, history: History, run_id: str, query: str = "",
         observed: ObservedPrompt | None = None, *, consolidate: bool = True,
-        force: bool = False,
+        force: bool = False, projected_history: History | None = None,
     ) -> TurnPreparation:
         if not self._enabled:
             return TurnPreparation(history=history, recalled_memories=[], compacted=False)
@@ -129,7 +129,9 @@ class MemoryHarness:
             try:
                 # force only when set, so compactors without the keyword keep working.
                 result = await self._compactor.maybe_compact(
-                    history, run_id, observed=observed, **({"force": True} if force else {}))
+                    history, run_id, observed=observed, **({"force": True} if force else {}),
+                    **({"projected_history": projected_history}
+                       if projected_history is not None else {}))
             except Exception:  # best-effort: memory must never break a loop iteration
                 logger.warning("[memory] compaction failed for run=%s", run_id, exc_info=True)
         prep = TurnPreparation(
@@ -155,6 +157,10 @@ class MemoryHarness:
             prep.recalled_memories = lines
             prep.recall_trace = trace
         return prep
+
+    @property
+    def image_context_window(self) -> int | None:
+        return getattr(self._compactor, "_window_tokens", None)
 
     def set_window_tokens(self, window_tokens: int) -> None:
         """Forward a settings-panel window change to the compactor.

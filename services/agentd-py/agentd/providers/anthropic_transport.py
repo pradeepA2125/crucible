@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import logging
-
 import json
+import logging
 import os
 from typing import Any
 
@@ -12,12 +11,21 @@ except ImportError:
     AsyncAnthropicClient = None
 
 from agentd.providers.context_overflow import ContextWindowExceeded, raise_if_overflow
-from agentd.providers.contracts import ModelJsonTransport, narrow_schema_for_type
+from agentd.providers.contracts import (
+    ModelJsonTransport,
+    narrow_schema_for_type,
+    normalize_image_attachments,
+    payload_without_image_attachments,
+)
+from agentd.providers.image_capabilities import require_image_capability
+from agentd.providers.image_parts import history_messages
 
 logger = logging.getLogger(__name__)
 
 
 class AnthropicJsonTransport(ModelJsonTransport):
+    supports_vision: bool = True
+
     def __init__(
         self,
         *,
@@ -29,6 +37,7 @@ class AnthropicJsonTransport(ModelJsonTransport):
         messages_client: Any | None = None,
     ) -> None:
         self._max_tokens = max_tokens
+        self._image_endpoint = (endpoint or "https://api.anthropic.com").rstrip("/")
 
         if messages_client is not None:
             self._messages: Any = messages_client
@@ -65,9 +74,12 @@ class AnthropicJsonTransport(ModelJsonTransport):
         schema: dict[str, object],
         system_instructions: str,
         user_payload: dict[str, object],
+        image_attachments: object = None,
+        image_assets: object = None,
         on_thinking: object = None,
         on_retry: object = None,
     ) -> dict[str, object]:
+        await require_image_capability(self, model, image_assets, image_attachments)
         active_schema = schema
         for attempt in range(2):  # one narrowing retry for controller schemas
             response = await self._create(
@@ -79,7 +91,8 @@ class AnthropicJsonTransport(ModelJsonTransport):
                     schema_name=schema_name,
                     schema=active_schema,
                 ),
-                messages=[{"role": "user", "content": json.dumps(user_payload)}],
+                messages=history_messages(
+                    user_payload, image_assets, "anthropic", image_attachments),
             )
             output_text = self._extract_text(response)
             result = self._parse_output_object(output_text)
@@ -178,6 +191,19 @@ class AnthropicJsonTransport(ModelJsonTransport):
             raise RuntimeError(msg)
 
         return payload
+
+
+def _anthropic_user_content(user_payload: dict[str, object], attachments: object) -> object:
+    safe_payload = payload_without_image_attachments(user_payload)
+    images = normalize_image_attachments(attachments)
+    if not images:
+        return json.dumps(safe_payload)
+    blocks: list[dict[str, object]] = [{"type": "text", "text": json.dumps(safe_payload)}]
+    blocks.extend(
+        {"type": "image", "source": {"type": "base64", "media_type": mime, "data": encoded}}
+        for _url, mime, encoded in images
+    )
+    return blocks
 
 
 def strip_json_code_fences(text: str) -> str:

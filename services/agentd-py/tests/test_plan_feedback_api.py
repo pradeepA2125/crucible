@@ -99,7 +99,9 @@ class SpecFirstReasoner:
             for msg in history
         )
         if in_verify:
-            return {"type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""}
+            return {
+                "type": "verify_done", "thought": "scripted", "verified": True, "test_output": ""
+            }
         return {
             "type": "emit_patch",
             "thought": "scripted",
@@ -230,7 +232,9 @@ async def _wait_for_plan_markdown(
         if payload["status"] in {"FAILED", "ABORTED"}:
             pytest.fail(f"Task {task_id} terminated unexpectedly: {payload}")
         await asyncio.sleep(0.01)
-    pytest.fail(f"Timed out waiting for plan fragment {expected_fragment}: last payload={last_payload}")
+    pytest.fail(
+        f"Timed out waiting for plan fragment {expected_fragment}: last payload={last_payload}"
+    )
 
 
 @pytest.mark.asyncio
@@ -304,7 +308,9 @@ async def test_plan_feedback_regenerates_markdown_plan(tmp_path: Path) -> None:
         payload = await _wait_for_plan_markdown(client, task_id, "# Revised Plan")
 
     assert "response model" in str(payload["plan_markdown"]).lower()
-    assert reasoner.markdown_feedbacks[-1] == "Please add a response model instead of returning a raw list."
+    assert reasoner.markdown_feedbacks[-1] == (
+        "Please add a response model instead of returning a raw list."
+    )
 
 
 @pytest.mark.asyncio
@@ -323,7 +329,9 @@ async def test_create_task_auto_critiques_markdown_before_approval(tmp_path: Pat
 
     workspace = tmp_path / "workspace"
     (workspace / "services/agentd-py/agentd/api").mkdir(parents=True)
-    (workspace / "services/agentd-py/agentd/api/routes.py").write_text("router = object()\n", encoding="utf-8")
+    (workspace / "services/agentd-py/agentd/api/routes.py").write_text(
+        "router = object()\n", encoding="utf-8"
+    )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
@@ -339,7 +347,9 @@ async def test_create_task_auto_critiques_markdown_before_approval(tmp_path: Pat
         task_id = response.json()["task_id"]
         payload = await _wait_for_status(client, task_id, "AWAITING_PLAN_APPROVAL")
 
-    assert payload["plan_markdown"] == "# Revised Plan\n\n- Update `services/agentd-py/agentd/api/routes.py`"
+    assert payload["plan_markdown"] == (
+        "# Revised Plan\n\n- Update `services/agentd-py/agentd/api/routes.py`"
+    )
 
 
 @pytest.mark.asyncio
@@ -365,9 +375,13 @@ async def test_plan_feedback_null_continues_task_to_ready_for_review(tmp_path: P
                 "goal": "Implement GET /v1/tasks/{task_id}/events",
                 "workspace_path": str(workspace),
                 "mode": "project_edit",
+                # Plan approval and per-step review are independent policies.
+                "step_review_auto_accept": True,
             },
         )
+        assert create_response.status_code == 200
         task_id = create_response.json()["task_id"]
+        assert (await store.get(task_id)).step_review_auto_accept is True
         await _wait_for_status(client, task_id, "AWAITING_PLAN_APPROVAL")
 
         approve_response = await client.post(

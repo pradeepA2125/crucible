@@ -19,6 +19,7 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     ("api/routes.py", "/chat/threads/{thread_id}/rewind-preview"),
     ("api/routes.py", "/chat/threads/{thread_id}/sessions/{session_id}/transcript"),
     ("api/routes.py", "/chat/threads/{thread_id}/usage"),
+    ("api/routes.py", "/chat/threads/{thread_id}/images/{asset_id}"),  # bounded reads only
     ("api/routes.py", "/chat/threads/{thread_id}/teams"),
     ("api/routes.py", "/chat/threads/{thread_id}/teams/{team_id}"),
     ("api/routes.py", "/config"),

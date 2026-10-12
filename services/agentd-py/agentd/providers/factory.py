@@ -272,6 +272,7 @@ def _build_raw_transport(
         return OpenAIJsonTransport(
             bearer=bearer,
             plan_route=True,
+            plan_model_lookup=lambda model: service.plan_model(registration_id, model),
             timeout_sec=_float_env(env, "CRUCIBLE_CHATGPT_TIMEOUT_SEC", 120.0),
             stream_timeout_sec=_float_env(env, "CRUCIBLE_CHATGPT_STREAM_TIMEOUT_SEC", 600.0),
             max_retries=_int_env(env, "CRUCIBLE_CHATGPT_MAX_RETRIES", 4),

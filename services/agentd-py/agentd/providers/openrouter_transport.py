@@ -98,6 +98,7 @@ class OpenRouterJsonTransport(OpenAICompatibleTransport):
         # fallback every turn; set False to let strict route to the default provider
         # (may still succeed there, else the fallback catches it) and skip the hard 404.
         self._require_parameters = require_parameters
+        self._image_endpoint = base_url.rstrip("/")
         # Test/fake path: stays exactly what's passed (None by default), so
         # existing completions_client-injected tests make zero network calls and
         # always take the name-substring fallback — unchanged behavior unless a

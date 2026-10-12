@@ -147,6 +147,7 @@ class ChatAgent:
     async def handle_message(
         self, thread_id: str, message: str, channel_id: str,
         step_review: bool | None = None,
+        image_attachments: list[dict[str, object]] | None = None,
     ) -> None:
         """Process a chat message and broadcast all events to channel_id.
 
@@ -162,8 +163,22 @@ class ChatAgent:
             thread_id, channel_id, len(message),
         )
 
-        user_msg = ChatMessage(role="user", content=message)
+        if image_attachments and not all("asset_id" in ref and "data_url" not in ref
+                                         for ref in image_attachments):
+            from agentd.images import ImageAssetStore
+            image_attachments = ImageAssetStore(Path(self._workspace_path)).import_uploads(
+                image_attachments)
+        user_msg = ChatMessage(role="user", content=message,
+                               metadata={"image_attachments": image_attachments}
+                               if image_attachments else {})
         self._store.append_message(thread_id, user_msg)
+        if image_attachments:
+            fallback = ("Image inference is unavailable in legacy chat; enable the chat controller "
+                        "and select a supported vision model, or remove the image.")
+            self._store.append_message(thread_id, ChatMessage(role="agent", content=fallback))
+            self._broadcaster.broadcast(channel_id, {
+                "type": "chat_done", "payload": {"error": fallback}})
+            return
 
         # Auto-name thread from first user message
         if not any(m.role == "user" for m in thread.messages):

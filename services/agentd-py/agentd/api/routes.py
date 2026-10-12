@@ -771,7 +771,7 @@ def build_router(
                 while True:
                     try:
                         event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # Keep-alive ping — prevents Node.js fetch (undici) from
                         # dropping the connection during the silent gap while the
                         # model generates a large plan (no task-channel events for
@@ -1286,7 +1286,13 @@ def build_router(
             # _find_recent_task would re-discover the FAILED parent, not this child.
             chat_agent._store.append_message(  # type: ignore[attr-defined]
                 thread_id,
-                ChatMessage(role="agent", content=child_id, type="task_card", task_id=child_id, metadata={}),
+                ChatMessage(
+                    role="agent",
+                    content=child_id,
+                    type="task_card",
+                    task_id=child_id,
+                    metadata={},
+                ),
             )
             orchestrator.broadcaster.broadcast(parent.chat_channel_id, {
                 "type": "task_card",
@@ -1302,7 +1308,9 @@ def build_router(
                         parent.task_id,
                         child_id,
                         parent.workspace_path,
-                        src_override=Path(parent.shadow_workspace_path) if parent.shadow_workspace_path else None,
+                        src_override=(
+                            Path(parent.shadow_workspace_path)
+                            if parent.shadow_workspace_path else None),
                     )
                     child_record = await store.get(child_id)
                     child_record.shadow_workspace_path = str(shadow.shadow_path)
@@ -1349,11 +1357,14 @@ def build_router(
         """
         import asyncio as _asyncio
 
-        workspace_path = request.get("workspace_path", "").strip() if isinstance(request, dict) else ""
+        workspace_path = (
+            request.get("workspace_path", "").strip()
+            if isinstance(request, dict) else "")
         if not workspace_path:
             raise HTTPException(400, "workspace_path is required")
         if retrieval_client is None or not retrieval_client.semantic_enabled():
-            raise HTTPException(503, "Semantic retrieval is not enabled (set CRUCIBLE_SEMANTIC_RETRIEVAL=true)")
+            raise HTTPException(
+                503, "Semantic retrieval is not enabled (set CRUCIBLE_SEMANTIC_RETRIEVAL=true)")
 
         async def _build() -> None:
             loop = _asyncio.get_event_loop()
@@ -1542,6 +1553,32 @@ def build_router(
                 raise HTTPException(status_code=404, detail="unknown session")
             return transcript
 
+        @router.get("/chat/threads/{thread_id}/images/{asset_id}")
+        async def get_chat_image(thread_id: str, asset_id: str):
+            from fastapi.responses import Response
+
+            from agentd.images import ImageAssetStore
+
+            thread = _chat_agent._store.get_thread(thread_id)
+            if thread is None:
+                raise HTTPException(status_code=404, detail="Image not found")
+            refs = [ref for message in thread.messages
+                    for ref in message.metadata.get("image_attachments", [])
+                    if isinstance(ref, dict)]
+            refs.extend(ref for entry in thread.controller_conversation_history or []
+                        for ref in entry.get("image_refs", []) if isinstance(ref, dict))
+            if not any(ref.get("asset_id") == asset_id for ref in refs):
+                raise HTTPException(status_code=404, detail="Image not found")
+            try:
+                data = ImageAssetStore(Path(thread.workspace_path)).read_preview(asset_id)
+            except (OSError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail="Image not found") from exc
+            if len(data) > 8 * 1024 * 1024:
+                raise HTTPException(status_code=404, detail="Image unavailable")
+            return Response(content=data, media_type="image/png",
+                            headers={"Cache-Control": "private, no-store",
+                                     "X-Content-Type-Options": "nosniff"})
+
         @router.post("/chat/threads/{thread_id}/message")
         async def post_chat_message(thread_id: str, request: dict) -> StreamingResponse:
             # Client-chosen id keeps the webview's optimistic echo and the persisted
@@ -1566,6 +1603,15 @@ def build_router(
                 ]
                 if isinstance(_raw_mentioned, list) else None
             ) or None
+            from agentd.images import ImageAssetStore, ImageValidationError
+            thread = _chat_agent._store.get_thread(thread_id)
+            if thread is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            try:
+                image_attachments = ImageAssetStore(Path(thread.workspace_path)).import_uploads(
+                    request.get("image_attachments", [])) or None
+            except ImageValidationError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
             _raw_plan_mode = request.get("plan_mode")
             plan_mode = _raw_plan_mode if isinstance(_raw_plan_mode, bool) else None
             channel_id = f"chat:{thread_id}"
@@ -1586,7 +1632,8 @@ def build_router(
                         queued_id = _chat_agent.queue_message(  # type: ignore[attr-defined]
                             thread_id, message, message_id=_message_id,
                             step_review=step_review, plan_mode=plan_mode,
-                            mentioned_files=mentioned_files, forced_skills=forced_skills)
+                            mentioned_files=mentioned_files, forced_skills=forced_skills,
+                            image_attachments=image_attachments)
                         return JSONResponse(status_code=202,  # type: ignore[return-value]
                                             content={"queued": True, "message_id": queued_id})
                     raise HTTPException(
@@ -1598,8 +1645,9 @@ def build_router(
                     _chat_agent.handle_message(
                         thread_id, message, channel_id=channel_id,
                         step_review=step_review, forced_skills=forced_skills,
-                        mentioned_files=mentioned_files, plan_mode=plan_mode,
-                        message_id=_message_id),
+                        mentioned_files=mentioned_files,
+                        **({"image_attachments": image_attachments} if image_attachments else {}),
+                        plan_mode=plan_mode, message_id=_message_id),
                     channel_id=channel_id,
                 )
                 queue = _chat_agent._broadcaster.subscribe(channel_id)
@@ -1635,11 +1683,13 @@ def build_router(
                 try:
                     await _chat_agent.handle_message(
                         thread_id, message, channel_id=channel_id, step_review=step_review,
+                        image_attachments=image_attachments,
                     )
                 except Exception:
                     import logging as _logging
                     _logging.getLogger(__name__).exception("ChatAgent.handle_message failed")
-                    _chat_agent._broadcaster.broadcast(channel_id, {"type": "chat_done", "payload": {}})
+                    _chat_agent._broadcaster.broadcast(
+                        channel_id, {"type": "chat_done", "payload": {}})
 
             async def event_stream():
                 # Start the agent task INSIDE the generator so it is scheduled
@@ -1654,7 +1704,7 @@ def build_router(
                             event = await _asyncio_chat.wait_for(
                                 queue.get(), timeout=15.0
                             )
-                        except _asyncio_chat.TimeoutError:
+                        except TimeoutError:
                             # Keep-alive ping — prevents Node.js fetch from
                             # dropping the connection during slow LLM inference.
                             yield ": ping\n\n"

@@ -314,6 +314,8 @@ class DefaultReasoningEngine(ReasoningEngine):
         render_ctx: RenderContext | None = None,
         persona: str | None = None,
         on_context_input: object | None = None,
+        image_attachments: list[dict[str, object]] | None = None,
+        image_assets: dict[str, dict[str, object]] | None = None,
     ) -> dict[str, object]:
         from agentd.chat.controller_prompts import (
             build_controller_step_payload,
@@ -397,6 +399,12 @@ class DefaultReasoningEngine(ReasoningEngine):
                else {}),
             **({"unconstrained": True}
                if unconstrained and _accepts(self._transport, "unconstrained")
+               else {}),
+            **({"image_assets": image_assets}
+               if image_assets is not None and _accepts(self._transport, "image_assets")
+               else {}),
+            **({"image_attachments": image_attachments}
+               if image_attachments is not None and _accepts(self._transport, "image_attachments")
                else {}),
         )
         result = result if isinstance(result, dict) else {}

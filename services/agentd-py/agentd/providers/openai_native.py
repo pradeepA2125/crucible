@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
+from agentd.providers.contracts import payload_without_image_attachments
+from agentd.providers.image_parts import image_content, origin_images
 from agentd.providers.openai_strict_schema import StrictSchemaCodec, encode_strict_schema
 
 NAMESPACE = "crucible"
@@ -180,30 +182,36 @@ def _union_branches(schema: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]
 # ---------------------------------------------------------------- history
 
 
-def to_native_input(payload: dict[str, object], actions: NativeActions) -> list[dict[str, Any]]:
-    """The engine's payload as native input items.
+def to_native_input(
+    payload: dict[str, object], actions: NativeActions, image_assets: object = None,
+) -> list[dict[str, Any]]:
+    """Convert model text/history to native items without transport-only images.""
 
     Payload fields before the history (stable workspace context) open the input, the
     history follows as items, and every later field (goal, instruction, budget…) closes
     it — the same order as today, so the stable part still leads for the prompt cache.
     """
-    history = payload.get(HISTORY_KEY)
+    safe_payload = payload_without_image_attachments(payload)
+    history = safe_payload.get(HISTORY_KEY)
     if not isinstance(history, list):
-        return [{"role": "user", "content": json.dumps(payload)}]
-    keys = list(payload)
+        return [{"role": "user", "content": json.dumps(safe_payload)}]
+    keys = list(safe_payload)
     split = keys.index(HISTORY_KEY)
-    head = {k: payload[k] for k in keys[:split]}
-    tail = {k: payload[k] for k in keys[split + 1:]}
+    head = {k: safe_payload[k] for k in keys[:split]}
+    tail = {k: safe_payload[k] for k in keys[split + 1:]}
     items: list[dict[str, Any]] = []
     if head:
         items.append({"role": "user", "content": json.dumps(head)})
-    items.extend(_history_items(history, actions))
+    items.extend(_history_items(payload.get(HISTORY_KEY, history), actions, image_assets))
     items.append({"role": "user", "content": json.dumps(tail)})
     return items
 
 
-def _history_items(history: list[Any], actions: NativeActions) -> list[dict[str, Any]]:
+def _history_items(
+    history: list[Any], actions: NativeActions, image_assets: object = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    batch_images: list[dict[str, Any]] = []
     pending: dict[str, str] = {}
     calls = 0
     batch_results: list[dict[str, Any]] | None = None
@@ -214,16 +222,28 @@ def _history_items(history: list[Any], actions: NativeActions) -> list[dict[str,
             items.append({"type": "function_call_output", "call_id": call_id,
                           "output": "[batch results]\n" + json.dumps(batch_results)
                           if batch_results is not None else NO_RESULT})
+        items.extend(batch_images)
+        batch_images.clear()
         batch_results = None
         pending.clear()
 
-    for entry in history:
+    for raw_entry in history:
+        images = origin_images(raw_entry, image_assets)
+        entry = (payload_without_image_attachments(raw_entry)
+                 if isinstance(raw_entry, dict) else raw_entry)
         role = entry.get("role") if isinstance(entry, dict) else None
         content = str(entry.get("content", "")) if isinstance(entry, dict) else str(entry)
         if role == "tool_result" and batch_results is not None:
             batch_results.append(entry)
+            if images:
+                batch_images.append({"role": "user", "content": image_content(
+                    "[Images from preceding tool result]", images, "responses")})
             continue
         if role == "tool_result":
+            if images:
+                # Insert after the result below, including orphan-result paths.
+                image_item = {"role": "user", "content": image_content(
+                    "[Images from tool result]", images, "responses")}
             label = str(entry.get("tool") or "")
             identity = entry.get("provider_call_id") or entry.get("call_id")
             if pending:
@@ -232,6 +252,8 @@ def _history_items(history: list[Any], actions: NativeActions) -> list[dict[str,
                 if entry.get("batch_id") and identity not in pending:
                     items.append({"role": "user", "content": _with_label(
                         _ORPHAN_LABEL_FMT, label, content)})
+                    if images:
+                        items.append(image_item)
                     continue
                 implied = pending.pop(call_id)
                 output = (
@@ -246,6 +268,8 @@ def _history_items(history: list[Any], actions: NativeActions) -> list[dict[str,
             else:
                 items.append({"role": "user",
                               "content": _with_label(_ORPHAN_LABEL_FMT, label, content)})
+            if images:
+                items.append(image_item)
             continue
         close_pending()
         if role == "assistant":
@@ -286,7 +310,7 @@ def _history_items(history: list[Any], actions: NativeActions) -> list[dict[str,
             items.append(call)
             pending[call_id] = _implied_tool(action)
             continue
-        items.append({"role": "user", "content": content})
+        items.append({"role": "user", "content": image_content(content, images, "responses")})
     close_pending()
     return items
 
@@ -472,4 +496,8 @@ class SessionInputs:
 
 
 def _labelled(tail: dict[str, Any]) -> dict[str, Any]:
-    return {**tail, "content": CURRENT_STEP + str(tail.get("content", ""))}
+    content = tail.get("content", "")
+    if isinstance(content, list):
+        return {**tail, "content": (
+            [{"type": "input_text", "text": CURRENT_STEP}] + copy.deepcopy(content))}
+    return {**tail, "content": CURRENT_STEP + str(content)}

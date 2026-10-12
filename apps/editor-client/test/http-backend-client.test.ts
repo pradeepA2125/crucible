@@ -58,6 +58,31 @@ describe("HttpBackendClient skills", () => {
     expect(JSON.parse(sentBody).mentioned_files).toBeUndefined();
   });
 
+  test("sendChatMessage maps image attachments to the backend wire fields", async () => {
+    let sentBody = "";
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async (_url, init) => {
+        sentBody = (init?.body as string) ?? "";
+        return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    await client.sendChatMessage("t1", "describe this", undefined, {
+      imageAttachments: [{
+        name: "screen.png",
+        mediaType: "image/png",
+        dataUrl: "data:image/png;base64,AA==",
+        bytes: 1,
+      }],
+    });
+    expect(JSON.parse(sentBody).image_attachments).toEqual([{
+      name: "screen.png",
+      media_type: "image/png",
+      data_url: "data:image/png;base64,AA==",
+      bytes: 1,
+    }]);
+  });
+
   test("sendChatMessage includes plan_mode in the request body when planMode is set", async () => {
     let sentBody = "";
     const client = new HttpBackendClient({

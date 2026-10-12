@@ -439,7 +439,7 @@ export type ExtensionMessage =
   | { type: "thread_title_updated"; payload: { thread_id: string; title: string } }
   // P1: prompt-file expansion replies from the host
   | { type: "promptList"; names: string[] }
-  | { type: "promptExpanded"; name: string; found: boolean; text: string }
+  | { type: "promptExpanded"; requestId?: string; name: string; found: boolean; text: string }
   | { type: "workspaceFileList"; paths: string[] }
   | { type: "fileReferenceCatalog"; revision: number; entries: import("../../src/file-references/matching").FileReferenceEntry[] }
   // Sticky Plan Mode toggle hydration (extension globalState), pushed on webviewReady
@@ -463,7 +463,7 @@ export type ExtensionMessage =
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
   | { type: "webviewReady" }
-  | { type: "sendMessage"; text: string; stepReview?: boolean; forcedSkills?: string[]; mentionedPaths?: string[]; planMode?: boolean }
+  | { type: "sendMessage"; text: string; originalDraftText?: string; draftId?: string; stepReview?: boolean; forcedSkills?: string[]; mentionedPaths?: string[]; imageAttachments?: { name: string; mediaType: string; dataUrl: string; bytes: number }[]; planMode?: boolean }
   | { type: "rewindPreview"; messageId: string }
   | { type: "rewindConfirm"; messageId: string }
   | { type: "implementPlan"; taskId: string }
@@ -501,7 +501,7 @@ export type WebviewMessage =
   | { type: "setReviewPref"; autoAccept: boolean }
   // P1: prompt-file (.crucible/prompts/<name>.md) listing + expand-before-send
   | { type: "listPrompts" }
-  | { type: "expandPrompt"; name: string; args: string }
+  | { type: "expandPrompt"; requestId: string; name: string; args: string }
   // P2: skill (.crucible/skills/<name>/SKILL.md) catalog for /skill forced-load
   | { type: "listSkills" }
   // Composer model quick-swap (ModelMenu) + settings shortcut.

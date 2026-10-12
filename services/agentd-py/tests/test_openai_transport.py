@@ -3,6 +3,7 @@ credentials, strict-schema encode/decode, and the plan route's error contract.""
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,7 +13,8 @@ import pytest
 
 from agentd.providers.availability import is_provider_unavailable
 from agentd.providers.openai_compatible_transport import TransientTransportError
-from agentd.providers.openai_transport import OpenAIJsonTransport, StaticBearer
+from agentd.providers.openai_native import native_actions, to_native_input
+from agentd.providers.openai_transport import USAGE_OWNER, OpenAIJsonTransport, StaticBearer
 from agentd.providers.plan_access import (
     PlanNotEligible,
     PlanSessionInvalid,
@@ -20,6 +22,52 @@ from agentd.providers.plan_access import (
     PlanUsageLimitReached,
     ProviderAccessStopped,
 )
+
+
+@contextmanager
+def _usage_owner(value: str):
+    token = USAGE_OWNER.set(value)
+    try:
+        yield
+    finally:
+        USAGE_OWNER.reset(token)
+
+
+def test_openai_body_builds_native_image_parts() -> None:
+    transport = OpenAIJsonTransport(responses_client=object())
+    body = transport._body("gpt-4o", "sys", {"message": "look"}, [
+        "data:image/png;base64,AAAA",
+    ])
+    content = body["input"][0]["content"]
+    assert content == [
+        {"type": "input_text", "text": '{"message": "look"}'},
+        {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "high"},
+    ]
+
+
+def test_native_input_does_not_serialize_attachment_data() -> None:
+    schema = {"type": "object", "properties": {
+        "type": {"const": "answer"}, "answer": {"type": "string"}}}
+    actions = native_actions(schema, "controller_step_response")
+    payload = {"goal": "inspect", "image_attachments": [
+        {"data_url": "data:image/png;base64,SECRET"}]}
+
+    items = to_native_input(payload, actions)
+
+    assert "SECRET" not in json.dumps(items)
+    assert items == [{"role": "user", "content": '{"goal": "inspect"}'}]
+
+
+def test_openai_body_preserves_text_only_string() -> None:
+    transport = OpenAIJsonTransport(responses_client=object())
+    body = transport._body("gpt-4o", "sys", {"message": "look"})
+    assert body["input"][0]["content"] == '{"message": "look"}'
+
+
+def test_openai_body_ignores_malformed_image_attachment() -> None:
+    transport = OpenAIJsonTransport(responses_client=object())
+    body = transport._body("gpt-4o", "sys", {"message": "look"}, ["not-a-data-url"])
+    assert body["input"][0]["content"] == '{"message": "look"}'
 
 # ---------------------------------------------------------------- fakes
 
@@ -105,6 +153,10 @@ class RefreshingBearer:
 
 def _transport(fake: FakeResponses, **kwargs: Any) -> OpenAIJsonTransport:
     kwargs.setdefault("retry_base_delay", 0.0)
+    if kwargs.get("plan_route"):
+        async def lookup(model):
+            return SimpleNamespace(slug=model, input_modalities=("text", "image"))
+        kwargs.setdefault("plan_model_lookup", lookup)
     return OpenAIJsonTransport(responses_client=fake, **kwargs)
 
 
@@ -555,6 +607,69 @@ async def test_the_plan_route_asks_for_one_native_function_call() -> None:
     assert call["instructions"].startswith("sys") and "exactly one action" in call["instructions"]
     assert call["input"][0] == {"role": "user", "content": json.dumps({"workspace_path": "/ws"})}
     assert call["input"][1] == {"role": "user", "content": "read a.py"}
+
+
+@pytest.mark.asyncio
+async def test_plan_native_request_keeps_a_real_png_image_part() -> None:
+    png_data_url = (
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "YAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+    )
+    fake = FakeResponses([_call_done("answer", {"thought": "t", "answer": "seen"}), _completed()])
+    payload = {"workspace_path": "/ws", "conversation_history": [
+        {"role": "user", "content": "what is in this screenshot?"}],
+        "goal": "what is in this screenshot?"}
+
+    result = await _transport(fake, plan_route=True).generate_json(
+        model="gpt-4o", schema_name="controller_step_response", schema=CONTROLLER_UNION,
+        system_instructions="sys", user_payload=payload,
+        image_attachments=[{"name": "screen.png", "media_type": "image/png",
+                            "data_url": png_data_url, "bytes": 24}],
+    )
+
+    assert result["answer"] == "seen"
+    content = fake.calls[0]["input"][-1]["content"]
+    assert content == [
+        {"type": "input_text", "text": '{"goal": "what is in this screenshot?"}'},
+        {"type": "input_image", "image_url": png_data_url, "detail": "high"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_owned_images_do_not_accumulate_in_real_owner_cached_whole_requests() -> None:
+    url = "data:image/png;base64,Zmlyc3Q="
+    asset = {"data_url": url, "media_type": "image/png"}
+    fake = FakeResponses(*([
+        [_call_done("answer", {"thought": "t", "answer": "seen"}), _completed()]
+    ] * 6))
+    transport = _transport(fake, plan_route=True)
+    origin = {"role": "user", "content": "describe image", "image_refs": [{"asset_id": "a"}]}
+    history = [origin]
+    with _usage_owner("thread:chat-image-growing"):
+        for step in range(4):
+            await transport.generate_json(
+                model="gpt-4o", schema_name="controller_step_response", schema=CONTROLLER_UNION,
+                system_instructions="sys", user_payload=_payload(history.copy(), step),
+                image_assets={"a": asset},
+            )
+            history.append({"role": "user", "content": f"follow up {step}"})
+        dropped = [{"role": "user", "content": (
+            "Image a unavailable: budget. Do not claim to see it.")}] + history[1:]
+        for projected in (dropped, [{"role": "user", "content": "[MEMORY] image a unavailable"}]):
+            await transport.generate_json(
+                model="gpt-4o", schema_name="controller_step_response", schema=CONTROLLER_UNION,
+                system_instructions="sys", user_payload=_payload(projected, 5), image_assets={},
+            )
+    for index, request in enumerate(fake.calls):
+        images = [part for item in request["input"] for part in item.get("content", [])
+                  if isinstance(part, dict) and part.get("type") == "input_image"]
+        assert len(images) == (1 if index < 4 else 0)
+        if index < 4:
+            assert images[0]["image_url"] == url
+        else:
+            assert url not in json.dumps(request)
+    for first, second in zip(fake.calls[:3], fake.calls[1:4], strict=True):
+        assert second["input"][:len(first["input"])] == first["input"]
 
 
 @pytest.mark.asyncio

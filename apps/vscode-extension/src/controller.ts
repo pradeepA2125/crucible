@@ -92,7 +92,7 @@ export interface ControllerUI {
   // Chat rewind: the preview feeds the confirm dialog, the prefill hands the rewound
   // message's text back to the composer for edit-or-resend.
   showRewindPreview(preview: RewindPreview): void;
-  prefillComposer(text: string): void;
+  prefillComposer(text: string, draft?: { threadId: string; imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] }): void;
   resolveInlineChangeCard(taskId: string, resolution: "applied" | "discarded"): void;
   updateThreadTitle(threadId: string, title: string): void;
   appendChatThinkingEntry(text: string): void;
@@ -136,7 +136,7 @@ export interface ControllerUI {
   replaceChatMessages(messages: ChatMessage[]): void;
   removeChatMessage(id: string): void;
   markQueued(id: string): void;
-  restoreDraft(text: string): void;
+  restoreDraft(text: string, recovery?: { draftId: string; mentionedPaths?: string[]; imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] }): void;
   // Sub-agents (spec §10): roster rows, and the open agents' transcripts and live events.
   renderAgents(agents: AgentSummary[]): void;
   agentDetail(agentId: string, detail: AgentDetail): void;
@@ -995,8 +995,22 @@ export class CrucibleController {
     const threadId = this.activeThreadId;
     if (!threadId) return;
     const client = this.createClient(this.settings.getBackendBaseUrl());
+    const epoch = this.contextView();
+    const imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] = [];
     let result;
     try {
+      const original = (await client.getChatThread(threadId)).messages.find(m => m.id === messageId);
+      if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
+      const previews = original?.metadata?.["image_previews"];
+      if (Array.isArray(previews)) {
+        for (const preview of previews) {
+          if (typeof preview?.dataUrl !== "string" || !preview.dataUrl.startsWith("data:image/png;base64,")) continue;
+          const encoded = preview.dataUrl.split(",")[1] ?? "";
+          imageAttachments.push({ name: String(preview.name ?? "Image"), mediaType: "image/png", dataUrl: preview.dataUrl,
+            bytes: Buffer.from(encoded, "base64").length });
+        }
+        if (previews.some(p => !p?.dataUrl)) this.ui.showError("Some rewound image previews are unavailable; reattach those images before sending.");
+      }
       result = await client.rewindThread(threadId, messageId);
     } catch (error) {
       // A refusal (409 turn in flight / live task) has to be visible. Falling through
@@ -1006,8 +1020,10 @@ export class CrucibleController {
     }
     // The server is authoritative about what survived, so reload rather than mutating
     // the transcript locally. Mirrors switchChatThread's clear-then-append.
+    if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
     await this.switchChatThread(threadId);
-    this.ui.prefillComposer(result.prefillText);
+    if (this.activeThreadId !== threadId) return;
+    this.ui.prefillComposer(result.prefillText, { threadId, imageAttachments });
     if (result.failed.length > 0) {
       this.ui.showError(
         `Rewind restored ${result.restoredFiles.length} file(s) but ${result.failed.length} `
@@ -1019,6 +1035,9 @@ export class CrucibleController {
   async sendChatMessage(
     text: string, stepReview?: boolean, forcedSkills?: string[], mentionedPaths?: string[],
     planMode?: boolean,
+    imageAttachments?: { name: string; mediaType: string; dataUrl: string; bytes: number }[],
+    draftId?: string,
+    originalDraftText?: string,
   ): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
@@ -1033,7 +1052,9 @@ export class CrucibleController {
         sendEpoch = this.contextView();
         this.ui.openChatPanel();
       } catch (error) {
+        if (!currentSend()) return;
         this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
+        this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
         return;
       }
     }
@@ -1055,7 +1076,10 @@ export class CrucibleController {
       type: "text",
       id: messageId,
       timestamp: this.now(),
-      metadata: mentionedPaths?.length ? { mentioned_files: mentionedPaths } : {},
+      metadata: {
+        ...(mentionedPaths?.length ? { mentioned_files: mentionedPaths } : {}),
+        ...(imageAttachments?.length ? { image_previews: imageAttachments.map(({ name, dataUrl }) => ({ name, dataUrl })) } : {}),
+      },
     });
 
     this.ui.setChatInputEnabled(false);
@@ -1065,6 +1089,7 @@ export class CrucibleController {
         ...(stepReview !== undefined ? { stepReview } : {}),
         ...(forcedSkills?.length ? { forcedSkills } : {}),
         ...(mentionedFiles?.length ? { mentionedFiles } : {}),
+        ...(imageAttachments?.length ? { imageAttachments } : {}),
         ...(planMode !== undefined ? { planMode } : {}),
         messageId,
       });
@@ -1072,7 +1097,7 @@ export class CrucibleController {
       if (!currentSend()) return;
       // InputArea already cleared the draft: give the text back (spec §5.3).
       this.ui.removeChatMessage(messageId);
-      this.ui.restoreDraft(text);
+      this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
       this.ui.setChatInputEnabled(true);
       if (!this.isBenignConflict(error)) {
         this.ui.showError(`Failed to send: ${formatError(error)}`);

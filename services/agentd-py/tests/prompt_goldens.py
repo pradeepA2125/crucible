@@ -12,7 +12,28 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from functools import wraps
 from pathlib import Path
+from unittest.mock import patch
+
+
+def default_capture(fn):
+    """Capture default prompts, independent of the invoking editor's feature flags."""
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        import os
+
+        env = dict(os.environ)
+        for key in (
+            "CRUCIBLE_ADAPTIVE_READS_ENABLED",
+            "CRUCIBLE_TOOL_BATCHING_ENABLED",
+            "CRUCIBLE_COMPACT_CONTEXT_ENABLED",
+            "CRUCIBLE_RETRIEVAL_SNAPSHOT_PATH",
+        ):
+            env.pop(key, None)
+        with patch.dict(os.environ, env, clear=True):
+            return fn(*args, **kwargs)
+    return wrapped
 
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "controller_prompt_main.json"
 
@@ -159,6 +180,7 @@ def _tool_texts(out: dict[str, str]) -> None:
         out["history/edit_session_empty_ops"] = str(exc)
 
 
+@default_capture
 def collect() -> dict[str, str]:
     out: dict[str, str] = {}
     _system_prompts(out)

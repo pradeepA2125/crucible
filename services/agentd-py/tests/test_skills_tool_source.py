@@ -1,8 +1,15 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource
+
+
+@pytest.fixture(autouse=True)
+def _skills_enabled_in_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CRUCIBLE_SKILLS_DISABLED", raising=False)
 
 
 def _write_skill(root: Path, name: str, body: str) -> None:
@@ -74,6 +81,24 @@ def test_read_skill_calls_on_activate_with_name_and_body(tmp_path: Path) -> None
     payload = json.loads(calls[0])
     assert payload["name"] == "git-commit"
     assert "STEP 1: stage." in payload["body"]
+
+
+def test_disabled_read_preserves_active_skill_and_does_not_persist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_skill(tmp_path, "brainstorming", "brainstorm body")
+    active = {"prior": "prior body"}
+    calls: list[str | None] = []
+
+    async def on_activate(raw: str | None) -> None:
+        calls.append(raw)
+
+    src = SkillToolSource(SkillCatalogLoader(tmp_path), active, on_activate=on_activate)
+    monkeypatch.setenv("CRUCIBLE_SKILLS_DISABLED", "brainstorming")
+    out = asyncio.run(src.execute("read_skill", {"name": "brainstorming"}))
+    assert out.is_error and "no skill" in out.output.lower()
+    assert active == {"prior": "prior body"}
+    assert calls == []
 
 
 def test_read_skill_without_on_activate_does_not_raise(tmp_path: Path) -> None:

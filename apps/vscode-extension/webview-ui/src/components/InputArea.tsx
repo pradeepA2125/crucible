@@ -11,9 +11,14 @@ import { TriggerDropdown } from "./TriggerDropdown";
 import type { InputAvailability } from "../inputAvailability";
 import type { ContextUsage, ThreadUsageView } from "../types";
 
+type ImageAttachment = { name: string; mediaType: string; dataUrl: string; bytes: number };
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/tiff"]);
+
 interface Props {
   availability: InputAvailability;
   draft: string;
+  threadId?: string;
   onDraftChange: (text: string) => void;
   // Opens the in-chat settings popup. When absent (standalone/test call sites),
   // the gear falls back to the legacy openSettings host message.
@@ -36,8 +41,75 @@ const MAX_TEXTAREA_HEIGHT = 96;
  * newline. When availability.showStop is true, a Stop button appears on the
  * left side of the footer row and posts { type: "stopTurn" } once.
  */
-export function InputArea({ availability, draft, onDraftChange, onOpenSettings, planMode = false, stepReview = true, threadUsage, teamNames, contextUsage = null, contextUsageStale = false }: Props) {
+export function InputArea({ availability, draft, threadId = "", onDraftChange, onOpenSettings, planMode = false, stepReview = true, threadUsage, teamNames, contextUsage = null, contextUsageStale = false }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+  const [pendingImages, setPendingImages] = useState(0);
+  const [imageError, setImageError] = useState("");
+  const readers = useRef(new Set<FileReader>());
+  const alive = useRef(true);
+  const recoveryId = useRef<string | null>(null);
+  const scope = useRef(threadId);
+  const readerGeneration = useRef(0);
+  useEffect(() => {
+    if (scope.current === threadId) return;
+    const initialSendAdoption = !scope.current && !!threadId && !!recoveryId.current;
+    scope.current = threadId;
+    if (initialSendAdoption) return;
+    ++readerGeneration.current;
+    for (const reader of readers.current) reader.abort();
+    readers.current.clear();
+    setPendingImages(0);
+    setImageAttachments([]);
+    setImageError("");
+    recoveryId.current = null;
+    pendingSlashRef.current = null;
+    onDraftChange("");
+  }, [threadId, onDraftChange]);
+  const currentDraft = useRef(draft);
+  currentDraft.current = draft;
+  useEffect(() => { alive.current = true; return () => { alive.current = false; for (const reader of readers.current) reader.abort(); }; }, []);
+  useEffect(() => {
+    if (draft) recoveryId.current = null;
+  }, [draft]);
+  useEffect(() => {
+    const recover = (event: MessageEvent) => {
+      const m = event.data;
+      if (m?.type === "composerPrefill" && m.threadId === scope.current) {
+        ++readerGeneration.current;
+        for (const reader of readers.current) reader.abort();
+        readers.current.clear();
+        setPendingImages(0);
+        recoveryId.current = null;
+        pendingSlashRef.current = null;
+        setImageAttachments(m.imageAttachments ?? []);
+        trackedMentionsRef.current = [];
+        return;
+      }
+      if (m?.type !== "draftRecovery" || m.draftId !== recoveryId.current || currentDraft.current || readers.current.size) return;
+      recoveryId.current = null;
+      setImageAttachments(m.imageAttachments ?? []);
+      trackedMentionsRef.current = m.mentionedPaths ?? [];
+      onDraftChange(m.text ?? "");
+    };
+    window.addEventListener("message", recover);
+    return () => window.removeEventListener("message", recover);
+  }, [onDraftChange]);
+
+  function sendDraft(text: string, forcedSkills?: string[]) {
+    if (availability.disabled || readers.current.size) return;
+    const draftId = `${Date.now()}-${Math.random()}`;
+    recoveryId.current = draftId;
+    vscode.postMessage({ type: "sendMessage", text, originalDraftText: currentDraft.current, stepReview, planMode, draftId,
+      ...(forcedSkills ? { forcedSkills } : {}),
+      ...(trackedMentionsRef.current.length ? { mentionedPaths: trackedMentionsRef.current } : {}),
+      ...(imageAttachments.length ? { imageAttachments } : {}),
+    });
+    trackedMentionsRef.current = [];
+    setImageAttachments([]);
+    onDraftChange("");
+  }
   const [stopping, setStopping] = useState(false);
   // One-shot guard for the Tier B task-abort buttons (keep / revert).
   const [aborting, setAborting] = useState(false);
@@ -74,7 +146,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
 
   // The text we sent for expansion, held across the async host round-trip so a
   // "no such prompt" reply can fall back to sending it as a normal message.
-  const pendingSlashRef = useRef<string | null>(null);
+  const pendingSlashRef = useRef<{ text: string; requestId: string } | null>(null);
   // Known skill names for deterministic /skill forced-load (the catalog from the host).
   // A prompt file of the same name wins (the host resolves prompts first).
   const [skillNames, setSkillNames] = useState<string[]>([]);
@@ -131,33 +203,25 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
   // Prompt-file expansion: the host replies to an expandPrompt request with the
   // substituted body (found=true → fill the draft for review). When there is no
   // matching prompt (found=false), the typed text was NOT a command — send it as
-  // a normal message rather than silently swallowing it (no dead-end composer).
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       const m = e.data as Record<string, unknown>;
-      if (m?.["type"] !== "promptExpanded") return;
+      if (m?.["type"] !== "promptExpanded" || !pendingSlashRef.current || m["requestId"] !== pendingSlashRef.current.requestId || currentDraft.current.trim() !== pendingSlashRef.current.text) return;
+      if (availability.disabled || readers.current.size) return;
+      const original = pendingSlashRef.current.text;
+      pendingSlashRef.current = null;
       if (m["found"] === true) {
-        pendingSlashRef.current = null;
         onDraftChange(m["text"] as string);
         return;
       }
-      const original = pendingSlashRef.current;
-      pendingSlashRef.current = null;
-      if (!original) return;
       // No prompt file matched — was it a /skill? Deterministic forced-load: send the
       // args as the message tagged with the skill. Otherwise send the typed text as-is.
       const slash = parseSlashCommand(original);
       const skill = slash ? resolveSkillCommand(slash.name, slash.args, skillNames) : null;
       if (skill) {
-        vscode.postMessage({
-          type: "sendMessage",
-          text: skill.message,
-          stepReview,
-          planMode,
-          forcedSkills: skill.forcedSkills,
-        });
+        sendDraft(skill.message, skill.forcedSkills);
       } else {
-        vscode.postMessage({ type: "sendMessage", text: original, stepReview, planMode });
+        sendDraft(original);
       }
       onDraftChange("");
       const el = textareaRef.current;
@@ -165,7 +229,43 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [onDraftChange, stepReview, skillNames, planMode]);
+  }, [onDraftChange, stepReview, skillNames, planMode, imageAttachments, availability.disabled]);
+
+  function addImageFiles(files: FileList | File[]) {
+    recoveryId.current = null;
+    pendingSlashRef.current = null;
+    const batch = Array.from(files);
+    if (readers.current.size || batch.length + imageAttachments.length > 8 ||
+        batch.reduce((n, f) => n + f.size, 0) + imageAttachments.reduce((n, f) => n + f.bytes, 0) > 24 * 1024 * 1024 ||
+        batch.some(f => !IMAGE_TYPES.has(f.type) || !f.size || f.size > MAX_IMAGE_BYTES)) {
+      setImageError("Use up to 8 supported images, at most 8 MiB each and 24 MiB total. Wait for pending images.");
+      return;
+    }
+    setImageError("");
+    for (const file of batch) {
+      const generation = readerGeneration.current;
+      const reader = new FileReader();
+      readers.current.add(reader);
+      setPendingImages(readers.current.size);
+      reader.onload = () => {
+        if (!alive.current || generation !== readerGeneration.current || typeof reader.result !== "string") return;
+        const dataUrl = reader.result;
+        setImageAttachments(current => current.some(a => a.dataUrl === dataUrl) ? current :
+          [...current, { name: file.name || "pasted-image", mediaType: file.type, dataUrl, bytes: file.size }]);
+      };
+      reader.onerror = () => { if (alive.current) setImageError(`Could not read ${file.name}. Please attach it again.`); };
+      reader.onloadend = () => { readers.current.delete(reader); if (alive.current) setPendingImages(readers.current.size); };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(e.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+    if (files.length) {
+      e.preventDefault();
+      addImageFiles(files);
+    }
+  }
 
   function autoGrow() {
     const el = textareaRef.current;
@@ -176,6 +276,8 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
 
   function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const value = e.target.value;
+    recoveryId.current = null;
+    pendingSlashRef.current = null;
     onDraftChange(value);
     maybeRequestCatalogs(value);
     const cursor = e.target.selectionStart ?? value.length;
@@ -242,28 +344,23 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
   }
 
   function doSend() {
-    if (availability.disabled) return;
+    if (availability.disabled || readers.current.size) return;
     const trimmed = draft.trim();
-    if (!trimmed) return;
+    if (!trimmed && imageAttachments.length === 0) return;
     const slash = parseSlashCommand(trimmed);
     if (slash) {
       // Expand first; the host replies with promptExpanded. found=true fills the
       // draft (user reviews, then sends again → real send); found=false falls back
       // to sending `original` as a normal message (see the listener above).
-      pendingSlashRef.current = trimmed;
-      vscode.postMessage({ type: "expandPrompt", name: slash.name, args: slash.args });
-      trackedMentionsRef.current = [];
+      const requestId = `${Date.now()}-${Math.random()}`;
+      pendingSlashRef.current = { text: trimmed, requestId };
+      vscode.postMessage({ type: "expandPrompt", name: slash.name, args: slash.args, requestId });
       return;
     }
-    const mentionedPaths = trackedMentionsRef.current.filter((p) => draft.includes(`@${p}`));
-    vscode.postMessage({
-      type: "sendMessage",
-      text: trimmed,
-      stepReview,
-      planMode,
-      ...(mentionedPaths.length ? { mentionedPaths } : {}),
-    });
+    trackedMentionsRef.current = trackedMentionsRef.current.filter(p => draft.includes(`@${p}`));
+    sendDraft(trimmed);
     trackedMentionsRef.current = [];
+    setImageAttachments([]);
     onDraftChange("");
     // Reset height after clearing.
     const el = textareaRef.current;
@@ -291,7 +388,7 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
     vscode.postMessage({ type: "abortTask", revert });
   }
 
-  const canSend = !availability.disabled && draft.trim().length > 0;
+  const canSend = !availability.disabled && pendingImages === 0 && (draft.trim().length > 0 || imageAttachments.length > 0);
 
   return (
     <div
@@ -315,12 +412,41 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
           onSelect={applyTriggerSelection}
         />
       )}
+      {(imageAttachments.length > 0 || pendingImages > 0 || imageError) && (
+        <div data-testid="composer-images" className="flex flex-wrap gap-2 pb-2 pt-1">
+          <span className="sr-only">
+            {imageAttachments.length} image{imageAttachments.length === 1 ? "" : "s"}
+          </span>
+          {imageAttachments.map((image, i) => (
+            <div key={`${image.name}-${i}`} title={image.name}
+              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-[8px]"
+              style={{ border: "1px solid var(--color-border-strong)", background: "var(--color-surface-2)" }}>
+              <img src={image.dataUrl} alt={image.name} className="h-full w-full object-cover" />
+              <button type="button" aria-label={`Remove ${image.name}`}
+                onClick={() => { recoveryId.current = null; pendingSlashRef.current = null; setImageAttachments(current => current.filter((_, index) => index !== i)); }}
+                className="absolute right-0.5 top-0.5 flex h-[18px] w-[18px] items-center justify-center rounded-full text-text opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+                style={{ background: "rgba(10,10,14,.72)", border: "1px solid var(--color-border-strong)" }}>
+                <Icon name="x" size={9} />
+              </button>
+            </div>
+          ))}
+          {Array.from({ length: pendingImages }, (_, i) => (
+            <div key={`pending-${i}`} aria-hidden="true" className="h-14 w-14 shrink-0 animate-pulse rounded-[8px]"
+              style={{ border: "1px dashed var(--color-border-strong)", background: "var(--color-surface-2)" }} />
+          ))}
+          {pendingImages > 0 && <span role="status" className="sr-only">Reading images…</span>}
+          {imageError && (
+            <span role="alert" className="basis-full text-[10.5px]" style={{ color: "var(--color-red)" }}>{imageError}</span>
+          )}
+        </div>
+      )}
       {/* Textarea */}
       <textarea
         ref={textareaRef}
         rows={1}
         value={draft}
         onChange={handleInput}
+        onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         disabled={availability.disabled}
         placeholder={availability.placeholder}
@@ -341,6 +467,27 @@ export function InputArea({ availability, draft, onDraftChange, onOpenSettings, 
 
       {/* Footer row */}
       <div data-testid="composer-footer" className="relative flex flex-wrap items-center gap-1.5 pt-1 [&>*]:shrink-0">
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/tiff"
+          multiple
+          className="hidden"
+          aria-label="Attach images"
+          onChange={(e) => {
+            if (e.target.files) addImageFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          aria-label="Attach images"
+          title="Attach images"
+          onClick={() => imageInputRef.current?.click()}
+          className="flex h-6 w-6 items-center justify-center rounded-[7px] text-text-3 hover:bg-surface-2 hover:text-text"
+        >
+          <Icon name="plus" size={12} />
+        </button>
         {/* Reasoning-effort chip + model hot-swap chip + settings shortcut. */}
         <EffortMenu />
         <ModelMenu />

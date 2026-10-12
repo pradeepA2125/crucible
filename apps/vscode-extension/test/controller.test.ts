@@ -2299,6 +2299,27 @@ describe("rewind", () => {
     expect(prefilled).toEqual(["try again"]);
   });
 
+  test("snapshots originating previews before rewind and prefills native upload draft", async () => {
+    let rewound = false;
+    const prefill = vi.fn();
+    const backend = {
+      getChatThread: async () => ({ ...THREAD, messages: rewound ? [] : [{
+        ...THREAD.messages[0], id: "m1", metadata: { image_previews: [{ name: "one.png", dataUrl: "data:image/png;base64,YQ==" }] },
+      }] }),
+      rewindThread: async () => { rewound = true; return REWIND_RESULT; },
+      listChatThreads: async () => [],
+      getThreadLiveState: async () => ({ pendingGates: [] }),
+    } as unknown as BackendTaskClient;
+    const controller = new CrucibleController(() => backend, new MemorySessionStore(), createSettings(),
+      createUi({ prefillComposer: prefill }), { openDiff: async () => {} });
+    controller.activeThreadId = "chat-1";
+    await controller.rewindTo("m1");
+    controller.dispose();
+    expect(prefill).toHaveBeenCalledWith("try again", { threadId: "chat-1", imageAttachments: [{
+      name: "one.png", mediaType: "image/png", dataUrl: "data:image/png;base64,YQ==", bytes: 1,
+    }] });
+  });
+
   test("surfaces a rewind failure instead of silently reloading", async () => {
     const errors: string[] = [];
     let threadFetched = false;
@@ -2317,7 +2338,7 @@ describe("rewind", () => {
     controller.dispose();
 
     expect(errors.length).toBe(1);
-    expect(threadFetched).toBe(false);
+    expect(threadFetched).toBe(true); // pre-rewind image snapshot, not a post-failure reload
   });
 });
 

@@ -194,8 +194,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const chatPanel = new ChatPanel(
     context.extensionUri,
-    (message, stepReview, forcedSkills, mentionedPaths, planMode) =>
-      controller.sendChatMessage(message, stepReview, forcedSkills, mentionedPaths, planMode),
+    (message, stepReview, forcedSkills, mentionedPaths, planMode, imageAttachments, draftId, originalDraftText) =>
+      controller.sendChatMessage(message, stepReview, forcedSkills, mentionedPaths, planMode, imageAttachments, draftId, originalDraftText),
     (taskId, action, feedback) => controller.handlePlanCardAction(taskId, action, feedback),
     () => controller.newChatThread(),
     (threadId) => controller.switchChatThread(threadId),
@@ -433,8 +433,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     showRewindPreview: (preview) => {
       chatPanel.showRewindPreview(preview);
     },
-    prefillComposer: (text) => {
-      chatPanel.prefillComposer(text);
+    prefillComposer: (text, draft) => {
+      chatPanel.prefillComposer(text, draft);
     },
     resolveInlineChangeCard: (taskId, resolution) => {
       chatPanel.resolveInlineChangeCard(taskId, resolution);
@@ -520,8 +520,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     removeChatMessage: (id) => {
       chatPanel.removeMessage(id);
     },
-    restoreDraft: (text) => {
-      chatPanel.restoreDraft(text);
+    restoreDraft: (text, recovery) => {
+      chatPanel.restoreDraft(text, recovery);
     },
     renderAgents: (agents) => {
       chatPanel.renderAgents(agents);
