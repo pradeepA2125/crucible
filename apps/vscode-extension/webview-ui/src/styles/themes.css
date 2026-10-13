@@ -1,0 +1,204 @@
+/* Theme tokens (spec 2026-10-13 §1). Components read only these. theme.ts sets
+   data-theme (vscode|dark|light|hc), data-tone (dark|light) and data-accent
+   (blue|violet|ember) on <html>; the host stamps initial values so first paint
+   is right. Every --vscode-* reference ends in the Crucible Dark value. */
+
+/* Shared, palette-independent tokens. The plain :root also carries the Crucible
+   Dark palette and blue accent, so a page without attributes still renders. */
+:root {
+  --fs-base: var(--vscode-font-size, 13px);
+  --fs-caption: calc(var(--fs-base) * 11 / 13);
+  --fs-meta: calc(var(--fs-base) * 12 / 13);
+  --fs-body: var(--fs-base);
+  --fs-prose: calc(var(--fs-base) * 14 / 13);
+  --r-control: 6px;
+  --r-card: 10px;
+  --r-composer: 16px;
+  --r-round: 999px;
+
+  /* Derived tints. Recomputed on <html> from whichever accent and status values apply there. */
+  --accent-bg: color-mix(in srgb, var(--accent-fill) 14%, transparent);
+  --accent-bg-2: color-mix(in srgb, var(--accent-fill) 22%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 40%, transparent);
+  --accent-glow: color-mix(in srgb, var(--accent-fill) 22%, transparent);
+  --success-bg: color-mix(in srgb, var(--success) 12%, transparent);
+  --danger-bg: color-mix(in srgb, var(--danger) 10%, transparent);
+  --warning-bg: color-mix(in srgb, var(--warning) 12%, transparent);
+  --warning-border: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+
+:root,
+:root[data-theme="dark"] {
+  --surface-0: #181818;
+  --on-surface-0: #e8e8e8;
+  --surface-1: #232323;
+  --on-surface-1: #e8e8e8;
+  --surface-2: #202020;
+  --on-surface-2: #e8e8e8;
+  --surface-3: #2a2a2a;
+  --on-surface-3: #e8e8e8;
+  --text-1: #e8e8e8;
+  --text-2: #a3a3a3;
+  --text-3: #949494;
+  --input-bg: #262626;
+  --input-fg: #e8e8e8;
+  --input-placeholder: #949494;
+  --input-border: #2e2e2e;
+  --button-bg: var(--accent-fill);
+  --button-fg: var(--on-accent);
+  --button-hover-bg: color-mix(in srgb, var(--accent-fill) 88%, white);
+  --button-secondary-bg: #2a2a2a;
+  --button-secondary-fg: #e8e8e8;
+  --border: #2e2e2e;
+  --border-strong: #3a3a3a;
+  --focus-ring: var(--accent);
+  --success: #3fb950;
+  --danger: #ff6b61;
+  --warning: #d29922;
+  --diff-add: #3fb950;
+  --diff-del: #ff6b61;
+  --shadow-popover: 0 24px 70px -20px rgba(0, 0, 0, 0.78), 0 2px 10px rgba(0, 0, 0, 0.45);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --scrim: rgba(6, 6, 9, 0.58);
+  --scrollbar-thumb: #3a3a3a;
+  --scrollbar-thumb-hover: #4a4a4a;
+}
+
+:root[data-theme="light"] {
+  --surface-0: #ffffff;
+  --on-surface-0: #1a1a1a;
+  --surface-1: #f0f0f0;
+  --on-surface-1: #1a1a1a;
+  --surface-2: #f6f6f6;
+  --on-surface-2: #1a1a1a;
+  --surface-3: #ffffff;
+  --on-surface-3: #1a1a1a;
+  --text-1: #1a1a1a;
+  --text-2: #5c5c5c;
+  --text-3: #6b6b6b;
+  --input-bg: #ffffff;
+  --input-fg: #1a1a1a;
+  --input-placeholder: #6b6b6b;
+  --input-border: #d0d0d0;
+  --button-bg: var(--accent-fill);
+  --button-fg: var(--on-accent);
+  --button-hover-bg: color-mix(in srgb, var(--accent-fill) 88%, black);
+  --button-secondary-bg: #f0f0f0;
+  --button-secondary-fg: #1a1a1a;
+  --border: #e3e3e3;
+  --border-strong: #d0d0d0;
+  --focus-ring: var(--accent);
+  --success: #17742f;
+  --danger: #cf222e;
+  --warning: #8a5c00;
+  --diff-add: #17742f;
+  --diff-del: #cf222e;
+  --shadow-popover: 0 24px 70px -20px rgba(0, 0, 0, 0.25), 0 2px 10px rgba(0, 0, 0, 0.12);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.15);
+  --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  --scrim: rgba(0, 0, 0, 0.32);
+  --scrollbar-thumb: #d0d0d0;
+  --scrollbar-thumb-hover: #b8b8b8;
+}
+
+:root[data-theme="vscode"] {
+  --surface-0: var(--vscode-sideBar-background, var(--vscode-editor-background, #181818));
+  --on-surface-0: var(--vscode-sideBar-foreground, var(--vscode-foreground, #e8e8e8));
+  --surface-1: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, #232323));
+  --on-surface-1: var(--vscode-foreground, #e8e8e8);
+  --surface-2: var(--vscode-editorWidget-background, #202020);
+  --on-surface-2: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #e8e8e8));
+  --surface-3: var(--vscode-menu-background, var(--vscode-editorWidget-background, #2a2a2a));
+  --on-surface-3: var(--vscode-menu-foreground, var(--vscode-foreground, #e8e8e8));
+  --text-1: var(--vscode-foreground, #e8e8e8);
+  --text-2: var(--vscode-descriptionForeground, #a3a3a3);
+  --text-3: var(--vscode-descriptionForeground, #949494);
+  --input-bg: var(--vscode-input-background, #262626);
+  --input-fg: var(--vscode-input-foreground, #e8e8e8);
+  --input-placeholder: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground, #949494));
+  --input-border: var(--vscode-input-border, var(--vscode-widget-border, #2e2e2e));
+  --button-bg: var(--vscode-button-background, #2f6fd6);
+  --button-fg: var(--vscode-button-foreground, #ffffff);
+  --button-hover-bg: var(--vscode-button-hoverBackground, #3a7ae0);
+  --button-secondary-bg: var(--vscode-button-secondaryBackground, #2a2a2a);
+  --button-secondary-fg: var(--vscode-button-secondaryForeground, #e8e8e8);
+  --border: var(--vscode-panel-border, var(--vscode-widget-border, #2e2e2e));
+  --border-strong: var(--vscode-widget-border, var(--vscode-panel-border, #3a3a3a));
+  --focus-ring: var(--vscode-focusBorder, #6aa2f5);
+  --success: var(--vscode-testing-iconPassed, #3fb950);
+  --danger: var(--vscode-errorForeground, #ff6b61);
+  --warning: var(--vscode-editorWarning-foreground, #d29922);
+  --diff-add: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+  --diff-del: var(--vscode-gitDecoration-deletedResourceForeground, #ff6b61);
+  --shadow-popover: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.5));
+  --shadow-control: none;
+  --highlight-inset: inset 0 0 0 transparent;
+  --scrim: rgba(0, 0, 0, 0.4);
+  --scrollbar-thumb: var(--vscode-scrollbarSlider-background, #3a3a3a);
+  --scrollbar-thumb-hover: var(--vscode-scrollbarSlider-hoverBackground, #4a4a4a);
+}
+
+:root[data-theme="hc"] {
+  --surface-0: var(--vscode-sideBar-background, var(--vscode-editor-background, #000000));
+  --on-surface-0: var(--vscode-sideBar-foreground, var(--vscode-foreground, #ffffff));
+  --surface-1: var(--vscode-textCodeBlock-background, var(--vscode-editor-background, #000000));
+  --on-surface-1: var(--vscode-foreground, #ffffff);
+  --surface-2: var(--vscode-editorWidget-background, var(--vscode-editor-background, #000000));
+  --on-surface-2: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #ffffff));
+  --surface-3: var(--vscode-menu-background, var(--vscode-editor-background, #000000));
+  --on-surface-3: var(--vscode-menu-foreground, var(--vscode-foreground, #ffffff));
+  --text-1: var(--vscode-foreground, #ffffff);
+  --text-2: var(--vscode-foreground, #ffffff);
+  --text-3: var(--vscode-descriptionForeground, #ffffff);
+  --input-bg: var(--vscode-input-background, #000000);
+  --input-fg: var(--vscode-input-foreground, #ffffff);
+  --input-placeholder: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground, #ffffff));
+  --input-border: var(--vscode-contrastBorder, #6fc3df);
+  --button-bg: var(--vscode-button-background, #000000);
+  --button-fg: var(--vscode-button-foreground, #ffffff);
+  --button-hover-bg: var(--vscode-button-background, #000000);
+  --button-secondary-bg: var(--vscode-button-secondaryBackground, #000000);
+  --button-secondary-fg: var(--vscode-button-secondaryForeground, #ffffff);
+  --border: var(--vscode-contrastBorder, #6fc3df);
+  --border-strong: var(--vscode-contrastBorder, #6fc3df);
+  --focus-ring: var(--vscode-focusBorder, var(--vscode-contrastActiveBorder, #f38518));
+  --success: var(--vscode-testing-iconPassed, #89d185);
+  --danger: var(--vscode-errorForeground, #f48771);
+  --warning: var(--vscode-editorWarning-foreground, #ffcc00);
+  --diff-add: var(--vscode-gitDecoration-addedResourceForeground, #89d185);
+  --diff-del: var(--vscode-gitDecoration-deletedResourceForeground, #f48771);
+  --shadow-popover: none;
+  --shadow-control: none;
+  --highlight-inset: inset 0 0 0 transparent;
+  --scrim: transparent;
+  --scrollbar-thumb: var(--vscode-scrollbarSlider-background, #6fc3df);
+  --scrollbar-thumb-hover: var(--vscode-scrollbarSlider-hoverBackground, #6fc3df);
+}
+
+/* Accents. These selectors carry no :root on purpose: an element can set its own
+   data-tone/data-accent to preview another accent (the Appearance swatches).
+   A plain :root falls back to the dark/blue values. */
+:root,
+[data-tone="dark"][data-accent="blue"] { --accent: #6aa2f5; --accent-fill: #2f6fd6; --on-accent: #ffffff; }
+[data-tone="dark"][data-accent="violet"] { --accent: #a898f0; --accent-fill: #6d5bd0; --on-accent: #ffffff; }
+[data-tone="dark"][data-accent="ember"] { --accent: #f0995a; --accent-fill: #a9531a; --on-accent: #ffffff; }
+[data-tone="light"][data-accent="blue"] { --accent: #2563eb; --accent-fill: #2563eb; --on-accent: #ffffff; }
+[data-tone="light"][data-accent="violet"] { --accent: #5b4bc4; --accent-fill: #5b4bc4; --on-accent: #ffffff; }
+[data-tone="light"][data-accent="ember"] { --accent: #a9531a; --accent-fill: #a9531a; --on-accent: #ffffff; }
+
+/* High contrast overrides the accent and switches every decorative effect off.
+   Placed last, and more specific than the accent blocks, so it always wins. */
+:root[data-theme="hc"][data-accent] {
+  --accent: var(--vscode-textLink-foreground, var(--vscode-button-background, #3794ff));
+  --accent-fill: var(--vscode-button-background, #000000);
+  --on-accent: var(--vscode-button-foreground, #ffffff);
+  --accent-bg: transparent;
+  --accent-bg-2: transparent;
+  --accent-border: var(--vscode-contrastActiveBorder, var(--vscode-contrastBorder, #f38518));
+  --accent-glow: transparent;
+  --success-bg: transparent;
+  --danger-bg: transparent;
+  --warning-bg: transparent;
+  --warning-border: var(--vscode-contrastBorder, #6fc3df);
+}
