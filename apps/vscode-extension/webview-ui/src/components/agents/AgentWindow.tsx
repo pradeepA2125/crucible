@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useRef } from "react";
 import { elapsedMs, formatElapsed, isTerminalAgent } from "../../agents";
 import { vscode } from "../../vscodeApi";
 import { Icon } from "../Icon";
+import { useModalFocus } from "../shared/useModalFocus";
 import { AgentChip } from "./AgentChip";
 import { AgentTranscript, viewToken } from "./AgentTranscript";
 import { TONE_COLOR, rosterRow, toneOf } from "./AgentRosterCard";
@@ -17,7 +18,7 @@ interface Props {
   onClose(): void;
 }
 
-/** ⤢ — one agent full height over the thread (spec §10): meta, ■ Stop, sibling tabs.
+/** ⤢ — one agent full height in a centered chat-width column (spec §10): meta, ■ Stop, sibling tabs.
  * One window at a time; Esc, ✕ or a backdrop click closes it. */
 export function AgentWindow({ agentId, siblings, onSwitch, onClose }: Props) {
   const ui = useAgentsUi();
@@ -28,27 +29,26 @@ export function AgentWindow({ agentId, siblings, onSwitch, onClose }: Props) {
   const tokens = ui.usage?.agents[agentId];
   const { ref, onScroll } = useFollowBottom(`${agentId}|${viewToken(ui.views[agentId])}`);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, onClose);
 
   return (
     <div role="presentation" className="scrim absolute inset-0 z-40"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}>
-      <div role="dialog" aria-modal="true" aria-label={`Sub-agent ${agent.label}`}
-        className="surface-card anim-pop absolute inset-x-3 bottom-3 top-10 flex flex-col overflow-hidden">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`Sub-agent ${agent.label}`}
+        className="surface-card absolute left-1/2 -translate-x-1/2 w-[calc(100%-24px)] max-w-[760px] bottom-3 top-10 flex flex-col overflow-hidden">
         <div className="accent-wash px-3 pb-2 pt-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: TONE_COLOR[toneOf(agent.status)] }} />
             <span className="truncate text-[13px] font-semibold text-text">{agent.label}</span>
             <AgentChip name={agent.name} />
             <span className="ml-auto flex items-center gap-1">
+              <button type="button" onClick={onClose} aria-label="Close agent window" title="Close"
+                className="order-last flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text">
+                <Icon name="x" size={12} />
+              </button>
               {running && (
                 <button type="button"
                   onClick={() => vscode.postMessage({ type: "stopAgent", agentId })}
@@ -57,13 +57,9 @@ export function AgentWindow({ agentId, siblings, onSwitch, onClose }: Props) {
                   ■ Stop
                 </button>
               )}
-              <button type="button" onClick={onClose} aria-label="Close agent window" title="Close"
-                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text">
-                <Icon name="x" size={12} />
-              </button>
             </span>
           </div>
-          <div className="mt-1 flex gap-2.5 text-[10.5px] text-text-3">
+          <div className="mt-1 flex flex-wrap gap-x-2.5 gap-y-1 text-[10.5px] text-text-3">
             <span><b className="font-semibold text-text-2">{agent.status}</b>{ms !== null ? ` · ${formatElapsed(ms)}` : ""}</span>
             <span><b className="font-semibold text-text-2">{agent.toolCount}</b> tools</span>
             <span><b className="font-semibold text-text-2">{agent.filesChangedCount}</b> file{agent.filesChangedCount === 1 ? "" : "s"} changed</span>
@@ -74,7 +70,7 @@ export function AgentWindow({ agentId, siblings, onSwitch, onClose }: Props) {
           </div>
         </div>
         {siblings.length > 1 && (
-          <div role="tablist" className="flex gap-0.5 px-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
+          <div role="tablist" className="flex gap-0.5 overflow-x-auto px-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
             {siblings.map((id) => {
               const sib = rosterRow(ui.agents, id);
               const on = id === agentId;

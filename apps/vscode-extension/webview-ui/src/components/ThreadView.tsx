@@ -104,7 +104,11 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     teams: state.teams,
     views: state.teamViews,
     usage: state.threadUsage,
-    openTeam: (teamId) => setTeamWindow({ teamId, tab: "board" }),
+    openTeam: (teamId) => {
+      // A board opened from an agent transcript becomes the foreground view.
+      setAgentWindow(null);
+      setTeamWindow({ teamId, tab: "board" });
+    },
   }), [state.teams, state.teamViews, state.threadUsage]);
 
   useEffect(() => {
@@ -534,21 +538,23 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         />
       )}
 
-      {agentWindow !== null && (
-        <AgentWindow
-          agentId={agentWindow.agentId}
-          siblings={agentWindow.siblings}
-          onSwitch={(agentId) => setAgentWindow({ ...agentWindow, agentId })}
-          onClose={() => setAgentWindow(null)}
-        />
-      )}
-
       {teamWindow !== null && (
         <TeamWindow
           teamId={teamWindow.teamId}
           tab={teamWindow.tab}
           onTab={(tab) => setTeamWindow({ ...teamWindow, tab })}
           onClose={() => setTeamWindow(null)}
+        />
+      )}
+
+      {/* Children opened from a team member sit above the retained team board.
+          DOM order matches paint order and the shared modal focus handler. */}
+      {agentWindow !== null && (
+        <AgentWindow
+          agentId={agentWindow.agentId}
+          siblings={agentWindow.siblings}
+          onSwitch={(agentId) => setAgentWindow({ ...agentWindow, agentId })}
+          onClose={() => setAgentWindow(null)}
         />
       )}
     </div>
