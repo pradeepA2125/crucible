@@ -36,9 +36,9 @@ const DETAIL = {
   transcript: [], lastSeq: 0,
 } as AgentDetailView;
 
-function renderView(usage: TeamsUi["usage"] = null, posts = POSTS, live: ToolEventView[] = [], status = "running") {
+function renderView(usage: TeamsUi["usage"] = null, posts = POSTS, live: ToolEventView[] = [], status = "running", report = "Objected: **missing case**") {
   const messages = [msg({ tool_events: [{ id: 1, tool: "read_file", args: {}, source: "execution", done: true }] }),
-    msg({ report: true, status: "completed" }, "Objected: **missing case**"),
+    msg({ report: true, status: "completed" }, report),
     msg({ divider: true, activation: 2 }, "↩ woken")];
   const agentsUi: AgentsUi = {
     agents: { "agent-r": { ...DETAIL, status } }, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
@@ -58,6 +58,28 @@ function renderView(usage: TeamsUi["usage"] = null, posts = POSTS, live: ToolEve
 }
 
 describe("MemberView", () => {
+  it("bounds a long one-line report even when its chapter is closed", () => {
+    const report = "Verified the report against the code. ".repeat(40) + "LAST_REPORT_DETAIL";
+    renderView(null, POSTS, [], "completed", report);
+    const chapter = screen.getByTestId("chapter-1");
+    expect(chapter.textContent).not.toContain("LAST_REPORT_DETAIL");
+    fireEvent.click(screen.getByRole("button", { name: /Chapter 1/ }));
+    expect(chapter.textContent).not.toContain("LAST_REPORT_DETAIL");
+    fireEvent.click(screen.getByRole("button", { name: "Show more of review's report in Chapter 1" }));
+    expect(chapter.textContent).toContain("LAST_REPORT_DETAIL");
+  });
+  it("opens a chapter with a compact report, then shows and hides its full markdown", () => {
+    const report = "Reviewed the implementation.\n\n" + "Verified code and regression coverage. ".repeat(25) + "\n\n**Final member detail**";
+    renderView(null, POSTS, [], "completed", report);
+    fireEvent.click(screen.getByRole("button", { name: /Chapter 1/ }));
+    expect(screen.queryByText("Final member detail")).toBeNull();
+    const more = screen.getByRole("button", { name: "Show more of review's report in Chapter 1" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(screen.getByText("Final member detail").tagName).toBe("STRONG");
+    fireEvent.click(screen.getByRole("button", { name: "Show less of review's report in Chapter 1" }));
+    expect(screen.queryByText("Final member detail")).toBeNull();
+  });
   it("previews a handed post, expands its full message, and can collapse it again", () => {
     const text = "@design @telemetry @ui " + "Plan a UI feature with verified code citations. ".repeat(40)
       + "\nA second paragraph that must remain visible.";

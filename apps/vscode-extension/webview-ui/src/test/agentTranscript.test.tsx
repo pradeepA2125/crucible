@@ -29,6 +29,20 @@ function withView(d: AgentDetailView, live = false) {
 }
 
 describe("AgentTranscript", () => {
+  it.each([false, true])("folds a long child report (fallback: %s) without losing full markdown", fallback => {
+    const report = "Implemented the limiter.\n\n" + "Verified the implementation against existing callers. ".repeat(25) + "\n\n**Final child detail**";
+    const messages: ChatMsg[] = fallback ? [] : [{ role: "agent", content: report, type: "text", timestamp: AT,
+      metadata: { report: true, status: "completed" } }];
+    render(<AgentsContext.Provider value={withView(detail("completed", messages, report))}><AgentTranscript agentId="agent-a" /></AgentsContext.Provider>);
+    expect(screen.queryByText("Final child detail")).toBeNull();
+    const more = screen.getByRole("button", { name: "Show more of impl's report" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(screen.getByText("Final child detail").tagName).toBe("STRONG");
+    expect(screen.getAllByTestId("report-disclosure")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Show less of impl's report" }));
+    expect(screen.queryByText("Final child detail")).toBeNull();
+  });
   it("shows the task, the transcript and the full report", () => {
     const transcript: ChatMsg[] = [
       { role: "agent", content: "Added TokenBucket; wiring next.", type: "text", timestamp: AT, metadata: { progress: true } },

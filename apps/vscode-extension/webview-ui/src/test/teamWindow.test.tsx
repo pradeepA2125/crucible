@@ -56,7 +56,7 @@ const agent = (id: string, label: string, status: string): AgentSummaryView => (
 
 function renderWindow(tab = "board", team = TEAM, posts = POSTS,
                       statuses: { review: string; impl: string } = { review: "completed", impl: "running" },
-                      usage: TeamsUi["usage"] = null) {
+                      usage: TeamsUi["usage"] = null, activity = ACTIVITY) {
   const onTab = vi.fn();
   const onClose = vi.fn();
   const agentsUi: AgentsUi = {
@@ -65,7 +65,7 @@ function renderWindow(tab = "board", team = TEAM, posts = POSTS,
     views: {}, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
   };
   const teamsUi: TeamsUi = { teams: { "team-1": team },
-    views: { "team-1": { posts, lastSeq: 4, activity: ACTIVITY, lastAseq: 6 } }, openTeam: vi.fn(), usage };
+    views: { "team-1": { posts, lastSeq: 4, activity, lastAseq: 6 } }, openTeam: vi.fn(), usage };
   render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={teamsUi}>
     <TeamWindow teamId="team-1" tab={tab} onTab={onTab} onClose={onClose} />
   </TeamsContext.Provider></AgentsContext.Provider>);
@@ -73,6 +73,18 @@ function renderWindow(tab = "board", team = TEAM, posts = POSTS,
 }
 
 describe("TeamWindow board", () => {
+  it("shows a long board report as an excerpt with Show more and Show less", () => {
+    const report = "Reviewed the proposal.\n\n" + "Verified all claims with workspace evidence. ".repeat(25) + "\n\n**Final board detail**";
+    renderWindow("board", TEAM, POSTS, undefined, null, ACTIVITY.map(e => e.kind === "wrapped_up"
+      ? { ...e, payload: { ...e.payload, report } } : e));
+    expect(screen.queryByText("Final board detail")).toBeNull();
+    const more = screen.getByRole("button", { name: "Show more of review's report" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(screen.getByText("Final board detail").tagName).toBe("STRONG");
+    fireEvent.click(screen.getByRole("button", { name: "Show less of review's report" }));
+    expect(screen.queryByText("Final board detail")).toBeNull();
+  });
   it("breaks token usage down by member, and a row opens that member's tab", () => {
     const u = (requests: number, input: number) => ({ requests, input, output: 100, cached: 0 });
     const { onTab } = renderWindow("board", TEAM, POSTS, undefined, {

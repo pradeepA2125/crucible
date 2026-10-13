@@ -2,7 +2,7 @@ import { isTerminalAgent } from "../../agents";
 import type { AgentViewState } from "../../types";
 import { MessageRow } from "../MessageRow";
 import { AgentWorkTranscript } from "../shared/AgentWorkTranscript";
-import { MarkdownContent } from "../shared/MarkdownContent";
+import { ReportDisclosure } from "../shared/ReportDisclosure";
 import { useAgentsUi } from "./AgentsContext";
 
 /** Changes whenever the view grows or a tool finishes — the follow-bottom trigger. */
@@ -20,14 +20,14 @@ function SectionLabel({ children, color }: { children: string; color?: string })
   );
 }
 
-function ReportBlock({ text, status }: { text: string; status: string }) {
+function ReportBlock({ text, status, label }: { text: string; status: string; label: string }) {
   const ok = status === "completed";
   return (
     <div className="grid min-w-0 gap-2">
       <SectionLabel color={ok ? "var(--color-green)" : undefined}>
         {ok ? "REPORT" : `REPORT · ${status}`}
       </SectionLabel>
-      <MarkdownContent content={text} />
+      <ReportDisclosure text={text} label={`${label}'s report`} />
     </div>
   );
 }
@@ -53,10 +53,10 @@ export function AgentTranscript({ agentId }: { agentId: string }) {
       <AgentWorkTranscript key={agentId} messages={view.messages} live={view.live} running={!isTerminalAgent(status)}
         waiting={status === "waiting"} startedAt={agents[agentId]?.activationStartedAt ?? detail.activationStartedAt ?? detail.startedAt}
         renderMessage={m => m.metadata?.report === true
-          ? <ReportBlock text={m.content} status={String(m.metadata?.status ?? status)} />
+          ? <ReportBlock text={m.content} status={String(m.metadata?.status ?? status)} label={detail.label} />
           : <MessageRow msg={m} />} />
       {!hasReport && isTerminalAgent(status) && detail.report !== "" && (
-        <ReportBlock text={detail.report} status={status} />
+        <ReportBlock key={`report-${agentId}`} text={detail.report} status={status} label={detail.label} />
       )}
     </div>
   );

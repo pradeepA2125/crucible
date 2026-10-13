@@ -5,6 +5,7 @@ import { identityFor } from "../../teamIdentity";
 import { memberStateWord } from "../../teams";
 import type { TeamPostView, ToolEventView } from "../../types";
 import { AgentWorkTranscript } from "../shared/AgentWorkTranscript";
+import { ReportDisclosure } from "../shared/ReportDisclosure";
 import { useAgentsUi } from "../agents/AgentsContext";
 import { Avatar } from "./Avatar";
 import { SaidPost, STATUS_CHIP, beatText } from "./Journey";
@@ -139,6 +140,7 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
   const [open, setOpen] = useState(defaultOpen);
   const chip = STATUS_CHIP[c.status];
   const color = identityFor(label, roster).color;
+  const reportPreview = Array.from(firstLine(c.report ?? ""));
   const postBySeq = (seq: number) => posts.find((p) => p.seq === seq);
   const ref = (seq: number) => (isProposal(seq) ? `P${seq}` : `#${seq}`);
   return (
@@ -158,7 +160,9 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
             : chip && <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10.5px]" style={{ color: chip.color, background: chip.bg, borderColor: "var(--color-border-strong)" }}>{chip.text}</span>}
         </span>
       </button>
-      {!open && c.report && <div className="px-3 pb-2.5 pl-[30px] text-[11.5px] text-text-3">{firstLine(c.report)}</div>}
+      {!open && c.report && <div className="px-3 pb-2.5 pl-[30px] text-[11.5px] text-text-3">
+        {reportPreview.slice(0, 240).join("")}{reportPreview.length > 240 ? "…" : ""}
+      </div>}
       {open && (
         <div className="grid min-w-0 gap-2.5 px-3 pb-3">
           {c.handed.length > 0 && (
@@ -212,7 +216,8 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
             <div className="grid gap-1.5 rounded-[9px] border px-3 py-2"
               style={{ borderColor: "var(--green-brd)", background: "linear-gradient(180deg, var(--green-bg), transparent 60%), var(--color-panel)" }}>
               <div className="flex min-w-0 items-start gap-2 text-[11.5px]">{chip && <span style={{ color: chip.color }}>{chip.text}</span>}<strong>Report</strong></div>
-              <PostBody text={c.report} />
+              <ReportDisclosure text={c.report} label={`${label}'s report in ${chapterHeading(c, isProposal).title}`}
+                renderContent={text => <PostBody text={text} />} />
             </div>
           )}
           {c.current && (

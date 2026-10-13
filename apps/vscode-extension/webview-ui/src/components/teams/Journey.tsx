@@ -8,6 +8,7 @@ import { useAgentsUi } from "../agents/AgentsContext";
 import { useNow } from "../agents/useNow";
 import { Avatar } from "./Avatar";
 import { PostBody } from "./PostBody";
+import { isLongReport, ReportDisclosure } from "../shared/ReportDisclosure";
 import { AdoptedCard, RoundStrip, Verdict, heldText } from "./RoundItems";
 import { useTeamsUi } from "./TeamsContext";
 
@@ -242,6 +243,7 @@ function WrapRow({ event, roster }: { event: TeamActivityView; roster: string[] 
   const status = String(p.status ?? "completed");
   const chip = STATUS_CHIP[status] ?? STATUS_CHIP.completed;
   const report = String(p.report ?? "");
+  const longReport = isLongReport(report);
   return (
     <div data-testid={`wrap-a${event.aseq}`} className="relative grid gap-1.5 rounded-lg border border-border px-2.5 py-1.5" style={{ background: "var(--color-panel)" }}>
       <Dot color={identityFor(event.label, roster).color} shape="square" />
@@ -251,12 +253,17 @@ function WrapRow({ event, roster }: { event: TeamActivityView; roster: string[] 
         <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10.5px]" style={{ color: chip.color, background: chip.bg, borderColor: "var(--color-border-strong)" }}>{chip.text}</span>
         <span className="tabular-nums text-text-3">{wrapStats(p)}</span>
         {typeof p.reason === "string" && <span className="text-text-3">— {p.reason}</span>}
-        {report && (
+        {report && !longReport && (
           <button type="button" aria-label={`${open ? "Hide" : "Show"} ${event.label}'s report`} onClick={() => setOpen(!open)}
             className="ml-auto text-[11px] text-accent-ink">report {open ? "▾" : "▸"}</button>
         )}
       </div>
-      {open && <div className="border-t pt-1.5" style={{ borderColor: "var(--hairline)" }}><PostBody text={report} /></div>}
+      {longReport
+        ? <div className="border-t pt-1.5" style={{ borderColor: "var(--hairline)" }}>
+            <ReportDisclosure text={report} label={`${event.label}'s report`}
+              renderContent={text => <PostBody text={text} />} />
+          </div>
+        : open && <div className="border-t pt-1.5" style={{ borderColor: "var(--hairline)" }}><PostBody text={report} /></div>}
     </div>
   );
 }
