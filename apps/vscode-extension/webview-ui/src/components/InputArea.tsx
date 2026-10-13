@@ -438,7 +438,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
           ))}
           {pendingImages > 0 && <span role="status" className="sr-only">Reading images…</span>}
           {imageError && (
-            <span role="alert" className="basis-full text-meta" style={{ color: "var(--color-red)" }}>{imageError}</span>
+            <span role="alert" className="basis-full text-meta [overflow-wrap:anywhere]" style={{ color: "var(--color-red)" }}>{imageError}</span>
           )}
         </div>
       )}

@@ -12,6 +12,8 @@ Work in `codex/theming-phase3` / `.superpowers/wt-theme3`. Save local commits at
 - [x] One model menu with the notched native effort slider, Default/null, supported/unknown filtering, clamp notes, pending/error handling and usage links.
 - [x] Composer + menu, plan chip, compact context ring with context and thread/team totals, round Send/Stop, header gear; preserve availability, images, mentions, slash expansion and existing stop behavior. Quiet WorkBar.
 - [x] Settings overlay focus entry/trap/Escape/return; Phase 3 type/radius/color/decoration lint and narrow real-browser checks.
-- [ ] Scoped and full relevant suites, build/typecheck, separate whole-phase review and fix pass, local installed-app verification where available; record limits truthfully before integration.
+- [x] Scoped and full relevant suites, build/typecheck, separate whole-phase review and fix pass, local installed-app verification where available; record limits truthfully before integration.
 
 The three approval policies are Ask for approval (review edits, ask commands), Accept edits (accept edits, ask commands), and Full access (accept edits, allow all commands). Auto is reserved. Plan remains a separate toggle. Existing protected/untrusted edit gates, MCP approval and sub-agent definitions retain their exceptions. A policy write never resolves a command gate.
+
+Completed and reviewed locally. See `docs/superpowers/2026-10-14-theming-phase3-review.md` for checks, resolved findings, installed package and live-session limits.

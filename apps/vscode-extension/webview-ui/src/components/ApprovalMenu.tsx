@@ -88,8 +88,8 @@ export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
           <p>MCP tools keep their own approval. Input to an already-running terminal session isn’t gated.</p>
         </div>
       </div>}
-      {approval.error && <p role="alert" className="max-w-full text-caption text-red">{approval.error}</p>}
-      {approval.notice && <p role="status" className="max-w-full text-caption text-text-3">{approval.notice}</p>}
+      {approval.error && <p role="alert" className="max-w-full text-caption text-red [overflow-wrap:anywhere]">{approval.error}</p>}
+      {approval.notice && <p role="status" className="max-w-full text-caption text-text-3 [overflow-wrap:anywhere]">{approval.notice}</p>}
       {warning && <FullAccessWarning returnTo={chip} onCancel={() => setWarning(false)} onConfirm={remember => { setWarning(false); choose("full_access", true, remember); }} />}
     </div>
   );

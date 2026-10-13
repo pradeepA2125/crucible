@@ -75,7 +75,7 @@ export function ModelMenu() {
         {busy ? <span aria-label="Checking with provider">…</span> : <Icon name="chev-d" size={10} />}
       </button>
       {open && <div role="dialog" aria-label="Model and reasoning effort" style={position}
-        className="absolute bottom-full z-50 mb-2 max-h-[65vh] overflow-y-auto overscroll-contain rounded-card border border-border-strong bg-surface-3 text-meta">
+        className="absolute bottom-full z-50 mb-2 max-h-[65vh] overflow-y-auto overscroll-contain rounded-card border border-border-strong bg-surface-3 text-meta [overflow-wrap:anywhere]">
         {plan && <div className="flex flex-wrap items-center gap-1.5 border-b border-border p-3 text-caption text-text-3">
           {plan === "claude" ? <ClaudeLogo size={12} /> : <ChatGPTLogo size={12} />}
           <span>{plan === "claude" ? "Using Claude plan" : "Using ChatGPT plan"}</span>
