@@ -158,7 +158,7 @@ describe("ThreadView — transient activity line", () => {
   it("shows the running tool while a turn is active and a bubble exists", () => {
     render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false, streaming: bubble }}
       onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
-    expect(screen.getByTestId("transient-activity").textContent).toContain("Running `pytest`");
+    expect(screen.getByTestId("transient-activity").textContent).toContain("Running pytest");
   });
 
   it("shows it with the thinking status when a turn is active and no bubble exists", () => {
@@ -194,5 +194,35 @@ describe("ThreadView — Stop all agents (spec §6)", () => {
     );
     fireEvent.click(screen.getByTitle("Stop all agents"));
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "stopAllAgents" });
+  });
+});
+
+describe("ThreadView — transient line across seals and gates", () => {
+  const t = "2026-10-13T00:00:00Z";
+  const running = { id: 7, tool: "run_command", args: { command: "pytest" }, source: "explore" as const, done: false };
+  const messages = [
+    { role: "user" as const, content: "go", type: "text" as const, timestamp: t, metadata: {} },
+    { role: "agent" as const, content: "", type: "text" as const, timestamp: t, metadata: { tool_events: [running] } },
+    { role: "agent" as const, content: "✓ Command approved: pytest", type: "text" as const, timestamp: t, metadata: { breadcrumb: true } },
+  ];
+  const props = { onBack: () => {}, dismissedErrorTaskId: null, onDismissError: () => {} };
+
+  it("still names a command that was sealed into a message by the approval breadcrumb", () => {
+    render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false, streaming: null, messages }} {...props} />);
+    expect(screen.getByTestId("transient-activity").textContent).toContain("Running pytest");
+    expect(screen.getByTestId("activity-summary").textContent).not.toContain("ran a command");
+  });
+
+  it("reads Waiting for your approval, without a clock, while a main gate is pending", () => {
+    const gate = { gateId: "g1", kind: "command" as const, taskId: "", payload: {}, agent: null, team: null };
+    render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false, streaming: null, messages, liveGates: [gate] }} {...props} />);
+    expect(screen.getByTestId("transient-activity").textContent).toContain("Waiting for your approval");
+  });
+
+  it("does not show an empty Thinking block above a streaming answer", () => {
+    render(<ThreadView state={{ ...base, turnActive: true, inputEnabled: false, messages: [messages[0]],
+      streaming: { text: "partial", thinkingEntries: [], activeThinkingChunk: "", toolEvents: [] } }} {...props} />);
+    expect(screen.queryByText(/Thinking/)).toBeNull();
+    expect(screen.getByText("partial")).toBeInTheDocument();
   });
 });

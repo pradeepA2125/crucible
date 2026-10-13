@@ -57,3 +57,41 @@ describe("TranscriptItems", () => {
     expect(document.querySelector("button[data-event-id]")).toBeNull();
   });
 });
+
+describe("TranscriptItems — running turn and avatars", () => {
+  const user: ChatMsg = { role: "user", content: "go", type: "text", timestamp: t, metadata: {} };
+  const applied: ChatMsg = { role: "agent", content: "", type: "diff_card", timestamp: t, metadata: { resolved: "applied", diff_entries: [{ path: "a.py", additions: 2, deletions: 1 }] } };
+
+  it("holds back the turn's changes card while the turn runs and shows it once it ends", () => {
+    const { rerender } = render(<TranscriptItems messages={[user, applied]} {...common} turnActive />);
+    expect(screen.queryByTestId("turn-changes")).toBeNull();
+    rerender(<TranscriptItems messages={[user, applied]} {...common} turnRunning />);
+    expect(screen.queryByTestId("turn-changes")).toBeNull();
+    rerender(<TranscriptItems messages={[user, applied]} {...common} />);
+    expect(screen.getByTestId("turn-changes")).toBeInTheDocument();
+  });
+
+  it("keeps a pending diff card interactive instead of folding it into a group", () => {
+    const pending: ChatMsg = { ...applied, metadata: { diff_entries: applied.metadata!.diff_entries } };
+    render(<TranscriptItems messages={[user, pending]} {...common} />);
+    expect(screen.queryByTestId("activity-group")).toBeNull();
+    expect(screen.getByRole("button", { name: /Apply|Accept/i })).toBeInTheDocument();
+  });
+
+  it("shows the avatar on narration that follows a full-width card", () => {
+    const roster: ChatMsg = { role: "agent", content: "", type: "agent_dispatch", timestamp: t, metadata: { agent_ids: ["a1"] } };
+    const note: ChatMsg = { role: "agent", content: "Working on it.", type: "text", timestamp: t, metadata: { progress: true } };
+    render(<TranscriptItems messages={[user, roster, note]} {...common} />);
+    expect(screen.queryAllByTestId("avatar-spacer")).toHaveLength(0);
+  });
+
+  it("tells renderTail whether the last item continues an agent run", () => {
+    const seen: boolean[] = [];
+    const tail = (c: boolean) => { seen.push(c); return null; };
+    render(<TranscriptItems messages={[user]} {...common} renderTail={tail} />);
+    render(<TranscriptItems messages={[user, applied]} {...common} turnActive renderTail={tail} />);
+    expect(seen).toEqual([false, true]);
+    render(<TranscriptItems messages={[user, { ...applied, metadata: { resolved: "applied", diff_entries: [] } }, { role: "agent", content: "hi", type: "text", timestamp: t, metadata: {} }]} {...common} renderTail={tail} />);
+    expect(seen[2]).toBe(true);
+  });
+});

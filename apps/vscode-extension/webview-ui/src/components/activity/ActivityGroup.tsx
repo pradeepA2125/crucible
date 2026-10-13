@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { ToolEventView } from "../../types";
 import type { ActivityStep } from "../../transcript/groupTranscript";
 import { summarizeActivity } from "../../transcript/summarizeActivity";
@@ -41,7 +41,7 @@ function EditRow({ step }: { step: Extract<ActivityStep, { type: "edit" }> }) {
   const del = step.entries.reduce((s, e) => s + e.deletions, 0);
   return (
     <div className="grid min-w-0 gap-1">
-      <button type="button" onClick={() => setOpen(!open)}
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
         className="flex min-w-0 items-center gap-2 text-left text-[11.5px] text-text-2 hover:text-text">
         <span className="truncate">{label}</span>
         {step.applied ? (
@@ -57,7 +57,19 @@ function EditRow({ step }: { step: Extract<ActivityStep, { type: "edit" }> }) {
   );
 }
 
-export function ActivityGroup({ steps }: { steps: ActivityStep[] }) {
+// groupTranscript rebuilds step objects on every regroup but reuses the message-owned events/entries,
+// so comparing those references keeps an unchanged group from re-rendering.
+function sameSteps(a: ActivityStep[], b: ActivityStep[]): boolean {
+  return a.length === b.length && a.every((step, i) => {
+    const other = b[i];
+    if (step.type !== other.type) return false;
+    if (step.type === "tools" && other.type === "tools") return step.events === other.events;
+    if (step.type === "edit" && other.type === "edit") return step.entries === other.entries && step.applied === other.applied;
+    return step.type === "outcome" && other.type === "outcome" && step.text === other.text;
+  });
+}
+
+export const ActivityGroup = memo(function ActivityGroup({ steps }: { steps: ActivityStep[] }) {
   const [open, setOpen] = useState(false);
   const summary = summarizeActivity(steps);
   return (
@@ -77,4 +89,4 @@ export function ActivityGroup({ steps }: { steps: ActivityStep[] }) {
       )}
     </div>
   );
-}
+}, (prev, next) => sameSteps(prev.steps, next.steps));

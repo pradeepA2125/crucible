@@ -8,7 +8,11 @@ function elapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export function TransientActivity({ bubble, startedAt, fallback }: { bubble: StreamingBubble; startedAt: number; fallback?: string | null }) {
+export function TransientActivity({ bubble, startedAt, fallback, waiting = false }: {
+  bubble: StreamingBubble; startedAt: number; fallback?: string | null;
+  /** A main-agent gate is pending: nothing is running, the user is the one being waited on. */
+  waiting?: boolean;
+}) {
   const [now, setNow] = useState(Date.now());
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -18,10 +22,10 @@ export function TransientActivity({ bubble, startedAt, fallback }: { bubble: Str
   // A tool batch emits all its members as pending at once and they finish in any order:
   // name the oldest unfinished one and count the rest. Finished work already shows in the
   // activity group above, so this line and its box only carry what is running now.
-  const unfinished = bubble.toolEvents.filter((e) => !e.done);
+  const unfinished = waiting ? [] : bubble.toolEvents.filter((e) => !e.done);
   const thinking = bubble.activeThinkingChunk.trim().split("\n").pop()
     || bubble.thinkingEntries[bubble.thinkingEntries.length - 1] || "";
-  const text = unfinished.length
+  const text = waiting ? "Waiting for your approval" : unfinished.length
     ? describeTool(unfinished[0]) + (unfinished.length > 1 ? ` +${unfinished.length - 1} more` : "")
     : thinking || fallback || "Working…";
   return (
@@ -30,7 +34,7 @@ export function TransientActivity({ bubble, startedAt, fallback }: { bubble: Str
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden="true"
           style={{ background: "var(--color-accent)", animation: "pulse 1.5s ease-in-out infinite" }} />
         <span data-testid="transient-text" className="min-w-0 truncate">{text}</span>
-        <span className="shrink-0 text-text-3">{elapsed(now - startedAt)}</span>
+        {!waiting && <span className="shrink-0 text-text-3">{elapsed(now - startedAt)}</span>}
         {unfinished.length > 0 && (
           <button type="button" aria-label="Show current step" onClick={() => setOpen(!open)}
             className="shrink-0 text-text-3 hover:text-text">{open ? "▾" : "›"}</button>

@@ -14,7 +14,7 @@ const steps: ActivityStep[] = [
 describe("ActivityGroup", () => {
   it("is one collapsed summary line by default", () => {
     render(<ActivityGroup steps={steps} />);
-    expect(screen.getByRole("button", { name: /Read a file, edited `a.ts` \+3 −1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Read a file, edited a.ts \+3 −1/ })).toBeInTheDocument();
     expect(screen.queryByTestId("activity-detail")).toBeNull();
   });
 
@@ -26,6 +26,15 @@ describe("ActivityGroup", () => {
     expect(detail.className).toContain("overflow-y-auto");
     expect(detail.textContent).toContain("Edited a.ts");
     expect(detail.textContent).toContain("Edit accepted: a.ts");
+  });
+
+  it("exposes the edit row's open state", () => {
+    render(<ActivityGroup steps={steps} />);
+    fireEvent.click(screen.getByRole("button", { name: /Read a file/ }));
+    const row = screen.getByRole("button", { name: /Edited a.ts/ });
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-expanded", "true");
   });
 
   it("opens an edit row to its diff", () => {

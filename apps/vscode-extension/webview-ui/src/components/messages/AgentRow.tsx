@@ -18,6 +18,8 @@ interface Props {
   streamingThinkingChunk?: string;
   /** False continues the previous agent run: a same-width spacer keeps the column aligned. */
   showAvatar?: boolean;
+  /** The live answer row has no thinking to show: the transient line carries it. */
+  hideThinkingBlock?: boolean;
 }
 
 /**
@@ -40,6 +42,7 @@ export function AgentRow({
   streamingThinkingEntries,
   streamingThinkingChunk,
   showAvatar = true,
+  hideThinkingBlock = false,
 }: Props) {
   const [copyLabel, setCopyLabel] = useState<"Copy" | "Copied ✓">("Copy");
 
@@ -68,7 +71,7 @@ export function AgentRow({
 
       <div className="flex-1 min-w-0 flex flex-col gap-2">
         {/* Thinking block */}
-        {(thinkEntries.length > 0 || !!streamingThinkingChunk || streaming) && (
+        {!hideThinkingBlock && (thinkEntries.length > 0 || !!streamingThinkingChunk || streaming) && (
           <ThinkingBlock
             entries={thinkEntries}
             activeChunk={streamingThinkingChunk}

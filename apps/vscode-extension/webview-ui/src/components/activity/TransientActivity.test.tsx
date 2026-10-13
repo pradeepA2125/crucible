@@ -12,7 +12,7 @@ describe("TransientActivity", () => {
       { id: 1, tool: "read_file", args: { path: "a.py" }, source: "explore", done: true },
       { id: 2, tool: "run_command", args: { command: "pytest" }, source: "explore", done: false },
     ] })} />);
-    expect(screen.getByTestId("transient-activity").textContent).toContain("Running `pytest`");
+    expect(screen.getByTestId("transient-activity").textContent).toContain("Running pytest");
   });
 
   it("names the oldest unfinished member of a parallel batch and counts the rest", () => {
@@ -22,7 +22,17 @@ describe("TransientActivity", () => {
       { id: 3, tool: "search_code", args: { pattern: "x" }, source: "explore", done: false },
       { id: 4, tool: "run_command", args: { command: "pytest" }, source: "explore", done: false },
     ] })} />);
-    expect(screen.getByTestId("transient-activity").textContent).toContain("Reading `b.py` +2 more");
+    expect(screen.getByTestId("transient-activity").textContent).toContain("Reading b.py +2 more");
+  });
+
+  it("says it waits on the user, with no clock, while a gate is pending", () => {
+    render(<TransientActivity startedAt={Date.now()} waiting bubble={bubble({ toolEvents: [
+      { id: 2, tool: "run_command", args: { command: "pytest" }, source: "explore", done: false },
+    ] })} />);
+    const text = screen.getByTestId("transient-activity").textContent ?? "";
+    expect(text).toContain("Waiting for your approval");
+    expect(text).not.toMatch(/\d+s/);
+    expect(screen.queryByRole("button", { name: /Show current step/ })).toBeNull();
   });
 
   it("falls back to the thinking text, then to Working…", () => {

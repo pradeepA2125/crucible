@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { vscode } from "../../vscodeApi";
 import type { FileChange } from "../../transcript/groupTranscript";
 import { DiffPanes } from "../shared/DiffPanes";
@@ -18,8 +18,8 @@ function Row({ file }: { file: FileChange }) {
           </>
         ) : <span className="text-text-3">not applied</span>}
         {file.diff && (
-          <button type="button" aria-label={`Show diff for ${file.path}`} onClick={() => setOpen(!open)}
-            className="text-text-3 hover:text-text">{open ? "▾" : "›"}</button>
+          <button type="button" aria-label={`Show diff for ${file.path}`} aria-expanded={open} onClick={() => setOpen(!open)}
+            className="px-1.5 py-0.5 text-text-3 hover:text-text">{open ? "▾" : "›"}</button>
         )}
       </div>
       {open && file.diff && <DiffPanes entries={[{ path: file.path, additions: file.additions, deletions: file.deletions, unified_diff: file.diff }]} />}
@@ -27,7 +27,12 @@ function Row({ file }: { file: FileChange }) {
   );
 }
 
-export function TurnChanges({ files }: { files: FileChange[] }) {
+function sameFiles(a: FileChange[], b: FileChange[]): boolean {
+  return a.length === b.length && a.every((f, i) => f.path === b[i].path && f.additions === b[i].additions
+    && f.deletions === b[i].deletions && f.applied === b[i].applied && f.diff === b[i].diff);
+}
+
+export const TurnChanges = memo(function TurnChanges({ files }: { files: FileChange[] }) {
   const applied = files.filter((f) => f.applied);
   const add = applied.reduce((s, f) => s + f.additions, 0);
   const del = applied.reduce((s, f) => s + f.deletions, 0);
@@ -47,4 +52,4 @@ export function TurnChanges({ files }: { files: FileChange[] }) {
       {files.map((f) => <Row key={f.path} file={f} />)}
     </div>
   );
-}
+}, (prev, next) => sameFiles(prev.files, next.files));
