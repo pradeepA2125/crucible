@@ -32,3 +32,34 @@ describe("MarkdownContent GFM support", () => {
     expect(screen.getByText("bold").tagName).toBe("STRONG");
   });
 });
+
+describe("MarkdownContent as plain prose (spec §2)", () => {
+  it("has no box: no border, background or radius", () => {
+    const { container } = render(<MarkdownContent content="Plain answer." />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.style.border).toBe("");
+    expect(root.style.background).toBe("");
+    expect(root.style.borderRadius).toBe("");
+  });
+
+  it("uses the prose size, primary text and a 1.6 line height", () => {
+    const { container } = render(<MarkdownContent content="Plain answer." />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("text-prose");
+    expect(root.className).toContain("text-text");
+    expect(root.className).toContain("leading-[1.6]");
+    expect(root.className).toContain("[&_p]:[text-wrap:pretty]");
+  });
+
+  it("renders inline code as a neutral chip on surface-1", () => {
+    const { container } = render(<MarkdownContent content="Use `retry()` here." />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("[&_:not(pre)>code]:bg-[var(--surface-1)]");
+    expect(root.className).not.toContain("[&_code]:text-code");
+  });
+
+  it("still wraps a very long unbroken token (Review Focus 1)", () => {
+    const { container } = render(<MarkdownContent content={"x".repeat(400)} />);
+    expect((container.firstElementChild as HTMLElement).className).toContain("[overflow-wrap:anywhere]");
+  });
+});

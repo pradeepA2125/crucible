@@ -34,34 +34,29 @@ export const MARKDOWN_WRAP_CLASSES = [
 
 /** Table styling, shared with PlanCard so both markdown surfaces match. */
 export const MARKDOWN_TABLE_CLASSES = [
-  "[&_table]:w-full [&_table]:border-collapse [&_table]:text-[11px]",
+  "[&_table]:w-full [&_table]:border-collapse [&_table]:text-meta",
   "[&_th]:border [&_th]:border-border-strong [&_th]:bg-surface-2 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold [&_th]:text-text",
   "[&_td]:border [&_td]:border-border-strong [&_td]:px-2 [&_td]:py-1 [&_td]:align-top",
 ];
 
 /**
- * Markdown answer body inside a left-aligned agent box — the visual mirror of
- * the user's right-aligned bubble (.ubub), with prose-ish Tailwind styling via
- * arbitrary selectors. Shared by QAMessage and AgentRow so a finished agent
- * message renders the same whether or not the turn carried tool pills.
+ * An agent answer as plain prose (spec §2): no card, no border, no avatar. Prose size,
+ * primary text, 1.6 line height, `text-wrap: pretty`. Inline code is a neutral chip on
+ * surface-1; file references keep their accent links (MessageMarkdown). Shared by
+ * QAMessage and AgentRow so an answer looks the same with or without tool steps.
  */
 export function MarkdownContent({ content }: Props) {
   return (
     <div
-      style={{
-        background: "linear-gradient(180deg, var(--color-surface-2), var(--color-surface))",
-        border: "1px solid var(--color-border-strong)",
-        boxShadow: "inset 0 1px 0 var(--hairline)",
-        borderRadius: "4px 12px 12px 12px",
-      }}
       className={[
-        "self-start px-3 py-2",
+        "self-stretch",
         ...MARKDOWN_WRAP_CLASSES,
-        "text-xs text-text-2 leading-relaxed",
-        // Inline code
-        "[&_code]:mono [&_code]:text-code [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:rounded",
+        "text-prose text-text leading-[1.6]",
+        "[&_p]:[text-wrap:pretty]",
+        // Inline code: a neutral chip (not code-coloured)
+        "[&_:not(pre)>code]:mono [&_:not(pre)>code]:bg-[var(--surface-1)] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:rounded-control",
         // Pre blocks
-        "[&_pre]:mono [&_pre]:bg-surface-2 [&_pre]:rounded [&_pre]:p-2",
+        "[&_pre]:mono [&_pre]:bg-[var(--surface-1)] [&_pre]:rounded-control [&_pre]:p-2",
         // Paragraphs
         "[&_p]:mb-2 [&_p:last-child]:mb-0",
         // Lists
