@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { formatElapsed, isTerminalAgent } from "../../agents";
 import { buildChapters, chapterHeading, type MemberChapter } from "../../teamChapters";
 import { identityFor } from "../../teamIdentity";
@@ -18,13 +18,26 @@ const firstLine = (text: string) =>
 export function HandedPost({ post, reference, roster }: {
   post?: TeamPostView; reference: string; roster: string[];
 }) {
+  const [open, setOpen] = useState(false);
+  const bodyId = useId();
+  const text = post?.text ?? "";
+  const first = Array.from(firstLine(text));
+  const preview = first.slice(0, 160).join("") + (first.length > 160 ? "…" : "");
+  const expandable = text.trim() !== preview;
   return (
-    <div className="flex min-w-0 max-w-full items-start gap-1.5 rounded-md border px-2 py-1 text-[11.5px] text-text-2"
+    <div className="flex min-w-0 max-w-full items-start gap-1.5 rounded-control border px-2 py-1 text-meta text-text-2"
       style={{ background: "var(--color-panel)", borderColor: "var(--color-border-strong)" }}>
-      <span className="shrink-0 font-mono text-[10.5px] font-semibold text-text-3">{reference}</span>
+      <span className="shrink-0 font-mono text-caption font-semibold text-text-3">{reference}</span>
       {post && <>
         <span className="shrink-0"><Avatar label={post.author} roster={roster} size="sm" /></span>
-        <span className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{post.author} · {post.text}</span>
+        <div className="grid min-w-0 flex-1 gap-1">
+          <span id={bodyId} className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{post.author} · {open ? text : preview}</span>
+          {expandable && <button type="button" aria-expanded={open} aria-controls={bodyId}
+            aria-label={`${open ? "Show less" : "Show more"} of handed post ${reference}`}
+            onClick={() => setOpen(!open)} className="justify-self-start rounded-control text-caption text-accent-ink">
+            {open ? "Show less" : "Show more"}
+          </button>}
+        </div>
       </>}
     </div>
   );

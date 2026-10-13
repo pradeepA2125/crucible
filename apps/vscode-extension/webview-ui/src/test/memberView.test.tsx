@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
 import { AgentsContext, type AgentsUi } from "../components/agents/AgentsContext";
-import { MemberView } from "../components/teams/MemberView";
+import { HandedPost, MemberView } from "../components/teams/MemberView";
 import { TeamsContext, type TeamsUi } from "../components/teams/TeamsContext";
 import type { AgentDetailView, ChatMsg, TeamActivityView, TeamPostView, TeamSummaryView, ToolEventView } from "../types";
 
@@ -58,12 +58,27 @@ function renderView(usage: TeamsUi["usage"] = null, posts = POSTS, live: ToolEve
 }
 
 describe("MemberView", () => {
-  it("keeps the full handed message, including later lines", () => {
+  it("previews a handed post, expands its full message, and can collapse it again", () => {
     const text = "@design @telemetry @ui " + "Plan a UI feature with verified code citations. ".repeat(40)
       + "\nA second paragraph that must remain visible.";
     renderView(null, POSTS.map((p) => p.seq === 5 ? { ...p, text } : p));
     const handed = screen.getByTestId("handed-2");
+    expect(handed.textContent).not.toContain(text);
+    expect(handed.textContent).not.toContain("A second paragraph that must remain visible.");
+    const more = screen.getByRole("button", { name: "Show more of handed post #5" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
     expect(handed.textContent).toContain(text);
+    const less = screen.getByRole("button", { name: "Show less of handed post #5" });
+    expect(less).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(less);
+    expect(handed.textContent).not.toContain("A second paragraph that must remain visible.");
+  });
+
+  it("shows a short handed message without a redundant disclosure", () => {
+    render(<HandedPost post={POSTS[2]} reference="#5" roster={["review", "impl"]} />);
+    expect(screen.getByText("impl · @review see this")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show more/ })).toBeNull();
   });
 
   it("shows the member's token usage (with its helpers) when the tab is selected", () => {

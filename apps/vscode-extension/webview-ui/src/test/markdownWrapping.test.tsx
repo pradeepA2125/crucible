@@ -6,6 +6,7 @@ import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compile } from "@tailwindcss/node";
 import { renderToStaticMarkup } from "react-dom/server";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MarkdownContent } from "../components/shared/MarkdownContent";
 import { AgentsContext, type AgentsUi } from "../components/agents/AgentsContext";
@@ -48,6 +49,14 @@ const memberAgents = {
 describe.skipIf(!chrome)("markdown wrapping in a real browser", () => {
   for (const surface of ["board", "agent", "handed", "member"] as const) {
     it(`${surface} wraps prose, paths, and code without widening nested grids or flex boxes`, async () => {
+      // Measure the full disclosed post, including long paths and later lines.
+      let handedMarkup = "";
+      if (surface === "handed") {
+        const handed = render(<HandedPost reference="#1" roster={["design"]} post={{ author: "main", text: message } as TeamPostView} />);
+        fireEvent.click(handed.getByRole("button", { name: "Show more of handed post #1" }));
+        handedMarkup = handed.container.innerHTML;
+        handed.unmount();
+      }
       const markdown = surface === "board"
         ? <PostBody text={message} /> : surface === "agent"
           ? <MarkdownContent content={message} />
@@ -55,7 +64,7 @@ describe.skipIf(!chrome)("markdown wrapping in a real browser", () => {
             ? <AgentsContext.Provider value={memberAgents}><TeamsContext.Provider value={memberTeams}>
                 <MemberView teamId="t" agentId="a" />
               </TeamsContext.Provider></AgentsContext.Provider>
-            : <HandedPost reference="#1" roster={["design"]} post={{ author: "main", text: message } as TeamPostView} />;
+            : <div dangerouslySetInnerHTML={{ __html: handedMarkup }} />;
       const markup = renderToStaticMarkup(<>
         {[280, 360, 640].map((width) => (
           <section key={width} data-panel style={{ width }} className="overflow-y-auto">
