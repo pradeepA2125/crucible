@@ -42,7 +42,7 @@ describe("TransientActivity", () => {
     expect(screen.getByTestId("transient-activity").textContent).toContain("Working…");
   });
 
-  it("is one ellipsized line and expands to the in-flight pills", () => {
+  it("is one ellipsized line and expands to the in-flight steps", () => {
     render(<TransientActivity startedAt={Date.now()} bubble={bubble({ toolEvents: [
       { id: 1, tool: "read_file", args: { path: "x".repeat(400) }, source: "explore", done: false },
     ] })} />);

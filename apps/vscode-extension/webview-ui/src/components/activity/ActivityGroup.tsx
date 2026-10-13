@@ -3,7 +3,7 @@ import type { ToolEventView } from "../../types";
 import type { ActivityStep } from "../../transcript/groupTranscript";
 import { summarizeActivity } from "../../transcript/summarizeActivity";
 import { DiffPanes } from "../shared/DiffPanes";
-import { ToolTrack } from "../shared/ToolTrack";
+import { ActivityLine } from "./ActivityLine";
 
 const basename = (path: string) => path.split("/").pop() || path;
 
@@ -24,8 +24,8 @@ function ToolsStep({ events }: { events: ToolEventView[] }) {
     <>
       {splitByThought(events).map((run, i) => (
         <div key={i} className="grid min-w-0 gap-1">
-          {run.thought && <div data-testid="activity-thought" className="text-[11px] text-text-3">{run.thought}</div>}
-          <ToolTrack events={run.events} />
+          {run.thought && <div data-testid="activity-thought" className="text-meta text-text-3">{run.thought}</div>}
+          {run.events.map((event) => <ActivityLine key={event.id} event={event} />)}
         </div>
       ))}
     </>
@@ -42,12 +42,12 @@ function EditRow({ step }: { step: Extract<ActivityStep, { type: "edit" }> }) {
   return (
     <div className="grid min-w-0 gap-1">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
-        className="flex min-w-0 items-center gap-2 text-left text-[11.5px] text-text-2 hover:text-text">
+        className="flex min-w-0 items-center gap-2 text-left text-body text-text-2 hover:text-text">
         <span className="truncate">{label}</span>
         {step.applied ? (
           <span className="shrink-0">
-            <span style={{ color: "var(--color-green)" }}>+{add}</span>{" "}
-            <span style={{ color: "var(--color-red)" }}>−{del}</span>
+            <span style={{ color: "var(--diff-add)" }}>+{add}</span>{" "}
+            <span style={{ color: "var(--diff-del)" }}>−{del}</span>
           </span>
         ) : <span className="shrink-0 text-text-3">Not applied</span>}
         <span className="shrink-0 text-text-3">{open ? "▾" : "›"}</span>
@@ -75,16 +75,17 @@ export const ActivityGroup = memo(function ActivityGroup({ steps }: { steps: Act
   return (
     <div data-testid="activity-group" className="grid min-w-0 gap-1.5">
       <button type="button" aria-expanded={open} aria-label={summary} onClick={() => setOpen(!open)}
-        className="flex min-w-0 items-center gap-1.5 text-left text-[12px] text-text-3 hover:text-text-2">
+        className="flex min-w-0 items-center gap-1.5 pb-1 text-left text-meta text-text-3 hover:text-text-2"
+        style={{ borderBottom: "1px solid var(--border)" }}>
         <span data-testid="activity-summary" className="min-w-0 truncate">{summary}</span>
         <span className="shrink-0">{open ? "▾" : "›"}</span>
       </button>
       {open && (
-        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 overflow-y-auto rounded-[8px] p-2"
-          style={{ maxHeight: "320px", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>
+        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto"
+          style={{ maxHeight: "320px" }}>
           {steps.map((step, i) => step.type === "tools" ? <ToolsStep key={i} events={step.events} />
             : step.type === "edit" ? <EditRow key={i} step={step} />
-            : <div key={i} className="text-[11px] text-text-3">{step.text.replace(/^[✓✗]\s*/, "")}</div>)}
+            : <div key={i} className="text-body text-text-3">{step.text.replace(/^[✓✗]\s*/, "")}</div>)}
         </div>
       )}
     </div>

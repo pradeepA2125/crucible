@@ -48,9 +48,9 @@ describe("AgentTranscript", () => {
     expect(screen.getByText("Status: failed — boom")).toBeInTheDocument();
   });
 
-  it("renders live pills and a loading state", () => {
+  it("renders live steps and a loading state", () => {
     const { rerender } = render(<AgentsContext.Provider value={withView(detail("running", []), true)}><AgentTranscript agentId="agent-a" /></AgentsContext.Provider>);
-    expect(screen.getByText("read_file")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reading/ })).toBeInTheDocument();
     rerender(<AgentsContext.Provider value={{ ...withView(detail("running", [])), views: {} }}><AgentTranscript agentId="agent-a" /></AgentsContext.Provider>);
     expect(screen.getByText("Loading…")).toBeInTheDocument();
   });

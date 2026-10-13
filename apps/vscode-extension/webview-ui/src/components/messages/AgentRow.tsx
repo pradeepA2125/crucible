@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ToolEventView } from "../../types";
 import { MarkdownContent } from "../shared/MarkdownContent";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
-import { ToolTrack } from "../shared/ToolTrack";
+import { ActivityLine } from "../activity/ActivityLine";
 import { TeamLinks } from "../teams/TeamLinks";
 import { Icon } from "../Icon";
 
@@ -20,7 +20,7 @@ interface Props {
 }
 
 /**
- * Generic agent row — handles breadcrumbs, tool pills, streaming content.
+ * Generic agent row — handles breadcrumbs, tool steps, streaming content.
  * Matches .turn / .crumb / .stream-line / .caret in the hi-fi mockup.
  *
  * breadcrumb: compact icon+text row, strips leading marker character.
@@ -43,11 +43,11 @@ export function AgentRow({
   const [copyLabel, setCopyLabel] = useState<"Copy" | "Copied ✓">("Copy");
 
   const thinkEntries = thinkingLog ?? streamingThinkingEntries ?? [];
-  const pills = toolEvents ?? [];
+  const steps = toolEvents ?? [];
 
   function handleCopy() {
     const parts = [
-      ...pills.map((t) => t.tool + (t.done ? " ok" : " pending")),
+      ...steps.map((t) => t.tool + (t.done ? " ok" : " pending")),
       content,
     ].join("\n");
     navigator.clipboard.writeText(parts).catch(() => {
@@ -69,12 +69,14 @@ export function AgentRow({
           />
         )}
 
-        {/* Tool pills, threaded onto a serpentine track */}
-        {pills.length > 0 && <ToolTrack events={pills} />}
-        {pills.length > 0 && <TeamLinks events={pills} />}
+        {/* Tool steps, shown as activity lines */}
+        {steps.length > 0 && (
+          <div className="grid min-w-0 gap-1.5">{steps.map((event) => <ActivityLine key={event.id} event={event} />)}</div>
+        )}
+        {steps.length > 0 && <TeamLinks events={steps} />}
 
         {/* Content. Finished messages get the same markdown treatment as
-            QAMessage (a turn with pills must not lose answer formatting);
+            QAMessage (a turn with steps must not lose answer formatting);
             streaming stays plain text — markdown on partial chunks flickers. */}
         {progress ? (
           <ProgressLine text={content} />

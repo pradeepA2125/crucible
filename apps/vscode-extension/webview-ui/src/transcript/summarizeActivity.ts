@@ -110,39 +110,55 @@ export function summarizeActivity(steps: ActivityStep[]): string {
   return failed ? `${sentence} · ${failed} failed` : sentence;
 }
 
-export function describeTool(event: ToolEventView): string {
-  const args = event.args ?? {};
+/** One activity line's words (spec §2): a verb, then a muted target. Present tense while
+ * the step runs ("Reading a.py"), past once it is done ("Read a.py"). Missing or odd
+ * arguments degrade to an empty target, never "undefined". */
+export function toolLine(event: ToolEventView): { verb: string; target: string } {
+  const args = (event.args ?? {}) as Record<string, unknown>;
   const str = (value: unknown): string => (typeof value === "string" ? value : "");
+  const live = !event.done;
+  const pick = (running: string, finished: string) => (live ? running : finished);
+  const quoted = (value: string) => (value ? `“${value}”` : "");
   switch (event.tool) {
     case "read_file":
-      return `Reading ${basename(str(args.path))}`;
+      return { verb: pick("Reading", "Read"), target: basename(str(args.path)) };
     case "list_directory":
-      return `Listing ${str(args.path) || "."}`;
+      return { verb: pick("Listing", "Listed"), target: str(args.path) || "." };
     case "search_code":
     case "search_semantic": {
       const query = str(args.pattern) || str(args.query);
-      return query ? `Searching code for “${query}”` : "Searching code";
+      return query
+        ? { verb: pick("Searching code for", "Searched for"), target: quoted(query) }
+        : { verb: pick("Searching code", "Searched code"), target: "" };
     }
     case "run_command":
     case "start_session": {
-      const extra = Array.isArray(args.args) ? args.args.join(" ") : "";
-      return `Running ${[str(args.command), extra].filter(Boolean).join(" ")}`;
+      const extra = Array.isArray(args.args) ? args.args.filter((a) => typeof a === "string").join(" ") : "";
+      return { verb: pick("Running", "Ran"), target: [str(args.command), extra].filter(Boolean).join(" ") };
     }
     case "web_search":
-      return `Searching the web for “${str(args.query)}”`;
+      return { verb: pick("Searching the web for", "Searched the web for"), target: quoted(str(args.query)) };
     case "web_fetch":
-      return `Fetching ${str(args.url)}`;
+      return { verb: pick("Fetching", "Fetched"), target: str(args.url) };
+    case "query_graph":
+      return { verb: pick("Querying the code graph for", "Queried the code graph for"), target: str(args.node) };
     case "write_stdin":
-      return "Sending input to a session";
+      return { verb: pick("Sending input to a session", "Sent input to a session"), target: "" };
     case "kill_session":
-      return "Stopping a session";
+      return { verb: pick("Stopping a session", "Stopped a session"), target: "" };
     case "list_sessions":
-      return "Listing sessions";
+      return { verb: pick("Listing sessions", "Listed sessions"), target: "" };
     case "dispatch_agents":
-      return "Starting agents";
+      return { verb: pick("Starting agents", "Started agents"), target: "" };
     case "write_todos":
-      return "Updating the todo list";
+      return { verb: pick("Updating the todo list", "Updated the todo list"), target: "" };
     default:
-      return `Using ${event.tool}`;
+      return { verb: pick("Using", "Used"), target: event.tool };
   }
+}
+
+/** The live line's text: the running step's verb and target. */
+export function describeTool(event: ToolEventView): string {
+  const { verb, target } = toolLine({ ...event, done: false });
+  return target ? `${verb} ${target}` : verb;
 }

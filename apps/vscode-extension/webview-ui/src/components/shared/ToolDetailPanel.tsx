@@ -9,9 +9,7 @@ interface Props {
 /**
  * Expanded input/output panel for one tool call.
  *
- * Mounted by ToolTrack below the pill's row rather than inside the pill's own
- * column: with rows packed at a fixed width, a ~230px panel under a single chip
- * would blow out its column.
+ * Mounted under its ActivityLine.
  */
 export function ToolDetailPanel({ event }: Props) {
   const icon = toolIcon(event.tool);
@@ -47,7 +45,7 @@ export function ToolDetailPanel({ event }: Props) {
               {outputLineCount} lines
             </span>
           )}
-          <span>collapse</span>
+          
         </span>
       </div>
 
@@ -56,7 +54,7 @@ export function ToolDetailPanel({ event }: Props) {
           INPUT
         </div>
         <div className="mono text-[10.5px] leading-[1.8]">
-          {Object.entries(event.args).map(([k, v]) => (
+          {Object.entries(event.args ?? {}).map(([k, v]) => (
             <div key={k}>
               <span className="text-text-3">{k}:</span>{" "}
               <span className="text-accent-ink">

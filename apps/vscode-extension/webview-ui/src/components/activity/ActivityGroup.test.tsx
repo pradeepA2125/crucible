@@ -44,7 +44,7 @@ describe("ActivityGroup", () => {
     expect(screen.getByTestId("activity-detail").textContent).toContain("new_line");
   });
 
-  it("shows a batch's shared thought once above its pills", () => {
+  it("shows a batch's shared thought once above its steps", () => {
     const batch: ActivityStep[] = [{ type: "tools", events: [
       { id: 1, tool: "read_file", args: { path: "a.py" }, thought: "Check both modules", source: "explore", done: true },
       { id: 2, tool: "read_file", args: { path: "b.py" }, thought: "Check both modules", source: "explore", done: true },
@@ -59,5 +59,19 @@ describe("ActivityGroup", () => {
     const long: ActivityStep[] = [{ type: "tools", events: [{ id: 1, tool: "mcp__" + "x".repeat(300), args: {}, source: "explore", done: true }] }];
     render(<ActivityGroup steps={long} />);
     expect(screen.getByTestId("activity-summary").className).toContain("truncate");
+  });
+  it("lists each tool step as one line, not steps (spec §2)", () => {
+    render(<ActivityGroup steps={steps} />);
+    fireEvent.click(screen.getByRole("button", { name: /Read a file/ }));
+    expect(screen.getByRole("button", { name: /Read a\.py/ })).toBeInTheDocument();
+    expect(screen.getByTestId("activity-detail").querySelector("[data-event-id]")).toBeNull();
+  });
+
+  it("puts the folded header on a muted meta row over a hairline rule", () => {
+    render(<ActivityGroup steps={steps} />);
+    const header = screen.getByRole("button", { name: /Read a file/ });
+    expect(header.className).toContain("text-meta");
+    expect(header.className).toContain("text-text-3");
+    expect(header.style.borderBottom).toBe("1px solid var(--border)");
   });
 });

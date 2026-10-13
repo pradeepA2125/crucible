@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ToolEventView } from "../types";
 import type { ActivityStep } from "./groupTranscript";
-import { describeTool, summarizeActivity } from "./summarizeActivity";
+import { describeTool, toolLine, summarizeActivity } from "./summarizeActivity";
 
 const ev = (tool: string, args: Record<string, unknown> = {}, isError = false): ToolEventView =>
   ({ id: 0, tool, args, source: "explore", done: true, isError });
@@ -64,5 +64,53 @@ describe("describeTool", () => {
     expect(describeTool(ev("list_sessions"))).toBe("Listing sessions");
     expect(describeTool(ev("search_code"))).toBe("Searching code");
     expect(describeTool(ev("search_semantic", { query: "" }))).toBe("Searching code");
+  });
+});
+
+const lineEvent = (tool: string, args: Record<string, unknown> | null, done = true, extra: Partial<ToolEventView> = {}): ToolEventView =>
+  ({ id: 1, tool, args: args as ToolEventView["args"], source: "explore", done, ...extra });
+
+describe("toolLine (one activity line per step, spec §2)", () => {
+  it.each([
+    ["read_file", { path: "src/a/upload_client.py" }, "Read", "upload_client.py"],
+    ["list_directory", { path: "src" }, "Listed", "src"],
+    ["search_code", { pattern: "retry|backoff" }, "Searched for", "“retry|backoff”"],
+    ["run_command", { command: "pytest", args: ["tests/test_upload.py"] }, "Ran", "pytest tests/test_upload.py"],
+    ["web_search", { query: "vite chunk names" }, "Searched the web for", "“vite chunk names”"],
+    ["web_fetch", { url: "https://example.com" }, "Fetched", "https://example.com"],
+    ["query_graph", { node: "src/a.ts" }, "Queried the code graph for", "src/a.ts"],
+    ["write_todos", { items: [] }, "Updated the todo list", ""],
+  ])("%s done → %s %s", (tool, args, verb, target) => {
+    expect(toolLine(lineEvent(tool, args))).toEqual({ verb, target });
+  });
+
+  it("uses the present tense while the step runs", () => {
+    expect(toolLine(lineEvent("read_file", { path: "a.py" }, false))).toEqual({ verb: "Reading", target: "a.py" });
+    expect(toolLine(lineEvent("run_command", { command: "pytest" }, false))).toEqual({ verb: "Running", target: "pytest" });
+  });
+
+  it("never crashes or prints undefined on missing or odd arguments (Review Focus 2)", () => {
+    for (const args of [null, {}, { path: 42 }, { command: null, args: "nope" }]) {
+      for (const tool of ["read_file", "run_command", "search_code", "web_fetch", "mcp__github__create_issue"]) {
+        const { verb, target } = toolLine(lineEvent(tool, args as Record<string, unknown> | null));
+        expect(verb.length).toBeGreaterThan(0);
+        expect(`${verb} ${target}`).not.toContain("undefined");
+      }
+    }
+  });
+
+  it("names an unknown tool instead of guessing", () => {
+    expect(toolLine(lineEvent("mcp__github__create_issue", {}))).toEqual({ verb: "Used", target: "mcp__github__create_issue" });
+  });
+});
+
+describe("describeTool keeps its live wording", () => {
+  it.each([
+    [lineEvent("read_file", { path: "a/b.py" }, false), "Reading b.py"],
+    [lineEvent("search_code", { pattern: "x" }, false), "Searching code for “x”"],
+    [lineEvent("run_command", { command: "pytest" }, false), "Running pytest"],
+    [lineEvent("list_directory", {}, false), "Listing ."],
+  ])("%#", (event, text) => {
+    expect(describeTool(event)).toBe(text);
   });
 });

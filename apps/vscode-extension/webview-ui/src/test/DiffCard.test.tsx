@@ -187,9 +187,9 @@ describe("DiffCard — resolved prop", () => {
   });
 });
 
-// ── 6. Persisted tool pills ───────────────────────────────────────────────────
+// ── 6. Persisted tool steps ───────────────────────────────────────────────────
 
-describe("DiffCard — persisted tool pills", () => {
+describe("DiffCard — persisted tool steps", () => {
   const TOOL_EVENTS = [
     {
       id: 0,
@@ -211,29 +211,23 @@ describe("DiffCard — persisted tool pills", () => {
     },
   ];
 
-  it("renders a pill per persisted tool event", () => {
-    render(
-      <DiffCard taskId="t1" diffEntries={ENTRIES} toolEvents={TOOL_EVENTS} />
-    );
-
-    expect(screen.getByText("read_file")).toBeTruthy();
-    expect(screen.getByText("run_command")).toBeTruthy();
+  it("renders a line per persisted tool event", () => {
+    render(<DiffCard taskId="t1" diffEntries={ENTRIES} toolEvents={TOOL_EVENTS} />);
+    expect(screen.getByRole("button", { name: /Read a\.py/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Ran pytest -q/ })).toBeTruthy();
   });
 
-  it("expands a done pill to show input args and output", () => {
-    render(
-      <DiffCard taskId="t1" diffEntries={ENTRIES} toolEvents={TOOL_EVENTS} />
-    );
-
-    fireEvent.click(screen.getByText("run_command"));
-    expect(screen.getByText("pytest -q")).toBeTruthy();
+  it("expands a step to show its input and output", () => {
+    render(<DiffCard taskId="t1" diffEntries={ENTRIES} toolEvents={TOOL_EVENTS} />);
+    fireEvent.click(screen.getByRole("button", { name: /Ran pytest -q/ }));
     expect(screen.getByText("3 passed")).toBeTruthy();
   });
 
-  it("renders no pill strip when toolEvents is absent", () => {
+  it("renders no step lines when toolEvents is absent", () => {
     render(<DiffCard taskId="t1" diffEntries={ENTRIES} />);
-    expect(screen.queryByText("read_file")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Read a\.py/ })).toBeNull();
   });
+
 });
 
 // ── 7. Resolved step-review record ────────────────────────────────────────────

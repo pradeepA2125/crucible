@@ -1,6 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
-import { ToolPill } from "../components/shared/ToolPill";
+import { describe, it, expect } from "vitest";
 import { ToolDetailPanel } from "../components/shared/ToolDetailPanel";
 import { ThinkingBlock } from "../components/shared/ThinkingBlock";
 import { AgentRow } from "../components/messages/AgentRow";
@@ -20,47 +19,6 @@ function makeEvent(overrides: Partial<ToolEventView> = {}): ToolEventView {
     ...overrides,
   };
 }
-
-// ── 1. ToolPill running ───────────────────────────────────────────────────────
-
-describe("ToolPill", () => {
-  it("running: shows the tool name and does not call onToggle when clicked", () => {
-    const onToggle = vi.fn();
-    const event = makeEvent({ done: false });
-    render(<ToolPill event={event} panelId="tool-panel-1" expanded={false} onToggle={onToggle} />);
-
-    expect(screen.getByText("read_file")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button"));
-    expect(onToggle).not.toHaveBeenCalled();
-  });
-
-  it("done: clicking calls onToggle", () => {
-    const onToggle = vi.fn();
-    const event = makeEvent({ done: true, output: "line 1\nline 2" });
-    render(<ToolPill event={event} panelId="tool-panel-1" expanded={false} onToggle={onToggle} />);
-
-    fireEvent.click(screen.getByRole("button"));
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-
-  it("done: reflects expanded state on aria-expanded", () => {
-    const event = makeEvent({ done: true });
-    const { rerender } = render(
-      <ToolPill event={event} panelId="tool-panel-1" expanded={false} onToggle={() => {}} />
-    );
-    expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("false");
-
-    rerender(<ToolPill event={event} panelId="tool-panel-1" expanded={true} onToggle={() => {}} />);
-    expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("never renders the detail panel itself", () => {
-    const event = makeEvent({ done: true, output: "line 1" });
-    render(<ToolPill event={event} panelId="tool-panel-1" expanded={true} onToggle={() => {}} />);
-    expect(screen.queryByText("INPUT")).toBeNull();
-    expect(screen.queryByText("OUTPUT")).toBeNull();
-  });
-});
 
 describe("ToolDetailPanel", () => {
   it("renders the tool name, input args and output", () => {
@@ -142,13 +100,14 @@ describe("AgentRow", () => {
     expect(textEl.textContent).not.toContain("✓");
   });
 
-  it("renders tool events on a track rather than a flat wrap", () => {
+  it("renders each tool event as an activity line", () => {
     const events: ToolEventView[] = [
       makeEvent({ id: 1, done: true, isError: false, output: "ok" }),
       makeEvent({ id: 2, tool: "search_code", done: true, isError: false, output: "ok" }),
     ];
-    const { container } = render(<AgentRow content="" toolEvents={events} />);
-    expect(container.querySelectorAll("[data-row]").length).toBeGreaterThan(0);
+    render(<AgentRow content="" toolEvents={events} />);
+    expect(screen.getByRole("button", { name: /Read foo.ts/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Searched code/ })).toBeInTheDocument();
   });
 
   it("renders no track when the turn made no tool calls", () => {

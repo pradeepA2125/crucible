@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { StreamingBubble } from "../../types";
-import { describeTool } from "../../transcript/summarizeActivity";
-import { ToolTrack } from "../shared/ToolTrack";
+import { describeTool, toolLine } from "../../transcript/summarizeActivity";
+import { ActivityLine } from "./ActivityLine";
 
 function elapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -30,21 +30,25 @@ export function TransientActivity({ bubble, startedAt, fallback, waiting = false
     : thinking || fallback || "Working…";
   return (
     <div data-testid="transient-activity" className="grid min-w-0 gap-1.5">
-      <div className="flex min-w-0 items-center gap-2 text-[12px] text-text-2">
+      <div className="flex min-w-0 items-center gap-2 text-meta text-text-2">
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden="true"
-          style={{ background: "var(--color-accent)", animation: "pulse 1.5s ease-in-out infinite" }} />
-        <span data-testid="transient-text" className="min-w-0 truncate">{text}</span>
+          style={{ background: "var(--color-accent)" }} />
+        <span data-testid="transient-text" className="min-w-0 truncate">
+          {waiting || !unfinished.length ? text : (
+            <><span className="shimmer-text">{toolLine(unfinished[0]).verb}</span>
+              {text.slice(toolLine(unfinished[0]).verb.length)}</>
+          )}
+        </span>
         {!waiting && <span className="shrink-0 text-text-3">{elapsed(now - startedAt)}</span>}
         {unfinished.length > 0 && (
-          <button type="button" aria-label="Show current step" onClick={() => setOpen(!open)}
+          <button type="button" aria-label="Show current step" aria-expanded={open} onClick={() => setOpen(!open)}
             className="shrink-0 text-text-3 hover:text-text">{open ? "▾" : "›"}</button>
         )}
       </div>
       {open && unfinished.length > 0 && (
-        <div data-testid="transient-detail"
-          className="grid min-w-0 grid-cols-[minmax(0,1fr)] overflow-y-auto rounded-[8px] p-2"
-          style={{ maxHeight: "320px", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>
-          <ToolTrack events={unfinished} />
+        <div data-testid="transient-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto"
+          style={{ maxHeight: "320px" }}>
+          {unfinished.map((event) => <ActivityLine key={event.id} event={event} />)}
         </div>
       )}
     </div>
