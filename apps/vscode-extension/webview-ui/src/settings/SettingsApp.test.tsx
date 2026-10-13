@@ -99,3 +99,18 @@ describe("SettingsApp offline (backend unreachable)", () => {
     expect(vscode.postMessage).toHaveBeenLastCalledWith({ type: "settings/load" });
   });
 });
+
+describe("SettingsApp follows appearance changes made elsewhere", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("updates the Appearance radios on a themeChanged broadcast", () => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/localState", appearance: "light", accent: "ember" });
+    navClick(/Appearance/);
+    expect(screen.getByRole("radio", { name: /Crucible Light/ })).toBeChecked();
+    // e.g. the user edited settings.json, or picked a theme from the chat's settings overlay
+    deliver({ type: "themeChanged", appearance: "vscode", accent: "blue" });
+    expect(screen.getByRole("radio", { name: /Match VS Code/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Blue/ })).toBeChecked();
+  });
+});

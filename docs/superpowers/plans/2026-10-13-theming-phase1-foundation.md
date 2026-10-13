@@ -1327,6 +1327,25 @@ describe("SettingsApp offline (backend unreachable)", () => {
 });
 ```
 
+Also append (found in the dry run's live check: the radios went stale when the setting changed outside the panel):
+
+```tsx
+describe("SettingsApp follows appearance changes made elsewhere", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("updates the Appearance radios on a themeChanged broadcast", () => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/localState", appearance: "light", accent: "ember" });
+    navClick(/Appearance/);
+    expect(screen.getByRole("radio", { name: /Crucible Light/ })).toBeChecked();
+    // e.g. the user edited settings.json, or picked a theme from the chat's settings overlay
+    deliver({ type: "themeChanged", appearance: "vscode", accent: "blue" });
+    expect(screen.getByRole("radio", { name: /Match VS Code/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Blue/ })).toBeChecked();
+  });
+});
+```
+
 - [ ] **Step 6: Run them to verify they fail**
 
 Run: `cd apps/vscode-extension/webview-ui && npx vitest run src/settings`
@@ -1419,6 +1438,21 @@ In `webview-ui/src/settings/SettingsApp.tsx`, make six changes:
 1. Add `import { AppearanceSection } from "./sections/AppearanceSection";` and `import type { Accent, Appearance } from "../theme";`.
 2. Add state: `const [local, setLocal] = useState<{ appearance: Appearance; accent: Accent } | null>(null);`.
 3. In `onMessage`, add the branch `else if (msg.type === "settings/localState") { setLocal({ appearance: msg.appearance, accent: msg.accent }); }`.
+   Also, at the top of `onMessage` (before `setBusy(false)`), follow the host's `themeChanged` broadcast so the radios stay in step when the setting changes elsewhere. Import `isAccent` and `isAppearance` from `"../theme"` alongside the types:
+
+```tsx
+      // The host broadcasts themeChanged to every panel when the setting changes
+      // anywhere (a settings.json edit, the chat's settings overlay). Keep the
+      // Appearance radios in step; it isn't a reply to this panel's own action,
+      // so it doesn't clear `busy`.
+      const raw = msg as { type?: unknown; appearance?: unknown; accent?: unknown };
+      if (raw.type === "themeChanged") {
+        if (isAppearance(raw.appearance) && isAccent(raw.accent)) {
+          setLocal({ appearance: raw.appearance, accent: raw.accent });
+        }
+        return;
+      }
+```
 4. Change the early return guard from `if (!state) {` to `if (!state && !local) {`. The existing loading and error screens stay for the moment before anything has arrived.
 5. Compute the shared props only when `state` exists: replace `const props: SectionProps = { state, busy, send };` with `const props: SectionProps | null = state ? { state, busy, send } : null;`, and use `state?.mcp.servers.length` and `state?.skills.length` in `counts`.
 6. Gate the error banner and the restart banner on `state &&`. Then replace the sections block with:

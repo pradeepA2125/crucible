@@ -10,7 +10,7 @@ import { InstructionsSection } from "./sections/InstructionsSection";
 import { PoliciesSection } from "./sections/PoliciesSection";
 import { RuntimeSection } from "./sections/RuntimeSection";
 import { AppearanceSection } from "./sections/AppearanceSection";
-import type { Accent, Appearance } from "../theme";
+import { isAccent, isAppearance, type Accent, type Appearance } from "../theme";
 import type { SectionId, SectionProps } from "./sections/meta";
 import type { SettingsOutMsg, SettingsState } from "./types";
 import { vscode } from "./vscodeApi";
@@ -34,6 +34,17 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
     const onMessage = (event: MessageEvent<SettingsOutMsg>) => {
       const msg = event.data;
       if (!msg || typeof msg !== "object") return;
+      // The host broadcasts themeChanged to every panel when the setting changes
+      // anywhere (a settings.json edit, the chat's settings overlay). Keep the
+      // Appearance radios in step; it isn't a reply to this panel's own action,
+      // so it doesn't clear `busy`.
+      const raw = msg as { type?: unknown; appearance?: unknown; accent?: unknown };
+      if (raw.type === "themeChanged") {
+        if (isAppearance(raw.appearance) && isAccent(raw.accent)) {
+          setLocal({ appearance: raw.appearance, accent: raw.accent });
+        }
+        return;
+      }
       setBusy(false);
       if (msg.type === "settings/state") {
         setState(msg.state);
