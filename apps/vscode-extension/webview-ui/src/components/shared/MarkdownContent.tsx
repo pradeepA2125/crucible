@@ -28,6 +28,7 @@ export const MARKDOWN_PLUGINS = [remarkGfm];
 
 /** Anywhere wrapping also reduces min-content width in nested grid/flex layouts. */
 export const MARKDOWN_WRAP_CLASSES = [
+  "message-markdown",
   "min-w-0 max-w-full [overflow-wrap:anywhere]",
   "[&_pre]:min-w-0 [&_pre]:max-w-full [&_pre]:whitespace-pre-wrap",
 ];
@@ -41,8 +42,8 @@ export const MARKDOWN_TABLE_CLASSES = [
 
 /**
  * An agent answer as plain prose (spec §2): no card, no border, no avatar. Prose size,
- * primary text, relaxed line height, `text-wrap: pretty`. Inline code is a neutral chip on
- * surface-1; file references keep their accent links (MessageMarkdown). Shared by
+ * primary text, relaxed line height, `text-wrap: pretty`. Inline code uses the
+ * theme accent; file references keep their accent links (MessageMarkdown). Shared by
  * QAMessage and AgentRow so an answer looks the same with or without tool steps.
  */
 export function MarkdownContent({ content }: Props) {
@@ -53,8 +54,7 @@ export function MarkdownContent({ content }: Props) {
         ...MARKDOWN_WRAP_CLASSES,
         "text-prose text-text leading-[1.65]",
         "[&_p]:[text-wrap:pretty]",
-        // Inline code: a neutral chip (not code-coloured)
-        "[&_:not(pre)>code]:mono [&_:not(pre)>code]:text-body [&_:not(pre)>code]:bg-[var(--surface-1)] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:rounded-control",
+        // Inline code follows the shared message-markdown style in index.css.
         // Pre blocks
         "[&_pre]:mono [&_pre]:text-body [&_pre]:bg-[var(--surface-1)] [&_pre]:rounded-control [&_pre]:p-3 [&_pre]:my-4",
         // Paragraphs

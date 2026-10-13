@@ -80,6 +80,7 @@ for (const theme of ["vscode", "dark", "light", "hc"] as const) {
               columnWidth: rect.width, centered: Math.abs(rect.left - outer.left - (outer.width - rect.width) / 2),
               bubbleWidth: bubble.getBoundingClientRect().width, bubbleBg: getComputedStyle(bubble).backgroundColor,
               bubbleFg: getComputedStyle(bubble).color, codeBg: getComputedStyle(code).backgroundColor,
+              codeBorderWidth: getComputedStyle(code).borderTopWidth,
               shimmer: getComputedStyle(panel.querySelector('.shimmer-text')).animationName,
               liveVerbCount: panel.querySelector('[data-testid="transient-text"]').querySelectorAll('.shimmer-text').length,
               reduced: matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -105,7 +106,8 @@ for (const theme of ["vscode", "dark", "light", "hc"] as const) {
             expect(result.bubbleContrast, `${theme}/${result.accent} bubble`).toBeGreaterThanOrEqual(4.5);
             expect(result.userCodeContrast, `${theme}/${result.accent} inline code`).toBeGreaterThanOrEqual(4.5);
             expect(result.queuedContrast, `${theme}/${result.accent} queued tag`).toBeGreaterThanOrEqual(4.5);
-            expect(result.codeBg).not.toBe("rgba(0, 0, 0, 0)");
+            expect(result.codeBorderWidth).toBe("1px");
+            if (theme !== "hc") expect(result.codeBg).not.toBe("rgba(0, 0, 0, 0)");
             expect(result.liveVerbCount).toBe(1);
             expect(result.reduced).toBe(reduced);
             expect(result.shimmer).toBe(reduced ? "none" : "shimmer");

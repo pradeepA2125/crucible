@@ -32,19 +32,28 @@ function split(node: Node, index: FileReferenceIndex): Node[] {
   const value = node.value ?? "";
   const inline = node.type === "inlineCode";
   const output: Node[] = [];
+  let plain = "";
+  const flush = () => {
+    if (!plain) return;
+    // Whitespace between linked code references is spacing, not a code chip.
+    output.push({ type: inline && !plain.trim() ? "text" : node.type, value: plain });
+    plain = "";
+  };
   const parts = value.split(/(\s+)/u);
   for (const part of parts) {
     if (!part) continue;
-    if (/^\s+$/u.test(part)) { output.push({ type: node.type, value: part }); continue; }
+    if (/^\s+$/u.test(part)) { plain += part; continue; }
     const exact = matchReference(index, part).length ? part : "";
     const trimmed = candidate(part);
     const matched = exact || (parseReference(trimmed.value) && matchReference(index, trimmed.value).length ? trimmed.value : "");
-    if (!matched) { output.push({ type: node.type, value: part }); continue; }
-    if (!exact && trimmed.prefix) output.push({ type: node.type, value: trimmed.prefix });
+    if (!matched) { plain += part; continue; }
+    if (!exact && trimmed.prefix) plain += trimmed.prefix;
+    flush();
     output.push(link(matched, inline));
-    if (!exact && trimmed.suffix) output.push({ type: node.type, value: trimmed.suffix });
+    if (!exact && trimmed.suffix) plain += trimmed.suffix;
   }
-  return output;
+  flush();
+  return output.some(part => part.type === "link") ? output : [node];
 }
 
 function walk(node: Node, index: FileReferenceIndex): void {

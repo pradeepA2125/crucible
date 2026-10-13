@@ -20,6 +20,13 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
 describe("live message file references", () => {
+  it("keeps ordinary inline-code phrases in one box before and after catalog hydration", () => {
+    const view = mount('Open `Crucible Chat` and run `npm test -- --maxWorkers=2`.');
+    const phrases = () => [...view.container.querySelectorAll('code')].map(code => code.textContent);
+    expect(phrases()).toEqual(["Crucible Chat", "npm test -- --maxWorkers=2"]);
+    publish();
+    expect(phrases()).toEqual(["Crucible Chat", "npm test -- --maxWorkers=2"]);
+  });
   it("links prose and inline code while preserving spelling and punctuation", () => {
     const content = 'See (ProviderSection.test.tsx), then `./src/ProviderSection.test.tsx`.';
     const view = mount(content);
@@ -111,6 +118,7 @@ describe("live message file references", () => {
     expect(screen.getAllByRole("link").map(link => link.textContent)).toEqual(["a.ts", "b.ts", "é.multi.test.ts"]);
     expect(view.container.textContent).toBe('a.ts b.ts unknown https://x/a.ts and "é.multi.test.ts".');
     expect(view.container.querySelectorAll("a code")).toHaveLength(2);
+    expect([...view.container.querySelectorAll("code")].some(code => !code.textContent?.trim())).toBe(false);
   });
   it("links list and GFM table cells without changing table wrapping", () => {
     const view = mount("- a.ts\n\n| File |\n| --- |\n| b.ts |"); publish();

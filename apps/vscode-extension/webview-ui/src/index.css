@@ -77,6 +77,31 @@ code, pre, .mono {
   font-family: var(--vscode-editor-font-family, ui-monospace, "SF Mono", Menlo, monospace);
 }
 
+/* Inline highlights follow their surrounding type scale and the chosen accent.
+   Cloned decoration keeps wrapped code phrases readable on every line. */
+.message-markdown :not(pre) > code {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r-control);
+  padding: 0 .25em;
+  font-size: inherit;
+  line-height: inherit;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+:root[data-tone="light"]:not([data-theme="hc"]) .message-markdown :not(pre) > code {
+  color: color-mix(in srgb, var(--accent) 90%, #000);
+}
+
+.tool-thought {
+  border-left: 2px solid var(--accent-border);
+  border-radius: var(--r-control);
+  background: var(--accent-bg);
+  padding: 8px 12px;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

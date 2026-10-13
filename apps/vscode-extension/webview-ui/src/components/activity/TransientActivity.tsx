@@ -46,7 +46,9 @@ export function TransientActivity({ bubble, startedAt, fallback, waiting = false
         )}
       </div>
       {open && unfinished.length > 0 && (
-        <div data-testid="transient-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 rounded-card border border-border bg-surface p-3">
+        <div data-testid="transient-detail" role="region" aria-label="Current tool details" tabIndex={0}
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 rounded-card border border-border bg-surface p-3 overflow-y-auto overscroll-contain"
+          style={{ maxHeight: "min(320px, 40vh)" }}>
           {unfinished.map((event) => <ActivityLine key={event.id} event={event} />)}
         </div>
       )}

@@ -18,12 +18,13 @@ describe("ActivityGroup", () => {
     expect(screen.queryByTestId("activity-detail")).toBeNull();
   });
 
-  it("expands to the steps in the transcript flow", () => {
+  it("expands to a bounded, keyboard-accessible tool scroller", () => {
     render(<ActivityGroup steps={steps} />);
     fireEvent.click(screen.getByRole("button", { name: /Read a file/ }));
     const detail = screen.getByTestId("activity-detail");
-    expect(detail.style.maxHeight).toBe("");
-    expect(detail.className).not.toContain("overflow-y-auto");
+    expect(detail.style.maxHeight).toBe("min(320px, 40vh)");
+    expect(detail.className).toContain("overflow-y-auto");
+    expect(detail).toHaveAttribute("tabindex", "0");
     expect(detail.textContent).toContain("Edited a.ts");
     expect(detail.textContent).toContain("Edit accepted: a.ts");
   });

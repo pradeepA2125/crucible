@@ -32,7 +32,7 @@ export function ToolDetailPanel({ event }: Props) {
         <span className="min-w-0 [overflow-wrap:anywhere] mono text-caption font-semibold text-accent-ink">{event.tool}</span>
 
         {event.thought && (
-          <span className="min-w-0 [overflow-wrap:anywhere] text-caption italic text-text-3 ml-1">{event.thought}</span>
+          <span className="tool-thought w-full min-w-0 [overflow-wrap:anywhere] text-caption text-text-2">{event.thought}</span>
         )}
 
         <span className="ml-auto flex items-center gap-2 text-caption text-text-4">
