@@ -534,7 +534,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         visible={workbarVisible}
       />
 
-      <div className="px-3 pb-3 pt-2 flex-shrink-0">
+      <div className="mx-auto w-full max-w-[760px] px-4 pb-3 pt-2 flex-shrink-0">
         <InputArea
           threadId={state.activeThreadId}
           availability={availability}

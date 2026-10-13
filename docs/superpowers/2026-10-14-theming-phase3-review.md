@@ -33,3 +33,7 @@ No outstanding blocking findings. Composer controls, backend ownership/versionin
 The reviewed local package is `.tmp/theme3-handoff/crucible-phase3-reviewed.vsix`, built with the validated runtime manifest and installed successfully. The managed backend is already an editable install pointing at this checkout, so the backend changes are available on its next restart after integration. The source manifest and lockfiles were preserved.
 
 The user's active VS Code session was not reloaded or interrupted. A fresh installed-app model turn and the full live editor-theme matrix remain manual checks after reload; the isolated preview and automated browser matrix are the visual evidence for this phase. Reload VS Code to load the new extension bundle and backend source.
+
+## Composer width follow-up
+
+The composer wrapper now uses the transcript's centered 760px maximum and 16px side padding. Reviewed the complete follow-up diff: the composer remains pinned at the bottom, shrinks with narrow panels, and retains the existing popovers and controls. No blocking findings. The 17 ThreadView tests and six real-browser footer matrix cases passed; the webview build and extension typecheck/build passed. The isolated preview measured equal 276px margins at 1280px, and 16px margins without horizontal overflow at 280px and 320px. The updated local package is `.tmp/theme3-handoff/crucible-composer-width-reviewed.vsix`.
