@@ -13,7 +13,7 @@ describe("image previews (above the composer field and above the message)", () =
     render(
       <InputArea
         availability={{ disabled: false, placeholder: "Message", showStop: false, taskStop: false }}
-        draft="" onDraftChange={vi.fn()} onOpenSettings={vi.fn()} threadUsage={null} teamNames={{}}
+        draft="" onDraftChange={vi.fn()} threadUsage={null} teamNames={{}}
       />,
     );
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;

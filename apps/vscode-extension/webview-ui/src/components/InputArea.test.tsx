@@ -75,10 +75,11 @@ describe("InputArea slash-command expansion", () => {
     expect((ta as HTMLTextAreaElement).value).toBe("");
   });
 
-  it("renders the model chip and the settings gear", () => {
+  it("renders the combined model chip and provider settings action", () => {
     render(<Harness />);
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "listModels" });
-    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select model" }));
+    fireEvent.click(screen.getByRole("button", { name: /Provider settings/ }));
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "openSettings" });
   });
 });
@@ -185,12 +186,12 @@ describe("InputArea @-file mentions", () => {
 describe("InputArea Plan Mode toggle", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("renders a Plan Mode checkbox reflecting the hydrated planMode prop", () => {
+  it("renders a Plan Mode button reflecting the hydrated planMode prop", () => {
     render(
       <InputArea availability={availability} draft="" onDraftChange={() => {}} planMode={true} />
     );
     const checkbox = screen.getByLabelText(/plan mode/i) as HTMLInputElement;
-    expect(checkbox.checked).toBe(true);
+    expect(checkbox).toHaveAttribute("aria-pressed", "true");
   });
 
   it("posts setPlanMode when toggled and includes planMode on send", () => {

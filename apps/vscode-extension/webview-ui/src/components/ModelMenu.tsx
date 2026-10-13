@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { ClaudeLogo } from "./shared/ClaudeBrand";
 import { CLAUDE_USAGE_URL } from "../claude";
@@ -6,186 +6,97 @@ import { ChatGPTLogo } from "./shared/ChatGPTBrand";
 import { CHATGPT_USAGE_URL } from "../chatgpt";
 import type { ModelOption } from "../types";
 import { vscode } from "../vscodeApi";
-
-// Several rows can share a backend: each subscription catalog model is its own row.
+import { effortStops, EFFORT_LABEL, type EffortLevel, type EffortView } from "../effort";
+import { EffortSlider } from "./EffortSlider";
+import { usePopover } from "./shared/usePopover";
 const optionKey = (opt: { backend: string; model: string }) => `${opt.backend}:${opt.model}`;
 
-function shortModel(model: string): string {
-  return model.length > 18 ? `${model.slice(0, 17)}…` : model;
-}
-
-/**
- * ModelMenu — composer model chip + upward popover. Lists only providers the
- * host reports as swappable (stored key, or currently active). Selecting one
- * posts setModel; the popover stays open with a row spinner until the host
- * replies with the refreshed modelList (success → close) or modelSwapError
- * (error line, stays open). Swaps apply from the next turn (hot-swap route).
- */
+/** Model and effort share a popover; provider acknowledgements own the displayed state. */
 export function ModelMenu() {
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState<{ backend: string; model: string } | null>(null);
   const [options, setOptions] = useState<ModelOption[]>([]);
-  const [swapping, setSwapping] = useState<string | null>(null); // optionKey in flight
+  const [swapping, setSwapping] = useState<string | null>(null);
   const [plan, setPlan] = useState<"chatgpt" | "claude" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const swappingRef = useRef<string | null>(null);
-  swappingRef.current = swapping;
-
+  const [effort, setEffort] = useState<EffortView>({ level: null, support: null });
+  const [effortPending, setEffortPending] = useState<EffortLevel | "default" | null>(null);
+  const [effortError, setEffortError] = useState<string | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const chip = useRef<HTMLButtonElement>(null);
+  const modelRequest = useRef<string | null>(null);
+  const effortRequest = useRef<EffortLevel | "default" | null>(null);
+  const close = useCallback(() => setOpen(false), []);
+  const position = usePopover(root, open, close);
   useEffect(() => {
     vscode.postMessage({ type: "listModels" });
-    function onMessage(e: MessageEvent) {
-      const m = e.data as Record<string, unknown>;
-      if (m?.["type"] === "modelList") {
-        setCurrent((m["current"] as { backend: string; model: string } | null) ?? null);
-        setOptions((m["options"] as ModelOption[]) ?? []);
-        const provider = (m["current"] as { backend?: string } | null)?.backend;
-        setPlan(provider === "claude_subscription" && m["usesClaudePlan"] === true ? "claude"
-          : provider === "chatgpt" && m["usesChatgptPlan"] === true ? "chatgpt" : null);
-        setError(null);
-        if (swappingRef.current !== null) {
-          setSwapping(null);
-          setOpen(false); // successful swap → close
-        }
-      } else if (m?.["type"] === "modelSwapError") {
-        setSwapping(null);
-        setError(m["message"] as string);
+    const onMessage = (e: MessageEvent) => {
+      const m = e.data;
+      if (m?.type === "modelList") {
+        setCurrent(m.current ?? null); setOptions(m.options ?? []);
+        setPlan(m.current?.backend === "claude_subscription" && m.usesClaudePlan ? "claude"
+          : m.current?.backend === "chatgpt" && m.usesChatgptPlan ? "chatgpt" : null);
+        setEffort(m.effort ?? { level: null, support: null });
+        setError(null); setEffortError(null);
+        if (modelRequest.current !== null) { modelRequest.current = null; setSwapping(null); setOpen(false); chip.current?.focus(); }
+        if (effortRequest.current !== null) { effortRequest.current = null; setEffortPending(null); }
+      } else if (m?.type === "modelSwapError") {
+        modelRequest.current = null; setSwapping(null); setError(m.message);
+      } else if (m?.type === "effortSwapError") {
+        effortRequest.current = null; setEffortPending(null); setEffortError(m.message);
       }
-    }
+    };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
-
-  // Close on outside click / Escape while open.
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  function choose(opt: ModelOption) {
-    if (opt.active || swapping) return;
-    setSwapping(optionKey(opt));
-    setError(null);
+  const busy = swapping !== null || effortPending !== null;
+  function chooseModel(opt: ModelOption) {
+    if (opt.active || modelRequest.current !== null || effortRequest.current !== null) return;
+    modelRequest.current = optionKey(opt); setSwapping(modelRequest.current); setError(null);
     vscode.postMessage({ type: "setModel", backend: opt.backend, model: opt.model });
   }
-
-  // Use the catalog display name for subscription models.
-  const currentName = current
-    ? options.find((o) => o.active && o.model === current.model)?.display ?? current.model
-    : null;
-
+  function chooseEffort(level: EffortLevel | null) {
+    if (modelRequest.current !== null || effortRequest.current !== null || !effortStops(effort.support).some(row => row.value === level)) return;
+    effortRequest.current = level ?? "default"; setEffortPending(effortRequest.current); setEffortError(null);
+    vscode.postMessage({ type: "setReasoningEffort", level });
+  }
+  const name = current ? options.find(opt => opt.active && opt.model === current.model)?.display ?? current.model : null;
+  const rows = effortStops(effort.support);
+  const value = effortPending === "default" ? null : effortPending ?? effort.level;
+  const effortLabel = rows.length === 0 ? null : value === null ? "Default" : rows.find(row => row.value === value)?.label ?? EFFORT_LABEL[value];
   return (
-    <div ref={rootRef} className="relative flex max-w-full flex-wrap items-center gap-1.5 [&>*]:shrink-0">
-      {/* Chip */}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={currentName ? `Model: ${currentName}` : "Select model"}
-        title={current ? `${current.backend} / ${current.model}` : "Select model"}
-        className="flex h-6 items-center gap-1 rounded-[7px] border px-1.5 text-[10px] cursor-pointer transition-colors duration-150 hover:text-text"
-        style={{
-          background: "var(--color-surface-2)",
-          borderColor: "var(--color-border-strong)",
-          color: "var(--color-text-2)",
-        }}
-      >
-        <span style={{ color: "var(--color-accent)" }}><Icon name="spark" size={9} /></span>
-        <span className="max-w-[130px] truncate font-mono" style={{ fontSize: "9.5px" }}>
-          {currentName ? shortModel(currentName) : "model"}
-        </span>
-        <Icon name="chev-d" size={8} />
+    <div ref={root} className="relative min-w-0 max-w-full">
+      <button ref={chip} type="button" onClick={() => setOpen(!open)} aria-haspopup="dialog" aria-expanded={open}
+        aria-label={name ? `Model: ${name}${effortLabel ? ` · ${effortLabel}` : ""}` : "Select model"}
+        title={name ? `${current?.backend} / ${name}` : "Select model"}
+        className="flex h-7 min-w-0 max-w-full items-center gap-1 rounded-control px-1.5 text-meta text-text-2 hover:bg-surface-2 hover:text-text">
+        <Icon name="spark" size={12} /><span className="min-w-0 max-w-[150px] truncate">{name ?? "Model"}</span>
+        {effortLabel && <span className="shrink-0">· {effortLabel}</span>}
+        {busy ? <span aria-label="Checking with provider">…</span> : <Icon name="chev-d" size={10} />}
       </button>
-      {/* Identify the active subscription next to the model selector. */}
-      {plan && (
-        <span className="flex items-center gap-1 whitespace-nowrap text-[9.5px] text-text-3">
-          {plan === "claude" ? <ClaudeLogo size={10} /> : <ChatGPTLogo size={10} />}
+      {open && <div role="dialog" aria-label="Model and reasoning effort" style={position}
+        className="absolute bottom-full z-50 mb-2 max-h-[65vh] overflow-y-auto overscroll-contain rounded-card border border-border-strong bg-surface-3 text-meta">
+        {plan && <div className="flex flex-wrap items-center gap-1.5 border-b border-border p-3 text-caption text-text-3">
+          {plan === "claude" ? <ClaudeLogo size={12} /> : <ChatGPTLogo size={12} />}
           <span>{plan === "claude" ? "Using Claude plan" : "Using ChatGPT plan"}</span>
-          <span className="text-text-4">·</span>
-          <button
-            type="button"
-            onClick={() => vscode.postMessage({ type: "settings/openExternal", url: plan === "claude" ? CLAUDE_USAGE_URL : CHATGPT_USAGE_URL })}
-            className="cursor-pointer border-0 bg-transparent p-0 underline-offset-2 hover:underline"
-            style={{ color: "var(--color-accent-ink)", fontSize: "inherit" }}
-          >
-            Manage usage
-          </button>
-        </span>
-      )}
-
-      {/* Popover (above the composer) */}
-      {open && (
-        <div
-          role="menu"
-          className="anim-rise absolute bottom-full left-0 z-50 mb-1.5 w-[240px] rounded-[10px] border p-1"
-          style={{
-            background: "var(--color-surface-2)",
-            borderColor: "var(--color-border-strong)",
-            boxShadow: "0 10px 30px -10px rgba(0,0,0,.7), inset 0 1px 0 var(--hairline)",
-          }}
-        >
-          {options.map((opt) => (
-            <button
-              key={optionKey(opt)}
-              type="button"
-              role="menuitem"
-              onClick={() => choose(opt)}
-              className="flex w-full cursor-pointer flex-col items-start gap-0.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-left transition-colors duration-150 hover:bg-[var(--accent-bg)]"
-            >
-              <span className="flex w-full items-center gap-1.5">
-                <span className="flex-1 text-[9.5px] font-semibold uppercase tracking-wide text-text-3">
-                  {opt.label}
-                </span>
-                {opt.active && <span style={{ color: "var(--color-accent)" }}><Icon name="check" size={10} /></span>}
-                {swapping === optionKey(opt) && (
-                  <span
-                    className="inline-block rounded-full border-2"
-                    style={{
-                      width: 9,
-                      height: 9,
-                      borderColor: "var(--color-accent-ink) var(--accent-bg) var(--accent-bg) var(--accent-bg)",
-                      animation: "spin 0.75s linear infinite",
-                    }}
-                  />
-                )}
-              </span>
-              {opt.display
-                ? <span className="text-[10.5px] text-text">{opt.display}</span>
-                : <span className="font-mono text-[10.5px] text-text">{opt.model}</span>}
-            </button>
-          ))}
-          {options.length === 0 && (
-            <p className="px-2 py-2 text-[10.5px] text-text-3">
-              No validated providers yet — add one in Settings.
-            </p>
-          )}
-          {error && (
-            <p className="px-2 py-1.5 text-[10.5px]" style={{ color: "var(--color-red)" }}>{error}</p>
-          )}
-          <div className="mt-1 border-t pt-1" style={{ borderColor: "var(--hairline)" }}>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => { vscode.postMessage({ type: "openSettings" }); setOpen(false); }}
-              className="flex w-full cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-left text-[10.5px] text-text-2 transition-colors duration-150 hover:bg-surface-3 hover:text-text"
-            >
-              <Icon name="gear" size={10} /> Provider settings…
-            </button>
-          </div>
+          <a href={plan === "claude" ? CLAUDE_USAGE_URL : CHATGPT_USAGE_URL} onClick={e => { e.preventDefault(); vscode.postMessage({ type: "settings/openExternal", url: plan === "claude" ? CLAUDE_USAGE_URL : CHATGPT_USAGE_URL }); }}
+            className="text-accent underline hover:text-text">Manage usage</a>
+        </div>}
+        <div className="grid gap-0.5 p-1" role="group" aria-label="Models">
+          {options.map(opt => <button key={optionKey(opt)} type="button" disabled={busy} aria-pressed={opt.active} onClick={() => chooseModel(opt)}
+            className="grid w-full min-w-0 gap-0.5 rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">
+            <span className="flex min-w-0 items-center gap-1.5 text-caption text-text-3"><span className="min-w-0 truncate">{opt.label}</span>{opt.active && <Icon name="check" size={11} />}{swapping === optionKey(opt) && <span>…</span>}</span>
+            <span className="[overflow-wrap:anywhere] text-body text-text">{opt.display ?? opt.model}</span>
+          </button>)}
+          {!options.length && <p className="p-2 text-caption text-text-3">No validated providers yet — add one in Settings.</p>}
+          {error && <p role="alert" className="p-2 text-caption text-red">{error}</p>}
         </div>
-      )}
+        <EffortSlider effort={effort} pending={effortPending} error={effortError} busy={swapping !== null} onChoose={chooseEffort} />
+        <button type="button" onClick={() => { vscode.postMessage({ type: "openSettings" }); setOpen(false); }}
+          className="flex w-full items-center gap-1.5 border-t border-border px-3 py-2 text-meta text-text-2 hover:bg-surface-2">
+          <Icon name="gear" size={12} />Provider settings…
+        </button>
+      </div>}
     </div>
   );
 }

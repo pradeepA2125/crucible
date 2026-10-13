@@ -1,3 +1,4 @@
+import { ApprovalCoordinator, isApprovalMode, type ApprovalDependencies, type ApprovalView } from "./approval-mode.js";
 import type {
   ProviderAccess,
   AgentDetail,
@@ -147,6 +148,8 @@ export interface ControllerUI {
   // Token usage for the composer total, team cards/boards and agent tabs. Null clears.
   renderThreadUsage(usage: ThreadUsage | null): void;
   renderContextUsage(usage: ContextUsage | null, stale: boolean): void;
+  renderApproval?(view: ApprovalView): void;
+  retryDecision?(threadId: string, kind: "mode" | "clarify" | "team_plan", gateId?: string): void;
   teamDetail(teamId: string, detail: TeamDetail): void;
   teamEvent(teamId: string, event: TeamViewEvent): void;
 }
@@ -198,6 +201,7 @@ export class CrucibleController {
   // survive reload and resume task-id churn. Source of truth for action binding (Task 8).
   private liveStateTimer: ReturnType<typeof setInterval> | null = null;
   private latestLiveState: ThreadLiveState | null = null;
+  private approval: ApprovalCoordinator | null = null;
   private lastLiveSignature: string | null = null;
   private backendReachableListeners: Array<() => void> = [];
   private livePollFailing = false;
@@ -826,8 +830,12 @@ export class CrucibleController {
     feedback?: string,
   ): Promise<void> {
     try {
-      await this.clientForChat().decideTeamPlan(threadId, gateId, decision, feedback);
+      const expectedProcessId = await this.approvalReady();
+      if (expectedProcessId) await this.clientForChat().decideTeamPlan(threadId, gateId, decision, feedback, expectedProcessId);
+      else await this.clientForChat().decideTeamPlan(threadId, gateId, decision, feedback);
     } catch (err) {
+      this.ui.retryDecision?.(threadId, "team_plan", gateId);
+      if (await this.recoverApproval(err)) return;
       if (this.isBenignGateMiss(err)) return;   // the card was already answered or stale
       this.ui.showError(`Failed to send the plan decision: ${formatError(err)}`);
       return;
@@ -1041,9 +1049,20 @@ export class CrucibleController {
   ): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
-
     let sendEpoch = this.contextView();
     const currentSend = () => this.contextState.current(sendEpoch, this.settings.getBackendBaseUrl());
+    let expectedProcessId: string | undefined;
+    try { if (this.approval) expectedProcessId = await this.approvalReady(); }
+    catch (error) {
+      if (!currentSend()) return;
+      if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
+      this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
+      this.ui.setChatInputEnabled(true);
+      this.ui.showError(`Approval mode not confirmed — retry: ${formatError(error)}`);
+      return;
+    }
+
+    if (!currentSend()) return;
     if (!this.activeThreadId) {
       try {
         const thread = await client.createChatThread(workspacePath);
@@ -1054,7 +1073,8 @@ export class CrucibleController {
       } catch (error) {
         if (!currentSend()) return;
         this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
-        this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
+        if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
+      this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
         return;
       }
     }
@@ -1086,6 +1106,7 @@ export class CrucibleController {
     let result: SendChatResult;
     try {
       result = await client.sendChatMessage(threadId, text, undefined, {
+        ...(expectedProcessId ? { expectedProcessId } : {}),
         ...(stepReview !== undefined ? { stepReview } : {}),
         ...(forcedSkills?.length ? { forcedSkills } : {}),
         ...(mentionedFiles?.length ? { mentionedFiles } : {}),
@@ -1097,8 +1118,10 @@ export class CrucibleController {
       if (!currentSend()) return;
       // InputArea already cleared the draft: give the text back (spec §5.3).
       this.ui.removeChatMessage(messageId);
+      if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
       this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
       this.ui.setChatInputEnabled(true);
+      if (await this.recoverApproval(error)) return;
       if (!this.isBenignConflict(error)) {
         this.ui.showError(`Failed to send: ${formatError(error)}`);
       }
@@ -1640,10 +1663,22 @@ export class CrucibleController {
    */
   async handleModeDecisionFromChat(threadId: string, mode: string): Promise<void> {
     if (threadId !== this.activeThreadId) return;
-    const client = this.clientForChat();
-    this.ui.setChatInputEnabled(false);
-    this.turnAbort = new AbortController();
-    await this.streamTurn(client.postModeDecision(threadId, mode));
+    const epoch = this.contextView();
+    const current = () => this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && threadId === this.activeThreadId;
+    try {
+      const expectedProcessId = await this.approvalReady();
+      if (!current()) return;
+      this.ui.setChatInputEnabled(false);
+      this.turnAbort = new AbortController();
+      const client = this.clientForChat();
+      await this.streamTurn(expectedProcessId ? client.postModeDecision(threadId, mode, expectedProcessId) : client.postModeDecision(threadId, mode));
+    } catch (error) {
+      if (!current()) return;
+      this.ui.retryDecision?.(threadId, "mode");
+      this.ui.setChatInputEnabled(true);
+      if (await this.recoverApproval(error)) return;
+      this.ui.showError(`Failed to send the decision: ${formatError(error)}`);
+    }
   }
 
   /**
@@ -1653,10 +1688,22 @@ export class CrucibleController {
    */
   async handleClarifyDecisionFromChat(threadId: string, answer: string): Promise<void> {
     if (threadId !== this.activeThreadId) return;
-    const client = this.clientForChat();
-    this.ui.setChatInputEnabled(false);
-    this.turnAbort = new AbortController();
-    await this.streamTurn(client.postClarifyDecision(threadId, answer));
+    const epoch = this.contextView();
+    const current = () => this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && threadId === this.activeThreadId;
+    try {
+      const expectedProcessId = await this.approvalReady();
+      if (!current()) return;
+      this.ui.setChatInputEnabled(false);
+      this.turnAbort = new AbortController();
+      const client = this.clientForChat();
+      await this.streamTurn(expectedProcessId ? client.postClarifyDecision(threadId, answer, expectedProcessId) : client.postClarifyDecision(threadId, answer));
+    } catch (error) {
+      if (!current()) return;
+      this.ui.retryDecision?.(threadId, "clarify");
+      this.ui.setChatInputEnabled(true);
+      if (await this.recoverApproval(error)) return;
+      this.ui.showError(`Failed to send the decision: ${formatError(error)}`);
+    }
   }
 
   /**
@@ -1767,7 +1814,29 @@ export class CrucibleController {
    *
    * A 409 from either is benign — it just means that surface has nothing running, and
    * the value still governs the next task's creation default / the next message. */
+  configureApproval(deps: Omit<ApprovalDependencies, "client" | "render">): void {
+    this.approval = new ApprovalCoordinator({ ...deps, endpoint: () => this.settings.getBackendBaseUrl(), client: () => this.clientForChat(),
+      render: view => this.ui.renderApproval?.(view) });
+    this.ui.renderApproval?.(this.approval.current());
+  }
+
+  async setApprovalMode(mode: unknown, confirmedFullAccess = false, dontShowAgain = false): Promise<void> {
+    if (!isApprovalMode(mode) || !this.approval) return;
+    await this.approval.select(mode, confirmedFullAccess, dontShowAgain);
+    this.lastLiveSignature = null;
+    void this.pollThreadLiveState();
+  }
+
+  private async approvalReady(): Promise<string | undefined> {
+    return this.approval?.ready();
+  }
+
+  private async recoverApproval(error: unknown): Promise<boolean> {
+    return await this.approval?.recover(error) ?? false;
+  }
+
   async setReviewPref(autoAccept: boolean): Promise<void> {
+    if (this.approval) { await this.setApprovalMode(autoAccept ? "accept_edits" : "ask"); return; }
     const taskId = this.latestLiveState?.activeTaskId;
     try {
       const result = await this.clientForChat().setGlobalReviewPref({ autoAccept });
@@ -1791,10 +1860,11 @@ export class CrucibleController {
   async pushPreferences(prefs: { autoAccept: boolean; planMode: boolean }): Promise<void> {
     try {
       const client = this.clientForChat();
-      await client.setGlobalReviewPref({ autoAccept: prefs.autoAccept });
+      if (this.approval) await this.approval.connect();
+      else if (!prefs.autoAccept) await client.setGlobalReviewPref({ autoAccept: false });
       await client.setPlanMode(prefs.planMode);
-    } catch {
-      // Unreachable now; the next reconnect pushes again.
+    } catch (error) {
+      this.ui.showError(`Approval mode not confirmed — retry: ${formatError(error)}`);
     }
   }
 
@@ -2314,6 +2384,7 @@ export class CrucibleController {
       for (const listener of this.backendReachableListeners) listener();
     }
     this.latestLiveState = live;
+    this.approval?.observe(live.approval, live.processId);
     this.maybeRefreshUsage(threadId, live);
 
     // Live-resume: a fresh webview (reload mid-turn) reconstructs the transcript from
@@ -2374,6 +2445,7 @@ export class CrucibleController {
       teams: live.teams,
       // INVARIANT (CLAUDE.md /live dedup): the access card is consumed after this gate.
       providerAccess: live.providerAccess,
+      approval: live.approval,
       turnKind: live.turnKind,
       messageCount: live.messageCount,
     });

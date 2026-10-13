@@ -130,25 +130,6 @@ code, pre, .mono {
   animation: rise .18s ease;
 }
 
-/* Streaming-pill gradient (matches .pill.live in mockup) */
-.shimmer-bg {
-  background: linear-gradient(110deg, var(--accent-bg) 25%, var(--accent-bg-2) 45%, var(--accent-bg) 65%);
-  background-size: 220% 100%;
-  animation: shimmer 1.8s linear infinite;
-}
-
-/* Animated hairline bar (matches .workbar::before in mockup) */
-.workbar-line {
-  position: absolute;
-  top: -1px;
-  left: 0;
-  right: 0;
-  height: 1.5px;
-  background: linear-gradient(90deg, transparent, var(--color-accent), var(--color-accent-ink), var(--color-accent), transparent);
-  background-size: 220% 100%;
-  animation: shimmer 2.2s linear infinite;
-}
-
 /* The live activity line's verb (spec §2): a text shimmer on the verb only. */
 .shimmer-text {
   background: linear-gradient(90deg, var(--text-2) 40%, var(--text-1) 50%, var(--text-2) 60%);
@@ -275,3 +256,9 @@ code, pre, .mono {
 @keyframes team-ring { 0% { transform: scale(.9); opacity: 1; } 100% { transform: scale(1.35); opacity: 0; } }
 .team-ring-pulse { animation: team-ring 1.4s var(--ease-out) infinite; }
 @media (prefers-reduced-motion: reduce) { .team-ring-pulse { animation: none; } }
+
+/* Native and custom controls share the active editor's keyboard-focus color. */
+:where(button, input, select, a):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

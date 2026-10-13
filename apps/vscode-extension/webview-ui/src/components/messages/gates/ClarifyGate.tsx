@@ -1,3 +1,4 @@
+import { useDecisionRetry } from "../../shared/useDecisionRetry";
 import { useState } from "react";
 import { vscode } from "../../../vscodeApi";
 import { CardShell } from "../../shared/CardShell";
@@ -26,6 +27,7 @@ export function ClarifyGate({ taskId, payload }: Props) {
   const options = parseOptions(payload);
 
   const [resolved, setResolved] = useState<string | null>(null);
+  useDecisionRetry(taskId, "clarify", () => setResolved(null));
   const [draft, setDraft] = useState("");
 
   function submit(answer: string) {

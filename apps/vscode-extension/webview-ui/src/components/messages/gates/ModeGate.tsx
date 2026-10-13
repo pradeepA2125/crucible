@@ -1,3 +1,4 @@
+import { useDecisionRetry } from "../../shared/useDecisionRetry";
 import { useState } from "react";
 import { Icon } from "../../Icon";
 import { vscode } from "../../../vscodeApi";
@@ -40,6 +41,7 @@ export function ModeGate({ taskId, payload }: Props) {
   const options = parseOptions(payload);
 
   const [resolved, setResolved] = useState<string | null>(null);
+  useDecisionRetry(taskId, "mode", () => setResolved(null));
   const [draft, setDraft] = useState("");
 
   function handlePick(mode: string, label: string) {

@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { compile } from "@tailwindcss/node";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { popoverPosition } from "../components/shared/usePopover";
 import { InputArea } from "../components/InputArea";
 import { contextUsage } from "./contextUsageFixture";
 
@@ -40,8 +41,8 @@ describe.skipIf(!chrome)("context composer footer in a real browser", () => {
         } },
       } })));
       fireEvent.focus(screen.getByRole("button", { name: /context.*details/i }));
-      const markup = [280, 360, 640].map(width =>
-        `<section data-panel style="width:${width}px;padding-top:500px">${container.innerHTML}</section>`).join("");
+      const markup = ["dark", "light", "hc", "vscode"].flatMap(theme => ["blue", "violet", "ember"].flatMap(accent => [280, 320, 360, 640].map(width =>
+        `<section data-panel data-theme="${theme}" data-tone="${theme === "light" ? "light" : "dark"}" data-accent="${accent}" style="width:${width}px;padding-top:500px">${container.innerHTML}</section>`))).join("");
       const compiler = await compile(readFileSync(resolve("src/index.css"), "utf8"), {
         base: resolve("src"), onDependency: () => {},
       });
@@ -50,8 +51,9 @@ describe.skipIf(!chrome)("context composer footer in a real browser", () => {
       const dir = mkdtempSync(join(tmpdir(), "context-footer-"));
       try {
         const file = join(dir, "test.html");
-        writeFileSync(file, `<!doctype html><meta charset="utf-8"><style>${compiler.build(candidates)}</style>${markup}
+        writeFileSync(file, `<!doctype html><meta charset="utf-8"><style>${compiler.build(candidates).replace(/:root/g, '[data-panel]').replace(/html\[/g, '[data-panel][')}</style>${markup}
           <script>
+            const place = ${popoverPosition.toString()};
             const results = [...document.querySelectorAll('[data-panel]')].map(panel => {
               const footer = panel.querySelector('[data-testid="composer-footer"]');
               const bounds = footer.getBoundingClientRect();
@@ -62,10 +64,14 @@ describe.skipIf(!chrome)("context composer footer in a real browser", () => {
                   top: r.top };
               });
               const details = footer.querySelector('[role="tooltip"]');
+              const anchor = panel.querySelector('[data-testid="context-meter"]').getBoundingClientRect();
+              const panelBounds = panel.getBoundingClientRect();
+              const position = place(anchor.left - panelBounds.left, panel.clientWidth, 320);
+              details.style.left = position.left + 'px'; details.style.width = position.width + 'px';
               const r = details.getBoundingClientRect();
-              return { width: panel.clientWidth, overflow: panel.scrollWidth - panel.clientWidth, controls,
+              return { theme: panel.dataset.theme, accent: panel.dataset.accent, width: panel.clientWidth, overflow: panel.scrollWidth - panel.clientWidth, controls,
                 wrapped: new Set(controls.map(c => c.top)).size > 1,
-                detailsFit: r.left >= bounds.left - 1 && r.right <= bounds.right + 1 && details.scrollWidth <= details.clientWidth + 1 };
+                detailsFit: r.left >= panelBounds.left - 1 && r.right <= panelBounds.right + 1 && details.scrollWidth <= details.clientWidth + 1 };
             });
             document.body.innerHTML = '<pre id="result">' + JSON.stringify(results) + '</pre>';
           </script>`);
@@ -80,8 +86,8 @@ describe.skipIf(!chrome)("context composer footer in a real browser", () => {
           expect(result.overflow, `${mode} panel ${result.width}px: ${JSON.stringify(result.controls.filter((c: { visible: boolean }) => !c.visible))}`).toBeLessThanOrEqual(1);
           expect(result.controls.filter((c: { visible: boolean }) => !c.visible), "all controls fit, not hidden or shrunk away").toEqual([]);
           expect(result.controls.map((c: { name: string }) => c.name)).toEqual(expect.arrayContaining([
-            "Open settings", provider === "claude_subscription" ? "Reasoning effort: Extra high" : "Reasoning effort: Max", "Model: long-composer-model-name", "Manage usage", mode === "stop" ? "Stop" : "Send",
-            ...(mode === "task" ? ["Stop and keep changes", "Stop and revert changes"] : []),
+            "Add context", "Approval mode: Ask for approval", "Plan Mode", `Model: long-composer-model-name · ${provider === "claude_subscription" ? "Extra high" : "Max"}`, mode === "stop" ? "Stop" : mode === "task" ? "Stop and keep changes" : "Send",
+            ...(mode === "task" ? ["Task stop options"] : []),
           ]));
           expect(result.detailsFit, "long model provenance tooltip fits footer").toBe(true);
           if (result.width <= 360) expect(result.wrapped).toBe(true);

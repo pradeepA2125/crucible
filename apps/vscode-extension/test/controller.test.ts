@@ -2776,3 +2776,49 @@ describe("CrucibleController — background agents (spec §5.3, §6)", () => {
     expect(seen).toEqual([["t2", 1], ["t2", 2]]);
   });
 });
+
+describe("Phase 3 approval admission integration", () => {
+  function fixture() {
+    const state: StubBackendState = { submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [], getResultCalls: [], planFeedbackCalls: [] };
+    const backend = createStubBackend(state);
+    const ui = createUi({ retryDecision: vi.fn(), restoreDraft: vi.fn(), removeChatMessage: vi.fn(), showError: vi.fn() });
+    const c = new CrucibleController(() => backend, new MemorySessionStore(), createSettings(), ui, { openDiff: async () => {} });
+    (c as unknown as { activeThreadId: string }).activeThreadId = "t";
+    c.configureApproval({ savedMode: () => "ask", reviewOn: () => true, saveMode: async () => {}, warningDismissed: () => false, saveWarningDismissed: async () => {} });
+    return { c, backend, ui };
+  }
+  const snapshot = { supported: true as const, autoAccept: false, shellPolicy: "ask" as const, version: 1, owned: true, processId: "process" };
+  test.each(["message", "mode", "clarify", "team"] as const)("%s waits for readiness and includes process identity", async kind => {
+    const { c, backend } = fixture();
+    let resolve!: (value: unknown) => void;
+    backend.getConfig = vi.fn(() => new Promise(r => { resolve = r; })) as BackendTaskClient["getConfig"];
+    backend.sendChatMessage = vi.fn(async () => ({ kind: "queued", messageId: "m" }));
+    backend.postModeDecision = vi.fn(async function* () {});
+    backend.postClarifyDecision = vi.fn(async function* () {});
+    backend.decideTeamPlan = vi.fn(async () => ({})) as BackendTaskClient["decideTeamPlan"];
+    const pending = kind === "message" ? c.sendChatMessage("hi") : kind === "mode" ? c.handleModeDecisionFromChat("t", "edit") : kind === "clarify" ? c.handleClarifyDecisionFromChat("t", "yes") : c.decideTeamPlan("t", "g", "approve");
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    const method = kind === "message" ? backend.sendChatMessage : kind === "mode" ? backend.postModeDecision : kind === "clarify" ? backend.postClarifyDecision : backend.decideTeamPlan;
+    expect(method).not.toHaveBeenCalled();
+    resolve({ approval: snapshot, chatControllerEnabled: true }); await pending;
+    if (kind === "message") expect(method).toHaveBeenCalledWith("t", "hi", undefined, expect.objectContaining({ expectedProcessId: "process" }));
+    else if (kind === "mode") expect(method).toHaveBeenCalledWith("t", "edit", "process");
+    else if (kind === "clarify") expect(method).toHaveBeenCalledWith("t", "yes", "process");
+    else expect(method).toHaveBeenCalledWith("t", "g", "approve", undefined, "process");
+    c.dispose();
+  });
+  test.each(["message", "mode", "clarify", "team"] as const)("%s recovers structured rejection and retains input or card", async kind => {
+    const { c, backend, ui } = fixture();
+    backend.getConfig = vi.fn(async () => ({ approval: snapshot, chatControllerEnabled: true })) as BackendTaskClient["getConfig"];
+    const error = { status: 409, detail: { code: "approval_not_confirmed", process_id: "new" } };
+    backend.sendChatMessage = vi.fn(async () => { throw error; });
+    backend.postModeDecision = vi.fn(async function* () { throw error; });
+    backend.postClarifyDecision = vi.fn(async function* () { throw error; });
+    backend.decideTeamPlan = vi.fn(async () => { throw error; });
+    if (kind === "message") { await c.sendChatMessage("hi"); expect(ui.restoreDraft).toHaveBeenCalledWith("hi", undefined); expect(ui.removeChatMessage).toHaveBeenCalled(); }
+    else if (kind === "mode") { await c.handleModeDecisionFromChat("t", "edit"); expect(ui.retryDecision).toHaveBeenCalledWith("t", "mode"); }
+    else if (kind === "clarify") { await c.handleClarifyDecisionFromChat("t", "yes"); expect(ui.retryDecision).toHaveBeenCalledWith("t", "clarify"); }
+    else { await c.decideTeamPlan("t", "g", "approve"); expect(ui.retryDecision).toHaveBeenCalledWith("t", "team_plan", "g"); }
+    expect(backend.getConfig).toHaveBeenCalledTimes(2); expect(ui.showError).not.toHaveBeenCalled(); c.dispose();
+  });
+});

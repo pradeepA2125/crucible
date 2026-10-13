@@ -624,7 +624,31 @@ export function parseContextUsage(raw: unknown): ContextUsage | null {
 // A thread's current actionable state — what the UI polls and renders from.
 // Resolved server-side from the thread's active task (GET /chat/threads/{id}/live),
 // so reloads and resume task-id churn self-heal on the next poll.
+export const ApprovalStateSchema = z.discriminatedUnion("supported", [
+  z.object({ supported: z.literal(true), autoAccept: z.boolean(), shellPolicy: z.enum(["ask", "allow_all"]),
+    version: z.number().int().nonnegative(), owned: z.boolean(), processId: z.string().min(1) }),
+  z.object({ supported: z.literal(false) }),
+]);
+export type ApprovalState = z.infer<typeof ApprovalStateSchema>;
+export type ApprovalSnapshot = Extract<ApprovalState, { supported: true }>;
+export type ApprovalModeResult = ApprovalSnapshot & { autoResolvedEdits: number; background: number };
+export interface SetApprovalModeOptions {
+  autoAccept: boolean; shellPolicy: "ask" | "allow_all"; resolveWaiting: boolean;
+  expectedProcessId: string; expectedVersion: number;
+}
+
+/** Wire state and conflict details use the same authoritative policy shape. */
+export function approvalFromWire(raw: unknown): ApprovalState | undefined {
+  if (raw == null) return undefined;
+  const v = raw as Record<string, unknown>;
+  return ApprovalStateSchema.parse(v.supported === false ? { supported: false } : {
+    supported: v.supported, autoAccept: v.auto_accept, shellPolicy: v.shell_policy,
+    version: v.version, owned: v.owned, processId: v.process_id,
+  });
+}
+
 export const ThreadLiveStateSchema = z.object({
+  approval: ApprovalStateSchema.optional(),
   processId: z.string().min(1).nullable().optional(),
   contextUsage: ContextUsageSchema.nullable().optional(),
   activeTaskId: z.string().nullable(),
@@ -666,7 +690,7 @@ export const EffortSupportSchema = z.object({
       value: ReasoningEffortSchema,
       label: z.string(),
       description: z.string(),
-      state: z.enum(["supported", "unknown"]),
+      state: z.enum(["supported", "unsupported", "unknown"]),
     })),
     source: z.enum(["catalog", "transport", "fallback"]),
     default: ReasoningEffortSchema.nullable(),
@@ -677,6 +701,8 @@ export type EffortSupport = z.infer<typeof EffortSupportSchema>;
 
 // Backend feature-flag capabilities (GET /v1/config) — drives task-path UI gating.
 export const BackendConfigSchema = z.object({
+  approval: ApprovalStateSchema.optional(),
+  shellPolicy: z.enum(["ask", "allow_all"]).optional(),
   taskSubsystemEnabled: z.boolean(),
   chatControllerEnabled: z.boolean(),
   memoryEnabled: z.boolean(),
@@ -854,6 +880,7 @@ export interface BackendTaskClient {
   // The same preference for an in-flight CHAT turn, where edits (not steps) are what
   // gets gated. Separate from setReviewPref because a controller turn has no task.
   // One "Review each edit" value for the whole backend (spec §5.4).
+  setApprovalMode(options: SetApprovalModeOptions): Promise<ApprovalModeResult>;
   setGlobalReviewPref(options: { autoAccept: boolean }): Promise<{ autoResolved: number; background: number }>;
   setPlanMode(planMode: boolean): Promise<void>;
   acceptPatch(taskId: string): Promise<TaskResult>;
@@ -915,9 +942,9 @@ export interface BackendTaskClient {
   // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
   // produce live events); the per-edit gate is a plain JSON ack (its continuation rides
   // the already-open message stream).
-  postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent>;
+  postModeDecision(threadId: string, mode: string, expectedProcessId?: string): AsyncIterable<StreamEvent>;
   // Controller clarify gate: a STREAMED dispatch (the answer re-enters the loop).
-  postClarifyDecision(threadId: string, answer: string): AsyncIterable<StreamEvent>;
+  postClarifyDecision(threadId: string, answer: string, expectedProcessId?: string): AsyncIterable<StreamEvent>;
   postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string, gateId?: string): Promise<void>;
   // Controller run_command gate: a plain JSON ack (continuation rides the open message stream).
   // gateId addresses one of several pending gates; omitted = the single pending one.
@@ -936,7 +963,7 @@ export interface BackendTaskClient {
   getTeam(threadId: string, teamId: string): Promise<TeamDetail>;
   disbandTeam(threadId: string, teamId: string): Promise<{ phase: string | null }>;
   decideTeamPlan(threadId: string, gateId: string, decision: "approve" | "feedback" | "reject",
-                 feedback?: string): Promise<{ teamId: string; phase: string | null }>;
+                 feedback?: string, expectedProcessId?: string): Promise<{ teamId: string; phase: string | null }>;
   // Subscribe-only SSE to any broadcaster channel (GET /v1/channels/{id}/stream). Used
   // to resume the live overlay for a controller turn after a webview reload (chat:{id}).
   streamChannel(channelId: string, signal?: AbortSignal): AsyncIterable<SequencedStreamEvent>;
@@ -952,6 +979,7 @@ export interface ChatImageAttachment {
 }
 
 export interface SendChatOptions {
+  expectedProcessId?: string;
   stepReview?: boolean;
   forcedSkills?: string[];
   mentionedFiles?: { path: string; content: string }[];

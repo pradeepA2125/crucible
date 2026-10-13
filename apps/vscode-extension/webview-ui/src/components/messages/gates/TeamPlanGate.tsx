@@ -1,3 +1,4 @@
+import { useDecisionRetry } from "../../shared/useDecisionRetry";
 import { useState } from "react";
 import { vscode } from "../../../vscodeApi";
 import { CardShell } from "../../shared/CardShell";
@@ -23,6 +24,7 @@ function assignmentsOf(payload: Record<string, unknown>): Assignment[] {
  * one more round, or reject (the team ends). One decision per card. */
 export function TeamPlanGate({ gateId, taskId, payload }: Props) {
   const [resolved, setResolved] = useState<string | null>(null);
+  useDecisionRetry(taskId, "team_plan", () => setResolved(null), gateId);
   const [feedback, setFeedback] = useState("");
   const team = String(payload.team_name ?? "");
   const proposal = String(payload.proposal_id ?? "");

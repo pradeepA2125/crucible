@@ -34,7 +34,7 @@ describe("ModelMenu", () => {
     render(<ModelMenu />);
     deliver(LIST);
     fireEvent.click(screen.getByRole("button", { name: /gemini-flash-latest/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Anthropic/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Anthropic/ }));
     expect(vscode.postMessage).toHaveBeenCalledWith({
       type: "setModel", backend: "anthropic", model: "claude-3-5-sonnet-latest",
     });
@@ -46,7 +46,7 @@ describe("ModelMenu", () => {
     render(<ModelMenu />);
     deliver(LIST);
     fireEvent.click(screen.getByRole("button", { name: /gemini-flash-latest/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Anthropic/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Anthropic/ }));
     deliver({ type: "modelSwapError", message: "validation failed: 401" });
     expect(screen.getByText(/validation failed: 401/)).toBeTruthy();
   });
@@ -55,7 +55,7 @@ describe("ModelMenu", () => {
     render(<ModelMenu />);
     deliver(LIST);
     fireEvent.click(screen.getByRole("button", { name: /gemini-flash-latest/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Provider settings/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Provider settings/ }));
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "openSettings" });
   });
 });
@@ -76,8 +76,8 @@ describe("ModelMenu on the ChatGPT plan", () => {
   it("names plan models by display name and swaps between them", () => {
     render(<ModelMenu />);
     deliver(PLAN);
-    fireEvent.click(screen.getByRole("button", { name: "Model: GPT A" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /GPT B/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Model: GPT A/ }));
+    fireEvent.click(screen.getByRole("button", { name: /GPT B/ }));
     expect(vscode.postMessage).toHaveBeenCalledWith(
       { type: "setModel", backend: "chatgpt", model: "gpt-b" });
   });
@@ -85,8 +85,9 @@ describe("ModelMenu on the ChatGPT plan", () => {
   it("shows Using ChatGPT plan with a Manage usage link only while the plan is in use", () => {
     render(<ModelMenu />);
     deliver(PLAN);
+    fireEvent.click(screen.getByRole("button", { name: /Model: GPT A/ }));
     expect(screen.getByText("Using ChatGPT plan")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Manage usage" }));
+    fireEvent.click(screen.getByRole("link", { name: "Manage usage" }));
     expect(vscode.postMessage).toHaveBeenCalledWith(
       { type: "settings/openExternal", url: "https://chatgpt.com/settings/usage?tab=overview" });
     deliver(LIST);
@@ -106,10 +107,11 @@ describe("ModelMenu on the Claude plan", () => {
   it("shows the Claude indicator and opens Claude usage settings", () => {
     render(<ModelMenu />);
     deliver(CLAUDE);
-    expect(screen.getByRole("button", { name: "Model: Claude Sonnet 5.5" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Model: Claude/ }));
+    expect(screen.getByRole("button", { name: /Model: Claude Sonnet 5.5/ })).toBeTruthy();
     expect(screen.getByText("Using Claude plan")).toBeTruthy();
     expect(screen.queryByText("Using ChatGPT plan")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Manage usage" }));
+    fireEvent.click(screen.getByRole("link", { name: "Manage usage" }));
     expect(vscode.postMessage).toHaveBeenLastCalledWith(
       { type: "settings/openExternal", url: "https://claude.ai/settings/usage" });
     deliver(LIST);
@@ -119,11 +121,12 @@ describe("ModelMenu on the Claude plan", () => {
   it("keeps Claude identification on a failed swap and clears it when the provider changes", () => {
     render(<ModelMenu />);
     deliver(CLAUDE);
+    fireEvent.click(screen.getByRole("button", { name: /Model: Claude/ }));
     deliver({ type: "modelSwapError", message: "Connection expired" });
     expect(screen.getByText("Using Claude plan")).toBeTruthy();
     // Stale or contradictory flags must not identify an API-key provider as plan usage.
     deliver({ ...LIST, usesClaudePlan: true, usesChatgptPlan: true });
     expect(screen.queryByText("Using Claude plan")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Manage usage" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Manage usage" })).toBeNull();
   });
 });

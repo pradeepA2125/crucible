@@ -1,15 +1,15 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { Icon } from "./Icon";
 import { ModelMenu } from "./ModelMenu";
-import { EffortMenu } from "./EffortMenu";
-import { UsageChip } from "./UsageChip";
+import { ApprovalMenu } from "./ApprovalMenu";
+import { usePopover } from "./shared/usePopover";
 import { ContextMeter } from "./ContextMeter";
 import { vscode } from "../vscodeApi";
 import { parseSlashCommand, resolveSkillCommand, buildSlashDropdownItems } from "../slash";
 import { detectTrigger } from "../composerTrigger";
 import { TriggerDropdown } from "./TriggerDropdown";
 import type { InputAvailability } from "../inputAvailability";
-import type { ContextUsage, ThreadUsageView } from "../types";
+import type { ApprovalModeView, ContextUsage, ThreadUsageView } from "../types";
 
 type ImageAttachment = { name: string; mediaType: string; dataUrl: string; bytes: number };
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -20,9 +20,7 @@ interface Props {
   draft: string;
   threadId?: string;
   onDraftChange: (text: string) => void;
-  // Opens the in-chat settings popup. When absent (standalone/test call sites),
-  // the gear falls back to the legacy openSettings host message.
-  onOpenSettings?: () => void;
+  approval?: ApprovalModeView;
   planMode?: boolean;  // hydrated from the extension's globalState via planModeState
   stepReview?: boolean;  // hydrated from globalState via reviewPrefState
   threadUsage?: ThreadUsageView | null;  // the thread's running token total
@@ -41,7 +39,7 @@ const MAX_TEXTAREA_HEIGHT = 96;
  * newline. When availability.showStop is true, a Stop button appears on the
  * left side of the footer row and posts { type: "stopTurn" } once.
  */
-export function InputArea({ availability, draft, threadId = "", onDraftChange, onOpenSettings, planMode = false, stepReview = true, threadUsage, teamNames, contextUsage = null, contextUsageStale = false }: Props) {
+export function InputArea({ availability, draft, threadId = "", onDraftChange, approval, planMode = false, stepReview = true, threadUsage, teamNames, contextUsage = null, contextUsageStale = false }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
@@ -113,16 +111,6 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, o
   const [stopping, setStopping] = useState(false);
   // One-shot guard for the Tier B task-abort buttons (keep / revert).
   const [aborting, setAborting] = useState(false);
-  // "Review each step" — a CONTROLLED prop sourced from the extension's globalState,
-  // not local state. As local useState(true) it silently returned to checked on every
-  // remount (thread switch, panel reload), so an unchecked box came back on and the
-  // next message gated its edits again. Mirrors planMode exactly.
-  //
-  // It governs BOTH paths: the controller applies it per message to its edit gate
-  // (controller.py `is_review = step_review is True` -> auto_accept_edits), and the
-  // task path uses it as the creation default. The older comment here claimed it was
-  // task-only; that has not been true since the controller gained per-edit review.
-
   // Focus on mount and whenever disabled flips to false.
   useEffect(() => {
     if (!availability.disabled) {
@@ -388,21 +376,35 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, o
     vscode.postMessage({ type: "abortTask", revert });
   }
 
+  const [addOpen, setAddOpen] = useState(false);
+  const addRoot = useRef<HTMLDivElement>(null);
+  const closeAdd = useCallback(() => setAddOpen(false), []);
+  const addPosition = usePopover(addRoot, addOpen, closeAdd, 220);
+  const [abortOpen, setAbortOpen] = useState(false);
+  const abortRoot = useRef<HTMLDivElement>(null);
+  const closeAbort = useCallback(() => setAbortOpen(false), []);
+  const abortPosition = usePopover(abortRoot, abortOpen, closeAbort, 220);
+  function insertTrigger(kind: "slash" | "file") {
+    setAddOpen(false);
+    const el = textareaRef.current;
+    const cursor = el?.selectionStart ?? draft.length;
+    const start = kind === "slash" ? 0 : cursor;
+    const prefix = kind === "file" && start > 0 && !/\s/.test(draft[start - 1]) ? " " : "";
+    const value = `${draft.slice(0, start)}${prefix}${kind === "slash" ? "/" : "@"}${draft.slice(start)}`;
+    const end = start + prefix.length + 1;
+    onDraftChange(value); maybeRequestCatalogs(value);
+    setTrigger(detectTrigger(value, end)); setActiveIndex(0);
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(end, end); });
+  }
+  const effectiveApproval: ApprovalModeView = approval ?? {
+    tier: "older", snapshot: null, mode: stepReview ? "ask" : "accept_edits",
+    confirmed: true, pending: false, warningDismissed: false, error: null, notice: null,
+  };
   const canSend = !availability.disabled && pendingImages === 0 && (draft.trim().length > 0 || imageAttachments.length > 0);
 
   return (
     <div
-      className={[
-        "relative rounded-[10px] border px-3 pt-2 pb-1.5",
-        "transition-opacity duration-150",
-        availability.disabled ? "opacity-55" : "opacity-100",
-      ].join(" ")}
-      style={{
-        background: "var(--color-surface)",
-        borderColor: "var(--color-border-strong)",
-      }}
-      // Focus-within ring is applied via inline style on a wrapper trick using
-      // onFocusCapture/onBlurCapture to avoid Tailwind v4 focus-within issues.
+      className="relative rounded-composer border border-border-strong bg-[var(--input-bg)] px-3 pt-2 pb-2 text-[var(--input-fg)] focus-within:border-[var(--focus-ring)]"
     >
       {trigger && dropdownItems.length > 0 && (
         <TriggerDropdown
@@ -419,24 +421,24 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, o
           </span>
           {imageAttachments.map((image, i) => (
             <div key={`${image.name}-${i}`} title={image.name}
-              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-[8px]"
+              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-control"
               style={{ border: "1px solid var(--color-border-strong)", background: "var(--color-surface-2)" }}>
-              <img src={image.dataUrl} alt={image.name} className="h-full w-full object-cover" />
+              <img width={56} height={56} src={image.dataUrl} alt={image.name} className="h-full w-full object-cover" />
               <button type="button" aria-label={`Remove ${image.name}`}
                 onClick={() => { recoveryId.current = null; pendingSlashRef.current = null; setImageAttachments(current => current.filter((_, index) => index !== i)); }}
                 className="absolute right-0.5 top-0.5 flex h-[18px] w-[18px] items-center justify-center rounded-full text-text opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-                style={{ background: "rgba(10,10,14,.72)", border: "1px solid var(--color-border-strong)" }}>
+                style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border-strong)" }}>
                 <Icon name="x" size={9} />
               </button>
             </div>
           ))}
           {Array.from({ length: pendingImages }, (_, i) => (
-            <div key={`pending-${i}`} aria-hidden="true" className="h-14 w-14 shrink-0 animate-pulse rounded-[8px]"
+            <div key={`pending-${i}`} aria-hidden="true" className="h-14 w-14 shrink-0 animate-pulse rounded-control"
               style={{ border: "1px dashed var(--color-border-strong)", background: "var(--color-surface-2)" }} />
           ))}
           {pendingImages > 0 && <span role="status" className="sr-only">Reading images…</span>}
           {imageError && (
-            <span role="alert" className="basis-full text-[10.5px]" style={{ color: "var(--color-red)" }}>{imageError}</span>
+            <span role="alert" className="basis-full text-meta" style={{ color: "var(--color-red)" }}>{imageError}</span>
           )}
         </div>
       )}
@@ -449,11 +451,11 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, o
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         disabled={availability.disabled}
-        placeholder={availability.placeholder}
-        aria-label="Chat input"
+        placeholder={!availability.disabled && planMode ? "Describe a plan…" : availability.placeholder}
+        aria-label="Chat input" name="message" autoComplete="off"
         className={[
           "w-full bg-transparent outline-none resize-none",
-          "text-xs leading-relaxed text-text",
+          "text-body leading-relaxed",
           "placeholder:text-text-4",
           "disabled:cursor-not-allowed",
         ].join(" ")}
@@ -465,185 +467,40 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, o
         }}
       />
 
-      {/* Footer row */}
-      <div data-testid="composer-footer" className="relative flex flex-wrap items-center gap-1.5 pt-1 [&>*]:shrink-0">
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/tiff"
-          multiple
-          className="hidden"
-          aria-label="Attach images"
-          onChange={(e) => {
-            if (e.target.files) addImageFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
-        <button
-          type="button"
-          aria-label="Attach images"
-          title="Attach images"
-          onClick={() => imageInputRef.current?.click()}
-          className="flex h-6 w-6 items-center justify-center rounded-[7px] text-text-3 hover:bg-surface-2 hover:text-text"
-        >
-          <Icon name="plus" size={12} />
+      <div data-testid="composer-footer" className="relative flex flex-wrap items-center gap-1 pt-1">
+        <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/tiff" multiple
+          className="hidden" aria-label="Attach images" onChange={e => { if (e.target.files) addImageFiles(e.target.files); e.target.value = ""; }} />
+        <div ref={addRoot} className="relative shrink-0">
+          <button type="button" aria-label="Add context" aria-haspopup="menu" aria-expanded={addOpen} onClick={() => setAddOpen(!addOpen)}
+            className="flex h-7 w-7 items-center justify-center rounded-control text-text-2 hover:bg-surface-2 hover:text-text"><Icon name="plus" size={14} /></button>
+          {addOpen && <div role="menu" aria-label="Add context" style={addPosition} className="absolute bottom-full z-50 mb-2 grid rounded-card border border-border-strong bg-surface-3 p-1 text-body text-text">
+            <button type="button" role="menuitem" disabled={availability.disabled} onClick={() => { setAddOpen(false); imageInputRef.current?.click(); }} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Attach images</button>
+            <button type="button" role="menuitem" disabled={availability.disabled} onClick={() => insertTrigger("file")} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Mention a file @</button>
+            <button type="button" role="menuitem" disabled={availability.disabled} onClick={() => insertTrigger("slash")} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Commands /</button>
+          </div>}
+        </div>
+        <ApprovalMenu approval={effectiveApproval} />
+        <button type="button" aria-label="Plan Mode" aria-pressed={planMode} onClick={() => vscode.postMessage({ type: "setPlanMode", enabled: !planMode })}
+          className="flex h-7 items-center gap-1 rounded-control px-1.5 text-meta hover:bg-surface-2"
+          style={{ color: planMode ? "var(--color-accent-ink)" : "var(--color-text-3)", background: planMode ? "var(--accent-bg)" : undefined }}>
+          <Icon name="list" size={13} />Plan
         </button>
-        {/* Reasoning-effort chip + model hot-swap chip + settings shortcut. */}
-        <EffortMenu />
-        <ModelMenu />
-        <button
-          type="button"
-          onClick={() =>
-            onOpenSettings ? onOpenSettings() : vscode.postMessage({ type: "openSettings" })
-          }
-          aria-label="Open settings"
-          title="Crucible settings"
-          className="flex h-6 w-6 items-center justify-center rounded-[7px] cursor-pointer text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text"
-        >
-          <Icon name="gear" size={12} />
-        </button>
-        <UsageChip usage={threadUsage ?? null} teamNames={teamNames ?? {}} />
-        <ContextMeter usage={contextUsage} stale={contextUsageStale} />
-
-        {/* Tier B: task-abort buttons — shown while a task is in an abortable phase.
-            "Stop & keep" leaves applied changes; "Stop & revert" rolls the workspace back. */}
-        {availability.taskStop && (
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => handleAbort(false)}
-              disabled={aborting}
-              aria-label="Stop and keep changes"
-              title="Stop the task; keep the changes applied so far"
-              className="flex items-center gap-1 h-6 px-2 rounded-[6px] border text-[10px] disabled:opacity-50 disabled:cursor-default"
-              style={{
-                background: "var(--color-surface-2)",
-                borderColor: "var(--color-border-strong)",
-                color: "var(--color-text-2)",
-              }}
-            >
-              <Icon name="stop" size={9} />
-              Stop &amp; keep
-            </button>
-            <button
-              type="button"
-              onClick={() => handleAbort(true)}
-              disabled={aborting}
-              aria-label="Stop and revert changes"
-              title="Stop the task and roll the workspace back to its pre-task state"
-              className="flex items-center gap-1 h-6 px-2 rounded-[6px] border text-[10px] disabled:opacity-50 disabled:cursor-default"
-              style={{
-                background: "var(--color-surface-2)",
-                borderColor: "var(--red-brd)",
-                color: "var(--color-red)",
-              }}
-            >
-              <Icon name="stop" size={9} />
-              Stop &amp; revert
-            </button>
-          </div>
-        )}
-
-        {/* Spacer */}
         <span className="flex-1" />
-
-        {/* Review-each-step toggle */}
-        <label className="flex items-center gap-1.5 text-[10px] text-text-3 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={stepReview}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              // No local setState: the host persists and echoes reviewPrefState back,
-              // which updates this controlled prop. The round-trip is required, not
-              // decorative — same contract as setPlanMode.
-              // Live-mutable in BOTH surfaces: a running task re-reads it before each step
-              // gate, and an in-flight chat turn re-reads it before each edit (flipping it
-              // on also accepts the edit gate currently on screen). Checked = "review each
-              // step" = auto_accept false. A 409 (nothing running) is benign on the
-              // extension side — the value still governs the next task/message.
-              vscode.postMessage({ type: "setReviewPref", autoAccept: !checked });
-            }}
-            className="accent-[var(--color-accent)] w-3 h-3"
-          />
-          Review each step
-        </label>
-
-        {/* Plan Mode toggle — sticky across threads (extension globalState), unlike
-            "Review each step" which is per-message local state. */}
-        <label className="flex items-center gap-1.5 text-[10px] text-text-3 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={planMode}
-            aria-label="Plan Mode"
-            onChange={(e) => {
-              vscode.postMessage({ type: "setPlanMode", enabled: e.target.checked });
-            }}
-            className="accent-[var(--color-accent)] w-3 h-3"
-          />
-          Plan Mode
-        </label>
-
-        {/* ⌘↵ hint */}
-        <span
-          className="font-mono text-text-4 select-none"
-          style={{ fontSize: "9.5px" }}
-        >
-          ⌘↵
-        </span>
-
-        {/* Right-hand action: Stop while a chat turn streams, otherwise Send. */}
-        {availability.showStop ? (
-          <button
-            type="button"
-            onClick={handleStop}
-            disabled={stopping}
-            aria-label="Stop"
-            title="Stop"
-            className={[
-              "flex items-center justify-center w-6 h-6 rounded-[7px]",
-              "transition-all duration-150",
-              "disabled:opacity-50 disabled:cursor-default",
-            ].join(" ")}
-            style={{
-              background: "var(--color-surface-2)",
-              border: "1px solid var(--red-brd)",
-              color: stopping ? "var(--color-text-4)" : "var(--color-red)",
-            }}
-          >
-            <Icon name="stop" size={11} />
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={doSend}
-            disabled={!canSend}
-            aria-label="Send"
-            className={[
-              "flex items-center justify-center w-6 h-6 rounded-[7px]",
-              "transition-all duration-150",
-              "disabled:opacity-40 disabled:cursor-default",
-            ].join(" ")}
-            style={
-              canSend
-                ? {
-                    background:
-                      "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
-                    boxShadow:
-                      "0 1px 4px rgba(0,0,0,.4), 0 0 12px var(--accent-glow)",
-                    color: "#fff",
-                  }
-                : {
-                    background: "var(--color-surface-2)",
-                    borderColor: "var(--color-border)",
-                    color: "var(--color-text-4)",
-                    border: "1px solid var(--color-border)",
-                  }
-            }
-          >
-            <Icon name="send" size={12} />
-          </button>
-        )}
+        <ModelMenu />
+        <ContextMeter usage={contextUsage} stale={contextUsageStale} threadUsage={threadUsage} teamNames={teamNames} />
+        {availability.taskStop ? <div ref={abortRoot} className="relative flex shrink-0 items-center gap-0.5">
+          <button type="button" onClick={() => handleAbort(false)} disabled={aborting} aria-label="Stop and keep changes" title="Stop the task; keep applied changes"
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-text disabled:opacity-50"><Icon name="stop" size={13} /></button>
+          <button type="button" aria-label="Task stop options" aria-haspopup="menu" aria-expanded={abortOpen} disabled={aborting} onClick={() => setAbortOpen(!abortOpen)}
+            className="flex h-7 w-5 items-center justify-center rounded-control text-text-3 hover:bg-surface-2"><Icon name="chev-d" size={10} /></button>
+          {abortOpen && <div role="menu" aria-label="Task stop options" style={abortPosition} className="absolute bottom-full z-50 mb-2 rounded-card border border-border-strong bg-surface-3 p-1 text-body">
+            <button type="button" role="menuitem" disabled={aborting} onClick={() => { handleAbort(true); setAbortOpen(false); }} aria-label="Stop and revert changes"
+              className="w-full rounded-control px-2 py-2 text-left text-red hover:bg-surface-2">Stop and revert changes</button>
+          </div>}
+        </div> : availability.showStop ? <button type="button" onClick={handleStop} disabled={stopping} aria-label="Stop" title="Stop"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-text disabled:opacity-50"><Icon name="stop" size={13} /></button>
+        : <button type="button" onClick={doSend} disabled={!canSend} aria-label="Send" title="Send (Enter)"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-fill)] text-[var(--on-accent)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 disabled:cursor-default"><Icon name="send" size={14} /></button>}
       </div>
     </div>
   );

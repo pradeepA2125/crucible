@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from agentd.chat.approval import ApprovalConflict, ApprovalManaged, ApprovalModeRequest, ApprovalState
 from agentd.chat.models import (
     ChatCommandDecisionRequest,
     ChatMcpDecisionRequest,
@@ -252,6 +253,20 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
+    def approval_report() -> dict[str, object]:
+        read = getattr(chat_agent, "approval_state", None)
+        return read().model_dump() if callable(read) else {"supported": False}
+
+    def require_approval(expected: object) -> None:
+        if expected is None:
+            return  # old clients retain the original admission behavior
+        if not isinstance(expected, str) or not expected:
+            raise HTTPException(status_code=422, detail="expected_process_id must be a nonempty string")
+        state = approval_report()
+        if not state.get("owned") or state.get("process_id") != expected:
+            raise HTTPException(status_code=409, detail={
+                "code": "approval_not_confirmed", "process_id": state.get("process_id")})
+
     @router.get("/config")
     async def get_config() -> dict[str, object]:
         """Feature-flag capabilities for the frontend to gate task-path UI."""
@@ -267,6 +282,8 @@ def build_router(
         from agentd.exec_sessions.config import is_exec_sessions_enabled
 
         return {
+            "approval": approval_report(),
+            "shell_policy": getattr(getattr(chat_agent, "_shell_policy", None), "value", "ask"),
             "task_subsystem_enabled": is_task_subsystem_enabled(),
             "chat_controller_enabled": is_controller_enabled(),
             "memory_enabled": is_memory_enabled(),
@@ -1519,6 +1536,8 @@ def build_router(
             _provider_access = getattr(_chat_agent, "provider_access", None)
             if _provider_access is not None:
                 live.provider_access = _provider_access(thread_id)
+            _approval = approval_report()
+            live.approval = ApprovalState.model_validate(_approval) if _approval.get("supported") else _approval
             live.message_count = len(thread.messages)
             _process_id = getattr(_chat_agent, "context_process_id", None)
             if _process_id is not None:
@@ -1578,6 +1597,7 @@ def build_router(
 
         @router.post("/chat/threads/{thread_id}/message")
         async def post_chat_message(thread_id: str, request: dict) -> StreamingResponse:
+            require_approval(request.get("expected_process_id"))
             # Client-chosen id keeps the webview's optimistic echo and the persisted
             # message in agreement, so the rewind anchor exists without a reload.
             _message_id = request.get("message_id")
@@ -1717,6 +1737,7 @@ def build_router(
 
         @router.post("/chat/threads/{thread_id}/mode-decision")
         async def post_mode_decision(thread_id: str, request: dict) -> StreamingResponse:
+            require_approval(request.get("expected_process_id"))
             import asyncio as _asyncio_mode
             import json as _json_mode
             mode = request.get("mode", "")
@@ -1796,6 +1817,7 @@ def build_router(
 
         @router.post("/chat/threads/{thread_id}/clarify-decision")
         async def post_clarify_decision(thread_id: str, request: dict) -> StreamingResponse:
+            require_approval(request.get("expected_process_id"))
             import asyncio as _asyncio_clar
             import json as _json_clar
             answer = request.get("answer", "")
@@ -1864,6 +1886,20 @@ def build_router(
                 raise _gate_http_error(exc) from exc
             return {"ok": ok}
 
+        @router.put("/chat/approval-mode")
+        async def put_approval_mode(request: ApprovalModeRequest) -> dict[str, object]:
+            setter = getattr(_chat_agent, "set_approval_mode", None)
+            if setter is None:
+                raise HTTPException(status_code=409, detail="chat controller required")
+            from agentd.domain.models import ShellPolicy
+            try:
+                result = setter(auto_accept=request.auto_accept,
+                    shell_policy=ShellPolicy(request.shell_policy), resolve_waiting=request.resolve_waiting,
+                    expected_process_id=request.expected_process_id, expected_version=request.expected_version)
+            except ApprovalConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.state.model_dump()) from exc
+            return result.model_dump()
+
         @router.put("/chat/review-pref")
         async def put_chat_review_pref(request: ReviewPrefRequest) -> dict:
             """The one "Review each edit" value for the whole backend (spec §5.4). Turning
@@ -1871,7 +1907,10 @@ def build_router(
             set_pref = getattr(_chat_agent, "set_review_pref", None)
             if set_pref is None:  # legacy ChatAgent has no review control
                 return {"auto_resolved": 0, "background": 0}
-            result = set_pref(auto_accept=bool(request.auto_accept))
+            try:
+                result = set_pref(auto_accept=bool(request.auto_accept))
+            except ApprovalManaged as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             return {"auto_resolved": result.auto_resolved, "background": result.background}
 
         @router.put("/chat/plan-mode")
@@ -2004,6 +2043,7 @@ def build_router(
         async def post_team_plan_decision(
             thread_id: str, request: TeamPlanDecisionRequest,
         ) -> dict[str, object]:
+            require_approval(request.expected_process_id)
             # Spec v2 §8.5. Plain JSON: approval starts members in the background.
             decide = getattr(_chat_agent, "decide_team_plan", None)
             if decide is None:

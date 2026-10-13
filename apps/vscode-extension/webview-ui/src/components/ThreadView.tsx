@@ -93,6 +93,7 @@ interface Props {
 export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError }: Props) {
   const [draft, setDraft] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   // Chat rewind is local UI state, not app state: the draft lives here too, and the
   // dialog is transient. Driven by host messages, mirroring InputArea's promptExpanded
   // listener.
@@ -289,6 +290,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         <button
           type="button"
           onClick={() => setDrawerOpen((o) => !o)}
+          ref={settingsButtonRef}
           aria-label="Settings menu"
           title="Settings"
           className={[
@@ -307,7 +309,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
             (e.currentTarget as HTMLButtonElement).style.color = "var(--color-text-3)";
           }}
         >
-          <Icon name="menu" size={14} />
+          <Icon name="gear" size={14} />
         </button>
 
         {/* Memory Inspector shortcut — opens the standalone panel (crucible.openMemoryPanel),
@@ -538,7 +540,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           availability={availability}
           draft={draft}
           onDraftChange={setDraft}
-          onOpenSettings={() => setSettingsSection("overview")}
+          approval={state.approval}
           planMode={state.planMode}
           stepReview={state.stepReview}
           threadUsage={state.threadUsage}
@@ -551,7 +553,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
       {/* Floating settings popup — over the whole chat, opened at the picked section. */}
       {settingsSection !== null && (
-        <ChatSettingsOverlay section={settingsSection} onClose={() => setSettingsSection(null)} />
+        <ChatSettingsOverlay returnTo={settingsButtonRef} section={settingsSection} onClose={() => setSettingsSection(null)} />
       )}
 
       {/* Confirm gate for a permanent rewind. */}

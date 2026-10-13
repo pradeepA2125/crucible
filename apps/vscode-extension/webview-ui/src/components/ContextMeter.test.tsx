@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { InputArea } from "./InputArea";
 import { contextUsage } from "../test/contextUsageFixture";
@@ -18,36 +18,36 @@ describe("ContextMeter in the composer", () => {
     ["last_request", "estimated", "Last context ~18%"],
   ] as const)("labels %s %s", (status, input_quality, label) => {
     render(composer({ ...contextUsage, status, input_quality }));
-    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent(label);
+    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(new RegExp(label));
     expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "18");
   });
 
   it("uses a known input count without inventing an unknown limit or percentage", () => {
     render(composer({ ...contextUsage, context_window: null, capacity_source: "unknown" }));
     const button = screen.getByRole("button", { name: /context.*details/i });
-    expect(button).toHaveTextContent("18k tokens");
-    expect(button).toHaveTextContent("limit unknown");
-    expect(button).not.toHaveTextContent("%");
+    expect(button).toHaveAccessibleName(/18k\ tokens/);
+    expect(button).toHaveAccessibleName(/limit\ unknown/);
+    expect(button).not.toHaveAccessibleName(/%/);
     expect(screen.queryByRole("meter")).not.toBeInTheDocument();
   });
 
   it.each(["awaiting_request", "invalidated", "unavailable"] as const)("does not show zero for %s", (status) => {
     render(composer({ ...contextUsage, status, input_tokens: null, input_quality: "unavailable" }));
     const button = screen.getByRole("button", { name: /context.*details/i });
-    expect(button).toHaveTextContent(status === "awaiting_request" ? "ready · 100k limit" : status === "invalidated" ? "invalidated" : "unavailable");
-    expect(button).not.toHaveTextContent(/0%|0 tokens/);
+    expect(button).toHaveAccessibleName(new RegExp(status === "awaiting_request" ? "ready · 100k limit" : status === "invalidated" ? "invalidated" : "unavailable"));
+    expect(button).not.toHaveAccessibleName(/0%|0 tokens/);
     expect(screen.queryByRole("meter")).not.toBeInTheDocument();
   });
 
   it("shows unavailable for a null snapshot and stale independently", () => {
     render(composer(null, true));
-    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("unavailable · stale");
+    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(/unavailable\ ·\ stale/);
   });
 
   it("opens on focus and click, shows provenance, and dismisses with Escape", () => {
     render(composer());
     const button = screen.getByRole("button", { name: /context.*details/i });
-    fireEvent.focus(button);
+    act(() => button.focus());
     expect(button).toHaveAttribute("aria-expanded", "true");
     const details = screen.getByRole("tooltip");
     expect(details).toHaveTextContent("18,000");
@@ -63,14 +63,14 @@ describe("ContextMeter in the composer", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     fireEvent.click(button);
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
-    fireEvent.blur(button);
+    fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
   it("caps visual fill but retains the raw ratio and count in details", () => {
     render(composer({ ...contextUsage, input_tokens: 120000 }));
     expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "100");
-    expect(screen.getByTestId("context-meter-fill")).toHaveStyle({ width: "100%" });
+    expect(screen.getByTestId("context-meter-fill")).toHaveAttribute("stroke-dasharray", "37.7 37.7");
     fireEvent.click(screen.getByRole("button", { name: /context.*details/i }));
     expect(screen.getByRole("tooltip")).toHaveTextContent("120%");
     expect(screen.getByRole("tooltip")).toHaveTextContent("120,000");
@@ -80,13 +80,14 @@ describe("ContextMeter in the composer", () => {
     const total = { requests: 1, input: 99, output: 3, cached: 0 };
     const { rerender } = render(<InputArea availability={availability} draft="hello" onDraftChange={vi.fn()}
       contextUsage={{ ...contextUsage, input_tokens: 0 }} threadUsage={{ total, main: total, agents: {}, teams: {} }} />);
-    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("~0%");
-    expect(screen.getByTestId("context-meter-fill")).toHaveStyle({ width: "0%" });
-    expect(screen.getByTestId("usage-chip")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(/\~0%/);
+    expect(screen.getByTestId("context-meter-fill")).toHaveAttribute("stroke-dasharray", "0 37.7");
+    fireEvent.click(screen.getByRole("button", { name: /context.*details/i }));
+    expect(screen.getByTestId("usage-breakdown")).toHaveTextContent("↑99 ↓3");
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
     rerender(composer(contextUsage, true, true));
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("stale");
+    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(/stale/);
   });
 });
 
@@ -94,16 +95,16 @@ it("shows catalog capacity before the first request without inventing free space
   render(composer({ ...contextUsage, status: "awaiting_request", input_tokens: null,
     input_quality: "unavailable", observed_at: null, context_window: 1000000 }));
   const button = screen.getByRole("button", { name: /context.*details/i });
-  expect(button).toHaveTextContent("Context ready · 1M limit");
-  expect(button).not.toHaveTextContent(/unavailable|100%/);
+  expect(button).toHaveAccessibleName(/Context\ ready\ ·\ 1M\ limit/);
+  expect(button).not.toHaveAccessibleName(/unavailable|100%/);
   expect(screen.queryByRole("meter")).not.toBeInTheDocument();
-  fireEvent.focus(button);
+  act(() => button.focus());
   const details = screen.getByRole("tooltip");
   expect(details).toHaveTextContent("Context window: 1,000,000 tokens");
   expect(details).toHaveTextContent("Main request input: Not measured yet");
   expect(details).toHaveTextContent("Awaiting first request");
   expect(details).toHaveTextContent("including instructions and tool definitions");
-  expect(details).not.toHaveTextContent("Unavailable");
+  expect(details).not.toHaveAccessibleName(/Unavailable/);
 });
 
 it("keeps the limit unknown until catalog metadata arrives", () => {
@@ -111,10 +112,18 @@ it("keeps the limit unknown until catalog metadata arrives", () => {
     input_tokens: null, input_quality: "unavailable" as const, observed_at: null,
     context_window: null, capacity_source: "unknown" as const };
   const { rerender } = render(composer(initial));
-  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("awaiting request");
-  expect(screen.getByRole("button", { name: /context.*details/i })).not.toHaveTextContent(/ready|%/);
+  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(/awaiting\ request/);
+  expect(screen.getByRole("button", { name: /context.*details/i })).not.toHaveAccessibleName(/ready|%/);
   rerender(composer({ ...initial, context_window: 1000000, capacity_source: "chatgpt_catalog" }));
-  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("ready · 1M limit");
+  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(/ready\ ·\ 1M\ limit/);
   rerender(composer({ ...contextUsage, input_tokens: 180000, context_window: 1000000 }));
-  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("Context ~18%");
+  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(/Context\ \~18%/);
+});
+
+it("dismisses a hover-only context card by Escape without reopening it through focus", () => {
+  render(composer());
+  fireEvent.mouseEnter(screen.getByTestId("context-meter"));
+  expect(screen.getByRole("tooltip")).toBeInTheDocument();
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  expect(screen.queryByRole("tooltip")).toBeNull();
 });

@@ -53,6 +53,7 @@ const INITIAL: AppState = {
   agentsRunning: 0,
   planMode: false,
   stepReview: true,
+  approval: { tier: "unknown", snapshot: null, mode: null, confirmed: false, pending: false, warningDismissed: false, error: null, notice: null },
   agents: {},
   agentViews: {},
   teams: {},
@@ -458,6 +459,9 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "markQueued":
       return { ...state, queuedIds: [...state.queuedIds.filter((id) => id !== msg.id), msg.id] };
+
+    case "approvalState":
+      return { ...state, approval: msg.approval };
 
     case "reviewPrefState":
       return { ...state, stepReview: msg.enabled };

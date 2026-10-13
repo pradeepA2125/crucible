@@ -7,6 +7,8 @@ explore→classify→route pipeline. F1 implements QA + clarify; propose_mode ga
 """
 from __future__ import annotations
 
+from agentd.chat.approval import ApprovalConflict, ApprovalManaged, ApprovalModeResult, ApprovalState
+
 import asyncio
 import json
 import logging
@@ -546,6 +548,8 @@ class ChatController:
         # The one "Review each edit" value for every thread, turn and background agent
         # (spec §5.4): the extension's checkbox is global, so the backend's is too.
         self._review_control = ChatTurnControl(auto_accept_edits=True)
+        self._approval_owned = False
+        self._approval_version = 0
         # gate id -> (thread, gate) for every pending edit gate, so a flip to auto-accept
         # can resolve them across threads.
         self._pending_edit_gates: dict[str, tuple[str, PendingGate]] = {}
@@ -759,10 +763,10 @@ class ChatController:
             raise ValueError(f"Thread {thread_id!r} not found")
         image_attachments = self._image_refs(image_attachments)
         self._user_spoke(thread_id, plan_mode)
-        if step_review is not None:
+        if step_review is not None and not self._approval_owned:
             # Sets the value for future edits; never resolves gates (spec §5.4) — a
             # message in one thread must not accept edits waiting in another.
-            self._review_control.auto_accept_edits = not step_review
+            self._set_legacy_review(not step_review)
         # Auto-name the thread from its first user message (mirrors ChatAgent).
         if not any(m.role == "user" for m in thread.messages):
             title = message.strip().replace("\n", " ")[:50]
@@ -894,8 +898,8 @@ class ChatController:
                 coordinator.user_spoke()
         if plan_mode is not None:
             self._plan_mode = plan_mode
-        if step_review is not None:
-            self._review_control.auto_accept_edits = not step_review
+        if step_review is not None and not self._approval_owned:
+            self._set_legacy_review(not step_review)
         self._queued[stored_id] = {"turn_message": turn_message, "step_review": step_review,
                                    "forced_skills": forced_skills}
         self._main_inbox.setdefault(thread_id, []).append(InboxItem(
@@ -1484,15 +1488,44 @@ class ChatController:
                     text += f" — {reason}"  # surface the user's reason in the record
             self._write_breadcrumb(thread_id, channel_id, text, edit_outcome=True)
 
-    def set_review_pref(self, *, auto_accept: bool) -> ReviewPrefResult:
-        """The one "Review each edit" value for every thread, turn and background agent
-        (spec §5.4). Turning auto-accept ON accepts the edit gates waiting under it — the
-        diff on screen would otherwise contradict the switch — except protected-path and
-        untrusted-agent gates, which take an explicit decision (§3.9, §3.12). Turning it
-        off only governs future edits. No await between the flip and the resolutions."""
+    def approval_state(self) -> ApprovalState:
+        return ApprovalState(auto_accept=self._review_control.auto_accept_edits,
+            shell_policy=self._shell_policy.value, version=self._approval_version,
+            owned=self._approval_owned, process_id=self.context_process_id())
+
+    def _set_legacy_review(self, auto_accept: bool) -> None:
+        if self._review_control.auto_accept_edits != auto_accept:
+            self._approval_version += 1
         self._review_control.auto_accept_edits = auto_accept
-        if not auto_accept:
-            return ReviewPrefResult(auto_resolved=0, background=0)
+
+    def set_approval_mode(self, *, auto_accept: bool, shell_policy: ShellPolicy,
+                          resolve_waiting: bool, expected_process_id: str,
+                          expected_version: int) -> ApprovalModeResult:
+        before = self.approval_state()
+        if before.process_id != expected_process_id or before.version != expected_version:
+            raise ApprovalConflict(before)
+        # Single-process asyncio: no await between CAS, ownership and policy writes.
+        changed = before.auto_accept != auto_accept or self._shell_policy != shell_policy
+        self._approval_owned = True
+        self._review_control.auto_accept_edits = auto_accept
+        self._shell_policy = shell_policy
+        if changed or not before.owned:
+            self._approval_version += 1
+        result = (self._resolve_waiting_edits() if resolve_waiting and not before.auto_accept
+                  and auto_accept else ReviewPrefResult(auto_resolved=0, background=0))
+        return ApprovalModeResult(**self.approval_state().model_dump(),
+            auto_resolved_edits=result.auto_resolved, background=result.background)
+
+    def set_review_pref(self, *, auto_accept: bool) -> ReviewPrefResult:
+        """Legacy clients keep their semantics until the approval API takes ownership."""
+        if self._approval_owned:
+            raise ApprovalManaged()
+        self._set_legacy_review(auto_accept)
+        return (self._resolve_waiting_edits() if auto_accept
+                else ReviewPrefResult(auto_resolved=0, background=0))
+
+    def _resolve_waiting_edits(self) -> ReviewPrefResult:
+        """Explicit false→true only in the owned API; never touch command gates."""
         resolved = background = 0
         for gate_id, (_thread_id, gate) in list(self._pending_edit_gates.items()):
             if gate.payload.get("protected") or gate.payload.get("review_required"):

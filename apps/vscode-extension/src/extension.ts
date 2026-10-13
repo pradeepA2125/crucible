@@ -1,3 +1,4 @@
+import { isApprovalMode, type ApprovalMode } from "./approval-mode.js";
 import { HttpBackendClient, type ReasoningEffort } from "@crucible/editor-client";
 import * as vscode from "vscode";
 import * as path from "node:path";
@@ -254,7 +255,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // hydrated the checkbox from globalState but setStepReview() had no caller, so the
     // box silently reset to the default on every webview reload.
     async (autoAccept) => {
-      await runtimeManager.setStepReview(!autoAccept);
       await controller.setReviewPref(autoAccept);
     },
     () => controller.listPrompts(),
@@ -571,6 +571,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     renderThreadUsage: (usage) => {
       chatPanel.renderThreadUsage(usage);
     },
+    renderApproval: (view) => chatPanel.renderApproval(view),
+    retryDecision: (threadId, kind, gateId) => chatPanel.retryDecision(threadId, kind, gateId),
     renderContextUsage: (usage, stale) => {
       chatPanel.renderContextUsage(usage, stale);
     },
@@ -649,6 +651,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   controller = new CrucibleController(clientFactory, sessionStore, settings, ui, {
     openDiff: openReviewDiff,
   });
+
+  controller.configureApproval({
+    savedMode: () => { const mode = context.globalState.get<unknown>("crucible.approvalMode"); return isApprovalMode(mode) ? mode : undefined; },
+    reviewOn: () => runtimeManager.getStepReview(),
+    saveMode: async (mode: ApprovalMode) => {
+      await context.globalState.update("crucible.approvalMode", mode);
+      await runtimeManager.setStepReview(mode === "ask");
+    },
+    warningDismissed: () => context.globalState.get<boolean>("crucible.fullAccessWarningDismissed", false),
+    saveWarningDismissed: () => context.globalState.update("crucible.fullAccessWarningDismissed", true),
+  });
+  chatPanel.setApprovalHandler((mode, confirmed, remember) => controller.setApprovalMode(mode, confirmed, remember));
 
   // Task-subsystem flag (GET /v1/config): when off, the controller handles changes inline
   // and the task path (startTask + task_card) is hidden. Set a `when`-context key so the

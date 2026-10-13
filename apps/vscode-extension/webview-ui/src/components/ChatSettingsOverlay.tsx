@@ -1,9 +1,11 @@
-import { useEffect } from "react";
+import { useRef } from "react";
+import { useModalFocus } from "./shared/useModalFocus";
 import SettingsApp from "../settings/SettingsApp";
 import type { SectionId } from "../settings/sections/meta";
 import { Icon } from "./Icon";
 
 interface Props {
+  returnTo?: React.RefObject<HTMLButtonElement>;
   section: SectionId;
   onClose: () => void;
 }
@@ -14,14 +16,9 @@ interface Props {
  * ✕, Escape, or a backdrop click. Replaces opening settings in a separate VS Code
  * editor tab — settings now live inside the chat webview.
  */
-export function ChatSettingsOverlay({ section, onClose }: Props) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+export function ChatSettingsOverlay({ section, onClose, returnTo }: Props) {
+  const root = useRef<HTMLDivElement>(null);
+  useModalFocus(root, onClose, returnTo);
 
   return (
     <div
@@ -35,18 +32,20 @@ export function ChatSettingsOverlay({ section, onClose }: Props) {
       }}
     >
       <div
+        ref={root}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="Crucible settings"
-        className="surface-card anim-pop flex h-[85%] max-h-[720px] w-full max-w-[720px] flex-col overflow-hidden"
+        className="rounded-card border border-border-strong bg-surface-3 flex h-[85%] max-h-[720px] w-full max-w-[720px] flex-col overflow-hidden"
       >
         {/* Titlebar — a faint violet accent wash for a touch of warmth. */}
         <div
-          className="accent-wash flex flex-shrink-0 items-center justify-between px-3 py-2"
+          className="bg-surface-2 flex flex-shrink-0 items-center justify-between px-3 py-2"
           style={{ borderBottom: "1px solid var(--color-border-strong)" }}
         >
           <div
-            className="flex items-center gap-2 text-xs font-semibold"
+            className="flex items-center gap-2 text-body font-semibold"
             style={{ color: "var(--color-text)" }}
           >
             <span style={{ color: "var(--color-accent)", display: "inline-flex" }}>
@@ -59,7 +58,7 @@ export function ChatSettingsOverlay({ section, onClose }: Props) {
             onClick={onClose}
             aria-label="Close settings"
             title="Close"
-            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text"
+            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-control text-text-3 transition-colors duration-150 hover:bg-surface-2 hover:text-text"
           >
             <Icon name="x" size={13} />
           </button>

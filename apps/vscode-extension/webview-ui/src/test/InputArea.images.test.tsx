@@ -19,7 +19,6 @@ function renderInput(draft = "") {
       availability={{ disabled: false, placeholder: "Message", showStop: false, taskStop: false }}
       draft={draft}
       onDraftChange={vi.fn()}
-      onOpenSettings={vi.fn()}
       threadUsage={null}
       teamNames={{}}
     />,
@@ -30,7 +29,8 @@ describe("InputArea image support", () => {
   it("renders an image attachment control", () => {
     renderInput();
 
-    expect(screen.getByRole("button", { name: "Attach images" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add context" }));
+    expect(screen.getByRole("menuitem", { name: "Attach images" })).toBeInTheDocument();
     const fileInput = document.querySelector('input[type="file"][accept*="image/png"]');
     expect(fileInput).not.toBeNull();
   });
@@ -53,7 +53,6 @@ describe("InputArea image support", () => {
         availability={{ disabled: false, placeholder: "Message", showStop: false, taskStop: false }}
         draft=""
         onDraftChange={onDraftChange}
-        onOpenSettings={vi.fn()}
         threadUsage={null}
         teamNames={{}}
       />,

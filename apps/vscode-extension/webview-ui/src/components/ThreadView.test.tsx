@@ -59,13 +59,14 @@ describe("ThreadView context integration", () => {
   it("forwards the authoritative snapshot and stale flag without replacing Manage usage", () => {
     render(<ThreadView state={{ ...base, contextUsage, contextUsageStale: true }}
       onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
-    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("Context ~18% · stale");
+    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(/Context ~18% · stale/);
     act(() => window.dispatchEvent(new MessageEvent("message", { data: {
       type: "modelList", usesChatgptPlan: true,
       current: { backend: "chatgpt", model: "different-composer-model" }, options: [],
     } })));
-    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("Context ~18% · stale");
-    fireEvent.click(screen.getByRole("button", { name: /manage usage/i }));
+    expect(screen.getByRole("button", { name: /context.*details/i })).toHaveAccessibleName(/Context ~18% · stale/);
+    fireEvent.click(screen.getByRole("button", { name: /Model: different/ }));
+    fireEvent.click(screen.getByRole("link", { name: /manage usage/i }));
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "settings/openExternal", url: "https://chatgpt.com/settings/usage?tab=overview" });
   });
 });
@@ -86,16 +87,18 @@ describe("ThreadView settings overlay", () => {
     expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
   });
 
-  it("opens the settings popup at Overview from the composer gear", () => {
+  it("opens the settings popup at Overview from the header gear", () => {
     renderView();
     expect(screen.queryByTestId("settings-app")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /open settings/i }));
+    fireEvent.click(screen.getByRole("button", { name: /settings menu/i }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Settings sections" })).getByRole("button", { name: /overview/i }));
     expect(screen.getByTestId("settings-app").textContent).toContain("overview");
   });
 
   it("closes the popup on ✕", () => {
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: /open settings/i }));
+    fireEvent.click(screen.getByRole("button", { name: /settings menu/i }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Settings sections" })).getByRole("button", { name: /overview/i }));
     expect(screen.getByTestId("settings-app")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /close settings/i }));
     expect(screen.queryByTestId("settings-app")).toBeNull();

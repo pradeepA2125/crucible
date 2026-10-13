@@ -1,3 +1,4 @@
+import type { ApprovalView } from "./approval-mode.js";
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import type {
@@ -122,6 +123,21 @@ export type SetPlanModeHandler = (enabled: boolean) => Promise<void>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
+  private approvalView: ApprovalView | null = null;
+  private approvalHandler: ((mode: unknown, confirmed: boolean, remember: boolean) => Promise<void>) | null = null;
+
+  setApprovalHandler(handler: (mode: unknown, confirmed: boolean, remember: boolean) => Promise<void>): void {
+    this.approvalHandler = handler;
+  }
+  retryDecision(threadId: string, kind: "mode" | "clarify" | "team_plan", gateId?: string): void {
+    void this.panel?.webview.postMessage({ type: "decisionRetry", threadId, kind, gateId });
+  }
+
+  renderApproval(view: ApprovalView): void {
+    this.approvalView = view;
+    void this.panel?.webview.postMessage({ type: "approvalState", approval: view });
+  }
+
   private themeSubscription: (() => void) | null = null;
   private fileReferenceBridge: FileReferenceBridge | null = null;
 
@@ -279,6 +295,7 @@ export class ChatPanel {
       }
       let p: Promise<void>;
       if (m["type"] === "webviewReady") {
+        if (this.approvalView) this.renderApproval(this.approvalView);
         this.renderContextUsage(this.lastContextUsage, this.contextUsageStale);
         // Webview state resets on reload; the workbar is SSE-fed (not in the
         // /live poll), so replay the last posted value or step progress shows
@@ -294,6 +311,8 @@ export class ChatPanel {
           enabled: this.onGetStepReview ? this.onGetStepReview() : true,
         });
         p = this.onReady();
+      } else if (m["type"] === "setApprovalMode") {
+        p = this.approvalHandler?.(m["mode"], m["confirmedFullAccess"] === true, m["dontShowAgain"] === true) ?? Promise.resolve();
       } else if (m["type"] === "setPlanMode") {
         // The checkbox is a fully controlled prop (sourced from globalState, not local
         // state, so it survives across threads/reloads) — without echoing the persisted

@@ -18,6 +18,8 @@ import {
   ChatEventSchema,
   ChatMessageSchema,
   ThreadLiveStateSchema,
+  approvalFromWire,
+  type ApprovalModeResult, type SetApprovalModeOptions,
   parseContextUsage,
   SessionTranscriptSchema,
   type SessionTranscript,
@@ -152,6 +154,15 @@ async function readWithIdleTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export class BackendRequestError extends Error {
+  constructor(message: string, readonly status: number, readonly detail: unknown) { super(message); }
+}
+
+async function responseError(response: Response, message: string): Promise<BackendRequestError> {
+  const body = await response.json().catch(() => null) as { detail?: unknown } | null;
+  return new BackendRequestError(message, response.status, body?.detail);
 }
 
 export class HttpBackendClient implements BackendTaskClient {
@@ -379,6 +390,16 @@ export class HttpBackendClient implements BackendTaskClient {
 
   // One "Review each edit" value for the whole backend (spec §5.4): every thread, turn
   // and background agent. Turning auto-accept on accepts the edits waiting under it.
+  async setApprovalMode(options: SetApprovalModeOptions): Promise<ApprovalModeResult> {
+    const raw = await this.fetchJson("/v1/chat/approval-mode", { method: "PUT", body: JSON.stringify({
+      auto_accept: options.autoAccept, shell_policy: options.shellPolicy, resolve_waiting: options.resolveWaiting,
+      expected_process_id: options.expectedProcessId, expected_version: options.expectedVersion,
+    }) }) as Record<string, unknown>;
+    const state = approvalFromWire(raw);
+    if (!state?.supported) throw new Error("Approval modes need the chat controller");
+    return { ...state, autoResolvedEdits: Number(raw.auto_resolved_edits ?? 0), background: Number(raw.background ?? 0) };
+  }
+
   async setGlobalReviewPref(options: { autoAccept: boolean }): Promise<{ autoResolved: number; background: number }> {
     const body = await this.fetchJson("/v1/chat/review-pref", {
       method: "PUT", body: JSON.stringify({ auto_accept: options.autoAccept }),
@@ -433,34 +454,34 @@ export class HttpBackendClient implements BackendTaskClient {
 
   // Controller mode gate (Phase F2): a STREAMED dispatch (edit/create_task produce
   // live events), consumed like sendChatMessage.
-  async *postModeDecision(threadId: string, mode: string): AsyncIterable<StreamEvent> {
+  async *postModeDecision(threadId: string, mode: string, expectedProcessId?: string): AsyncIterable<StreamEvent> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/mode-decision`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, ...(expectedProcessId ? { expected_process_id: expectedProcessId } : {}) }),
       }
     );
     if (!response.ok) {
-      throw new Error(`Mode decision failed (${response.status}) for thread ${threadId}`);
+      throw await responseError(response, `Mode decision failed (${response.status}) for thread ${threadId}`);
     }
     yield* this.consumeChatEventStream(response);
   }
 
   // Controller clarify gate: a STREAMED dispatch (the answer re-enters the loop),
   // consumed like sendChatMessage — mirror of postModeDecision.
-  async *postClarifyDecision(threadId: string, answer: string): AsyncIterable<StreamEvent> {
+  async *postClarifyDecision(threadId: string, answer: string, expectedProcessId?: string): AsyncIterable<StreamEvent> {
     const response = await this.fetchFn(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/clarify-decision`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ answer }),
+        body: JSON.stringify({ answer, ...(expectedProcessId ? { expected_process_id: expectedProcessId } : {}) }),
       }
     );
     if (!response.ok) {
-      throw new Error(`Clarify decision failed (${response.status}) for thread ${threadId}`);
+      throw await responseError(response, `Clarify decision failed (${response.status}) for thread ${threadId}`);
     }
     yield* this.consumeChatEventStream(response);
   }
@@ -546,9 +567,10 @@ export class HttpBackendClient implements BackendTaskClient {
 
   async decideTeamPlan(
     threadId: string, gateId: string, decision: "approve" | "feedback" | "reject",
-    feedback?: string,
+    feedback?: string, expectedProcessId?: string,
   ): Promise<{ teamId: string; phase: string | null }> {
     const body: Record<string, unknown> = { gate_id: gateId, decision };
+    if (expectedProcessId) body.expected_process_id = expectedProcessId;
     if (feedback !== undefined) body.feedback = feedback;
     const raw = await this.fetchJson(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/team-plan-decision`,
@@ -884,6 +906,7 @@ export class HttpBackendClient implements BackendTaskClient {
       ? (raw["pending_gates"] as Record<string, unknown>[])
       : [];
     return ThreadLiveStateSchema.parse({
+      approval: approvalFromWire(raw["approval"]),
       processId: typeof raw["process_id"] === "string" && raw["process_id"].length > 0 ? raw["process_id"] : null,
       contextUsage: parseContextUsage(raw["context_usage"]),
       activeTaskId: raw["active_task_id"] ?? null,
@@ -935,6 +958,8 @@ export class HttpBackendClient implements BackendTaskClient {
   async getConfig(): Promise<BackendConfig> {
     const raw = await this.fetchJson("/v1/config") as Record<string, unknown>;
     return BackendConfigSchema.parse({
+      approval: approvalFromWire(raw["approval"]),
+      ...(raw["shell_policy"] !== undefined ? { shellPolicy: raw["shell_policy"] } : {}),
       taskSubsystemEnabled: raw["task_subsystem_enabled"] ?? false,
       chatControllerEnabled: raw["chat_controller_enabled"] ?? false,
       memoryEnabled: raw["memory_enabled"] ?? false,
@@ -1355,6 +1380,7 @@ export class HttpBackendClient implements BackendTaskClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           content: message,
+          ...(options?.expectedProcessId ? { expected_process_id: options.expectedProcessId } : {}),
           ...(options?.stepReview !== undefined ? { step_review: options.stepReview } : {}),
           ...(options?.forcedSkills && options.forcedSkills.length
             ? { forced_skills: options.forcedSkills }
@@ -1387,11 +1413,7 @@ export class HttpBackendClient implements BackendTaskClient {
       return { kind: "queued", messageId: body.message_id };
     }
     if (!response.ok) {
-      const error = new Error(
-        `Chat message failed (${response.status}) for thread ${threadId}`
-      ) as Error & { status?: number };
-      error.status = response.status;
-      throw error;
+      throw await responseError(response, `Chat message failed (${response.status}) for thread ${threadId}`);
     }
     return { kind: "stream", events: this.consumeChatEventStream(response) };
   }
@@ -1442,13 +1464,7 @@ export class HttpBackendClient implements BackendTaskClient {
     });
 
     if (!response.ok) {
-      const error = new Error(
-        `Backend request failed (${response.status} ${response.statusText}) for ${path}`
-      ) as Error & { status?: number };
-      // Surface the status so callers can treat a benign 409 (gate already moved on)
-      // differently from a real failure, without parsing the message string.
-      error.status = response.status;
-      throw error;
+      throw await responseError(response, `Backend request failed (${response.status} ${response.statusText}) for ${path}`);
     }
 
     return response.json();

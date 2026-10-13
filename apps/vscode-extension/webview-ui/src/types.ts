@@ -446,6 +446,8 @@ export type ExtensionMessage =
   // Sticky Plan Mode toggle hydration (extension globalState), pushed on webviewReady
   // and whenever the composer/ModeGate posts setPlanMode back to the host.
   | { type: "planModeState"; enabled: boolean }
+  | { type: "decisionRetry"; threadId: string; kind: "mode" | "clarify" | "team_plan"; gateId?: string }
+  | { type: "approvalState"; approval: ApprovalModeView }
   | { type: "reviewPrefState"; enabled: boolean }
   // Chat rewind: the preview opens the confirm dialog; the prefill lands the rewound
   // message's text back in the composer after the server-authoritative reload.
@@ -464,6 +466,7 @@ export type ExtensionMessage =
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
   | { type: "webviewReady" }
+  | { type: "setApprovalMode"; mode: ApprovalMode; confirmedFullAccess?: boolean; dontShowAgain?: boolean }
   | { type: "sendMessage"; text: string; originalDraftText?: string; draftId?: string; stepReview?: boolean; forcedSkills?: string[]; mentionedPaths?: string[]; imageAttachments?: { name: string; mediaType: string; dataUrl: string; bytes: number }[]; planMode?: boolean }
   | { type: "rewindPreview"; messageId: string }
   | { type: "rewindConfirm"; messageId: string }
@@ -540,7 +543,16 @@ export interface StreamingBubble {
   toolEvents: ToolEventView[];
 }
 
+export type ApprovalMode = "ask" | "accept_edits" | "full_access";
+export interface ApprovalModeView {
+  tier: "unknown" | "supported" | "older" | "legacy";
+  snapshot: { supported: true; autoAccept: boolean; shellPolicy: "ask" | "allow_all"; version: number; owned: boolean; processId: string } | null;
+  mode: ApprovalMode | null; confirmed: boolean; pending: boolean; warningDismissed: boolean;
+  error: string | null; notice: string | null;
+}
+
 export interface AppState {
+  approval?: ApprovalModeView;
   view: "history" | "thread";
   threads: ThreadSummary[];
   activeThreadId: string;

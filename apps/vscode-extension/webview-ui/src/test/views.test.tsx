@@ -507,7 +507,8 @@ describe("InputArea — Tier B task abort + dynamic review pref", () => {
         onDraftChange={vi.fn()}
       />,
     );
-    const revertBtn = screen.getByRole("button", { name: /stop and revert/i });
+    fireEvent.click(screen.getByRole("button", { name: "Task stop options" }));
+    const revertBtn = screen.getByRole("menuitem", { name: /stop and revert/i });
     fireEvent.click(revertBtn);
     fireEvent.click(revertBtn);
     // One-shot: only one abortTask despite two clicks (mount-time listModels is unrelated).
@@ -527,39 +528,21 @@ describe("InputArea — Tier B task abort + dynamic review pref", () => {
     expect(screen.queryByRole("button", { name: /stop and revert/i })).toBeNull();
   });
 
-  it("toggling 'Review each step' posts setReviewPref with the inverted auto-accept", () => {
-    render(
-      <InputArea
-        availability={makeAvailability({ disabled: true, taskStop: true })}
-        draft=""
-        onDraftChange={vi.fn()}
-      />,
-    );
-    // Default prop is checked (review on); clicking asks the host for the inverse.
-    fireEvent.click(screen.getByLabelText(/review each step/i));
-    expect(postMessage).toHaveBeenLastCalledWith({ type: "setReviewPref", autoAccept: true });
+  it("approval modes stay available while the textarea is disabled", () => {
+    render(<InputArea availability={makeAvailability({ disabled: true })} draft="" onDraftChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Approval mode/ }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^Accept edits/ }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "setApprovalMode", mode: "accept_edits", confirmedFullAccess: false, dontShowAgain: false });
+  });
+  it("the approval chip reflects the acknowledged prop", () => {
+    const { rerender } = render(<InputArea availability={makeAvailability({ disabled: true })} draft="" onDraftChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Approval mode/ }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^Accept edits/ }));
+    expect(screen.getByRole("button", { name: /Approval mode: Ask/ })).toBeInTheDocument();
+    rerender(<InputArea availability={makeAvailability({ disabled: true })} draft="" onDraftChange={vi.fn()} stepReview={false} />);
+    expect(screen.getByRole("button", { name: /Approval mode: Accept edits/ })).toBeInTheDocument();
   });
 
-  it("the checkbox reflects the prop, not the last click", () => {
-    // A controlled box does not flip on click — the host echoes reviewPrefState back.
-    // Without that echo the click would appear to do nothing, which is exactly why the
-    // round-trip is required rather than decorative (same contract as setPlanMode).
-    const { rerender } = render(
-      <InputArea availability={makeAvailability({ disabled: true, taskStop: true })}
-                 draft="" onDraftChange={vi.fn()} />,
-    );
-    const box = screen.getByLabelText(/review each step/i) as HTMLInputElement;
-    expect(box.checked).toBe(true);
-
-    fireEvent.click(box);
-    expect(box.checked).toBe(true);   // no local flip
-
-    rerender(
-      <InputArea availability={makeAvailability({ disabled: true, taskStop: true })}
-                 draft="" onDraftChange={vi.fn()} stepReview={false} />,
-    );
-    expect((screen.getByLabelText(/review each step/i) as HTMLInputElement).checked).toBe(false);
-  });
 });
 
 // ── 5. HistoryView ────────────────────────────────────────────────────────────

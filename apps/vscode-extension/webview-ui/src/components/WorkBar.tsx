@@ -67,8 +67,8 @@ function TokenCounter({ progress }: { progress: TokenProgressView }) {
 
   return (
     <span
-      className="flex-shrink-0 flex items-center gap-2 font-mono tabular-nums"
-      style={{ fontSize: "10px", color: dim }}
+      className="flex-shrink-0 flex items-center gap-2 font-mono tabular-nums text-meta"
+      style={{ color: dim }}
       aria-label={
         `${input ?? 0} input tokens, ${thinking} thinking tokens, ` +
         `${output} output tokens (${exact ? "exact" : "estimated"})`
@@ -178,8 +178,8 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, vi
     label = (
       <>
         <span
-          className="font-semibold"
-          style={{ color: "var(--color-accent-ink)" }}
+          className="font-medium"
+          style={{ color: "var(--color-text-3)" }}
         >
           Step {workbar.stepIndex} of {workbar.totalSteps}
         </span>
@@ -235,16 +235,13 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, vi
         background: "var(--color-surface)",
       }}
     >
-      {/* Animated top hairline */}
-      <span className="workbar-line" aria-hidden="true" />
-
       {/* Spinner */}
       <span
         className="flex-shrink-0 rounded-full border-2"
         style={{
           width: 9,
           height: 9,
-          borderColor: "var(--color-accent-ink) var(--accent-bg) var(--accent-bg) var(--accent-bg)",
+          borderColor: "var(--color-text-3) var(--accent-bg) var(--accent-bg) var(--accent-bg)",
           animation: "spin 0.75s linear infinite",
         }}
         aria-hidden="true"
@@ -252,7 +249,7 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, vi
 
       {/* Label — takes remaining space, truncated */}
       <span
-        className="flex-1 min-w-0 truncate text-[11px]"
+        className="flex-1 min-w-0 truncate text-meta"
         aria-live="polite"
       >
         {label}
@@ -263,8 +260,8 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, vi
 
       {/* Elapsed timer */}
       <span
-        className="flex-shrink-0 font-mono tabular-nums"
-        style={{ fontSize: "10px", color: "var(--color-text-4)" }}
+        className="flex-shrink-0 font-mono tabular-nums text-meta"
+        style={{ color: "var(--color-text-4)" }}
         aria-label={`Elapsed ${formatElapsed(elapsed)}`}
       >
         {formatElapsed(elapsed)}

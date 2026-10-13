@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from agentd.chat.approval import ApprovalState
+
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
@@ -274,6 +276,7 @@ class ThreadLiveState(BaseModel):
     The UI renders from this (state-driven), so reloads and resume task-id churn
     self-heal on the next poll.
     """
+    approval: ApprovalState | dict[str, object] | None = None
     process_id: str | None = None
     context_usage: ContextUsage | None = None
     active_task_id: str | None = None
@@ -331,6 +334,7 @@ class ChatMcpDecisionRequest(McpToolDecision):
 class TeamPlanDecisionRequest(BaseModel):
     """POST /chat/threads/{id}/team-plan-decision body (spec v2 §8.5). Feedback length is
     checked by the controller, after the gate and team checks (404, then 409, then 422)."""
+    expected_process_id: str | None = None
     gate_id: str
     decision: Literal["approve", "feedback", "reject"]
     feedback: str | None = None
