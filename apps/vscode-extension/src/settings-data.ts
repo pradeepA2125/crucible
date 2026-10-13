@@ -15,6 +15,7 @@ import {
 } from "./chatgpt-settings.js";
 import { createClaudeHandler, isClaudeMessage, type ClaudeDeps, type ClaudeInMsg, type ClaudeOutMsg } from "./claude-settings.js";
 import type { SettingsSectionId } from "./settings-sections.js";
+import { APPEARANCES, ACCENTS, type Accent, type Appearance, type ThemeSettings } from "./theme-settings.js";
 
 // vscode-free message handler for the settings panel (settings-panel.ts wires it to
 // RuntimeManager + HttpBackendClient). Mirrors setup-data.ts/memory-data.ts's split.
@@ -42,6 +43,7 @@ export interface SettingsState {
 // webview → host
 export type SettingsInMsg =
   | { type: "settings/load" }
+  | { type: "settings/setAppearance"; appearance: string; accent: string }
   | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string>; contextWindow?: number }
   // Explicit delete of a backend's stored API key. A blank API-key field means
   // "keep the stored key" (setProvider only writes a non-empty one), so this is
@@ -73,6 +75,7 @@ export type SettingsInMsg =
 // host → webview
 export type SettingsOutMsg =
   | { type: "settings/state"; state: SettingsState }
+  | { type: "settings/localState"; appearance: Appearance; accent: Accent }
   | { type: "settings/instructions"; content: string; exists: boolean }
   | { type: "settings/error"; message: string }
   | { type: "settings/navigate"; section: SettingsSectionId }
@@ -120,6 +123,9 @@ export interface SettingsDeps {
     trustAgentDefinition(path: string, sha256: string): Promise<void>;
   };
   workspace: string;
+  /** crucible.appearance + crucible.accent. Local VS Code settings — no backend needed. */
+  readAppearance(): ThemeSettings;
+  setAppearance(settings: ThemeSettings): Promise<void>;
   readRuntimeJson(): { releaseTag: string; components: Record<string, string> } | null;
   mcpDisabled(): string[];
   setMcpDisabled(names: string[]): Promise<void>;
@@ -243,7 +249,21 @@ export function createSettingsHandler(
     try {
       switch (msg.type) {
         case "settings/load": {
+          // Local first: the Appearance section and the nav render even when the
+          // backend is down (spec §1 — Settings must not blank on a backend failure).
+          post({ type: "settings/localState", ...deps.readAppearance() });
           await postState();
+          return;
+        }
+        case "settings/setAppearance": {
+          const appearance = APPEARANCES.find((a) => a === msg.appearance);
+          const accent = ACCENTS.find((a) => a === msg.accent);
+          if (!appearance || !accent) {
+            post({ type: "settings/error", message: `Unknown appearance or accent: ${msg.appearance} / ${msg.accent}` });
+            return;
+          }
+          await deps.setAppearance({ appearance, accent });
+          post({ type: "settings/localState", ...deps.readAppearance() });
           return;
         }
         case "settings/setProvider": {

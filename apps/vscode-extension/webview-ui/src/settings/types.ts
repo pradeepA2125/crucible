@@ -2,6 +2,7 @@
 // imports the extension's src/ (separate Vite bundle). Mirrors setup/types.ts's split.
 import type { SectionId } from "./sections/meta";
 import type { ClaudeInMsg, ClaudeOutMsg } from "./claude-types";
+import type { Accent, Appearance } from "../theme";
 
 // Mirror of editor-client's AgentDefinitionView / AgentCatalog / AgentDefinitionInput.
 // tools: null = all tools, distinct from [] (no tools).
@@ -74,6 +75,7 @@ export interface SettingsState {
 export type SettingsInMsg =
   | ClaudeInMsg
   | { type: "settings/load" }
+  | { type: "settings/setAppearance"; appearance: Appearance; accent: Accent }
   | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string>; contextWindow?: number }
   // Explicit delete of a backend's stored API key — a blank API-key field means
   // "keep the stored key", so this is the only way to remove one.
@@ -137,6 +139,7 @@ export interface ChatGPTModel {
 export type SettingsOutMsg =
   | ClaudeOutMsg
   | { type: "settings/state"; state: SettingsState }
+  | { type: "settings/localState"; appearance: Appearance; accent: Accent }
   | { type: "settings/instructions"; content: string; exists: boolean }
   | { type: "settings/error"; message: string }
   | { type: "settings/navigate"; section: SectionId }

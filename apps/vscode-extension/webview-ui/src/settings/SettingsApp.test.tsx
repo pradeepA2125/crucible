@@ -83,3 +83,19 @@ describe("SettingsApp shell", () => {
     expect(screen.getByRole("heading", { name: "Provider" })).toBeTruthy();
   });
 });
+
+describe("SettingsApp offline (backend unreachable)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("renders the nav and Appearance from local state; other sections offer a retry", () => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/localState", appearance: "vscode", accent: "blue" });
+    deliver({ type: "settings/error", message: "connect ECONNREFUSED" });
+    navClick(/Appearance/);
+    expect(screen.getByRole("heading", { name: "Appearance" })).toBeTruthy();
+    navClick(/Provider/);
+    expect(screen.getByText(/connect ECONNREFUSED/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(vscode.postMessage).toHaveBeenLastCalledWith({ type: "settings/load" });
+  });
+});

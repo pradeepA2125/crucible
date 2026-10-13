@@ -6,6 +6,7 @@
 
 export type SettingsSectionId =
   | "overview"
+  | "appearance"
   | "provider"
   | "mcp"
   | "skills"
@@ -22,6 +23,7 @@ export interface SettingsSection {
 /** Nav order = activity-bar tree order = Settings panel nav order. */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "overview", label: "Overview" },
+  { id: "appearance", label: "Appearance" },
   { id: "provider", label: "Provider" },
   { id: "mcp", label: "MCP Servers" },
   { id: "skills", label: "Skills" },

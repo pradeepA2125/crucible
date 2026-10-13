@@ -9,6 +9,7 @@ import { buildChatGPTDeps } from "./chatgpt-deps.js";
 import { buildModelOptions } from "./composer-models.js";
 import { loadInstructions, saveInstructions } from "./instructions-file.js";
 import { PROVIDERS } from "./setup-data.js";
+import { readThemeConfig } from "./settings.js";
 
 const ENV_FLAG_KEYS = [
   "crucible.policy.shell",
@@ -93,6 +94,12 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
       await vscode.workspace
         .getConfiguration()
         .update(key, value, vscode.ConfigurationTarget.Global);
+    },
+    readAppearance: () => readThemeConfig(),
+    setAppearance: async ({ appearance, accent }) => {
+      const cfg = vscode.workspace.getConfiguration("crucible");
+      await cfg.update("appearance", appearance, vscode.ConfigurationTarget.Global);
+      await cfg.update("accent", accent, vscode.ConfigurationTarget.Global);
     },
     readInstructions: () => loadInstructions(workspacePath),
     writeInstructions: (content) => saveInstructions(workspacePath, content),

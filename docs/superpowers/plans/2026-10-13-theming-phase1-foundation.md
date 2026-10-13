@@ -1205,6 +1205,14 @@ describe("appearance (spec 2026-10-13 §1)", () => {
 });
 ```
 
+Also update the existing `"load posts a full state snapshot"` case in that file: `settings/localState` is now posted before the snapshot, so it must find the snapshot instead of reading `posted[0]`:
+
+```ts
+    await createSettingsHandler(deps(), (m) => posted.push(m))({ type: "settings/load" });
+    // settings/localState is posted first (appearance needs no backend); find the snapshot.
+    const state = stateMsg(posted.find((m) => m.type === "settings/state")!).state;
+```
+
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `cd apps/vscode-extension && npx vitest run test/settings-sections.test.ts test/settings-data.test.ts`

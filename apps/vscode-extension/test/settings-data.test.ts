@@ -81,6 +81,8 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
     saveContextWindow: async () => {},
     openFile: vi.fn(async () => {}),
     listModels: async () => ["gpt-5", "m2"],
+    readAppearance: () => ({ appearance: "vscode", accent: "blue" }),
+    setAppearance: vi.fn(async () => {}),
     chatgpt: {
       client: {
         startChatGPTSignIn: vi.fn(),
@@ -145,7 +147,8 @@ describe("createSettingsHandler", () => {
   it("load posts a full state snapshot", async () => {
     const posted: SettingsOutMsg[] = [];
     await createSettingsHandler(deps(), (m) => posted.push(m))({ type: "settings/load" });
-    const state = stateMsg(posted[0]).state;
+    // settings/localState is posted first (appearance needs no backend); find the snapshot.
+    const state = stateMsg(posted.find((m) => m.type === "settings/state")!).state;
     expect(state.provider).toEqual({ backend: "openai", model: "gpt-5" });
     expect(state.mcp.servers[0].userEnabled).toBe(true);
     expect(state.skills).toEqual([{ name: "s1", description: "d", enabled: true }]);
@@ -452,5 +455,43 @@ describe.each(["crucible.webSearch.enabled", "crucible.webFetch.enabled"])("%s p
       expect(stateMsg(posted.at(-1)!).state.restartRequired).toBe(false);
     }
     expect(restart).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("appearance (spec 2026-10-13 §1)", () => {
+  it("posts local appearance state before the backend snapshot on load", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const handle = createSettingsHandler(deps(), (m) => posted.push(m));
+    await handle({ type: "settings/load" });
+    expect(posted[0]).toEqual({ type: "settings/localState", appearance: "vscode", accent: "blue" });
+    expect(posted[1]?.type).toBe("settings/state");
+  });
+
+  it("still posts local state when the backend is unreachable", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const d = deps();
+    d.client.getConfig = async () => { throw new Error("connect ECONNREFUSED"); };
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({ type: "settings/load" });
+    expect(posted.map((m) => m.type)).toEqual(["settings/localState", "settings/error"]);
+  });
+
+  it("writes a valid appearance and echoes the new local state", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const d = deps();
+    d.readAppearance = () => ({ appearance: "light", accent: "ember" });
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({ type: "settings/setAppearance", appearance: "light", accent: "ember" });
+    expect(d.setAppearance).toHaveBeenCalledWith({ appearance: "light", accent: "ember" });
+    expect(posted.at(-1)).toEqual({ type: "settings/localState", appearance: "light", accent: "ember" });
+  });
+
+  it("rejects an unknown appearance without writing", async () => {
+    const posted: SettingsOutMsg[] = [];
+    const d = deps();
+    const handle = createSettingsHandler(d, (m) => posted.push(m));
+    await handle({ type: "settings/setAppearance", appearance: "neon", accent: "blue" });
+    expect(d.setAppearance).not.toHaveBeenCalled();
+    expect(posted.at(-1)).toEqual({ type: "settings/error", message: "Unknown appearance or accent: neon / blue" });
   });
 });

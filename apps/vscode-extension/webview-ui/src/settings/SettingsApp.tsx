@@ -9,6 +9,8 @@ import { AgentsSection } from "./sections/AgentsSection";
 import { InstructionsSection } from "./sections/InstructionsSection";
 import { PoliciesSection } from "./sections/PoliciesSection";
 import { RuntimeSection } from "./sections/RuntimeSection";
+import { AppearanceSection } from "./sections/AppearanceSection";
+import type { Accent, Appearance } from "../theme";
 import type { SectionId, SectionProps } from "./sections/meta";
 import type { SettingsOutMsg, SettingsState } from "./types";
 import { vscode } from "./vscodeApi";
@@ -21,6 +23,7 @@ import { vscode } from "./vscodeApi";
  */
 export default function SettingsApp({ initialSection = "overview" }: { initialSection?: SectionId } = {}) {
   const [state, setState] = useState<SettingsState | null>(null);
+  const [local, setLocal] = useState<{ appearance: Appearance; accent: Accent } | null>(null);
   const [instructions, setInstructions] = useState<{ content: string; exists: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,6 +42,8 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
         setInstructions({ content: msg.content, exists: msg.exists });
       } else if (msg.type === "settings/error") {
         setError(msg.message);
+      } else if (msg.type === "settings/localState") {
+        setLocal({ appearance: msg.appearance, accent: msg.accent });
       } else if (msg.type === "settings/navigate") {
         setSection(msg.section);
       }
@@ -62,7 +67,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
     vscode.postMessage(msg);
   };
 
-  if (!state) {
+  if (!state && !local) {
     // A buildState failure on the host (e.g. backend unreachable) posts settings/error
     // before any state arrives. Surface it here — otherwise the panel hangs on
     // "Loading settings…" forever, since the error banner below is gated on `state`.
@@ -87,10 +92,10 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
     return <div className="p-6 text-sm text-text-3">Loading settings…</div>;
   }
 
-  const props: SectionProps = { state, busy, send };
+  const props: SectionProps | null = state ? { state, busy, send } : null;
   const counts: Partial<Record<SectionId, number>> = {
-    mcp: state.mcp.servers.length,
-    skills: state.skills.length,
+    mcp: state?.mcp.servers.length,
+    skills: state?.skills.length,
   };
 
   return (
@@ -98,7 +103,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
       <NavRail active={section} counts={counts} onSelect={setSection} />
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[560px] p-5">
-          {error && (
+          {state && error && (
             <div
               className="anim-slide-down mb-4 rounded-[10px] border px-3 py-2 text-xs"
               style={{ borderColor: "var(--red-brd)", background: "var(--red-bg)", color: "var(--color-red)" }}
@@ -106,7 +111,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
               {error}
             </div>
           )}
-          {state.restartRequired && (
+          {state?.restartRequired && (
             <div
               className="anim-slide-down mb-4 flex items-center justify-between gap-3 rounded-[10px] border px-3 py-2 text-xs"
               style={{ borderColor: "rgba(251,191,36,.3)", background: "var(--amber-bg)", color: "var(--color-amber)" }}
@@ -118,16 +123,26 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
             </div>
           )}
           <div key={section} className="anim-section">
-            {section === "overview" && <OverviewSection state={state} onNavigate={setSection} />}
-            {section === "provider" && <ProviderSection {...props} />}
-            {section === "mcp" && <McpSection {...props} />}
-            {section === "skills" && <SkillsSection {...props} />}
-            {section === "agents" && <AgentsSection {...props} />}
-            {section === "instructions" && (
+            {section === "appearance" && local && (
+              <AppearanceSection appearance={local.appearance} accent={local.accent} busy={busy} send={send} />
+            )}
+            {section !== "appearance" && !props && (
+              <div className="grid justify-items-start gap-3">
+                <p className="text-text-2">Can’t reach the Crucible backend, so this section can’t load.</p>
+                {error && <p className="text-text-3" style={{ fontSize: "var(--fs-meta)" }}>{error}</p>}
+                <BtnPrimary onClick={() => { setError(null); vscode.postMessage({ type: "settings/load" }); }}>Retry</BtnPrimary>
+              </div>
+            )}
+            {props && section === "overview" && <OverviewSection state={props.state} onNavigate={setSection} />}
+            {props && section === "provider" && <ProviderSection {...props} />}
+            {props && section === "mcp" && <McpSection {...props} />}
+            {props && section === "skills" && <SkillsSection {...props} />}
+            {props && section === "agents" && <AgentsSection {...props} />}
+            {props && section === "instructions" && (
               <InstructionsSection instructions={instructions} busy={busy} send={send} />
             )}
-            {section === "policies" && <PoliciesSection {...props} />}
-            {section === "runtime" && <RuntimeSection {...props} />}
+            {props && section === "policies" && <PoliciesSection {...props} />}
+            {props && section === "runtime" && <RuntimeSection {...props} />}
           </div>
         </div>
       </main>
