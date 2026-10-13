@@ -13,7 +13,7 @@ interface Props {
  */
 export const MARKDOWN_COMPONENTS = {
   table: ({ children, ...props }: { children?: ReactNode }) => (
-    <div className="overflow-x-auto mb-2">
+    <div className="overflow-x-auto mb-4">
       <table {...props}>{children}</table>
     </div>
   ),
@@ -34,14 +34,14 @@ export const MARKDOWN_WRAP_CLASSES = [
 
 /** Table styling, shared with PlanCard so both markdown surfaces match. */
 export const MARKDOWN_TABLE_CLASSES = [
-  "[&_table]:w-full [&_table]:border-collapse [&_table]:text-meta",
-  "[&_th]:border [&_th]:border-border-strong [&_th]:bg-surface-2 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold [&_th]:text-text",
-  "[&_td]:border [&_td]:border-border-strong [&_td]:px-2 [&_td]:py-1 [&_td]:align-top",
+  "[&_table]:w-full [&_table]:border-collapse [&_table]:text-body [&_table]:leading-relaxed",
+  "[&_th]:border-b [&_th]:border-border-strong [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_th]:text-text",
+  "[&_td]:border-b [&_td]:border-border [&_td]:px-3 [&_td]:py-2 [&_td]:align-top",
 ];
 
 /**
  * An agent answer as plain prose (spec §2): no card, no border, no avatar. Prose size,
- * primary text, 1.6 line height, `text-wrap: pretty`. Inline code is a neutral chip on
+ * primary text, relaxed line height, `text-wrap: pretty`. Inline code is a neutral chip on
  * surface-1; file references keep their accent links (MessageMarkdown). Shared by
  * QAMessage and AgentRow so an answer looks the same with or without tool steps.
  */
@@ -51,17 +51,21 @@ export function MarkdownContent({ content }: Props) {
       className={[
         "self-stretch",
         ...MARKDOWN_WRAP_CLASSES,
-        "text-prose text-text leading-[1.6]",
+        "text-prose text-text leading-[1.65]",
         "[&_p]:[text-wrap:pretty]",
         // Inline code: a neutral chip (not code-coloured)
-        "[&_:not(pre)>code]:mono [&_:not(pre)>code]:bg-[var(--surface-1)] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:rounded-control",
+        "[&_:not(pre)>code]:mono [&_:not(pre)>code]:text-body [&_:not(pre)>code]:bg-[var(--surface-1)] [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:rounded-control",
         // Pre blocks
-        "[&_pre]:mono [&_pre]:bg-[var(--surface-1)] [&_pre]:rounded-control [&_pre]:p-2",
+        "[&_pre]:mono [&_pre]:text-body [&_pre]:bg-[var(--surface-1)] [&_pre]:rounded-control [&_pre]:p-3 [&_pre]:my-4",
         // Paragraphs
-        "[&_p]:mb-2 [&_p:last-child]:mb-0",
+        "[&_p]:mb-4 [&_p:last-child]:mb-0",
         // Lists
-        "[&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-2",
-        "[&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-2",
+        "[&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-4",
+        "[&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-4",
+        "[&_li+li]:mt-1.5 [&_li>p]:mb-2 [&_li>ul]:mt-2 [&_li>ol]:mt-2 [&_li>ul]:mb-0 [&_li>ol]:mb-0",
+        // Headings retain the type scale, using spacing and weight for hierarchy.
+        "[&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h4]:font-semibold",
+        "[&_:is(h1,h2,h3,h4)]:mt-6 [&_:is(h1,h2,h3,h4)]:mb-3 [&_>:first-child]:mt-0 [&_>:last-child]:mb-0",
         // Tables (GFM)
         ...MARKDOWN_TABLE_CLASSES,
       ].join(" ")}

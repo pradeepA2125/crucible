@@ -130,7 +130,7 @@ All of these were verified in code. They supersede the older per-thread descript
 | Accent | `--accent` (links and icons on surfaces), `--accent-fill` (user bubble, send button), `--on-accent` (text on the fill), `--accent-bg` (tint), `--accent-border` |
 | Status | `--success`, `--danger`, `--warning`, each with a `-bg` pair |
 | Diff | `--diff-add`, `--diff-del` |
-| Type scale | `--fs-caption`, `--fs-meta`, `--fs-body`, `--fs-prose`. They're derived from `--vscode-font-size` (the workbench UI font size, not the editor font size), keeping today's base. At the default 13px they come out to 11, 12, 13 and 14px. |
+| Type scale | `--fs-caption`, `--fs-meta`, `--fs-body`, `--fs-prose`. They're derived from `--vscode-font-size` (the workbench UI font size, not the editor font size), keeping today's base. At the default 13px they come out to 11, 12, 13 and 15px after the 14 October readability refinement. |
 | Radius scale | `--r-control` 6px, `--r-card` 10px, `--r-composer` 16px, and `999px` for round buttons and avatars |
 | Motion | The existing `--dur-*` and `--ease-*`. `prefers-reduced-motion` turns off shimmer and transitions. |
 
@@ -206,6 +206,7 @@ The existing Tailwind `@theme` names (`--color-surface`, `--color-text-2` and so
 ### 2. Transcript
 
 - **Column.** Content sits in a centered column, max 760px wide. Narrower than that, it fills the panel with 16px gutters.
+  - Readability refinement (14 October, following the user's Codex/Crucible screenshots): 24px between transcript items, 16px between prose paragraphs, and explicit heading/list spacing. Keep the centered column and pinned composer.
 - **User message.**
   - A right-aligned bubble in `--accent-fill` with `--on-accent` text, at `--fs-body`, radius 16px, at most 80% of the column wide.
   - File mentions are real `<button>`s.
@@ -213,12 +214,13 @@ The existing Tailwind `@theme` names (`--color-surface`, `--color-text-2` and so
   - The queued tag stays.
 - **Agent answer.**
   - No card, border or avatar.
-  - Prose at `--fs-prose`, line height 1.6, `text-wrap: pretty`.
+  - Prose at `--fs-prose`, line height 1.65, `text-wrap: pretty`.
   - File references are `--accent` links.
   - Inline code is a neutral monospace chip on `--surface-1`.
+  - Code stays at `--fs-body`; tables use that readable size with 8px vertical cell padding and horizontal rules instead of a boxed grid.
   - Gates and cards line up with the column edge.
 - **Activity.**
-  - **Folded header:** the existing action summary ("Read 4 files, ran 2 commands ›") on a muted `--fs-meta` row with a hairline rule. No elapsed time.
+  - **Folded header:** the existing action summary ("Read 4 files, ran 2 commands ›") on a muted `--fs-body` row with a small activity icon and disclosure chevron. The 14 October readability refinement removes the full-width hairline rule. No elapsed time.
   - **Expanded:** one `--fs-body` line per step: icon, verb, then the target in muted text.
   - **Kept:** failed and not-applied outcomes, shared thoughts, and keyboard-reachable tool details.
   - **Removed:** the monospace tool pills and the connected-track drawing.

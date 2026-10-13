@@ -83,7 +83,7 @@ export function AgentRow({
         ) : breadcrumb ? (
           <BreadcrumbLine text={content} />
         ) : streaming ? (
-          <div className="text-prose text-text leading-[1.6] whitespace-pre-wrap [overflow-wrap:anywhere]">
+          <div className="text-prose text-text leading-[1.65] whitespace-pre-wrap [overflow-wrap:anywhere]">
             {content}
             <span
               className="inline-block w-px h-3.5 bg-accent align-middle ml-px"

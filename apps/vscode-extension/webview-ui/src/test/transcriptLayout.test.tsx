@@ -33,7 +33,7 @@ for (const theme of ["vscode", "dark", "light", "hc"] as const) {
       const markup = renderToStaticMarkup(<>
         {[280, 360, 1024].map(width => (
           <section key={width} data-panel style={{ width }}>
-            <div data-column className="mx-auto flex w-full max-w-[760px] flex-col gap-3 px-4 [&>*]:flex-shrink-0">
+            <div data-column className="mx-auto flex w-full max-w-[760px] flex-col gap-6 px-4 [&>*]:flex-shrink-0">
               <UserMessage content={`Inspect @${token} and \`retry()\`.`} mentionedFiles={[token]} queued />
               <div data-open-detail dangerouslySetInnerHTML={{ __html: detailMarkup }} />
               <MarkdownContent content={`A plain answer.\n\n${token}\n\nUse \`retry()\`.`} />

@@ -67,11 +67,11 @@ describe("ActivityGroup", () => {
     expect(screen.getByTestId("activity-detail").querySelector("[data-event-id]")).toBeNull();
   });
 
-  it("puts the folded header on a muted meta row over a hairline rule", () => {
+  it("puts the folded header on a readable muted row without a divider", () => {
     render(<ActivityGroup steps={steps} />);
     const header = screen.getByRole("button", { name: /Read a file/ });
-    expect(header.className).toContain("text-meta");
+    expect(header.className).toContain("text-body");
     expect(header.className).toContain("text-text-3");
-    expect(header.style.borderBottom).toBe("1px solid var(--border)");
+    expect(header.style.borderBottom).toBe("");
   });
 });

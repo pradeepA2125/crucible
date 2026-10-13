@@ -463,8 +463,8 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           (diff/plan/review cards) have a flex automatic minimum size of ZERO,
           so once the list overflows they silently collapse to a border line
           while plain text rows keep their height. */}
-      <div className="flex-1 overflow-y-auto py-3 [&>*]:flex-shrink-0">
-        <div data-testid="transcript-column" className="mx-auto flex w-full max-w-[760px] flex-col gap-3 px-4 [&>*]:flex-shrink-0">
+      <div className="flex-1 overflow-y-auto pt-6 pb-8 [&>*]:flex-shrink-0">
+        <div data-testid="transcript-column" className="mx-auto flex w-full max-w-[760px] flex-col gap-6 px-4 [&>*]:flex-shrink-0">
         {isEmpty ? (
           <EmptyState onPick={setDraft} />
         ) : (

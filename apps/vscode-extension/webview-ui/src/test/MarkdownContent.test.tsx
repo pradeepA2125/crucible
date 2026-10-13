@@ -42,12 +42,12 @@ describe("MarkdownContent as plain prose (spec §2)", () => {
     expect(root.style.borderRadius).toBe("");
   });
 
-  it("uses the prose size, primary text and a 1.6 line height", () => {
+  it("uses the prose size, primary text and relaxed line height", () => {
     const { container } = render(<MarkdownContent content="Plain answer." />);
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("text-prose");
     expect(root.className).toContain("text-text");
-    expect(root.className).toContain("leading-[1.6]");
+    expect(root.className).toContain("leading-[1.65]");
     expect(root.className).toContain("[&_p]:[text-wrap:pretty]");
   });
 

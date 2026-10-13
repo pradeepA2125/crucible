@@ -7,7 +7,7 @@ import { remarkFileReferences } from "./remarkFileReferences";
 
 const components: Components = {
   table: ({ children, ...props }: { children?: ReactNode }) => (
-    <div className="overflow-x-auto mb-2"><table {...props}>{children}</table></div>
+    <div className="overflow-x-auto mb-4"><table {...props}>{children}</table></div>
   ),
   a: ({ node, ...props }) => {
     const reference = node?.properties?.["data-file-reference"];

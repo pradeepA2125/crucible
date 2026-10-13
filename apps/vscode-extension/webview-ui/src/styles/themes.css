@@ -10,7 +10,7 @@
   --fs-caption: calc(var(--fs-base) * 11 / 13);
   --fs-meta: calc(var(--fs-base) * 12 / 13);
   --fs-body: var(--fs-base);
-  --fs-prose: calc(var(--fs-base) * 14 / 13);
+  --fs-prose: calc(var(--fs-base) * 15 / 13);
   --r-control: 6px;
   --r-card: 10px;
   --r-composer: 16px;

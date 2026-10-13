@@ -4,6 +4,7 @@ import type { ActivityStep } from "../../transcript/groupTranscript";
 import { summarizeActivity } from "../../transcript/summarizeActivity";
 import { DiffPanes } from "../shared/DiffPanes";
 import { ActivityLine } from "./ActivityLine";
+import { Icon } from "../Icon";
 
 const basename = (path: string) => path.split("/").pop() || path;
 
@@ -75,10 +76,10 @@ export const ActivityGroup = memo(function ActivityGroup({ steps }: { steps: Act
   return (
     <div data-testid="activity-group" className="grid min-w-0 gap-1.5">
       <button type="button" aria-expanded={open} aria-label={summary} onClick={() => setOpen(!open)}
-        className="flex min-w-0 items-center gap-1.5 pb-1 text-left text-meta text-text-3 hover:text-text-2"
-        style={{ borderBottom: "1px solid var(--border)" }}>
+        className="flex w-fit max-w-full min-w-0 items-center gap-2 py-1 text-left text-body text-text-3 hover:text-text-2 rounded-control">
+        <span aria-hidden="true" className="shrink-0"><Icon name="list" size={13} /></span>
         <span data-testid="activity-summary" className="min-w-0 truncate">{summary}</span>
-        <span className="shrink-0">{open ? "▾" : "›"}</span>
+        <span aria-hidden="true" className="shrink-0"><Icon name={open ? "chev-d" : "chev-r"} size={11} /></span>
       </button>
       {open && (
         <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto overscroll-contain"
