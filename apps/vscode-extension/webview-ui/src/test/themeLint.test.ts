@@ -6,7 +6,7 @@ const SRC = join(__dirname, "..");
 
 /** Files that must use theme tokens only. Each phase appends what it migrates
  * (spec Testing → Lint). styles/themes.css is the token definition file and is exempt. */
-export const LINT_SCOPE = ["index.css"];
+export const LINT_SCOPE = ["index.css", "theme.ts"];
 
 const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|rgba?\(/;
 const TW_SIZE = /\btext-\[\d|\btext-(xs|sm|base|lg|xl|2xl)\b/;

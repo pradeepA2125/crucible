@@ -562,6 +562,15 @@ describe("useAppState", () => {
     act(() => { fireMessage({ type: "appendMessage", message }); });
     expect(result.current.state.messages.filter((m) => m.type === "agent_dispatch")).toHaveLength(1);
   });
+
+  it("ignores a themeChanged message (Phase 1 theming)", () => {
+    const { result } = renderHook(() => useAppState());
+    const before = result.current.state;
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "themeChanged", appearance: "light", accent: "blue" } }));
+    });
+    expect(result.current.state).toEqual(before);
+  });
 });
 
 describe("useAppState — background agents (spec §6)", () => {
