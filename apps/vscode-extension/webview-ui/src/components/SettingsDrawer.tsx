@@ -44,7 +44,7 @@ export function SettingsDrawer({ open, onClose, onSelect }: Props) {
           color: "var(--color-text-2)",
           borderBottom: "1px solid var(--color-border)",
           background:
-            "linear-gradient(180deg, rgba(139,92,246,.10), rgba(139,92,246,0)), transparent",
+            "linear-gradient(180deg, var(--accent-bg), transparent), transparent",
         }}
       >
         <span style={{ color: "var(--color-accent)", display: "inline-flex" }}>

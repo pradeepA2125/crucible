@@ -200,7 +200,7 @@ export default function SetupApp() {
               className="flex h-11 w-11 items-center justify-center rounded-[12px]"
               style={{
                 background: "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
-                color: "#fff",
+                color: "var(--on-accent)",
                 animation: "breathe 2.4s ease-in-out infinite",
               }}
             >

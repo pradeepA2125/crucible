@@ -32,7 +32,7 @@ export default function MemoryApp() {
     }`;
   const tabStyle = (active: boolean): React.CSSProperties =>
     active
-      ? { background: "var(--color-accent-deep)", color: "#fff" }
+      ? { background: "var(--accent-fill)", color: "var(--on-accent)" }
       : { background: "var(--color-surface-2)", color: "var(--color-text-2)" };
 
   return (

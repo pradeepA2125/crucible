@@ -39,7 +39,7 @@ export function Switch({ checked, onChange, disabled, label }: SwitchProps) {
           top: 1,
           left: checked ? 12 : 1,
           transition: "left var(--dur-base) var(--ease-spring)",
-          boxShadow: "0 1px 2px rgba(0,0,0,.5)",
+          boxShadow: "var(--shadow-control)",
         }}
       />
     </button>

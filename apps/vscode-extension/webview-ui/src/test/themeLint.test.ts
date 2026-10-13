@@ -6,7 +6,16 @@ const SRC = join(__dirname, "..");
 
 /** Files that must use theme tokens only. Each phase appends what it migrates
  * (spec Testing → Lint). styles/themes.css is the token definition file and is exempt. */
-export const LINT_SCOPE = ["index.css", "theme.ts"];
+export const LINT_SCOPE = [
+  "index.css",
+  "theme.ts",
+  "setup/StepRail.tsx",
+  "setup/SetupApp.tsx",
+  "memory/MemoryApp.tsx",
+  "components/SettingsDrawer.tsx",
+];
+// Linted for literal colours only in Phase 1; their sizes and radii migrate with their layouts later.
+const COLOR_ONLY = new Set(["setup/StepRail.tsx", "setup/SetupApp.tsx", "memory/MemoryApp.tsx", "components/SettingsDrawer.tsx"]);
 
 const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|rgba?\(/;
 const TW_SIZE = /\btext-\[\d|\btext-(xs|sm|base|lg|xl|2xl)\b/;
@@ -24,9 +33,10 @@ describe("theme lint (in-scope files use tokens only)", () => {
       const offenders = lines(file)
         .map((text, i) => ({ text, line: i + 1 }))
         .filter(({ text }) => !text.trim().startsWith("/*") && !text.trim().startsWith("*") && !text.trim().startsWith("//"))
-        .filter(({ text }) =>
-          COLOR_LITERAL.test(text) || TW_SIZE.test(text) || TW_RADIUS.test(text)
-          || INLINE_SIZE.test(text) || (file.endsWith(".css") && CSS_SIZE.test(text)))
+        .filter(({ text }) => COLOR_ONLY.has(file)
+          ? COLOR_LITERAL.test(text)
+          : COLOR_LITERAL.test(text) || TW_SIZE.test(text) || TW_RADIUS.test(text)
+            || INLINE_SIZE.test(text) || (file.endsWith(".css") && CSS_SIZE.test(text)))
         .map(({ line, text }) => `${file}:${line}: ${text.trim()}`);
       expect(offenders).toEqual([]);
     });

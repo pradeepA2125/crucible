@@ -114,7 +114,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
           {state?.restartRequired && (
             <div
               className="anim-slide-down mb-4 flex items-center justify-between gap-3 rounded-[10px] border px-3 py-2 text-xs"
-              style={{ borderColor: "rgba(251,191,36,.3)", background: "var(--amber-bg)", color: "var(--color-amber)" }}
+              style={{ borderColor: "var(--warning-border)", background: "var(--amber-bg)", color: "var(--color-amber)" }}
             >
               <span>Some changes require a backend restart to take effect.</span>
               <BtnPrimary disabled={busy} onClick={() => send({ type: "settings/restartBackend" })}>

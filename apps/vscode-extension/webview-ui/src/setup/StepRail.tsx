@@ -48,7 +48,7 @@ export function StepRail({ current }: { current: Step }) {
                     : isActive
                       ? {
                           background: "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
-                          color: "#fff",
+                          color: "var(--on-accent)",
                           animation: "breathe 2.4s ease-in-out infinite",
                         }
                       : { background: "var(--color-surface-3)", color: "var(--color-text-3)" }),

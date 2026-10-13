@@ -35,7 +35,7 @@ export function BtnPrimary({ onClick, disabled, flex, icon, className = "", chil
       style={{
         background: "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
         boxShadow:
-          "0 1px 2px rgba(0,0,0,.4), 0 0 16px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,.18)",
+          "var(--shadow-control), 0 0 16px var(--accent-glow), var(--highlight-inset)",
       }}
     >
       {icon && <Icon name={icon} size={11} />}
