@@ -160,6 +160,17 @@ describe("theme palettes meet WCAG AA (4.5:1)", () => {
   }
 });
 
+describe("native controls follow the theme (web-design-guidelines: color-scheme)", () => {
+  it("sets color-scheme per tone so native radios, checkboxes and scrollbars match", () => {
+    expect(block(':root[data-tone="dark"]')["color-scheme"]).toBe("dark");
+    expect(block(':root[data-tone="light"]')["color-scheme"]).toBe("light");
+  });
+  it("tints native controls with the accent", () => {
+    expect(block(':root[data-tone="dark"]')["accent-color"]).toBe("var(--accent-fill)");
+    expect(block(':root[data-tone="light"]')["accent-color"]).toBe("var(--accent-fill)");
+  });
+});
+
 describe("vscode and hc mode token chains", () => {
   it("every --vscode-* reference carries a fallback", () => {
     // var(--vscode-x) with no comma before its closing paren has no fallback.
@@ -355,6 +366,12 @@ Create `apps/vscode-extension/webview-ui/src/styles/themes.css`:
   --scrollbar-thumb: var(--vscode-scrollbarSlider-background, #6fc3df);
   --scrollbar-thumb-hover: var(--vscode-scrollbarSlider-hoverBackground, #6fc3df);
 }
+
+/* Native controls (radios, checkboxes, scrollbars, form fields) follow the tone and
+   take the accent, so a dark theme never shows light native widgets. */
+:root,
+:root[data-tone="dark"] { color-scheme: dark; accent-color: var(--accent-fill); }
+:root[data-tone="light"] { color-scheme: light; accent-color: var(--accent-fill); }
 
 /* Accents. These selectors carry no :root on purpose: an element can set its own
    data-tone/data-accent to preview another accent (the Appearance swatches).
@@ -1369,7 +1386,7 @@ import type { SettingsInMsg } from "../types";
 import { SectionHeader } from "../SectionHeader";
 
 const APPEARANCE_OPTIONS: { value: Appearance; label: string; hint: string }[] = [
-  { value: "vscode", label: "Match VS Code", hint: "Uses your editor's colour theme." },
+  { value: "vscode", label: "Match VS Code", hint: "Uses your editor’s colour theme." },
   { value: "dark", label: "Crucible Dark", hint: "Neutral greys, any editor theme." },
   { value: "light", label: "Crucible Light", hint: "White and light greys." },
 ];
@@ -1398,7 +1415,7 @@ export function AppearanceSection({ appearance, accent, busy, send }: Props) {
 
   return (
     <div className="grid gap-5">
-      <SectionHeader title="Appearance" description="Colours for Crucible's panels. High-contrast VS Code themes always win." />
+      <SectionHeader title="Appearance" description="Colours for Crucible’s panels. High-contrast VS Code themes always win." />
       <fieldset className="grid gap-2" disabled={busy}>
         <legend className="mb-1 text-text-2" style={{ fontSize: "var(--fs-meta)" }}>Theme</legend>
         {APPEARANCE_OPTIONS.map((o) => (

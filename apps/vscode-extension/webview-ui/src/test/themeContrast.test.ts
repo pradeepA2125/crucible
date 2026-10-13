@@ -72,3 +72,14 @@ describe("vscode and hc mode token chains", () => {
     expect(CSS.match(/var\(--vscode-[\w-]+\)/g) ?? []).toEqual([]);
   });
 });
+
+describe("native controls follow the theme (web-design-guidelines: color-scheme)", () => {
+  it("sets color-scheme per tone so native radios, checkboxes and scrollbars match", () => {
+    expect(block(':root[data-tone="dark"]')["color-scheme"]).toBe("dark");
+    expect(block(':root[data-tone="light"]')["color-scheme"]).toBe("light");
+  });
+  it("tints native controls with the accent", () => {
+    expect(block(':root[data-tone="dark"]')["accent-color"]).toBe("var(--accent-fill)");
+    expect(block(':root[data-tone="light"]')["accent-color"]).toBe("var(--accent-fill)");
+  });
+});

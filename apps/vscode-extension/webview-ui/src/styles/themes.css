@@ -176,6 +176,12 @@
   --scrollbar-thumb-hover: var(--vscode-scrollbarSlider-hoverBackground, #6fc3df);
 }
 
+/* Native controls (radios, checkboxes, scrollbars, form fields) follow the tone and
+   take the accent, so a dark theme never shows light native widgets. */
+:root,
+:root[data-tone="dark"] { color-scheme: dark; accent-color: var(--accent-fill); }
+:root[data-tone="light"] { color-scheme: light; accent-color: var(--accent-fill); }
+
 /* Accents. These selectors carry no :root on purpose: an element can set its own
    data-tone/data-accent to preview another accent (the Appearance swatches).
    A plain :root falls back to the dark/blue values. */

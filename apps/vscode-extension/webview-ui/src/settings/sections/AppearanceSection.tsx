@@ -3,7 +3,7 @@ import type { SettingsInMsg } from "../types";
 import { SectionHeader } from "../SectionHeader";
 
 const APPEARANCE_OPTIONS: { value: Appearance; label: string; hint: string }[] = [
-  { value: "vscode", label: "Match VS Code", hint: "Uses your editor's colour theme." },
+  { value: "vscode", label: "Match VS Code", hint: "Uses your editor’s colour theme." },
   { value: "dark", label: "Crucible Dark", hint: "Neutral greys, any editor theme." },
   { value: "light", label: "Crucible Light", hint: "White and light greys." },
 ];
@@ -32,7 +32,7 @@ export function AppearanceSection({ appearance, accent, busy, send }: Props) {
 
   return (
     <div className="grid gap-5">
-      <SectionHeader title="Appearance" description="Colours for Crucible's panels. High-contrast VS Code themes always win." />
+      <SectionHeader title="Appearance" description="Colours for Crucible’s panels. High-contrast VS Code themes always win." />
       <fieldset className="grid gap-2" disabled={busy}>
         <legend className="mb-1 text-text-2" style={{ fontSize: "var(--fs-meta)" }}>Theme</legend>
         {APPEARANCE_OPTIONS.map((o) => (
