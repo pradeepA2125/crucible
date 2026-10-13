@@ -23,6 +23,15 @@
   --color-red: var(--danger);
   --color-amber: var(--warning);
   --color-code: var(--accent);
+  /* Type and radius scales (spec §1) as Tailwind utilities:
+     text-caption/meta/body/prose, rounded-control/card/composer. */
+  --text-caption: var(--fs-caption);
+  --text-meta: var(--fs-meta);
+  --text-body: var(--fs-body);
+  --text-prose: var(--fs-prose);
+  --radius-control: var(--r-control);
+  --radius-card: var(--r-card);
+  --radius-composer: var(--r-composer);
 }
 
 :root {
@@ -138,6 +147,19 @@ code, pre, .mono {
   background: linear-gradient(90deg, transparent, var(--color-accent), var(--color-accent-ink), var(--color-accent), transparent);
   background-size: 220% 100%;
   animation: shimmer 2.2s linear infinite;
+}
+
+/* The live activity line's verb (spec §2): a text shimmer on the verb only. */
+.shimmer-text {
+  background: linear-gradient(90deg, var(--text-2) 40%, var(--text-1) 50%, var(--text-2) 60%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text { animation: none; color: var(--text-2); background: none; }
 }
 
 /* ---------- settings/setup/composer motion (plan Task 1) ---------- */

@@ -25,6 +25,8 @@
   --danger-bg: color-mix(in srgb, var(--danger) 10%, transparent);
   --warning-bg: color-mix(in srgb, var(--warning) 12%, transparent);
   --warning-border: color-mix(in srgb, var(--warning) 30%, transparent);
+  --diff-add-bg: color-mix(in srgb, var(--diff-add) 10%, transparent);
+  --diff-del-bg: color-mix(in srgb, var(--diff-del) 9%, transparent);
 }
 
 :root,
@@ -212,4 +214,6 @@
   --green-brd: var(--vscode-contrastBorder, #6fc3df);
   --red-brd: var(--vscode-contrastBorder, #6fc3df);
   --hairline: var(--vscode-contrastBorder, #6fc3df);
+  --diff-add-bg: transparent;
+  --diff-del-bg: transparent;
 }
