@@ -55,8 +55,15 @@ function configured(root: HTMLElement): { appearance: Appearance; accent: Accent
 }
 
 /** Resolve now, then keep the root in sync with body-class changes and
- * themeChanged messages. Returns a disposer (used by tests). */
-export function installThemeSync(doc: Document = document, win: Window = window): () => void {
+ * themeChanged messages. `post` announces themeReady to the host on every mount:
+ * VS Code drops messages to hidden webviews, and panels without
+ * retainContextWhenHidden remount on reveal, so the host replays the current
+ * theme in reply. Returns a disposer (used by tests). */
+export function installThemeSync(
+  doc: Document = document,
+  win: Window = window,
+  post?: (message: { type: "themeReady" }) => void,
+): () => void {
   const root = doc.documentElement;
   let current = configured(root);
   const apply = () => applyTheme(root, resolveTheme(current.appearance, current.accent, doc.body.classList));
@@ -73,6 +80,7 @@ export function installThemeSync(doc: Document = document, win: Window = window)
     apply();
   };
   win.addEventListener("message", onMessage);
+  post?.({ type: "themeReady" });
 
   return () => {
     observer.disconnect();

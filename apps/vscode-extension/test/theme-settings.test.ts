@@ -55,3 +55,17 @@ describe("host and webview theme lists match", () => {
   it("appearances", () => expect(list("APPEARANCES")).toEqual([...APPEARANCES]));
   it("accents", () => expect(list("ACCENTS")).toEqual([...ACCENTS]));
 });
+
+describe("themeReadyReply (panel remount replay)", () => {
+  it("answers a webview's themeReady with the current theme", async () => {
+    const { themeReadyReply } = await import("../src/theme-settings.js");
+    const hub = new ThemeHub();
+    hub.update({ appearance: "light", accent: "ember" });
+    expect(themeReadyReply({ type: "themeReady" }, hub)).toEqual({ type: "themeChanged", appearance: "light", accent: "ember" });
+  });
+  it("ignores every other message", async () => {
+    const { themeReadyReply } = await import("../src/theme-settings.js");
+    expect(themeReadyReply({ type: "settings/load" }, new ThemeHub())).toBeNull();
+    expect(themeReadyReply(null, new ThemeHub())).toBeNull();
+  });
+});

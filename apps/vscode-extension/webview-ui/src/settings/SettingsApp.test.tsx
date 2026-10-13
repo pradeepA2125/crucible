@@ -114,3 +114,15 @@ describe("SettingsApp follows appearance changes made elsewhere", () => {
     expect(screen.getByRole("radio", { name: /Blue/ })).toBeChecked();
   });
 });
+
+describe("SettingsApp shows a failed appearance save while offline", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("renders the error inside the Appearance section without backend state", () => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/localState", appearance: "vscode", accent: "blue" });
+    navClick(/Appearance/);
+    deliver({ type: "settings/error", message: "EACCES: settings.json is read-only" });
+    expect(screen.getByText(/EACCES: settings.json is read-only/)).toBeTruthy();
+  });
+});

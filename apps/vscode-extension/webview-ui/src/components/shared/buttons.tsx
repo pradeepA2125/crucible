@@ -26,13 +26,14 @@ export function BtnPrimary({ onClick, disabled, flex, icon, className = "", chil
       disabled={disabled}
       className={[
         "inline-flex items-center justify-center gap-1.5 px-3 py-[6px]",
-        "rounded-md text-[11px] font-[550] text-white cursor-pointer",
+        "rounded-md text-[11px] font-[550] cursor-pointer",
         "border border-transparent",
         "disabled:opacity-50 disabled:cursor-default",
         flex ? "flex-1" : "",
         className,
       ].filter(Boolean).join(" ")}
       style={{
+        color: "var(--on-accent)",
         background: "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
         boxShadow:
           "var(--shadow-control), 0 0 16px var(--accent-glow), var(--highlight-inset)",

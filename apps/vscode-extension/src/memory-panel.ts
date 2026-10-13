@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import { handleMemoryMessage, type MemoryDataSource, type MemoryToHost } from "./memory-data.js";
-import { injectThemeAttributes, themeHub } from "./theme-settings.js";
+import { injectThemeAttributes, themeHub, themeReadyReply } from "./theme-settings.js";
 
 /** Dedicated read-only memory-inspector webview. Loads the webview-ui `memory` Vite entry
  * (dist/memory.html) and wires its messages to a MemoryDataSource. Mirrors chat-panel.ts. */
@@ -35,11 +35,16 @@ export class MemoryPanel {
     this.themeSubscription = themeHub.subscribe((message) => {
       void this.panel?.webview.postMessage(message);
     });
-    this.panel.webview.onDidReceiveMessage((msg: unknown) =>
-      handleMemoryMessage(msg as MemoryToHost, this.source, this.threadId, this.workspacePath, (m) =>
+    this.panel.webview.onDidReceiveMessage((msg: unknown) => {
+      const themeReply = themeReadyReply(msg, themeHub);
+      if (themeReply) {
+        void this.panel?.webview.postMessage(themeReply);
+        return;
+      }
+      return handleMemoryMessage(msg as MemoryToHost, this.source, this.threadId, this.workspacePath, (m) =>
         this.panel?.webview.postMessage(m)
-      )
-    );
+      );
+    });
     this.panel.onDidDispose(() => {
       this.themeSubscription?.();
       this.themeSubscription = null;

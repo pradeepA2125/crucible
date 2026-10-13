@@ -114,7 +114,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
       <NavRail active={section} counts={counts} onSelect={setSection} />
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[560px] p-5">
-          {state && error && (
+          {error && (state || section === "appearance") && (
             <div
               className="anim-slide-down mb-4 rounded-[10px] border px-3 py-2 text-xs"
               style={{ borderColor: "var(--red-brd)", background: "var(--red-bg)", color: "var(--color-red)" }}

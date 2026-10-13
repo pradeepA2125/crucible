@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyTheme, installThemeSync, resolveTheme } from "../theme";
 
 const classes = (...names: string[]) => ({ contains: (c: string) => names.includes(c) });
@@ -62,5 +62,16 @@ describe("applyTheme and installThemeSync", () => {
     expect(document.documentElement.dataset.accent).toBe("violet");
     window.dispatchEvent(new MessageEvent("message", { data: { type: "themeChanged", appearance: "neon", accent: "pink" } }));
     expect(document.documentElement.dataset.theme).toBe("light");
+  });
+});
+
+describe("installThemeSync remount handshake", () => {
+  afterEach(() => { document.body.className = ""; });
+  it("announces itself so the host can replay the current theme", () => {
+    const post = vi.fn();
+    document.body.className = "vscode-dark";
+    const dispose = installThemeSync(document, window, post);
+    expect(post).toHaveBeenCalledExactlyOnceWith({ type: "themeReady" });
+    dispose();
   });
 });

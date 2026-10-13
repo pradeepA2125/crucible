@@ -6,7 +6,7 @@ import type { RuntimeManager } from "./runtime/vscode-runtime.js";
 import { createSettingsHandler, type SettingsInMsg, type SettingsMutationHandler } from "./settings-data.js";
 import { buildSettingsDeps } from "./settings-deps.js";
 import type { SettingsSectionId } from "./settings-sections.js";
-import { injectThemeAttributes, themeHub } from "./theme-settings.js";
+import { injectThemeAttributes, themeHub, themeReadyReply } from "./theme-settings.js";
 
 /** Settings panel: provider hot-swap, MCP server management, skills toggles, runtime
  * versions + restart. Loads the webview-ui `settings` Vite entry (dist/settings.html).
@@ -58,6 +58,11 @@ export class SettingsPanel {
       this.buildDeps(), (msg) => this.panel?.webview.postMessage(msg), this.afterMutation,
     );
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
+      const themeReply = themeReadyReply(msg, themeHub);
+      if (themeReply) {
+        void this.panel?.webview.postMessage(themeReply);
+        return;
+      }
       const inbound = msg as SettingsInMsg;
       // The webview posts `settings/load` on mount — the reliable "I'm ready"
       // signal. Fire the deferred deep-link navigate exactly once, then hand off.

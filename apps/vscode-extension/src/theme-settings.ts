@@ -56,5 +56,13 @@ export class ThemeHub {
   }
 }
 
+/** A panel's webview posts themeReady on every mount (VS Code drops messages to
+ * hidden webviews, and Settings/Setup/Memory remount on reveal). The panel answers
+ * with the current theme so a remounted page never keeps stale attributes. */
+export function themeReadyReply(message: unknown, hub: ThemeHub): ThemeMessage | null {
+  if (typeof message !== "object" || message === null) return null;
+  return (message as { type?: unknown }).type === "themeReady" ? { type: "themeChanged", ...hub.settings } : null;
+}
+
 /** One hub per extension host; every Crucible panel subscribes on creation. */
 export const themeHub = new ThemeHub();

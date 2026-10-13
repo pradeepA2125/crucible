@@ -22,7 +22,7 @@ import type { TeamViewEvent } from "./team-views.js";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
 import type { FileReferenceBridge, FileReferenceCatalogMessage } from "./file-references/bridge.js";
-import { injectThemeAttributes, themeHub } from "./theme-settings.js";
+import { injectThemeAttributes, themeHub, themeReadyReply } from "./theme-settings.js";
 
 // Builds a settings message handler bound to a poster into THIS webview — the chat
 // bundle now embeds the settings UI (floating overlay), so its settings/* messages
@@ -258,6 +258,11 @@ export class ChatPanel {
         })
       : null;
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
+      const themeReply = themeReadyReply(msg, themeHub);
+      if (themeReply) {
+        void this.panel?.webview.postMessage(themeReply);
+        return;
+      }
       if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
       const m = msg as Record<string, unknown>;
       if (m["type"] === "requestFileReferenceCatalog" || m["type"] === "openFileReference") {

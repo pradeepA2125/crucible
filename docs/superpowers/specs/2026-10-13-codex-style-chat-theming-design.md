@@ -1,7 +1,7 @@
 # Codex-style chat and theming: design
 
 Date: 2026-10-13
-Status: revision 5, after four Codex review rounds. Awaiting written-spec review.
+Status: revision 6. Approved after five Codex review rounds; revision 6 folds in the Phase 1 dry-run findings.
 
 ## Goal
 
@@ -136,7 +136,7 @@ All of these were verified in code. They supersede the older per-thread descript
 
 The existing Tailwind `@theme` names (`--color-surface`, `--color-text-2` and so on) stay as aliases of the new tokens until every user has migrated.
 
-**Contextual foregrounds.** A container on a surface takes the matching class (`.on-surface-1`, `.on-surface-2`, `.on-surface-3`). That class re-points `--text-1` to the paired foreground, and `--text-2` and `--text-3` to that surface's description roles. Components keep reading `--text-*` and get the right pair inside cards and menus. In the `dark` and `light` palettes the pairs are identical to the page values, so the class changes nothing there; it matters in `vscode` and `hc` mode.
+**Readable text on every surface.** In `vscode` mode, surfaces 1–3 are tinted from the page background toward the foreground (`color-mix(in srgb, var(--surface-0) N%, var(--text-1))`), and each `--on-surface-*` is `--text-1`. General text is therefore readable on every surface by construction. (Revision 6: this replaces per-surface contextual foreground classes. Forty components put colour on surfaces 2/3, many of them chips and hover fills rather than popovers, and an inherited legacy alias such as `--color-text` cannot be re-pointed per container without scoping every one of them.)
 
 **Theme resolution.** `webview-ui/src/theme.ts` sets one effective state on `<html>`: `data-theme="vscode|dark|light|hc"` and `data-accent="blue|violet|ember"`.
 
@@ -148,14 +148,12 @@ The existing Tailwind `@theme` names (`--color-surface`, `--color-text-2` and so
 
 **Theme sets.** Each one is a CSS block keyed on `data-theme` and `data-accent`.
 
-- **`vscode` (match the editor).** Every token is `var(--vscode-…, var(--vscode-fallback…, <Crucible Dark value of the same token>))`, so a theme missing a variable falls back to our dark palette rather than to nothing. Foreground and background are always paired:
+- **`vscode` (match the editor).** Every token is `var(--vscode-…, var(--vscode-fallback…, <Crucible Dark value of the same token>))`, so a theme missing a variable falls back to our dark palette rather than to nothing. (`hc` mode is the exception: its fallbacks are black/white high-contrast values, so a high-contrast user never falls back to low contrast.) Foreground and background are always paired:
 
   | Our token | VS Code variable chain |
   |---|---|
   | `--surface-0` / `--on-surface-0` | `sideBar-background` → `editor-background` / `sideBar-foreground` → `foreground` |
-  | `--surface-1` / `--on-surface-1` | `textCodeBlock-background` → `editorWidget-background` / `foreground` |
-  | `--surface-2` / `--on-surface-2` | `editorWidget-background` / `editorWidget-foreground` → `foreground` |
-  | `--surface-3` / `--on-surface-3` | `menu-background` → `editorWidget-background` / `menu-foreground` → `foreground` |
+  | `--surface-1..3` / `--on-surface-1..3` | tinted from the page: 96%, 94% and 90% `--surface-0` mixed toward `--text-1` / `--text-1` |
   | `--input-*` | `input-background`, `input-foreground`, `input-placeholderForeground`, `input-border` → `widget-border` |
   | `--button-*` | `button-background`, `button-foreground`, `button-hoverBackground`, `button-secondaryBackground`, `button-secondaryForeground` |
   | `--text-1` | `foreground` |
@@ -177,7 +175,7 @@ The existing Tailwind `@theme` names (`--color-surface`, `--color-text-2` and so
 - **`hc`:**
   - every token maps to its `--vscode-*` variable;
   - borders use `contrastBorder`, focus and selection use `contrastActiveBorder` and `focusBorder`;
-  - accent tints, washes, shadows and opacity effects are off;
+  - accent tints, washes, shadows and opacity effects are off, including the legacy translucent borders (`--green-brd`, `--red-brd`, `--hairline`), which become `contrastBorder`;
   - the accent and fills come from `button-background` and `button-foreground`, not from our accent setting.
 - **Accents.** Link (`--accent`) and fill (`--accent-fill`) are separate values. The minimum contrast below is over all surfaces in that theme. `--on-accent` is white everywhere.
 
@@ -515,6 +513,16 @@ If the backend's state isn't available, migration waits and the chip shows a pen
 - The effort fallback keeps the existing per-rung support logic, and the options schema gains `unsupported`.
 - Inset and popover colours are specified (dark muted grey is now `#949494`), along with the contextual foreground classes, fallback to the Crucible Dark values, and the contrast floor scoped to our own palettes.
 - CSS-property lint, stale-gate and stop-race tests, and corrections to the counts and the clarification-resume wording.
+
+**Revision 6 (Phase 1 dry run)** folds in the Phase 1 implementation reviews:
+
+- `vscode` surfaces are tinted from the page instead of per-surface classes;
+- button hover fills are darkened (lightening failed 4.5:1);
+- high-contrast legacy borders;
+- `color-scheme` and `accent-color` per tone;
+- a webview `themeReady` handshake so a remounted hidden panel gets the current theme;
+- a failed Appearance save is shown offline;
+- `BtnPrimary` uses `--on-accent`.
 
 **Revision 3** folds in round 2 (persistent Codex session `01a13660-cf99-7501-a1cb-f141810d7b23`). Every claim was verified against the code. Round 2 rated 8 of the original findings resolved and 12 partially resolved, and raised 8 new issues. All were accepted:
 

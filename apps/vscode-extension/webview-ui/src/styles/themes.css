@@ -46,7 +46,7 @@
   --input-border: #2e2e2e;
   --button-bg: var(--accent-fill);
   --button-fg: var(--on-accent);
-  --button-hover-bg: color-mix(in srgb, var(--accent-fill) 88%, white);
+  --button-hover-bg: var(--accent-fill-hover);
   --button-secondary-bg: #2a2a2a;
   --button-secondary-fg: #e8e8e8;
   --border: #2e2e2e;
@@ -83,7 +83,7 @@
   --input-border: #d0d0d0;
   --button-bg: var(--accent-fill);
   --button-fg: var(--on-accent);
-  --button-hover-bg: color-mix(in srgb, var(--accent-fill) 88%, black);
+  --button-hover-bg: var(--accent-fill-hover);
   --button-secondary-bg: #f0f0f0;
   --button-secondary-fg: #1a1a1a;
   --border: #e3e3e3;
@@ -105,12 +105,12 @@
 :root[data-theme="vscode"] {
   --surface-0: var(--vscode-sideBar-background, var(--vscode-editor-background, #181818));
   --on-surface-0: var(--vscode-sideBar-foreground, var(--vscode-foreground, #e8e8e8));
-  --surface-1: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, #232323));
-  --on-surface-1: var(--vscode-foreground, #e8e8e8);
-  --surface-2: var(--vscode-editorWidget-background, #202020);
-  --on-surface-2: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #e8e8e8));
-  --surface-3: var(--vscode-menu-background, var(--vscode-editorWidget-background, #2a2a2a));
-  --on-surface-3: var(--vscode-menu-foreground, var(--vscode-foreground, #e8e8e8));
+  --surface-1: color-mix(in srgb, var(--surface-0) 96%, var(--text-1));
+  --on-surface-1: var(--text-1);
+  --surface-2: color-mix(in srgb, var(--surface-0) 94%, var(--text-1));
+  --on-surface-2: var(--text-1);
+  --surface-3: color-mix(in srgb, var(--surface-0) 90%, var(--text-1));
+  --on-surface-3: var(--text-1);
   --text-1: var(--vscode-foreground, #e8e8e8);
   --text-2: var(--vscode-descriptionForeground, #a3a3a3);
   --text-3: var(--vscode-descriptionForeground, #949494);
@@ -120,7 +120,7 @@
   --input-border: var(--vscode-input-border, var(--vscode-widget-border, #2e2e2e));
   --button-bg: var(--vscode-button-background, #2f6fd6);
   --button-fg: var(--vscode-button-foreground, #ffffff);
-  --button-hover-bg: var(--vscode-button-hoverBackground, #3a7ae0);
+  --button-hover-bg: var(--vscode-button-hoverBackground, #2962bc);
   --button-secondary-bg: var(--vscode-button-secondaryBackground, #2a2a2a);
   --button-secondary-fg: var(--vscode-button-secondaryForeground, #e8e8e8);
   --border: var(--vscode-panel-border, var(--vscode-widget-border, #2e2e2e));
@@ -186,14 +186,16 @@
    data-tone/data-accent to preview another accent (the Appearance swatches).
    A plain :root falls back to the dark/blue values. */
 :root,
-[data-tone="dark"][data-accent="blue"] { --accent: #6aa2f5; --accent-fill: #2f6fd6; --on-accent: #ffffff; }
-[data-tone="dark"][data-accent="violet"] { --accent: #a898f0; --accent-fill: #6d5bd0; --on-accent: #ffffff; }
-[data-tone="dark"][data-accent="ember"] { --accent: #f0995a; --accent-fill: #a9531a; --on-accent: #ffffff; }
-[data-tone="light"][data-accent="blue"] { --accent: #2563eb; --accent-fill: #2563eb; --on-accent: #ffffff; }
-[data-tone="light"][data-accent="violet"] { --accent: #5b4bc4; --accent-fill: #5b4bc4; --on-accent: #ffffff; }
-[data-tone="light"][data-accent="ember"] { --accent: #a9531a; --accent-fill: #a9531a; --on-accent: #ffffff; }
+[data-tone="dark"][data-accent="blue"] { --accent: #6aa2f5; --accent-fill: #2f6fd6; --on-accent: #ffffff; --accent-fill-hover: #2962bc; }
+[data-tone="dark"][data-accent="violet"] { --accent: #a898f0; --accent-fill: #6d5bd0; --on-accent: #ffffff; --accent-fill-hover: #6050b7; }
+[data-tone="dark"][data-accent="ember"] { --accent: #f0995a; --accent-fill: #a9531a; --on-accent: #ffffff; --accent-fill-hover: #954917; }
+[data-tone="light"][data-accent="blue"] { --accent: #2563eb; --accent-fill: #2563eb; --on-accent: #ffffff; --accent-fill-hover: #2157cf; }
+[data-tone="light"][data-accent="violet"] { --accent: #5b4bc4; --accent-fill: #5b4bc4; --on-accent: #ffffff; --accent-fill-hover: #5042ac; }
+[data-tone="light"][data-accent="ember"] { --accent: #a9531a; --accent-fill: #a9531a; --on-accent: #ffffff; --accent-fill-hover: #954917; }
 
 /* High contrast overrides the accent and switches every decorative effect off.
+   Its terminal fallbacks are black/white high-contrast values, deliberately not
+   the Crucible Dark ones: a high-contrast user must never fall back to low contrast.
    Placed last, and more specific than the accent blocks, so it always wins. */
 :root[data-theme="hc"][data-accent] {
   --accent: var(--vscode-textLink-foreground, var(--vscode-button-background, #3794ff));
@@ -207,4 +209,7 @@
   --danger-bg: transparent;
   --warning-bg: transparent;
   --warning-border: var(--vscode-contrastBorder, #6fc3df);
+  --green-brd: var(--vscode-contrastBorder, #6fc3df);
+  --red-brd: var(--vscode-contrastBorder, #6fc3df);
+  --hairline: var(--vscode-contrastBorder, #6fc3df);
 }

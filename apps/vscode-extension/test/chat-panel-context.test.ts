@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, test, vi } from "vitest";
+import { ThemeHub, themeReadyReply } from "../src/theme-settings.js";
 const text = readFileSync(new URL("../src/chat-panel.ts", import.meta.url), "utf8");
 const tree = ts.createSourceFile("chat-panel.ts", text, ts.ScriptTarget.Latest, true);
 const declaration = tree.statements.find(n => ts.isClassDeclaration(n) && n.name?.text === "ChatPanel")!;
 const js = ts.transpile(declaration.getText(tree), { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS });
-const ChatPanel = new Function("exports", `${js}; return ChatPanel;`)({});
+// The class source runs without its module scope, so bind the theme helpers it uses
+// (theming Phase 1: the message handler answers themeReady before anything else).
+const themeHub = new ThemeHub();
+const ChatPanel = new Function("exports", "themeReadyReply", "themeHub", `${js}; return ChatPanel;`)({}, themeReadyReply, themeHub);
 function setup() {
   const host = Object.create(ChatPanel.prototype) as any;
   let receive!: (message: unknown) => void;
@@ -52,5 +56,13 @@ describe("ChatPanel context bridge", () => {
     host.onListModels = () => new Promise(r => { finish = r; }); const pending = host.refreshModels();
     host.panel = { webview: { postMessage: vi.fn() } }; finish({ options: ["wrong-panel"] }); await pending;
     expect(postMessage).toHaveBeenCalledTimes(1); expect(host.panel.webview.postMessage).not.toHaveBeenCalled();
+  });
+  test("answers the webview's themeReady with the current theme before any other handling", () => {
+    const { host, postMessage, receive } = setup();
+    host.registerHandlers();
+    themeHub.update({ appearance: "dark", accent: "violet" });
+    postMessage.mockClear();
+    receive({ type: "themeReady" });
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "themeChanged", appearance: "dark", accent: "violet" });
   });
 });

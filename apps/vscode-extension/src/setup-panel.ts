@@ -7,7 +7,7 @@ import type { RuntimeManager } from "./runtime/vscode-runtime.js";
 import { buildClaudeDeps } from "./claude-deps.js";
 import { buildChatGPTDeps } from "./chatgpt-deps.js";
 import { createSetupHandler, type SetupDeps, type SetupInMsg } from "./setup-data.js";
-import { injectThemeAttributes, themeHub } from "./theme-settings.js";
+import { injectThemeAttributes, themeHub, themeReadyReply } from "./theme-settings.js";
 
 /** First-run setup wizard: install runtime, pick a provider, start the backend.
  * Loads the webview-ui `setup` Vite entry (dist/setup.html). Mirrors memory-panel.ts. */
@@ -45,6 +45,11 @@ export class SetupPanel {
     });
     const handle = createSetupHandler(this.buildDeps(), (msg) => this.panel?.webview.postMessage(msg));
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
+      const themeReply = themeReadyReply(msg, themeHub);
+      if (themeReply) {
+        void this.panel?.webview.postMessage(themeReply);
+        return;
+      }
       void handle(msg as SetupInMsg);
     });
     this.panel.onDidDispose(() => {

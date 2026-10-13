@@ -21,7 +21,8 @@
 - **Scope of both settings:** application scope. They need no backend.
 - **Contrast:** in the `dark` and `light` palettes, every text token reaches ≥ 4.5:1 on every surface. That covers links, and `--on-accent` on `--accent-fill`. In `vscode` and `hc` mode, contrast is up to the theme author; there we only use paired roles.
 - **High contrast wins.** `vscode-high-contrast` or `vscode-high-contrast-light` on `<body>` resolves to `hc` whatever the appearance and accent settings say. Accent tints, washes, shadows and opacity effects are off in `hc`.
-- **Fallbacks.** Every `var(--vscode-…)` in a token definition ends in a fallback; the final fallback is the Crucible Dark value of the same token.
+- **Fallbacks.** Every `var(--vscode-…)` in a token definition ends in a fallback. In `vscode` mode the final fallback is the Crucible Dark value of the same token (wherever Dark uses a literal colour). In `hc` mode it is a high-contrast black/white value instead, on purpose: a high-contrast user must never fall back to low contrast.
+- **`vscode`-mode surfaces are tinted from the page** (`color-mix` of `--surface-0` toward `--text-1`), not mapped to `editorWidget`/`menu` backgrounds. General text then stays readable on every surface by construction, and no per-component foreground scoping is needed. This deviates from the spec's original `editorWidget`/`menu` mapping; see the ledger ruling (dry-run finding T1-1).
 - **Graph is excluded.** Don't touch `webview-ui/src/graph/**`.
 - **No layout changes in this phase.** Only colour, shadow and radius values move onto tokens.
 - **Type scale:** derived from `--vscode-font-size` (the workbench UI font size), never from `--vscode-editor-font-size`.
@@ -98,31 +99,62 @@ import { describe, expect, it } from "vitest";
 
 const CSS = readFileSync(join(__dirname, "..", "styles", "themes.css"), "utf8");
 
-/** Declarations of the first rule whose selector list contains `selector` exactly. */
-function block(selector: string): Record<string, string> {
-  const rule = /([^{}]+)\{([^{}]*)\}/g;
-  for (const m of CSS.matchAll(rule)) {
-    const selectors = m[1]!.replace(/\/\*[\s\S]*?\*\//g, "").split(",").map((s) => s.trim());
-    if (!selectors.includes(selector)) continue;
-    const out: Record<string, string> = {};
+/** Declarations for `selector`, merging every rule whose selector list contains it
+ * exactly, in source order (later declarations win, as in the cascade). */
+export function blockIn(css: string, selector: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  let found = false;
+  for (const m of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!m[1]!.split(",").map((x) => x.trim()).includes(selector)) continue;
+    found = true;
     for (const d of m[2]!.split(";")) {
       const i = d.indexOf(":");
       if (i > 0) out[d.slice(0, i).trim()] = d.slice(i + 1).trim();
     }
-    return out;
   }
-  throw new Error(`no rule for selector ${selector}`);
+  if (!found) throw new Error(`no rule for selector ${selector}`);
+  return out;
 }
+const block = (selector: string) => blockIn(CSS, selector);
 
 function luminance(hex: string): number {
-  const h = hex.replace("#", "");
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) throw new Error(`not a #rrggbb colour: ${hex}`);
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
     .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
   return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
 }
 function ratio(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi! + 0.05) / (lo! + 0.05);
+}
+
+/** Every var(...) in `value` with its fallback (null when absent), parsed by parentheses. */
+function varCalls(value: string): { name: string; fallback: string | null }[] {
+  const calls: { name: string; fallback: string | null }[] = [];
+  for (let i = value.indexOf("var("); i !== -1; i = value.indexOf("var(", i + 4)) {
+    let depth = 0, comma = -1, end = -1;
+    for (let j = i + 3; j < value.length; j++) {
+      if (value[j] === "(") depth++;
+      else if (value[j] === ")") { depth--; if (depth === 0) { end = j; break; } }
+      else if (value[j] === "," && depth === 1 && comma === -1) comma = j;
+    }
+    const inner = value.slice(i + 4, end);
+    calls.push({
+      name: (comma === -1 ? inner : value.slice(i + 4, comma)).trim(),
+      fallback: comma === -1 ? null : value.slice(comma + 1, end).trim(),
+    });
+  }
+  return calls;
+}
+/** The literal a var() chain ends in: var(--a, var(--b, #123456)) → #123456. */
+function terminal(value: string): string {
+  let v = value.trim();
+  while (v.startsWith("var(")) {
+    const first = varCalls(v)[0]!;
+    if (first.fallback === null) return v;
+    v = first.fallback;
+  }
+  return v;
 }
 
 const SURFACES = ["--surface-0", "--surface-1", "--surface-2", "--surface-3", "--input-bg"];
@@ -151,6 +183,9 @@ describe("theme palettes meet WCAG AA (4.5:1)", () => {
       it(`${tone}/${accent}: on-accent on accent-fill`, () => {
         expect(ratio(a["--on-accent"]!, a["--accent-fill"]!)).toBeGreaterThanOrEqual(4.5);
       });
+      it(`${tone}/${accent}: on-accent on the hover fill`, () => {
+        expect(ratio(a["--on-accent"]!, a["--accent-fill-hover"]!)).toBeGreaterThanOrEqual(4.5);
+      });
       for (const surface of SURFACES) {
         it(`${tone}/${accent}: accent link on ${surface}`, () => {
           expect(ratio(a["--accent"]!, palette[surface]!)).toBeGreaterThanOrEqual(4.5);
@@ -158,6 +193,57 @@ describe("theme palettes meet WCAG AA (4.5:1)", () => {
       }
     }
   }
+});
+
+describe("vscode and hc mode token chains", () => {
+  const vscode = block(':root[data-theme="vscode"]');
+  const dark = block(':root[data-theme="dark"]');
+
+  it("every --vscode-* reference carries a fallback (parsed, whitespace-tolerant)", () => {
+    const missing = [...CSS.matchAll(/--[\w-]+\s*:\s*([^;]+);/g)]
+      .flatMap((m) => varCalls(m[1]!))
+      .filter((c) => c.name.startsWith("--vscode-") && c.fallback === null)
+      .map((c) => c.name);
+    expect(missing).toEqual([]);
+  });
+
+  it("vscode chains end in the Crucible Dark value wherever Dark uses a literal colour", () => {
+    const mismatched = Object.entries(vscode)
+      .filter(([token, value]) => value.includes("var(--vscode-") && /^#[0-9a-fA-F]{6}$/.test(dark[token] ?? ""))
+      .filter(([token, value]) => terminal(value).toLowerCase() !== dark[token]!.toLowerCase())
+      .map(([token, value]) => `${token}: ${terminal(value)} ≠ ${dark[token]}`);
+    expect(mismatched).toEqual([]);
+  });
+
+  it("vscode surfaces are tinted from the page so general text stays readable on them", () => {
+    for (const n of [1, 2, 3]) {
+      expect(vscode[`--surface-${n}`]).toMatch(/^color-mix\(in srgb, var\(--surface-0\) \d+%, var\(--text-1\)\)$/);
+      expect(vscode[`--on-surface-${n}`]).toBe("var(--text-1)");
+    }
+  });
+
+  it("high contrast replaces every translucent legacy tint and border", () => {
+    const hc = block(':root[data-theme="hc"][data-accent]');
+    for (const t of ["--accent-bg", "--accent-bg-2", "--accent-glow", "--success-bg", "--danger-bg", "--warning-bg"]) {
+      expect(hc[t], t).toBe("transparent");
+    }
+    for (const t of ["--green-brd", "--red-brd", "--hairline", "--accent-border", "--warning-border"]) {
+      expect(hc[t], t).toMatch(/^var\(--vscode-contrast/);
+    }
+  });
+});
+
+describe("the palette parser itself", () => {
+  it("lets a later rule for the same selector win", () => {
+    const css = ':root[data-theme="light"] { --text-3: #6b6b6b; }\n:root[data-theme="light"] { --text-3: #ffffff; }';
+    expect(blockIn(css, ':root[data-theme="light"]')["--text-3"]).toBe("#ffffff");
+  });
+  it("rejects a malformed colour instead of reading part of it", () => {
+    expect(() => ratio("#6b6b6b-invalid", "#ffffff")).toThrow(/not a #rrggbb/);
+  });
+  it("reads fallbacks through nested var() calls", () => {
+    expect(terminal("var( --vscode-a , var(--vscode-b, #123456))")).toBe("#123456");
+  });
 });
 
 describe("native controls follow the theme (web-design-guidelines: color-scheme)", () => {
@@ -168,13 +254,6 @@ describe("native controls follow the theme (web-design-guidelines: color-scheme)
   it("tints native controls with the accent", () => {
     expect(block(':root[data-tone="dark"]')["accent-color"]).toBe("var(--accent-fill)");
     expect(block(':root[data-tone="light"]')["accent-color"]).toBe("var(--accent-fill)");
-  });
-});
-
-describe("vscode and hc mode token chains", () => {
-  it("every --vscode-* reference carries a fallback", () => {
-    // var(--vscode-x) with no comma before its closing paren has no fallback.
-    expect(CSS.match(/var\(--vscode-[\w-]+\)/g) ?? []).toEqual([]);
   });
 });
 ```
@@ -237,7 +316,7 @@ Create `apps/vscode-extension/webview-ui/src/styles/themes.css`:
   --input-border: #2e2e2e;
   --button-bg: var(--accent-fill);
   --button-fg: var(--on-accent);
-  --button-hover-bg: color-mix(in srgb, var(--accent-fill) 88%, white);
+  --button-hover-bg: var(--accent-fill-hover);
   --button-secondary-bg: #2a2a2a;
   --button-secondary-fg: #e8e8e8;
   --border: #2e2e2e;
@@ -274,7 +353,7 @@ Create `apps/vscode-extension/webview-ui/src/styles/themes.css`:
   --input-border: #d0d0d0;
   --button-bg: var(--accent-fill);
   --button-fg: var(--on-accent);
-  --button-hover-bg: color-mix(in srgb, var(--accent-fill) 88%, black);
+  --button-hover-bg: var(--accent-fill-hover);
   --button-secondary-bg: #f0f0f0;
   --button-secondary-fg: #1a1a1a;
   --border: #e3e3e3;
@@ -296,12 +375,12 @@ Create `apps/vscode-extension/webview-ui/src/styles/themes.css`:
 :root[data-theme="vscode"] {
   --surface-0: var(--vscode-sideBar-background, var(--vscode-editor-background, #181818));
   --on-surface-0: var(--vscode-sideBar-foreground, var(--vscode-foreground, #e8e8e8));
-  --surface-1: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, #232323));
-  --on-surface-1: var(--vscode-foreground, #e8e8e8);
-  --surface-2: var(--vscode-editorWidget-background, #202020);
-  --on-surface-2: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #e8e8e8));
-  --surface-3: var(--vscode-menu-background, var(--vscode-editorWidget-background, #2a2a2a));
-  --on-surface-3: var(--vscode-menu-foreground, var(--vscode-foreground, #e8e8e8));
+  --surface-1: color-mix(in srgb, var(--surface-0) 96%, var(--text-1));
+  --on-surface-1: var(--text-1);
+  --surface-2: color-mix(in srgb, var(--surface-0) 94%, var(--text-1));
+  --on-surface-2: var(--text-1);
+  --surface-3: color-mix(in srgb, var(--surface-0) 90%, var(--text-1));
+  --on-surface-3: var(--text-1);
   --text-1: var(--vscode-foreground, #e8e8e8);
   --text-2: var(--vscode-descriptionForeground, #a3a3a3);
   --text-3: var(--vscode-descriptionForeground, #949494);
@@ -311,7 +390,7 @@ Create `apps/vscode-extension/webview-ui/src/styles/themes.css`:
   --input-border: var(--vscode-input-border, var(--vscode-widget-border, #2e2e2e));
   --button-bg: var(--vscode-button-background, #2f6fd6);
   --button-fg: var(--vscode-button-foreground, #ffffff);
-  --button-hover-bg: var(--vscode-button-hoverBackground, #3a7ae0);
+  --button-hover-bg: var(--vscode-button-hoverBackground, #2962bc);
   --button-secondary-bg: var(--vscode-button-secondaryBackground, #2a2a2a);
   --button-secondary-fg: var(--vscode-button-secondaryForeground, #e8e8e8);
   --border: var(--vscode-panel-border, var(--vscode-widget-border, #2e2e2e));
@@ -377,14 +456,16 @@ Create `apps/vscode-extension/webview-ui/src/styles/themes.css`:
    data-tone/data-accent to preview another accent (the Appearance swatches).
    A plain :root falls back to the dark/blue values. */
 :root,
-[data-tone="dark"][data-accent="blue"] { --accent: #6aa2f5; --accent-fill: #2f6fd6; --on-accent: #ffffff; }
-[data-tone="dark"][data-accent="violet"] { --accent: #a898f0; --accent-fill: #6d5bd0; --on-accent: #ffffff; }
-[data-tone="dark"][data-accent="ember"] { --accent: #f0995a; --accent-fill: #a9531a; --on-accent: #ffffff; }
-[data-tone="light"][data-accent="blue"] { --accent: #2563eb; --accent-fill: #2563eb; --on-accent: #ffffff; }
-[data-tone="light"][data-accent="violet"] { --accent: #5b4bc4; --accent-fill: #5b4bc4; --on-accent: #ffffff; }
-[data-tone="light"][data-accent="ember"] { --accent: #a9531a; --accent-fill: #a9531a; --on-accent: #ffffff; }
+[data-tone="dark"][data-accent="blue"] { --accent: #6aa2f5; --accent-fill: #2f6fd6; --on-accent: #ffffff; --accent-fill-hover: #2962bc; }
+[data-tone="dark"][data-accent="violet"] { --accent: #a898f0; --accent-fill: #6d5bd0; --on-accent: #ffffff; --accent-fill-hover: #6050b7; }
+[data-tone="dark"][data-accent="ember"] { --accent: #f0995a; --accent-fill: #a9531a; --on-accent: #ffffff; --accent-fill-hover: #954917; }
+[data-tone="light"][data-accent="blue"] { --accent: #2563eb; --accent-fill: #2563eb; --on-accent: #ffffff; --accent-fill-hover: #2157cf; }
+[data-tone="light"][data-accent="violet"] { --accent: #5b4bc4; --accent-fill: #5b4bc4; --on-accent: #ffffff; --accent-fill-hover: #5042ac; }
+[data-tone="light"][data-accent="ember"] { --accent: #a9531a; --accent-fill: #a9531a; --on-accent: #ffffff; --accent-fill-hover: #954917; }
 
 /* High contrast overrides the accent and switches every decorative effect off.
+   Its terminal fallbacks are black/white high-contrast values, deliberately not
+   the Crucible Dark ones: a high-contrast user must never fall back to low contrast.
    Placed last, and more specific than the accent blocks, so it always wins. */
 :root[data-theme="hc"][data-accent] {
   --accent: var(--vscode-textLink-foreground, var(--vscode-button-background, #3794ff));
@@ -398,6 +479,9 @@ Create `apps/vscode-extension/webview-ui/src/styles/themes.css`:
   --danger-bg: transparent;
   --warning-bg: transparent;
   --warning-border: var(--vscode-contrastBorder, #6fc3df);
+  --green-brd: var(--vscode-contrastBorder, #6fc3df);
+  --red-brd: var(--vscode-contrastBorder, #6fc3df);
+  --hairline: var(--vscode-contrastBorder, #6fc3df);
 }
 ```
 
@@ -472,7 +556,7 @@ Expected: PASS. Every text/surface pair and every accent pair is ≥ 4.5, and no
 - [ ] **Step 6: Run the whole webview suite and the build**
 
 Run: `cd "apps/vscode-extension/webview-ui" && npx vitest run && npx tsc --noEmit && npx vite build`
-Expected: all tests pass, there are no type errors, and the build succeeds. If Tailwind rejects a `var()` value inside `@theme`, change `@theme {` to `@theme inline {` and rebuild. This keeps the aliases resolving at use sites.
+Expected: all tests pass, there are no type errors, and the build succeeds. Plain `@theme` with `var()` values compiles (Tailwind 4.3). The aliases resolve correctly because they and the tokens they reference are declared on the same element, `<html>`, so a theme change on `<html>` recomputes both.
 
 - [ ] **Step 7: Commit**
 
@@ -662,7 +746,7 @@ git commit -m "refactor(webview): shared primitives read theme tokens; add theme
 Create `apps/vscode-extension/webview-ui/src/test/theme.test.ts`:
 
 ```ts
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyTheme, installThemeSync, resolveTheme } from "../theme";
 
 const classes = (...names: string[]) => ({ contains: (c: string) => names.includes(c) });
@@ -726,6 +810,17 @@ describe("applyTheme and installThemeSync", () => {
     expect(document.documentElement.dataset.accent).toBe("violet");
     window.dispatchEvent(new MessageEvent("message", { data: { type: "themeChanged", appearance: "neon", accent: "pink" } }));
     expect(document.documentElement.dataset.theme).toBe("light");
+  });
+});
+
+describe("installThemeSync remount handshake", () => {
+  afterEach(() => { document.body.className = ""; });
+  it("announces itself so the host can replay the current theme", () => {
+    const post = vi.fn();
+    document.body.className = "vscode-dark";
+    const dispose = installThemeSync(document, window, post);
+    expect(post).toHaveBeenCalledExactlyOnceWith({ type: "themeReady" });
+    dispose();
   });
 });
 ```
@@ -810,8 +905,15 @@ function configured(root: HTMLElement): { appearance: Appearance; accent: Accent
 }
 
 /** Resolve now, then keep the root in sync with body-class changes and
- * themeChanged messages. Returns a disposer (used by tests). */
-export function installThemeSync(doc: Document = document, win: Window = window): () => void {
+ * themeChanged messages. `post` announces themeReady to the host on every mount:
+ * VS Code drops messages to hidden webviews, and panels without
+ * retainContextWhenHidden remount on reveal, so the host replays the current
+ * theme in reply. Returns a disposer (used by tests). */
+export function installThemeSync(
+  doc: Document = document,
+  win: Window = window,
+  post?: (message: { type: "themeReady" }) => void,
+): () => void {
   const root = doc.documentElement;
   let current = configured(root);
   const apply = () => applyTheme(root, resolveTheme(current.appearance, current.accent, doc.body.classList));
@@ -828,6 +930,7 @@ export function installThemeSync(doc: Document = document, win: Window = window)
     apply();
   };
   win.addEventListener("message", onMessage);
+  post?.({ type: "themeReady" });
 
   return () => {
     observer.disconnect();
@@ -846,12 +949,24 @@ For `src/main.tsx`:
 import { installThemeSync } from "./theme";
 // …existing imports…
 
-installThemeSync();
+// The shared singleton handle (untyped postMessage): themeReady belongs to no
+// panel's own protocol; the host answers it before panel-specific handling.
+const themeApi = acquireVsCodeApiSingleton();
+installThemeSync(document, window, (message) => themeApi.postMessage(message));
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
 ```
 
-For the three sub-entries, use `import { installThemeSync } from "../theme";` instead.
+with `import { acquireVsCodeApiSingleton } from "./sharedVscodeApi";`. `settings/main.tsx` and `setup/main.tsx` are the same with `"../sharedVscodeApi"` and `"../theme"`. `memory/main.tsx` has its own non-singleton handle (`./vscodeApi`), so it posts through that, with a cast because `themeReady` isn't in its typed `MemoryToHost` protocol:
+
+```tsx
+import { vscode } from "./vscodeApi";
+import { installThemeSync } from "../theme";
+
+// MemoryToHost is the memory panel's typed protocol; themeReady is the shared
+// theme handshake every panel answers before its own messages.
+installThemeSync(document, window, (message) => vscode.postMessage(message as never));
+```
 
 Then set `LINT_SCOPE = ["index.css", "theme.ts"]` in `src/test/themeLint.test.ts`.
 
@@ -958,6 +1073,20 @@ describe("host and webview theme lists match", () => {
   it("appearances", () => expect(list("APPEARANCES")).toEqual([...APPEARANCES]));
   it("accents", () => expect(list("ACCENTS")).toEqual([...ACCENTS]));
 });
+
+describe("themeReadyReply (panel remount replay)", () => {
+  it("answers a webview's themeReady with the current theme", async () => {
+    const { themeReadyReply } = await import("../src/theme-settings.js");
+    const hub = new ThemeHub();
+    hub.update({ appearance: "light", accent: "ember" });
+    expect(themeReadyReply({ type: "themeReady" }, hub)).toEqual({ type: "themeChanged", appearance: "light", accent: "ember" });
+  });
+  it("ignores every other message", async () => {
+    const { themeReadyReply } = await import("../src/theme-settings.js");
+    expect(themeReadyReply({ type: "settings/load" }, new ThemeHub())).toBeNull();
+    expect(themeReadyReply(null, new ThemeHub())).toBeNull();
+  });
+});
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -1024,6 +1153,14 @@ export class ThemeHub {
       this.listeners.delete(post);
     };
   }
+}
+
+/** A panel's webview posts themeReady on every mount (VS Code drops messages to
+ * hidden webviews, and Settings/Setup/Memory remount on reveal). The panel answers
+ * with the current theme so a remounted page never keeps stale attributes. */
+export function themeReadyReply(message: unknown, hub: ThemeHub): ThemeMessage | null {
+  if (typeof message !== "object" || message === null) return null;
+  return (message as { type?: unknown }).type === "themeReady" ? { type: "themeChanged", ...hub.settings } : null;
 }
 
 /** One hub per extension host; every Crucible panel subscribes on creation. */
@@ -1094,7 +1231,7 @@ with the imports `import { themeHub } from "./theme-settings.js";` and `readThem
 
 In each of `src/chat-panel.ts`, `src/settings-panel.ts`, `src/setup-panel.ts` and `src/memory-panel.ts`, make three changes:
 
-1. Import `import { injectThemeAttributes, themeHub } from "./theme-settings.js";`.
+1. Import `import { injectThemeAttributes, themeHub, themeReadyReply } from "./theme-settings.js";`.
 2. In `buildHtml()`, change the final `return html;` to `return injectThemeAttributes(html, themeHub.settings);`. Leave the "build is missing" fallback HTML unchanged.
 3. Add the field `private themeSubscription: (() => void) | null = null;`. Right after every `this.panel.webview.html = this.buildHtml();` (this includes `ChatPanel.reattach`, the restored-panel path), add:
 
@@ -1113,6 +1250,40 @@ In each panel's existing `onDidDispose` handler, add before `this.panel = null;`
 ```
 
 (`ChatPanel` registers its dispose handler inside `registerHandlers()`; find it with `grep -n "onDidDispose" src/chat-panel.ts`.)
+
+At the top of each panel's `this.panel.webview.onDidReceiveMessage((msg: unknown) => {` handler, answer the webview's mount handshake before anything else. Settings, Setup and Memory have no `retainContextWhenHidden`, so they remount on reveal from their original HTML, and VS Code drops messages sent while hidden:
+
+```ts
+      const themeReply = themeReadyReply(msg, themeHub);
+      if (themeReply) {
+        void this.panel?.webview.postMessage(themeReply);
+        return;
+      }
+```
+
+`MemoryPanel`'s handler is an arrow expression; turn it into a block body with this check first and `return handleMemoryMessage(…)` after it.
+
+`test/chat-panel-context.test.ts` also runs `ChatPanel`'s class source through `new Function`, so bind the helpers it now uses, and pin the handshake. Add `import { ThemeHub, themeReadyReply } from "../src/theme-settings.js";`, then replace the `const ChatPanel = new Function("exports", …)` line with:
+
+```ts
+// The class source runs without its module scope, so bind the theme helpers it uses
+// (theming Phase 1: the message handler answers themeReady before anything else).
+const themeHub = new ThemeHub();
+const ChatPanel = new Function("exports", "themeReadyReply", "themeHub", `${js}; return ChatPanel;`)({}, themeReadyReply, themeHub);
+```
+
+and add this case inside its `describe`:
+
+```ts
+  test("answers the webview's themeReady with the current theme before any other handling", () => {
+    const { host, postMessage, receive } = setup();
+    host.registerHandlers();
+    themeHub.update({ appearance: "dark", accent: "violet" });
+    postMessage.mockClear();
+    receive({ type: "themeReady" });
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "themeChanged", appearance: "dark", accent: "violet" });
+  });
+```
 
 `test/model-auth-refresh.test.ts` runs `SettingsPanel`'s source text through `new Function` with explicit bindings, so it must also bind the two new names. In its `"forwards the standalone panel callback to its real handler factory"` case, add to the `execute(…)` bindings, after `createSettingsHandler, exports: {},`:
 
@@ -1363,6 +1534,22 @@ describe("SettingsApp follows appearance changes made elsewhere", () => {
 });
 ```
 
+And this one (dry-run phase review: a failed save was invisible while offline):
+
+```tsx
+describe("SettingsApp shows a failed appearance save while offline", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("renders the error inside the Appearance section without backend state", () => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/localState", appearance: "vscode", accent: "blue" });
+    navClick(/Appearance/);
+    deliver({ type: "settings/error", message: "EACCES: settings.json is read-only" });
+    expect(screen.getByText(/EACCES: settings.json is read-only/)).toBeTruthy();
+  });
+});
+```
+
 - [ ] **Step 6: Run them to verify they fail**
 
 Run: `cd apps/vscode-extension/webview-ui && npx vitest run src/settings`
@@ -1472,7 +1659,7 @@ In `webview-ui/src/settings/SettingsApp.tsx`, make six changes:
 ```
 4. Change the early return guard from `if (!state) {` to `if (!state && !local) {`. The existing loading and error screens stay for the moment before anything has arrived.
 5. Compute the shared props only when `state` exists: replace `const props: SectionProps = { state, busy, send };` with `const props: SectionProps | null = state ? { state, busy, send } : null;`, and use `state?.mcp.servers.length` and `state?.skills.length` in `counts`.
-6. Gate the error banner and the restart banner on `state &&`. Then replace the sections block with:
+6. Gate the restart banner on `state?.restartRequired`, and the error banner on `error && (state || section === "appearance")`. The Appearance section must show a failed save (for example a read-only `settings.json`) even with no backend state. Then replace the sections block with:
 
 ```tsx
           <div key={section} className="anim-section">
@@ -1558,6 +1745,22 @@ Expected: FAIL, listing the four `#fff` and `rgba(…)` lines.
 - `settings/SettingsApp.tsx` restart banner: `borderColor: "rgba(251,191,36,.3)"` → `borderColor: "var(--warning-border)"`
 - `components/SettingsDrawer.tsx:47`: `"linear-gradient(180deg, rgba(139,92,246,.10), rgba(139,92,246,0)), transparent"` → `"linear-gradient(180deg, var(--accent-bg), transparent), transparent"`
 - `components/shared/buttons.tsx:38`: the box-shadow string → `"var(--shadow-control), 0 0 16px var(--accent-glow), var(--highlight-inset)"`
+- `components/shared/buttons.tsx:29`: remove `text-white` from `BtnPrimary`'s class list and add `color: "var(--on-accent)",` to its `style`. High-contrast themes can pair a light button background with a dark button foreground, and a hardcoded white would vanish there. Pin it with `webview-ui/src/test/buttons.theme.test.tsx`:
+
+```tsx
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { BtnPrimary } from "../components/shared/buttons";
+
+describe("BtnPrimary theming", () => {
+  it("takes its text colour from --on-accent, not a hardcoded white", () => {
+    render(<BtnPrimary onClick={() => {}}>Save</BtnPrimary>);
+    const button = screen.getByRole("button", { name: "Save" });
+    expect(button.className).not.toMatch(/\btext-white\b/);
+    expect(button.style.color).toBe("var(--on-accent)");
+  });
+});
+```
 - `components/shared/Switch.tsx:42`: `boxShadow: "0 1px 2px rgba(0,0,0,.5)",` → `boxShadow: "var(--shadow-control)",`
 
 `components/shared/*` is linted in Phase 2. This step only removes its colour literals, so high contrast turns the shadows off.
@@ -1592,47 +1795,84 @@ Create `scripts/dev/cdp-theme-check.mjs`:
 #!/usr/bin/env node
 // Real-browser theme check (spec 2026-10-13 Testing → computed-colour checks). jsdom
 // can't resolve CSS variables, so this reads computed styles from the live Crucible
-// webviews over CDP. Usage: node scripts/dev/cdp-theme-check.mjs [expectedTheme] [expectedAccent]
-const [expectedTheme, expectedAccent] = process.argv.slice(2);
+// webviews over CDP.
+//
+// Usage: node scripts/dev/cdp-theme-check.mjs [--theme vscode|dark|light|hc]
+//          [--tone dark|light] [--accent blue|violet|ember]
+//          [--require "Crucible Chat,Crucible Settings"]
+// Exits non-zero when a required panel is missing, a probe fails, or any check fails.
+const args = Object.fromEntries(
+  process.argv.slice(2).reduce((pairs, a, i, all) => (a.startsWith("--") ? [...pairs, [a.slice(2), all[i + 1]]] : pairs), []),
+);
 const PORT = Number(process.env.CDP_PORT ?? 9335);
+const required = (args.require ?? "Crucible Chat").split(",").map((s) => s.trim()).filter(Boolean);
+const withTimeout = (promise, ms, what) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout: ${what}`)), ms))]);
 
-const targets = await (await fetch(`http://localhost:${PORT}/json/list`)).json();
+const targets = await withTimeout((await fetch(`http://localhost:${PORT}/json/list`)).json(), 5000, "target list");
 const webviews = targets.filter((t) => t.type === "iframe" && t.url.startsWith("vscode-webview://"));
-if (webviews.length === 0) throw new Error("No webview targets — open a Crucible panel first.");
 
 // Evaluated inside each webview target. VS Code nests the page document in a child
-// iframe; pick the document that has #root.
+// iframe; pick the document that has #root. Probe elements resolve tokens to
+// computed colours so the checks compare real pixels, not variable text.
 const PROBE = `(() => {
   const docs = [document, ...Array.from(document.querySelectorAll('iframe')).map((f) => { try { return f.contentDocument; } catch { return null; } })];
   const doc = docs.find((d) => d && d.getElementById('root'));
   if (!doc) return null;
-  const root = doc.documentElement, cs = getComputedStyle(root), body = getComputedStyle(doc.body);
-  const v = (n) => cs.getPropertyValue(n).trim();
+  const root = doc.documentElement;
+  const resolve = (prop, value) => { const el = doc.createElement('div'); el.style[prop] = value; doc.body.appendChild(el); const out = getComputedStyle(el)[prop]; el.remove(); return out; };
+  const body = getComputedStyle(doc.body);
   return { title: doc.title, theme: root.dataset.theme, tone: root.dataset.tone, accent: root.dataset.accent,
-    bodyClass: doc.body.className, bodyBg: body.backgroundColor, bodyFg: body.color,
-    tokens: { surface0: v('--surface-0'), text1: v('--text-1'), accent: v('--accent'), accentFill: v('--accent-fill'), border: v('--border') } };
+    bodyBg: body.backgroundColor, bodyFg: body.color, colorScheme: getComputedStyle(root).colorScheme,
+    surface0: resolve('backgroundColor', 'var(--surface-0)'), legacyPanel: resolve('backgroundColor', 'var(--color-panel)'),
+    text1: resolve('color', 'var(--text-1)'), legacyText: resolve('color', 'var(--color-text)'),
+    accentFill: resolve('backgroundColor', 'var(--accent-fill)'), onAccent: resolve('color', 'var(--on-accent)') };
 })()`;
 
+async function probe(target) {
+  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  await withTimeout(new Promise((r, reject) => { ws.addEventListener("open", r, { once: true }); ws.addEventListener("error", reject, { once: true }); }), 5000, "connect");
+  try {
+    const reply = await withTimeout(new Promise((resolve) => {
+      ws.addEventListener("message", (e) => { const m = JSON.parse(e.data); if (m.id === 1) resolve(m); });
+      ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: PROBE, returnByValue: true } }));
+    }), 5000, "evaluate");
+    if (reply.result?.exceptionDetails) throw new Error(`probe threw: ${reply.result.exceptionDetails.text}`);
+    return reply.result?.result?.value ?? null;
+  } finally {
+    ws.close();
+  }
+}
+
+const seen = new Set();
 let failures = 0;
 for (const target of webviews) {
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((r) => ws.addEventListener("open", r, { once: true }));
-  const result = await new Promise((resolve) => {
-    ws.addEventListener("message", (e) => {
-      const m = JSON.parse(e.data);
-      if (m.id === 1) resolve(m.result?.result?.value ?? null);
-    });
-    ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: PROBE, returnByValue: true } }));
-  });
-  ws.close();
-  if (!result) continue;
+  let r;
+  try {
+    r = await probe(target);
+  } catch (err) {
+    failures++;
+    console.log(`✗ ${target.url.slice(0, 60)}… ${err.message}`);
+    continue;
+  }
+  if (!r) continue; // a non-Crucible webview or a frame without #root
+  seen.add(r.title);
   const problems = [];
-  if (expectedTheme && result.theme !== expectedTheme) problems.push(`theme ${result.theme} ≠ ${expectedTheme}`);
-  if (expectedAccent && result.theme !== "hc" && result.accent !== expectedAccent) problems.push(`accent ${result.accent} ≠ ${expectedAccent}`);
-  if (Object.values(result.tokens).some((t) => t === "")) problems.push("an expected token resolved to empty");
-  if (result.bodyBg === "rgba(0, 0, 0, 0)") problems.push("body background is transparent");
+  if (args.theme && r.theme !== args.theme) problems.push(`theme ${r.theme} ≠ ${args.theme}`);
+  if (args.tone && r.tone !== args.tone) problems.push(`tone ${r.tone} ≠ ${args.tone}`);
+  if (args.accent && r.theme !== "hc" && r.accent !== args.accent) problems.push(`accent ${r.accent} ≠ ${args.accent}`);
+  if (r.bodyBg !== r.surface0) problems.push(`body bg ${r.bodyBg} ≠ --surface-0 ${r.surface0}`);
+  if (r.bodyFg !== r.text1) problems.push(`body fg ${r.bodyFg} ≠ --text-1 ${r.text1}`);
+  if (r.legacyPanel !== r.surface0) problems.push(`--color-panel ${r.legacyPanel} ≠ --surface-0`);
+  if (r.legacyText !== r.text1) problems.push(`--color-text ${r.legacyText} ≠ --text-1`);
+  if (r.bodyBg === "rgba(0, 0, 0, 0)") problems.push("body background is transparent");
+  if (r.tone && r.colorScheme !== r.tone) problems.push(`color-scheme ${r.colorScheme} ≠ tone ${r.tone}`);
+  if (r.accentFill === r.onAccent) problems.push("--on-accent equals --accent-fill");
   failures += problems.length;
-  console.log(`${problems.length ? "✗" : "✓"} ${result.title}  theme=${result.theme} tone=${result.tone} accent=${result.accent}  bg=${result.bodyBg} fg=${result.bodyFg}`, problems.join("; "));
+  console.log(`${problems.length ? "✗" : "✓"} ${r.title}  theme=${r.theme} tone=${r.tone} accent=${r.accent}  bg=${r.bodyBg} fg=${r.bodyFg}`, problems.join("; "));
+}
+for (const title of required) {
+  if (!seen.has(title)) { failures++; console.log(`✗ required panel not found: ${title}`); }
 }
 process.exit(failures ? 1 : 0);
 ```
@@ -1663,10 +1903,13 @@ Run `node scripts/dev/cdp-theme-check.mjs` and capture screenshots (with `Page.c
 | Dark High Contrast | light | `hc` (tone dark) |
 | Light High Contrast | dark | `hc` (tone light) |
 
-For each row, run `node scripts/dev/cdp-theme-check.mjs <expectedTheme> blue`, then switch the accent to violet and to ember, and re-run it with that accent. Expected: every line prints `✓`, and the exit code is 0. Also:
+For each row, run `node scripts/dev/cdp-theme-check.mjs --theme <expected> --tone <expected> --accent blue --require "Crucible Chat"`, then switch the accent to violet and to ember, and re-run it with that accent. Expected: every line prints `✓`, and the exit code is 0. Also:
 
-- Reload the chat webview (**Developer: Reload Webviews**) and confirm the restored panel keeps its theme.
-- Stop the backend and open Settings: the nav and Appearance must still work.
+- **Drive changes from a script** by posting from the chat webview's **inner** iframe, where `window.__vscodeApi` lives: `document.querySelector('iframe').contentWindow.__vscodeApi.postMessage({type: 'settings/setAppearance', appearance, accent})`. The outer frame has no handle.
+- **Restart VS Code, don't reload the workbench.** `location.reload()` in the workbench page is ignored. Quit VS Code and reopen it with `--remote-debugging-port=9335`. Confirm the restored chat panel keeps its theme.
+- **Hidden-panel replay:** open Settings, switch to the Chat tab (Settings' webview is destroyed), change the appearance, and switch back. Run the check with `--require "Crucible Chat,Crucible Settings"`. Both panels must show the new theme, and Settings' radios must show the new values.
+- **Stop the backend and open Settings:** the nav and Appearance must still work.
+- **Restore the user's settings.** The colour-theme picker and the Appearance section write `workbench.colorTheme`, `crucible.appearance` and `crucible.accent` into the user's `settings.json`. Back the file up first, and afterwards remove exactly the lines the test added.
 
 - [ ] **Step 4: Audit with the installed skill**
 
@@ -1692,7 +1935,7 @@ git commit -m "test(dev): CDP computed-colour theme check"
 
 - **Spec coverage (§1 and the Phase 1 rows):**
   - tokens, scales and the four theme sets — Task 1;
-  - paired surface foregrounds — Task 1. The contextual `.on-surface-*` classes are introduced in Phase 2, with the first components that sit on cards (no Phase 1 component needs them);
+  - paired surface foregrounds — Task 1. `vscode`-mode surfaces are tinted from the page, so `--text-1` is readable on every surface and the spec's contextual `.on-surface-*` classes are not needed (dry-run ruling T1-1);
   - `theme.ts`, high contrast and live body classes — Task 3;
   - settings, injection and `themeChanged` — Task 4;
   - Appearance, offline state, both registries and both mirrors — Task 5. The chat overlay embeds `SettingsApp` and routes `settings/*` through the same handler (`chat-panel.ts:259`), so it gets the section and the offline shell with no extra wiring;
