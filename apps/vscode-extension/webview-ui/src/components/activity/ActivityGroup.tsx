@@ -72,7 +72,10 @@ function sameSteps(a: ActivityStep[], b: ActivityStep[]): boolean {
 
 export const ActivityGroup = memo(function ActivityGroup({ steps }: { steps: ActivityStep[] }) {
   const [open, setOpen] = useState(false);
-  const summary = summarizeActivity(steps);
+  const activity = summarizeActivity(steps);
+  // A stopped/reloaded transcript can contain an unfinished call. This is a
+  // history disclosure; the transient line owns whether work is running now.
+  const summary = activity === "Working…" ? "Tool activity" : activity;
   return (
     <div data-testid="activity-group" className="grid min-w-0 gap-1.5">
       <button type="button" aria-expanded={open} aria-label={summary} onClick={() => setOpen(!open)}

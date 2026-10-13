@@ -225,6 +225,7 @@ The existing Tailwind `@theme` names (`--color-surface`, `--color-text-2` and so
   - **Kept:** failed and not-applied outcomes, shared thoughts, and keyboard-reachable tool details.
   - **Removed:** the monospace tool pills and the connected-track drawing.
   - **Live line:** the transient line shimmers only its verb, and only when reduced motion is off.
+  - **Sub-agent follow-up (14 October):** main chat, expanded sub-agent history and team member work share the grouped transcript renderer. Finished calls fold into activity summaries; unfinished calls use the current-step disclosure. Narration and activation boundaries stay visible. Sub-agent reports use plain answer prose, and team chapters keep their separate edits and reports.
 - **Changes card.** `TurnChanges` is restyled, with no new features:
   - one card with radius `--r-card`;
   - a header showing "Edited N files" and `+N −N`;

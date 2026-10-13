@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { TranscriptItems } from "./shared/TranscriptItems";
 import { Icon } from "./Icon";
 import { vscode } from "../vscodeApi";
 import { EmptyState } from "./EmptyState";
-import { MessageRow } from "./MessageRow";
 import { AgentRow } from "./messages/AgentRow";
 import { LiveSlot } from "./LiveSlot";
 import { WorkBar } from "./WorkBar";
@@ -11,10 +11,7 @@ import { SettingsDrawer } from "./SettingsDrawer";
 import { ChatSettingsOverlay } from "./ChatSettingsOverlay";
 import { inputAvailability } from "../inputAvailability";
 import type { SectionId } from "../settings/sections/meta";
-import type { AppState, ChatMsg, RewindPreviewView, ToolEventView } from "../types";
-import { groupTranscript } from "../transcript/groupTranscript";
-import { ActivityGroup } from "./activity/ActivityGroup";
-import { TurnChanges } from "./activity/TurnChanges";
+import type { AppState, RewindPreviewView, ToolEventView } from "../types";
 import { TransientActivity } from "./activity/TransientActivity";
 import { RewindDialog } from "./RewindDialog";
 import { AgentsContext, type AgentsUi } from "./agents/AgentsContext";
@@ -22,6 +19,8 @@ import { AgentWindow } from "./agents/AgentWindow";
 import { TeamsContext, type TeamsUi } from "./teams/TeamsContext";
 import { TeamStrip } from "./teams/TeamStrip";
 import { TeamWindow } from "./teams/TeamWindow";
+
+export { TranscriptItems } from "./shared/TranscriptItems";
 
 // Gate statuses where the workbar should be HIDDEN (user is deciding something).
 const WAITING_STATUSES = new Set([
@@ -31,51 +30,6 @@ const WAITING_STATUSES = new Set([
   "AWAITING_STEP_REVIEW",
   "AWAITING_VALIDATION_DECISION",
 ]);
-
-/**
- * The transcript as grouped items. Live tool steps (the streaming bubble's finished tool events)
- * join the grouping as a trailing tools-only message, so work shown live sits in the very
- * group it is sealed into (same index, same key) and nothing jumps when the bubble seals.
- * `renderTail` draws the live elements after the transcript.
- */
-export function TranscriptItems({ messages, turnActive, turnRunning = false, queuedIds, planVersions, onRewindRequest, streamingToolEvents, renderTail }: {
-  messages: ChatMsg[]; turnActive: boolean; queuedIds: string[];
-  /** The turn is still running (turnActive or input disabled): its changes card waits for the end. */
-  turnRunning?: boolean;
-  planVersions: Map<number, number | undefined>; onRewindRequest: (id: string) => void;
-  streamingToolEvents?: ToolEventView[];
-  renderTail?: () => ReactNode;
-}) {
-  const grouped = useMemo(() => {
-    const live = streamingToolEvents ?? [];
-    const all = live.length
-      ? [...messages, { role: "agent", type: "text", content: "", timestamp: "", metadata: { tool_events: live } } as ChatMsg]
-      : messages;
-    return groupTranscript(all);
-  }, [messages, streamingToolEvents]);
-  const running = turnActive || turnRunning;
-  // Under a running turn the changes card would sit above the live line and the streaming answer, then jump below it.
-  const items = running && grouped[grouped.length - 1]?.kind === "changes" ? grouped.slice(0, -1) : grouped;
-  return (
-    <>
-      {items.map((item) => {
-        if (item.kind === "activity" || item.kind === "changes") {
-          return (
-            <div key={item.key} className="min-w-0">
-              {item.kind === "activity" ? <ActivityGroup steps={item.steps} /> : <TurnChanges files={item.files} />}
-            </div>
-          );
-        }
-        return (
-          <MessageRow key={item.msg.id ?? `m-${item.index}`} msg={item.msg} planVersion={planVersions.get(item.index)}
-            turnActive={turnActive} queued={item.msg.id != null && queuedIds.includes(item.msg.id)}
-            onRewindRequest={onRewindRequest} />
-        );
-      })}
-      {renderTail?.()}
-    </>
-  );
-}
 
 interface Props {
   state: AppState;

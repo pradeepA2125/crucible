@@ -4,8 +4,7 @@ import { buildChapters, chapterHeading, type MemberChapter } from "../../teamCha
 import { identityFor } from "../../teamIdentity";
 import { memberStateWord } from "../../teams";
 import type { TeamPostView, ToolEventView } from "../../types";
-import { MessageRow } from "../MessageRow";
-import { AgentRow } from "../messages/AgentRow";
+import { AgentWorkTranscript } from "../shared/AgentWorkTranscript";
 import { useAgentsUi } from "../agents/AgentsContext";
 import { Avatar } from "./Avatar";
 import { SaidPost, STATUS_CHIP, beatText } from "./Journey";
@@ -112,19 +111,19 @@ export function MemberView({ teamId, agentId }: { teamId: string; agentId: strin
       <div className="relative grid min-w-0 gap-2.5 pl-[22px] before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-[1.5px] before:bg-[var(--color-border-strong)] before:content-['']">
         {chapters.map((c, i) => (
           <Chapter key={c.n} chapter={c} defaultOpen={i === chapters.length - 1} label={label} roster={roster}
-            posts={posts} isProposal={isProposal} live={c.current ? aview.live : []} now={row?.now ?? ""} />
+            posts={posts} isProposal={isProposal} live={c.current ? aview.live : []} now={row?.now ?? ""}
+            waiting={status === "waiting"} />
         ))}
       </div>
     </div>
   );
 }
 
-function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, live, now }: {
+function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, live, now, waiting }: {
   chapter: MemberChapter; defaultOpen: boolean; label: string; roster: string[]; posts: TeamPostView[];
-  isProposal: (seq: number) => boolean; live: ToolEventView[]; now: string;
+  isProposal: (seq: number) => boolean; live: ToolEventView[]; now: string; waiting: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const [showWork, setShowWork] = useState(false);
   const chip = STATUS_CHIP[c.status];
   const color = identityFor(label, roster).color;
   const postBySeq = (seq: number) => posts.find((p) => p.seq === seq);
@@ -169,16 +168,10 @@ function Chapter({ chapter: c, defaultOpen, label, roster, posts, isProposal, li
             </div>
           ))}
           {(c.work.length > 0 || live.length > 0) && (
-            // minmax(0,1fr): a grid track otherwise sizes to its widest row, and a
-            // tool-pill strip never wraps, so it pushed the member view 4x wide.
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5">
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
               <span className="text-[10px] uppercase tracking-[.08em] text-text-3">Work</span>
-              <button type="button" onClick={() => setShowWork(!showWork)}
-                className="justify-self-start rounded-md border border-dashed px-2.5 py-1 text-[11.5px] text-text-2" style={{ borderColor: "var(--color-border-strong)" }}>
-                Explored · {c.tools + live.length} tool{c.tools + live.length === 1 ? "" : "s"} {showWork ? "▾" : "▸"}
-              </button>
-              {showWork && <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">{c.work.map((m, i) => <MessageRow key={i} msg={m} />)}
-                {live.length > 0 && <AgentRow content="" toolEvents={live} />}</div>}
+              <AgentWorkTranscript messages={c.work} live={live} running={c.current} waiting={waiting}
+                startedAt={c.start} showChanges={false} />
             </div>
           )}
           {c.edits.length > 0 && (

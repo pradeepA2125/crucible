@@ -6,7 +6,7 @@ vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 import { AgentsContext, type AgentsUi } from "../components/agents/AgentsContext";
 import { MemberView } from "../components/teams/MemberView";
 import { TeamsContext, type TeamsUi } from "../components/teams/TeamsContext";
-import type { AgentDetailView, ChatMsg, TeamActivityView, TeamPostView, TeamSummaryView } from "../types";
+import type { AgentDetailView, ChatMsg, TeamActivityView, TeamPostView, TeamSummaryView, ToolEventView } from "../types";
 
 const T = (s: number) => new Date(Date.UTC(2026, 9, 5, 17, 10, s)).toISOString();
 const msg = (meta: Record<string, unknown>, content = ""): ChatMsg =>
@@ -36,13 +36,13 @@ const DETAIL = {
   transcript: [], lastSeq: 0,
 } as AgentDetailView;
 
-function renderView(usage: TeamsUi["usage"] = null, posts = POSTS) {
+function renderView(usage: TeamsUi["usage"] = null, posts = POSTS, live: ToolEventView[] = [], status = "running") {
   const messages = [msg({ tool_events: [{ id: 1, tool: "read_file", args: {}, source: "execution", done: true }] }),
     msg({ report: true, status: "completed" }, "Objected: **missing case**"),
     msg({ divider: true, activation: 2 }, "↩ woken")];
   const agentsUi: AgentsUi = {
-    agents: { "agent-r": { ...DETAIL } }, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
-    views: { "agent-r": { detail: DETAIL, messages, live: [], callIds: {}, nextId: 1 } },
+    agents: { "agent-r": { ...DETAIL, status } }, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
+    views: { "agent-r": { detail: DETAIL, messages, live, callIds: {}, nextId: 1 } },
   };
   const teamsUi: TeamsUi = { teams: { "team-1": TEAM }, openTeam: vi.fn(), usage, views: { "team-1": {
     posts, lastSeq: 5, lastAseq: 7, activity: [
@@ -108,6 +108,36 @@ describe("MemberView", () => {
     expect(screen.getByText("missing case").tagName).toBe("STRONG");
     expect(screen.getByTestId("chapter-1")).toHaveTextContent("objects to");
   });
+
+  it("opens a chapter to the shared folded activity summary, then exposes individual tools", () => {
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: /Chapter 1/ }));
+    const summary = screen.getByRole("button", { name: "Read a file" });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Read" })).toBeNull();
+    fireEvent.click(summary);
+    expect(screen.getByRole("button", { name: "Read" })).toBeInTheDocument();
+    expect(screen.getByText("missing case")).toBeInTheDocument();
+  });
+
+  it("groups finished live work in the current chapter and keeps the running step separate", () => {
+    renderView(null, POSTS, [
+      { id: 10, tool: "read_file", args: { path: "api.py" }, source: "execution", done: true },
+      { id: 11, tool: "run_command", args: { command: "pytest" }, source: "execution", done: false },
+    ]);
+    const summary = screen.getByRole("button", { name: "Read a file" });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("transient-text")).toHaveTextContent("Running pytest");
+    expect(screen.queryByRole("button", { name: "Running pytest" })).toBeNull();
+    fireEvent.click(summary);
+    expect(screen.getByRole("button", { name: "Read api.py" })).toBeInTheDocument();
+  });
+
+  it("labels a member's blocked tool as awaiting approval", () => {
+    renderView(null, POSTS, [{ id: 11, tool: "run_command", args: { command: "pytest" }, source: "execution", done: false }], "waiting");
+    expect(screen.getByTestId("transient-text")).toHaveTextContent("Waiting for your approval");
+    expect(screen.queryByRole("button", { name: "Show current step" })).toBeNull();
+  });
 });
 
 describe("MemberView in implementation and review", () => {
@@ -133,5 +163,7 @@ describe("MemberView in implementation and review", () => {
     expect(screen.getByTestId("edits-1")).toHaveTextContent("a.py");
     expect(screen.getByTestId("edits-1")).toHaveTextContent("+4");
     expect(screen.getByTestId("handed-1")).toHaveTextContent("round_price");
+    expect(screen.getByRole("button", { name: "Edited a.py +4 −0" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("turn-changes")).toBeNull();
   });
 });
