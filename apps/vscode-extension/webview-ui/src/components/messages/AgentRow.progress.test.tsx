@@ -14,15 +14,9 @@ describe("progress notes", () => {
     expect(strong.closest(".text-text-3")).toBeNull();
   });
 
-  it("can omit the avatar to continue the previous agent row", () => {
-    const { container } = render(<AgentRow content="next" progress showAvatar={false} />);
-    expect(container.querySelector("[data-testid='avatar-spacer']")).not.toBeNull();
-    expect(container.querySelector(AVATAR_SELECTOR)).toBeNull();
-  });
-
-  it("shows the avatar and no spacer when showAvatar is omitted (default true)", () => {
+  it("renders no avatar or spacer", () => {
     const { container } = render(<AgentRow content="first" progress />);
-    expect(container.querySelector(AVATAR_SELECTOR)).not.toBeNull();
     expect(container.querySelector("[data-testid='avatar-spacer']")).toBeNull();
+    expect(container.querySelector(AVATAR_SELECTOR)).toBeNull();
   });
 });

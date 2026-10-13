@@ -12,11 +12,10 @@ import { ChatSettingsOverlay } from "./ChatSettingsOverlay";
 import { inputAvailability } from "../inputAvailability";
 import type { SectionId } from "../settings/sections/meta";
 import type { AppState, ChatMsg, RewindPreviewView, ToolEventView } from "../types";
-import { groupTranscript, type TranscriptItem } from "../transcript/groupTranscript";
+import { groupTranscript } from "../transcript/groupTranscript";
 import { ActivityGroup } from "./activity/ActivityGroup";
 import { TurnChanges } from "./activity/TurnChanges";
 import { TransientActivity } from "./activity/TransientActivity";
-import { Avatar } from "./shared/Avatar";
 import { RewindDialog } from "./RewindDialog";
 import { AgentsContext, type AgentsUi } from "./agents/AgentsContext";
 import { AgentWindow } from "./agents/AgentWindow";
@@ -33,14 +32,6 @@ const WAITING_STATUSES = new Set([
   "AWAITING_VALIDATION_DECISION",
 ]);
 
-// Only items drawn by AgentRow/QAMessage, activity lines and changes cards carry the agent avatar;
-// full-width cards (rosters, plans, notices, pending diffs, gates) neither show nor continue it.
-function carriesAvatar(item: TranscriptItem): boolean {
-  if (item.kind !== "message") return true;
-  const { msg } = item;
-  return msg.role === "agent" && (msg.type === "text" || msg.type === "diff_summary");
-}
-
 /**
  * The transcript as grouped items. Live pills (the streaming bubble's finished tool events)
  * join the grouping as a trailing pills-only message, so work shown live sits in the very
@@ -54,7 +45,7 @@ export function TranscriptItems({ messages, turnActive, turnRunning = false, que
   turnRunning?: boolean;
   planVersions: Map<number, number | undefined>; onRewindRequest: (id: string) => void;
   streamingToolEvents?: ToolEventView[];
-  renderTail?: (continuesAgentRun: boolean) => ReactNode;
+  renderTail?: () => ReactNode;
 }) {
   const grouped = useMemo(() => {
     const live = streamingToolEvents ?? [];
@@ -66,30 +57,23 @@ export function TranscriptItems({ messages, turnActive, turnRunning = false, que
   const running = turnActive || turnRunning;
   // Under a running turn the changes card would sit above the live line and the streaming answer, then jump below it.
   const items = running && grouped[grouped.length - 1]?.kind === "changes" ? grouped.slice(0, -1) : grouped;
-  const lastItem = items[items.length - 1];
   return (
     <>
-      {items.map((item, i) => {
-        // An avatar-bearing item right after another one continues the same row (one avatar).
-        const prev = items[i - 1];
-        const showAvatar = carriesAvatar(item) && !(prev && carriesAvatar(prev));
+      {items.map((item) => {
         if (item.kind === "activity" || item.kind === "changes") {
           return (
-            <div key={item.key} className="flex min-w-0 items-start gap-2.5">
-              {showAvatar ? <Avatar /> : <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />}
-              <div className="min-w-0 flex-1">
-                {item.kind === "activity" ? <ActivityGroup steps={item.steps} /> : <TurnChanges files={item.files} />}
-              </div>
+            <div key={item.key} className="min-w-0">
+              {item.kind === "activity" ? <ActivityGroup steps={item.steps} /> : <TurnChanges files={item.files} />}
             </div>
           );
         }
         return (
           <MessageRow key={item.msg.id ?? `m-${item.index}`} msg={item.msg} planVersion={planVersions.get(item.index)}
             turnActive={turnActive} queued={item.msg.id != null && queuedIds.includes(item.msg.id)}
-            onRewindRequest={onRewindRequest} showAvatar={showAvatar} />
+            onRewindRequest={onRewindRequest} />
         );
       })}
-      {renderTail?.(!!lastItem && carriesAvatar(lastItem))}
+      {renderTail?.()}
     </>
   );
 }
@@ -478,7 +462,8 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           (diff/plan/review cards) have a flex automatic minimum size of ZERO,
           so once the list overflows they silently collapse to a border line
           while plain text rows keep their height. */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3 [&>*]:flex-shrink-0">
+      <div className="flex-1 overflow-y-auto py-3 [&>*]:flex-shrink-0">
+        <div data-testid="transcript-column" className="mx-auto flex w-full max-w-[760px] flex-col gap-3 px-4 [&>*]:flex-shrink-0">
         {isEmpty ? (
           <EmptyState onPick={setDraft} />
         ) : (
@@ -486,7 +471,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
             <TranscriptItems messages={state.messages} turnActive={state.turnActive} turnRunning={turnRunning}
               queuedIds={state.queuedIds} planVersions={planVersionMap} onRewindRequest={setRewindMessageId}
               streamingToolEvents={liveFinishedEvents}
-              renderTail={(continuesAgentRun) => (
+              renderTail={() => (
                 <>
                   {/* Retry-status bubble — takes precedence over both the thinking
                       status line and the streaming bubble below while a retry is
@@ -508,19 +493,11 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
                   {/* Transient line (hidden while a retry is in flight — resumes once it clears) */}
                   {showTransient && (
-                    <div className="flex min-w-0 items-start gap-2.5">
-                      {continuesAgentRun
-                        ? <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />
-                        : <Avatar />}
-                      <div className="min-w-0 flex-1">
-                        <TransientActivity bubble={transientBubble} startedAt={streamStartedAt}
-                          fallback={state.thinkingStatus} waiting={waitingOnGate} />
-                      </div>
-                    </div>
+                    <TransientActivity bubble={transientBubble} startedAt={streamStartedAt}
+                      fallback={state.thinkingStatus} waiting={waitingOnGate} />
                   )}
                   {!state.retryStatus && state.streaming?.text && (
-                    <AgentRow content={state.streaming.text} streaming hideThinkingBlock
-                      showAvatar={!continuesAgentRun && !showTransient} />
+                    <AgentRow content={state.streaming.text} streaming hideThinkingBlock />
                   )}
                 </>
               )} />
@@ -529,6 +506,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
         {/* Scroll anchor */}
         <div ref={bottomRef} />
+        </div>
       </div>
 
       {/* ── Pinned bottom section ── */}

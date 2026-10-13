@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Avatar } from "../shared/Avatar";
 import { MarkdownContent } from "../shared/MarkdownContent";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { Icon } from "../Icon";
@@ -7,8 +6,6 @@ import { Icon } from "../Icon";
 interface Props {
   content: string;
   thinkingLog?: string[];
-  /** False continues the previous agent run: a same-width spacer keeps the column aligned. */
-  showAvatar?: boolean;
 }
 
 /**
@@ -18,7 +15,7 @@ interface Props {
  * Uses ReactMarkdown for content with prose-ish Tailwind styling via arbitrary selectors.
  * Copy button fades in on hover, briefly flips to "Copied ✓" on click.
  */
-export function QAMessage({ content, thinkingLog, showAvatar = true }: Props) {
+export function QAMessage({ content, thinkingLog }: Props) {
   const [copyLabel, setCopyLabel] = useState<"Copy" | "Copied ✓">("Copy");
 
   function handleCopy() {
@@ -30,13 +27,7 @@ export function QAMessage({ content, thinkingLog, showAvatar = true }: Props) {
   }
 
   return (
-    <div className="group relative flex gap-2.5 items-start">
-      {showAvatar ? (
-        <Avatar />
-      ) : (
-        <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />
-      )}
-
+    <div className="group relative flex flex-col items-stretch">
       <div className="flex-1 min-w-0 flex flex-col gap-1.5">
         {thinkingLog && thinkingLog.length > 0 && (
           <ThinkingBlock entries={thinkingLog} />

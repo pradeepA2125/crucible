@@ -284,7 +284,7 @@ Expected: FAIL. The avatar elements still render, and no `transcript-column` exi
 `components/MessageRow.tsx`: remove the `showAvatar` prop from `Props` and every `showAvatar={showAvatar}` it passes to `AgentRow`/`QAMessage`.
 
 `components/ThreadView.tsx`:
-- **Imports:** remove `import { Avatar } from "./shared/Avatar";`.
+- **Imports:** remove `import { Avatar } from "./shared/Avatar";`, and drop `type TranscriptItem` from the `groupTranscript` import (only the deleted `carriesAvatar` used it, and `tsc` fails on the unused import).
 - **In `TranscriptItems`:**
   - remove `carriesAvatar` and the `prev`/`showAvatar` computation;
   - change `renderTail?: (continuesAgentRun: boolean) => ReactNode;` to `renderTail?: () => ReactNode;`;

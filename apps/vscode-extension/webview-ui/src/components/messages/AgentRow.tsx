@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { ToolEventView } from "../../types";
-import { Avatar } from "../shared/Avatar";
 import { MarkdownContent } from "../shared/MarkdownContent";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { ToolTrack } from "../shared/ToolTrack";
@@ -16,8 +15,6 @@ interface Props {
   streaming?: boolean;
   streamingThinkingEntries?: string[];
   streamingThinkingChunk?: string;
-  /** False continues the previous agent run: a same-width spacer keeps the column aligned. */
-  showAvatar?: boolean;
   /** The live answer row has no thinking to show: the transient line carries it. */
   hideThinkingBlock?: boolean;
 }
@@ -41,7 +38,6 @@ export function AgentRow({
   streaming,
   streamingThinkingEntries,
   streamingThinkingChunk,
-  showAvatar = true,
   hideThinkingBlock = false,
 }: Props) {
   const [copyLabel, setCopyLabel] = useState<"Copy" | "Copied ✓">("Copy");
@@ -62,13 +58,7 @@ export function AgentRow({
   }
 
   return (
-    <div className="group relative flex gap-2.5 items-start">
-      {showAvatar ? (
-        <Avatar />
-      ) : (
-        <div data-testid="avatar-spacer" className="w-5 flex-shrink-0" aria-hidden="true" />
-      )}
-
+    <div className="group relative flex flex-col items-stretch">
       <div className="flex-1 min-w-0 flex flex-col gap-2">
         {/* Thinking block */}
         {!hideThinkingBlock && (thinkEntries.length > 0 || !!streamingThinkingChunk || streaming) && (

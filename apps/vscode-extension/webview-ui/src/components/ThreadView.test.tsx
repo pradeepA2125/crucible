@@ -226,3 +226,13 @@ describe("ThreadView — transient line across seals and gates", () => {
     expect(screen.getByText("partial")).toBeInTheDocument();
   });
 });
+
+describe("transcript column (spec §2)", () => {
+  it("keeps the transcript in a centered column of at most 760px", () => {
+    render(<ThreadView state={base} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    const column = screen.getByTestId("transcript-column");
+    expect(column.className).toContain("max-w-[760px]");
+    expect(column.className).toContain("mx-auto");
+    expect(column.className).toContain("w-full");
+  });
+});

@@ -22,7 +22,7 @@ describe("TranscriptItems", () => {
     expect(screen.getAllByTestId("activity-group")).toHaveLength(2);
     expect(screen.getByText("Found the bug.")).toBeInTheDocument();
     expect(screen.getByTestId("turn-changes")).toBeInTheDocument();
-    expect(screen.getAllByTestId("avatar-spacer").length).toBeGreaterThan(0);
+    expect(screen.queryAllByTestId("avatar-spacer")).toHaveLength(0);
   });
 
   it("renders the same items for a reloaded copy of the thread", () => {
@@ -78,20 +78,8 @@ describe("TranscriptItems — running turn and avatars", () => {
     expect(screen.getByRole("button", { name: /Apply|Accept/i })).toBeInTheDocument();
   });
 
-  it("shows the avatar on narration that follows a full-width card", () => {
-    const roster: ChatMsg = { role: "agent", content: "", type: "agent_dispatch", timestamp: t, metadata: { agent_ids: ["a1"] } };
-    const note: ChatMsg = { role: "agent", content: "Working on it.", type: "text", timestamp: t, metadata: { progress: true } };
-    render(<TranscriptItems messages={[user, roster, note]} {...common} />);
-    expect(screen.queryAllByTestId("avatar-spacer")).toHaveLength(0);
-  });
-
-  it("tells renderTail whether the last item continues an agent run", () => {
-    const seen: boolean[] = [];
-    const tail = (c: boolean) => { seen.push(c); return null; };
-    render(<TranscriptItems messages={[user]} {...common} renderTail={tail} />);
-    render(<TranscriptItems messages={[user, applied]} {...common} turnActive renderTail={tail} />);
-    expect(seen).toEqual([false, true]);
-    render(<TranscriptItems messages={[user, { ...applied, metadata: { resolved: "applied", diff_entries: [] } }, { role: "agent", content: "hi", type: "text", timestamp: t, metadata: {} }]} {...common} renderTail={tail} />);
-    expect(seen[2]).toBe(true);
+  it("renders the tail after the transcript", () => {
+    render(<TranscriptItems messages={[user]} {...common} renderTail={() => <div data-testid="tail" />} />);
+    expect(screen.getByTestId("tail")).toBeInTheDocument();
   });
 });
