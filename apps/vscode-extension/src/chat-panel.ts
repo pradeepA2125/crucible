@@ -22,6 +22,7 @@ import type { TeamViewEvent } from "./team-views.js";
 import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
 import type { FileReferenceBridge, FileReferenceCatalogMessage } from "./file-references/bridge.js";
+import { injectThemeAttributes, themeHub } from "./theme-settings.js";
 
 // Builds a settings message handler bound to a poster into THIS webview — the chat
 // bundle now embeds the settings UI (floating overlay), so its settings/* messages
@@ -121,6 +122,7 @@ export type SetPlanModeHandler = (enabled: boolean) => Promise<void>;
 
 export class ChatPanel {
   private panel: vscode.WebviewPanel | null = null;
+  private themeSubscription: (() => void) | null = null;
   private fileReferenceBridge: FileReferenceBridge | null = null;
 
   setFileReferenceBridge(bridge: FileReferenceBridge): void {
@@ -211,6 +213,10 @@ export class ChatPanel {
       ],
     };
     this.panel.webview.html = this.buildHtml();
+    this.themeSubscription?.();
+    this.themeSubscription = themeHub.subscribe((message) => {
+      void this.panel?.webview.postMessage(message);
+    });
     this.registerHandlers();
   }
 
@@ -235,6 +241,10 @@ export class ChatPanel {
       }
     );
     this.panel.webview.html = this.buildHtml();
+    this.themeSubscription?.();
+    this.themeSubscription = themeHub.subscribe((message) => {
+      void this.panel?.webview.postMessage(message);
+    });
     this.registerHandlers();
   }
 
@@ -489,6 +499,8 @@ export class ChatPanel {
       });
     });
     this.panel.onDidDispose(() => {
+      this.themeSubscription?.();
+      this.themeSubscription = null;
       this.panel = null;
     });
   }
@@ -758,6 +770,6 @@ export class ChatPanel {
       "<head>",
       `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${cspSource}; script-src 'nonce-${nonce}' ${cspSource}; img-src ${cspSource} data:; font-src ${cspSource};">`
     );
-    return html;
+    return injectThemeAttributes(html, themeHub.settings);
   }
 }

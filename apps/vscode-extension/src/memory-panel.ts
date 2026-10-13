@@ -1,11 +1,13 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import { handleMemoryMessage, type MemoryDataSource, type MemoryToHost } from "./memory-data.js";
+import { injectThemeAttributes, themeHub } from "./theme-settings.js";
 
 /** Dedicated read-only memory-inspector webview. Loads the webview-ui `memory` Vite entry
  * (dist/memory.html) and wires its messages to a MemoryDataSource. Mirrors chat-panel.ts. */
 export class MemoryPanel {
   private panel: vscode.WebviewPanel | null = null;
+  private themeSubscription: (() => void) | null = null;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -29,12 +31,18 @@ export class MemoryPanel {
       }
     );
     this.panel.webview.html = this.buildHtml();
+    this.themeSubscription?.();
+    this.themeSubscription = themeHub.subscribe((message) => {
+      void this.panel?.webview.postMessage(message);
+    });
     this.panel.webview.onDidReceiveMessage((msg: unknown) =>
       handleMemoryMessage(msg as MemoryToHost, this.source, this.threadId, this.workspacePath, (m) =>
         this.panel?.webview.postMessage(m)
       )
     );
     this.panel.onDidDispose(() => {
+      this.themeSubscription?.();
+      this.themeSubscription = null;
       this.panel = null;
     });
   }
@@ -66,6 +74,6 @@ export class MemoryPanel {
       "<head>",
       `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${cspSource}; script-src 'nonce-${nonce}' ${cspSource}; img-src ${cspSource} data:; font-src ${cspSource};">`
     );
-    return html;
+    return injectThemeAttributes(html, themeHub.settings);
   }
 }

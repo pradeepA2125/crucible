@@ -86,6 +86,9 @@ describe("settings mutation wiring", () => {
     const SettingsPanel = execute(`${declaration.getText(panelTree)}\nreturn SettingsPanel;`, {
       vscode: { window: { createWebviewPanel: () => panel }, ViewColumn: { One: 1 }, Uri: { joinPath: () => ({}) } },
       createSettingsHandler, exports: {},
+      // The panel subscribes to theme changes in open() (theming Phase 1).
+      themeHub: { settings: { appearance: "vscode", accent: "blue" }, subscribe: () => () => {} },
+      injectThemeAttributes: (html: string) => html,
     }) as new (...args: unknown[]) => { open(): void; buildHtml(): string; buildDeps(): unknown };
     const instance = new SettingsPanel({}, {}, "", {}, () => "", callback);
     instance.buildHtml = () => "";

@@ -4,6 +4,7 @@ import type { SettingsProvider } from "./controller.js";
 import type { TaskMode } from "./types.js";
 import { normalizeBackendUrl } from "./backend-auth/backend-gate.js";
 import type { ProbeResult } from "./runtime/probe-health.js";
+import { normalizeThemeSettings, type ThemeSettings } from "./theme-settings.js";
 
 const DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:8000";
 const DEFAULT_MODE: TaskMode = "project_edit";
@@ -67,4 +68,10 @@ export async function checkBackendHealth(
   baseUrl: string, probe: (port: number) => Promise<ProbeResult>,
 ): Promise<ProbeResult> {
   return probe(normalizeBackendUrl(baseUrl).port);
+}
+
+/** crucible.appearance + crucible.accent, normalized (unknown values → defaults). */
+export function readThemeConfig(): ThemeSettings {
+  const cfg = vscode.workspace.getConfiguration("crucible");
+  return normalizeThemeSettings({ appearance: cfg.get("appearance"), accent: cfg.get("accent") });
 }

@@ -33,10 +33,20 @@ import { VscodeSessionStore } from "./vscode-session-store.js";
 import {
   checkBackendHealth,
   isBackendBaseUrlUserSet,
+  readThemeConfig,
   VscodeSettingsProvider,
 } from "./settings.js";
+import { themeHub } from "./theme-settings.js";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  themeHub.update(readThemeConfig());
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("crucible.appearance") || event.affectsConfiguration("crucible.accent")) {
+        themeHub.update(readThemeConfig());
+      }
+    }),
+  );
   const settings = new VscodeSettingsProvider();
   const sessionStore = new VscodeSessionStore(context.workspaceState);
 

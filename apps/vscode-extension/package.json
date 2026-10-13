@@ -213,6 +213,25 @@
           "type": "boolean",
           "default": true,
           "description": "Enable the cross-encoder reranker for memory recall (requires crucible.memory.enabled). Requires a managed restart to take effect."
+        },
+        "crucible.appearance": {
+          "type": "string",
+          "enum": ["vscode", "dark", "light"],
+          "enumDescriptions": [
+            "Match the current VS Code colour theme",
+            "Crucible Dark",
+            "Crucible Light"
+          ],
+          "default": "vscode",
+          "scope": "application",
+          "description": "Colours for Crucible's panels. High-contrast VS Code themes always win."
+        },
+        "crucible.accent": {
+          "type": "string",
+          "enum": ["blue", "violet", "ember"],
+          "default": "blue",
+          "scope": "application",
+          "description": "Accent colour for Crucible's panels (links, your messages, the send button)."
         }
       }
     }

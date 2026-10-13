@@ -865,6 +865,7 @@ git commit -m "feat(webview): resolve theme from settings and VS Code body class
 - Modify: `apps/vscode-extension/src/settings.ts` (add `readThemeConfig`)
 - Modify: `apps/vscode-extension/src/chat-panel.ts`, `src/settings-panel.ts`, `src/setup-panel.ts`, `src/memory-panel.ts`
 - Modify: `apps/vscode-extension/src/extension.ts`
+- Modify: `apps/vscode-extension/test/model-auth-refresh.test.ts` (bind the new names)
 - Test: `apps/vscode-extension/test/theme-settings.test.ts`
 
 **Interfaces:**
@@ -1096,10 +1097,18 @@ In each panel's existing `onDidDispose` handler, add before `this.panel = null;`
 
 (`ChatPanel` registers its dispose handler inside `registerHandlers()`; find it with `grep -n "onDidDispose" src/chat-panel.ts`.)
 
+`test/model-auth-refresh.test.ts` runs `SettingsPanel`'s source text through `new Function` with explicit bindings, so it must also bind the two new names. In its `"forwards the standalone panel callback to its real handler factory"` case, add to the `execute(…)` bindings, after `createSettingsHandler, exports: {},`:
+
+```ts
+      // The panel subscribes to theme changes in open() (theming Phase 1).
+      themeHub: { settings: { appearance: "vscode", accent: "blue" }, subscribe: () => () => {} },
+      injectThemeAttributes: (html: string) => html,
+```
+
 - [ ] **Step 8: Typecheck and run all host tests**
 
 Run: `cd apps/vscode-extension && npx tsc -p tsconfig.json --noEmit && npx vitest run`
-Expected: no type errors; all tests pass.
+Expected: no type errors. All tests pass **except** the three `model-auth-refresh.test.ts` › "host catalog and auth refresh" cases (`claudeCatalogEpoch is not defined`), which already fail on `main` at `437fa77` and are not this plan's to fix.
 
 - [ ] **Step 9: Commit**
 

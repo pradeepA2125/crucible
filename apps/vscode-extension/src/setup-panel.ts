@@ -7,11 +7,13 @@ import type { RuntimeManager } from "./runtime/vscode-runtime.js";
 import { buildClaudeDeps } from "./claude-deps.js";
 import { buildChatGPTDeps } from "./chatgpt-deps.js";
 import { createSetupHandler, type SetupDeps, type SetupInMsg } from "./setup-data.js";
+import { injectThemeAttributes, themeHub } from "./theme-settings.js";
 
 /** First-run setup wizard: install runtime, pick a provider, start the backend.
  * Loads the webview-ui `setup` Vite entry (dist/setup.html). Mirrors memory-panel.ts. */
 export class SetupPanel {
   private panel: vscode.WebviewPanel | null = null;
+  private themeSubscription: (() => void) | null = null;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -37,11 +39,17 @@ export class SetupPanel {
       }
     );
     this.panel.webview.html = this.buildHtml();
+    this.themeSubscription?.();
+    this.themeSubscription = themeHub.subscribe((message) => {
+      void this.panel?.webview.postMessage(message);
+    });
     const handle = createSetupHandler(this.buildDeps(), (msg) => this.panel?.webview.postMessage(msg));
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
       void handle(msg as SetupInMsg);
     });
     this.panel.onDidDispose(() => {
+      this.themeSubscription?.();
+      this.themeSubscription = null;
       this.panel = null;
     });
   }
@@ -140,6 +148,6 @@ export class SetupPanel {
       "<head>",
       `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${cspSource}; script-src 'nonce-${nonce}' ${cspSource}; img-src ${cspSource} data:; font-src ${cspSource};">`
     );
-    return html;
+    return injectThemeAttributes(html, themeHub.settings);
   }
 }

@@ -6,12 +6,14 @@ import type { RuntimeManager } from "./runtime/vscode-runtime.js";
 import { createSettingsHandler, type SettingsInMsg, type SettingsMutationHandler } from "./settings-data.js";
 import { buildSettingsDeps } from "./settings-deps.js";
 import type { SettingsSectionId } from "./settings-sections.js";
+import { injectThemeAttributes, themeHub } from "./theme-settings.js";
 
 /** Settings panel: provider hot-swap, MCP server management, skills toggles, runtime
  * versions + restart. Loads the webview-ui `settings` Vite entry (dist/settings.html).
  * Mirrors setup-panel.ts/memory-panel.ts. */
 export class SettingsPanel {
   private panel: vscode.WebviewPanel | null = null;
+  private themeSubscription: (() => void) | null = null;
   // Section to deep-link to once the freshly-created webview signals readiness
   // (its `settings/load` mount message). Posting before mount would race the
   // webview's own message listener; deferring makes the jump reliable.
@@ -48,6 +50,10 @@ export class SettingsPanel {
       }
     );
     this.panel.webview.html = this.buildHtml();
+    this.themeSubscription?.();
+    this.themeSubscription = themeHub.subscribe((message) => {
+      void this.panel?.webview.postMessage(message);
+    });
     const handle = createSettingsHandler(
       this.buildDeps(), (msg) => this.panel?.webview.postMessage(msg), this.afterMutation,
     );
@@ -62,6 +68,8 @@ export class SettingsPanel {
       void handle(inbound);
     });
     this.panel.onDidDispose(() => {
+      this.themeSubscription?.();
+      this.themeSubscription = null;
       this.panel = null;
       this.pendingSection = null;
     });
@@ -103,6 +111,6 @@ export class SettingsPanel {
       "<head>",
       `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${cspSource}; script-src 'nonce-${nonce}' ${cspSource}; img-src ${cspSource} data:; font-src ${cspSource};">`
     );
-    return html;
+    return injectThemeAttributes(html, themeHub.settings);
   }
 }
