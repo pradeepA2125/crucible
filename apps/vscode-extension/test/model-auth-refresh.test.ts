@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const source = readFileSync(new URL("../src/extension.ts", import.meta.url), "utf8");
 const tree = ts.createSourceFile("extension.ts", source, ts.ScriptTarget.Latest, true);
-const names = new Set(["chatgptCatalogCache", "chatgptCatalogEpoch", "invalidateChatgptCatalog", "chatgptCatalog", "afterSettingsMutation"]);
+const names = new Set(["chatgptCatalogCache", "chatgptCatalogEpoch", "invalidateChatgptCatalog", "chatgptCatalog", "afterSettingsMutation", "claudeCatalogEpoch", "claudeCatalogCache"]);
 const statements: string[] = [];
 function visit(node: ts.Node): void {
   if (ts.isVariableStatement(node) && node.declarationList.declarations.some((d) => names.has(d.name.getText(tree)))) {

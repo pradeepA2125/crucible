@@ -127,7 +127,7 @@ export function ModeGate({ taskId, payload }: Props) {
               }
             }}
             placeholder="Chat about this approach…"
-            className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1 text-caption text-text-1 placeholder:text-text-2"
+            className="mt-1 w-full rounded-control border border-border bg-transparent px-2 py-1 text-caption text-text-1 placeholder:text-text-2"
           />
         </div>
       ) : (

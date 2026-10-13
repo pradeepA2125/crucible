@@ -24,7 +24,7 @@ interface Props {
 /**
  * CardShell — shared structural primitive for all card-style messages and gates.
  *
- * Produces: rounded card, inset hairline + soft drop-shadow, an icon+title header
+ * Produces: rounded-control card, inset hairline + soft drop-shadow, an icon+title header
  * (clickable toggle when expandable=true), and a children slot for the body.
  * All styling is driven by CSS vars so callers can override border/header tint.
  */
@@ -84,9 +84,7 @@ export function CardShell({
 
   return (
     <div
-      className={[
-        "rounded-card border overflow-hidden bg-surface",
-      ].join(" ")}
+      className="rounded-card border overflow-hidden bg-surface"
       style={{
         borderColor: borderColor ?? "var(--color-border)",
         transition: "border-color 0.2s",

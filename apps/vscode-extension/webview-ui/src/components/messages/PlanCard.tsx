@@ -129,8 +129,8 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
         <div
           className={[
             "px-3 py-2 text-meta text-text-2 leading-relaxed",
-            "[&_code]:font-mono [&_code]:text-code [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:rounded",
-            "[&_pre]:font-mono [&_pre]:bg-surface-2 [&_pre]:rounded [&_pre]:p-2 [&_pre]:overflow-x-auto",
+            "[&_code]:font-mono [&_code]:text-code [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:rounded-control",
+            "[&_pre]:font-mono [&_pre]:bg-surface-2 [&_pre]:rounded-control [&_pre]:p-2 [&_pre]:overflow-x-auto",
             "[&_p]:mb-1.5 [&_p:last-child]:mb-0",
             "[&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-1.5",
             "[&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-1.5",

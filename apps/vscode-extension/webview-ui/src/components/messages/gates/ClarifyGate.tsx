@@ -54,7 +54,7 @@ export function ClarifyGate({ taskId, payload }: Props) {
           {/* free-text escape — always present */}
           <div className="flex items-center gap-1.5 pt-1">
             <input
-              className="flex-1 rounded border border-border bg-surface-2 px-2 py-1 text-meta text-text-1 outline-none"
+              className="flex-1 rounded-control border border-border bg-surface-2 px-2 py-1 text-meta text-text-1 outline-none"
               placeholder="Something else… (type your answer)"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}

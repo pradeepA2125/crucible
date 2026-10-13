@@ -65,7 +65,7 @@ export function UserMessage({
     <div className="group relative flex max-w-[80%] flex-col items-end gap-1.5 self-end">
       {onRewind && (
         <button
-          className="absolute -left-6 top-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
+          className="absolute -left-6 top-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
           title="Rewind to here"
           aria-label="Rewind to here"
           onClick={onRewind}

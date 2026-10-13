@@ -62,7 +62,7 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
           <textarea aria-label="Feedback for the team" rows={2} value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
             placeholder="What should the team change? (sends the plan back for another round)"
-            className="w-full resize-y rounded border border-border bg-panel px-2 py-1 text-meta" />
+            className="w-full resize-y rounded-control border border-border bg-panel px-2 py-1 text-meta" />
           <div className="flex flex-wrap items-center gap-1.5">
             <BtnPrimary onClick={() => decide("approve")}>Approve</BtnPrimary>
             <BtnGhost onClick={() => decide("feedback")}>Send feedback</BtnGhost>

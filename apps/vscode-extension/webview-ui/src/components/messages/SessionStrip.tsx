@@ -63,9 +63,6 @@ export function SessionStrip({ items, transcripts, onExpand }: Props) {
                   className="block h-[8px] w-[8px] flex-shrink-0 rounded-full"
                   style={{
                     background: s.status === "running" ? "var(--color-green)" : "var(--color-text-4)",
-                    ...(s.status === "running"
-                      ? { boxShadow: "0 0 0 3px var(--accent-bg-2)" }
-                      : {}),
                   }}
                 />
                 <code className="min-w-0 flex-1 truncate text-caption text-text-2">{s.command}</code>
@@ -78,7 +75,7 @@ export function SessionStrip({ items, transcripts, onExpand }: Props) {
                 </span>
               </button>
               {isOpen && (
-                <div className="mx-3 mb-2 rounded border border-border bg-surface-2 text-caption">
+                <div className="mx-3 mb-2 rounded-control border border-border bg-surface-2 text-caption">
                   {transcript === undefined && (
                     <div className="px-2 py-1.5 text-text-3">Loading…</div>
                   )}
@@ -95,7 +92,7 @@ export function SessionStrip({ items, transcripts, onExpand }: Props) {
                           <div className="mb-0.5">stdin sent:</div>
                           <div className="flex flex-wrap gap-1">
                             {transcript.stdin_history.map((e, i) => (
-                              <code key={i} className="rounded bg-surface-3 px-1 font-mono">
+                              <code key={i} className="rounded-control bg-surface-3 px-1 font-mono">
                                 {esc(e.chars)}
                               </code>
                             ))}

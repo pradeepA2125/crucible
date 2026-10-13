@@ -70,7 +70,7 @@ export function FileRow({ entry }: Props) {
             shadowPath: entry.temp_path ?? "",
           })
         }
-        className="flex-shrink-0 w-[22px] h-[22px] rounded flex items-center justify-center text-text-3 bg-transparent border border-transparent cursor-pointer hover:border-border-strong hover:text-text-2 transition-colors duration-150"
+        className="flex-shrink-0 w-[22px] h-[22px] rounded-control flex items-center justify-center text-text-3 bg-transparent border border-transparent cursor-pointer hover:border-border-strong hover:text-text-2 transition-colors duration-150"
       >
         <Icon name="file" size={11} />
       </button>

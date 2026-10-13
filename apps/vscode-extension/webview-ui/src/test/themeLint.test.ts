@@ -19,7 +19,7 @@ const COLOR_ONLY = new Set(["setup/StepRail.tsx", "setup/SetupApp.tsx", "memory/
 
 const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|rgba?\(/;
 const TW_SIZE = /\btext-\[\d|\btext-(xs|sm|base|lg|xl|2xl)\b/;
-const TW_RADIUS = /\brounded-\[\d|\brounded-(sm|md|lg|xl|2xl|3xl)\b/;
+const TW_RADIUS = /\brounded(?![\w-])|\brounded-\[\d|\brounded-(sm|md|lg|xl|2xl|3xl)\b/;
 const INLINE_SIZE = /\b(fontSize|borderRadius)\s*:\s*(\d|["'`]\d)/;
 const CSS_SIZE = /\b(font-size|border-radius)\s*:\s*(?!\s|var\()[^;]*\d/;
 
@@ -49,14 +49,14 @@ export const DECORATION_SCOPE = [
   "components/shared/buttons.tsx", "components/shared/Switch.tsx", "components/shared/ThinkingBlock.tsx",
   "components/shared/ToolDetailPanel.tsx", "components/shared/CardShell.tsx", "components/shared/MarkdownContent.tsx",
   "components/messages/TodoCard.tsx", "components/messages/PlanCard.tsx", "components/messages/DiffCard.tsx",
-  "components/messages/ErrorCard.tsx", "components/messages/UserMessage.tsx",
+  "components/messages/ErrorCard.tsx", "components/messages/UserMessage.tsx", "components/messages/SessionStrip.tsx",
   "components/messages/gates/ClarifyGate.tsx", "components/messages/gates/CommandGate.tsx",
   "components/messages/gates/EditGate.tsx", "components/messages/gates/McpGate.tsx",
   "components/messages/gates/ModeGate.tsx", "components/messages/gates/ScopeGate.tsx",
   "components/messages/gates/StepGate.tsx", "components/messages/gates/TeamPlanGate.tsx",
   "components/messages/gates/ValidationGate.tsx",
 ];
-const DECORATION = /linear-gradient|radial-gradient|--accent-glow|shimmer-bg|0_10px_24px/;
+const DECORATION = /linear-gradient|radial-gradient|--accent-glow|shimmer-bg|0_10px_24px|boxShadow\s*:/;
 
 describe("transcript decoration lint", () => {
   for (const file of DECORATION_SCOPE) {

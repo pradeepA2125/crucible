@@ -44,7 +44,6 @@ function StatusPip({ status }: { status: Status }) {
           className="block h-[9px] w-[9px] rounded-full"
           style={{
             background: "var(--color-accent)",
-            boxShadow: "0 0 0 3px var(--accent-bg-2)",
             animation: "pulse 1.6s ease-in-out infinite",
           }}
         />

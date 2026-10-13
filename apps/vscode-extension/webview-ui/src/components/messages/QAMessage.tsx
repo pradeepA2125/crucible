@@ -42,10 +42,10 @@ export function QAMessage({ content, thinkingLog }: Props) {
         onClick={handleCopy}
         className={[
           "absolute top-0 right-0",
-          "opacity-0 group-hover:opacity-100 transition-opacity duration-150",
-          "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption text-text-3 cursor-pointer",
+          "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity duration-150",
+          "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-control text-caption text-text-3 cursor-pointer",
           "bg-surface-2 border border-border-strong",
-          "hover:text-text hover:border-[var(--accent-brd)]",
+          "hover:text-text hover:border-[var(--accent-brd)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]",
         ].join(" ")}
         aria-label="Copy message"
       >

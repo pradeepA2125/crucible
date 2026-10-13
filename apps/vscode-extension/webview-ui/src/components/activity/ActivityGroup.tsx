@@ -81,7 +81,7 @@ export const ActivityGroup = memo(function ActivityGroup({ steps }: { steps: Act
         <span className="shrink-0">{open ? "▾" : "›"}</span>
       </button>
       {open && (
-        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto"
+        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto overscroll-contain"
           style={{ maxHeight: "320px" }}>
           {steps.map((step, i) => step.type === "tools" ? <ToolsStep key={i} events={step.events} />
             : step.type === "edit" ? <EditRow key={i} step={step} />

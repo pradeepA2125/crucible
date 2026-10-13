@@ -174,7 +174,7 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
                   setPrefixCount(Math.max(1, Math.min(tokens.length || 1, Number(e.target.value) || 1)));
                 }}
                 onClick={(e) => { e.stopPropagation(); setScope("prefix"); }}
-                className="w-10 bg-surface-2 border border-border-strong rounded px-1 py-0.5 text-caption text-text text-center outline-none"
+                className="w-10 bg-surface-2 border border-border-strong rounded-control px-1 py-0.5 text-caption text-text text-center outline-none"
               />{" "}
               token(s)
             </span>

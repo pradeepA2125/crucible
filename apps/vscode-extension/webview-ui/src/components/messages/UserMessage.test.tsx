@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { UserMessage } from "./UserMessage";
 import { vscode } from "../../vscodeApi";
 
@@ -35,14 +36,14 @@ describe("UserMessage bubble (spec §2)", () => {
     expect((bubble.parentElement as HTMLElement).className).toContain("max-w-[80%]");
   });
 
-  it("renders a mention as a real button, readable on the accent fill, opening with the keyboard (Review Focus 4)", () => {
+  it("renders a mention as a real button, readable on the accent fill, opening with the keyboard (Review Focus 4)", async () => {
     render(<UserMessage content="look at @src/a.ts please" mentionedFiles={["src/a.ts"]} />);
     const mention = screen.getByRole("button", { name: "@src/a.ts" });
     expect(mention.tagName).toBe("BUTTON");
     expect(mention.style.color).toBe("var(--on-accent)");
     expect(mention.style.textDecoration).toBe("underline");
     mention.focus();
-    fireEvent.click(mention);
+    await userEvent.keyboard("{Enter}");
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "openFile", path: "src/a.ts" });
   });
 

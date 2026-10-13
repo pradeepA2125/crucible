@@ -33,11 +33,10 @@ const WAITING_STATUSES = new Set([
 ]);
 
 /**
- * The transcript as grouped items. Live pills (the streaming bubble's finished tool events)
- * join the grouping as a trailing pills-only message, so work shown live sits in the very
+ * The transcript as grouped items. Live tool steps (the streaming bubble's finished tool events)
+ * join the grouping as a trailing tools-only message, so work shown live sits in the very
  * group it is sealed into (same index, same key) and nothing jumps when the bubble seals.
- * `renderTail` draws the live elements after the transcript and learns whether the last item
- * already continues an agent run (so the tail must not repeat the avatar).
+ * `renderTail` draws the live elements after the transcript.
  */
 export function TranscriptItems({ messages, turnActive, turnRunning = false, queuedIds, planVersions, onRewindRequest, streamingToolEvents, renderTail }: {
   messages: ChatMsg[]; turnActive: boolean; queuedIds: string[];

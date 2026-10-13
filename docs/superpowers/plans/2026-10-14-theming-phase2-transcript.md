@@ -86,7 +86,7 @@ All paths below are relative to `apps/vscode-extension/` unless written in full.
   - CSS tokens `--diff-add-bg` and `--diff-del-bg`.
   - The CSS class `.shimmer-text` (an animated verb; static under reduced motion).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `webview-ui/src/test/typeScale.test.ts`:
 
@@ -127,12 +127,12 @@ describe("Phase 2 scale utilities (spec §1 type and radius scales)", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run src/test/typeScale.test.ts`
 Expected: FAIL. The utilities, tokens and class are missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `webview-ui/src/index.css`, inside the existing `@theme { … }` block, add after `--color-code: var(--accent);`:
 
@@ -179,12 +179,12 @@ and inside `:root[data-theme="hc"][data-accent] { … }`, before its closing bra
   --diff-del-bg: transparent;
 ```
 
-- [ ] **Step 4: Run the tests and the build**
+- [x] **Step 4: Run the tests and the build**
 
 Run: `npx vitest run src/test/typeScale.test.ts src/test/themeContrast.test.ts src/test/themeLint.test.ts && npx vite build`
 Expected: PASS, and the build succeeds. `grep -o "font-size:var(--text-caption)" dist/assets/*.css` returns nothing yet (no utility is used), which is fine.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add webview-ui/src/index.css webview-ui/src/styles/themes.css webview-ui/src/test/typeScale.test.ts
@@ -208,7 +208,7 @@ git commit -m "feat(webview): type and radius scale utilities, diff tints, live-
   - `MessageRow` without `showAvatar`.
   - The transcript column is the element with `data-testid="transcript-column"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Rename `components/messages/QAMessage.avatar.test.tsx` to `components/messages/QAMessage.test.tsx` and replace its body:
 
@@ -266,12 +266,12 @@ describe("transcript column (spec §2)", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `npx vitest run src/components/messages src/components/ThreadView.test.tsx src/test/thread-activity.test.tsx`
 Expected: FAIL. The avatar elements still render, and no `transcript-column` exists.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `components/messages/QAMessage.tsx`:
 - Remove the `Avatar` import, the `showAvatar` prop and its doc comment.
@@ -333,12 +333,12 @@ The existing `[&>*]:flex-shrink-0` comment explains why children must not shrink
 
 Delete `components/shared/Avatar.tsx`. Then confirm nothing imports it: `grep -rn "shared/Avatar" src` must return nothing. The team components import their own `teams/Avatar`.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `npx vitest run && npx tsc --noEmit`
 Expected: PASS. If a test outside the three files above still asserts an avatar or spacer, change it to assert their absence, the same way.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A webview-ui/src
@@ -363,7 +363,7 @@ git commit -m "feat(webview): transcript in a centered 760px column; agent rows 
   - `describeTool(event)` keeps its exact present-tense output.
   - `ActivityLine({ event }: { event: ToolEventView })`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `webview-ui/src/transcript/summarizeActivity.test.ts`. If the file already exists, append the `describe` blocks.
 
@@ -511,12 +511,12 @@ In `test/agentTranscript.test.tsx` `"renders live pills and a loading state"`:
 
 Delete `test/ToolTrack.test.tsx` and `test/tool-track-layout.test.ts`. They test the deleted components.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `npx vitest run src/transcript src/components/activity src/test/DiffCard.test.tsx src/test/agentTranscript.test.tsx`
 Expected: FAIL. `toolLine` and `ActivityLine` don't exist yet, and the pills still render.
 
-- [ ] **Step 3: Implement `toolLine` and rebuild `describeTool` on it**
+- [x] **Step 3: Implement `toolLine` and rebuild `describeTool` on it**
 
 In `transcript/summarizeActivity.ts`, replace the whole `describeTool` function with:
 
@@ -577,7 +577,7 @@ export function describeTool(event: ToolEventView): string {
 
 `basename` already exists at the top of the file. An empty `read_file` path makes `basename("")` return `""`, which is fine.
 
-- [ ] **Step 4: Create `ActivityLine`**
+- [x] **Step 4: Create `ActivityLine`**
 
 Create `webview-ui/src/components/activity/ActivityLine.tsx`:
 
@@ -610,7 +610,7 @@ export function ActivityLine({ event }: { event: ToolEventView }) {
 }
 ```
 
-- [ ] **Step 5: Use it everywhere the track was used**
+- [x] **Step 5: Use it everywhere the track was used**
 
 **`components/activity/ActivityGroup.tsx`:**
 - Replace `import { ToolTrack } from "../shared/ToolTrack";` with `import { ActivityLine } from "./ActivityLine";`.
@@ -678,12 +678,12 @@ export function ActivityLine({ event }: { event: ToolEventView }) {
 
 **Delete** `components/shared/ToolTrack.tsx`, `components/shared/ToolPill.tsx` and `components/shared/tool-track-layout.ts`. Then confirm nothing imports them: `grep -rnE "ToolTrack|ToolPill|tool-track-layout" src` must return nothing.
 
-- [ ] **Step 6: Run the tests, typecheck and build**
+- [x] **Step 6: Run the tests, typecheck and build**
 
 Run: `npx vitest run && npx tsc --noEmit && npx vite build`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A webview-ui/src
@@ -702,7 +702,7 @@ git commit -m "feat(webview): one activity line per tool step; remove the pill t
 - Consumes: `text-prose`, `rounded-control` (Task 1).
 - Produces: `MarkdownContent({ content })` with no box. `MARKDOWN_WRAP_CLASSES` and `MARKDOWN_TABLE_CLASSES` stay exported.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `webview-ui/src/test/MarkdownContent.test.tsx`. Keep the existing imports; add `render` from `@testing-library/react` if missing.
 
@@ -739,12 +739,12 @@ describe("MarkdownContent as plain prose (spec §2)", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run src/test/MarkdownContent.test.tsx`
 Expected: FAIL. The box style is present and the classes differ.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Replace the `MarkdownContent` component (keep the exports above it) with:
 
@@ -784,12 +784,12 @@ export function MarkdownContent({ content }: Props) {
 
 `MARKDOWN_TABLE_CLASSES` contains `[&_table]:text-[11px]`. Change it to `[&_table]:text-meta` (PlanCard shares it).
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `npx vitest run src/test/MarkdownContent.test.tsx src/test/markdownWrapping.test.tsx src/components/messages`
 Expected: PASS. If `markdownWrapping.test.tsx` asserted the old box, change it to assert the wrap classes only.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add webview-ui/src/components/shared/MarkdownContent.tsx webview-ui/src/test/MarkdownContent.test.tsx webview-ui/src/test/markdownWrapping.test.tsx
@@ -808,7 +808,7 @@ git commit -m "feat(webview): agent answers as unboxed prose"
 - Consumes: `--accent-fill`, `--on-accent`, `text-body`, `rounded-composer` (Task 1).
 - Produces: the same `UserMessage` props as today.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `webview-ui/src/components/messages/UserMessage.test.tsx`. Keep its existing imports; it already mocks `vscodeApi`. Check with `grep -n "vi.mock" src/components/messages/UserMessage.test.tsx` and add `vi.mock("../../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));` plus `import { vscode } from "../../vscodeApi";` if missing.
 
@@ -845,12 +845,12 @@ describe("UserMessage bubble (spec §2)", () => {
 });
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `npx vitest run src/components/messages/UserMessage.test.tsx`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `UserMessage.tsx`, make four changes.
 
@@ -901,12 +901,12 @@ In `UserMessage.tsx`, make four changes.
 
 In the image tiles, change `rounded-[10px]` to `rounded-card` (twice) and `text-[10px]` to `text-caption`.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `npx vitest run src/components/messages src/test/queuedMessage.test.tsx src/test/image-previews.test.tsx`
 Expected: PASS. If `queuedMessage.test.tsx` asserted the old tag colour, assert the `queued-tag` text only.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add webview-ui/src/components/messages/UserMessage.tsx webview-ui/src/components/messages/UserMessage.test.tsx webview-ui/src/test/queuedMessage.test.tsx
@@ -925,7 +925,7 @@ git commit -m "feat(webview): accent-filled user bubble; mentions are real butto
 - Consumes: `FileChange` (`transcript/groupTranscript.ts`); `DiffPanes`; `rounded-card`, `text-body`, `text-meta`, `--diff-add`/`--diff-del`.
 - Produces: `TurnChanges({ files })`, unchanged signature. `data-testid="turn-changes"` is kept.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `components/activity/TurnChanges.test.tsx`, reusing its imports and mocks:
 
@@ -960,12 +960,12 @@ describe("TurnChanges card (spec §2)", () => {
 
 Add `FileChange` to the imports (`import type { FileChange } from "../../transcript/groupTranscript";`), and `fireEvent` if missing.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `npx vitest run src/components/activity/TurnChanges.test.tsx`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Replace `Row` and `TurnChanges` in `TurnChanges.tsx` (keep `sameFiles`):
 
@@ -1040,12 +1040,12 @@ export const TurnChanges = memo(function TurnChanges({ files }: { files: FileCha
 
 Add `import { Icon } from "../Icon";`.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `npx vitest run src/components/activity src/test/thread-activity.test.tsx`
 Expected: PASS. Existing `TurnChanges` tests that matched the old path text, `text-[var(--color-code)]` or `+N` spans may need their selectors updated to the new markup. Keep their intent: the open-file and diff-toggle behaviour are unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add webview-ui/src/components/activity/TurnChanges.tsx webview-ui/src/components/activity/TurnChanges.test.tsx
@@ -1063,7 +1063,7 @@ git commit -m "feat(webview): restyled changes card with folder/basename rows an
 **Interfaces:**
 - Consumes: `--accent-fill`, `--accent-fill-hover`, `--on-accent`, `--accent-bg`, `--surface-2`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `webview-ui/src/test/themeLint.test.ts`, add after the existing `describe`:
 
@@ -1096,12 +1096,12 @@ describe("transcript decoration lint", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run src/test/themeLint.test.ts`
 Expected: FAIL, listing the gradient, glow and card-shadow lines.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 | File | Change |
 |---|---|
@@ -1117,12 +1117,12 @@ Expected: FAIL, listing the gradient, glow and card-shadow lines.
 
 `MarkdownContent.tsx` and `UserMessage.tsx` are already flat after Tasks 4 and 5.
 
-- [ ] **Step 4: Run the tests and build**
+- [x] **Step 4: Run the tests and build**
 
 Run: `npx vitest run && npx vite build`
 Expected: PASS. If `test/components.test.tsx` or `src/test/Switch.test.tsx` asserted the gradient or glow, change them to assert `var(--accent-fill)`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A webview-ui/src
@@ -1140,7 +1140,7 @@ git commit -m "refactor(webview): flat transcript cards and controls — no grad
 **Interfaces:**
 - Consumes: the Task 1 utilities and the `--diff-*-bg` tokens.
 
-- [ ] **Step 1: Extend the lint scope so it fails**
+- [x] **Step 1: Extend the lint scope so it fails**
 
 In `webview-ui/src/test/themeLint.test.ts`, add the imports `import { readdirSync, statSync } from "node:fs";`, and append to the file:
 
@@ -1178,7 +1178,7 @@ The Phase 1 `LINT_SCOPE` and `COLOR_ONLY` entries stay as they are.
 Run: `npx vitest run src/test/themeLint.test.ts`
 Expected: FAIL, listing roughly 150 literal sizes, radii and colours across the transcript components.
 
-- [ ] **Step 2: Run the one-off codemod**
+- [x] **Step 2: Run the one-off codemod**
 
 From `apps/vscode-extension/webview-ui/src`, run this script once. Don't commit it.
 
@@ -1213,7 +1213,7 @@ print("files changed:", changed)
 EOF
 ```
 
-- [ ] **Step 3: Hand-edit what the codemod can't**
+- [x] **Step 3: Hand-edit what the codemod can't**
 
 Run `npx vitest run src/test/themeLint.test.ts` and fix each remaining offender. These were measured at plan time:
 
@@ -1230,12 +1230,12 @@ Run `npx vitest run src/test/themeLint.test.ts` and fix each remaining offender.
 
 Any other offender left after the codemod is an unmapped size (for example `text-[8px]` → `text-caption`) or radius (`rounded-[14px]` → `rounded-composer`). Map it to the nearest scale step and record it in the ledger.
 
-- [ ] **Step 4: Run everything**
+- [x] **Step 4: Run everything**
 
 Run: `npx vitest run && npx tsc --noEmit && npx vite build`
 Expected: PASS. Tests that asserted a literal class (for example `text-[11px]`) are updated to the scale class they now carry. Keep each test's intent.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A webview-ui/src
@@ -1248,13 +1248,13 @@ git commit -m "refactor(webview): transcript components on the type and radius s
 
 **Files:** none new; this task verifies.
 
-- [ ] **Step 1: Build and install from the worktree (extension only)**
+- [x] **Step 1: Build and install from the worktree (extension only)**
 
 ```bash
 bash scripts/dev/install-local.sh --no-backend
 ```
 
-- [ ] **Step 2: Restart VS Code with CDP**
+- [x] **Step 2: Restart VS Code with CDP**
 
 Back up `~/Library/Application Support/Code/User/settings.json` first. Quit VS Code (`osascript -e 'quit app "Visual Studio Code"'`), reopen it with `open -a "Visual Studio Code" --args --remote-debugging-port=9335 "<repo>"`, and open the Crucible chat on a thread with tool activity, an edit and a mention.
 
@@ -1270,7 +1270,7 @@ Capture `Page.captureScreenshot` at side-panel width and at editor-tab width, in
 
 Run `node scripts/dev/cdp-theme-check.mjs --require "Crucible Chat"`; it must still pass. Send one live message and confirm the transient line shimmers only its verb. Then emulate reduced motion over CDP (`Emulation.setEmulatedMedia` with `prefers-reduced-motion: reduce`) and confirm the verb is static.
 
-- [ ] **Step 4: Audit**
+- [x] **Step 4: Audit**
 
 Invoke `web-design-guidelines` on:
 - `components/activity/{ActivityLine,ActivityGroup,TransientActivity,TurnChanges}.tsx`
@@ -1280,7 +1280,7 @@ Invoke `web-design-guidelines` on:
 
 Fix each finding test-first, or record why it's kept in the fix commit message.
 
-- [ ] **Step 5: Restore and commit**
+- [x] **Step 5: Restore and commit**
 
 Restore any `settings.json` lines the run added. Commit any audit fixes:
 
@@ -1306,3 +1306,34 @@ git commit -m "fix(webview): Phase 2 audit fixes"
 - **Spec drift:** spec §2 says "Gates and cards align to the column edge". With avatars gone, every item is a full-width column child, so this holds with no extra work.
 - **Deferred to Phase 3:** composer, approval mode, effort slider, WorkBar restyle, settings gear move, and `ChatSettingsOverlay` focus management.
 - **Names used consistently:** `toolLine`, `ActivityLine`, `transcript-column`, `user-bubble`, `turn-changes-totals`, `DECORATION_SCOPE`, `PHASE2_SCOPE`, `.shimmer-text`, `--diff-add-bg`/`--diff-del-bg`, `rounded-card`/`rounded-control`/`rounded-composer`, `text-caption`/`text-meta`/`text-body`/`text-prose`.
+
+## Codex continuation — 14 October 2026
+
+Claude session `8cd8dc9f-b5bc-436a-bd6f-6a67840f4aa3` stopped at Task 3 after committing Tasks 1 and 2. Codex resumed the existing `dryrun/theming-phase2` worktree and implemented Tasks 3–8. No backend or protocol changes were made.
+
+### Plan corrections and review fixes
+
+- The removed `ToolPill` also had coverage in `test/components.test.tsx`; its obsolete tests were removed and AgentRow assertions migrated to activity lines. Obsolete global geometry mocks were removed from `test/setup.ts`.
+- Tool details now tolerate null arguments, not just the collapsed line. A regression test opens that case.
+- The new tool disclosure has a stable `aria-controls` target and visible focus. Enter-key tests exercise tool details and user mentions. Copy actions appear on keyboard focus as well as hover. Expanded activity boxes contain scrolling.
+- Long verbs can shrink in narrow panels; long user mentions and streaming answers wrap. Streaming answers use the same prose scale and colour as completed answers.
+- Primary-button fill moved to Tailwind classes so its hover fill actually works; an inline background would override the planned hover utility.
+- Bare `rounded` classes were outside the approved radius scale too; they migrated to `rounded-control`, and lint now detects them. Remaining status-dot shadows were removed and decoration lint catches `boxShadow`.
+- The existing host auth-refresh test harness omitted `claudeCatalogEpoch` and `claudeCatalogCache`, causing three baseline failures. Its source-extraction list now includes those declarations; runtime behavior is unchanged.
+
+### Validation
+
+- `npm test`: **1,716 passed** (151 editor-client, 517 extension, 1,048 webview); one existing opt-in performance test skipped.
+- `npm run typecheck`: all workspaces passed.
+- `npm run build`: passed during the local installer run.
+- `transcriptLayout.test.tsx`: real Chrome checks at 280, 360 and 1,024px in VS Code fallback, dark, light and high contrast; verifies centering, column limits, long-content overflow, bubble width, neutral inline-code background and reduced-motion shimmer. All passed.
+- Installed the packaged local extension with `scripts/dev/install-local.sh --no-backend` and reloaded VS Code. The installer also refreshed the existing indexer binary; backend source remained the main checkout.
+- Visual check of the existing 158-message thread: unboxed prose, centered column, accent bubbles, hairline activity summaries and three-file changes previews rendered in the installed app.
+- Read-only `cdp-theme-check.mjs --require "Crucible Chat"`: passed in Match VS Code / dark / blue.
+- Accessibility audit applied the locally installed `web-design-guidelines` skill and current Vercel guidelines. In-scope keyboard, focus, overflow and motion findings were fixed. The settings-overlay focus work remains Phase 3 as specified.
+
+### Live-check limits and next work
+
+The installed chat was inspected at editor width in Match VS Code. Narrow widths, Crucible Light, high contrast and reduced motion were checked in the real-browser test fixture. A fresh live model turn and interactive theme/side-panel checks were not run: the user was actively using VS Code during the final UI pass. No appearance settings were changed. Those checks remain a short follow-up; the automated paths are covered.
+
+Phase 3 is next: the composer/model-menu/effort-slider restyle and backend-wide approval-mode contract described in spec §3. It has not been implemented in this continuation. Nothing was pushed.
