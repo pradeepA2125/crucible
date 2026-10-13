@@ -29,21 +29,49 @@ function isPillsOnly(msg: ChatMsg): boolean {
     && msg.metadata?.progress !== true && msg.metadata?.breadcrumb !== true;
 }
 
-export function isActivityMember(msg: ChatMsg): boolean {
-  return msg.type === "diff_card" || isOutcome(msg) || isPillsOnly(msg);
+// A pending diff card is interactive (Apply/Discard) and must stay a message; only resolved cards are activity.
+function isResolvedDiffCard(msg: ChatMsg): boolean {
+  return msg.type === "diff_card" && !!msg.metadata?.resolved;
 }
 
-function toStep(msg: ChatMsg): ActivityStep | null {
+export function isActivityMember(msg: ChatMsg): boolean {
+  return isResolvedDiffCard(msg) || isOutcome(msg) || isPillsOnly(msg);
+}
+
+// The live memory_compacted line is not persisted, so it must not split a group that
+// a reloaded thread (without it) would show as one.
+function isCompactionNotice(msg: ChatMsg): boolean {
+  return msg.role === "agent" && msg.metadata?.breadcrumb === true && msg.content.startsWith("🗜️");
+}
+
+function toSteps(msg: ChatMsg): ActivityStep[] {
   if (msg.type === "diff_card") {
-    return {
+    const steps: ActivityStep[] = [];
+    // A legacy inline-change card carries the pills of the run that produced it.
+    const events = toolEvents(msg);
+    if (events.length) steps.push({ type: "tools", events });
+    steps.push({
       type: "edit",
       entries: (msg.metadata?.diff_entries as DiffEntry[] | undefined) ?? [],
       applied: msg.metadata?.resolved !== "discarded",
-    };
+    });
+    return steps;
   }
-  if (isOutcome(msg)) return { type: "outcome", text: msg.content };
+  if (isOutcome(msg)) return [{ type: "outcome", text: msg.content }];
   const events = toolEvents(msg);
-  return events.length ? { type: "tools", events } : null;
+  return events.length ? [{ type: "tools", events }] : [];
+}
+
+// Keyed by the original message so a regroup hands MessageRow's memo the same object.
+const answerWithoutPills = new WeakMap<ChatMsg, ChatMsg>();
+function withoutPills(msg: ChatMsg): ChatMsg {
+  let split = answerWithoutPills.get(msg);
+  if (!split) {
+    const { tool_events: _te, thinking_log: _tl, ...rest } = msg.metadata ?? {};
+    split = { ...msg, metadata: rest };
+    answerWithoutPills.set(msg, split);
+  }
+  return split;
 }
 
 // Sums a turn's applied edits per file; a file that only ever had rejected edits is listed as not applied.
@@ -71,9 +99,13 @@ export function groupTranscript(messages: ChatMsg[]): TranscriptItem[] {
   let turnSteps: ActivityStep[] = [];
   let turnKey = "start";
 
+  // Notices that arrived inside a group render right after it, so the group stays whole.
+  let deferred: TranscriptItem[] = [];
   const closeGroup = () => {
     if (group && group.steps.length) items.push({ kind: "activity", key: group.key, steps: group.steps });
     group = null;
+    items.push(...deferred);
+    deferred = [];
   };
   const closeTurn = () => {
     closeGroup();
@@ -91,11 +123,16 @@ export function groupTranscript(messages: ChatMsg[]): TranscriptItem[] {
       return;
     }
     if (isActivityMember(msg)) {
-      const step = toStep(msg);
-      if (!step) return;
+      const steps = toSteps(msg);
+      if (!steps.length) return;
       group ??= { key: msg.id ?? `activity-${index}`, steps: [] };
-      group.steps.push(step);
-      turnSteps.push(step);
+      group.steps.push(...steps);
+      turnSteps.push(...steps);
+      return;
+    }
+    if (isCompactionNotice(msg)) {
+      if (group) deferred.push({ kind: "message", msg, index });
+      else items.push({ kind: "message", msg, index });
       return;
     }
     // An answer finalizes its in-flight pills message: the pills are activity, the text is a boundary after them.
@@ -107,8 +144,7 @@ export function groupTranscript(messages: ChatMsg[]): TranscriptItem[] {
       group.steps.push(step);
       turnSteps.push(step);
       closeGroup();
-      const { tool_events: _te, thinking_log: _tl, ...rest } = msg.metadata ?? {};
-      items.push({ kind: "message", msg: { ...msg, metadata: rest }, index });
+      items.push({ kind: "message", msg: withoutPills(msg), index });
       return;
     }
     closeGroup();

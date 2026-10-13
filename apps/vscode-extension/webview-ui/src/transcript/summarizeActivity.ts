@@ -16,6 +16,8 @@ const PHRASES: ReadonlyMap<string, { key: string; phrase: Phrase }> = new Map([
   ["web_fetch", { key: "fetch", phrase: { one: "fetched a page", many: (n) => `fetched ${n} pages` } }],
   ["query_graph", { key: "graph", phrase: { one: "queried the code graph once", many: (n) => `queried the code graph ${n} times` } }],
   ["dispatch_agents", { key: "agents", phrase: { one: "started an agent", many: (n) => `started ${n} agents` } }],
+  ["kill_session", { key: "kill", phrase: { one: "stopped a session", many: (n) => `stopped ${n} sessions` } }],
+  ["list_sessions", { key: "sessions", phrase: { one: "listed sessions", many: () => "listed sessions" } }],
   ["write_todos", { key: "todos", phrase: { one: "updated the todo list", many: () => "updated the todo list" } }],
 ]);
 
@@ -44,8 +46,8 @@ function describeEdits(edits: EditRecord[]): string {
   if (entries.length === 1) {
     const [[path, file]] = entries;
     return file.applied
-      ? `edited \`${basename(path)}\` +${file.additions} −${file.deletions}`
-      : `edited \`${basename(path)}\` (not applied)`;
+      ? `edited ${basename(path)} +${file.additions} −${file.deletions}`
+      : `edited ${basename(path)} (not applied)`;
   }
   const additions = entries.reduce((sum, [, file]) => sum + file.additions, 0);
   const deletions = entries.reduce((sum, [, file]) => sum + file.deletions, 0);
@@ -57,6 +59,12 @@ function describeBucket(bucket: ToolBucket): string {
   return total === 1 ? bucket.phrase.one : bucket.phrase.many(total);
 }
 
+// A group of nothing but edit outcomes (or only still-running tools) has no counts to report.
+function outcomeFallback(steps: ActivityStep[]): string {
+  const outcome = steps.find((step) => step.type === "outcome");
+  return outcome?.type === "outcome" ? outcome.text.replace(/^[✓✗]\s*/, "") : "Working…";
+}
+
 export function summarizeActivity(steps: ActivityStep[]): string {
   const buckets = new Map<string, ToolBucket>();
   const edits: EditRecord[] = [];
@@ -66,6 +74,8 @@ export function summarizeActivity(steps: ActivityStep[]): string {
   for (const step of steps) {
     if (step.type === "tools") {
       for (const event of step.events) {
+        // A tool still running has not happened yet: it belongs to the live line, not the summary.
+        if (!event.done) continue;
         if (event.isError) failed += 1;
         const known = PHRASES.get(event.tool);
         const key = known?.key ?? `tool:${event.tool}`;
@@ -95,6 +105,7 @@ export function summarizeActivity(steps: ActivityStep[]): string {
   const overflow = phrases.length > MAX_PHRASES + 1;
   const shown = overflow ? [...phrases.slice(0, MAX_PHRASES), `and ${phrases.length - MAX_PHRASES} more`] : phrases;
   const text = shown.join(", ");
+  if (!text) return outcomeFallback(steps);
   const sentence = text.charAt(0).toUpperCase() + text.slice(1);
   return failed ? `${sentence} · ${failed} failed` : sentence;
 }
@@ -104,9 +115,9 @@ export function describeTool(event: ToolEventView): string {
   const str = (value: unknown): string => (typeof value === "string" ? value : "");
   switch (event.tool) {
     case "read_file":
-      return `Reading \`${basename(str(args.path))}\``;
+      return `Reading ${basename(str(args.path))}`;
     case "list_directory":
-      return `Listing \`${str(args.path) || "."}\``;
+      return `Listing ${str(args.path) || "."}`;
     case "search_code":
     case "search_semantic": {
       const query = str(args.pattern) || str(args.query);
@@ -115,12 +126,18 @@ export function describeTool(event: ToolEventView): string {
     case "run_command":
     case "start_session": {
       const extra = Array.isArray(args.args) ? args.args.join(" ") : "";
-      return `Running \`${[str(args.command), extra].filter(Boolean).join(" ")}\``;
+      return `Running ${[str(args.command), extra].filter(Boolean).join(" ")}`;
     }
     case "web_search":
       return `Searching the web for “${str(args.query)}”`;
     case "web_fetch":
       return `Fetching ${str(args.url)}`;
+    case "write_stdin":
+      return "Sending input to a session";
+    case "kill_session":
+      return "Stopping a session";
+    case "list_sessions":
+      return "Listing sessions";
     case "dispatch_agents":
       return "Starting agents";
     case "write_todos":

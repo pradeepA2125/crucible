@@ -17,24 +17,34 @@ describe("summarizeActivity", () => {
   it("names a single edit and totals several", () => {
     const one: ActivityStep = { type: "edit", applied: true, entries: [{ path: "src/a.ts", additions: 3, deletions: 1 }] };
     const two: ActivityStep = { type: "edit", applied: true, entries: [{ path: "b.ts", additions: 2, deletions: 0 }] };
-    expect(summarizeActivity([one])).toBe("Edited `a.ts` +3 −1");
+    expect(summarizeActivity([one])).toBe("Edited a.ts +3 −1");
     expect(summarizeActivity([one, two])).toBe("Edited 2 files +5 −1");
   });
 
   it("counts distinct files, so two edits to one file read as one file", () => {
     const first: ActivityStep = { type: "edit", applied: true, entries: [{ path: "a.ts", additions: 3, deletions: 1 }] };
     const second: ActivityStep = { type: "edit", applied: true, entries: [{ path: "a.ts", additions: 2, deletions: 0 }] };
-    expect(summarizeActivity([first, second])).toBe("Edited `a.ts` +5 −1");
+    expect(summarizeActivity([first, second])).toBe("Edited a.ts +5 −1");
   });
 
   it("marks edits that were not applied and counts failures", () => {
     const rejected: ActivityStep = { type: "edit", applied: false, entries: [{ path: "a.ts", additions: 1, deletions: 0 }] };
-    expect(summarizeActivity([tools(ev("run_command", {}, true)), rejected])).toBe("Ran a command, edited `a.ts` (not applied) · 1 failed");
+    expect(summarizeActivity([tools(ev("run_command", {}, true)), rejected])).toBe("Ran a command, edited a.ts (not applied) · 1 failed");
   });
 
   it("caps at three phrases plus 'and N more'", () => {
     const steps = [tools(ev("read_file", { path: "a" }), ev("search_code"), ev("run_command"), ev("web_search"), ev("web_fetch"))];
     expect(summarizeActivity(steps)).toBe("Read a file, searched code once, ran a command, and 2 more");
+  });
+
+  it("leaves tools that are still running out of the counts", () => {
+    const running: ToolEventView = { id: 1, tool: "run_command", args: {}, source: "explore", done: false };
+    expect(summarizeActivity([tools(ev("read_file", { path: "a" }), running)])).toBe("Read a file");
+  });
+
+  it("falls back to the first outcome without its marker when a group has nothing else to count", () => {
+    expect(summarizeActivity([{ type: "outcome", text: "✓ Edit accepted: a.ts" }, { type: "outcome", text: "✗ Not applied: b" }]))
+      .toBe("Edit accepted: a.ts");
   });
 
   it("falls back to the tool name", () => {
@@ -44,11 +54,14 @@ describe("summarizeActivity", () => {
 
 describe("describeTool", () => {
   it("describes the running tool", () => {
-    expect(describeTool(ev("read_file", { path: "src/controller.py" }))).toBe("Reading `controller.py`");
-    expect(describeTool(ev("run_command", { command: "pytest", args: ["-q"] }))).toBe("Running `pytest -q`");
+    expect(describeTool(ev("read_file", { path: "src/controller.py" }))).toBe("Reading controller.py");
+    expect(describeTool(ev("run_command", { command: "pytest", args: ["-q"] }))).toBe("Running pytest -q");
     expect(describeTool(ev("web_search", { query: "ollama vision" }))).toBe("Searching the web for “ollama vision”");
     expect(describeTool(ev("dispatch_agents"))).toBe("Starting agents");
     expect(describeTool(ev("other_tool"))).toBe("Using other_tool");
+    expect(describeTool(ev("write_stdin", { session_id: "s1" }))).toBe("Sending input to a session");
+    expect(describeTool(ev("kill_session"))).toBe("Stopping a session");
+    expect(describeTool(ev("list_sessions"))).toBe("Listing sessions");
     expect(describeTool(ev("search_code"))).toBe("Searching code");
     expect(describeTool(ev("search_semantic", { query: "" }))).toBe("Searching code");
   });
