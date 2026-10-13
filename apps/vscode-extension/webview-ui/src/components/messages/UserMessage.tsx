@@ -12,7 +12,7 @@ const PREVIEWABLE = /^data:image\/(png|jpeg|webp|gif|bmp|tiff);base64,/;
  * Inline backtick spans rendered as <code> (mono, text-code) — no markdown engine.
  * mentionedFiles are the paths the composer's @ dropdown actually inserted for this
  * message (not a blind @-regex scan) — only those "@path" tokens render clickable.
- * Arbitrary border-radius matches the mockup's 12px 12px 4px 12px shape.
+ * Accent-filled bubble with the shared composer radius.
  * Attached images sit above the bubble (as in Claude and Codex): one image as a
  * preview, several as square tiles; a click opens the full image.
  */
@@ -44,15 +44,15 @@ export function UserMessage({
       <span key={keyPrefix}>
         {pieces.map((piece, i) =>
           mentionTokens.includes(piece) ? (
-            <span
+            <button
               key={i}
-              role="button"
-              tabIndex={0}
+              type="button"
               onClick={() => vscode.postMessage({ type: "openFile", path: piece.slice(1) })}
-              style={{ color: "var(--color-accent)", cursor: "pointer", textDecoration: "underline" }}
+              className="inline cursor-pointer border-0 bg-transparent p-0 font-[inherit]"
+              style={{ color: "var(--on-accent)", textDecoration: "underline" }}
             >
               {piece}
-            </span>
+            </button>
           ) : (
             <span key={i}>{piece}</span>
           ),
@@ -62,10 +62,10 @@ export function UserMessage({
   }
 
   return (
-    <div className="group relative flex max-w-[86%] flex-col items-end gap-1.5 self-end">
+    <div className="group relative flex max-w-[80%] flex-col items-end gap-1.5 self-end">
       {onRewind && (
         <button
-          className="absolute -left-6 top-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute -left-6 top-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
           title="Rewind to here"
           aria-label="Rewind to here"
           onClick={onRewind}
@@ -79,14 +79,14 @@ export function UserMessage({
           {images.map((image, i) => image.dataUrl && PREVIEWABLE.test(image.dataUrl) ? (
             <button key={i} type="button" title={image.name} aria-label={`Open ${image.name}`}
               onClick={() => setOpen({ src: image.dataUrl!, name: image.name })}
-              className="overflow-hidden rounded-[10px] transition-opacity hover:opacity-90"
+              className="overflow-hidden rounded-card transition-opacity hover:opacity-90"
               style={{ border: "1px solid var(--color-border-strong)", background: "var(--color-surface-2)" }}>
               <img src={image.dataUrl} alt={image.name}
                 className={single ? "block max-h-56 max-w-[260px] object-contain" : "block h-24 w-24 object-cover"} />
             </button>
           ) : (
             <span key={i} title={image.name}
-              className="flex h-24 w-24 items-center justify-center rounded-[10px] p-2 text-center text-[10px] leading-snug text-text-3"
+              className="flex h-24 w-24 items-center justify-center rounded-card p-2 text-center text-caption leading-snug text-text-3"
               style={{ border: "1px dashed var(--color-border-strong)", background: "var(--color-surface-2)" }}>
               {image.name}: image preview unavailable
             </span>
@@ -95,18 +95,15 @@ export function UserMessage({
       )}
       {(content.trim() || queued) && (
         <div
-          className="max-w-full px-3 py-2 text-xs leading-relaxed text-text whitespace-pre-wrap break-words"
-          style={{
-            background: "linear-gradient(180deg, var(--color-surface-2), var(--color-surface))",
-            border: "1px solid var(--color-border-strong)",
-            boxShadow: "inset 0 1px 0 var(--hairline)",
-            borderRadius: "12px 12px 4px 12px",
-          }}
+          data-testid="user-bubble"
+          className="max-w-full rounded-composer px-3 py-2 text-body leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]"
+          style={{ background: "var(--accent-fill)", color: "var(--on-accent)" }}
         >
           {codeParts.map((part, i) => {
             if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
               return (
-                <code key={i} className="mono text-code">
+                <code key={i} className="mono rounded-control px-1"
+                  style={{ background: "color-mix(in srgb, var(--on-accent) 16%, transparent)" }}>
                   {part.slice(1, -1)}
                 </code>
               );
@@ -114,7 +111,7 @@ export function UserMessage({
             return renderTextSegment(part, `seg-${i}`);
           })}
           {queued && (
-            <div data-testid="queued-tag" className="mt-1 text-[10.5px]" style={{ color: "var(--color-text-3)" }}>
+            <div data-testid="queued-tag" className="mt-1 text-caption" style={{ opacity: 0.85 }}>
               Queued — the agent picks this up at its next step
             </div>
           )}
