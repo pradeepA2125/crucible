@@ -66,7 +66,6 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
         "rounded-[10px] border overflow-hidden",
         "bg-surface",
         // Hairline inset + soft shadow
-        "shadow-[inset_0_1px_0_var(--hairline),0_10px_24px_-14px_rgba(0,0,0,.55)]",
         // Accent border when expanded
         expanded ? "border-[var(--accent-brd)]" : "border-border",
       ].join(" ")}
@@ -149,7 +148,7 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
             data-testid="plan-fade"
             className="absolute bottom-0 left-0 right-0 h-[52px] pointer-events-none"
             style={{
-              background: "linear-gradient(transparent, var(--color-surface))",
+              background: "linear-gradient(transparent, var(--color-surface))", // decoration-ok: collapse fade mask
             }}
           />
         )}

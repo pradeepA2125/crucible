@@ -59,7 +59,6 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
       className={[
         "rounded-[10px] overflow-hidden",
         "bg-surface",
-        "shadow-[inset_0_1px_0_var(--hairline),0_10px_24px_-14px_rgba(0,0,0,.55)]",
       ].join(" ")}
       style={{ border: `1px solid ${borderColor}`, transition: "border-color 0.2s" }}
     >

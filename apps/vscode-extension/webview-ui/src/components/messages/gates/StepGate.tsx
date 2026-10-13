@@ -57,7 +57,7 @@ export function StepGate({ taskId, payload }: Props) {
       title="Review step changes"
       subtitle={subtitle}
       borderColor="var(--accent-brd)"
-      headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
+      headerTint="var(--accent-bg)"
     >
       {/* ── File rows ── */}
       {entries.length > 0 && (

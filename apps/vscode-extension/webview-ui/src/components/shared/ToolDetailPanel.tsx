@@ -20,14 +20,13 @@ export function ToolDetailPanel({ event }: Props) {
     <div
       className="anim-rise rounded-lg border overflow-hidden"
       style={{
-        borderColor: "var(--accent-brd)",
+        borderColor: "var(--border)",
         background: "var(--color-surface)",
-        boxShadow: "inset 0 1px 0 var(--hairline), 0 8px 20px -10px rgba(0,0,0,.5)",
       }}
     >
       <div
         className="flex items-center gap-1.5 px-[11px] py-[7px] border-b border-border"
-        style={{ background: "linear-gradient(180deg, var(--accent-bg), transparent)" }}
+        style={{ background: "var(--surface-2)" }}
       >
         <Icon name={icon} size={11} className="text-accent" />
         <span className="mono text-[11px] font-semibold text-accent-ink">{event.tool}</span>

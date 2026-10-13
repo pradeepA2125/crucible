@@ -133,7 +133,7 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
       title="Run command?"
       subtitle={stepId ? `step ${stepId}` : undefined}
       borderColor="var(--accent-brd)"
-      headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
+      headerTint="var(--accent-bg)"
     >
       {/* ── Command block ── */}
       <div
@@ -260,7 +260,6 @@ function RadioOption({ selected, onSelect, label }: RadioOptionProps) {
             style={{
               inset: 2.5,
               background: "var(--color-accent)",
-              boxShadow: "0 0 6px var(--accent-glow)",
             }}
           />
         )}

@@ -7,7 +7,7 @@ interface SwitchProps {
 
 /**
  * Switch — animated toggle replacing raw checkboxes in Settings.
- * Track fills with the accent gradient + glow when on; the knob slides
+ * Track fills with the accent when on; the knob slides
  * with the spring ease. Motion collapses under prefers-reduced-motion.
  */
 export function Switch({ checked, onChange, disabled, label }: SwitchProps) {
@@ -22,24 +22,23 @@ export function Switch({ checked, onChange, disabled, label }: SwitchProps) {
       className="relative inline-flex w-[26px] h-[15px] flex-shrink-0 rounded-full border cursor-pointer disabled:opacity-50 disabled:cursor-default"
       style={{
         background: checked
-          ? "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))"
+          ? "var(--accent-fill)"
           : "var(--color-surface-3)",
         borderColor: checked ? "transparent" : "var(--color-border-strong)",
-        boxShadow: checked ? "0 0 10px var(--accent-glow)" : "none",
         transition:
-          "background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out)",
+          "background var(--dur-base) var(--ease-out)",
       }}
     >
       <span
         aria-hidden="true"
-        className="absolute rounded-full bg-white"
+        className="absolute rounded-full"
         style={{
           width: 11,
           height: 11,
           top: 1,
           left: checked ? 12 : 1,
           transition: "left var(--dur-base) var(--ease-spring)",
-          boxShadow: "var(--shadow-control)",
+          background: checked ? "var(--on-accent)" : "var(--text-2)",
         }}
       />
     </button>

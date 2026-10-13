@@ -55,7 +55,7 @@ export function ValidationGate({ taskId, payload }: Props) {
       title="Validation failed — review"
       subtitle={summary || undefined}
       borderColor="var(--accent-brd)"
-      headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
+      headerTint="var(--accent-bg)"
     >
       {/* ── Explainer ── */}
       <p className="px-3 pt-2 pb-1 text-[11px] text-text-3">

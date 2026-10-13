@@ -41,7 +41,7 @@ export function ErrorCard({ taskId, status, detail, narrative, onDismiss }: Prop
 
   return (
     <div
-      className="rounded-[10px] border overflow-hidden shadow-[inset_0_1px_0_var(--hairline),0_10px_24px_-14px_rgba(0,0,0,.55)]"
+      className="rounded-[10px] border overflow-hidden "
       style={{
         background: "var(--red-bg)",
         borderColor: "var(--red-brd)",

@@ -108,7 +108,7 @@ export function TodoCard({ items }: { items: TodoItem[] }) {
             style={{
               width: `${pct}%`,
               background:
-                "linear-gradient(90deg, var(--color-accent-deep), var(--color-accent))",
+                "var(--accent-fill)",
             }}
           />
         </div>

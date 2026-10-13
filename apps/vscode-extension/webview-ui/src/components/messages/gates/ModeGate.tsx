@@ -70,7 +70,7 @@ export function ModeGate({ taskId, payload }: Props) {
       title="How should I proceed?"
       subtitle={reason || undefined}
       borderColor="var(--accent-brd)"
-      headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
+      headerTint="var(--accent-bg)"
     >
       {/* ── Approach sketch — scrollable/expandable so a long, detailed plan is
           actually readable before deciding (this is what makes dropping the old

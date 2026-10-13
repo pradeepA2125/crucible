@@ -86,7 +86,6 @@ export function CardShell({
     <div
       className={[
         "rounded-[10px] border overflow-hidden bg-surface",
-        "shadow-[inset_0_1px_0_var(--hairline),0_10px_24px_-14px_rgba(0,0,0,.55)]",
       ].join(" ")}
       style={{
         borderColor: borderColor ?? "var(--color-border)",

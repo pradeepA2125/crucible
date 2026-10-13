@@ -66,7 +66,7 @@ export function ScopeGate({ taskId, payload }: Props) {
       title="Scope extension requested"
       subtitle={stepId ? `step ${stepId}` : undefined}
       borderColor="var(--accent-brd)"
-      headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
+      headerTint="var(--accent-bg)"
     >
       {/* ── Reason ── */}
       {reason && (

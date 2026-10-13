@@ -15,7 +15,7 @@ interface BtnPrimaryProps {
 }
 
 /**
- * Gradient accent button — accent-deep → accent-hot, white text, glow shadow.
+ * Flat accent button: --accent-fill and --on-accent text.
  * Used for the primary/affirmative action in every card.
  */
 export function BtnPrimary({ onClick, disabled, flex, icon, className = "", children }: BtnPrimaryProps) {
@@ -27,16 +27,13 @@ export function BtnPrimary({ onClick, disabled, flex, icon, className = "", chil
       className={[
         "inline-flex items-center justify-center gap-1.5 px-3 py-[6px]",
         "rounded-md text-[11px] font-[550] cursor-pointer",
-        "border border-transparent",
+        "border border-transparent bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)]",
         "disabled:opacity-50 disabled:cursor-default",
         flex ? "flex-1" : "",
         className,
       ].filter(Boolean).join(" ")}
       style={{
         color: "var(--on-accent)",
-        background: "linear-gradient(180deg, var(--color-accent-deep), var(--color-accent-hot))",
-        boxShadow:
-          "var(--shadow-control), 0 0 16px var(--accent-glow), var(--highlight-inset)",
       }}
     >
       {icon && <Icon name={icon} size={11} />}

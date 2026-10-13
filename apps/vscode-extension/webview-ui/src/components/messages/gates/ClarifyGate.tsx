@@ -42,7 +42,7 @@ export function ClarifyGate({ taskId, payload }: Props) {
       title="A quick question"
       subtitle={question || undefined}
       borderColor="var(--accent-brd)"
-      headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
+      headerTint="var(--accent-bg)"
     >
       {resolved === null ? (
         <div className="flex flex-col gap-1.5 px-2.5 py-2 border-t border-border">

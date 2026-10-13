@@ -43,7 +43,7 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
       title={`Team ${team} adopted ${proposal} — approve the plan?`}
       subtitle="The members implement it after you approve"
       borderColor="var(--accent-brd)"
-      headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
+      headerTint="var(--accent-bg)"
     >
       <div className="max-h-60 overflow-auto border-t border-border px-2.5 py-2 text-[12px] text-text-2">
         <p className="whitespace-pre-wrap">{String(payload.text ?? "")}</p>

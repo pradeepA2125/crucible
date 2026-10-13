@@ -78,7 +78,6 @@ export function ThinkingBlock({ entries, activeChunk, streaming }: Props) {
           /* Live: pulse dot */
           <span
             className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse"
-            style={{ boxShadow: "0 0 8px var(--accent-glow)" }}
           />
         ) : (
           /* Idle: rotating chevron */

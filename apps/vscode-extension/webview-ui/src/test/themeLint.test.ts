@@ -42,3 +42,30 @@ describe("theme lint (in-scope files use tokens only)", () => {
     });
   }
 });
+
+/** Transcript components must be flat (spec §2: gradients, glows, coloured shadows and
+ * shimmer borders removed). A line ending in `// decoration-ok: <reason>` is allowed. */
+export const DECORATION_SCOPE = [
+  "components/shared/buttons.tsx", "components/shared/Switch.tsx", "components/shared/ThinkingBlock.tsx",
+  "components/shared/ToolDetailPanel.tsx", "components/shared/CardShell.tsx", "components/shared/MarkdownContent.tsx",
+  "components/messages/TodoCard.tsx", "components/messages/PlanCard.tsx", "components/messages/DiffCard.tsx",
+  "components/messages/ErrorCard.tsx", "components/messages/UserMessage.tsx",
+  "components/messages/gates/ClarifyGate.tsx", "components/messages/gates/CommandGate.tsx",
+  "components/messages/gates/EditGate.tsx", "components/messages/gates/McpGate.tsx",
+  "components/messages/gates/ModeGate.tsx", "components/messages/gates/ScopeGate.tsx",
+  "components/messages/gates/StepGate.tsx", "components/messages/gates/TeamPlanGate.tsx",
+  "components/messages/gates/ValidationGate.tsx",
+];
+const DECORATION = /linear-gradient|radial-gradient|--accent-glow|shimmer-bg|0_10px_24px/;
+
+describe("transcript decoration lint", () => {
+  for (const file of DECORATION_SCOPE) {
+    it(`${file} has no gradients or glows`, () => {
+      const offenders = lines(file)
+        .map((text, i) => ({ text, line: i + 1 }))
+        .filter(({ text }) => DECORATION.test(text) && !text.includes("decoration-ok:"))
+        .map(({ line, text }) => `${file}:${line}: ${text.trim()}`);
+      expect(offenders).toEqual([]);
+    });
+  }
+});

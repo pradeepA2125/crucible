@@ -39,7 +39,7 @@ export function McpGate({ gateId, taskId, payload }: Props) {
         ? "Your query is sent to Exa, which may use it for model training. Review it before approving."
         : "External MCP server — review the arguments before approving"}
       borderColor="var(--accent-brd)"
-      headerTint="linear-gradient(180deg, var(--accent-bg), transparent)"
+      headerTint="var(--accent-bg)"
     >
       <pre className="max-h-40 overflow-auto px-2.5 py-2 text-[11px] text-text-2 border-t border-border whitespace-pre-wrap">
         {JSON.stringify(args, null, 2)}
