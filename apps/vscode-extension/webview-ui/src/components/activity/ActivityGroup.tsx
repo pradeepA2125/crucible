@@ -4,9 +4,23 @@ import type { ActivityStep } from "../../transcript/groupTranscript";
 import { summarizeActivity } from "../../transcript/summarizeActivity";
 import { DiffPanes } from "../shared/DiffPanes";
 import { ActivityLine } from "./ActivityLine";
-import { Icon } from "../Icon";
+import { Icon, type IconName } from "../Icon";
+import { toolIcon } from "../shared/tool-icon";
 
 const basename = (path: string) => path.split("/").pop() || path;
+
+function firstActionIcon(steps: ActivityStep[]): IconName {
+  for (const step of steps) {
+    if (step.type === "tools" && step.events.length) return toolIcon(step.events[0].tool);
+    if (step.type === "edit" && step.entries.length) return "diff";
+    if (step.type === "outcome") {
+      if (step.text.startsWith("✗")) return "x";
+      if (step.text.startsWith("✓")) return "check";
+      return "bolt";
+    }
+  }
+  return "list";
+}
 
 // A tool batch emits every member with the same step thought, so a run of events sharing
 // one thought is one model step: show the thought once, above that step's lines.
@@ -80,7 +94,7 @@ export const ActivityGroup = memo(function ActivityGroup({ steps }: { steps: Act
     <div data-testid="activity-group" className="grid min-w-0 gap-1.5">
       <button type="button" aria-expanded={open} aria-label={summary} onClick={() => setOpen(!open)}
         className="flex w-fit max-w-full min-w-0 items-center gap-2 py-1 text-left text-body text-text-3 hover:text-text-2 rounded-control">
-        <span aria-hidden="true" className="shrink-0"><Icon name="list" size={13} /></span>
+        <span aria-hidden="true" className="shrink-0"><Icon name={firstActionIcon(steps)} size={13} /></span>
         <span data-testid="activity-summary" className="min-w-0 truncate">{summary}</span>
         <span aria-hidden="true" className="shrink-0"><Icon name={open ? "chev-d" : "chev-r"} size={11} /></span>
       </button>
