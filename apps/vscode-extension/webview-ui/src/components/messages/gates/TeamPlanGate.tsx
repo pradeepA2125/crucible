@@ -45,7 +45,7 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
       borderColor="var(--accent-brd)"
       headerTint="var(--accent-bg)"
     >
-      <div className="max-h-60 overflow-auto border-t border-border px-2.5 py-2 text-[12px] text-text-2">
+      <div className="max-h-60 overflow-auto border-t border-border px-2.5 py-2 text-meta text-text-2">
         <p className="whitespace-pre-wrap">{String(payload.text ?? "")}</p>
         <ul className="mt-2 grid gap-0.5">
           {assignmentsOf(payload).map((a) => (
@@ -62,7 +62,7 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
           <textarea aria-label="Feedback for the team" rows={2} value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
             placeholder="What should the team change? (sends the plan back for another round)"
-            className="w-full resize-y rounded border border-border bg-panel px-2 py-1 text-[12px]" />
+            className="w-full resize-y rounded border border-border bg-panel px-2 py-1 text-meta" />
           <div className="flex flex-wrap items-center gap-1.5">
             <BtnPrimary onClick={() => decide("approve")}>Approve</BtnPrimary>
             <BtnGhost onClick={() => decide("feedback")}>Send feedback</BtnGhost>
@@ -70,7 +70,7 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
           </div>
         </div>
       ) : (
-        <div className="border-t border-border px-2.5 py-2 text-[12px] text-text-3">{resolved}</div>
+        <div className="border-t border-border px-2.5 py-2 text-meta text-text-3">{resolved}</div>
       )}
     </CardShell>
   );

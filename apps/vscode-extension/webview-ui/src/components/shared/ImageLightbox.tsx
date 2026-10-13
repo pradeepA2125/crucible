@@ -27,8 +27,8 @@ export function ImageLightbox({ src, name, onClose }: Props) {
       <img
         src={src}
         alt={name}
-        className="max-h-[88vh] max-w-[92vw] rounded-[10px] object-contain"
-        style={{ border: "1px solid var(--color-border-strong)", boxShadow: "0 18px 48px rgba(0,0,0,.45)" }}
+        className="max-h-[88vh] max-w-[92vw] rounded-card object-contain"
+        style={{ border: "1px solid var(--color-border-strong)", boxShadow: "var(--shadow-popover)" }}
         onClick={(e) => e.stopPropagation()}
       />
       <button

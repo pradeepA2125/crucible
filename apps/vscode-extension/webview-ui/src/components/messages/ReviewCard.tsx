@@ -83,11 +83,11 @@ export function ReviewCard({
       {/* ── Narrative (LLM-authored: what the task did) ── */}
       {narrative && (
         <div className="border-t border-border px-3 pt-2 pb-1.5">
-          <p className="text-text font-medium text-[11px] mb-1">{narrative.headline}</p>
+          <p className="text-text font-medium text-caption mb-1">{narrative.headline}</p>
           {narrative.points.length > 0 && (
             <ul className="list-disc pl-4">
               {narrative.points.map((p, i) => (
-                <li key={i} className="text-text-2 text-[11px]">{p}</li>
+                <li key={i} className="text-text-2 text-caption">{p}</li>
               ))}
             </ul>
           )}
@@ -105,7 +105,7 @@ export function ReviewCard({
 
       {/* ── Steps line ── */}
       {showSteps && (
-        <p className="px-3 py-1.5 text-text-2 text-[11px]">
+        <p className="px-3 py-1.5 text-text-2 text-caption">
           {stepsCompleted} of {stepsTotal} steps completed
         </p>
       )}
@@ -115,7 +115,7 @@ export function ReviewCard({
         <div className="border-t border-border px-3 pt-2 pb-1.5">
           <p
             className="text-text-4 uppercase tracking-wide mb-1.5"
-            style={{ fontSize: 9 }}
+            style={{ fontSize: "var(--fs-caption)" }}
           >
             During the run
           </p>
@@ -124,7 +124,7 @@ export function ReviewCard({
               <span style={{ color: "var(--color-accent)" }}>
                 <Icon name="retry" size={11} />
               </span>
-              <span className="text-text-2 text-[11px]">{d}</span>
+              <span className="text-text-2 text-caption">{d}</span>
             </div>
           ))}
         </div>
@@ -147,7 +147,7 @@ export function ReviewCard({
         {/* closing: reason input row */}
         {mode === "closing" && (
           <div className="flex flex-col gap-1.5 px-2.5 py-2 anim-rise">
-            <p className="text-text-4 text-[10px]">rolls the workspace back to its pre-task state</p>
+            <p className="text-text-4 text-caption">rolls the workspace back to its pre-task state</p>
             <div className="flex gap-1.5">
               <input
                 ref={inputRef}
@@ -159,7 +159,7 @@ export function ReviewCard({
                   if (e.key === "Escape") handleCancelClose();
                 }}
                 placeholder="Reason (optional)"
-                className="flex-1 min-w-0 bg-surface-2 border border-border-strong rounded-md px-2.5 py-[6px] text-[11px] text-text outline-none placeholder:text-text-4"
+                className="flex-1 min-w-0 bg-surface-2 border border-border-strong rounded-control px-2.5 py-[6px] text-caption text-text outline-none placeholder:text-text-4"
               />
               <BtnDanger onClick={handleConfirmClose}>
                 Discard
@@ -177,7 +177,7 @@ export function ReviewCard({
             <span style={{ color: "var(--color-green)" }}>
               <Icon name="check" size={12} />
             </span>
-            <span className="text-[11px] text-text-2">{resolvedLabel}</span>
+            <span className="text-caption text-text-2">{resolvedLabel}</span>
           </div>
         )}
       </div>

@@ -41,7 +41,7 @@ export function ErrorCard({ taskId, status, detail, narrative, onDismiss }: Prop
 
   return (
     <div
-      className="rounded-[10px] border overflow-hidden "
+      className="rounded-card border overflow-hidden "
       style={{
         background: "var(--red-bg)",
         borderColor: "var(--red-brd)",
@@ -52,21 +52,21 @@ export function ErrorCard({ taskId, status, detail, narrative, onDismiss }: Prop
         <span className="flex-shrink-0" style={{ color: "var(--color-red)" }}>
           <Icon name="warn" size={13} />
         </span>
-        <span className="text-xs font-semibold" style={{ color: "var(--color-red)" }}>
+        <span className="text-meta font-semibold" style={{ color: "var(--color-red)" }}>
           {title}
         </span>
         {/* taskId subtitle */}
-        <span className="font-mono text-[10px] text-text-3 flex-1 min-w-0 truncate">{taskId}</span>
+        <span className="font-mono text-caption text-text-3 flex-1 min-w-0 truncate">{taskId}</span>
       </div>
 
       {/* ── Narrative (LLM-authored: what was attempted / where it stopped) ── */}
       {narrative && (
         <div className="px-3 pb-2" style={{ borderTop: "1px solid var(--red-brd)", paddingTop: "0.5rem" }}>
-          <p className="text-text font-medium text-[11px] mb-1">{narrative.headline}</p>
+          <p className="text-text font-medium text-caption mb-1">{narrative.headline}</p>
           {narrative.points.length > 0 && (
             <ul className="list-disc pl-4">
               {narrative.points.map((p, i) => (
-                <li key={i} className="text-text-2 text-[11px]">{p}</li>
+                <li key={i} className="text-text-2 text-caption">{p}</li>
               ))}
             </ul>
           )}
@@ -80,7 +80,7 @@ export function ErrorCard({ taskId, status, detail, narrative, onDismiss }: Prop
           <button
             type="button"
             onClick={() => setDetailOpen((o) => !o)}
-            className="w-full flex items-center gap-[7px] px-3 py-2 text-[11px] text-text-2 bg-transparent border-0 cursor-pointer text-left"
+            className="w-full flex items-center gap-[7px] px-3 py-2 text-caption text-text-2 bg-transparent border-0 cursor-pointer text-left"
           >
             <span
               className="text-text-4 transition-transform"
@@ -97,9 +97,9 @@ export function ErrorCard({ taskId, status, detail, narrative, onDismiss }: Prop
           {/* Trace box */}
           {detailOpen && (
             <div
-              className="mx-3 mb-2.5 px-[10px] py-2 rounded-[7px] font-mono text-[10px] overflow-y-auto anim-rise"
+              className="mx-3 mb-2.5 px-[10px] py-2 rounded-control font-mono text-caption overflow-y-auto anim-rise"
               style={{
-                background: "rgba(0,0,0,.35)",
+                background: "var(--surface-1)",
                 border: "1px solid var(--red-brd)",
                 color: "var(--color-red)",
                 lineHeight: 1.7,
@@ -138,7 +138,7 @@ export function ErrorCard({ taskId, status, detail, narrative, onDismiss }: Prop
             <span style={{ color: "var(--color-green)" }}>
               <Icon name="retry" size={12} />
             </span>
-            <span className="text-[11px] text-text-2">{resolved}</span>
+            <span className="text-caption text-text-2">{resolved}</span>
           </div>
         )}
       </div>

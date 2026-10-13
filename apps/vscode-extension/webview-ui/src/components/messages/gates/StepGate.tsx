@@ -87,7 +87,7 @@ export function StepGate({ taskId, payload }: Props) {
             <span style={{ color: resolved === "Accepted" ? "var(--color-green)" : "var(--color-red)" }}>
               <Icon name={resolved === "Accepted" ? "check" : "x"} size={12} />
             </span>
-            <span className="text-[11px] text-text-2">{resolved}</span>
+            <span className="text-caption text-text-2">{resolved}</span>
           </div>
         )}
       </div>

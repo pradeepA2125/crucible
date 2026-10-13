@@ -9,7 +9,7 @@ export function NoticeLine({ msg }: { msg: ChatMsg }) {
   const agentId = typeof target?.agent_id === "string" ? target.agent_id : null;
   const text = msg.content.replace(/^🔔\s*/, "");
   return (
-    <div className="flex items-center gap-2 px-2 py-1 text-xs text-text-2">
+    <div className="flex items-center gap-2 px-2 py-1 text-meta text-text-2">
       <span aria-hidden="true">🔔</span>
       {agentId ? (
         <button

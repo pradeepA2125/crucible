@@ -137,7 +137,7 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
     >
       {/* ── Command block ── */}
       <div
-        className="mx-3 mb-2.5 px-[11px] py-2 rounded-[7px] font-mono text-[11px] text-text-2 overflow-x-auto whitespace-nowrap"
+        className="mx-3 mb-2.5 px-[11px] py-2 rounded-control font-mono text-caption text-text-2 overflow-x-auto whitespace-nowrap"
         style={{ background: "var(--color-panel)", border: "1px solid var(--color-border)" }}
       >
         <span className="select-none" style={{ color: "var(--color-accent)" }}>$ </span>
@@ -174,7 +174,7 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
                   setPrefixCount(Math.max(1, Math.min(tokens.length || 1, Number(e.target.value) || 1)));
                 }}
                 onClick={(e) => { e.stopPropagation(); setScope("prefix"); }}
-                className="w-10 bg-surface-2 border border-border-strong rounded px-1 py-0.5 text-[10px] text-text text-center outline-none"
+                className="w-10 bg-surface-2 border border-border-strong rounded px-1 py-0.5 text-caption text-text text-center outline-none"
               />{" "}
               token(s)
             </span>
@@ -188,7 +188,7 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
           label={
             <span>
               Any{" "}
-              <code className="font-mono text-[10px] text-text-3">{basename}</code>{" "}
+              <code className="font-mono text-caption text-text-3">{basename}</code>{" "}
               command
             </span>
           }
@@ -196,7 +196,7 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
       </div>
 
       {/* ── Preview line ── */}
-      <p className="px-3 pb-2.5 text-text-3 text-[10px]">{previewText()}</p>
+      <p className="px-3 pb-2.5 text-text-3 text-caption">{previewText()}</p>
 
       {/* ── Actions row ── */}
       <div className="flex gap-1.5 px-2.5 py-2 border-t border-border">
@@ -241,7 +241,7 @@ function RadioOption({ selected, onSelect, label }: RadioOptionProps) {
           onSelect();
         }
       }}
-      className="flex items-center gap-2 text-[11px] cursor-pointer"
+      className="flex items-center gap-2 text-caption cursor-pointer"
       style={{ color: selected ? "var(--color-text)" : "var(--color-text-2)" }}
     >
       {/* Custom radio dot — 13px circle, violet dot when selected */}
@@ -280,7 +280,7 @@ function ResolvedRow({ resolved }: ResolvedRowProps) {
       <span style={{ color: isApproval ? "var(--color-green)" : "var(--color-red)" }}>
         <Icon name={isApproval ? "check" : "x"} size={12} />
       </span>
-      <span className="text-[11px] text-text-2">{resolved}</span>
+      <span className="text-caption text-text-2">{resolved}</span>
     </div>
   );
 }

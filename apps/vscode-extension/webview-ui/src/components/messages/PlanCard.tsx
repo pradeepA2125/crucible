@@ -63,7 +63,7 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
   return (
     <div
       className={[
-        "rounded-[10px] border overflow-hidden",
+        "rounded-card border overflow-hidden",
         "bg-surface",
         // Hairline inset + soft shadow
         // Accent border when expanded
@@ -82,11 +82,11 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
         </span>
 
         {/* Title */}
-        <span className="text-xs font-semibold text-text">Plan</span>
+        <span className="text-meta font-semibold text-text">Plan</span>
 
         {/* Step count subtitle */}
         {stepCount > 0 && (
-          <span className="text-[11px] text-text-3 flex-1 min-w-0 truncate">
+          <span className="text-caption text-text-3 flex-1 min-w-0 truncate">
             {stepCount} {stepCount === 1 ? "step" : "steps"}
           </span>
         )}
@@ -95,7 +95,7 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
         {/* Version badge */}
         {showVersionBadge && (
           <span
-            className="text-[9.5px] font-semibold px-[7px] py-[1.5px] rounded-full flex-shrink-0"
+            className="text-caption font-semibold px-[7px] py-[1.5px] rounded-full flex-shrink-0"
             style={{
               color: "var(--color-accent-ink)",
               background: "var(--accent-bg)",
@@ -128,14 +128,14 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
         {/* Markdown content */}
         <div
           className={[
-            "px-3 py-2 text-xs text-text-2 leading-relaxed",
+            "px-3 py-2 text-meta text-text-2 leading-relaxed",
             "[&_code]:font-mono [&_code]:text-code [&_code]:bg-surface-2 [&_code]:px-1 [&_code]:rounded",
             "[&_pre]:font-mono [&_pre]:bg-surface-2 [&_pre]:rounded [&_pre]:p-2 [&_pre]:overflow-x-auto",
             "[&_p]:mb-1.5 [&_p:last-child]:mb-0",
             "[&_ul]:list-disc [&_ul]:pl-4 [&_ul]:mb-1.5",
             "[&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:mb-1.5",
-            "[&_h2]:text-[11px] [&_h2]:font-semibold [&_h2]:text-text [&_h2]:mt-2 [&_h2]:mb-1",
-            "[&_h3]:text-[11px] [&_h3]:font-semibold [&_h3]:text-text [&_h3]:mt-1.5 [&_h3]:mb-0.5",
+            "[&_h2]:text-caption [&_h2]:font-semibold [&_h2]:text-text [&_h2]:mt-2 [&_h2]:mb-1",
+            "[&_h3]:text-caption [&_h3]:font-semibold [&_h3]:text-text [&_h3]:mt-1.5 [&_h3]:mb-0.5",
             ...MARKDOWN_TABLE_CLASSES,
           ].join(" ")}
         >
@@ -182,7 +182,7 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
                   if (e.key === "Escape") handleCancelFeedback();
                 }}
                 placeholder="What should change in this plan?"
-                className="flex-1 min-w-0 bg-surface-2 border border-border-strong rounded-md px-2.5 py-[6px] text-[11px] text-text outline-none placeholder:text-text-4"
+                className="flex-1 min-w-0 bg-surface-2 border border-border-strong rounded-control px-2.5 py-[6px] text-caption text-text outline-none placeholder:text-text-4"
               />
               <BtnPrimary onClick={handleSendFeedback} disabled={feedbackText.trim() === ""}>
                 Send
@@ -199,7 +199,7 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
               <span className="text-green">
                 <Icon name="check" size={12} />
               </span>
-              <span className="text-[11px] text-text-2">Implementing…</span>
+              <span className="text-caption text-text-2">Implementing…</span>
             </div>
           )}
 
@@ -209,7 +209,7 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
               <span className="text-accent">
                 <Icon name="retry" size={12} />
               </span>
-              <span className="text-[11px] text-text-2">
+              <span className="text-caption text-text-2">
                 Regenerating with your feedback…
               </span>
             </div>

@@ -293,7 +293,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           aria-label="Settings menu"
           title="Settings"
           className={[
-            "flex items-center justify-center w-6 h-6 rounded-md",
+            "flex items-center justify-center w-6 h-6 rounded-control",
             "border transition-colors duration-150",
           ].join(" ")}
           style={{ color: "var(--color-text-3)", background: "transparent", borderColor: "transparent" }}
@@ -319,7 +319,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           aria-label="Memory Inspector"
           title="Memory Inspector"
           className={[
-            "flex items-center justify-center w-6 h-6 rounded-md",
+            "flex items-center justify-center w-6 h-6 rounded-control",
             "border transition-colors duration-150",
           ].join(" ")}
           style={{ color: "var(--color-text-3)", background: "transparent", borderColor: "transparent" }}
@@ -344,7 +344,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
             onClick={() => vscode.postMessage({ type: "stopAllAgents" })}
             aria-label="Stop all agents"
             title="Stop all agents"
-            className="flex items-center justify-center w-6 h-6 rounded-md border transition-colors duration-150"
+            className="flex items-center justify-center w-6 h-6 rounded-control border transition-colors duration-150"
             style={{ color: "var(--color-red)", background: "transparent", borderColor: "transparent" }}
           >
             <Icon name="stop" size={14} />
@@ -359,7 +359,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           aria-label="Dependency Space"
           title="Dependency Space"
           className={[
-            "flex items-center justify-center w-6 h-6 rounded-md",
+            "flex items-center justify-center w-6 h-6 rounded-control",
             "border transition-colors duration-150",
           ].join(" ")}
           style={{ color: "var(--color-text-3)", background: "transparent", borderColor: "transparent" }}
@@ -385,7 +385,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           title={navLocked ? "A turn is in progress" : undefined}
           aria-label="Back to history"
           className={[
-            "flex items-center justify-center w-6 h-6 rounded-md",
+            "flex items-center justify-center w-6 h-6 rounded-control",
             "border transition-colors duration-150",
             "disabled:opacity-40 disabled:cursor-not-allowed",
           ].join(" ")}
@@ -413,7 +413,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         </button>
 
         {/* Thread title */}
-        <span className="flex-1 min-w-0 truncate text-xs text-text-2">
+        <span className="flex-1 min-w-0 truncate text-meta text-text-2">
           {threadTitle}
         </span>
 
@@ -425,7 +425,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           title={navLocked ? "A turn is in progress" : undefined}
           aria-label="New chat"
           className={[
-            "flex items-center justify-center w-6 h-6 rounded-md",
+            "flex items-center justify-center w-6 h-6 rounded-control",
             "border transition-colors duration-150",
             "disabled:opacity-40 disabled:cursor-not-allowed",
           ].join(" ")}
@@ -479,7 +479,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
                       trace left once it clears (see design spec). */}
                   {state.retryStatus && (
                     <div
-                      className="flex items-center gap-2 text-[11px]"
+                      className="flex items-center gap-2 text-caption"
                       style={{ color: "var(--color-text-3)", animation: "pulse 1.5s ease-in-out infinite" }}
                     >
                       <span

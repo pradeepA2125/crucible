@@ -26,7 +26,7 @@ export function BtnPrimary({ onClick, disabled, flex, icon, className = "", chil
       disabled={disabled}
       className={[
         "inline-flex items-center justify-center gap-1.5 px-3 py-[6px]",
-        "rounded-md text-[11px] font-[550] cursor-pointer",
+        "rounded-control text-caption font-[550] cursor-pointer",
         "border border-transparent bg-[var(--accent-fill)] hover:bg-[var(--accent-fill-hover)]",
         "disabled:opacity-50 disabled:cursor-default",
         flex ? "flex-1" : "",
@@ -63,7 +63,7 @@ export function BtnGhost({ onClick, disabled, className = "", children }: BtnGho
       disabled={disabled}
       className={[
         "inline-flex items-center justify-center px-3 py-[6px]",
-        "rounded-md text-[11px] font-[550] text-text-2 cursor-pointer",
+        "rounded-control text-caption font-[550] text-text-2 cursor-pointer",
         "bg-transparent border border-border-strong",
         "hover:bg-surface-2 hover:text-text",
         "transition-colors duration-150",
@@ -97,7 +97,7 @@ export function BtnDanger({ onClick, disabled, className = "", children }: BtnDa
       disabled={disabled}
       className={[
         "inline-flex items-center justify-center px-3 py-[6px]",
-        "rounded-md text-[11px] font-[550] cursor-pointer",
+        "rounded-control text-caption font-[550] cursor-pointer",
         "bg-transparent border transition-colors duration-150",
         "disabled:opacity-50 disabled:cursor-default",
         className,

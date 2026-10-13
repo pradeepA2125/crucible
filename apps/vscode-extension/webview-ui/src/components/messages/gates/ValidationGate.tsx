@@ -58,7 +58,7 @@ export function ValidationGate({ taskId, payload }: Props) {
       headerTint="var(--accent-bg)"
     >
       {/* ── Explainer ── */}
-      <p className="px-3 pt-2 pb-1 text-[11px] text-text-3">
+      <p className="px-3 pt-2 pb-1 text-caption text-text-3">
         These errors remained after auto-repair. They may be pre-existing — accept to proceed to
         review, or reject to fail.
       </p>
@@ -66,7 +66,7 @@ export function ValidationGate({ taskId, payload }: Props) {
       {/* ── Diagnostic list ── */}
       {diagnostics.length > 0 && (
         <div
-          className="mx-3 mb-2.5 font-mono text-[10.5px] overflow-y-auto"
+          className="mx-3 mb-2.5 font-mono text-caption overflow-y-auto"
           style={{ maxHeight: "8rem" }}
         >
           {diagnostics.map((d, i) => (
@@ -101,7 +101,7 @@ export function ValidationGate({ taskId, payload }: Props) {
             <span style={{ color: resolved === "Accepted" ? "var(--color-green)" : "var(--color-red)" }}>
               <Icon name={resolved === "Accepted" ? "check" : "x"} size={12} />
             </span>
-            <span className="text-[11px] text-text-2">{resolved}</span>
+            <span className="text-caption text-text-2">{resolved}</span>
           </div>
         )}
       </div>

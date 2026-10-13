@@ -95,7 +95,7 @@ export function TodoCard({ items }: { items: TodoItem[] }) {
       icon="list"
       title="Todo"
       trailing={
-        <span className="flex-shrink-0 text-[11px] tabular-nums text-text-3">
+        <span className="flex-shrink-0 text-caption tabular-nums text-text-3">
           {`${done}/${total}`}
         </span>
       }
@@ -133,7 +133,7 @@ export function TodoCard({ items }: { items: TodoItem[] }) {
             <span className="mt-[2px] flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center">
               <StatusPip status={it.status} />
             </span>
-            <span className={`text-[11px] leading-[1.5] ${TITLE_CLASS[it.status]}`}>
+            <span className={`text-caption leading-[1.5] ${TITLE_CLASS[it.status]}`}>
               {it.title}
               {it.note && (it.status === "blocked" || it.status === "cancelled") && (
                 <span className="text-text-4"> — {it.note}</span>

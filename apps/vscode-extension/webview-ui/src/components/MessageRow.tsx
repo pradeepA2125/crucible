@@ -29,11 +29,11 @@ function TaskCreatedRow({ msg }: { msg: ChatMsg }) {
   const taskId = msg.taskId ?? msg.content;
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 rounded-lg border"
+      className="flex items-center gap-2 px-3 py-2 rounded-card border"
       style={{
         background: "var(--color-surface)",
         borderColor: "var(--color-border)",
-        fontSize: "11px",
+        fontSize: "var(--fs-caption)",
       }}
     >
       <span style={{ color: "var(--color-accent)", flexShrink: 0 }}>
@@ -42,7 +42,7 @@ function TaskCreatedRow({ msg }: { msg: ChatMsg }) {
       <span className="text-text-2">Task created</span>
       <span
         className="font-mono truncate"
-        style={{ color: "var(--color-code)", fontSize: "10px" }}
+        style={{ color: "var(--color-code)", fontSize: "var(--fs-caption)" }}
       >
         {taskId}
       </span>

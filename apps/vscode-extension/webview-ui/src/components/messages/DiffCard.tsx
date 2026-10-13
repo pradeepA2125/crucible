@@ -57,7 +57,7 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
   return (
     <div
       className={[
-        "rounded-[10px] overflow-hidden",
+        "rounded-card overflow-hidden",
         "bg-surface",
       ].join(" ")}
       style={{ border: `1px solid ${borderColor}`, transition: "border-color 0.2s" }}
@@ -74,17 +74,17 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
         </span>
 
         {/* Title */}
-        <span className="text-xs font-semibold text-text">Changes ready</span>
+        <span className="text-meta font-semibold text-text">Changes ready</span>
 
         {/* Aggregate +/- stats */}
-        <span className="font-mono text-[10px] font-semibold flex items-center gap-1 flex-1 min-w-0">
+        <span className="font-mono text-caption font-semibold flex items-center gap-1 flex-1 min-w-0">
           <span className="text-green">+{totalAdditions}</span>
           <span className="text-red">&minus;{totalDeletions}</span>
         </span>
 
         {/* File count badge */}
         <span
-          className="text-[9.5px] font-semibold px-[7px] py-[1.5px] rounded-full flex-shrink-0"
+          className="text-caption font-semibold px-[7px] py-[1.5px] rounded-full flex-shrink-0"
           style={{
             color: "var(--color-accent-ink)",
             background: "var(--accent-bg)",
@@ -149,7 +149,7 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
               <Icon name="check" size={12} />
             </span>
             <span
-              className="text-[11px] font-[550]"
+              className="text-caption font-[550]"
               style={{ color: "var(--color-green)" }}
             >
               Applied
@@ -163,7 +163,7 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
               <Icon name="x" size={12} />
             </span>
             <span
-              className="text-[11px] font-[550]"
+              className="text-caption font-[550]"
               style={{ color: "var(--color-red)" }}
             >
               Discarded

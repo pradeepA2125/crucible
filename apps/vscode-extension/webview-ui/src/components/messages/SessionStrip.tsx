@@ -68,8 +68,8 @@ export function SessionStrip({ items, transcripts, onExpand }: Props) {
                       : {}),
                   }}
                 />
-                <code className="min-w-0 flex-1 truncate text-[11px] text-text-2">{s.command}</code>
-                <span className="flex-shrink-0 text-[10px] tabular-nums text-text-3">
+                <code className="min-w-0 flex-1 truncate text-caption text-text-2">{s.command}</code>
+                <span className="flex-shrink-0 text-caption tabular-nums text-text-3">
                   {s.status}
                   {s.exit_code !== null ? ` (exit ${s.exit_code})` : ""} · {ageSec(s.started_at)}s
                 </span>
@@ -78,7 +78,7 @@ export function SessionStrip({ items, transcripts, onExpand }: Props) {
                 </span>
               </button>
               {isOpen && (
-                <div className="mx-3 mb-2 rounded border border-border bg-surface-2 text-[10px]">
+                <div className="mx-3 mb-2 rounded border border-border bg-surface-2 text-caption">
                   {transcript === undefined && (
                     <div className="px-2 py-1.5 text-text-3">Loading…</div>
                   )}

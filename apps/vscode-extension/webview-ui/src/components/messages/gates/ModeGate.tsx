@@ -79,7 +79,7 @@ export function ModeGate({ taskId, payload }: Props) {
       {planSketch && (
         <div
           data-testid="plan-sketch"
-          className="px-2.5 py-2 text-[12px] text-text-1 whitespace-pre-wrap border-t border-border overflow-y-auto"
+          className="px-2.5 py-2 text-meta text-text-1 whitespace-pre-wrap border-t border-border overflow-y-auto"
           style={{ maxHeight: "16rem" }}
         >
           {planSketch}
@@ -98,7 +98,7 @@ export function ModeGate({ taskId, payload }: Props) {
                   {isRecommended ? " (recommended)" : ""}
                 </span>
                 {opt.description && (
-                  <span className="text-[10px] text-text-2">{opt.description}</span>
+                  <span className="text-caption text-text-2">{opt.description}</span>
                 )}
               </span>
             );
@@ -127,7 +127,7 @@ export function ModeGate({ taskId, payload }: Props) {
               }
             }}
             placeholder="Chat about this approach…"
-            className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1 text-[11px] text-text-1 placeholder:text-text-2"
+            className="mt-1 w-full rounded border border-border bg-transparent px-2 py-1 text-caption text-text-1 placeholder:text-text-2"
           />
         </div>
       ) : (
@@ -135,7 +135,7 @@ export function ModeGate({ taskId, payload }: Props) {
           <span style={{ color: "var(--color-green)" }}>
             <Icon name="check" size={12} />
           </span>
-          <span className="text-[11px] text-text-2">{resolved}</span>
+          <span className="text-caption text-text-2">{resolved}</span>
         </div>
       )}
     </CardShell>

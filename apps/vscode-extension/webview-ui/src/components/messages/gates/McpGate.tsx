@@ -41,7 +41,7 @@ export function McpGate({ gateId, taskId, payload }: Props) {
       borderColor="var(--accent-brd)"
       headerTint="var(--accent-bg)"
     >
-      <pre className="max-h-40 overflow-auto px-2.5 py-2 text-[11px] text-text-2 border-t border-border whitespace-pre-wrap">
+      <pre className="max-h-40 overflow-auto px-2.5 py-2 text-caption text-text-2 border-t border-border whitespace-pre-wrap">
         {JSON.stringify(args, null, 2)}
       </pre>
       {resolved === null ? (
@@ -53,7 +53,7 @@ export function McpGate({ gateId, taskId, payload }: Props) {
           <BtnDanger onClick={() => submit(false, false)}>Reject</BtnDanger>
         </div>
       ) : (
-        <div className="px-2.5 py-2 text-[12px] text-text-3 border-t border-border">{resolved}</div>
+        <div className="px-2.5 py-2 text-meta text-text-3 border-t border-border">{resolved}</div>
       )}
     </CardShell>
   );

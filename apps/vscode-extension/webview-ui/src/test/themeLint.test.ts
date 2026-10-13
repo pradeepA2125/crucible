@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -64,6 +64,33 @@ describe("transcript decoration lint", () => {
       const offenders = lines(file)
         .map((text, i) => ({ text, line: i + 1 }))
         .filter(({ text }) => DECORATION.test(text) && !text.includes("decoration-ok:"))
+        .map(({ line, text }) => `${file}:${line}: ${text.trim()}`);
+      expect(offenders).toEqual([]);
+    });
+  }
+});
+
+/** Phase 2 (spec Testing → Lint): every transcript component, brand assets excepted. */
+function tsxUnder(dir: string): string[] {
+  return readdirSync(join(SRC, dir)).flatMap((name) => {
+    const rel = `${dir}/${name}`;
+    if (statSync(join(SRC, rel)).isDirectory()) return tsxUnder(rel);
+    return name.endsWith(".tsx") && !name.includes(".test.") ? [rel] : [];
+  });
+}
+const BRAND_EXEMPT = new Set(["components/shared/ChatGPTBrand.tsx", "components/shared/ClaudeBrand.tsx"]);
+export const PHASE2_SCOPE = [
+  ...tsxUnder("components/messages"), ...tsxUnder("components/activity"), ...tsxUnder("components/shared"),
+  "components/ThreadView.tsx", "components/MessageRow.tsx",
+].filter((f) => !BRAND_EXEMPT.has(f));
+
+describe("theme lint — Phase 2 transcript scope", () => {
+  for (const file of PHASE2_SCOPE) {
+    it(`${file} uses tokens only`, () => {
+      const offenders = lines(file)
+        .map((text, i) => ({ text, line: i + 1 }))
+        .filter(({ text }) => !text.trim().startsWith("//") && !text.trim().startsWith("*"))
+        .filter(({ text }) => COLOR_LITERAL.test(text) || TW_SIZE.test(text) || TW_RADIUS.test(text) || INLINE_SIZE.test(text))
         .map(({ line, text }) => `${file}:${line}: ${text.trim()}`);
       expect(offenders).toEqual([]);
     });

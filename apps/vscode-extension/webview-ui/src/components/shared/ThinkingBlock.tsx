@@ -66,7 +66,7 @@ export function ThinkingBlock({ entries, activeChunk, streaming }: Props) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={[
-          "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] cursor-pointer",
+          "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-control text-caption cursor-pointer",
           "border transition-colors duration-150",
           streaming
             ? "border-[var(--accent-brd)] text-accent-ink"
@@ -104,7 +104,7 @@ export function ThinkingBlock({ entries, activeChunk, streaming }: Props) {
           ref={bodyRef}
           data-thinking-body=""
           onScroll={handleScroll}
-          className="anim-rise border-l-2 border-border-strong pl-3 ml-1.5 max-h-40 overflow-y-auto text-[11px] text-text-3 leading-relaxed"
+          className="anim-rise border-l-2 border-border-strong pl-3 ml-1.5 max-h-40 overflow-y-auto text-caption text-text-3 leading-relaxed"
         >
           {entries.map((entry, i) => (
             <div key={i} className="mb-0.5">

@@ -70,13 +70,13 @@ export function ScopeGate({ taskId, payload }: Props) {
     >
       {/* ── Reason ── */}
       {reason && (
-        <p className="px-3 pt-2 pb-1 text-[11px] text-text-2">{reason}</p>
+        <p className="px-3 pt-2 pb-1 text-caption text-text-2">{reason}</p>
       )}
 
       {/* ── File list ── */}
       {files.length > 0 && (
         <div className="px-3 pb-2.5">
-          <ul className="font-mono text-[10.5px] text-text-3 flex flex-col gap-0.5">
+          <ul className="font-mono text-caption text-text-3 flex flex-col gap-0.5">
             {files.map((f) => (
               <li key={f}>{f}</li>
             ))}
@@ -113,7 +113,7 @@ function ResolvedRow({ resolved }: { resolved: string }) {
       <span style={{ color: isApproval ? "var(--color-green)" : "var(--color-red)" }}>
         <Icon name={isApproval ? "check" : "x"} size={12} />
       </span>
-      <span className="text-[11px] text-text-2">{resolved}</span>
+      <span className="text-caption text-text-2">{resolved}</span>
     </div>
   );
 }

@@ -9,7 +9,7 @@ export function AgentMessageLine({ msg }: { msg: ChatMsg }) {
   const firstLine = msg.content.split("\n")[0] ?? "";
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="px-2 text-xs text-text-2 truncate" title={msg.content}>
+      <div className="px-2 text-meta text-text-2 truncate" title={msg.content}>
         ↳ to <span className="text-text">{label}</span>: {firstLine}
       </div>
       {agentId && <AgentLiveRow agentId={agentId} />}

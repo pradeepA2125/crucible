@@ -52,7 +52,7 @@ export function CardShell({
 
       {/* Title */}
       <span
-        className="text-xs font-semibold"
+        className="text-meta font-semibold"
         style={{ color: titleColor ?? "var(--color-text)" }}
       >
         {title}
@@ -60,7 +60,7 @@ export function CardShell({
 
       {/* Subtitle — takes available space, truncated */}
       {subtitle && (
-        <span className="text-[11px] text-text-3 flex-1 min-w-0 truncate">{subtitle}</span>
+        <span className="text-caption text-text-3 flex-1 min-w-0 truncate">{subtitle}</span>
       )}
       {!subtitle && <span className="flex-1" />}
 
@@ -85,7 +85,7 @@ export function CardShell({
   return (
     <div
       className={[
-        "rounded-[10px] border overflow-hidden bg-surface",
+        "rounded-card border overflow-hidden bg-surface",
       ].join(" ")}
       style={{
         borderColor: borderColor ?? "var(--color-border)",

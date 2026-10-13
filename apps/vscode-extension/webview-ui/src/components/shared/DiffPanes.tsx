@@ -37,8 +37,8 @@ function parseUnifiedDiff(diff: string): DiffLine[] {
 }
 
 const LINE_STYLE: Record<LineKind, { row: string; marker: string }> = {
-  add:  { row: "bg-[rgba(74,222,128,.07)] text-[#b6f0c8]", marker: "text-green" },
-  del:  { row: "bg-[rgba(248,113,113,.06)] text-[#f3b8b8]", marker: "text-red" },
+  add:  { row: "bg-[var(--diff-add-bg)] text-text", marker: "text-green" },
+  del:  { row: "bg-[var(--diff-del-bg)] text-text", marker: "text-red" },
   ctx:  { row: "text-text-3", marker: "" },
   hunk: { row: "text-text-4 italic", marker: "" },
 };
@@ -64,7 +64,7 @@ export function DiffPanes({ entries }: Props) {
             aria-selected={i === active}
             onClick={(e) => { e.stopPropagation(); setActive(i); }}
             className={[
-              "mono text-[10.5px] px-2.5 py-[7px] whitespace-nowrap cursor-pointer bg-transparent border-0",
+              "mono text-caption px-2.5 py-[7px] whitespace-nowrap cursor-pointer bg-transparent border-0",
               "border-b-[1.5px] -mb-px",
               i === active
                 ? "text-accent-ink border-b-accent"
@@ -80,7 +80,7 @@ export function DiffPanes({ entries }: Props) {
         {parseUnifiedDiff(current.unified_diff ?? "").map((line, i) => (
           <div
             key={i}
-            className={`flex mono text-[10.5px] leading-[1.8] whitespace-pre pr-3 ${LINE_STYLE[line.kind].row}`}
+            className={`flex mono text-caption leading-[1.8] whitespace-pre pr-3 ${LINE_STYLE[line.kind].row}`}
           >
             <span className="w-[34px] flex-shrink-0 text-right pr-2.5 text-text-4 select-none tabular-nums">
               {line.num}

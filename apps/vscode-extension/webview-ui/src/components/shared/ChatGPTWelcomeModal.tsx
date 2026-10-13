@@ -17,10 +17,10 @@ export function ChatGPTWelcomeModal({ onDismiss, onManageUsage }: {
          role="dialog" aria-modal="true" aria-labelledby="chatgpt-welcome-title">
       <div className="surface-card anim-pop flex w-full max-w-[360px] flex-col gap-3 p-5">
         <ChatGPTLogo size={24} color="var(--color-text)" />
-        <h2 id="chatgpt-welcome-title" className="text-sm font-semibold text-text">
+        <h2 id="chatgpt-welcome-title" className="text-body font-semibold text-text">
           You're using your ChatGPT plan
         </h2>
-        <p className="text-xs leading-relaxed text-text-2">
+        <p className="text-meta leading-relaxed text-text-2">
           Eligible usage in this app uses your ChatGPT plan. Manage usage in your ChatGPT
           settings.
         </p>

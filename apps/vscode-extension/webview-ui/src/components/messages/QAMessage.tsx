@@ -43,7 +43,7 @@ export function QAMessage({ content, thinkingLog }: Props) {
         className={[
           "absolute top-0 right-0",
           "opacity-0 group-hover:opacity-100 transition-opacity duration-150",
-          "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-text-3 cursor-pointer",
+          "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption text-text-3 cursor-pointer",
           "bg-surface-2 border border-border-strong",
           "hover:text-text hover:border-[var(--accent-brd)]",
         ].join(" ")}

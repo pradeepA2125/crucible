@@ -80,7 +80,7 @@ export function EditGate({ gateId, taskId, payload }: Props) {
       {resolved === null && rejecting ? (
         <div className="flex flex-col gap-1.5 px-2.5 py-2 border-t border-border">
           <textarea
-            className="w-full rounded border border-border bg-surface-2 px-2 py-1 text-[12px] text-text-1 outline-none resize-none"
+            className="w-full rounded border border-border bg-surface-2 px-2 py-1 text-meta text-text-1 outline-none resize-none"
             rows={3}
             autoFocus
             placeholder="What's wrong, and what should stay? (optional — helps the agent fix it correctly on the next attempt)"
@@ -112,7 +112,7 @@ export function EditGate({ gateId, taskId, payload }: Props) {
               <span style={{ color: resolved === "Accepted" ? "var(--color-green)" : "var(--color-red)" }}>
                 <Icon name={resolved === "Accepted" ? "check" : "x"} size={12} />
               </span>
-              <span className="text-[11px] text-text-2">{resolved}</span>
+              <span className="text-caption text-text-2">{resolved}</span>
             </div>
           )}
         </div>

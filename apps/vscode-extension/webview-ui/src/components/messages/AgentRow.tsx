@@ -83,7 +83,7 @@ export function AgentRow({
         ) : breadcrumb ? (
           <BreadcrumbLine text={content} />
         ) : streaming ? (
-          <div className="text-xs text-text-3 whitespace-pre-wrap">
+          <div className="text-meta text-text-3 whitespace-pre-wrap">
             {content}
             <span
               className="inline-block w-px h-3.5 bg-accent align-middle ml-px"
@@ -103,7 +103,7 @@ export function AgentRow({
           className={[
             "absolute top-0 right-0",
             "opacity-0 group-hover:opacity-100 transition-opacity duration-150",
-            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-text-3 cursor-pointer",
+            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption text-text-3 cursor-pointer",
             "bg-surface-2 border border-border-strong",
             "hover:text-text hover:border-[var(--accent-brd)]",
           ].join(" ")}
@@ -141,7 +141,7 @@ function BreadcrumbLine({ text }: { text: string }) {
   const displayText = match ? text.slice(match.char.length).trimStart() : text;
 
   return (
-    <div className="flex items-center gap-2 text-[11px] text-text-2">
+    <div className="flex items-center gap-2 text-caption text-text-2">
       {match && (
         <Icon name={match.icon} size={11} className={match.color} />
       )}
